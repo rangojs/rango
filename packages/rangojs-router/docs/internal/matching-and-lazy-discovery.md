@@ -114,7 +114,8 @@ If a trie key still finds no owner among the entries at its static prefix, dev t
 error naming the key, the prefix and the includes it checked (`find-match.ts`);
 production keeps the old fallback, which 404s. The error can also show for a moment
 in the HMR window, between a route edit's re-import and the rediscovered trie, so its
-message says a reload fixes that case.
+message says a reload fixes that case. `dispatch` from `@rangojs/router/testing`
+matches through a dev-rebuilt trie too, so a unit test sees this class of bug.
 
 ## Invariants & design decisions
 

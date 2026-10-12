@@ -11,10 +11,8 @@ import MapRootLayout from "../server/root-layout";
 import { joinPrefix } from "./pattern-matching.js";
 import type { RouteEntry } from "../types";
 import type { UrlPatterns } from "../urls";
-import {
-  isIncludeProvider,
-  resolveIncludeModule,
-} from "../urls/include-provider.js";
+import { isIncludeProvider } from "../urls/include-provider.js";
+import { resolveEntryPatterns } from "./lazy-includes.js";
 import { VERSION } from "@rangojs/router:version";
 
 // Tags an error thrown while dynamically importing an async include's module
@@ -193,10 +191,7 @@ export async function loadManifest(
           // cache the resolved patterns on the entry so later renders reuse them.
           if (isIncludeProvider(entry.lazyPatterns)) {
             try {
-              entry.lazyPatterns = resolveIncludeModule(
-                await entry.lazyPatterns(),
-                entry.staticPrefix,
-              ) as unknown as UrlPatterns<any>;
+              await resolveEntryPatterns(entry);
             } catch (err) {
               // A failed dynamic import of a REAL, matched route's module is a
               // server error, not a missing route. Tag it so the outer catch

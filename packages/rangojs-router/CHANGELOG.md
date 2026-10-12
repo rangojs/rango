@@ -108,6 +108,41 @@ a silent 404:
 [@rangojs/router] The route trie matched "/login" to route "..." under static prefix "", but no include there registered that name at runtime (checked: ...). Build discovery and the runtime named this route differently, so it cannot render. If this follows a route edit, reload the page; if it persists, please report it with your route configuration.
 ```
 
+### Changed: `dispatch` matches through the route trie, as `vite dev` and production do ([#1107](https://github.com/rangojs/rango/issues/1107))
+
+`dispatch` from `@rangojs/router/testing` matched a router with no trie by
+URL pattern alone, while `serveShellRequest` and the router's own handler
+build the trie first. So a router answered differently depending on what ran
+before: a trailing-slash URL for a route with no `trailingSlash` option
+redirected with a 308 on a fresh router, and served the route after a
+`serveShellRequest` call on the same router. And a route that only the trie
+gets wrong, like the nested unnamed include above, passed in `dispatch` and
+404'd in the app.
+
+Now every match goes through a trie: the build manifest's trie when one is
+loaded for the router's id, otherwise one built from the router's routes the
+way the dev server builds it. `dispatch` builds it when the id has no trie yet,
+or when the id's trie came from another router object (routers created with
+the same `id` don't share a trie); a trie `serveShellRequest` built for the
+same router is reused. What your tests see:
+
+- A route with no `trailingSlash` serves both `/products` and `/products/`
+  with no redirect, as production does. Routes with `trailingSlash: "never"`
+  or `"always"` still redirect the other form with a 308.
+
+  ```ts
+  // path.json("/api/items", handler) with no trailingSlash option
+  const res = await dispatch(router, { request: "/api/items/" });
+  // before: 308, Location: /api/items (on a router serveShellRequest had not served)
+  // now:    200 from the route, before and after serveShellRequest
+  ```
+
+- Building the trie runs route discovery: every `include()`d `urls()`
+  handler runs once more, and every async include provider
+  (`() => import(...)`) is called. A test counting provider calls or handler
+  runs counts from after the first `dispatch` on that router. A provider that
+  rejects fails the `dispatch`, as it fails `vite dev` and the build.
+
 ## 0.24.2 (2026-10-13)
 
 ### Fixed: a `clientUrls()` group layout that reads its own loader keeps the instant page change on navigations between its routes

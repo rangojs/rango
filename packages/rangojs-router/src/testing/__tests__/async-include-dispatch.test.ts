@@ -40,6 +40,9 @@ import { clientUrls } from "../../client-urls/client-urls.js";
 // A `() => Promise.resolve({ default: urls(...) })` provider stands in for
 // `() => import("./routes")`: isIncludeProvider() keys on the function, and
 // resolveIncludeModule() accepts the `{ default }` module shape.
+//
+// The first dispatch builds the route trie, and its discovery calls every
+// provider: each test dispatches "/" first and counts from there.
 
 describe("async include() via dispatch (public path)", () => {
   it("resolves a leaf async include route on first request (200, not 404)", async () => {
@@ -65,17 +68,20 @@ describe("async include() via dispatch (public path)", () => {
     expect(provider).not.toHaveBeenCalled();
     expect(built).toBe(0);
 
+    await dispatch(router, { request: "/" });
+    provider.mockClear();
+    built = 0;
+
     const res = await dispatch(router, { request: "/group/widget" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, from: "async-group" });
 
     // The first matching request drove the module import exactly once (the
     // provider is cached after the first resolve) — this is the "resolves once"
-    // pin. The urls() handler itself is walked exactly twice: once at match-time
-    // expansion, once at render-time loadManifest (the existing eager/lazy split,
-    // not a re-import).
+    // pin. A leaf include takes the trie's precomputed routes at match time, so
+    // the urls() handler is walked once, by render-time loadManifest.
     expect(provider).toHaveBeenCalledTimes(1);
-    expect(built).toBe(2);
+    expect(built).toBe(1);
   });
 
   it("resolves a NESTED async include (async provider whose module has include()) on first request", async () => {
@@ -101,6 +107,9 @@ describe("async include() via dispatch (public path)", () => {
         include("/shop", shopProvider, { name: "shop" }),
       ]),
     ) as any;
+
+    await dispatch(router, { request: "/" });
+    shopProvider.mockClear();
 
     // Shop home (direct route of the async module). The registered pattern is
     // "/shop" (include prefix + path("/")), so request without a trailing slash.
@@ -147,6 +156,10 @@ describe("async include() via dispatch (public path)", () => {
     expect(shopProvider).not.toHaveBeenCalled();
     expect(productProvider).not.toHaveBeenCalled();
 
+    await dispatch(router, { request: "/" });
+    shopProvider.mockClear();
+    productProvider.mockClear();
+
     const product = await dispatch(router, { request: "/shop/product/42" });
     expect(product.status).toBe(200);
     expect(await product.json()).toEqual({ product: "42" });
@@ -157,11 +170,49 @@ describe("async include() via dispatch (public path)", () => {
     expect(productProvider).toHaveBeenCalledTimes(1);
   });
 
-  it("dedupes concurrent first-hits through dispatch (imports once)", async () => {
+  it("dedupes concurrent first-hits of a non-leaf async include at match time (imports once)", async () => {
     // The helper-level concurrency test (async-include.test.ts) exercises
     // evaluateLazyEntry directly; this pins the same dedup through the real
     // createRouter + dispatch path (two simultaneous first requests share one
-    // in-flight import).
+    // in-flight import). The group holds a nested include, so match time
+    // expands it; a leaf include takes the trie's precomputed routes instead.
+    const groupPatterns = urls<{}>(({ path, include }) => [
+      path.json("/widget", () => ({ ok: true }), { name: "widget" }),
+      include(
+        "/nested",
+        urls<{}>(({ path }) => [
+          path.json("/", () => ({ nested: true }), { name: "index" }),
+        ]),
+        { name: "nested" },
+      ),
+    ]);
+    const provider = vi.fn(async () => {
+      await Promise.resolve();
+      return { default: groupPatterns };
+    });
+    const router = createRouter<{}>({}).routes(
+      urls(({ path, include }) => [
+        path.json("/", () => ({ root: true }), { name: "home" }),
+        include("/group", provider, { name: "group" }),
+      ]),
+    ) as any;
+
+    await dispatch(router, { request: "/" });
+    provider.mockClear();
+
+    const [a, b] = await Promise.all([
+      dispatch(router, { request: "/group/widget" }),
+      dispatch(router, { request: "/group/widget" }),
+    ]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(provider).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedupes concurrent first-hits of a leaf async include at render time (imports once)", async () => {
+    // A leaf include matches through the trie's precomputed routes, so its
+    // provider first resolves in render-time loadManifest; two simultaneous
+    // first requests share that import too.
     const groupPatterns = urls<{}>(({ path }) => [
       path.json("/widget", () => ({ ok: true }), { name: "widget" }),
     ]);
@@ -175,6 +226,9 @@ describe("async include() via dispatch (public path)", () => {
         include("/group", provider, { name: "group" }),
       ]),
     ) as any;
+
+    await dispatch(router, { request: "/" });
+    provider.mockClear();
 
     const [a, b] = await Promise.all([
       dispatch(router, { request: "/group/widget" }),

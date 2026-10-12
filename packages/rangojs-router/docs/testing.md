@@ -1047,10 +1047,19 @@ it("returns 404 for an unmatched path", async () => {
 });
 ```
 
-`dispatch` also covers trailing-slash/redirect targets (`findMatch`) — a
-redirected path returns a 308 with the `Location` (query preserved). A JSON
-response route serializes the handler's return value verbatim (no envelope),
-and a returned or thrown `Response` uses the same control-flow path. Any other
+`dispatch` matches through the route trie, as `vite dev` and production do:
+the build manifest's trie when one is loaded for the router's id, otherwise
+one built from the router's routes (route discovery, so every include's
+handler runs once more and async include providers are called). It builds
+that trie when the id has none yet or when the id's trie came from another
+router object; routers created with the same `id` don't share a trie. A route
+with `trailingSlash: "never"` or `"always"` answers the other form with a 308
+and the `Location` (query preserved); a route with no `trailingSlash` serves
+both forms, as production does.
+
+A JSON response route serializes the handler's return value verbatim (no
+envelope), and a returned or thrown `Response` uses the same control-flow
+path. Any other
 thrown error becomes an RFC 9457 problem+json body
 (`application/problem+json`). Cookies and `ctx.header(...)` set inside a
 response-route handler surface on the returned `Response`. Pass env via

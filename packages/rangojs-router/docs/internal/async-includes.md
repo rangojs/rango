@@ -134,9 +134,14 @@ it checks `isIncludeProvider` and resolves+caches before calling `.handler()`.
 Skipping it surfaced as `lazyPatterns.handler is not a function` and a 404 on
 render for exactly the leaf includes the match path had shortcut.
 
-**Concurrent first-hits dedupe.** The entry carries a `_lazyInflight` promise so
-two simultaneous first requests share one import + expansion; on failure the
-flag clears so a later request can retry rather than wedging the route.
+**Concurrent first-hits dedupe.** `resolveEntryPatterns` (`lazy-includes.ts`)
+stores the in-flight import on the entry (`_providerInflight`), so two
+simultaneous first requests share one import, and the first to resume expands
+the entry (`lazyEvaluated` guards the rest). Render-time `loadManifest`, which
+resolves a leaf include the precomputed shortcut skipped, shares the same
+promise. On failure it clears, so a later request retries rather than wedging
+the route. Both sites are pinned through `dispatch` in
+`async-include-dispatch.test.ts`.
 
 ## When to use which
 

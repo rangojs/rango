@@ -2047,3 +2047,44 @@ describe("dispatch", () => {
     });
   });
 });
+
+// dispatch matches through the trie installed for the router's id. Router ids
+// need not be unique across instances (a helper calling createRouter({ id })
+// per test), so a trie built from one router must not serve another.
+describe("dispatch route trie per router", () => {
+  it("routers sharing an id each match through a trie of their own routes", async () => {
+    const items = createRouter({ id: "dispatch-shared-id" }).routes(
+      urls(({ path }) => [
+        path.json("/items", () => ({ from: "items" }), { name: "items" }),
+      ]),
+    ) as any;
+    const list = createRouter({ id: "dispatch-shared-id" }).routes(
+      urls(({ path }) => [
+        path.json("/items", () => ({ from: "list" }), { name: "list" }),
+      ]),
+    ) as any;
+
+    const first = await dispatch(items, { request: "/items" });
+    expect(await first.json()).toEqual({ from: "items" });
+    const second = await dispatch(list, { request: "/items" });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({ from: "list" });
+    const again = await dispatch(items, { request: "/items" });
+    expect(await again.json()).toEqual({ from: "items" });
+  });
+
+  it("builds a zero-route router's trie once, not on every dispatch", async () => {
+    // Trie discovery runs the urls() handler; a router with no routes builds
+    // no trie, and that outcome must count as built.
+    const handler = vi.fn(() => []);
+    const router = createRouter({ id: "dispatch-zero-routes" }).routes(
+      urls(handler),
+    ) as any;
+
+    expect((await dispatch(router, { request: "/missing" })).status).toBe(404);
+    const afterFirst = handler.mock.calls.length;
+    expect((await dispatch(router, { request: "/missing" })).status).toBe(404);
+    expect((await dispatch(router, { request: "/other" })).status).toBe(404);
+    expect(handler.mock.calls.length).toBe(afterFirst);
+  });
+});

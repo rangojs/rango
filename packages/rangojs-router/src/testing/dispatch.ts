@@ -129,7 +129,7 @@ import type { CacheProfile } from "../cache/profile-registry.js";
 // onto the whole testing barrel's eager graph and break every consumer suite
 // that imports `@rangojs/router/testing` without mocking plugin-rsc.
 import type { EntryData } from "../server/context.js";
-import { setRouterManifest } from "../route-map-builder.js";
+import { ensureRouterTrie } from "../rsc/manifest-init.js";
 import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
 import { RouterError } from "../errors.js";
 import { createProblemDetails } from "../rsc/response-error.js";
@@ -170,6 +170,8 @@ interface DispatchableRouter<TEnv> {
   /** createRouter({ version }), the consumer-set version. */
   version?: string;
   routeMap: Record<string, unknown>;
+  /** The routes() patterns the dev trie is rebuilt from (rsc/manifest-init.ts). */
+  urlpatterns?: unknown;
   middleware: MiddlewareEntry<TEnv>[];
   onError?: OnErrorCallback<TEnv>;
   /**
@@ -409,11 +411,8 @@ export async function dispatch<TEnv = any>(
   const url = new URL(req.url);
   const env = (opts.env ?? {}) as TEnv;
 
-  // Seed the per-router manifest so reverse() resolves during handler execution.
   const routerId = router.id ?? router.routerId;
-  if (routerId) {
-    setRouterManifest(routerId, router.routeMap as Record<string, string>);
-  }
+  await ensureRouterTrie(router);
 
   // The visitor's URL is matched before any middleware runs, so an RSC route
   // fails here, before a middleware side effect. A rewrite target is matched

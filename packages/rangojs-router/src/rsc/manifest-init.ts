@@ -6,8 +6,12 @@
  */
 
 import {
+  ensureRouterManifest,
   getGlobalRouteMap,
+  getRouterManifest,
+  getRouterTrie,
   hasCachedManifest,
+  isRouterTrieAuthoritative,
   setCachedManifest,
   setRouterManifest,
   setRouterTrie,
@@ -15,6 +19,55 @@ import {
 } from "../route-map-builder.js";
 import { mergeFullManifests } from "../build/merge-full-manifests.js";
 import { isTransitionWhenValidationEnabled } from "../transition-when-ref.js";
+import type { TrieNode } from "../router/route-trie-builder.js";
+
+// A zero-route router builds no trie; recording that keeps it from rebuilding.
+const NO_TRIE: unique symbol = Symbol("rango.noTrie");
+
+// The trie each router object last installed. Router ids need not be unique
+// across instances (a test helper calling createRouter({ id }) per test), and
+// the per-id trie map cannot tell which instance a trie came from.
+const installedTries = new WeakMap<object, TrieNode | typeof NO_TRIE>();
+
+/** True when the trie installed for `router.id` was built from this router. */
+export function isRouterTrieBuiltFrom(router: { id?: string }): boolean {
+  if (router.id === undefined) return false;
+  const installed = installedTries.get(router);
+  return (
+    installed !== undefined &&
+    installed === (getRouterTrie(router.id) ?? NO_TRIE)
+  );
+}
+
+/** The router fields ensureRouterTrie reads. */
+export interface TrieSource {
+  id?: string;
+  urlpatterns?: unknown;
+  routeMap: Record<string, unknown>;
+}
+
+/**
+ * Install the trie `router` matches through, as a request finds it: the build
+ * manifest's trie when one is registered for its id, otherwise one built from
+ * its routes the way the dev handler builds it (rsc/handler.ts). Ids can repeat
+ * across router objects (tests), and another object's trie names other routes,
+ * so a trie this object did not build is rebuilt. Seeds the per-router manifest
+ * from `router.routeMap` when neither source set one, for reverse(). testing's
+ * dispatch matches through it, never the regex fallback alone (#1104, #1107).
+ */
+export async function ensureRouterTrie(router: TrieSource): Promise<void> {
+  const id = router.id;
+  if (!id) return;
+  if (!isRouterTrieAuthoritative(id) && !isRouterTrieBuiltFrom(router)) {
+    await ensureRouterManifest(id);
+    if (router.urlpatterns && !isRouterTrieAuthoritative(id)) {
+      await buildRouterTrieFromUrlpatterns(router);
+    }
+  }
+  if (!getRouterManifest(id)) {
+    setRouterManifest(id, router.routeMap as Record<string, string>);
+  }
+}
 
 /**
  * Build a fresh route trie from the router's URL-pattern mounts and store it in
@@ -63,9 +116,9 @@ export async function buildRouterTrieFromUrlpatterns(
   // are no routes.
   const { buildPerRouterTrie } = await import("../build/route-trie.js");
   const trie = buildPerRouterTrie(generated);
-  if (trie) {
-    setRouterTrie(router.id, trie);
-  }
+  if (trie) setRouterTrie(router.id, trie);
+  // Re-read: setRouterTrie stores a copy (nullPrototypeStaticChildren).
+  installedTries.set(router, trie ? getRouterTrie(router.id)! : NO_TRIE);
   setRouterManifest(router.id, generated.routeManifest);
 
   // Match the production discovery path: precompute leaf-include entries so the
