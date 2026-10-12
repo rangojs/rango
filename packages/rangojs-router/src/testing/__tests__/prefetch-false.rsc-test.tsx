@@ -1440,14 +1440,19 @@ describe("R8: where the flag cannot be honoured the work runs in the prefetch", 
     expect(payload.deferred).toEqual([]);
   });
 
-  it("defers nothing in a prefetch that resolves an intercept", async () => {
+  it("a prefetch that resolves an intercept defers its flagged loader, and nothing of the target", async () => {
     const { prefetch } = setup();
     const result = await prefetch("/item/1", "/");
     const payload = payloadOf(result);
     expect(result.flight).toContain("modal-run-1");
-    expect(count("modal-loader")).toBe(1);
-    expect(payload.deferred).toEqual([]);
-    expect(result.flight).not.toContain('"deferred"');
+    expect(count("modal-loader")).toBe(0);
+    // The target's own flagged loader and loading() are the route's, which
+    // the intercept replaces: neither runs nor is deferred.
+    expect(count("reviews")).toBe(0);
+    const modalLoader = payload.find(ModalLoader.$$id)!;
+    expect(modalLoader.id).toMatch(/\.@modalD0\./);
+    expect(payload.deferred).toEqual([modalLoader.id]);
+    expect(await result.readDeferred()).toEqual([modalLoader.id]);
   });
 
   it("an intercept prefetch renders a flagged layout of its target's chain", async () => {

@@ -815,7 +815,7 @@ const intercept = (
     //
     // Why an intercept rejects these (validateInterceptUseItems):
     // - revalidate(): an intercept only evaluates its loaders' revalidate()
-    //   (router/intercept-resolution.ts).
+    //   (loader segments of its slot, router/intercept-resolution.ts).
     // - errorBoundary()/notFoundBoundary(): error lookup walks EntryData
     //   parent chains (router/error-handling.ts), which never include an
     //   InterceptEntry; intercept loader errors resolve against the declaring

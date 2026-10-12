@@ -16,6 +16,7 @@ import { detectPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { findInOrphans } from "./error-handling.js";
+import { interceptSlotId } from "./intercept-resolution.js";
 import { loadManifest } from "./manifest.js";
 import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
@@ -487,7 +488,7 @@ export async function matchForPrerender<TEnv = any>(
             // artifact. Re-pinned per iteration so multiple intercepts targeting
             // the same route each get their own id (mirrors fresh.ts parallel-slot
             // pinning).
-            const interceptSegmentId = `${parentEntry.shortCode}.${intercept.slotName}`;
+            const interceptSegmentId = interceptSlotId(parentEntry, intercept);
             (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
               interceptSegmentId;
 

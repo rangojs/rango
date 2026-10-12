@@ -1,9 +1,5 @@
 import type { ResolvedSegment } from "./types.js";
-import {
-  mergeSegmentLoaders,
-  needsLoaderMerge,
-  insertMissingDiffSegments,
-} from "./merge-segment-loaders.js";
+import { insertMissingDiffSegments } from "./merge-segment-loaders.js";
 import { assertSegmentStructure } from "./segment-structure-assert.js";
 import { splitInterceptSegments } from "./intercept-utils.js";
 import { debugLog, IS_BROWSER_DEBUG } from "./logging.js";
@@ -11,15 +7,17 @@ import { debugLog, IS_BROWSER_DEBUG } from "./logging.js";
 /**
  * Determines the merging behavior for segment reconciliation.
  *
- * - 'action': From server-action-bridge's own merge. Always merges loaders,
- *   always preserves cached loading (even undefined), never clears cached
- *   segment loading.
- * - 'navigation': From partial-update during normal navigation. Does NOT merge
- *   loaders, preserves cached loading only when defined, clears truthy loading
- *   on cached segments not in server diff.
+ * - 'action': From server-action-bridge's own merge. Always preserves cached
+ *   loading (even undefined), never clears cached segment loading.
+ * - 'navigation': From partial-update during normal navigation. Preserves
+ *   cached loading only when defined, clears truthy loading on cached
+ *   segments not in server diff.
  * - 'stale-revalidation': From partial-update during stale revalidation or
- *   action-triggered refetch. Merges loaders, always preserves cached loading
- *   (same as action), clears truthy loading on cached segments not in server diff.
+ *   action-triggered refetch. Always preserves cached loading (same as
+ *   action), clears truthy loading on cached segments not in server diff.
+ *
+ * No actor merges loader data: a loader the server skipped, an intercept's
+ * included, is its own cached segment in `matched`.
  */
 export type ReconcileActor = "navigation" | "action" | "stale-revalidation";
 
@@ -64,11 +62,6 @@ export interface ReconcileResult {
  *   (not undefined). When cached is undefined, lets server value through
  *   because we're building a new tree.
  *
- * Loader merging:
- * - action/stale-revalidation: Merges partial loader data when server returns
- *   fewer loaders than cached (revalidation only updated some loaders).
- * - navigation: Does not merge (full navigation fetches complete data).
- *
  * Cached segment handling (segments in matched but not in server response):
  * - action: Returns cached segment as-is (preserve tree structure).
  * - navigation/stale-revalidation: Clears truthy loading to undefined
@@ -77,7 +70,6 @@ export interface ReconcileResult {
  */
 export function reconcileSegments(input: ReconcileInput): ReconcileResult {
   const { actor, matched, diff, insertMissingDiff } = input;
-  const shouldMergeLoaders = actor !== "navigation";
   const context = actor === "action" ? "action-bridge" : "partial-update";
 
   // Build lookup maps from arrays
@@ -106,16 +98,6 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
 
       if (fromServer) {
         const inDiff = diffSet.has(segId);
-        // Merge partial loader data when server returns fewer loaders than cached
-        if (shouldMergeLoaders && needsLoaderMerge(fromServer, fromCache)) {
-          if (IS_BROWSER_DEBUG) {
-            debugLog(
-              `[reconcile] ${segId}: MERGE loaders (server partial, ${inDiff ? "in diff" : "not in diff"})`,
-            );
-          }
-          return mergeSegmentLoaders(fromServer, fromCache);
-        }
-
         // Preserve cached structural properties to maintain consistent React tree.
         // Changing these between renders alters the element nesting
         // (with/without RouteContentWrapper, MountContextProvider, etc.),

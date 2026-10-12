@@ -30,12 +30,14 @@ import {
   getParallelSlotEntries,
   isPprEntry,
   type EntryData,
+  type InterceptEntry,
   type LoaderEntry,
 } from "../../server/context.js";
 import { requestHeaders } from "../../server/request-headers.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
 import { FILL_PARAM, PREFETCH_HEADER } from "../../prefetch-markers.js";
+import { isInterceptSegment } from "../../browser/intercept-utils.js";
 
 /**
  * What a request says it is, read once when its context is created
@@ -271,40 +273,64 @@ export function resolveDeferralScope(
   return scope;
 }
 
+const interceptScopes = new WeakMap<InterceptEntry, DeferralScope>();
+
+/**
+ * The deferral scope of a request that resolves `intercept`: its own flagged
+ * loaders, nothing of the target chain. The chain's layouts below the
+ * declaring entry render in that request and its `matched` leaves them out
+ * (match-result.ts), so a hole there would stand for a segment outside the
+ * page. A flagged loading() inside intercept() defers nothing: the slot is
+ * never a unit. Memoized on the entry (replaced with its manifest on HMR).
+ */
+export function resolveInterceptDeferralScope(
+  intercept: InterceptEntry,
+): DeferralScope {
+  const cached = interceptScopes.get(intercept);
+  if (cached) return cached;
+  const flagged = intercept.loader.filter((l) => l.prefetch === false);
+  const scope: DeferralScope =
+    flagged.length === 0
+      ? EMPTY_SCOPE
+      : {
+          loaders: new Map(flagged.map((l) => [l, true as const])),
+          loaderIds: new Set(flagged.map((l) => l.loader.$$id)),
+          units: new Map(),
+        };
+  interceptScopes.set(intercept, scope);
+  return scope;
+}
+
 /**
  * Which half of the feature a partial request is, if either (`fill` and
  * `prefetch` are requestKind's answer). Both halves are GETs: a request of
  * another method that carries either marker is a normal request. A prefetch
  * defers only on a plain GET navigation: an action re-renders what it
- * changed, an intercept resolves its loaders outside the shared funnel, and a
- * shell capture is never a prefetch whatever the request that scheduled it
- * sent. The four conditions overlap today (an action is a POST, a capture
- * runs the full match): each one states its own reason.
+ * changed, and a shell capture is never a prefetch whatever the request that
+ * scheduled it sent. The conditions overlap today (an action is a POST, a
+ * capture runs the full match): each one states its own reason.
  */
 export function partialDeferralMode(request: {
   fill: boolean;
   prefetch: boolean;
   method: string;
   isAction: boolean;
-  isIntercept: boolean;
   isShellCapture: boolean;
 }): PrefetchDeferral["mode"] {
   if (request.method !== "GET") return undefined;
   if (request.fill) return "fill";
-  return request.prefetch &&
-    !request.isAction &&
-    !request.isIntercept &&
-    !request.isShellCapture
+  return request.prefetch && !request.isAction && !request.isShellCapture
     ? "prefetch"
     : undefined;
 }
 
-const NOTHING_HELD: ReadonlySet<string> = new Set();
+export const NOTHING_HELD: ReadonlySet<string> = new Set();
 
 /**
  * The plan for one match, or undefined when the tree declares no flag and the
  * request is not a fill (the common case: nothing to carry). `held` is the
- * client's segment ids as the request listed them.
+ * client's segment ids as the request listed them. `scope` is the chain's
+ * unless the request resolves an intercept (resolveInterceptDeferralScope).
  */
 export function planPrefetchDeferral(
   entries: readonly EntryData[],
@@ -312,8 +338,8 @@ export function planPrefetchDeferral(
   matched: { pr?: boolean; od?: boolean },
   cacheScope: CacheScope | null | undefined,
   held: ReadonlySet<string> = NOTHING_HELD,
+  scope: DeferralScope = resolveDeferralScope(entries),
 ): PrefetchDeferral | undefined {
-  const scope = resolveDeferralScope(entries);
   if (scope === EMPTY_SCOPE && mode !== "fill") return undefined;
 
   const leaf = entries[entries.length - 1];
@@ -384,6 +410,30 @@ export function fillSends(
   held: ReadonlySet<string>,
 ): boolean | undefined {
   return isFillRequest(ctx) ? !held.has(segmentId) : undefined;
+}
+
+/**
+ * A fill that resolves an intercept sends only what the client lacks of the
+ * intercept: a target-chain entry (by id) or stored segment it does not hold
+ * lies outside the intercept's `matched` (match-result.ts), so the fill skips
+ * it. The intercept's own segments are never skipped.
+ */
+export function interceptFillSkips(
+  match: {
+    handlerContext: HandlerContext<any, any>;
+    isIntercept: boolean;
+    clientSegmentSet: ReadonlySet<string>;
+  },
+  segment: string | { id: string; namespace?: string },
+): boolean {
+  if (!match.isIntercept) return false;
+  if (typeof segment !== "string") {
+    if (isInterceptSegment(segment)) return false;
+    segment = segment.id;
+  }
+  return (
+    fillSends(match.handlerContext, segment, match.clientSegmentSet) === true
+  );
 }
 
 const RECORD_OPEN: RecordUse = { read: true, write: true, refresh: true };

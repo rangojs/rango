@@ -16,7 +16,6 @@ import type {
   InternalHandlerContext,
   ResolvedSegment,
 } from "../types";
-import { evaluateRevalidation } from "./revalidation.js";
 import { getRequestContext } from "../server/request-context.js";
 import { executeInterceptMiddleware } from "./middleware.js";
 import { createReverseFunction } from "./handler-context.js";
@@ -29,15 +28,21 @@ import {
 import { catchSegmentError } from "./segment-resolution/helpers.js";
 import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
 import { findInOrphans } from "./error-handling.js";
-import { resolveLoaderData } from "./segment-resolution/loader-cache.js";
+import {
+  deliverStartedLoaders,
+  resolveOwnerLoaders,
+} from "./segment-resolution/revalidation.js";
+import {
+  fillSends,
+  NOTHING_HELD,
+} from "./segment-resolution/prefetch-deferral.js";
 import type { SegmentResolutionDeps } from "./types.js";
-import { debugLog } from "./logging.js";
 import { getRouterContext } from "./router-context.js";
+import type { RevalidationContext } from "./router-context.js";
 import { runInSegmentTagScope } from "../cache/cache-tag.js";
 import {
   RangoContext,
   latchPprHeaderScopeForEntries,
-  runInsideLoaderScope,
 } from "../server/context.js";
 
 /**
@@ -198,8 +203,80 @@ function renderInterceptHandlerError<TEnv>(
   ).component;
 }
 
+/** The segment id of `intercept`'s slot on `parentEntry`. */
+export function interceptSlotId(
+  parentEntry: EntryData,
+  intercept: InterceptEntry,
+): string {
+  return `${parentEntry.shortCode}.${intercept.slotName}`;
+}
+
 /**
- * Resolve an intercept entry and emit segment with the slot name.
+ * Every segment id an intercept's slot owns, in order: the slot, then one
+ * loader segment per loader in declaration order, run or not. A request that
+ * resolves the intercept lists them in `matched` (match-result.ts).
+ */
+export function interceptSegmentIds(
+  parentEntry: EntryData,
+  intercept: InterceptEntry,
+): string[] {
+  const slotId = interceptSlotId(parentEntry, intercept);
+  return [
+    slotId,
+    ...intercept.loader.map((l, i) => `${slotId}D${i}.${l.loader.$$id}`),
+  ];
+}
+
+/**
+ * An intercept's loaders are loader segments of its slot, resolved through
+ * the partial lane's funnel (revalidation.ts resolveOwnerLoaders): each one
+ * revalidated on its own, kept in a fill, deferred by a prefetch when flagged.
+ */
+function resolveInterceptLoaders<TEnv>(
+  interceptEntry: InterceptEntry,
+  parentEntry: EntryData,
+  context: HandlerContext<any, TEnv>,
+  belongsToRoute: boolean,
+  deps: SegmentResolutionDeps<TEnv>,
+  rc: RevalidationContext,
+): Promise<{ segments: ResolvedSegment[] }> {
+  return resolveOwnerLoaders(
+    {
+      loaders: interceptEntry.loader,
+      namespace: `intercept:${interceptEntry.routeName}`,
+      segmentPrefix: interceptSlotId(parentEntry, interceptEntry),
+      boundary: parentEntry,
+      bakeLane: false,
+      traceSource: "intercept-loader",
+    },
+    context,
+    belongsToRoute,
+    rc.clientSegmentIds,
+    rc.prevParams,
+    rc.request,
+    rc.prevUrl,
+    rc.nextUrl,
+    rc.routeKey,
+    deps,
+    rc.actionContext,
+    rc.stale,
+  );
+}
+
+/**
+ * An intercept slot with no loading() waits for its loaders that are not
+ * deferred; the browser's side is foldInterceptLoaders (segment-system.tsx).
+ */
+async function settleLoaderSegments(
+  segments: readonly ResolvedSegment[],
+): Promise<void> {
+  await Promise.all(
+    segments.filter((s) => !s.deferred).map((s) => s.loaderData),
+  );
+}
+
+/**
+ * Resolve an intercept entry: its slot segment, then its loader segments.
  */
 export async function resolveInterceptEntry<TEnv>(
   interceptEntry: InterceptEntry,
@@ -208,20 +285,14 @@ export async function resolveInterceptEntry<TEnv>(
   context: HandlerContext<any, TEnv>,
   belongsToRoute: boolean,
   deps: SegmentResolutionDeps<TEnv>,
-  revalidationContext?: {
-    clientSegmentIds: Set<string>;
-    prevParams: Record<string, string>;
-    request: Request;
-    prevUrl: URL;
-    nextUrl: URL;
-    routeKey: string;
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    };
-    stale?: boolean;
+  // The background re-render passes none: nothing held, rendered fresh.
+  revalidationContext: RevalidationContext = {
+    clientSegmentIds: NOTHING_HELD,
+    prevParams: {},
+    request: context.request,
+    prevUrl: context.url,
+    nextUrl: context.url,
+    routeKey: interceptEntry.routeName,
   },
   options?: {
     /**
@@ -239,8 +310,6 @@ export async function resolveInterceptEntry<TEnv>(
     skipMiddleware?: boolean;
   },
 ): Promise<ResolvedSegment[]> {
-  const segments: ResolvedSegment[] = [];
-
   if (!options?.skipMiddleware && interceptEntry.middleware.length > 0) {
     const requestCtx = getRequestContext();
     if (!requestCtx?.res) {
@@ -262,96 +331,46 @@ export async function resolveInterceptEntry<TEnv>(
 
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
-  // The intercept segment's id: the tag scope its handler and layout record in
-  // (#957, cache-tag.ts runInSegmentTagScope) and the owner of its handler's
-  // and loaders' handle pushes, pinned before the loader kickoffs as
-  // fresh.ts/revalidation.ts pin theirs (createLoaderExecutor captures it at
-  // kickoff; a handler's ctx.use(Handle) reads it when called).
-  const slotSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
+  const slotSegmentId = interceptSlotId(parentEntry, interceptEntry);
+  const { segments: loaderSegments } = await resolveInterceptLoaders(
+    interceptEntry,
+    parentEntry,
+    context,
+    belongsToRoute,
+    deps,
+    revalidationContext,
+  );
+  // The slot's tag scope (#957, cache-tag.ts runInSegmentTagScope) and the
+  // owner of its handler's handle pushes (a handler's ctx.use(Handle) reads
+  // it when called).
   (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
     slotSegmentId;
-  const hasLoaders = interceptEntry.loader.length > 0;
 
-  const loaderPromises: Promise<any>[] = [];
-  const loaderIds: string[] = [];
+  const slotSegment = (
+    component: ReactNode,
+    layout: ReactNode | undefined,
+  ): ResolvedSegment => ({
+    id: slotSegmentId,
+    namespace: `intercept:${interceptEntry.routeName}`,
+    type: "parallel",
+    index: 0,
+    component,
+    loading: interceptEntry.loading === false ? null : interceptEntry.loading,
+    layout,
+    params,
+    slot: interceptEntry.slotName,
+    belongsToRoute,
+    parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
+  });
 
-  for (let i = 0; i < interceptEntry.loader.length; i++) {
-    const loaderEntry = interceptEntry.loader[i];
-    const { loader, revalidate: loaderRevalidateFns } = loaderEntry;
-    const segmentId = `${slotSegmentId}D${i}.${loader.$$id}`;
-
-    if (revalidationContext) {
-      const {
-        clientSegmentIds,
-        prevParams,
-        request,
-        prevUrl,
-        nextUrl,
-        routeKey,
-        actionContext,
-        stale,
-      } = revalidationContext;
-
-      if (clientSegmentIds.has(slotSegmentId)) {
-        const dummySegment: ResolvedSegment = {
-          id: segmentId,
-          namespace: `intercept:${interceptEntry.routeName}`,
-          type: "loader",
-          index: i,
-          component: null,
-          params,
-          loaderId: loader.$$id,
-          belongsToRoute,
-        };
-
-        const shouldRevalidate = await evaluateRevalidation({
-          segment: dummySegment,
-          prevParams,
-          getPrevSegment: null,
-          request,
-          prevUrl,
-          nextUrl,
-          revalidations: loaderRevalidateFns.map((fn, j) => ({
-            name: `intercept-loader-revalidate${j}`,
-            fn,
-          })),
-          routeKey,
-          context,
-          actionContext,
-          stale,
-          traceSource: "intercept-loader",
-        });
-
-        if (!shouldRevalidate) {
-          debugLog("intercept.loader", "skipped revalidation", {
-            loaderId: loader.$$id,
-          });
-          continue;
-        }
-        debugLog("intercept.loader", "revalidating", {
-          loaderId: loader.$$id,
-          stale,
-        });
-      }
-    }
-
-    loaderIds.push(loader.$$id);
-    loaderPromises.push(
-      deps.wrapLoaderPromise(
-        // The DSL binding's funnel, as for route loaders: a loader's own
-        // cache() applies here too.
-        runInsideLoaderScope(
-          () => resolveLoaderData(loaderEntry, context, context.pathname),
-          loader.$$id,
-        ),
-        parentEntry,
-        segmentId,
-        context.pathname,
-        // Report a throwing intercept loader to onError + loader.error telemetry,
-        // matching the fresh/revalidation paths.
-        buildLoaderErrorContext(context),
-      ),
-    );
+  // A fill keeps a slot the client holds: neither its handler nor its layout
+  // runs, only the loaders the client lacks (match-result.ts leaves the null
+  // slot out of the response).
+  if (
+    fillSends(context, slotSegmentId, revalidationContext.clientSegmentIds) ===
+    false
+  ) {
+    return [slotSegment(null, undefined), ...loaderSegments];
   }
 
   let handlerResult: ReactNode;
@@ -397,7 +416,6 @@ export async function resolveInterceptEntry<TEnv>(
   }
 
   let component: ReactNode;
-  let loaderDataPromise: Promise<any[]> | any[] | undefined;
   // A streamed (loading()) handler resolves after the 200 has started: tracked
   // like route handlers (onError report, handle-store completion) and
   // recovered into the declared boundary, except on the skipMiddleware
@@ -413,7 +431,7 @@ export async function resolveInterceptEntry<TEnv>(
       recover: !options?.skipMiddleware,
     });
 
-  if (interceptEntry.loading && loaderPromises.length > 0) {
+  if (interceptEntry.loading && loaderSegments.length > 0) {
     if (handlerResult instanceof Promise) {
       warnOnStreamedResponse(
         handlerResult,
@@ -424,13 +442,10 @@ export async function resolveInterceptEntry<TEnv>(
       handlerResult instanceof Promise
         ? streamedComponent(handlerResult)
         : (Promise.resolve(handlerResult) as ReactNode);
-    loaderDataPromise = Promise.all(loaderPromises);
   } else if (interceptEntry.loading && handlerResult instanceof Promise) {
     component = streamedComponent(handlerResult);
   } else {
-    if (loaderPromises.length > 0) {
-      loaderDataPromise = await Promise.all(loaderPromises);
-    }
+    if (!interceptEntry.loading) await settleLoaderSegments(loaderSegments);
     component = handlerResult;
     if (handlerResult instanceof Promise) {
       try {
@@ -447,167 +462,35 @@ export async function resolveInterceptEntry<TEnv>(
       }
     }
   }
+  // After the handler is awaited, or at once when it streams: the loaders it
+  // started with ctx.use() by now are delivered from this response.
+  deliverStartedLoaders(context, loaderSegments);
 
-  // The aggregate lists the loaders that ran; empty, not absent, when the
-  // client holds the slot and all skipped. Absent replaces the client's
-  // aggregate, empty merges into it (merge-segment-loaders.ts).
-  if (hasLoaders && loaderPromises.length === 0) {
-    loaderDataPromise = [];
-  }
-
-  const interceptSegment = {
-    id: slotSegmentId,
-    namespace: `intercept:${interceptEntry.routeName}`,
-    type: "parallel" as const,
-    index: 0,
-    component,
-    loading: interceptEntry.loading === false ? null : interceptEntry.loading,
-    layout: layoutElement,
-    params,
-    slot: interceptEntry.slotName,
-    belongsToRoute,
-    parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
-    loaderDataPromise,
-    loaderIds: hasLoaders ? loaderIds : undefined,
-  };
-  segments.push(interceptSegment);
-
-  return segments;
+  return [slotSegment(component, layoutElement), ...loaderSegments];
 }
 
 /**
- * Resolve only the loaders for a cached intercept segment.
- * Used on intercept cache hit to get fresh loader data while keeping cached component/layout.
+ * The loader segments of a cached intercept slot, on a cache hit: the slot
+ * keeps its cached component and layout, its loaders are never cached.
  */
 export async function resolveInterceptLoadersOnly<TEnv>(
   interceptEntry: InterceptEntry,
   parentEntry: EntryData,
-  params: Record<string, string>,
   context: HandlerContext<any, TEnv>,
   belongsToRoute: boolean,
   deps: SegmentResolutionDeps<TEnv>,
-  revalidationContext: {
-    clientSegmentIds: Set<string>;
-    prevParams: Record<string, string>;
-    request: Request;
-    prevUrl: URL;
-    nextUrl: URL;
-    routeKey: string;
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    };
-    stale?: boolean;
-  },
-): Promise<{
-  loaderDataPromise: Promise<any[]> | any[];
-  loaderIds: string[];
-} | null> {
-  if (interceptEntry.loader.length === 0) {
-    return null;
-  }
-
+  revalidationContext: RevalidationContext,
+): Promise<ResolvedSegment[]> {
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
-
-  // The loaders' handle push owner, as in resolveInterceptEntry.
-  const slotSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
-  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-    slotSegmentId;
-  const loaderPromises: Promise<any>[] = [];
-  const loaderIds: string[] = [];
-
-  const {
-    clientSegmentIds,
-    prevParams,
-    request,
-    prevUrl,
-    nextUrl,
-    routeKey,
-    actionContext,
-    stale,
-  } = revalidationContext;
-
-  for (let i = 0; i < interceptEntry.loader.length; i++) {
-    const loaderEntry = interceptEntry.loader[i];
-    const { loader, revalidate: loaderRevalidateFns } = loaderEntry;
-    const segmentId = `${slotSegmentId}D${i}.${loader.$$id}`;
-
-    if (clientSegmentIds.has(slotSegmentId)) {
-      const dummySegment: ResolvedSegment = {
-        id: segmentId,
-        namespace: `intercept:${interceptEntry.routeName}`,
-        type: "loader",
-        index: i,
-        component: null,
-        params,
-        loaderId: loader.$$id,
-        belongsToRoute,
-      };
-
-      const shouldRevalidate = await evaluateRevalidation({
-        segment: dummySegment,
-        prevParams,
-        getPrevSegment: null,
-        request,
-        prevUrl,
-        nextUrl,
-        revalidations: loaderRevalidateFns.map((fn, j) => ({
-          name: `intercept-loader-revalidate${j}`,
-          fn,
-        })),
-        routeKey,
-        context,
-        actionContext,
-        stale,
-        traceSource: "intercept-loader",
-      });
-
-      if (!shouldRevalidate) {
-        debugLog("intercept.loader", "skipped on cache hit", {
-          loaderId: loader.$$id,
-        });
-        continue;
-      }
-      debugLog("intercept.loader", "revalidating on cache hit", {
-        loaderId: loader.$$id,
-        stale,
-      });
-    }
-
-    loaderIds.push(loader.$$id);
-    loaderPromises.push(
-      deps.wrapLoaderPromise(
-        // The DSL binding's funnel, as for route loaders: a loader's own
-        // cache() applies here too.
-        runInsideLoaderScope(
-          () => resolveLoaderData(loaderEntry, context, context.pathname),
-          loader.$$id,
-        ),
-        parentEntry,
-        segmentId,
-        context.pathname,
-        // Report a throwing intercept loader to onError + loader.error telemetry,
-        // matching the fresh/revalidation paths. resolveInterceptLoadersOnly is
-        // only called on the cache-hit partial-update path (handleCacheHitIntercept),
-        // so flag isPartial:true exactly like revalidation.ts's partial path.
-        { ...buildLoaderErrorContext(context), isPartial: true },
-      ),
-    );
-  }
-
-  // Every loader held: the empty aggregate (see resolveInterceptEntry).
-  if (loaderPromises.length === 0) {
-    return { loaderDataPromise: [], loaderIds };
-  }
-
-  // Match fresh-path semantics: only defer (no await) when loading is truthy.
-  // `loading: false` means "no loading UI, await loaders before render" —
-  // same as the fresh path's `if (interceptEntry.loading && ...)` check.
-  const loaderDataPromise = interceptEntry.loading
-    ? Promise.all(loaderPromises)
-    : await Promise.all(loaderPromises);
-
-  return { loaderDataPromise, loaderIds };
+  const { segments } = await resolveInterceptLoaders(
+    interceptEntry,
+    parentEntry,
+    context,
+    belongsToRoute,
+    deps,
+    revalidationContext,
+  );
+  if (!interceptEntry.loading) await settleLoaderSegments(segments);
+  deliverStartedLoaders(context, segments);
+  return segments;
 }

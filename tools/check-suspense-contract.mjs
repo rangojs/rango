@@ -85,14 +85,8 @@ const PRODUCERS = {
   "segment-boundary-content.ts":
     "getBoundaryContent: what a route's content boundary is handed",
   "segment-loader-promise.ts": "getMemoizedLoaderPromise, buildLoaderPromise",
-  "browser/merge-segment-loaders.ts":
-    "client merge of a segment's loader results after a partial update",
   "client-urls/client-root.tsx":
     "clientUrls() group: optimistic loader streams",
-  "router/intercept-resolution.ts":
-    "server: an intercept slot's loader aggregate",
-  "router/match-middleware/intercept-resolution.ts":
-    "server: a fresh loader aggregate onto a cached intercept segment",
   "cache/segment-codec.ts": "decodes a cached segment's settled aggregate",
   "outlet-provider.tsx":
     "hands a boundary's per-loader streams to useLoader through the outlet context",

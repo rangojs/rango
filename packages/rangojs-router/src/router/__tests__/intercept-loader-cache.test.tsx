@@ -114,7 +114,12 @@ async function navigate(pathname: string) {
     const r = await router.matchPartial(request, { env: {} });
     const modal = r.segments.find((s: any) => s.slot === "@modal");
     expect(modal).toBeDefined();
-    await modal.loaderDataPromise;
+    // The modal's loaders are loader segments of its slot.
+    await Promise.all(
+      r.segments
+        .filter((s: any) => s.id.startsWith(`${modal.id}D`))
+        .map((s: any) => s.loaderData),
+    );
     reqCtx._handleStore.seal();
     await reqCtx._handleStore.fullySettled;
     const tasks = reqCtx._pendingBackgroundTasks ?? [];

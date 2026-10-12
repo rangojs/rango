@@ -97,7 +97,10 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * entries are deferred: `result.readDeferred()` lists them. `fill: true`
    * sends the request the browser follows an adopted prefetch with
    * (`_rsc_fill`): pass the ids the prefetch delivered, without the deferred
-   * ones, as `segments`, and the same URL as `from`.
+   * ones, as `segments`, and the same URL as `from`. `interceptSource` sends
+   * the intercept source (`X-RSC-Router-Intercept-Source`) the browser sends
+   * from an open modal and with the fill of an intercept, whose `from` is
+   * that source.
    */
   partial?:
     | true
@@ -106,6 +109,7 @@ export interface ServeShellRequestOptions<TEnv = any> {
         segments?: readonly string[];
         prefetch?: boolean;
         fill?: boolean;
+        interceptSource?: string;
       };
   /**
    * POST this form as a submit before hydration: the no-JS request the
@@ -568,6 +572,7 @@ async function buildRequest(
     segments = [],
     prefetch = false,
     fill = false,
+    interceptSource,
   } = partial === true ? {} : partial;
   const target = new URL(url);
   target.searchParams.set("_rsc_partial", "true");
@@ -580,6 +585,12 @@ async function buildRequest(
   }
   if (!headers.has("X-RSC-Router-Client-Path")) {
     headers.set("X-RSC-Router-Client-Path", new URL(from, url).href);
+  }
+  if (interceptSource !== undefined) {
+    headers.set(
+      "X-RSC-Router-Intercept-Source",
+      new URL(interceptSource, url).href,
+    );
   }
   if (!headers.has(SEGMENT_FRAGMENT_CAPABILITY_HEADER)) {
     headers.set(SEGMENT_FRAGMENT_CAPABILITY_HEADER, "1");

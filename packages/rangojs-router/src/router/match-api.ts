@@ -57,6 +57,7 @@ import { resolveNavigation } from "./navigation-snapshot.js";
 import {
   partialDeferralMode,
   planPrefetchDeferral,
+  resolveInterceptDeferralScope,
   requestKind,
 } from "./segment-resolution/prefetch-deferral.js";
 
@@ -476,7 +477,6 @@ export async function createMatchContextForPartial<TEnv>(
       prefetch: kind === "prefetch",
       method: request.method,
       isAction,
-      isIntercept,
       isShellCapture: reqCtx?._shellCaptureRun === true,
     }),
     matched,
@@ -484,6 +484,9 @@ export async function createMatchContextForPartial<TEnv>(
     // As the request listed them, not the copy forced above: see
     // prefetch-deferral.ts.
     nav.clientSegmentSet,
+    interceptResult
+      ? resolveInterceptDeferralScope(interceptResult.intercept)
+      : undefined,
   );
   (handlerContext as InternalHandlerContext<any, TEnv>)._prefetchDeferral =
     deferral;

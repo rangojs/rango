@@ -24,6 +24,7 @@ import {
   runInSegmentTagScope,
 } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
+import { isInterceptSegment } from "../browser/intercept-utils.js";
 import {
   predatesInvalidation,
   type ExecutionStart,
@@ -373,7 +374,7 @@ export class CacheScope {
       const next = id.charCodeAt(boundary.length);
       return !(next >= 48 && next <= 57);
     }
-    return namespace?.startsWith("intercept:") === true;
+    return isInterceptSegment({ namespace });
   }
 
   /**

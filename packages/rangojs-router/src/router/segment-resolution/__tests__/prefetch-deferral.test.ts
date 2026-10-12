@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { EntryData, LoaderEntry } from "../../../server/context";
+import type {
+  EntryData,
+  InterceptEntry,
+  LoaderEntry,
+} from "../../../server/context";
 import {
   belowDeferredUnit,
   defersLoader,
@@ -8,6 +12,7 @@ import {
   fillSends,
   firstUnitCandidate,
   getPrefetchDeferral,
+  interceptFillSkips,
   isFillRequest,
   loaderOwner,
   markUnitDeferred,
@@ -17,6 +22,7 @@ import {
   registerDeferredLoader,
   requestKind,
   resolveDeferralScope,
+  resolveInterceptDeferralScope,
   startDeferredLoader,
   type PrefetchDeferral,
 } from "../prefetch-deferral";
@@ -313,6 +319,50 @@ describe("requestKind", () => {
   });
 });
 
+describe("resolveInterceptDeferralScope", () => {
+  const intercept = (loader: LoaderEntry[]): InterceptEntry =>
+    ({ slotName: "@modal", routeName: "item", loader }) as any;
+
+  it("lists only the intercept's flagged loaders, and no unit", () => {
+    const plain = loaderEntry("plain");
+    const flaggedLoader = loaderEntry("flagged", { prefetch: false });
+    const scope = resolveInterceptDeferralScope(
+      intercept([plain, flaggedLoader]),
+    );
+    expect([...scope.loaders]).toEqual([[flaggedLoader, true]]);
+    expect(ids(scope)).toEqual(["flagged"]);
+    expect(scope.units.size).toBe(0);
+  });
+
+  it("is the empty scope when nothing is flagged, memoized per entry", () => {
+    const empty = resolveInterceptDeferralScope(
+      intercept([loaderEntry("plain")]),
+    );
+    expect(empty).toBe(resolveDeferralScope([]));
+    const entry = intercept([loaderEntry("f", { prefetch: false })]);
+    expect(resolveInterceptDeferralScope(entry)).toBe(
+      resolveInterceptDeferralScope(entry),
+    );
+  });
+
+  it("makes a prefetch plan that defers the flagged loader only while its segment is new", () => {
+    const flaggedLoader = loaderEntry("flagged", { prefetch: false });
+    const scope = resolveInterceptDeferralScope(intercept([flaggedLoader]));
+    const plan = (held: string[]) =>
+      planPrefetchDeferral(
+        [entry("route")],
+        "prefetch",
+        {},
+        undefined,
+        new Set(held),
+        scope,
+      );
+    const id = "L0.@modalD0.flagged";
+    expect(defersLoader(ctxWith(plan([])), flaggedLoader, id)).toBe(true);
+    expect(defersLoader(ctxWith(plan([id])), flaggedLoader, id)).toBe(false);
+  });
+});
+
 describe("partialDeferralMode", () => {
   // A plain GET navigation that carries the prefetch header.
   const PREFETCH = {
@@ -320,10 +370,11 @@ describe("partialDeferralMode", () => {
     prefetch: true,
     method: "GET",
     isAction: false,
-    isIntercept: false,
     isShellCapture: false,
   };
 
+  // A request that resolves an intercept is one too: its plan's scope is the
+  // intercept's (resolveInterceptDeferralScope).
   it("is a prefetch for a plain GET navigation with the prefetch header", () => {
     expect(partialDeferralMode(PREFETCH)).toBe("prefetch");
     expect(partialDeferralMode({ ...PREFETCH, prefetch: false })).toBe(
@@ -335,7 +386,6 @@ describe("partialDeferralMode", () => {
   // runs the full match, so no request shows them apart.
   it.each([
     ["an action revalidation", { isAction: true }],
-    ["a request that resolves an intercept", { isIntercept: true }],
     ["a shell capture", { isShellCapture: true }],
     ["a POST", { method: "POST" }],
     ["a HEAD", { method: "HEAD" }],
@@ -351,7 +401,6 @@ describe("partialDeferralMode", () => {
         prefetch: false,
         method: "GET",
         isAction: true,
-        isIntercept: true,
         isShellCapture: true,
       }),
     ).toBe("fill");
@@ -808,6 +857,27 @@ describe("the decisions", () => {
       expect(fillSends(ctx, "new", held)).toBeUndefined();
     }
     expect(fillSends(ctxWith(undefined), "held", held)).toBeUndefined();
+  });
+
+  // A fill that resolves an intercept skips what the client lacks outside
+  // the intercept: never a held id, never the intercept's own segments.
+  it("interceptFillSkips skips only an unheld non-intercept segment of an intercept's fill", () => {
+    const route = entry("route", flagged);
+    const build = () => ({ chain: [route] });
+    const match = (mode: "fill" | undefined, isIntercept: boolean) => ({
+      handlerContext: ctxWith(plan(mode, build)),
+      isIntercept,
+      clientSegmentSet: holding("held"),
+    });
+    const fill = match("fill", true);
+    expect(interceptFillSkips(fill, "new")).toBe(true);
+    expect(interceptFillSkips(fill, { id: "new" })).toBe(true);
+    expect(interceptFillSkips(fill, "held")).toBe(false);
+    expect(
+      interceptFillSkips(fill, { id: "new", namespace: "intercept:item" }),
+    ).toBe(false);
+    expect(interceptFillSkips(match("fill", false), "new")).toBe(false);
+    expect(interceptFillSkips(match(undefined, true), "new")).toBe(false);
   });
 
   it("read the plan off a handler context, or nothing", () => {

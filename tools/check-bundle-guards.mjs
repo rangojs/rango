@@ -107,7 +107,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // where every partial payload is committed, so the holes, the fill request
 // and its merge live in browser/partial-update.ts (armHoles, fillHoles,
 // releaseHoles), with the lanes of segment-system.tsx that must not await a
-// hole (hasDeferred). An app with no flag pays for it too: deferral is a
+// hole (settlesLoaders). An app with no flag pays for it too: deferral is a
 // property of the payload, known only once one arrives. None of it can load
 // lazily: the holes are armed synchronously before the adoption renders, and
 // partial-update.ts is on the rejected-splits list (AGENTS.md, Bundle

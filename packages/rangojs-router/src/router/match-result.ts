@@ -109,10 +109,14 @@
  */
 import type { MatchResult, ResolvedSegment } from "../types.js";
 import { isPlaceholder } from "../types/segments.js";
+import { loaderParentId } from "../browser/react/filter-segment-order.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
 import { debugLog } from "./logging.js";
 import { appendMetric } from "./metrics.js";
-import { collectInterceptTargetNames } from "./intercept-resolution.js";
+import {
+  collectInterceptTargetNames,
+  interceptSegmentIds,
+} from "./intercept-resolution.js";
 
 export async function collectSegments(
   generator: AsyncGenerator<ResolvedSegment>,
@@ -192,6 +196,25 @@ function deduplicateLoaderSegments(
   return { segments: result, removedIds };
 }
 
+/**
+ * An intercept's `matched`: the client's ids without any of the slot's (its
+ * id and every loader segment on it, another intercept's into the same slot
+ * included), then the slot's (interceptSegmentIds). One order for the
+ * prefetch, its fill, an action and a revisit: a fill whose `matched` differs
+ * from its tree's is rendered as a new tree (browser/partial-update.ts
+ * fillHoles).
+ */
+function interceptMatched(
+  clientIds: readonly string[],
+  slotIds: readonly string[],
+): string[] {
+  // loaderParentId leaves a non-loader id as it is: the slot's own id goes too.
+  return [
+    ...clientIds.filter((id) => loaderParentId(id) !== slotIds[0]),
+    ...slotIds,
+  ];
+}
+
 export function buildMatchResult<TEnv>(
   allSegments: ResolvedSegment[],
   ctx: MatchContext<TEnv>,
@@ -223,7 +246,13 @@ export function buildMatchResult<TEnv>(
   } else {
     allIds = ctx.interceptResult
       ? ctx.clientSegmentIds.length > 0
-        ? [...ctx.clientSegmentIds, ...state.interceptSegments.map((s) => s.id)]
+        ? interceptMatched(
+            ctx.clientSegmentIds,
+            interceptSegmentIds(
+              ctx.interceptResult.entry,
+              ctx.interceptResult.intercept,
+            ),
+          )
         : allSegments.map((s) => s.id)
       : [...state.matchedIds, ...state.interceptSegments.map((s) => s.id)];
 

@@ -14,7 +14,6 @@ export {
   resolveLoadersOnly,
 } from "./segment-resolution/fresh.js";
 export {
-  resolveLoadersWithRevalidation,
   resolveLoadersOnlyWithRevalidation,
   buildEntryRevalidateMap,
   resolveParallelSegmentsWithRevalidation,

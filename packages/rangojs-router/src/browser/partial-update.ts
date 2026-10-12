@@ -910,6 +910,13 @@ export function createPartialUpdater(
       // prefetch is decided against the real source.
       const gatedOff = decideGatedOff(reconciled.segments, payload.metadata);
 
+      const isInterceptResponse = hasActiveInterceptSlots(
+        payload.metadata?.slots,
+      );
+      // The source the commit records for an intercept, and its fill's.
+      const effectiveInterceptSource =
+        interceptSourceUrl || segmentState.currentUrl;
+
       // The fill: one request for what the prefetch deferred, listing what
       // the client holds once this payload commits. It leaves now, before
       // the tree is rendered, with this navigation's signal.
@@ -921,8 +928,13 @@ export function createPartialUpdater(
           answer: client.fetchPartial({
             targetUrl: url,
             segmentIds: heldIds,
-            // The page the fill completes is the page it is on.
-            previousUrl: url,
+            // The page the fill completes is the page it is on: from the
+            // target itself nothing intercepts, so an intercept's fill names
+            // its source, as a request from the open modal does.
+            previousUrl: isInterceptResponse ? effectiveInterceptSource : url,
+            ...(isInterceptResponse && {
+              interceptSourceUrl: effectiveInterceptSource,
+            }),
             fill: true,
             signal,
             version: getVersion(),
@@ -1034,10 +1046,6 @@ export function createPartialUpdater(
         return;
       }
 
-      const isInterceptResponse = hasActiveInterceptSlots(
-        payload.metadata?.slots,
-      );
-
       // Same-structure revalidation: every segment this commit will render
       // already exists on screen (by id) — the navigation mounts nothing new,
       // it only refreshes what the user is looking at. The hold this enables
@@ -1053,8 +1061,6 @@ export function createPartialUpdater(
       const isSameStructureNav =
         mode.type === "navigate" && holdsAll(reconciled.segments);
 
-      const effectiveInterceptSource =
-        interceptSourceUrl || segmentState.currentUrl;
       if (mode.type !== "action" && mode.type !== "stale-revalidation") {
         if (isInterceptResponse) {
           store.setInterceptSourceUrl(effectiveInterceptSource);

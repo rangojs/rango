@@ -6,6 +6,7 @@ import type {
 } from "../types";
 import type { SegmentResolutionDeps } from "./types.js";
 import type { ResolveSegmentOptions } from "./segment-resolution.js";
+import type { RevalidationContext } from "./router-context.js";
 
 import {
   resolveAllSegments as _resolveAllSegments,
@@ -101,14 +102,10 @@ export interface SegmentWrappers<TEnv = any> {
   resolveInterceptLoadersOnly: (
     interceptEntry: InterceptEntry,
     parentEntry: EntryData,
-    params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
-    belongsToRoute?: boolean,
-    revalidationContext?: any,
-  ) => Promise<{
-    loaderDataPromise: Promise<any[]> | any[];
-    loaderIds: string[];
-  } | null>;
+    belongsToRoute: boolean,
+    revalidationContext: RevalidationContext,
+  ) => Promise<ResolvedSegment[]>;
 }
 
 /**
@@ -267,15 +264,13 @@ export function createSegmentWrappers<TEnv = any>(
   function resolveInterceptLoadersOnly(
     interceptEntry: InterceptEntry,
     parentEntry: EntryData,
-    params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
-    belongsToRoute: boolean = true,
-    revalidationContext: any,
+    belongsToRoute: boolean,
+    revalidationContext: RevalidationContext,
   ): ReturnType<typeof _resolveInterceptLoadersOnly> {
     return _resolveInterceptLoadersOnly(
       interceptEntry,
       parentEntry,
-      params,
       context,
       belongsToRoute,
       segmentDeps,

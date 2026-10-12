@@ -17,7 +17,7 @@ vi.mock("../../../server/request-context.js", () => ({
 }));
 
 import { resolveLoaderData } from "../loader-cache";
-import { resolveLoadersWithRevalidation } from "../revalidation";
+import { ownerOf, resolveOwnerLoaders } from "../revalidation";
 import {
   isShellCaptureActive,
   createMaskedLoaderPromise,
@@ -67,8 +67,8 @@ function createEntry(loader: any, loading?: unknown): EntryData {
 
 function runRevalidationFunnel(entry: EntryData, ctx: any) {
   const url = new URL("https://example.com/x");
-  return resolveLoadersWithRevalidation(
-    entry,
+  return resolveOwnerLoaders(
+    ownerOf(entry),
     ctx,
     true,
     // Client has never seen the segment, so shouldRun is true without invoking

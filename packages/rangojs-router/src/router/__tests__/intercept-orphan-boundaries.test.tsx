@@ -110,7 +110,16 @@ async function navigate(pathname: string) {
   );
   const modal = result.segments.find((s: any) => s.slot === "@modal");
   expect(modal).toBeDefined();
-  return { modal, status: reqCtx.res.status };
+  // The modal's loaders are loader segments of its slot.
+  const loaderData = () =>
+    Promise.all(
+      result.segments
+        .filter(
+          (s: any) => s.type === "loader" && s.id.startsWith(`${modal.id}D`),
+        )
+        .map((s: any) => s.loaderData),
+    );
+  return { modal, loaderData, status: reqCtx.res.status };
 }
 
 describe("intercept declared in a routeless layout: ancestor boundaries", () => {
@@ -134,16 +143,16 @@ describe("intercept declared in a routeless layout: ancestor boundaries", () => 
   });
 
   it("a throwing loader renders the root layout's errorBoundary", async () => {
-    const { modal } = await navigate("/loaderthrow/1");
-    const [result] = await modal.loaderDataPromise;
+    const { loaderData } = await navigate("/loaderthrow/1");
+    const [result] = await loaderData();
     expect(result.ok).toBe(false);
     expect(result.error.message).toBe("orphan modal loader failed");
     expect(result.fallback).toBe(RootError);
   });
 
   it("a loader notFound() renders the root layout's notFoundBoundary", async () => {
-    const { modal } = await navigate("/loadergone/1");
-    const [result] = await modal.loaderDataPromise;
+    const { loaderData } = await navigate("/loadergone/1");
+    const [result] = await loaderData();
     expect(result.notFound).toBe(true);
     expect(result.fallback).toBe(RootNotFound);
   });

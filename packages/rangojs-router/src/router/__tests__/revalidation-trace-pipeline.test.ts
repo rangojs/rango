@@ -46,7 +46,8 @@ vi.mock("../segment-resolution/helpers.js", () => ({
 }));
 
 import {
-  resolveLoadersWithRevalidation,
+  ownerOf,
+  resolveOwnerLoaders,
   resolveParallelSegmentsWithRevalidation,
 } from "../segment-resolution/revalidation.js";
 import {
@@ -159,8 +160,8 @@ describe("revalidation trace through segment resolution pipeline", () => {
 
         const entry = makeEntry("loader-1");
         // Empty client set = segment not on client = early return with "new-segment"
-        await resolveLoadersWithRevalidation(
-          entry,
+        await resolveOwnerLoaders(
+          ownerOf(entry),
           makeContext(),
           true, // belongsToRoute
           new Set(), // empty clientSegmentIds
@@ -207,8 +208,8 @@ describe("revalidation trace through segment resolution pipeline", () => {
 
         const entry = makeEntry("loader-1");
         // Segment IS in client set, so it flows through evaluateRevalidation
-        await resolveLoadersWithRevalidation(
-          entry,
+        await resolveOwnerLoaders(
+          ownerOf(entry),
           makeContext(),
           true,
           new Set([segmentId]),
@@ -272,8 +273,8 @@ describe("revalidation trace through segment resolution pipeline", () => {
         } as any;
 
         // Only loader-B is in client set; loader-A will be "new-segment"
-        await resolveLoadersWithRevalidation(
-          entry,
+        await resolveOwnerLoaders(
+          ownerOf(entry),
           makeContext(),
           true,
           new Set(["L0R0D1.loader-B"]),

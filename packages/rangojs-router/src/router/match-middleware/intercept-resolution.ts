@@ -106,6 +106,7 @@ import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog } from "../logging.js";
+import { isInterceptSegment } from "../../browser/intercept-utils.js";
 
 /**
  * Creates intercept resolution middleware
@@ -151,7 +152,7 @@ export function withInterceptResolution<TEnv>(
 
     if (skipInterceptResolution) {
       if (ctx.interceptResult && state.cacheHit && ctx.isIntercept) {
-        await handleCacheHitIntercept(ctx, state, segments);
+        yield* await handleCacheHitIntercept(ctx, state, segments);
       }
       if (ms) {
         ms.metrics.push({
@@ -212,77 +213,57 @@ export function withInterceptResolution<TEnv>(
   };
 }
 
+/**
+ * A cache or prerender hit that carries the intercept's slot: the slot keeps
+ * its stored component and layout, and its loaders, never stored, resolve as
+ * loader segments of it. Returns those segments for the caller to yield.
+ */
 async function handleCacheHitIntercept<TEnv>(
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
   segments: ResolvedSegment[],
-): Promise<void> {
-  if (!ctx.interceptResult) return;
+): Promise<ResolvedSegment[]> {
+  if (!ctx.interceptResult) return [];
 
   const { resolveInterceptLoadersOnly } = getRouterContext<TEnv>();
 
   const slotName = ctx.interceptResult.intercept.slotName;
 
-  const interceptSegments = segments.filter((s) =>
-    s.namespace?.startsWith("intercept:"),
-  );
-  state.interceptSegments = interceptSegments;
-
-  if (resolveInterceptLoadersOnly) {
-    const Store = ctx.Store;
-    const freshLoaderResult = await Store.run(() =>
-      resolveInterceptLoadersOnly(
-        ctx.interceptResult!.intercept,
-        ctx.interceptResult!.entry,
-        ctx.matched.params,
-        ctx.handlerContext,
-        true, // belongsToRoute
-        {
-          clientSegmentIds: ctx.clientSegmentSet,
-          prevParams: ctx.prevParams,
-          request: ctx.request,
-          prevUrl: ctx.prevUrl,
-          nextUrl: ctx.url,
-          routeKey: ctx.routeKey,
-          actionContext: ctx.actionContext,
-          stale: ctx.stale,
-        },
-      ),
-    );
-
-    if (freshLoaderResult) {
-      const interceptMainSegment = interceptSegments.find(
-        (s) => s.type === "parallel" && s.slot,
-      );
-      if (interceptMainSegment) {
-        interceptMainSegment.loaderDataPromise =
-          freshLoaderResult.loaderDataPromise;
-        interceptMainSegment.loaderIds = freshLoaderResult.loaderIds;
-        debugLog(
-          "matchPartial.intercept",
-          freshLoaderResult.loaderIds.length > 0
-            ? "cache hit with fresh intercept loaders"
-            : "cache hit, every intercept loader held",
-          {
-            routeName: ctx.localRouteName,
-            slotName,
-          },
-        );
-      }
-    } else {
-      debugLog(
-        "matchPartial.intercept",
-        "cache hit, intercept has no loaders",
-        {
-          routeName: ctx.localRouteName,
-          slotName,
-        },
-      );
-    }
+  const cachedSlot = segments.filter(isInterceptSegment);
+  // A record stored before 0.25.0 carries the loaders' aggregate on the slot;
+  // the loader segments below replace it. Build versions hash the router's
+  // code, so only a `version` pinned across the upgrade (createRouter's or
+  // the store's) still reads one.
+  for (const slot of cachedSlot) {
+    delete slot.loaderDataPromise;
+    delete slot.loaderIds;
   }
 
+  const loaderSegments = resolveInterceptLoadersOnly
+    ? await ctx.Store.run(() =>
+        resolveInterceptLoadersOnly(
+          ctx.interceptResult!.intercept,
+          ctx.interceptResult!.entry,
+          ctx.handlerContext,
+          true, // belongsToRoute
+          {
+            clientSegmentIds: ctx.clientSegmentSet,
+            prevParams: ctx.prevParams,
+            request: ctx.request,
+            prevUrl: ctx.prevUrl,
+            nextUrl: ctx.url,
+            routeKey: ctx.routeKey,
+            actionContext: ctx.actionContext,
+            stale: ctx.stale,
+          },
+        ),
+      )
+    : [];
+  const interceptSegments = [...cachedSlot, ...loaderSegments];
+  state.interceptSegments = interceptSegments;
   state.slots[slotName] = {
     active: true,
     segments: interceptSegments,
   };
+  return loaderSegments;
 }

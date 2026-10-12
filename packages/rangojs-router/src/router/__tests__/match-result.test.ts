@@ -300,21 +300,50 @@ describe("match-result", () => {
   });
 
   describe("buildMatchResult() - intercept handling", () => {
-    it("should use clientSegmentIds when intercepting with client segments", () => {
-      const ctx = createMockContext({
-        isFullMatch: false,
-        clientSegmentIds: ["layout", "page"],
-        interceptResult: { route: "modal", slot: "@modal" } as any,
-      });
-      const state = createPipelineState();
-      state.matchedIds = ["layout", "page"];
-      state.interceptSegments = [createSegment("modal-content")];
+    // An intercept's slot and its loader segments, ids as
+    // intercept-resolution.ts interceptSegmentIds forms them.
+    const interceptResult = {
+      entry: { shortCode: "L0" },
+      intercept: {
+        slotName: "@modal",
+        loader: [{ loader: { $$id: "a" } }, { loader: { $$id: "b" } }],
+      },
+    } as any;
+    const SLOT = ["L0.@modal", "L0.@modalD0.a", "L0.@modalD1.b"];
+    const interceptMatched = (clientSegmentIds: string[]) =>
+      buildMatchResult(
+        [createSegment("L0R1")],
+        createMockContext({
+          isFullMatch: false,
+          clientSegmentIds,
+          interceptResult,
+        }),
+        createPipelineState(),
+      ).matched;
 
-      const segments = [createSegment("page")];
-      const result = buildMatchResult(segments, ctx, state);
+    it("should use clientSegmentIds when intercepting with client segments, then the slot's ids", () => {
+      expect(interceptMatched(["L0", "L0R0"])).toEqual(["L0", "L0R0", ...SLOT]);
+    });
 
-      // Should include client segments + intercept segments
-      expect(result.matched).toEqual(["layout", "page", "modal-content"]);
+    it("lists the slot's ids in one order for a prefetch, its fill and an action", () => {
+      // The prefetch from the source, its fill (holding the slot and the
+      // loader the prefetch ran), and an action with the modal open.
+      const prefetch = interceptMatched(["L0", "L0R0"]);
+      const fill = interceptMatched([
+        "L0",
+        "L0R0",
+        "L0.@modal",
+        "L0.@modalD0.a",
+      ]);
+      const action = interceptMatched(["L0", "L0.@modalD1.b", "L0R0", ...SLOT]);
+      expect(fill).toEqual(prefetch);
+      expect(action).toEqual(prefetch);
+    });
+
+    it("drops another intercept's loader segments held in the same slot", () => {
+      expect(
+        interceptMatched(["L0", "L0R0", "L0.@modal", "L0.@modalD0.other"]),
+      ).toEqual(["L0", "L0R0", ...SLOT]);
     });
 
     it("should use segment IDs when intercepting without client segments (HMR)", () => {
