@@ -15,10 +15,8 @@ import {
   type Rewrite,
 } from "../route-definition/rewrite.js";
 import { prefixBasename } from "../router/basename.js";
-import {
-  createReverseFunction,
-  stripInternalParams,
-} from "../router/handler-context.js";
+import { createReverseFunction } from "../router/handler-context.js";
+import { stripInternalParams } from "../router/internal-params.js";
 import {
   rebaseRequestContext,
   type RequestContext,

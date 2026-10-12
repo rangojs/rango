@@ -12,7 +12,7 @@ import { contextGet, contextSet, createVar } from "../context-var.js";
 import { RewriteLoopError } from "../errors.js";
 import { documentCacheStoresRender } from "../cache/document-cache-policy.js";
 import { guardIdentityRead, type IdentityReadWording } from "./context.js";
-import { stripInternalParams } from "../router/handler-context.js";
+import { stripInternalParams } from "../router/internal-params.js";
 import type { RequestContext } from "./request-context.js";
 
 /** Most rewrites one request may take; the next one is a RewriteLoopError. */
