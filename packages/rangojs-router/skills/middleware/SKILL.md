@@ -497,7 +497,9 @@ export const countVisit: Middleware = async (ctx, next) => {
 page has rendered: a `throw rewrite()` after it (a "rewrite on 404" after
 `const res = await next()`) is an error, "throw rewrite() before await
 next()". Decide before calling `next()`. A rewrite thrown further down
-passes through your `await next()` as usual.
+passes through your `await next()` as usual, and in a `catch` around it you
+may throw another rewrite in its place; after any other failure of `next()`
+(the route may have rendered before it failed) a rewrite is an error too.
 
 **Same request context.** Values you `ctx.set()` before the throw are
 readable in the target's middleware, handlers and loaders; cookies, headers
@@ -521,7 +523,8 @@ direct visit does.
 
 **Throw it, don't return it.** A returned rewrite is an error. Where a
 rewrite cannot be honored it is an error that names the rule: a route
-handler, a loader (`ssr: false` included; not supported yet), a server
+handler, a loader (`ssr: false` included; a rewrite from an `ssr: false`
+loader is a possible future addition), a server
 action (use `redirect()`), intercept middleware, a loader fetch
 (`useFetchLoader`, `load()`: it rejects with the rule) or its middleware,
 and middleware handling a non-GET request (a JS action or a no-JS form post:

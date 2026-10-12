@@ -903,15 +903,17 @@ in everything but the request context. For the same reason a guard never
 skips a rewritten pass: `ctx.rewrittenFrom` is for side effects (a counter,
 a log line), never for authorization.
 
-A rewrite is thrown before `await next()`. A middleware whose `next()`
-already ran the route (resolved, or still running) cannot rewrite: that
-render would keep writing into the context the next pass moves, and the
-response it built (with the cookies and onResponse callbacks set before
-`next()`) would be dropped. `executeMiddleware` turns such a throw into an
-error naming the rule (`rewriteAfterNextError`). A rewrite that reaches a
-middleware through a rejected `next()` (a downstream rewrite, or one thrown
-in a `catch` after the downstream failed) unwinds as usual. So a pass never
-renders before it rewrites.
+A rewrite is thrown before `await next()`. A middleware whose `next()` ran
+the downstream (resolved, still running, or failed with an error) cannot
+rewrite: that render would keep writing into the context the next pass
+moves, or the next pass would push into the handle store it already used,
+and the response it built (with the cookies and onResponse callbacks set
+before `next()`) would be dropped. `executeMiddleware` turns such a throw
+into an error naming the rule (`rewriteAfterNextError`). Only a `next()`
+that rejected with a Rewrite proves nothing rendered (a downstream
+middleware rewrote before its own `next()`): that Rewrite, or another one
+thrown in the `catch`, unwinds as usual. So a pass never renders before it
+rewrites.
 
 The request context is the same object across passes. That is the headline
 guarantee: a value `ctx.set()` before the throw is readable in the target's

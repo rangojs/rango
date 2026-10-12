@@ -101,6 +101,14 @@ takes a rewritten page through the full pipeline; `dispatch` re-dispatches
 between response routes; `renderRoute` takes `rewrite: "/target"` to render a
 rewritten page at the visitor's URL. See `/middleware` → "Rewrite".
 
+### Fixed: `<Link>` and `useRouter()` no longer prefix the basename twice before `?` or `#`
+
+With `createRouter({ basename: "/app" })`, `<Link to="/app?tab=1">`,
+`router.push("/app?tab=1")` and the same with `#top` navigated to
+`/app/app?tab=1`. They now go to `/app?tab=1`, as `redirect()` already did:
+a path that carries the basename followed by `/`, `?`, `#` or nothing is left
+as is. Other paths are prefixed as before.
+
 ### Fixed: names like `constructor`, `toString` or `__proto__` in a request or in loader data are ordinary keys ([#1109](https://github.com/rangojs/rango/issues/1109))
 
 Cookie names, URL segments and fetchable-loader params come from the request,
