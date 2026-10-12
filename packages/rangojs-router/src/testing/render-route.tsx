@@ -382,6 +382,14 @@ export interface RenderRouteOptions {
    * - Needs @testing-library/react >= 16.2.0; throws on older versions.
    */
   hydrate?: boolean;
+  /**
+   * The path middleware rewrote `request` to (`throw rewrite()`): the leaf
+   * route is matched against it for params, while the location stays
+   * `request`, as on a rewritten document. The server pass and hydration
+   * both see `request` (`usePathname()`, `useSearchParams()`), as production
+   * renders a rewritten page with the visitor's URL (`/middleware` skill).
+   */
+  rewrite?: string;
 }
 
 /**
@@ -687,7 +695,12 @@ export async function renderRoute(
       pathname,
     };
   };
-  const initialMatch = resolve(url.pathname);
+  // A rewritten request renders the target's route at the visitor's URL.
+  const renderedPathname =
+    options.rewrite === undefined
+      ? url.pathname
+      : new URL(options.rewrite, url).pathname;
+  const initialMatch = resolve(renderedPathname);
 
   const historyKey = generateHistoryKey(url.href);
   const mount = normalizeBasename(options.mount);
@@ -706,10 +719,10 @@ export async function renderRoute(
     options.request !== undefined &&
     Object.keys(options.params ?? {}).length === 0 &&
     isUnderTestRunner() &&
-    matchLeaf(leaf.path, url.pathname) === null
+    matchLeaf(leaf.path, renderedPathname) === null
   ) {
     throw new Error(
-      `renderRoute: request "${url.pathname}" does not match the leaf route ` +
+      `renderRoute: request "${renderedPathname}" does not match the leaf route ` +
         `"${leaf.path}"${mount ? ` (mount "${mount}")` : ""}. renderRoute paths ` +
         `are include-RELATIVE: pass a request that matches "${leaf.path}" ` +
         `(e.g. "${staticPrefix(leaf.path)}"). A mount does NOT auto-rewrite the ` +

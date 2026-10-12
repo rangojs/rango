@@ -149,6 +149,7 @@ export type ReverseFunction<TRoutes> = {
 export type ScopedReverseFunction<
   TLocalRoutes,
   TGlobalRoutes = TLocalRoutes,
+  TResult = string,
 > = {
   /**
    * Global route without params
@@ -159,7 +160,7 @@ export type ScopedReverseFunction<
     > extends true
       ? TName
       : never,
-  ): string;
+  ): TResult;
 
   /**
    * Global route with params
@@ -167,7 +168,7 @@ export type ScopedReverseFunction<
   <TName extends keyof TGlobalRoutes & string>(
     name: TName,
     params: ExtractParams<RoutePatternFor<TGlobalRoutes, TName>>,
-  ): string;
+  ): TResult;
 
   /**
    * Global route with params and search
@@ -176,7 +177,7 @@ export type ScopedReverseFunction<
     name: TName,
     params: ExtractParams<RoutePatternFor<TGlobalRoutes, TName>>,
     search: ResolveSearchSchema<ExtractSearchSchema<TGlobalRoutes, TName>>,
-  ): string;
+  ): TResult;
 
   /**
    * Dot-prefixed local route without params
@@ -187,7 +188,7 @@ export type ScopedReverseFunction<
     > extends true
       ? `.${TName}`
       : never,
-  ): string;
+  ): TResult;
 
   /**
    * Dot-prefixed local route with params
@@ -195,7 +196,7 @@ export type ScopedReverseFunction<
   <TName extends keyof TLocalRoutes & string>(
     name: `.${TName}`,
     params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>,
-  ): string;
+  ): TResult;
 
   /**
    * Dot-prefixed local route with params and search
@@ -204,7 +205,7 @@ export type ScopedReverseFunction<
     name: `.${TName}`,
     params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>,
     search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>,
-  ): string;
+  ): TResult;
 };
 
 /**
@@ -235,14 +236,16 @@ export type ScopedReverseFunction<
  * reverse(".post", { slug: "hello" })     // compile error: no include() scope
  * ```
  */
-export type GlobalReverseFunction<TGlobalRoutes> =
-  string extends keyof TGlobalRoutes
-    ? <TName extends string>(
-        name: Exclude<TName, `.${string}`>,
-        params?: Record<string, string>,
-        search?: Record<string, unknown>,
-      ) => string
-    : ScopedReverseFunction<{}, TGlobalRoutes>;
+export type GlobalReverseFunction<
+  TGlobalRoutes,
+  TResult = string,
+> = string extends keyof TGlobalRoutes
+  ? <TName extends string>(
+      name: Exclude<TName, `.${string}`>,
+      params?: Record<string, string>,
+      search?: Record<string, unknown>,
+    ) => TResult
+  : ScopedReverseFunction<{}, TGlobalRoutes, TResult>;
 
 /**
  * Extract local routes type from UrlPatterns

@@ -119,6 +119,14 @@ export {
   transition,
 } from "./route-definition.js";
 
+// Render another route at the same URL from middleware (throw rewrite()).
+export {
+  rewrite,
+  type Rewrite,
+  type RewriteFunction,
+} from "./route-definition/rewrite.js";
+export { RewriteLoopError } from "./errors.js";
+
 // Composition types for reusable callback factories
 export type {
   RouteUseItem,

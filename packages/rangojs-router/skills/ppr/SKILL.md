@@ -149,6 +149,15 @@ material is shared per host+URL and request partition. `cache(false)`, or a
 `condition()` that returns false, on a ppr route now renders the request like a
 cache miss (no shell).
 
+### A request middleware rewrote
+
+A request middleware rewrote (`throw rewrite()`, `/middleware`) to a `ppr`
+route is served the target's shell under the target's key. The capture
+renders the target as a direct visit: `ctx.rewrittenFrom` reads `undefined`
+there and the payload carries the target's pathname, so the shell is the
+same for direct and rewritten visitors (a component that renders
+`usePathname()` shows the target's URL to a rewritten visitor on a HIT).
+
 ### Request-partitioned shells
 
 A route whose `cache()` record is partitioned by the request partitions its

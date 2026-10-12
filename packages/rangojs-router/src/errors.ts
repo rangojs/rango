@@ -297,6 +297,25 @@ export function isSkip(value: unknown): value is Skip {
 }
 
 /**
+ * A request middleware rewrote (`throw rewrite()`) more than `maxHops` times,
+ * or to the URL it was on. Reported through `onError` (phase "routing") and
+ * answered with 508. `trail` lists the URLs, the visitor's first.
+ */
+export class RewriteLoopError extends Error {
+  name = "RewriteLoopError" as const;
+  readonly trail: readonly string[];
+
+  constructor(trail: readonly string[], maxHops: number) {
+    super(
+      `Infinite rewrite loop: ${trail.join(" -> ")}. A request is rewritten ` +
+        `at most ${maxHops} times, and never to the URL it is on.`,
+    );
+    Object.setPrototypeOf(this, RewriteLoopError.prototype);
+    this.trail = trail;
+  }
+}
+
+/**
  * Thrown by the partial updater when the server responds with a redirect payload
  * that carries location state. Caught by navigate() to re-navigate to the
  * redirect target with the server-set state merged into history.pushState.

@@ -344,6 +344,7 @@ import {
 } from "./pages/prerender-warm.js";
 import mixedClientUrls from "./mixed-client/urls.js";
 import pureClientUrls from "./client-urls/urls.js";
+import { rewritePatterns } from "./pages/rewrite.js";
 import slowClientUrls, { SlowChrome } from "./client-urls/slow.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
@@ -1109,6 +1110,8 @@ export const urlpatterns = urls(
     include("/build-env-direct", buildEnvDirectPatterns, {
       name: "buildEnvDirect",
     }),
+    // throw rewrite() from middleware (e2e/rewrite.test.ts)
+    include("/rw", rewritePatterns, { name: "rw" }),
     // Prefixed wildcard before the root catch-all: hitting bare "/files" must
     // resolve "/files/*" with an empty splat (C1), not fall to "/*".
     path("/files/*", FilesWildcardPage, { name: "filesWildcard" }),

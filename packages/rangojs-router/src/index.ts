@@ -155,6 +155,13 @@ export function redirect(): never {
   throw serverOnlyStubError("redirect");
 }
 
+/**
+ * Error-throwing stub for server-only `rewrite` function.
+ */
+export function rewrite(): never {
+  throw serverOnlyStubError("rewrite");
+}
+
 // Handle API (universal - works on both server and client)
 export { createHandle, isHandle, type Handle } from "./handle.js";
 export {

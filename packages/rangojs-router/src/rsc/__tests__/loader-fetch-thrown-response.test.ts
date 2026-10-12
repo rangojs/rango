@@ -73,6 +73,7 @@ vi.mock("../helpers.js", () => ({
 
 import { handleLoaderFetch } from "../loader-fetch";
 import { notFound } from "../../errors.js";
+import { rewrite } from "../../route-definition/rewrite.js";
 
 // Capture what renderToReadableStream is asked to serialize (the error payload).
 let serializedPayloads: unknown[] = [];
@@ -163,6 +164,25 @@ describe("handleLoaderFetch — thrown Response from a no-middleware loader (D4)
     );
 
     expect(res.status).toBe(404);
+  });
+});
+
+describe("handleLoaderFetch — rewrite() is not supported", () => {
+  it("reports a rewrite a fetchable loader throws as the loader's error, the rule in its message", async () => {
+    loaderImpl = async () => {
+      throw rewrite("/maintenance");
+    };
+    const { request, url } = loaderRequest();
+    const ctx = createMockHandlerCtx();
+
+    const res = await handleLoaderFetch(ctx, request, {}, url, {});
+
+    expect(res.status).toBe(500);
+    expect(ctx.callOnError.mock.calls[0]?.[1]).toBe("loader");
+    const reported = ctx.callOnError.mock.calls[0]?.[0] as Error;
+    expect(reported.name).toBe("Rewrite");
+    expect(reported.message).toContain("rewrite() is for middleware");
+    expect(reported.message).toContain("loader fetches can't either");
   });
 });
 

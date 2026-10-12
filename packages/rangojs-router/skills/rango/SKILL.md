@@ -311,7 +311,7 @@ Grouped by concern — read when you need to…
 | `/layout`                 | Layouts that wrap child routes                                             |
 | `/parallel`               | Multi-column layouts and sidebars                                          |
 | `/intercept`              | Modal/slide-over patterns for soft navigation                              |
-| `/middleware`             | Request processing and authentication                                      |
+| `/middleware`             | Request processing, authentication, `throw rewrite()` (same-URL rewrites)  |
 | `/host-router`            | Multi-app host routing with domain/subdomain patterns                      |
 | `/links`                  | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse        |
 | `/response-routes`        | JSON/text/HTML/XML/stream endpoints with `path.json()`, `path.text()`      |

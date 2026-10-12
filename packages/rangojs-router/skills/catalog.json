@@ -143,7 +143,7 @@
     },
     {
       "name": "middleware",
-      "description": "Define global (router.use) and route (middleware()) middleware in @rangojs/router — auth gates, logging, response headers, context variables, redirects. Use when gating routes behind auth checks, logging requests, setting headers or ctx variables before a handler runs, or deciding whether middleware wraps server actions.",
+      "description": "Define global (router.use) and route (middleware()) middleware in @rangojs/router — auth gates, logging, response headers, context variables, redirects, rewrites (throw rewrite() renders another route at the same URL). Use when gating routes behind auth checks, logging requests, setting headers or ctx variables before a handler runs, showing a maintenance page at the visitor's URL, or deciding whether middleware wraps server actions.",
       "argumentHint": "[middleware-name]",
       "path": "skills/middleware/SKILL.md"
     },

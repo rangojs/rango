@@ -16,6 +16,7 @@ import {
   assertPprReplayStatus,
   assertShellStatus,
 } from "@rangojs/router/testing/e2e";
+import { expectConsole } from "@shared/e2e";
 
 type BuildAxis = "dev" | "prod";
 type TransportAxis = "js" | "pe" | "request";
@@ -991,6 +992,168 @@ const matrixRows: SemanticMatrixRow[] = [
         { headers: new Headers(replay.headers()) },
         { outcome: "HIT", freshness: "fresh" },
       );
+    },
+  },
+  // throw rewrite() (docs/internal/execution-model.md, "Rewrite"). Fixture:
+  // test-app/src/urls/rewrite.tsx; the rw-lock cookie turns the lock on.
+  {
+    id: "RW1",
+    contract:
+      "a global rewrite re-dispatches as the target: the target's pattern guard runs, pass-one ctx.set and cookies are kept, the target's chain runs and the original's never",
+    transport: "request",
+    execution: "full-render",
+    scope: "n/a",
+    assert: async ({ baseUrl, request }) => {
+      const guarded = await request.get(baseUrl("/rw/global-to-guarded"));
+      expect(guarded.status()).toBe(401);
+      const allowed = await request.get(baseUrl("/rw/global-to-guarded"), {
+        headers: { cookie: "rw-auth=1" },
+      });
+      expect(allowed.status()).toBe(200);
+      expect(await allowed.text()).toContain("Guarded page");
+
+      const locked = await request.get(baseUrl("/rw/shop"), {
+        headers: { cookie: "rw-lock=on" },
+      });
+      expect(locked.status()).toBe(503);
+      expect(locked.headers()["x-rango-rewrite"]).toBe("/rw/maintenance");
+      // The target's route middleware ran (Retry-After) and the original's
+      // never did (its post-next header).
+      expect(locked.headers()["retry-after"]).toBe("600");
+      expect(locked.headers()["x-rw-shop-post"]).toBeUndefined();
+      expect(
+        locked
+          .headersArray()
+          .some(
+            (h) =>
+              h.name.toLowerCase() === "set-cookie" &&
+              h.value.startsWith("rw-pass-one=kept"),
+          ),
+      ).toBe(true);
+      const html = await locked.text();
+      expect(html).toContain('data-testid="rw-reason">deploy<');
+      expect(html).toContain('data-testid="rw-from">/rw/shop<');
+      expect(html).toContain('data-testid="rw-target-runs">1<');
+    },
+  },
+  {
+    id: "RW2",
+    contract:
+      "a route-middleware rewrite unwinds: no code after next() of the rewriting pass runs, the target's chain runs once; a rewrite after next() ran the route is an error",
+    transport: "request",
+    execution: "full-render",
+    scope: "n/a",
+    assert: async ({ baseUrl, request }) => {
+      const response = await request.get(baseUrl("/rw/route-to-maintenance"));
+      expect(response.status()).toBe(503);
+      expect(response.headers()["x-rango-rewrite"]).toBe("/rw/maintenance");
+      expect(response.headers()["x-rw-route-post"]).toBeUndefined();
+      // Global middleware: once per pass; its post-next only on the target's.
+      expect(response.headers()["x-rw-post"]).toBe("/rw/maintenance");
+      const html = await response.text();
+      expect(html).toContain('data-testid="rw-runs">2<');
+      expect(html).toContain('data-testid="rw-count">1<');
+      expect(html).toContain('data-testid="rw-target-runs">1<');
+      expect(html).not.toContain("never rendered");
+
+      const late = await request.get(baseUrl("/rw/after"));
+      expect(late.status()).toBe(500);
+      expect(late.headers()["x-rango-rewrite"]).toBeUndefined();
+    },
+  },
+  {
+    id: "RW3",
+    contract:
+      "a rewrite during a mutation is an error; the middleware's Response path for mutations works in JS and no-JS",
+    transport: "request",
+    execution: "action-followup",
+    scope: "n/a",
+    assert: async ({ baseUrl, page, request }) => {
+      expectConsole(page, {
+        allow: [/Unhandled error caught: Error: Connection closed/],
+      });
+      await page.goto(baseUrl("/rw/shop"));
+      await waitForHydration(page);
+      await page
+        .context()
+        .addCookies([{ name: "rw-lock", value: "on", url: baseUrl("/") }]);
+      const post = page.waitForResponse(
+        (r) => r.request().method() === "POST" && r.url().includes("/rw/shop"),
+      );
+      await testId(page, "rw-save").click();
+      const jsAction = await post;
+      expect(jsAction.status()).toBe(503);
+      expect(await jsAction.text()).toBe("Maintenance");
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+        /Internal Server Error|Connection Error/,
+      );
+
+      // A no-JS form post (pe-render) under the same lock.
+      const form = await request.post(baseUrl("/rw/shop"), {
+        form: { note: "x" },
+        headers: { cookie: "rw-lock=on" },
+      });
+      expect(form.status()).toBe(503);
+      expect(await form.text()).toBe("Maintenance");
+
+      // Middleware that rewrites the mutation instead: an error.
+      const jsRejected = await request.post(
+        baseUrl("/rw/shop?_rsc_action=rw%23save"),
+        {
+          headers: { cookie: "rw-lock=naive", "rsc-action": "rw#save" },
+          data: "[]",
+        },
+      );
+      expect(jsRejected.status()).toBe(500);
+      const formRejected = await request.post(baseUrl("/rw/shop"), {
+        headers: { cookie: "rw-lock=naive" },
+        form: { note: "x" },
+      });
+      expect(formRejected.status()).toBe(500);
+      await expect
+        .poll(async () => {
+          const log = (await (
+            await request.get(baseUrl("/__test/last-error"))
+          ).json()) as Array<{ phase: string; message: string }> | null;
+          return (log ?? []).filter(
+            (entry) =>
+              entry.phase === "routing" &&
+              entry.message.includes(
+                "middleware threw it while handling a non-GET request",
+              ),
+          ).length;
+        })
+        .toBeGreaterThanOrEqual(2);
+    },
+  },
+  {
+    id: "RW4",
+    contract:
+      "a rewrite loop past the hop limit, or to the URL the request is on, answers 508 and reports RewriteLoopError",
+    transport: "request",
+    execution: "full-render",
+    scope: "n/a",
+    assert: async ({ baseUrl, request }) => {
+      for (const [path, trail] of [
+        ["/rw/loop-a", "/rw/loop-a -> /rw/loop-b -> /rw/loop-a"],
+        ["/rw/self", "/rw/self -> /rw/self"],
+      ] as const) {
+        const response = await request.get(baseUrl(path));
+        expect(response.status()).toBe(508);
+        expect(response.headers()["x-rango-rewrite"]).toBeUndefined();
+        await expect
+          .poll(async () => {
+            const log = (await (
+              await request.get(baseUrl("/__test/last-error"))
+            ).json()) as Array<{ phase: string; message: string }> | null;
+            return (log ?? []).some(
+              (entry) =>
+                entry.phase === "routing" &&
+                entry.message.includes(`Infinite rewrite loop: ${trail}`),
+            );
+          })
+          .toBe(true);
+      }
     },
   },
 ];

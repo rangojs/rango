@@ -60,3 +60,22 @@ export function isRedirectResponse(response: Response): boolean {
     Boolean(response.headers.get("Location"))
   );
 }
+
+/**
+ * Set a header on a response the router hands to the host, skipping a
+ * WebSocket upgrade (its headers are not to be touched) and swallowing the
+ * TypeError of immutable headers (a passed-through platform Response):
+ * instrumentation and debug headers never fail a request.
+ */
+export function trySetHeader(
+  response: Response,
+  name: string,
+  value: string,
+): void {
+  if (isWebSocketUpgradeResponse(response)) return;
+  try {
+    response.headers.set(name, value);
+  } catch {
+    // Immutable headers: drop the header, never the response.
+  }
+}

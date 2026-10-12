@@ -163,3 +163,21 @@ describe("useRouter().back()", () => {
     });
   });
 });
+
+describe("useRouter().push() basename prefixing", () => {
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).window;
+  });
+
+  it.each([
+    ["/settings", "/app/settings"],
+    ["/", "/app"],
+    ["/app/settings", "/app/settings"],
+    ["/app?tab=1", "/app?tab=1"],
+    ["/app#top", "/app#top"],
+  ])("push(%s) navigates to %s", async (url, expected) => {
+    const { navigate } = setupWindow({ basename: "/app" });
+    await useRouter().push(url);
+    expect(navigate).toHaveBeenCalledWith(expected, { replace: false });
+  });
+});

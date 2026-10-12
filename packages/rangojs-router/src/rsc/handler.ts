@@ -17,6 +17,8 @@ import {
   createRequestContext,
   captureRequestEntryContext,
 } from "../server/request-context.js";
+import { REWRITE_HEADER, runRewritePasses } from "./rewrite-passes.js";
+import { renderedLocation } from "./full-payload.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc/server";
 import type {
   RscPayload,
@@ -25,6 +27,7 @@ import type {
   SSRModule,
 } from "./types.js";
 import {
+  createReloadResponse,
   createResponseWithMergedHeaders,
   finalizeResponse,
   interceptRedirectForPartial,
@@ -41,6 +44,7 @@ import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import {
   isWebSocketUpgradeResponse,
   appendVaryAccept,
+  trySetHeader,
 } from "../response-utils.js";
 import {
   handleResponseRoute,
@@ -57,10 +61,7 @@ import {
   invokeOnError,
   resolveDefaultNotFound,
 } from "../router/error-handling.js";
-import {
-  createReverseFunction,
-  stripInternalParams,
-} from "../router/handler-context.js";
+import { createReverseFunction } from "../router/handler-context.js";
 import { contextSet } from "../context-var.js";
 import {
   hasCachedManifest,
@@ -82,7 +83,7 @@ import {
   revalidateAfterAction,
   type ActionContinuation,
 } from "./server-action.js";
-import { handleLoaderFetch } from "./loader-fetch.js";
+import { handleLoaderFetch, renderLoaderError } from "./loader-fetch.js";
 import { applyStreamIdleTimeout } from "./stream-idle.js";
 import {
   checkRequestOrigin,
@@ -113,6 +114,7 @@ import {
   mayNeedSSR,
   isRscRequest,
   SSR_SETUP_VAR,
+  type SSRSetup,
 } from "./ssr-setup.js";
 import {
   classifyRequest,
@@ -154,21 +156,6 @@ import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
  * });
  * ```
  */
-
-/**
- * Response that tells the client to do a full document navigation. Shared by
- * the terminal reload plans (version-mismatch and app-switch): an empty 200
- * carrying X-RSC-Reload, which the client turns into window.location.href.
- */
-function createReloadResponse(reloadUrl: string) {
-  return createResponseWithMergedHeaders(null, {
-    status: 200,
-    headers: {
-      "X-RSC-Reload": reloadUrl,
-      "content-type": "text/x-component;charset=utf-8",
-    },
-  });
-}
 
 export function createRSCHandler<
   TEnv = unknown,
@@ -703,24 +690,70 @@ export function createRSCHandler<
         // latter is reserved for the low-cardinality template (OTel convention).
         span.setAttribute("url.path", url.pathname);
 
-        // Core handler logic (wrapped by middleware)
-        const coreHandler = async (): Promise<Response> => {
-          return coreRequestHandler(request, env, url, variables, nonce);
-        };
-
-        // Execute middleware chain if any, otherwise call core handler
-        // directly; the response is finalized below, inside the response span.
-        const hasMiddleware = matchedMiddleware.length > 0;
-        const downstream = hasMiddleware
-          ? await executeMiddleware(
-              matchedMiddleware,
-              request,
+        // One pass per URL: the global middleware chain matched on the pass's
+        // path, wrapping the core handler. A `throw rewrite()` from global or
+        // route middleware unwinds the pass, and the next one runs the same
+        // request as the target from the top, as a direct visit would
+        // (rsc/rewrite-passes.ts). The response is finalized below, inside the
+        // response span.
+        let passIndex = 0;
+        let hasMiddleware = false;
+        const { response: downstream, rewrittenTo } = await runRewritePasses({
+          reqCtx: requestContext,
+          request,
+          url,
+          routeMap: getRequiredRouteMap,
+          basename: router.basename,
+          runPass: (passRequest, passUrl) => {
+            const passMiddleware =
+              passIndex++ === 0
+                ? matchedMiddleware
+                : matchMiddleware(
+                    requestContext.url.pathname,
+                    router.middleware,
+                  );
+            hasMiddleware = passMiddleware.length > 0;
+            const coreHandler = (): Promise<Response> =>
+              coreRequestHandler(passRequest, env, passUrl, variables, nonce);
+            return hasMiddleware
+              ? executeMiddleware(
+                  passMiddleware,
+                  passRequest,
+                  env,
+                  variables,
+                  coreHandler,
+                  createReverseFunction(getRequiredRouteMap()),
+                )
+              : coreHandler();
+          },
+          onHop: (pass) => {
+            span.setAttribute("rango.rewrite.target", pass.target.pathname);
+            span.setAttribute("rango.rewrite.hops", pass.hops);
+          },
+          report: (error, at) => {
+            callOnError(error, "routing", {
+              request: at.request,
+              url: at.url,
               env,
-              variables,
-              coreHandler,
-              createReverseFunction(getRequiredRouteMap()),
-            )
-          : await coreHandler();
+              handledByBoundary: false,
+            });
+          },
+          // A loader fetch answers with the error `load()` rejects with.
+          refuse: (error) =>
+            url.searchParams.has("_rsc_loader")
+              ? renderLoaderError(
+                  handlerCtx,
+                  { message: (error as Error).message, name: "Error" },
+                  500,
+                  {
+                    request,
+                    url,
+                    env,
+                    loaderId: url.searchParams.get("_rsc_loader") ?? "",
+                  },
+                )
+              : undefined,
+        });
 
         // Final response construction + host handoff, wrapped in rango.response
         // — the explicit stream-handoff marker. The callback is synchronous, so
@@ -787,14 +820,9 @@ export function createRSCHandler<
           }
 
           const fullTiming = timingParts.join(", ");
-          if (fullTiming && !isWebSocketUpgradeResponse(response)) {
-            try {
-              response.headers.set("Server-Timing", fullTiming);
-            } catch {
-              // Immutable headers (e.g. a passed-through platform Response) — drop
-              // the timing header, never the response. Instrumentation must not
-              // 500 a request.
-            }
+          if (fullTiming) trySetHeader(response, "Server-Timing", fullTiming);
+          if (rewrittenTo !== undefined) {
+            trySetHeader(response, REWRITE_HEADER, rewrittenTo);
           }
 
           // Single open-redirect chokepoint: every response (PE, full-page,
@@ -956,18 +984,19 @@ export function createRSCHandler<
       // which returns { redirect: url }. Fall through to full-render.
     }
 
+    // A reload points at the visitor's URL, never a rewrite target's.
     if (plan.mode === "version-mismatch") {
       console.log(
         `[RSC] Version mismatch: client=${url.searchParams.get("_rsc_v")}, server=${version}. Forcing reload.`,
       );
-      return createReloadResponse(plan.reloadUrl);
+      return createReloadResponse(getRequestContext(), plan.reloadUrl);
     }
 
     if (plan.mode === "app-switch") {
       // Cross-app SPA navigation crossed a host-router app boundary. Force a
       // real document navigation so the target app's document is re-established
       // (stylesheets, theme, warmup, prefetch-TTL). See request-classification.
-      return createReloadResponse(plan.reloadUrl);
+      return createReloadResponse(getRequestContext(), plan.reloadUrl);
     }
 
     // ---- 3. Origin guard (gate for action/loader/PE modes) ----
@@ -1137,6 +1166,9 @@ export function createRSCHandler<
       (mayNeedSSR(request, url) &&
         !isRscRequest(request, url, plan.mode === "partial-render"));
     if (plan.mode !== "loader" && willRenderHtml) {
+      // A rewritten pass keeps the SSR module the earlier pass started
+      // loading; the stream mode is resolved for the request it renders.
+      const earlier = variables[SSR_SETUP_VAR] as Promise<SSRSetup> | undefined;
       const ssrSetup = startSSRSetup(
         handlerCtx,
         request,
@@ -1145,6 +1177,7 @@ export function createRSCHandler<
         router.debugPerformance
           ? () => getRequestContext()._metricsStore
           : undefined,
+        earlier?.then(([ssrModule]) => ssrModule),
       );
       variables[SSR_SETUP_VAR] = ssrSetup;
 
@@ -1348,13 +1381,7 @@ export function createRSCHandler<
               `[RSC] Route handler at ${url.pathname} returned a Response during client-side navigation. ` +
                 `Falling back to hard navigation. Use data-external on the <Link> to avoid the extra round-trip.`,
             );
-            return createResponseWithMergedHeaders(null, {
-              status: 200,
-              headers: {
-                "X-RSC-Reload": stripInternalParams(url).toString(),
-                "content-type": "text/x-component;charset=utf-8",
-              },
-            });
+            return createReloadResponse(getRequestContext(), url);
           }
 
           if (treatAsPartial) {
@@ -1396,7 +1423,7 @@ export function createRSCHandler<
 
           const payload: RscPayload = {
             metadata: {
-              pathname: url.pathname,
+              pathname: renderedLocation(getRequestContext(), url).pathname,
               routerId: router.id,
               basename: router.basename,
               segments: [notFoundSegment],

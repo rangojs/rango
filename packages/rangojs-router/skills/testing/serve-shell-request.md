@@ -392,6 +392,24 @@ const result = await serveShellRequest(router, "/shop", {
 
 This is the request a `clientUrls()` group's `revalidate()` sees on an action: the action's return value as `actionResult`, its last `FormData` argument as `formData`. The pinned example is `src/testing/__tests__/client-urls-revalidate.rsc-test.tsx`. Not with `partial` or `form`.
 
+## A page middleware rewrites
+
+A request a middleware rewrites (`throw rewrite()`, see `/middleware`) runs through the same production handler: the visitor's pass, then the target's, with one request context. Assert what the visitor gets: the target's body and status, `x-rango-rewrite`, the visitor's pathname in the payload, and on a `ppr` target the target's shell key.
+
+```ts
+it("a locked page renders the maintenance route at its own URL", async () => {
+  const result = await serveShellRequest(router, "/shop?lock=on");
+  expect(result.response.status).toBe(503); // set by the target's middleware
+  expect(result.response.headers.get("x-rango-rewrite")).toBe("/maintenance");
+  expect(result.body).toContain("Down for maintenance");
+
+  const nav = await serveShellRequest(router, "/shop?lock=on", {
+    partial: { from: "/" },
+  });
+  expect(nav.flight).toContain("Down for maintenance"); // the target's segments
+});
+```
+
 ## Caveats
 
 What the HTML stub cannot reproduce, so keep it in e2e:

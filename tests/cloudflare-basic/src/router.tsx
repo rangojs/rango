@@ -10,6 +10,12 @@ import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
 import type { AppBindings } from "./env.js";
 import { onErrorLog } from "./error-log.js";
+import {
+  rwClientUrlsLockMiddleware,
+  rwCountMiddleware,
+  rwGuardMiddleware,
+  rwLockMiddleware,
+} from "./pages/rewrite.js";
 
 function resolveTagPurge(
   env: AppBindings,
@@ -200,6 +206,11 @@ export const router = createRouter<AppBindings>({
       headers: { "x-return-response": "applied" },
     });
   })
+  // throw rewrite() fixtures (pages/rewrite.tsx, e2e/rewrite.test.ts).
+  .use("/rw/*", rwCountMiddleware)
+  .use("/rw/*", rwLockMiddleware)
+  .use("/rw/guarded/*", rwGuardMiddleware)
+  .use("/__client-urls/:slug", rwClientUrlsLockMiddleware)
   // Register all routes
   .routes(urlpatterns);
 
