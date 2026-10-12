@@ -7,7 +7,13 @@ import {
   useOutlet,
   useParams,
 } from "@rangojs/router/client";
-import { ClientUrlsItemLoader } from "./client-urls.loader.js";
+import { clientUrlsResultAction } from "./client-urls-result.actions.js";
+import {
+  ClientUrlsCounterLoader,
+  ClientUrlsItemLoader,
+  ClientUrlsModalNoteLoader,
+  ClientUrlsModalResultLoader,
+} from "./client-urls.loader.js";
 
 /**
  * Named clientUrls group exercising both intercept declaration sites:
@@ -48,6 +54,13 @@ function InterceptClientIndex() {
       >
         Open detail
       </Link>
+      <Link
+        to="/client-urls-intercept/detail/delta"
+        prefetch="hover"
+        data-testid="ci-detail-prefetch-link"
+      >
+        Open detail (prefetched)
+      </Link>
     </div>
   );
 }
@@ -82,28 +95,59 @@ function InterceptClientDetail() {
 
 function InterceptClientDetailModal() {
   const { data } = useLoader(ClientUrlsItemLoader);
+  const { data: count } = useLoader(ClientUrlsCounterLoader);
+  const { data: result } = useLoader(ClientUrlsModalResultLoader);
+  const { data: note } = useLoader(ClientUrlsModalNoteLoader);
 
   return (
     <dialog open data-testid="ci-client-modal">
       <p data-testid="ci-client-modal-item">{data}</p>
+      <span data-testid="ci-modal-count">{count}</span>
+      <span data-testid="ci-modal-result-runs">{result.runs}</span>
+      <span data-testid="ci-modal-note-runs">{note.runs}</span>
+      <button
+        data-testid="ci-modal-ok"
+        onClick={() => void clientUrlsResultAction(true)}
+      >
+        Succeeds
+      </button>
+      <button
+        data-testid="ci-modal-fail"
+        onClick={() => void clientUrlsResultAction(false)}
+      >
+        Fails
+      </button>
     </dialog>
   );
 }
 
-export default clientUrls(({ layout, path, loader, loading, intercept }) => [
-  layout(InterceptClientLayout, () => [
-    path("/", InterceptClientIndex, { name: "index" }),
-    path("/items/:itemId", InterceptClientItem, { name: "item" }, () => [
-      loader(ClientUrlsItemLoader),
-      loading(<InterceptClientLoading />),
+export default clientUrls(
+  ({ layout, path, loader, loading, intercept, revalidate }) => [
+    layout(InterceptClientLayout, () => [
+      path("/", InterceptClientIndex, { name: "index" }),
+      path("/items/:itemId", InterceptClientItem, { name: "item" }, () => [
+        loader(ClientUrlsItemLoader),
+        loading(<InterceptClientLoading />),
+      ]),
+      path("/detail/:itemId", InterceptClientDetail, { name: "detail" }, () => [
+        loader(ClientUrlsItemLoader),
+      ]),
+      // Module-local intercept: no `when`, dot-local named target, loader()/
+      // loading() only — every field projects as JSON to the server tree. Its
+      // loaders take the route options: a revalidate() the build moves to the
+      // server, and prefetch: false.
+      intercept("@modal", ".detail", InterceptClientDetailModal, () => [
+        loader(ClientUrlsItemLoader),
+        loader(ClientUrlsCounterLoader),
+        loader(ClientUrlsModalResultLoader, () => [
+          revalidate(({ isAction, actionResult }) =>
+            isAction(clientUrlsResultAction)
+              ? actionResult?.ok === true
+              : undefined,
+          ),
+        ]),
+        loader(ClientUrlsModalNoteLoader, { prefetch: false }),
+      ]),
     ]),
-    path("/detail/:itemId", InterceptClientDetail, { name: "detail" }, () => [
-      loader(ClientUrlsItemLoader),
-    ]),
-    // Module-local intercept: no `when`, dot-local named target, loader()/
-    // loading() only — every field projects as JSON to the server tree.
-    intercept("@modal", ".detail", InterceptClientDetailModal, () => [
-      loader(ClientUrlsItemLoader),
-    ]),
-  ]),
-]);
+  ],
+);

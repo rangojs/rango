@@ -2194,6 +2194,8 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
    * route's `item/b` renders `pf-item-*`. `from` takes the same stem.
    */
   stem?: string;
+  /** The stem of `from`'s test ids, where it is not `stem`. */
+  fromStem?: string;
   /**
    * The fallback of the `<Suspense>` around the deferred read. A deferred
    * loader is a loader that is still streaming: this fallback shows with the
@@ -3307,7 +3309,11 @@ export async function recordPlainAndAdoptedClick(
       // Its own link, already prefetched: a second hover sends nothing.
       if (!(early && ownLink)) await prefetchCase(page, hub, spec.from);
       await clickWithoutHover(page, spec.from);
-      await expect(value(spec.from)).toBeVisible();
+      await expect(
+        spec.fromStem
+          ? byId(page, `pf-${spec.fromStem}-value`)
+          : value(spec.from),
+      ).toBeVisible();
       await expect(page).toHaveURL(hub.pageUrl(spec.from));
       await complete(page);
     }
@@ -3992,6 +3998,263 @@ export interface PrefetchFalseSuite {
  * file calls this once in a dev describe and once in a `(production)` one:
  * the describes stay in the file, where the bucketing checks read them.
  */
+// intercept(): loaders of a modal opened from its source page (the fixture's
+// `ix`), loader segments of the @modal slot.
+
+/** The intercept's source page, entered from the hub with a plain click. */
+async function openSource(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  flags: PrefetchFalseFlags = {},
+): Promise<Hub> {
+  const hub = await openHub(page, fixture, undefined, flags);
+  await clickWithoutHover(page, "ix");
+  await expect(byId(page, "pf-ix-value")).toBeVisible();
+  await expect(page).toHaveURL(hub.pageUrl("ix"));
+  await complete(page);
+  return hub;
+}
+
+/** The source page's mount marker: another value is another mount. */
+async function sourceInstance(page: Page): Promise<string> {
+  const marker = byId(page, "pf-ix-instance");
+  await expect(marker).not.toHaveText("");
+  return (await marker.textContent()) ?? "";
+}
+
+const IX_ITEM_WORK = ["ix-item.a", "ix-item.data", "ix-item.modal"];
+
+/**
+ * From the source page, a prefetch of the intercept runs its handler and its
+ * unflagged loader, not the flagged one. The click that adopts it opens the
+ * modal at once over the source page, with the modal's loading() while its
+ * one fill, sent from the source with the intercept source header, is held;
+ * released, the fill brings the flagged loader's value. Nothing the prefetch
+ * ran runs again.
+ */
+export async function expectInterceptPrefetchSkipsFlaggedLoaderAndClickFillsIt(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openSource(page, fixture);
+  const requests = recordPartials(page, hub.pathname("ix/item/1"));
+  await prefetchCase(page, hub, "ix/item/1");
+  expect(
+    pick(await hub.counts(), IX_ITEM_WORK),
+    "the prefetch ran the modal and its unflagged loader, not the flagged one",
+  ).toEqual({ "ix-item.a": 1, "ix-item.data": 0, "ix-item.modal": 1 });
+
+  const fills = await holdFills(page);
+  await clickWithoutHover(page, "ix/item/1");
+  await expect(page).toHaveURL(hub.pageUrl("ix/item/1"));
+  await expect(
+    byId(page, "pf-ix-item-modal").or(byId(page, "pf-ix-item-fallback")),
+  ).toBeVisible();
+  await expect(byId(page, "pf-ix-item-fallback")).toBeVisible();
+  await expect(
+    byId(page, "pf-ix-page"),
+    "the source stays under the modal",
+  ).toBeVisible();
+  await expect
+    .poll(() => kindsOf(requests), "the click sent its fill")
+    .toEqual(["prefetch", "fill"]);
+  const fill = requests[1]!;
+  const source = await fill.headerValue("x-rsc-router-intercept-source");
+  expect(
+    source && new URL(source, hub.home).href,
+    "the fill names the intercept's source",
+  ).toBe(hub.pageUrl("ix"));
+
+  await fills.release();
+  await expect(byId(page, "pf-ix-item-value")).toHaveText("ix-item.data:1");
+  await expect(byId(page, "pf-ix-item-a")).toHaveText("ix-item.a:1");
+  await complete(page);
+  await expect(byId(page, "pf-ix-page")).toBeVisible();
+  expect(kindsOf(requests)).toEqual(["prefetch", "fill"]);
+  expect(
+    pick(await hub.counts(), IX_ITEM_WORK),
+    "the fill ran the flagged loader once, and nothing the prefetch ran",
+  ).toEqual({ "ix-item.a": 1, "ix-item.data": 1, "ix-item.modal": 1 });
+}
+
+/**
+ * Opening a modal neither remounts nor hides the page under it: its mount
+ * marker keeps its value, with a flagged loader deferred and without one.
+ */
+export async function expectSourcePageIsNotRemountedWhenTheModalOpens(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  name: "ix/item/1" | "ix/bare/1" | "ix/plain/1",
+  prefetched: boolean,
+): Promise<void> {
+  const hub = await openSource(page, fixture);
+  const before = await sourceInstance(page);
+  if (prefetched) await prefetchCase(page, hub, name);
+  const stem = name.split("/").slice(0, 2).join("-");
+  const watch = await watchPage(page, ["pf-layout", "pf-ix-page"]);
+  await clickWithoutHover(page, name);
+  await expect(page).toHaveURL(hub.pageUrl(name));
+  await expect(byId(page, `pf-${stem}-value`)).toBeVisible();
+  await complete(page);
+  const seen = await watch.stop();
+  expect(seen.hidden, "the page under the modal stayed on screen").toEqual([]);
+  expect(seen.remounted, "nothing was mounted again").toEqual([]);
+  expect(await sourceInstance(page), "the same mount of the page").toBe(before);
+}
+
+/**
+ * A modal with no loading() and a deferred loader: the URL moves at the
+ * click and the page under it stays; the slot shows nothing until the fill
+ * answers (its LoaderBoundary's own null fallback), as a plain click shows
+ * nothing until its response. Then the modal shows whole.
+ */
+export async function expectInterceptWithNoLoadingWaitsForTheFillInItsSlot(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openSource(page, fixture);
+  const requests = recordPartials(page, hub.pathname("ix/bare/1"));
+  await prefetchCase(page, hub, "ix/bare/1");
+  expect(pick(await hub.counts(), ["ix-bare.data", "ix-bare.modal"])).toEqual({
+    "ix-bare.data": 0,
+    "ix-bare.modal": 1,
+  });
+  const fills = await holdFills(page);
+  await clickWithoutHover(page, "ix/bare/1");
+  await expect(page).toHaveURL(hub.pageUrl("ix/bare/1"));
+  await expect
+    .poll(() => kindsOf(requests), "the click sent its fill")
+    .toEqual(["prefetch", "fill"]);
+  await page.waitForTimeout(100);
+  await expect(byId(page, "pf-ix-page")).toBeVisible();
+  await expect(byId(page, "pf-ix-bare-modal"), "the slot is empty").toHaveCount(
+    0,
+  );
+
+  await fills.release();
+  await expect(byId(page, "pf-ix-bare-value")).toHaveText("ix-bare.data:1");
+  await expect(byId(page, "pf-ix-bare-modal")).toBeVisible();
+  await complete(page);
+  expect(pick(await hub.counts(), ["ix-bare.data", "ix-bare.modal"])).toEqual({
+    "ix-bare.data": 1,
+    "ix-bare.modal": 1,
+  });
+}
+
+/** Back closes the filled modal, forward restores it from history. */
+export async function expectInterceptBackAndForwardKeepTheFilledModal(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openSource(page, fixture);
+  await prefetchCase(page, hub, "ix/item/1");
+  await clickWithoutHover(page, "ix/item/1");
+  await expect(byId(page, "pf-ix-item-value")).toHaveText("ix-item.data:1");
+  await complete(page);
+  const requests = recordPartials(page, hub.pathname("ix/item/1"));
+
+  for (let round = 0; round < 2; round++) {
+    await page.goBack();
+    await expect(page).toHaveURL(hub.pageUrl("ix"));
+    await expect(byId(page, "pf-ix-item-modal")).toHaveCount(0);
+    await expect(byId(page, "pf-ix-page")).toBeVisible();
+    await page.goForward();
+    await expect(page).toHaveURL(hub.pageUrl("ix/item/1"));
+    await expect(byId(page, "pf-ix-item-value")).toHaveText("ix-item.data:1");
+    await expect(byId(page, "pf-ix-item-a")).toHaveText("ix-item.a:1");
+    await expect(byId(page, "pf-ix-page")).toBeVisible();
+    await expect(byId(page, "pf-ix-item-fallback")).toHaveCount(0);
+  }
+  expect(requests, "the filled modal was restored from history").toEqual([]);
+  expect(pick(await hub.counts(), IX_ITEM_WORK)).toEqual({
+    "ix-item.a": 1,
+    "ix-item.data": 1,
+    "ix-item.modal": 1,
+  });
+}
+
+/**
+ * A newer navigation while the modal's fill is held ends on the newer page:
+ * the fill is cancelled before its response, the flagged loader never runs,
+ * and nothing of the modal is left.
+ */
+export async function expectNewerNavigationDuringAnInterceptFill(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const failed: string[] = [];
+  page.on("requestfailed", (request) => {
+    if (isFill(request.url())) failed.push(request.failure()?.errorText ?? "");
+  });
+  const hub = await openSource(page, fixture);
+  await prefetchCase(page, hub, "ix/item/1");
+  const fills = await holdFills(page);
+  await clickWithoutHover(page, "ix/item/1");
+  await expect(byId(page, "pf-ix-item-fallback")).toBeVisible();
+  await clickWithoutHover(page, "control");
+  await expect(page).toHaveURL(hub.pageUrl("control"));
+  await expect(byId(page, "pf-control-value")).toBeVisible();
+  await expect.poll(() => failed.length, "the fill was cancelled").toBe(1);
+  await fills.release();
+  await complete(page);
+  await page.waitForTimeout(200);
+  await expect(page).toHaveURL(hub.pageUrl("control"));
+  await expect(byId(page, "pf-ix-item-modal")).toHaveCount(0);
+  expect(
+    pick(await hub.counts(), ["ix-item.data"]),
+    "the cancelled fill ran nothing",
+  ).toEqual({ "ix-item.data": 0 });
+}
+
+/**
+ * A document request of an intercept's target renders no intercept: the
+ * full page, every loader run once.
+ */
+export async function expectHardLoadOfTheTargetRunsEveryLoader(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = hubFor(page, fixture, randomUUID().slice(0, 8));
+  await page.goto(hub.pageUrl("ix/item/1"));
+  await awaitHydrated(page);
+  await expect(byId(page, "pf-ix-item-page")).toBeVisible();
+  await expect(byId(page, "pf-ix-item-value")).toHaveText("ix-item.data:1");
+  await expect(byId(page, "pf-ix-item-a")).toHaveText("ix-item.a:1");
+  await expect(byId(page, "pf-ix-item-modal")).toHaveCount(0);
+  expect(
+    pick(await hub.counts(), [...IX_ITEM_WORK, "ix-item.handler"]),
+  ).toEqual({
+    "ix-item.a": 1,
+    "ix-item.data": 1,
+    "ix-item.modal": 0,
+    "ix-item.handler": 1,
+  });
+}
+
+/**
+ * The intercept parity cases: a click from the source page, plain and with
+ * its prefetch adopted, the server `SERVER_MS` away. The modal's loading()
+ * covers its loaders on both clicks; the page under it is held.
+ */
+const IX_PARITY_CLICKS: PrefetchFalseParityCase[] = [
+  {
+    name: "ix/item/1",
+    from: "ix",
+    fromStem: "ix",
+    stem: "ix-item",
+    held: ["pf-ix-page"],
+    server: SERVER_MS,
+  },
+  {
+    name: "ix/plain/1",
+    from: "ix",
+    fromStem: "ix",
+    stem: "ix-plain",
+    held: ["pf-ix-page"],
+    server: SERVER_MS,
+  },
+];
+
 export function definePrefetchFalseTests(
   test: typeof base,
   suite: PrefetchFalseSuite,
@@ -4322,6 +4585,56 @@ export function definePrefetchFalseTests(
 
   it("a deferring prefetch the browser kept never answers a navigation during a back/forward reload", (page, fixture) =>
     expectDeferringPrefetchTheBrowserKeptIsHarmless(page, fixture, "click"));
+
+  // intercept(): loaders of a modal opened from its source page.
+  it("intercept(): a prefetch from the source skips the flagged loader and the click fills it", (page, fixture) =>
+    expectInterceptPrefetchSkipsFlaggedLoaderAndClickFillsIt(page, fixture));
+
+  for (const name of ["ix/item/1", "ix/bare/1", "ix/plain/1"] as const) {
+    for (const prefetched of [true, false]) {
+      it(`intercept(): the page under the modal is not remounted when it opens: ${name}${prefetched ? ", prefetched" : ""}`, (page, fixture) =>
+        expectSourcePageIsNotRemountedWhenTheModalOpens(
+          page,
+          fixture,
+          name,
+          prefetched,
+        ));
+    }
+  }
+
+  it("intercept(): with no loading(), the slot is empty until the fill and the URL moves at the click", (page, fixture) =>
+    expectInterceptWithNoLoadingWaitsForTheFillInItsSlot(page, fixture));
+
+  it("intercept(): back and forward keep the filled modal", (page, fixture) =>
+    expectInterceptBackAndForwardKeepTheFilledModal(page, fixture));
+
+  it("intercept(): a newer navigation during the fill ends on the newer page", (page, fixture) =>
+    expectNewerNavigationDuringAnInterceptFill(page, fixture));
+
+  it("intercept(): a hard load of the target runs every loader", (page, fixture) =>
+    expectHardLoadOfTheTargetRunsEveryLoader(page, fixture));
+
+  for (const spec of IX_PARITY_CLICKS) {
+    it(`intercept(): the adopted click shows the modal at the click, never later than a plain click: ${prefetchFalseParityTitle(spec)}`, async (page, fixture) => {
+      const pair = await expectAdoptedClickIsNeverWorseThanAPlainClick(
+        page,
+        fixture,
+        spec,
+        {
+          onRepeat: (late) =>
+            test.info().annotations.push({
+              type: "parity pair repeated",
+              description: late,
+            }),
+          onOpen: ({ reason }) => test.fail(true, reason),
+        },
+      );
+      test.info().annotations.push({
+        type: "parity",
+        description: describePair(pair),
+      });
+    });
+  }
 
   // clientUrls() routes: loader(Def, { prefetch: false }) in a group.
   it("clientUrls(): an in-group click commits the prefetch with the click and one fill brings the flagged loader; pending ends with the commit", (page, fixture) =>

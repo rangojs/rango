@@ -204,6 +204,84 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(testId(page, "cu-result-runs")).toHaveText(String(afterOk));
   });
 
+  test("a clientUrls() intercept loader's revalidate() sees the action result", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/__client-urls-intercept"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+    await testId(page, "cui-note-link").click();
+    await expect(testId(page, "cui-modal")).toBeVisible();
+
+    const readResult = (): Promise<number> =>
+      getNumericContent(testId(page, "cui-modal-result-runs"));
+    const readNs = (): Promise<number> =>
+      getNumericContent(testId(page, "cui-modal-ns-runs"));
+    const before = await readResult();
+    await testId(page, "cui-modal-ok").click();
+    await expect.poll(readResult).toBeGreaterThan(before);
+    const afterOk = await readResult();
+
+    // The namespace-gated loader re-runs on every action of that module:
+    // once it advanced, the fail action's commit landed.
+    const nsBefore = await readNs();
+    await testId(page, "cui-modal-fail").click();
+    await expect.poll(readNs).toBeGreaterThan(nsBefore);
+    await expect(testId(page, "cui-modal-result-runs")).toHaveText(
+      String(afterOk),
+    );
+    await expect(testId(page, "cui-index")).toBeVisible();
+  });
+
+  test("clientUrls(): an in-group prefetch of an intercept target defers the flagged intercept loader", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/__client-urls-intercept"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const target = "/__client-urls-intercept/note/b";
+    const kinds: string[] = [];
+    let fillSource: string | null = null;
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname !== target || !url.searchParams.has("_rsc_partial")) {
+        return;
+      }
+      if (url.searchParams.has("_rsc_fill")) {
+        kinds.push("fill");
+        fillSource = request.headers()["x-rsc-router-intercept-source"] ?? "";
+      } else {
+        kinds.push(
+          request.headers()["x-rango-prefetch"] === "1"
+            ? "prefetch"
+            : "navigation",
+        );
+      }
+    });
+    const prefetched = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === target &&
+        response.request().headers()["x-rango-prefetch"] === "1",
+    );
+    await testId(page, "cui-note-prefetch-link").hover();
+    await (await prefetched).finished();
+    await page.mouse.move(0, 0);
+
+    await testId(page, "cui-note-prefetch-link").click();
+    await expect(testId(page, "cui-modal")).toBeVisible();
+    await expect(testId(page, "cui-modal-note-runs")).toBeVisible();
+    await expect(testId(page, "cui-index")).toBeVisible();
+    // The prefetch deferred the flagged loader; the click's one fill, from
+    // the intercept's source, ran it.
+    expect(kinds).toEqual(["prefetch", "fill"]);
+    expect(fillSource && new URL(fillSource, f.url("/")).href).toBe(
+      f.url("/__client-urls-intercept"),
+    );
+  });
+
   test("ssr:false document render keeps the large awaited grid in-place (no outlining)", async ({
     request,
   }) => {

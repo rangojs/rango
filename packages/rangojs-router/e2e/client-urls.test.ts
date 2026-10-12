@@ -387,6 +387,82 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "ci-client-modal")).not.toBeVisible();
   });
 
+  test("a clientUrls() intercept loader's revalidate() sees the action result", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/client-urls-intercept"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+    await testId(page, "ci-detail-link").click();
+    await expect(testId(page, "ci-client-modal")).toBeVisible();
+
+    const readRuns = (): Promise<number> =>
+      getNumericContent(testId(page, "ci-modal-result-runs"));
+    const before = await readRuns();
+    await testId(page, "ci-modal-ok").click();
+    await expect.poll(readRuns).toBeGreaterThan(before);
+    const afterOk = await readRuns();
+
+    // The counter loader follows the action default: once it advanced, the
+    // fail action's commit landed and a held value is observable.
+    const count = await testId(page, "ci-modal-count").innerText();
+    await testId(page, "ci-modal-fail").click();
+    await expect(testId(page, "ci-modal-count")).not.toHaveText(count);
+    await expect(testId(page, "ci-modal-result-runs")).toHaveText(
+      String(afterOk),
+    );
+    await expect(testId(page, "ci-index")).toBeVisible();
+  });
+
+  test("clientUrls(): an in-group prefetch of an intercept target defers the flagged intercept loader", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/client-urls-intercept"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const target = "/client-urls-intercept/detail/delta";
+    const kinds: string[] = [];
+    let fillSource: string | null = null;
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname !== target || !url.searchParams.has("_rsc_partial")) {
+        return;
+      }
+      if (url.searchParams.has("_rsc_fill")) {
+        kinds.push("fill");
+        fillSource = request.headers()["x-rsc-router-intercept-source"] ?? "";
+      } else {
+        kinds.push(
+          request.headers()["x-rango-prefetch"] === "1"
+            ? "prefetch"
+            : "navigation",
+        );
+      }
+    });
+    const prefetched = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === target &&
+        response.request().headers()["x-rango-prefetch"] === "1",
+    );
+    await testId(page, "ci-detail-prefetch-link").hover();
+    await (await prefetched).finished();
+    await page.mouse.move(0, 0);
+
+    await testId(page, "ci-detail-prefetch-link").click();
+    await expect(testId(page, "ci-client-modal")).toBeVisible();
+    await expect(testId(page, "ci-modal-note-runs")).toBeVisible();
+    await expect(testId(page, "ci-index")).toBeVisible();
+    // The prefetch deferred the flagged loader; the click's one fill, from
+    // the intercept's source, ran it.
+    expect(kinds).toEqual(["prefetch", "fill"]);
+    expect(fillSource && new URL(fillSource, f.url("/")).href).toBe(
+      f.url("/client-urls-intercept"),
+    );
+  });
+
   test("action revalidates the clientUrls group's loaders; parent RSC layout keeps the locked skip", async ({
     page,
   }) => {
