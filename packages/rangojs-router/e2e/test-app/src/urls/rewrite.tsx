@@ -21,6 +21,8 @@ const RwLock = createVar<{ reason: string }>();
 const RwRuns = createVar<number>();
 /** The same middleware's count, skipped on a rewritten pass. */
 const RwCount = createVar<number>();
+/** Runs of the maintenance route's own middleware. */
+const RwTargetRuns = createVar<number>();
 
 /** Counts runs and adds a post-next() header (mounted on /rw/* in router.tsx). */
 export const rwCountMiddleware: Middleware = async (ctx, next) => {
@@ -36,6 +38,9 @@ export const rwLockMiddleware: Middleware = async (ctx, next) => {
   if (ctx.pathname === "/rw/loop-a") throw rewrite("/rw/loop-b");
   if (ctx.pathname === "/rw/loop-b") throw rewrite("/rw/loop-a");
   if (ctx.pathname === "/rw/gone") throw rewrite("/rw/nowhere");
+  if (ctx.pathname === "/rw/self") throw rewrite("/rw/self");
+  // A global rewrite into a pattern-guarded path.
+  if (ctx.pathname === "/rw/global-to-guarded") throw rewrite("rw.guarded");
   // An inline path guard decides on the URL being rendered.
   if (
     ctx.pathname === "/rw/inline-admin" &&
@@ -129,6 +134,9 @@ function RwMaintenance(ctx: HandlerContext) {
       </span>
       <span data-testid="rw-runs">{String(ctx.get(RwRuns) ?? 0)}</span>
       <span data-testid="rw-count">{String(ctx.get(RwCount) ?? 0)}</span>
+      <span data-testid="rw-target-runs">
+        {String(ctx.get(RwTargetRuns) ?? 0)}
+      </span>
       <RwClientLocation />
     </section>
   );
@@ -147,6 +155,7 @@ export const rewritePatterns = urls(({ path, layout, middleware }) => [
     path("/maintenance", RwMaintenance, { name: "maintenance" }, () => [
       // The target sets its own status.
       middleware(async (ctx, next) => {
+        ctx.set(RwTargetRuns, (ctx.get(RwTargetRuns) ?? 0) + 1);
         getRequestContext().setStatus(503);
         ctx.header("Retry-After", "600");
         await next();
@@ -182,6 +191,24 @@ export const rewritePatterns = urls(({ path, layout, middleware }) => [
         }),
       ],
     ),
+    // A route middleware chain that rewrites from its inner middleware: the
+    // outer one's code after next() never runs.
+    path(
+      "/route-to-maintenance",
+      () => <h1>never rendered</h1>,
+      {},
+      () => [
+        middleware(async (ctx, next) => {
+          await next();
+          ctx.header("x-rw-route-post", "visitor");
+        }),
+        middleware(() => {
+          throw rewrite("rw.maintenance");
+        }),
+      ],
+    ),
+    path("/global-to-guarded", () => <h1>never rendered</h1>),
+    path("/self", () => <h1>self</h1>),
     path("/handler-throws", () => {
       throw rewrite("/rw/shop");
     }),

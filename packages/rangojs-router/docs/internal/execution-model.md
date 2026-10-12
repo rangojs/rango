@@ -127,9 +127,28 @@ The decisions live in `router/segment-resolution/revalidation.ts` and ask
 `router/segment-resolution/prefetch-deferral.ts`; the design is
 `docs/design/prefetch-false.md`.
 
+### 6) Rewritten request (`throw rewrite()`)
+
+A middleware that throws `rewrite(target)` ends the pass it is in. The
+request runs again as the target, from the top, with the same request
+context:
+
+```text
+pass 1 (the visitor's URL)
+  global middleware -> ... -> throw rewrite("/maintenance")   (global or route middleware)
+pass 2 (the target's URL, same request context)
+  global middleware matched on the target path
+    -> the target's route middleware
+      -> the target's render
+```
+
+See "Rewrite" below for what moves and what stays.
+
 ## Guarantees
 
-- Global middleware wraps the entire request lifecycle.
+- Global middleware wraps the entire request lifecycle of each pass: once for
+  a request no middleware rewrites, once per pass for a rewritten one
+  (`[RW1]`, `[RW2]`).
 - Route middleware wraps render passes, including:
   - normal renders
   - post-action revalidation renders
@@ -861,6 +880,101 @@ Internal consumers tolerate both forms — `satisfiesConstraints` and
 `reverse()` treat missing/undefined and `""` identically — so caller code
 or `getParams()` shapes that pass `""` explicitly continue to work.
 
+## Rewrite
+
+`throw rewrite(target)` renders another route at the same URL: the address
+bar keeps the visitor's URL, the response is the target's. You reach for it
+for a maintenance or lock page, a deploy migration, a URL override, an A/B or
+geo split. The implementation is a dispatcher loop, not a second router: the
+global middleware chain runs inside one catch in `rsc/handler.ts`, and a
+`Rewrite` that unwinds to it moves the request context to the target
+(`applyRewrite` in `route-definition/rewrite.ts`, `rebaseRequestContext` in
+`server/request-context.ts`) and runs the request again.
+
+Why one catch at the top, and not a re-render where the throw happened?
+Because a direct visit to the target runs the target's global middleware
+first. A guard scoped to the target's path (`.use("/admin/*", guard)`), or an
+inline `if (ctx.pathname === ...)` check, must decide on the URL being
+rendered, or a rewrite becomes a way around it. So pass 2 is a direct visit
+in everything but the request context.
+
+The request context is the same object across passes. That is the headline
+guarantee: a value `ctx.set()` before the throw is readable in the target's
+middleware, handlers and loaders.
+
+- **Kept** (the same object): variables (`ctx.set`/`ctx.get`), the response
+  stub (status, headers, cookies), location state, theme, `ctx.dynamic()`,
+  metrics, request tags, onResponse callbacks, the SSR setup the first pass
+  started, and the hop counter (an internal `createVar` token user code
+  cannot reach).
+- **Moved to the target**: `request` (rebuilt for the target), `url`,
+  `originalUrl` (the visitor's `_rsc*` params carried, so a navigation stays
+  a navigation), `pathname`, `searchParams`, the request kind.
+- **Cleared** for the target's match: `params`, the route name, `reverse`,
+  the classified route, the request mode, and the render state of the pass
+  that unwound.
+- **New**: the handle store, the loader memo and the render barrier. A pass
+  can render before it rewrites (a middleware that rewrites after
+  `await next()`); its handle pushes never reach the target.
+
+Guarantees, each pinned by a semantic matrix row:
+
+- A global rewrite re-dispatches as the target: the target's pattern-scoped
+  global middleware runs, pass-1 `ctx.set` values and cookies are kept, the
+  target's route chain runs, and the original route's never does. `[RW1]`
+- A rewrite unwinds: no code after `await next()` of the pass that rewrote
+  runs, in global or route middleware; the target's chain runs once. `[RW2]`
+  The `rango.middleware` span treats the throw as control flow (success),
+  like a thrown `Response`.
+- A rewrite during a mutation (a JS action, a no-JS form post: any non-GET,
+  non-HEAD request) is an error reported through `onError` (phase
+  `"routing"`). A lock returns a `Response` for mutations instead, and that
+  path works in JS and no-JS. `[RW3]`
+- More than 5 hops, or a rewrite to the URL the pass is on (pathname and
+  search), is a `RewriteLoopError`: `onError` (phase `"routing"`) and a 508.
+  `[RW4]`
+
+Where the old and the new URL show:
+
+- `ctx.url`, `ctx.pathname`, `ctx.searchParams` are the target's in pass 2,
+  so pattern-scoped middleware and path checks decide on the rendered route.
+  `ctx.rewrittenFrom` is the visitor's URL (the first one after several
+  hops), a copy per context, `undefined` when nothing rewrote.
+- The payload's `metadata.pathname` and the SSR search and origin seed show
+  the visitor's URL (`renderedLocation` in `rsc/full-payload.ts`), so the
+  document hydrates against the address bar. `params` and `routeName` are the
+  target's. A render other visitors may be served shows the target, as a
+  direct visit does: a PPR shell capture (and the HIT tail that resumes it),
+  and a render the document cache stores. A render that shows the visitor's
+  URL is not stored by the document cache (`_payloadVisitorLocation`).
+- `x-rango-rewrite: <target pathname>` on the response; `rango.request` keeps
+  the visitor's `url.path` and adds `rango.rewrite.target` and
+  `rango.rewrite.hops`.
+- A reload the router asks the browser for (`X-RSC-Reload`, version mismatch,
+  app switch) points at the visitor's URL.
+
+Where a rewrite is not honored, and what it becomes:
+
+| Thrown from                                              | Result                                                             |
+| -------------------------------------------------------- | ------------------------------------------------------------------ |
+| a server action                                          | the action's error, "use redirect()" (`rejectActionRewrite`)       |
+| middleware during a mutation                             | an error, onError `"routing"`                                      |
+| middleware or a loader of a loader fetch (`_rsc_loader`) | the loader fetch's error response                                  |
+| intercept middleware                                     | an error                                                           |
+| a route handler or a loader                              | the error boundary / loader error UI, with the rule in the message |
+| a returned (not thrown) `Rewrite`                        | an error: "throw it, don't return it"                              |
+
+Caches: the document cache keys pass 2 by the target's URL, as a direct
+visit; it lets a `Rewrite` through its `catch` (`isRewrite`). Register a
+rewriting global middleware before the document cache: a pass-1 HIT for the
+visitor's URL would skip the lock. A cached target document carries the
+target's pathname, so a component rendering `usePathname()` can mismatch on
+hydration at the visitor's URL; the same holds for a PPR shell HIT. The
+client's prefetch and history caches key by the visitor's URL and are not
+told about rewrites: a page prefetched before a lock keeps its prefetched
+content for `prefetchCacheTTL`; `invalidateClientCache()` from the response
+that lifts a lock drops stale entries.
+
 ## Async Context Propagation
 
 The router uses `AsyncLocalStorage` to maintain request context across all
@@ -1044,6 +1158,9 @@ value within a group is therefore opt-in via a common `key`.
 
 ## Non-Guarantees
 
+- A loader cannot rewrite, `ssr: false` included: its rejection becomes the
+  loader's error UI. Unwinding a loader would need segment resolution to stop
+  turning a flagged loader's failure into an error envelope.
 - Route middleware is not an action guard.
 - Partial revalidation does not implicitly recompute non-revalidated ancestors.
 - A fill request (`prefetch: false`) does not recompute the handlers the
