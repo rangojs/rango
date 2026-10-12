@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import React, { useContext } from "react";
 import { createSSRHandler, type SSRDependencies } from "../index";
 import { NavigationStoreContext } from "../../browser/react/context.js";
@@ -628,6 +628,90 @@ describe("createSSRHandler", () => {
       resolveInner();
       const html = await consumeStream(stream);
       expect(html).toContain("loaded");
+    });
+
+    // Dev documents settle the client-reference loads their Flight decode
+    // requested before the first flush (#1106). plugin-rsc's SSR loader is
+    // the global the Flight client calls for an import row.
+    describe("dev client-reference loads", () => {
+      const g = globalThis as {
+        __vite_rsc_client_require__?: (id: string) => unknown;
+      };
+      let previousLoader: ((id: string) => unknown) | undefined;
+      beforeEach(() => {
+        previousLoader = g.__vite_rsc_client_require__;
+      });
+      afterEach(() => {
+        g.__vite_rsc_client_require__ = previousLoader;
+      });
+
+      it("the first flush waits for a load the decode requested", async () => {
+        const order: string[] = [];
+        let resolveLoad!: () => void;
+        const load = new Promise<void>((r) => {
+          resolveLoad = r;
+        });
+        g.__vite_rsc_client_require__ = () => load;
+
+        function Badge() {
+          React.use(load);
+          return React.createElement("span", null, "badge-content");
+        }
+        mockedRenderSegments.mockImplementation(() =>
+          Promise.resolve(
+            React.createElement(
+              React.Suspense,
+              { fallback: React.createElement("span", null, "badge-fallback") },
+              React.createElement(Badge),
+            ),
+          ),
+        );
+        const deps = createRealDeps({
+          createFromReadableStream: vi.fn().mockImplementation(async () => {
+            void g.__vite_rsc_client_require__!("/src/badge.tsx#Badge");
+            return {
+              metadata: { pathname: "/", params: {}, matched: ["/"] },
+            };
+          }),
+          // The module settles after the shell is ready, as a module-runner
+          // import does in dev.
+          renderToReadableStream: (async (
+            ...args: Parameters<typeof realRenderToReadableStream>
+          ) => {
+            const stream = await realRenderToReadableStream(...args);
+            setTimeout(() => {
+              order.push("load settled");
+              resolveLoad();
+            }, 20);
+            return stream;
+          }) as SSRDependencies["renderToReadableStream"],
+        });
+
+        const stream = await createSSRHandler(deps)(createMockRscStream());
+        order.push("stream returned");
+        expect(order).toEqual(["load settled", "stream returned"]);
+        const html = await consumeStream(stream);
+        expect(html).toContain("badge-content");
+        expect(html).not.toContain("badge-fallback");
+      });
+
+      it("a load requested outside the document's decode does not hold its flush", async () => {
+        g.__vite_rsc_client_require__ = () => new Promise<void>(() => {});
+        mockedRenderSegments.mockImplementation(() =>
+          Promise.resolve(React.createElement("div", null, "page")),
+        );
+        const renderHTML = createSSRHandler(createRealDeps());
+
+        const rendering = renderHTML(createMockRscStream());
+        // Another render's load, which never settles.
+        void g.__vite_rsc_client_require__!("/src/other.tsx#Other");
+        const winner = await Promise.race([
+          rendering.then(() => "rendered"),
+          new Promise((r) => setTimeout(() => r("held"), 1_000)),
+        ]);
+        expect(winner).toBe("rendered");
+        expect(await consumeStream(await rendering)).toContain("page");
+      });
     });
   });
 

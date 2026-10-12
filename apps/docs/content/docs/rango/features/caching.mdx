@@ -104,6 +104,8 @@ Pick the idiom by what the default already does. After an action, loaders and th
 - **Narrow after actions** where the default re-runs: `ctx.isAction() ? ctx.isAction(X) : undefined` re-runs only for `X`'s actions and keeps the navigation default (params or search changed).
 - **Avoid bare `ctx.isAction(X)`.** It returns a hard `false` on navigation too, so a loader stops refetching when params change, and when several revalidators share a segment, the first hard `false` means the rest never run.
 
+A loader in a [`clientUrls()` group](/docs/rango/guides/client-urls#revalidation-runs-on-the-server) takes the same predicate: the build moves it out of the `"use client"` module, and the server runs it with these arguments, so the idioms above apply unchanged.
+
 ## Coming from another framework
 
 Same words, different jobs — this is the most common source of misreads:

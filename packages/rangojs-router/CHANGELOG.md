@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed: in dev, a document renders a client component a loader's answer draws inside an inline `<Suspense>` in place, as a build does ([#1106](https://github.com/rangojs/rango/issues/1106))
+
+Before: on the dev server, most visibly with `preset: "cloudflare"`, a
+document whose inline `<Suspense>` drew a client component from a loader's
+answer (a loader returning `{ badge: <PriceBadge /> }`, where `PriceBadge` is a
+`"use client"` component) usually flushed the boundary's fallback first and
+swapped the content in with a script, so a browser without JavaScript showed
+only the fallback. A production build rendered the content in place. The dev server loaded that client component again for every
+request and finished after the first flush.
+
+Now: before a document's first flush, the dev server waits for the client
+components its payload has named so far, so the boundary renders in place in
+dev as in a build. A loader that settles after the first flush still streams
+its fallback, in dev and in a build; `loader(Def, { ssr: false })` is the way
+to guarantee its content in the document. Production builds are unchanged.
+
 ### Fixed: names like `constructor`, `toString` or `__proto__` in a request or in loader data are ordinary keys ([#1109](https://github.com/rangojs/rango/issues/1109))
 
 Cookie names, URL segments and fetchable-loader params come from the request,

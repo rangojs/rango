@@ -324,6 +324,12 @@ import { lateHistoryPatterns } from "./pages/late-history.js";
 import { heldHandlesPatterns } from "./pages/held-handles.js";
 import { historyHandlesPatterns } from "./pages/history-handles.js";
 import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
+import actionFailureClientPatterns from "./pages/action-failure.client-urls.js";
+import {
+  ActionFailureBoundedLayout,
+  ActionFailureErrorBoundary,
+  actionFailurePatterns,
+} from "./pages/action-failure.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
@@ -347,6 +353,7 @@ import pureClientUrls from "./client-urls/urls.js";
 import slowClientUrls, { SlowChrome } from "./client-urls/slow.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
+import clientUrlsLoaderElementPatterns from "./client-urls-loader-element/urls.js";
 import { clientUrlsVarsMiddleware } from "./client-urls-vars/shared.js";
 import {
   MirrorSessionLoader,
@@ -1211,6 +1218,15 @@ export const urlpatterns = urls(
         // { ssr: false } loaders settling with redirect()/notFound() before the
         // document flush (e2e/client-urls-ssr-signals.test.ts).
         include("/client-urls-ssr-signals", clientUrlsSsrSignalsPatterns),
+        // A no-script document whose inline <Suspense> draws a client
+        // component from a loader's answer (e2e/client-urls-loader-element.test.ts).
+        include(
+          "/client-urls-loader-element",
+          clientUrlsLoaderElementPatterns,
+          {
+            name: "clientLoaderElement",
+          },
+        ),
         // Streaming useLoader demo: no-loading() route streams per-loader;
         // /gated contrasts the loading() boundary; /ppr pins live holes.
         include("/suspense-demo", suspenseDemoPatterns, {
@@ -2930,6 +2946,21 @@ export const urlpatterns = urls(
           name: "heldHandlesClient",
         }),
         include("/", heldHandlesPatterns, { name: "" }),
+        // A loader that fails on its rerun after an action, in a clientUrls()
+        // group, its urls() twin, and the group under an errorBoundary()
+        // (e2e/action-failure.test.ts).
+        include("/action-failure-client", actionFailureClientPatterns, {
+          name: "actionFailureClient",
+        }),
+        include("/action-failure-server", actionFailurePatterns, {
+          name: "actionFailureServer",
+        }),
+        layout(ActionFailureBoundedLayout, () => [
+          errorBoundary(ActionFailureErrorBoundary),
+          include("/action-failure-bounded", actionFailureClientPatterns, {
+            name: "actionFailureBounded",
+          }),
+        ]),
         // A link to a page the history cache holds keeps that page's handle
         // pushes when the response re-renders part of it.
         include("/", historyHandlesPatterns, { name: "" }),

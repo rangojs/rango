@@ -9,10 +9,14 @@
 import { clientUrls } from "../../../client-urls/client-urls.js";
 import type { ClientUrlPatterns } from "../../../client-urls/types.js";
 import {
+  FlakyDataLoader,
+  FlakyLoader,
+  ForcedLoader,
   HeldLoader,
   ItemLoader,
   ResultLoader,
   ScopedLoader,
+  StaleLoader,
   resultAction,
 } from "./client-urls-revalidate-data.js";
 
@@ -20,6 +24,9 @@ function ShopIndex(): null {
   return null;
 }
 function ShopItem(): null {
+  return null;
+}
+function ShopFlaky(): null {
   return null;
 }
 
@@ -44,6 +51,12 @@ const definition: ClientUrlPatterns = clientUrls(
         ),
       ]),
       loader(ItemLoader),
+      loader(ForcedLoader, () => [revalidate(() => true)]),
+      loader(StaleLoader, () => [revalidate(({ stale }) => stale === true)]),
+    ]),
+    path("/flaky", ShopFlaky, { name: "flaky" }, () => [
+      loader(FlakyLoader),
+      loader(FlakyDataLoader),
     ]),
   ],
 );

@@ -600,6 +600,61 @@ in the same commit; `isAction(target)` vs `isAction(* as Actions)` pin
 identity; an `actionResult` predicate, a `formData` predicate, and a
 prefetched param navigation) and in `semantic-matrix.test.ts` row R2.
 
+### After an action
+
+A common misread is that a group hands the server only a verdict and the
+browser decides the rest. It is the other way round: the browser sends the
+action and the ids of the segments it holds (`_rsc_segments`), and the server
+decides everything that follows while it handles that one request. The action
+runs there and its return value is what the call resolves with. Each group
+loader's `revalidate()` answers there, with `actionResult` and `formData`. The
+browser's cache invalidation after the response is the action's call too:
+`keepClientCache()` in the action suppresses it
+([server-actions skill](../skills/server-actions/SKILL.md), "Client Cache
+After an Action"). And a loader that throws on its rerun is reported to the
+router's `onError` on the server and reaches the page as a loader error entry.
+
+A form's React state survives the revalidation, as on a `urls()` route: the
+action commit renders into the mounted tree (`server-action-bridge.ts`, the
+`normal` case), so a controlled input keeps what the user typed.
+
+### A loader that fails on its rerun after an action
+
+The action has run and returned by the time its loaders rerun, so the failure
+cannot undo it. What the browser does depends on whether an `errorBoundary()`
+sits above the route, which for a group means around the `include()` mount:
+
+| Above the route                    | Action called directly (`await action()`)                                                                                                         | From `<form action>`, `useActionState`, `useTransition`                                                                                     |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| No `errorBoundary()`               | The call rejects with the loader's error (`"An error occurred"` in a build); nothing of that revalidation commits; page data and React state stay | React hands the rejection to the nearest React error boundary above the form; with none of the app's, `RootErrorBoundary` replaces the page |
+| `errorBoundary()` around the mount | Its fallback replaces the route; the page and its form state unmount                                                                              | The same                                                                                                                                    |
+
+Why the first row rejects: the action lane settles loader data before it
+commits (`renderSegments` with `isAction`, `server-action-bridge.ts:849`). A
+loader entry with `ok: false` and no fallback makes `decodeLoaderResults`
+throw (`decode-loader-results.ts:121`, called from `segment-system.tsx:745`),
+so `renderSegments` rejects before `onUpdate`, and the rejection becomes the
+action call's. With an `errorBoundary()`, `loader-resolution.ts` renders its
+fallback into the entry, `decodeLoaderResults` takes it as the segment's
+`errorFallback` (`decode-loader-results.ts:109`), and the commit renders it in
+place of the route. A `urls()` route takes the same path. One side effect to
+know about: the rejected action's entry is disposed without `complete()` or
+`fail()`, so it lingers uncompleted for its 100 ms settle window
+(`event-controller.ts`, `doSettle`), and an action started in that window
+counts it as concurrent and adds one consolidation refetch.
+
+The pattern to recommend for a failure the user can retry: return it from the
+loader as data (`{ ok: false, reason }`) and render it at the read. The action
+resolves, the page and its state stay, and the next rerun replaces the
+message. The skill carries the example.
+
+Pinned dev+prod in `e2e/action-failure.test.ts` (router test-app) and
+`tests/cloudflare-basic/e2e/action-failure.test.ts`, body
+`tests/shared-e2e/src/action-failure-scenario.ts`: a group, its `urls()`
+twin, and the group under an `errorBoundary()`. The response itself is pinned
+through `serveShellRequest({ action })` in
+`src/testing/__tests__/client-urls-revalidate.rsc-test.tsx`.
+
 `intercept()` loaders inside `clientUrls()` do not apply their `revalidate()`
 yet (a known gap, left for a follow-up), so do not rely on it there. The build
 still checks those predicates like any other, so one that captures a binding of
@@ -621,6 +676,25 @@ streaming behind their boundaries. A flagged loader must not
 deadlock error), and `intercept()` loaders reject the option (intercepts
 render on client navigations only). Pinned dev+prod in
 `tests/vite-rsc-demo/e2e/client-shop-stream.test.ts`.
+
+A browser without JavaScript sees only what the first flush carries: a
+boundary that completes later ships its fallback and swaps the content in with
+a script that never runs. A client component a loader's answer draws under an
+inline `<Suspense>` is in the first flush when the loader settles before it
+(a fast loader usually does; `ssr: false` guarantees it). That used to differ in
+dev. plugin-rsc tags client reference ids with a per-render cache tag in dev, so
+its SSR loader memo missed on every request and each reference loaded through
+the module runner again, an RPC per import on workerd; the boundary completed
+after the shell flushed. `renderHTML` (`src/ssr/index.tsx`,
+`settleDocumentClientLoads`) now holds a dev document's first flush until the
+client-reference loads its Flight decode requested have settled, bounded at 5
+seconds. Loads are attributed per document through an `AsyncLocalStorage`
+entered around the decode, so a concurrent render's loads never hold it. A
+build does not run it: its loader memo hits after the first load per isolate.
+Pinned dev+prod in `e2e/client-urls-loader-element.test.ts` and
+`tests/cloudflare-basic/e2e/client-urls-loader-element.test.ts` (body
+`tests/shared-e2e/src/loader-element-scenario.ts`), and by
+`src/ssr/__tests__/ssr-handler.test.tsx` ("dev client-reference loads").
 
 `loader(Def, { prefetch: false }, use?)` keeps one loader out of the route's
 `<Link>` prefetches, as on a server route
