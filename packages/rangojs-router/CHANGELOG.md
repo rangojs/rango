@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.24.2 (2026-10-13)
 
 ### Fixed: a `clientUrls()` group layout that reads its own loader keeps the instant page change on navigations between its routes
 
