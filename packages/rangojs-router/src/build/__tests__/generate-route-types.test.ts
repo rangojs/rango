@@ -727,6 +727,52 @@ describe("per-module vs named-routes consistency", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Locale independence of generated route order
+// ---------------------------------------------------------------------------
+
+describe("generated route order is locale independent", () => {
+  // A machine whose default locale is Czech: `localeCompare` called without a
+  // locale argument sorts "ch" after "h". A call that pins a locale is unaffected.
+  const realLocaleCompare = String.prototype.localeCompare;
+  beforeEach(() => {
+    vi.spyOn(String.prototype, "localeCompare").mockImplementation(function (
+      this: string,
+      that: string,
+      locales?: Intl.LocalesArgument,
+      options?: Intl.CollatorOptions,
+    ) {
+      return realLocaleCompare.call(this, that, locales ?? "cs", options);
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("the stubbed default locale does reorder ch after h", () => {
+    expect("charts".localeCompare("hat")).toBeGreaterThan(0);
+    expect("charts".localeCompare("hat", "en")).toBeLessThan(0);
+  });
+
+  it("generatePerModuleTypesSource lists names in English order", () => {
+    const source = generatePerModuleTypesSource([
+      { name: "hat", pattern: "/hat" },
+      { name: "charts", pattern: "/charts" },
+    ]);
+    expect(source.indexOf("charts:")).toBeGreaterThan(-1);
+    expect(source.indexOf("charts:")).toBeLessThan(source.indexOf("hat:"));
+  });
+
+  it("generateRouteTypesSource lists names in English order", () => {
+    const source = generateRouteTypesSource({
+      hat: "/hat",
+      charts: "/charts",
+    });
+    expect(source.indexOf("charts:")).toBeGreaterThan(-1);
+    expect(source.indexOf("charts:")).toBeLessThan(source.indexOf("hat:"));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // writePerModuleRouteTypesForFile with recursive includes
 // ---------------------------------------------------------------------------
 
