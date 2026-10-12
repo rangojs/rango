@@ -41,6 +41,11 @@ export const rwLockMiddleware: Middleware = async (ctx, next) => {
   if (ctx.pathname === "/rw/self") throw rewrite("/rw/self");
   // A global rewrite into a pattern-guarded path.
   if (ctx.pathname === "/rw/global-to-guarded") throw rewrite("rw.guarded");
+  // A rewrite after next() ran the route: an error.
+  if (ctx.pathname === "/rw/after") {
+    await next();
+    throw rewrite("rw.shop");
+  }
   // An inline path guard decides on the URL being rendered.
   if (
     ctx.pathname === "/rw/inline-admin" &&
@@ -208,6 +213,7 @@ export const rewritePatterns = urls(({ path, layout, middleware }) => [
       ],
     ),
     path("/global-to-guarded", () => <h1>never rendered</h1>),
+    path("/after", () => <h1 data-testid="rw-after">after page</h1>),
     path("/self", () => <h1>self</h1>),
     path("/handler-throws", () => {
       throw rewrite("/rw/shop");

@@ -1039,7 +1039,7 @@ const matrixRows: SemanticMatrixRow[] = [
   {
     id: "RW2",
     contract:
-      "a route-middleware rewrite unwinds: no code after next() of the rewriting pass runs, the target's chain runs once",
+      "a route-middleware rewrite unwinds: no code after next() of the rewriting pass runs, the target's chain runs once; a rewrite after next() ran the route is an error",
     transport: "request",
     execution: "full-render",
     scope: "n/a",
@@ -1055,6 +1055,10 @@ const matrixRows: SemanticMatrixRow[] = [
       expect(html).toContain('data-testid="rw-count">1<');
       expect(html).toContain('data-testid="rw-target-runs">1<');
       expect(html).not.toContain("never rendered");
+
+      const late = await request.get(baseUrl("/rw/after"));
+      expect(late.status()).toBe(500);
+      expect(late.headers()["x-rango-rewrite"]).toBeUndefined();
     },
   },
   {

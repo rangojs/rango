@@ -31,6 +31,24 @@ async function lock(
     .addCookies([{ name: "rw-lock", value: mode, url: f.url("/") }]);
 }
 
+/**
+ * Hydration errors a recovered mismatch reports to the console (dev's
+ * "Hydration failed", production's minified #418) as well as page errors.
+ */
+function watchHydrationErrors(page: Page): string[] {
+  const seen: string[] = [];
+  const hydration = /hydrat|#418|#423|#425/i;
+  page.on("console", (message) => {
+    if (message.type() === "error" && hydration.test(message.text())) {
+      seen.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => {
+    if (hydration.test(error.message)) seen.push(error.message);
+  });
+  return seen;
+}
+
 async function waitForOnError(
   request: APIRequestContext,
   f: Fixture,
@@ -54,6 +72,7 @@ function rewriteTests(f: Fixture) {
     page,
   }) => {
     using _ = expectNoPageError(page);
+    const hydrationErrors = watchHydrationErrors(page);
     await lock(page, f, "on");
     const response = await page.goto(f.url("/rw/shop?ref=mail"));
 
@@ -86,6 +105,7 @@ function rewriteTests(f: Fixture) {
     await expect(testId(page, "rw-client-location")).toHaveText(
       "/rw/shop?ref=mail",
     );
+    expect(hydrationErrors).toEqual([]);
   });
 
   test("a soft navigation to a locked URL renders the lock page, back and forward keep it", async ({
@@ -221,6 +241,36 @@ function rewriteTests(f: Fixture) {
       "middleware threw it while handling a non-GET request",
     );
     expect(reported.phase).toBe("routing");
+  });
+
+  test("a loader fetch under the lock rejects with the rule as a loaderError", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/rw/shop?_rsc_loader=rw-probe"), {
+      headers: { cookie: "rw-lock=on" },
+    });
+    expect(response.status()).toBe(500);
+    expect(response.headers()["content-type"]).toBe(
+      "text/x-component;charset=utf-8",
+    );
+    const body = await response.text();
+    expect(body).toContain("loaderError");
+    expect(body).toContain("middleware threw it during a loader fetch");
+    const reported = await waitForOnError(
+      request,
+      f,
+      "middleware threw it during a loader fetch",
+    );
+    expect(reported.phase).toBe("routing");
+  });
+
+  test("a rewrite after next() ran the route is an error", async ({
+    request,
+  }) => {
+    const response = await request.get(f.url("/rw/after"));
+    expect(response.status()).toBe(500);
+    expect(response.headers()["x-rango-rewrite"]).toBeUndefined();
+    expect(await response.text()).not.toContain('data-testid="rw-shop"');
   });
 
   test("a rewrite loop answers 508 and reports the trail", async ({
