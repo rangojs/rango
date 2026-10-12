@@ -328,9 +328,21 @@ export type EntryData =
       EntryPropRender);
 
 /**
+ * Where an include()'s handler runs in the route tree. Hidden include-scope
+ * names (`$prefix_*`) derive from it, never from counter state, so build
+ * discovery and runtime expansion name every include the same (#1104).
+ */
+export interface IncludeScopePosition {
+  /** Sibling indexes of the enclosing includes, "_"-joined ("" at a mount root). */
+  scopePath?: string;
+  /** The scopePath tail since the nearest include that added a name segment. */
+  hiddenScopePath?: string;
+}
+
+/**
  * Tracked include info for build-time manifest generation
  */
-export interface TrackedInclude {
+export interface TrackedInclude extends IncludeScopePosition {
   prefix: string;
   fullPrefix: string;
   namePrefix?: string;
@@ -352,7 +364,7 @@ export type CachedHeaderScope = {
 /**
  * Context stored in AsyncLocalStorage
  */
-interface HelperContext {
+interface HelperContext extends IncludeScopePosition {
   manifest: Map<string, EntryData>;
   namespace: string;
   parent: EntryData | null;
@@ -572,6 +584,8 @@ export const getContext = (): {
           trackedIncludes: store.trackedIncludes,
           cacheProfiles: store.cacheProfiles,
           includeScope: store.includeScope,
+          scopePath: store.scopePath,
+          hiddenScopePath: store.hiddenScopePath,
           // cachedHeaderScope (and insideCacheScope) deliberately NOT copied —
           // the header guard's middleware exemption depends on the latch dying
           // with the funnel scope (see assertCachedHeaderWriteAllowed).
@@ -616,6 +630,8 @@ export const getContext = (): {
           rootScoped: store?.rootScoped,
           trackedIncludes: store?.trackedIncludes,
           cacheProfiles: store?.cacheProfiles,
+          scopePath: store?.scopePath,
+          hiddenScopePath: store?.hiddenScopePath,
         },
         callback,
       );

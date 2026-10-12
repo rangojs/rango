@@ -173,6 +173,8 @@ function runExpansion<TEnv = any>(
       rootScoped: lazyContext?.rootScoped,
       routerId: lazyContext?.routerId,
       includeScope: lazyContext?.includeScope,
+      scopePath: lazyContext?.scopePath,
+      hiddenScopePath: lazyContext?.hiddenScopePath,
     },
     () => {
       const includePrefix = (entry as any)._lazyPrefix || "";

@@ -160,7 +160,7 @@ export type IncludeItem = {
      * include cannot collide with siblings declared outside it.
      */
     includeScope?: string;
-  };
+  } & import("./server/context.js").IncludeScopePosition;
 };
 
 /**

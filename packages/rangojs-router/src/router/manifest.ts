@@ -167,6 +167,9 @@ export async function loadManifest(
     // undefined) so a prior lazy build's scope cannot leak into a later
     // non-lazy build on the same ALS-backed Store.
     Store.includeScope = lazyContext?.includeScope;
+    // Same rule for the include's tree position (hidden include names).
+    Store.scopePath = lazyContext?.scopePath;
+    Store.hiddenScopePath = lazyContext?.hiddenScopePath;
 
     const handlerExecStart = performance.now();
     const useItems = await getContext().runWithStore(

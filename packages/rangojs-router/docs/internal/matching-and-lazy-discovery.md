@@ -75,16 +75,46 @@ Here's the side-by-side. Scan it with one question in mind — _which column is 
 differ?_ The answer is essentially none of the rows that affect a match; the differences
 are all in _where_ the data comes from, not _what_ it resolves to.
 
-| Concern                          | Dev                                                        | Production                                               |
-| -------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------- |
-| Trie source                      | rebuilt per request from `urlpatterns` (`manifest-init`)   | serialized JSON chunk, loaded via `ensureRouterManifest` |
-| Trie builder                     | `buildPerRouterTrie` (shared)                              | `buildPerRouterTrie` (shared)                            |
-| `routeToStaticPrefix` builder    | `buildRouteToStaticPrefix` (shared)                        | `buildRouteToStaticPrefix` (shared)                      |
-| `mountIndex` arg                 | `undefined` → default `0` (single-router == prod router-0) | global counter `0,1,2…` per router                       |
-| Precomputed leaf entries         | computed in the dev trie rebuild (`flattenLeafEntries`)    | serialized `precomputedEntries`                          |
-| Nested lazy includes             | runtime `evaluateLazyEntry` (same code)                    | runtime `evaluateLazyEntry` (same code)                  |
-| `routesEntries` (regex fallback) | `Rango.routes()` walk at init                              | `Rango.routes()` walk at init                            |
-| Regex fallback reachability      | reachable only in the HMR window before the trie rebuilds  | effectively unreachable (trie always present)            |
+| Concern                            | Dev                                                        | Production                                               |
+| ---------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------- |
+| Trie source                        | rebuilt per request from `urlpatterns` (`manifest-init`)   | serialized JSON chunk, loaded via `ensureRouterManifest` |
+| Trie builder                       | `buildPerRouterTrie` (shared)                              | `buildPerRouterTrie` (shared)                            |
+| `routeToStaticPrefix` builder      | `buildRouteToStaticPrefix` (shared)                        | `buildRouteToStaticPrefix` (shared)                      |
+| `mountIndex` arg                   | `undefined` → default `0` (single-router == prod router-0) | global counter `0,1,2…` per router                       |
+| Precomputed leaf entries           | computed in the dev trie rebuild (`flattenLeafEntries`)    | serialized `precomputedEntries`                          |
+| Nested lazy includes               | runtime `evaluateLazyEntry` (same code)                    | runtime `evaluateLazyEntry` (same code)                  |
+| `routesEntries` (regex fallback)   | `Rango.routes()` walk at init                              | `Rango.routes()` walk at init                            |
+| Regex fallback reachability        | reachable only in the HMR window before the trie rebuilds  | effectively unreachable (trie always present)            |
+| Hidden include names (`$prefix_*`) | position path, same rule at discovery and expansion        | build discovery's names, serialized in the trie          |
+
+**Route names are a pure function of the route tree, never of counter state.** A route
+key is the one thing both realms must agree on: the trie leaf carries the name build
+discovery gave the route, and find-match looks that name up in whichever runtime entry
+expanded the include. Discovery runs each include's handler in a fresh context, while
+runtime expansion runs it with the counters its parent captured — so anything derived
+from a counter comes out differently. That's exactly what broke #1104: an unnamed
+`include()` used to take its hidden segment from a per-context counter, so an unnamed
+include nested in another was `$prefix_0.$prefix_0.login` to discovery and
+`$prefix_0.$prefix_1.login` at runtime, and the route 404'd with no warning. The same
+counter gave an unnamed include beside a `{ name: "" }` include the same name as one
+behind it, and one URL rendered the other's handler.
+
+Now every `include()` takes its index among its handler run's includes, and the context
+carries the resulting path (`scopePath` / `hiddenScopePath`, `IncludeScopePosition` in
+`server/context.ts`) into the nested run: through `TrackedInclude` at discovery, through
+`LazyIncludeContext` for runtime expansion and render-time `loadManifest`. An unnamed
+include's hidden segment is `$prefix_` plus its positions since the nearest include that
+added a name segment, e.g. `$prefix_1_0` under a transparent include
+(`urls/include-helper.ts`). Hidden names are positional, so inserting an include shifts
+the hidden names of the unnamed includes after it; the regenerated trie and manifest
+follow. If you add anything else that feeds a route name, derive it from the tree the
+same way.
+
+If a trie key still finds no owner among the entries at its static prefix, dev throws an
+error naming the key, the prefix and the includes it checked (`find-match.ts`);
+production keeps the old fallback, which 404s. The error can also show for a moment
+in the HMR window, between a route edit's re-import and the rediscovered trie, so its
+message says a reload fixes that case.
 
 ## Invariants & design decisions
 
@@ -240,7 +270,10 @@ is the list:
 - `dev-prod-trie-parity.test.ts` — the dev rebuilt trie really does equal the prod
   serialized one.
 - `find-match.test.ts` — the cache clone (C7), fallback selection, the lazy-iteration
-  cap, and the R3 warning.
+  cap, the R3 warning, and the dev error for a trie key no entry registered.
+- `include-scope-names.test.ts` — hidden include names: build discovery and runtime
+  expansion register the same keys, and `dispatch` serves every route through the dev
+  and the production trie (nested, sibling and transparent-scope fixtures).
 - `precomputed-prefix-collision.test.ts` — the shared-`staticPrefix` drop (C19), including
   the full findMatch→loadManifest path that used to 500.
 - `lazy-include-isolation.test.ts` — lazy parent isolation and the C5 nested-prefix join.

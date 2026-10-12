@@ -341,3 +341,55 @@ describe("createFindMatch — shared static-prefix async include candidate scan"
     }
   });
 });
+
+// #1104: the trie matched, every candidate at the leaf's static prefix was
+// evaluated, and none registered the trie's route key. The fallback entry
+// cannot render it (loadManifest 404s), so dev names the route instead of
+// failing silently; production keeps the fallback.
+describe("createFindMatch — trie key no candidate registered", () => {
+  function setup(routerId: string) {
+    const nonOwner = {
+      prefix: "",
+      staticPrefix: "",
+      routes: {},
+      lazy: true,
+      lazyEvaluated: false,
+      _lazyPrefix: "/",
+    } as unknown as RouteEntry;
+    setRouterTrie(
+      routerId,
+      buildRouteTrie(
+        { "$prefix_0.$prefix_0.login": "/login" },
+        { "$prefix_0.$prefix_0.login": "" },
+      ),
+    );
+    const fm = createFindMatch({
+      routesEntries: [nonOwner],
+      evaluateLazyEntry: (e) => {
+        // Runtime expansion registered the route under another name.
+        e.routes = { "$prefix_0.$prefix_1.login": "/login" } as never;
+      },
+      routerId,
+    });
+    return { fm, nonOwner };
+  }
+
+  it("throws in dev, naming the route key, the static prefix and the include", async () => {
+    const { fm } = setup("find-match-unowned-dev");
+    await expect(fm("/login")).rejects.toThrow(
+      /"\$prefix_0\.\$prefix_0\.login" under static prefix "".*include\("\/"\)/,
+    );
+  });
+
+  it("keeps the fallback entry in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      const { fm, nonOwner } = setup("find-match-unowned-prod");
+      const r = await fm("/login");
+      expect(r?.routeKey).toBe("$prefix_0.$prefix_0.login");
+      expect(r?.entry).toBe(nonOwner);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});

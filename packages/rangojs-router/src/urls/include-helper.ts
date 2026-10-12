@@ -3,6 +3,7 @@ import {
   getUrlPrefix,
   getNamePrefix,
   requireDslContext,
+  type IncludeScopePosition,
 } from "../server/context";
 import {
   INTERNAL_INCLUDE_SCOPE_PREFIX,
@@ -21,13 +22,32 @@ function hasExplicitNameOption(options: IncludeOptions | undefined): boolean {
   return !!options && Object.prototype.hasOwnProperty.call(options, "name");
 }
 
-function allocateInternalIncludeScopeId(
+/**
+ * This include's index among the includes its handler run has called. The
+ * counter is keyed by the run's scopePath, which no ancestor run's counter
+ * snapshot holds, so every run counts from 0 in every realm (build discovery,
+ * runtime expansion, render-time manifest).
+ */
+function nextIncludePosition(
   counters: Record<string, number>,
-): string {
-  const key = "__include_scope__";
+  scopePath: string | undefined,
+): number {
+  const key = `__include_position__:${scopePath ?? ""}`;
   const index = counters[key] ?? 0;
   counters[key] = index + 1;
-  return `${INTERNAL_INCLUDE_SCOPE_PREFIX}${index}`;
+  return index;
+}
+
+function joinScopePath(parent: string | undefined, index: number): string {
+  return parent ? `${parent}_${index}` : `${index}`;
+}
+
+function joinNames(
+  prefix: string | undefined,
+  segment: string | undefined,
+): string | undefined {
+  if (!segment) return prefix;
+  return prefix ? `${prefix}.${segment}` : segment;
 }
 
 /**
@@ -100,15 +120,20 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         ? capturedUrlPrefix + prefix.slice(1)
         : capturedUrlPrefix + prefix
       : prefix;
+    // Route names are a pure function of the route tree: an unnamed include's
+    // hidden segment is its position path since the nearest include that added
+    // a name segment (a transparent { name: "" } adds none), e.g. `$prefix_1_0`.
+    const index = nextIncludePosition(ctx.counters, ctx.scopePath);
+    const hiddenSoFar = joinScopePath(ctx.hiddenScopePath, index);
     const nextSegment = hasExplicitName
       ? explicitName
-      : allocateInternalIncludeScopeId(ctx.counters);
-    const fullNamePrefix =
-      nextSegment !== undefined && nextSegment !== ""
-        ? capturedNamePrefix
-          ? `${capturedNamePrefix}.${nextSegment}`
-          : nextSegment
-        : capturedNamePrefix;
+      : `${INTERNAL_INCLUDE_SCOPE_PREFIX}${hiddenSoFar}`;
+    const fullNamePrefix = joinNames(capturedNamePrefix, nextSegment);
+    const position: IncludeScopePosition = {
+      scopePath: joinScopePath(ctx.scopePath, index),
+      // A name segment restarts the hidden path for this include's children.
+      hiddenScopePath: nextSegment ? "" : hiddenSoFar,
+    };
 
     // Track this include for build-time manifest generation
     if (ctx.trackedIncludes) {
@@ -118,6 +143,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         namePrefix: fullNamePrefix,
         patterns,
         lazy: true,
+        ...position,
       });
     }
 
@@ -171,6 +197,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         rootScoped: capturedRootScoped,
         routerId: ctx.routerId,
         includeScope,
+        ...position,
       },
     } as IncludeItem;
   };

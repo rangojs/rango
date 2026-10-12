@@ -69,6 +69,45 @@ files from the same routes.
 
 **Now.** The order is the same everywhere. Nothing to change in your code.
 
+### Fixed: an unnamed `include()` inside another unnamed `include()` serves its routes ([#1104](https://github.com/rangojs/rango/issues/1104))
+
+Before, with the trie live (every request in `vite dev` and production), the
+routes of an unnamed `include()` that sat inside another unnamed `include()`
+answered 404, with no warning from the build, `rango generate` or the dev
+server:
+
+```ts
+// urls.tsx
+include("/", publicPatterns), // unnamed
+
+// urls-public.tsx
+export const publicPatterns = urls(({ include }) => [
+  include("/", signInPatterns), // unnamed, nested: /login answered 404
+]);
+```
+
+The same cause hit an unnamed `include()` beside a `{ name: "" }` include
+that held another unnamed `include()`: when both included modules named a
+route alike (`index`), one URL rendered the other module's handler, or 404'd
+in production.
+
+Now both shapes serve their own routes in dev and production. Nothing changes
+in your code; the `include("/", signInPatterns, { name: "" })` workaround
+keeps working. Routes behind unnamed includes still carry internal names
+that never reach generated files, `ctx.routeName` or `transition({ when })`.
+Those internal names can change with this upgrade, and on-demand prerender
+entries are stored under the route name: if you pin `createRouter({ version })`
+and use on-demand prerendering under unnamed includes, bump `version` on this
+upgrade so a stored page is not served for another route.
+
+If the route trie ever matches a route that no include registered at runtime,
+`vite dev` now fails that request with an error naming the route, instead of
+a silent 404:
+
+```
+[@rangojs/router] The route trie matched "/login" to route "..." under static prefix "", but no include there registered that name at runtime (checked: ...). Build discovery and the runtime named this route differently, so it cannot render. If this follows a route edit, reload the page; if it persists, please report it with your route configuration.
+```
+
 ## 0.24.2 (2026-10-13)
 
 ### Fixed: a `clientUrls()` group layout that reads its own loader keeps the instant page change on navigations between its routes

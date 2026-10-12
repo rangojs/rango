@@ -1,7 +1,8 @@
 import type { AllUseItems } from "../route-types.js";
+import type { IncludeScopePosition } from "../server/context.js";
 import type { TrailingSlashMode, ResolvedRouteMap } from "./route-config.js";
 
-export interface LazyIncludeContext {
+export interface LazyIncludeContext extends IncludeScopePosition {
   urlPrefix: string;
   namePrefix: string | undefined;
   parent: unknown; // EntryData - avoid circular import
