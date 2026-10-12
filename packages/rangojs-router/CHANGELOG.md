@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed: an action whose revalidation render failed no longer makes the next action re-run loaders `revalidate()` would hold
+
+When a loader threw while it re-ran after a server action, on a route without
+`loading()` the action call rejected with that error and the router left the
+action's tracking entry unfinished for its 100 ms settle window. An action
+started in that window counted it as running alongside, and finished with an
+extra refetch that left out the segments the failed action had re-rendered,
+so their loaders ran as new ones, whatever their `revalidate()` answered for
+the second action. `useAction` also reported no error for the rejected call.
+
+Now the failed action is finished as soon as its call rejects: the next action
+runs no extra refetch, and `useAction` reports the rejection as the action's
+`error`, as it does for an action that throws.
+
 ### Fixed: in dev, a document renders a client component a loader's answer draws inside an inline `<Suspense>` in place, as a build does ([#1106](https://github.com/rangojs/rango/issues/1106))
 
 Before: on the dev server, most visibly with `preset: "cloudflare"`, a
@@ -15,8 +29,8 @@ request and finished after the first flush.
 Now: before a document's first flush, the dev server waits for the client
 components its payload has named so far, so the boundary renders in place in
 dev as in a build. A loader that settles after the first flush still streams
-its fallback, in dev and in a build; `loader(Def, { ssr: false })` is the way
-to guarantee its content in the document. Production builds are unchanged.
+its fallback, in dev and in a build; `loader(Def, { ssr: false })` guarantees
+the loader's data in the document. Production builds are unchanged.
 
 ### Fixed: names like `constructor`, `toString` or `__proto__` in a request or in loader data are ordinary keys ([#1109](https://github.com/rangojs/rango/issues/1109))
 

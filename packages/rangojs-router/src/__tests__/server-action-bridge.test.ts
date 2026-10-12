@@ -264,3 +264,63 @@ describe("server-action-bridge redirect payload validation", () => {
     expect(result).toBe("done");
   });
 });
+
+describe("server-action-bridge revalidation render failure", () => {
+  // A loader that throws on its rerun leaves an error entry with no fallback;
+  // the action commit's renderSegments rejects, and the call rejects with it.
+  it("records the rejection as the action's error", async () => {
+    stubWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    const segment = { id: "R0", type: "route", component: "div" };
+    const store = {
+      ...createMockStore(),
+      getHistoryKey: vi.fn(() => "/"),
+      getCachedSegments: vi.fn(() => ({ segments: [segment], stale: false })),
+      setSegmentIds: vi.fn(),
+      cacheSegmentsForHistory: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getHistoryEntryMemory: vi.fn(() => undefined),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const eventController = createEventController();
+    const setServerCallback = vi.fn();
+    const renderError = new Error("stock service unavailable");
+    createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController,
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async () => ({
+          metadata: {
+            pathname: "/",
+            segments: [segment],
+            matched: ["R0"],
+            diff: ["R0"],
+            isPartial: true,
+          },
+          returnValue: { ok: true, data: "saved" },
+        })),
+        setServerCallback,
+      } as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => {
+        throw renderError;
+      }),
+    }).register();
+
+    await expect(
+      setServerCallback.mock.calls[0]![0]("hash#save", []),
+    ).rejects.toBe(renderError);
+    await vi.waitFor(() =>
+      expect(eventController.getActionState("save")).toMatchObject({
+        state: "idle",
+        error: renderError,
+      }),
+    );
+  });
+});

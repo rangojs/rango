@@ -626,6 +626,24 @@ describe("createEventController", () => {
       vi.advanceTimersByTime(100);
     });
 
+    // An action whose handler threw (a revalidation render that rejected) is
+    // disposed without complete()/fail(). Left uncompleted in its settle
+    // window, it made the next action concurrent, and that action's
+    // consolidation refetch reran its revalidate-gated loaders (#675 class).
+    it("action starting during a disposed action's settle window is not concurrent", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("hash#target", []);
+      first.recordRevalidatedSegments(["R0D0.loaderA", "R0"]);
+      first[Symbol.dispose]();
+
+      vi.advanceTimersByTime(50);
+      expect(ctrl.getInflightActions().size).toBe(1);
+
+      const second = ctrl.startAction("hash#decoy", []);
+      expect(second.hadConcurrentActions).toBe(false);
+      expect(ctrl.hadAnyConcurrentActions()).toBe(false);
+    });
+
     it("action starting while another is still fetching stays concurrent", () => {
       const ctrl = createController();
       const first = ctrl.startAction("hash#a", []);

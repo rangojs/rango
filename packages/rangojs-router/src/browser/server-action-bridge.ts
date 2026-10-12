@@ -906,6 +906,12 @@ export function createServerActionBridge(
 
       handle.complete(returnData);
       return returnData;
+    } catch (error) {
+      // What the call rejects with (a revalidation render that threw, a
+      // failed decode) is the action's error, for useAction as for the
+      // caller. A no-op for an aborted or already-settled action.
+      handle.fail(error);
+      throw error;
     } finally {
       // The single deferred invalidation + fence release for this action. Runs
       // for every terminal that settles (normal, navigated-away, error, abort,
