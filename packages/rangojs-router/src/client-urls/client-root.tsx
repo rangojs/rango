@@ -194,13 +194,13 @@ export function ClientUrlsRoot({
     });
   }
 
+  // Keyed per layout() item, not per route (#1124).
   for (let index = route.layouts.length - 1; index >= 0; index--) {
-    const layoutKey = `${route.id}-layout-${index}`;
     content = createElement(OutletProvider, {
-      key: layoutKey,
+      key: route.layoutKeys[index],
       content,
       pending,
-      children: createElement(route.layouts[index], { key: layoutKey }),
+      children: createElement(route.layouts[index]),
     });
   }
 

@@ -230,11 +230,19 @@ Two boundaries, both deliberate:
 - **Cross-route navigations present the destination at once** (see
   "Navigation authority") and commit in the transition lane, so the presented
   content is held while any read that still suspends resolves.
+- **A `layout()` keeps its instance across its routes.** `ClientUrlsRoot`
+  keys each layout per `layout()` item (`ClientUrlRouteRecord.layoutKeys`, its
+  ordinal among sibling layouts), not per route, so `/a → /b` under one layout
+  reconciles it: state, DOM and inline Suspense stay. Only the route component
+  (`key: route.id`) and the layouts below where the two chains differ mount
+  anew (#1124).
 
 Pinned dev+prod in `tests/vite-rsc-demo/e2e/client-shop-filters.test.ts`
 (hold + pending on a filter nav) and `e2e/client-urls.test.ts` (param-nav
 hold with and without `transition()`); the server-route remount default stays
-pinned in `e2e/same-route-nav.test.ts`.
+pinned in `e2e/same-route-nav.test.ts`. Layout identity across routes is
+pinned by `src/client-urls/__tests__/client-root.test.tsx` and the
+"a layout() keeps its DOM" case in both apps' `e2e/client-urls.test.ts`.
 
 ## Outer layouts and middleware across group navigations
 

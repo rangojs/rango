@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `clientUrls()` `layout()` keeps its instance across navigations between its routes ([#1124](https://github.com/rangojs/rango/issues/1124))
+
+A `layout()` that wraps several `path()`s in a `clientUrls()` group was
+unmounted and mounted again on every move between those paths. Its loaders
+were held as their `revalidate()` rules said, but its React state and DOM were
+recreated: `useState` reset, an input lost its value, a `<details>` closed, a
+scroll container jumped to the top, and an inline `<Suspense>` inside it could
+show its fallback again.
+
+Now a layout keeps its instance for as long as a navigation stays under it,
+as a server `layout()` around the group's `include()` already did. Only the
+route component, and any layout below the point where the two routes' chains
+differ, mount anew. Nothing changes in your code. If you moved shared chrome
+into a server layout to work around this, you can move it back into the group.
+
 ## 0.24.0 (2026-10-12)
 
 ### Added: `throw rewrite()` renders another route at the same URL from middleware

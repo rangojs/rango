@@ -755,6 +755,70 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     );
   });
 
+  test("a layout() keeps its DOM across navigations between its routes (#1124)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url(INDEX_PATH));
+    await waitForHydration(page);
+    await expect(testId(page, "client-urls-index")).toBeVisible();
+    // A remount replaces the element, and the attribute goes with it.
+    await testId(page, "client-urls-layout").evaluate((el) =>
+      el.setAttribute("data-e2e-kept", "1"),
+    );
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "client-urls-item-link").click();
+    await expectItem(page, "soft-nav");
+    await expect(testId(page, "client-urls-layout")).toHaveAttribute(
+      "data-e2e-kept",
+      "1",
+    );
+
+    await page.goBack();
+    await expect(testId(page, "client-urls-index")).toBeVisible();
+    await expect(testId(page, "client-urls-layout")).toHaveAttribute(
+      "data-e2e-kept",
+      "1",
+    );
+  });
+
+  test("a layout() keeps its DOM across an action and a same-route param navigation (#1124)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/client-urls-action/items/alpha"));
+    await waitForHydration(page);
+    await testId(page, "ca-layout").evaluate((el) =>
+      el.setAttribute("data-e2e-kept", "1"),
+    );
+    const readCount = async (): Promise<number> =>
+      Number(
+        (await testId(page, "ca-item-count").textContent())?.replace(
+          "count:",
+          "",
+        ),
+      );
+    const count = await readCount();
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "ca-item-bump").click();
+    await expect.poll(readCount).toBeGreaterThanOrEqual(count + 1);
+    await expect(testId(page, "ca-layout")).toHaveAttribute(
+      "data-e2e-kept",
+      "1",
+    );
+
+    await testId(page, "ca-item-to-beta").click();
+    await expect(testId(page, "ca-item-param")).toHaveText("beta");
+    await expect(testId(page, "ca-layout")).toHaveAttribute(
+      "data-e2e-kept",
+      "1",
+    );
+  });
+
   test("hook probe: mount, absolute pathname, SSR search values, setter write", async ({
     page,
     request,
