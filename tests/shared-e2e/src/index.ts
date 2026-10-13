@@ -42,6 +42,14 @@ export {
   expectReturnToCommittedRouteFromOptimisticFrameShowsTheDestination,
 } from "./client-urls-layout-loader-scenario.js";
 export type { ClientUrlsLayoutLoaderOptions } from "./client-urls-layout-loader-scenario.js";
+export {
+  expectParamMountClickRendersAtTheClick,
+  expectParamMountInterceptOpens,
+  expectParamMountLocaleSwitchNavigates,
+} from "./client-urls-locale-scenario.js";
+export type { ClientUrlsLocaleOptions } from "./client-urls-locale-scenario.js";
+export { expectCompetingServerRouteGetsNoFrame } from "./client-urls-compete-scenario.js";
+export type { ClientUrlsCompeteOptions } from "./client-urls-compete-scenario.js";
 export { expectComponentUseItemsDriveTheRoute } from "./client-urls-component-use-scenario.js";
 export type { ClientUrlsComponentUseOptions } from "./client-urls-component-use-scenario.js";
 export type { LoaderElementScenarioOptions } from "./loader-element-scenario.js";

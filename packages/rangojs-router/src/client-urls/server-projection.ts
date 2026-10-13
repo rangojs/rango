@@ -33,6 +33,13 @@ import {
   ClientUrlsRoot,
 } from "./client-root.js";
 import { createClientUrlsWhenRef } from "../transition-when-ref.js";
+import type { TrieLeaf, TrieNode } from "../router/route-trie-builder.js";
+import { tryTrieMatch } from "../router/trie-matching.js";
+import { sameMountInstance } from "../router/substitute-pattern-params.js";
+import { getRouterTrie } from "../route-map-builder.js";
+import { _getRequestContext } from "../server/request-context.js";
+import { routeKeyOf } from "../urls/path-helper.js";
+import { buildClientUrlsTrie } from "./client-urls.js";
 import type {
   ClientTransitionConfig,
   ClientUrlInterceptRecord,
@@ -668,6 +675,100 @@ function materializedPathOptions(
   };
 }
 
+/** A param segment on a walked path; the leaf's `pa` names it. */
+const PARAM = "\0";
+
+/**
+ * The patterns of the router's routes, outside the group, that a URL of the
+ * group matches too: the trie walked in step with the group's (its patterns
+ * joined to the mount), static against static, a param against either, a
+ * catch-all against everything below. Constraints are not compared, so the
+ * list may hold a route no URL of the group reaches: the client trie, which
+ * gets the patterns as they are, never lets one win a URL it does not match.
+ * `own` are the group's route keys in the router's trie.
+ */
+export function competingPatterns(
+  router: TrieNode,
+  group: TrieNode,
+  own: ReadonlySet<string>,
+): string[] {
+  const found = new Set<string>();
+  const add = (leaf: TrieLeaf, path: readonly string[], tail = ""): void => {
+    if (own.has(leaf.n)) return;
+    let index = 0;
+    const pattern = path.map((piece) => {
+      if (piece[0] !== PARAM) return piece;
+      const name = leaf.pa?.[index++] ?? `p${index}`;
+      const allowed = leaf.cv?.[name];
+      return `/:${name}${allowed ? `(${allowed.join("|")})` : ""}${piece.slice(1)}`;
+    });
+    found.add(pattern.join("") + tail || "/");
+  };
+  const catchAll = (node: TrieNode, path: readonly string[]): void => {
+    const leaf = node.w!;
+    add(
+      leaf,
+      path,
+      leaf.pn === "*" ? "/*" : `/:${leaf.pn}${leaf.w1 ? "+" : "*"}`,
+    );
+  };
+  const everything = (node: TrieNode, path: readonly string[]): void => {
+    if (node.r) add(node.r, path);
+    if (node.w) catchAll(node, path);
+    for (const [key, child] of Object.entries(node.s ?? {})) {
+      everything(child, [...path, `/${key}`]);
+    }
+    if (node.p) everything(node.p.c, [...path, PARAM]);
+    for (const [suffix, child] of Object.entries(node.xp ?? {})) {
+      everything(child.c, [...path, PARAM + suffix]);
+    }
+  };
+  // Every child of the group's node that a segment `matches` lets through.
+  const groupSteps = (
+    node: TrieNode,
+    matches: (key: string) => boolean,
+  ): TrieNode[] => [
+    ...Object.entries(node.s ?? {}).flatMap(([key, child]) =>
+      matches(key) ? [child] : [],
+    ),
+    ...(node.p ? [node.p.c] : []),
+    ...Object.values(node.xp ?? {}).map((child) => child.c),
+  ];
+  const walk = (g: TrieNode, r: TrieNode, path: readonly string[]): void => {
+    if (g.w) return everything(r, path);
+    if (r.r && g.r) add(r.r, path);
+    if (r.w && (g.r || g.s || g.p || g.xp)) catchAll(r, path);
+    for (const [key, child] of Object.entries(r.s ?? {})) {
+      const next = [...path, `/${key}`];
+      if (g.s?.[key]) walk(g.s[key], child, next);
+      if (g.p) walk(g.p.c, child, next);
+      for (const [suffix, gx] of Object.entries(g.xp ?? {})) {
+        if (key.endsWith(suffix)) walk(gx.c, child, next);
+      }
+    }
+    if (r.p) {
+      for (const step of groupSteps(g, () => true)) {
+        walk(step, r.p.c, [...path, PARAM]);
+      }
+    }
+    for (const [suffix, child] of Object.entries(r.xp ?? {})) {
+      for (const step of groupSteps(g, (key) => key.endsWith(suffix))) {
+        walk(step, child.c, [...path, PARAM + suffix]);
+      }
+    }
+  };
+  walk(group, router, []);
+  return [...found];
+}
+
+/** competingPatterns per router trie, per group (name prefix and mount). */
+const COMPETING = new WeakMap<TrieNode, Map<string, readonly string[]>>();
+
+function currentRouterTrie(): TrieNode | undefined {
+  const routerId = _getRequestContext()?._routerId;
+  return routerId ? getRouterTrie(routerId) : undefined;
+}
+
 function materializeRouteItems(
   reference: ClientUrlDefinitionSource,
   projection: ClientUrlProjection,
@@ -688,6 +789,32 @@ function materializeRouteItems(
   // One key per group MOUNT (the include's URL prefix): renderSegments keys
   // every route segment of the group by it (ResolvedSegment.clientGroup).
   const clientGroup = getUrlPrefix() || "/";
+  // The group's routes as the router's trie names them.
+  const own = new Set(
+    projection.routes.map((route) =>
+      routeKeyOf(namePrefix, route.pattern, route.name ?? undefined),
+    ),
+  );
+  // ClientUrlsRoot's `foreign`: the router's routes that compete with the
+  // group's for a URL, so the browser presents only what the server routes
+  // here (a `/:slug` route under `/:locale?` would claim a root `/login`).
+  const foreignProp = (): { foreign?: readonly string[] } => {
+    const router = currentRouterTrie();
+    if (!router) return {};
+    let byGroup = COMPETING.get(router);
+    if (!byGroup) COMPETING.set(router, (byGroup = new Map()));
+    const key = `${namePrefix} ${clientGroup}`;
+    let foreign = byGroup.get(key);
+    if (!foreign) {
+      foreign = competingPatterns(
+        router,
+        buildClientUrlsTrie(projection.routes, clientGroup),
+        own,
+      );
+      byGroup.set(key, foreign);
+    }
+    return foreign.length ? { foreign } : {};
+  };
 
   // The loader() items of a route's or an intercept's projected loaders: each
   // stub with its `ssr: false` and `prefetch: false` flags and its
@@ -753,6 +880,7 @@ function materializeRouteItems(
               definition: reference as ClientUrlPatterns,
               routeId: route.id,
               namePrefix,
+              ...foreignProp(),
             }),
           materializedPathOptions(route, clientGroup),
           recordingCopies(routeIndex, () => [
@@ -812,15 +940,27 @@ function materializeRouteItems(
   //    out-of-group origin the slot's host layout is not in the rendered
   //    tree, so the modal would silently vanish. The declaration contract is
   //    module-local, so materialization synthesizes the origin check the DSL
-  //    deliberately does not expose: activate only when the origin pathname
-  //    is inside this include's mount. This is server-generated code — no
-  //    function crosses the "use client" projection boundary.
-  const mount = getUrlPrefix() || "/";
-  const isInGroupOrigin = ({ from }: InterceptSelectorContext): boolean =>
-    mount === "/"
-      ? true
-      : from.url.pathname === mount ||
-        from.url.pathname.startsWith(`${mount}/`);
+  //    deliberately does not expose: activate only when the origin is one of
+  //    this group's routes, in the target's mount instance. The router
+  //    matched the origin already: its route name, or for an unnamed one its
+  //    key in the router's trie, says whether it is the group's (a URL
+  //    prefix cannot: a `/:locale?` mount prefixes every path), and its
+  //    params whether another locale is another instance, a full page
+  //    (beginClientUrlNavigation in navigation.ts leaves the group for it
+  //    too). This is server-generated code — no function crosses the
+  //    "use client" projection boundary.
+  const isInGroupOrigin = ({ from, to }: InterceptSelectorContext): boolean => {
+    if (clientGroup === "/") return true;
+    const router = currentRouterTrie();
+    const key =
+      from.routeName ??
+      (router && tryTrieMatch(router, from.url.pathname)?.routeKey);
+    return (
+      !!key &&
+      own.has(key) &&
+      sameMountInstance(clientGroup, from.params, to.params)
+    );
+  };
   const slotNames = [...new Set(intercepts.map((record) => record.slotName))];
   const buildInterceptItems = (): AllUseItems[] =>
     intercepts.map(

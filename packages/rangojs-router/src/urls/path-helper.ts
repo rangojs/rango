@@ -54,6 +54,21 @@ function applyNamePrefix(prefix: string | undefined, name: string): string {
   return `${prefix}.${name}`;
 }
 
+/**
+ * The key path() registers a route under: its name, or a `$path_` name built
+ * from its pattern, behind the include's name prefix.
+ */
+export function routeKeyOf(
+  namePrefix: string | undefined,
+  pattern: string,
+  name: string | undefined,
+): string {
+  return applyNamePrefix(
+    namePrefix,
+    name || `$path_${pattern.replace(/[/:*?]/g, "_")}`,
+  );
+}
+
 function resolveResponseType(
   options: PathOptions | undefined,
 ): string | undefined {
@@ -143,12 +158,10 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     const prefixedPattern = applyUrlPrefix(urlPrefix, pattern);
 
-    const localName =
-      options?.name || `$path_${pattern.replace(/[/:*?]/g, "_")}`;
     if (options?.name) {
       validateUserRouteName(options.name);
     }
-    const routeName = applyNamePrefix(namePrefix, localName);
+    const routeName = routeKeyOf(namePrefix, pattern, options?.name);
 
     const namespace = `${ctx.namespace}.${store.getNextIndex("route")}.${routeName}`;
 
