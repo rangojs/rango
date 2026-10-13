@@ -54,7 +54,7 @@ import {
   type RouteSnapshot,
 } from "./route-snapshot.js";
 import { resolveNavigation } from "./navigation-snapshot.js";
-import { visitorUrl } from "../server/rewrite-trail.js";
+import { pathKey, visitorUrl } from "../server/rewrite-trail.js";
 import { withLayoutLoaderCopies } from "../client-urls/layout-loader-copies.js";
 import {
   partialDeferralMode,
@@ -380,10 +380,8 @@ export async function createMatchContextForPartial<TEnv>(
   // Two visitor URLs can share a rewrite target, and the render may read
   // ctx.rewrittenFrom: a move of the visitor's URL counts as a change.
   if (reqCtx && nav.prevVisitorUrl) {
-    const now = visitorUrl(reqCtx, cleanUrl);
-    const left = nav.prevVisitorUrl;
     reqCtx._visitorMoved =
-      now.pathname + now.search !== left.pathname + left.search;
+      pathKey(visitorUrl(reqCtx, cleanUrl)) !== pathKey(nav.prevVisitorUrl);
   }
 
   const interceptSelectorContext: InterceptSelectorContext = {

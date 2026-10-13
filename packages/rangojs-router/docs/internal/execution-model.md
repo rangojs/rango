@@ -1084,9 +1084,18 @@ It names only the page being left. What renders is matched from the
 request's own URL and middleware, so a forged value runs and skips no
 middleware; it can make the server re-render more or less of what the client
 claims to hold, which `_rsc_segments` can already do. A value of another
-origin, or one that does not parse, is ignored. The browser does not send it
-from an intercept's source, and the server ignores it beside
-`X-RSC-Router-Intercept-Source`.
+origin, or one that does not parse, is ignored. It never names an intercept's
+source: a navigation from an open modal names its source in
+`X-RSC-Router-Client-Path` and leaves `_rsc_rt` out (`partial-update.ts`),
+and a fill or an action from a modal sends both, so the server ignores it
+beside `X-RSC-Router-Intercept-Source`.
+
+Leaving a page, the server compares URLs the browser names (the header,
+`_rsc_rt`) with the request's own, so `resolveNavigation` writes their query
+the way URLSearchParams does (`formSearch`). The request's URL went through
+it when the browser set `_rsc*` params and the server stripped them
+(`?q=a%2Cb`), while the address bar keeps `?q=a,b`: compared as sent, every
+navigation from such a page counted as a search change, rewritten or not.
 
 Can two visitor URLs share one target? Yes: `/promo/a` and `/promo/b` can
 both rewrite to `/landing`, and the target frame alone would hold the route
@@ -1105,8 +1114,9 @@ What this does not cover yet:
   same for every visitor.
 - An intercept opened from a rewritten page is decided with the target as
   its source, but the modal's later requests (its fill, a refresh, Back into
-  it) name the source by `X-RSC-Router-Intercept-Source`, the visitor's URL,
-  so an intercept `when()` that reads `from` sees the rewriting route there.
+  it after a history-cache miss) name the source by its visitor URL without
+  `_rsc_rt`, so an intercept `when()` that reads `from` sees the rewriting
+  route there, and can reject on Back what it admitted on the open.
 - Entering a rewritten page from its own target URL (`/item/1` to
   `/public-1`) holds the route, as before #1144, though `ctx.rewrittenFrom`
   changed: `_visitorMoved` is set only when leaving a rewritten page.

@@ -109,10 +109,21 @@ function getShownRouteUrl(url: URL): URL | null {
   if (!shown) return null;
   try {
     const parsed = new URL(shown, url.origin);
-    return parsed.origin === url.origin ? parsed : null;
+    return parsed.origin === url.origin ? formSearch(parsed) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * `url` with its query as URLSearchParams writes it, as the request's own URL
+ * has it: setting and stripping `_rsc*` params rewrote that one (`?q=a%2Cb`),
+ * while a URL the browser names keeps the address bar's (`?q=a,b`). Compared
+ * as sent, every navigation from such a page was a search change.
+ */
+function formSearch(url: URL): URL {
+  url.search = String(url.searchParams);
+  return url;
 }
 
 export async function resolveNavigation(
@@ -132,17 +143,15 @@ export async function resolveNavigation(
     return null;
   }
 
-  let prevUrl: URL;
-  let prevVisitorUrl: URL | null = null;
+  let visitor: URL;
   try {
-    const visitor = new URL(previousUrl, url.origin);
-    // An intercept's request diffs from its source, which _rsc_rt does not name.
-    const shown = !interceptSourceUrl && getShownRouteUrl(url);
-    prevUrl = shown || visitor;
-    if (shown) prevVisitorUrl = visitor;
+    visitor = formSearch(new URL(previousUrl, url.origin));
   } catch {
     return null;
   }
+  // An intercept's request diffs from its source, which _rsc_rt does not name.
+  const shown = interceptSourceUrl ? null : getShownRouteUrl(url);
+  const prevUrl = shown ?? visitor;
 
   let interceptContextUrl: URL;
   try {
@@ -179,7 +188,7 @@ export async function resolveNavigation(
 
   return {
     prevUrl,
-    prevVisitorUrl,
+    prevVisitorUrl: shown && visitor,
     prevParams,
     prevMatch,
     interceptContextUrl,

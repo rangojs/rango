@@ -909,6 +909,10 @@ export function withCacheLookup<TEnv>(
     const entryRevalidateMap = canCheckSegmentRevalidation
       ? buildEntryRevalidateMap(ctx.entries)
       : undefined;
+    const searchChanged =
+      ctx.prevUrl.search !== ctx.url.search ||
+      pipelineReqCtx?._visitorMoved === true;
+    const routeParamsChanged = !paramsEqual(ctx.matched.params, ctx.prevParams);
 
     yield* liveSegments;
 
@@ -946,14 +950,6 @@ export function withCacheLookup<TEnv>(
       }
 
       const entryInfo = entryRevalidateMap?.get(segment.id);
-
-      const searchChanged =
-        ctx.prevUrl.search !== ctx.url.search ||
-        _getRequestContext()?._visitorMoved === true;
-      const routeParamsChanged = !paramsEqual(
-        ctx.matched.params,
-        ctx.prevParams,
-      );
       const shouldDefaultRevalidate =
         (searchChanged || routeParamsChanged) &&
         (segment.type === "route" ||
