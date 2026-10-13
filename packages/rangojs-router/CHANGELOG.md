@@ -61,6 +61,14 @@ dropped from the page with them.
 
 **Now.** They stay, as a skipped route loader's do.
 
+### Fixed: generated route files list routes in the same order in every locale
+
+**Before.** The order of names in `*.gen.ts` followed the machine's locale
+(Czech sorts `ch` after `h`, for one), so two machines could write different
+files from the same routes.
+
+**Now.** The order is the same everywhere. Nothing to change in your code.
+
 ## 0.24.2 (2026-10-13)
 
 ### Fixed: a `clientUrls()` group layout that reads its own loader keeps the instant page change on navigations between its routes

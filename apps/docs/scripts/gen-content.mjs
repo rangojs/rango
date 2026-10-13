@@ -63,7 +63,7 @@ const pageMeta = walk(contentDir)
       url: slug ? `/docs/${slug}` : "/docs",
     };
   })
-  .sort((a, b) => a.url.localeCompare(b.url));
+  .sort((a, b) => a.url.localeCompare(b.url, "en"));
 
 function readMeta(dirGlob) {
   try {
@@ -105,5 +105,17 @@ export const pageMeta: PageMeta[] = ${JSON.stringify(pageMeta, null, 2)};
 export const pageTree: TreeNode[] = ${JSON.stringify(pageTree, null, 2)};
 `;
 
-writeFileSync(join(root, "src/content.gen.ts"), out);
+const outPath = join(root, "src/content.gen.ts");
+
+// --check: exit 3 when the committed file differs, without writing it. Not 1,
+// which is also the exit code of a crash (missing dependency, bad meta.json).
+if (process.argv.includes("--check")) {
+  let current = "";
+  try {
+    current = readFileSync(outPath, "utf8");
+  } catch {}
+  process.exit(current === out ? 0 : 3);
+}
+
+writeFileSync(outPath, out);
 console.log(`generated src/content.gen.ts — ${pageMeta.length} pages`);

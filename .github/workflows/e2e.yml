@@ -127,6 +127,9 @@ jobs:
       - name: Check skills catalog is current
         run: pnpm check:skills-catalog
 
+      - name: Check generated route files are current
+        run: pnpm check:route-gen
+
   format:
     needs: [debounce]
     runs-on: ubuntu-latest

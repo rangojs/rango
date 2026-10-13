@@ -10,6 +10,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
+import { planPerModuleRouteTypesForFile } from "../route-types/per-module-writer";
 import {
   writeCombinedRouteTypes,
   generateRouteTypesSource,
@@ -727,6 +728,52 @@ describe("per-module vs named-routes consistency", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Locale independence of generated route order
+// ---------------------------------------------------------------------------
+
+describe("generated route order is locale independent", () => {
+  // A machine whose default locale is Czech: `localeCompare` called without a
+  // locale argument sorts "ch" after "h". A call that pins a locale is unaffected.
+  const realLocaleCompare = String.prototype.localeCompare;
+  beforeEach(() => {
+    vi.spyOn(String.prototype, "localeCompare").mockImplementation(function (
+      this: string,
+      that: string,
+      locales?: Intl.LocalesArgument,
+      options?: Intl.CollatorOptions,
+    ) {
+      return realLocaleCompare.call(this, that, locales ?? "cs", options);
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("the stubbed default locale does reorder ch after h", () => {
+    expect("charts".localeCompare("hat")).toBeGreaterThan(0);
+    expect("charts".localeCompare("hat", "en")).toBeLessThan(0);
+  });
+
+  it("generatePerModuleTypesSource lists names in English order", () => {
+    const source = generatePerModuleTypesSource([
+      { name: "hat", pattern: "/hat" },
+      { name: "charts", pattern: "/charts" },
+    ]);
+    expect(source.indexOf("charts:")).toBeGreaterThan(-1);
+    expect(source.indexOf("charts:")).toBeLessThan(source.indexOf("hat:"));
+  });
+
+  it("generateRouteTypesSource lists names in English order", () => {
+    const source = generateRouteTypesSource({
+      hat: "/hat",
+      charts: "/charts",
+    });
+    expect(source.indexOf("charts:")).toBeGreaterThan(-1);
+    expect(source.indexOf("charts:")).toBeLessThan(source.indexOf("hat:"));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // writePerModuleRouteTypesForFile with recursive includes
 // ---------------------------------------------------------------------------
 
@@ -1082,6 +1129,37 @@ export const patterns = urls(({ path, include }) => [
     expect(content).toContain('index: "/"');
     expect(content).toContain("api.users");
     expect(content).toContain("/api/users");
+  });
+
+  it("plans without writing: routes, placeholder and null cases", () => {
+    const withRoutes = join(tempDir, "a.ts");
+    writeFileSync(
+      withRoutes,
+      `import { urls } from "@rangojs/router";
+export const patterns = urls(({ path }) => [path("/x", handler, { name: "x" })]);
+`,
+    );
+    const placeholder = join(tempDir, "b.ts");
+    writeFileSync(
+      placeholder,
+      `import { urls } from "@rangojs/router";
+import { buildRoutes } from "./factory.js";
+export const patterns = urls(buildRoutes);
+`,
+    );
+    const unrelated = join(tempDir, "c.ts");
+    writeFileSync(unrelated, "export const x = 1;\n");
+
+    const plan = planPerModuleRouteTypesForFile(withRoutes);
+    expect(plan?.isPlaceholder).toBe(false);
+    expect(plan?.genPath).toBe(join(tempDir, "a.gen.ts"));
+    expect(plan?.content).toContain('x: "/x"');
+    const empty = planPerModuleRouteTypesForFile(placeholder);
+    expect(empty?.isPlaceholder).toBe(true);
+    expect(empty?.content).toBe(generatePerModuleTypesSource([]));
+    expect(planPerModuleRouteTypesForFile(unrelated)).toBeNull();
+    expect(existsSync(join(tempDir, "a.gen.ts"))).toBe(false);
+    expect(existsSync(join(tempDir, "b.gen.ts"))).toBe(false);
   });
 
   it("emits empty placeholder when urls() variable exists but routes are unresolvable", () => {
