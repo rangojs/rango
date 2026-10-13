@@ -48,6 +48,9 @@ const DOCS = [
     "prerender",
     "shell-manifest",
     "use-cache",
+    // The UX recipe book names API across every primitive skill; a rename
+    // there would leave its recipes teaching a helper that no longer exists.
+    "ux-architecture",
   ].map((skill) => `packages/rangojs-router/skills/${skill}/SKILL.md`),
 ];
 

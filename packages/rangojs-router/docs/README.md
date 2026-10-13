@@ -9,6 +9,9 @@ segment", "test this middleware"), use the skills that ship with the package.
 Start with [`/rango`](../skills/rango/SKILL.md), which maps every topic to its
 skill (`/route`, `/loader`, `/caching`, `/testing`, ...). The package
 [`README.md`](../README.md) has the overview and quick start.
+For how to compose an app so a click shows the next page at once and nothing
+on screen remounts, read
+[`/ux-architecture`](../skills/ux-architecture/SKILL.md).
 
 If you are new to Rango, start with
 [named routes](../../../docs/named-routes.md), `urls()`, `path()`,

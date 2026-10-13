@@ -274,6 +274,12 @@
       "path": "skills/use-cache/SKILL.md"
     },
     {
+      "name": "ux-architecture",
+      "description": "Architect a Rango app so navigation is instant and stable — when a server urls() page or a clientUrls() group wins, where layouts, loaders, Suspense boundaries, revalidate() rules, prefetch, transition(), intercept() modals and actions go, with worked recipes (shop, dashboard tabs, settings forms, search filters, a modal over a list) and the anti-patterns behind remounts, skeleton flashes and slow clicks. Use when designing or reviewing a Rango app's routing, layout, loading or navigation UX, choosing between urls() and clientUrls(), placing a loader or a boundary, writing revalidate() rules, or debugging a remount, a re-shown fallback or a click that waits.",
+      "argumentHint": "[shop|dashboard|settings|search|modal]",
+      "path": "skills/ux-architecture/SKILL.md"
+    },
+    {
       "name": "vercel",
       "description": "Deploy a Rango app to Vercel Functions (Build Output API v3). Use when deploying a Rango app to Vercel, or asking how the router works with Vercel Functions and the Build Output API.",
       "argumentHint": "",
