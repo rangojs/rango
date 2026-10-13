@@ -73,3 +73,37 @@ export function substitutePatternParams(
   if (hasTrailingSlash && !result.endsWith("/")) result += "/";
   return result;
 }
+
+/**
+ * Join an include() mount with a mount-relative pattern. The mount is the
+ * include PATTERN (`/:locale?`), so the result is a pattern too.
+ *
+ * `pattern === "/"` is the index of the local module: under a non-root mount
+ * it collapses, so `/` under `/blog` becomes `/blog`, not `/blog/`. This
+ * matches `ctx.reverse(".index")` and, for a mount without a trailing slash,
+ * the route pattern the server registers (applyUrlPrefix in
+ * urls/path-helper.ts).
+ */
+export function joinMount(mount: string, pattern: string): string {
+  if (pattern === "/") {
+    if (mount === "" || mount === "/") return "/";
+    return mount.endsWith("/") ? mount.slice(0, -1) : mount;
+  }
+  const normalizedMount = mount === "/" ? "" : mount.replace(/\/+$/, "");
+  return normalizedMount + pattern;
+}
+
+/**
+ * Whether two matches of an include() mount pattern are in the same instance
+ * of the include: `/en/...` and `/de/...` under `/:locale` are not.
+ */
+export function sameMountInstance(
+  mount: string,
+  a: Readonly<Record<string, string>>,
+  b: Readonly<Record<string, string>>,
+): boolean {
+  return (
+    substitutePatternParams(mount, a, mount) ===
+    substitutePatternParams(mount, b, mount)
+  );
+}

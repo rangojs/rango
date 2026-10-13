@@ -2,6 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
   expectLayoutLoaderHeldAcrossNavigations,
+  expectParamMountClickRendersAtTheClick,
+  expectParamMountInterceptOpens,
+  expectParamMountLocaleSwitchNavigates,
+  expectCompetingServerRouteGetsNoFrame,
   expectReturnToCommittedRouteFromOptimisticFrameShowsTheDestination,
 } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
@@ -158,6 +162,90 @@ function runClientUrlsSpec(f: Fixture): void {
         path: "/client-urls-layout-loader",
       },
     );
+  });
+
+  for (const [label, path, locale] of [
+    ["include('/:locale')", "/client-urls-locale/en", "en"],
+    ["include('/:locale?') with the locale", "/client-urls-olocale/en", "en"],
+    ["include('/:locale?') without the locale", "/client-urls-olocale", "-"],
+  ] as const) {
+    test(`a click inside a group under ${label} renders the destination at the click with the mount's params`, async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await expectParamMountClickRendersAtTheClick(page, {
+        url: (pathname) => f.url(pathname),
+        path,
+        locale,
+      });
+    });
+
+    test(`a group's intercept under ${label} opens from inside the group`, async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      await expectParamMountInterceptOpens(page, {
+        url: (pathname) => f.url(pathname),
+        path,
+        locale,
+      });
+    });
+  }
+
+  test("a locale switch to another route under include('/:locale') gets no frame, and the other locale's clicks render at the click", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectParamMountLocaleSwitchNavigates(page, {
+      url: (pathname) => f.url(pathname),
+      path: "/client-urls-locale/en",
+      locale: "en",
+      germanPath: "/client-urls-locale/de",
+    });
+  });
+
+  test("a locale switch to another route under include('/:locale?') from the unprefixed URL gets no frame", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectParamMountLocaleSwitchNavigates(page, {
+      url: (pathname) => f.url(pathname),
+      path: "/client-urls-olocale",
+      locale: "-",
+      germanPath: "/client-urls-olocale/de",
+    });
+  });
+
+  test("under include('/:locale?'), a click to a root route the group's /:slug also matches gets no group frame, and opens no group modal", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectCompetingServerRouteGetsNoFrame(page, {
+      url: (pathname) => f.url(pathname),
+      path: "/client-urls-ocompete/shoe",
+      competitor: {
+        link: "cmp-to-login",
+        slug: "login",
+        path: "/client-urls-ocompete/login",
+        text: "server:login",
+      },
+    });
+  });
+
+  test("under include('/:locale'), a click to a sibling /:locale/about the group's /:slug also matches gets no group frame, and opens no group modal", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectCompetingServerRouteGetsNoFrame(page, {
+      url: (pathname) => f.url(pathname),
+      path: "/client-urls-compete/en/shoe",
+      competitor: {
+        link: "cmp-to-about",
+        slug: "about",
+        path: "/client-urls-compete/en/about",
+        text: "server:about:en",
+      },
+    });
   });
 
   test("a group loader's revalidate() isAction() matches a target action and a namespace import", async ({

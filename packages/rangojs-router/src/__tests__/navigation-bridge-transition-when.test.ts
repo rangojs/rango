@@ -241,8 +241,8 @@ describe("navigation-bridge transition({ when })", () => {
   it("decides a cross-route clientUrls() navigation at the optimistic swap and carries it to the commit", async () => {
     vi.stubGlobal("window", {
       location: {
-        href: "http://localhost/shop/items/one",
-        pathname: "/shop/items/one",
+        href: "http://localhost/en/shop/items/one",
+        pathname: "/en/shop/items/one",
         origin: "http://localhost",
       },
       history: { state: { key: "k1" } },
@@ -260,24 +260,30 @@ describe("navigation-bridge transition({ when })", () => {
         { id: "about", name: "about", transition: { when: destinationWhen } },
       ],
       intercepts: [],
-      match: (pathname: string) =>
-        pathname === "/about"
-          ? { routeKey: "about", params: {} }
-          : pathname.startsWith("/items/")
-            ? { routeKey: "items", params: { itemId: pathname.slice(7) } }
-            : null,
+      // An absolute pathname against the routes joined to the mount pattern.
+      match: (pathname: string, mount: string) => {
+        expect(mount).toBe("/:locale/shop");
+        const [, locale, local = "/"] =
+          /^\/([^/]+)\/shop(\/.*)?$/.exec(pathname) ?? [];
+        if (!locale) return null;
+        return local === "/about"
+          ? { routeKey: "about", params: { locale } }
+          : local.startsWith("/items/")
+            ? { routeKey: "items", params: { locale, itemId: local.slice(7) } }
+            : null;
+      },
     };
     const intents: any[] = [];
     registerClientUrlGroup(
       definition as any,
-      "/shop",
+      "/:locale/shop",
       "shop",
       (intent) => intents.push(intent),
       "items",
     );
     const layoutWhen = vi.fn(() => true);
     const store = {
-      getHistoryKey: vi.fn(() => "/shop/items/one"),
+      getHistoryKey: vi.fn(() => "/en/shop/items/one"),
       getCachedSegments: vi.fn(() => ({
         segments: [
           seg("L0", {
@@ -287,15 +293,15 @@ describe("navigation-bridge transition({ when })", () => {
           }),
           seg("L0R0", {
             params: { locale: "en", itemId: "one" },
-            clientGroup: "/shop",
+            clientGroup: "/:locale/shop",
             transition: { when: vi.fn(() => true) },
           } as any),
         ],
         stale: false,
       })),
       getSegmentState: vi.fn(() => ({
-        path: "/shop/items/one",
-        currentUrl: "http://localhost/shop/items/one",
+        path: "/en/shop/items/one",
+        currentUrl: "http://localhost/en/shop/items/one",
         currentSegmentIds: ["L0", "L0R0"],
       })),
       getHistoryEntryMemory: vi.fn(() => ({ routeName: "shop.item" })),
@@ -311,7 +317,7 @@ describe("navigation-bridge transition({ when })", () => {
       renderSegments: vi.fn(async () => "tree"),
     });
 
-    await bridge.navigate("/shop/about", {
+    await bridge.navigate("/en/shop/about", {
       state: { __rsc_ls_s: "pushed" },
     } as any);
 
@@ -323,7 +329,8 @@ describe("navigation-bridge transition({ when })", () => {
     expect(seen[0].from.routeName).toBe("shop.item");
     expect(seen[0].to).toMatchObject({
       routeName: "shop.about",
-      // Mount params carry over; the origin route's own do not.
+      // The destination's params, the mount's included; the origin route's
+      // own do not carry over.
       params: { locale: "en" },
       state: { __rsc_ls_s: "pushed" },
     });

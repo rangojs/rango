@@ -27,6 +27,7 @@ import { OutletProvider } from "../../outlet-provider.js";
 import type { LoaderDefinition } from "../../types.js";
 import { useLoader } from "../../use-loader.js";
 import { useParams } from "../../browser/react/use-params.js";
+import { useReverse } from "../../browser/react/use-reverse.js";
 import { usePathname } from "../../browser/react/use-pathname.js";
 import { useSearchParams } from "../../browser/react/use-search-params.js";
 import {
@@ -1106,6 +1107,168 @@ describe("ClientUrlsRoot", () => {
     expect(result.container.querySelector("main")?.dataset.pending).toBe(
       "true",
     );
+  });
+});
+
+// The mount is the include() PATTERN (useMount() returns it). A click
+// inside the group presents its destination at the click, with the mount's
+// params in the frame's useParams() as after the commit.
+describe("ClientUrlsRoot under a parameterized include() mount", () => {
+  const ITEM_ROUTES = { index: "/", item: "/items/:itemId" } as const;
+
+  function IndexPage(): ReactNode {
+    return <p>Index</p>;
+  }
+
+  function ItemPage(): ReactNode {
+    const params = useParams();
+    const reverse = useReverse(ITEM_ROUTES);
+    return (
+      <p data-testid="item">
+        {JSON.stringify(params)}|{reverse(".item", { itemId: "7" })}
+      </p>
+    );
+  }
+
+  const definition = clientUrls(({ path }) => [
+    path("/", IndexPage, { name: "index" }),
+    path("/items/:itemId", ItemPage, { name: "item" }),
+  ]);
+
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  async function navigate(
+    mount: string,
+    origin: string,
+    target: string,
+  ): Promise<{
+    presentation: ReturnType<typeof beginClientUrlNavigation>;
+    result: ReturnType<typeof render>;
+  }> {
+    window.history.replaceState(null, "", origin);
+    const result = render(
+      <MountContextProvider value={mount}>
+        <ClientUrlsRoot definition={definition} routeId="client-route-0" />
+      </MountContextProvider>,
+    );
+    let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+    await act(async () => {
+      presentation = beginClientUrlNavigation(
+        new URL(`http://localhost${target}`),
+        new AbortController().signal,
+      );
+    });
+    return { presentation, result };
+  }
+
+  it("/:locale presents the destination with the locale in useParams()", async () => {
+    const { presentation, result } = await navigate(
+      "/:locale",
+      "/en",
+      "/en/items/42",
+    );
+    expect(presentation?.routeId).toBe("client-route-1");
+    expect(result.getByTestId("item").textContent).toBe(
+      '{"locale":"en","itemId":"42"}|/en/items/7',
+    );
+  });
+
+  it("/:locale? presents with and without the prefix", async () => {
+    const prefixed = await navigate("/:locale?", "/en", "/en/items/42");
+    expect(prefixed.presentation?.routeId).toBe("client-route-1");
+    expect(prefixed.result.getByTestId("item").textContent).toBe(
+      '{"locale":"en","itemId":"42"}|/en/items/7',
+    );
+    cleanup();
+    clearClientUrlNavigationRegistry();
+
+    const bare = await navigate("/:locale?", "/", "/items/42");
+    expect(bare.presentation?.routeId).toBe("client-route-1");
+    expect(bare.result.getByTestId("item").textContent).toBe(
+      '{"itemId":"42"}|/items/7',
+    );
+  });
+
+  it("/:accountId/:projectId presents with both mount params", async () => {
+    const { presentation, result } = await navigate(
+      "/:accountId/:projectId",
+      "/acme/web",
+      "/acme/web/items/6",
+    );
+    expect(presentation?.routeId).toBe("client-route-1");
+    expect(result.getByTestId("item").textContent).toBe(
+      '{"accountId":"acme","projectId":"web","itemId":"6"}|/acme/web/items/7',
+    );
+  });
+
+  // Another mount param value is another instance of the include: the click
+  // leaves the group (a plain navigation), as the server's intercept gate
+  // treats it (server-projection.ts isInGroupOrigin).
+  it("a click that changes a mount param gets no frame", async () => {
+    const cases: Array<[mount: string, origin: string, target: string]> = [
+      ["/:locale", "/en/items/1", "/de/items/2"],
+      ["/:locale?", "/en/items/1", "/items/2"],
+      ["/:locale?", "/items/1", "/en/items/2"],
+      ["/:accountId/:projectId", "/acme/web", "/acme/api/items/2"],
+    ];
+    for (const [mount, origin, target] of cases) {
+      const { presentation, result } = await navigate(mount, origin, target);
+      expect(presentation, `${mount}: ${origin} -> ${target}`).toBeNull();
+      expect(result.getByText("Index")).toBeDefined();
+      cleanup();
+      clearClientUrlNavigationRegistry();
+    }
+  });
+
+  // A group route that starts with a param claims URLs the server routes
+  // elsewhere: `/:slug` under `/:locale?` matches a root `/login`. The server
+  // ships the routes that compete (`foreign`); one that wins gets no frame.
+  it("does not present a URL a competing server route wins", async () => {
+    const shop = clientUrls(({ path }) => [
+      path("/items/:itemId", ItemPage, { name: "item" }),
+      path("/:slug", IndexPage, { name: "product" }),
+    ]);
+    window.history.replaceState(null, "", "/items/1");
+    render(
+      <MountContextProvider value="/:locale?">
+        <ClientUrlsRoot
+          definition={shop}
+          routeId="client-route-0"
+          foreign={["/login", "/:locale/about"]}
+        />
+      </MountContextProvider>,
+    );
+    const begin = async (target: string) => {
+      let presentation: ReturnType<typeof beginClientUrlNavigation> = null;
+      await act(async () => {
+        presentation = beginClientUrlNavigation(
+          new URL(`http://localhost${target}`),
+          new AbortController().signal,
+        );
+      });
+      return presentation as ReturnType<typeof beginClientUrlNavigation>;
+    };
+    expect(await begin("/login")).toBeNull();
+    expect(await begin("/en/about")).toBeNull();
+    expect((await begin("/shoe"))?.routeId).toBe("client-route-1");
+  });
+
+  it("declines a target an intercept claims, as under a literal mount", () => {
+    window.history.replaceState(null, "", "/en");
+    registerClientUrlGroup(definition, "/:locale", "shop", () => {});
+    setActiveInterceptTargets(["shop.item"]);
+    expect(
+      beginClientUrlNavigation(
+        new URL("http://localhost/en/items/1"),
+        new AbortController().signal,
+      ),
+    ).toBeNull();
+    expect(
+      beginClientUrlNavigation(
+        new URL("http://localhost/en"),
+        new AbortController().signal,
+      )?.routeId,
+    ).toBe("client-route-0");
   });
 });
 

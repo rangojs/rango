@@ -466,6 +466,74 @@ describe("clientUrls", () => {
     expect(patterns.match("/fr/docs")).toBeNull();
   });
 
+  // The mount is the include() PATTERN. An absolute pathname matches
+  // the routes joined to it, with the mount's params bound next to the
+  // route's, as the server's match binds them.
+  describe("match(pathname, mount): the include() mount pattern", () => {
+    const patterns = clientUrls(({ path }) => [
+      path("/", HomePage, { name: "index" }),
+      path("/items/:itemId", UserPage, { name: "item" }),
+    ]);
+
+    it("a literal mount", () => {
+      expect(patterns.match("/shop/items/1", "/shop")).toMatchObject({
+        routeKey: "client-route-1",
+        params: { itemId: "1" },
+      });
+      expect(patterns.match("/shop", "/shop")).toMatchObject({
+        routeKey: "client-route-0",
+        params: {},
+      });
+      expect(patterns.match("/elsewhere/items/1", "/shop")).toBeNull();
+      expect(patterns.match("/shop-extra", "/shop")).toBeNull();
+    });
+
+    it("a required param mount", () => {
+      expect(patterns.match("/en/items/1", "/:locale")).toMatchObject({
+        routeKey: "client-route-1",
+        params: { locale: "en", itemId: "1" },
+      });
+      expect(patterns.match("/de", "/:locale")).toMatchObject({
+        routeKey: "client-route-0",
+        params: { locale: "de" },
+      });
+      expect(patterns.match("/items/1", "/:locale")).toBeNull();
+    });
+
+    it("an optional param mount, with and without the prefix", () => {
+      expect(patterns.match("/en/items/1", "/:locale?")).toMatchObject({
+        routeKey: "client-route-1",
+        params: { locale: "en", itemId: "1" },
+      });
+      const unprefixed = patterns.match("/items/1", "/:locale?");
+      expect(unprefixed).toMatchObject({
+        routeKey: "client-route-1",
+        params: { itemId: "1" },
+      });
+      expect(unprefixed?.params).not.toHaveProperty("locale");
+      expect(patterns.match("/", "/:locale?")).toMatchObject({
+        routeKey: "client-route-0",
+        params: {},
+      });
+      expect(patterns.match("/en", "/:locale?")).toMatchObject({
+        routeKey: "client-route-0",
+        params: { locale: "en" },
+      });
+    });
+
+    it("nested params under a static prefix", () => {
+      expect(
+        patterns.match("/app/acme/web/items/6", "/app/:accountId/:projectId"),
+      ).toMatchObject({
+        routeKey: "client-route-1",
+        params: { accountId: "acme", projectId: "web", itemId: "6" },
+      });
+      expect(
+        patterns.match("/app/acme/items/6", "/app/:accountId/:projectId"),
+      ).toBeNull();
+    });
+  });
+
   it("assigns deterministic route ids in flattened declaration order", () => {
     const build = (): ReturnType<typeof clientUrls> =>
       clientUrls(({ path, layout }) => [

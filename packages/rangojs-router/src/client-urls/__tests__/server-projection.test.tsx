@@ -791,19 +791,28 @@ describe("client URL server projection", () => {
     const interceptEntry = groupLayout?.intercept[0];
     expect(interceptEntry?.routeName).toBe("clientGroup.detail");
 
-    // The synthesized origin `when` scopes activation to the include's mount:
-    // in-group origins activate, outside origins (including prefix-sharing
-    // siblings like "/client-extra") fall through to the full route.
-    const activates = (pathname: string): boolean =>
+    // The synthesized origin `when` scopes activation to the group: an origin
+    // the router matched to one of its routes activates; any other origin
+    // (a prefix-sharing sibling like "/client-extra", or a route under the
+    // mount that is not the group's) falls through to the full route.
+    const activates = (pathname: string, routeName: string): boolean =>
       interceptEntry!.when.every((selector) =>
         selector({
-          from: { url: new URL(`http://localhost${pathname}`), params: {} },
-        } as Parameters<typeof selector>[0]),
+          from: {
+            url: new URL(`http://localhost${pathname}`),
+            params: {},
+            routeName,
+          },
+          to: { params: { id: "8" } },
+        } as unknown as Parameters<typeof selector>[0]),
       );
-    expect(activates("/client")).toBe(true);
-    expect(activates("/client/detail/7")).toBe(true);
-    expect(activates("/elsewhere")).toBe(false);
-    expect(activates("/client-extra")).toBe(false);
+    expect(activates("/client", "clientGroup.index")).toBe(true);
+    expect(activates("/client/detail/7", "clientGroup.detail")).toBe(true);
+    expect(activates("/elsewhere", "elsewhere")).toBe(false);
+    expect(activates("/client-extra", "clientExtra")).toBe(false);
+    // Under the mount but not one of the group's routes: the group layout
+    // that hosts the slot is not on screen.
+    expect(activates("/client/other/7", "clientOther")).toBe(false);
     // The browser-side coordination composes the same canonical name:
     // ClientUrlsRoot receives the prefix so beginClientUrlNavigation can
     // decline presentations the intercept will claim.
@@ -813,6 +822,82 @@ describe("client URL server projection", () => {
     expect((handlerElement.props as { namePrefix?: string }).namePrefix).toBe(
       "clientGroup",
     );
+  });
+
+  // The include() mount is a PATTERN (a literal prefix compare never
+  // activated under `/:locale`). The gate reads the router's own match of the
+  // origin: its route name, and its params for the mount instance (another
+  // locale is not in the group).
+  it("activates a group's intercept under a parameterized mount, from the same mount instance only", () => {
+    function DetailModal(): null {
+      return null;
+    }
+    const source = clientUrls(({ path, intercept }) => [
+      path("/", AccountPage, { name: "index" }),
+      path("/detail/:id", AccountPage, { name: "detail" }),
+      intercept("@modal", ".detail", DetailModal),
+    ]);
+    const selectorsUnder = (mount: string) => {
+      const manifest = new Map<string, EntryData>();
+      RangoContext.run(
+        {
+          manifest,
+          patterns: new Map(),
+          trailingSlash: new Map(),
+          searchSchemas: new Map(),
+          namespace: "test",
+          parent: null,
+          counters: {},
+        },
+        () =>
+          runWithPrefixes(mount, "shop", () =>
+            materializeClientUrlPatterns(
+              clientReference(`app.urls#param-mount-${mount}`),
+              serializeClientUrlPatterns(source),
+            ).handler(),
+          ),
+      );
+      const interceptEntry = manifest.get("shop.detail")?.parent?.intercept[0];
+      if (!interceptEntry) throw new Error("Expected the group's intercept");
+      return (
+        routeName: string | undefined,
+        fromParams: Record<string, string>,
+        toParams: Record<string, string>,
+      ): boolean =>
+        interceptEntry.when.every((selector) =>
+          selector({
+            from: {
+              url: new URL("http://localhost/origin"),
+              params: fromParams,
+              routeName,
+            },
+            to: { params: toParams },
+          } as unknown as Parameters<typeof selector>[0]),
+        );
+    };
+    const en = { locale: "en" };
+    const enDetail = { locale: "en", id: "1" };
+
+    const locale = selectorsUnder("/:locale");
+    expect(locale("shop.index", en, enDetail)).toBe(true);
+    expect(locale("shop.detail", { ...en, id: "2" }, enDetail)).toBe(true);
+    expect(locale("shop.index", { locale: "de" }, enDetail)).toBe(false);
+    expect(locale("about", en, enDetail)).toBe(false);
+    // An unnamed origin is looked up in the router's trie; none here.
+    expect(locale(undefined, en, enDetail)).toBe(false);
+
+    const optional = selectorsUnder("/:locale?");
+    expect(optional("shop.index", {}, { id: "1" })).toBe(true);
+    expect(optional("shop.index", en, enDetail)).toBe(true);
+    expect(optional("shop.index", en, { id: "1" })).toBe(false);
+    expect(optional("shop.index", {}, enDetail)).toBe(false);
+    expect(optional("login", {}, { id: "1" })).toBe(false);
+
+    const nested = selectorsUnder("/:accountId/:projectId");
+    const web = { accountId: "acme", projectId: "web" };
+    const to = { ...web, id: "1" };
+    expect(nested("shop.index", web, to)).toBe(true);
+    expect(nested("shop.index", { ...web, projectId: "api" }, to)).toBe(false);
   });
 
   it("projects and materializes a data-only transition config onto the route entry", () => {

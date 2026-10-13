@@ -150,6 +150,9 @@ import { historyHandlesPatterns } from "./urls/history-handles.js";
 import { interceptHeldPatterns } from "./urls/intercept-held.js";
 import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
 import clientUrlsLayoutLoaderPatterns from "./urls/client-urls-layout-loader.js";
+import clientUrlsLocalePatterns from "./urls/client-urls-locale.js";
+import clientUrlsCompetePatterns from "./urls/client-urls-compete.js";
+import { CompeteServerPage } from "./urls/client-urls-compete.server.js";
 import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
@@ -953,6 +956,38 @@ export const urlpatterns = urls(
               name: "clientLayoutLoader",
             },
           ),
+          // One group under a parameterized include(), required and optional:
+          // its clicks present at the click too.
+          include("/client-urls-locale/:locale", clientUrlsLocalePatterns, {
+            name: "clientLocale",
+          }),
+          include("/client-urls-olocale/:locale?", clientUrlsLocalePatterns, {
+            name: "clientOptLocale",
+          }),
+          // A group whose `/:slug` also matches the server routes beside it:
+          // those clicks get no frame, and open no modal of the group.
+          path("/client-urls-ocompete/login", () => (
+            <CompeteServerPage
+              text="server:login"
+              detail="/client-urls-ocompete/detail/1"
+            />
+          )),
+          path(
+            "/client-urls-compete/:locale/about",
+            (ctx) => (
+              <CompeteServerPage
+                text={`server:about:${ctx.params.locale}`}
+                detail={`/client-urls-compete/${ctx.params.locale}/detail/1`}
+              />
+            ),
+            { name: "clientCompeteAbout" },
+          ),
+          include("/client-urls-ocompete/:locale?", clientUrlsCompetePatterns, {
+            name: "clientOptCompete",
+          }),
+          include("/client-urls-compete/:locale", clientUrlsCompetePatterns, {
+            name: "clientCompete",
+          }),
         ],
       ),
       // Async include resolving DIRECTLY to a clientUrls() module (no server

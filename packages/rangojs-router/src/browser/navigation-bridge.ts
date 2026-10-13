@@ -457,20 +457,13 @@ export function createNavigationBridge(
                 ).filter((segment) => segment.clientGroup === undefined),
                 options?.replace ? "replace" : "push",
                 {
-                  to: (from) => {
-                    // Mount (include prefix) params carry over; the origin
-                    // route's own params do not.
-                    const params = { ...from.params };
-                    for (const name of destination.originLocalParamNames) {
-                      delete params[name];
-                    }
-                    return {
-                      url: targetUrl,
-                      params: { ...params, ...destination.params },
-                      routeName: destination.routeName,
-                      state: destination.state,
-                    };
-                  },
+                  // The destination's params include the mount's.
+                  to: () => ({
+                    url: targetUrl,
+                    params: destination.params,
+                    routeName: destination.routeName,
+                    state: destination.state,
+                  }),
                   extra: destination.when,
                 },
               ),

@@ -557,6 +557,16 @@ a hard load of the target URL renders the full route.
   hold; it adds the view-transition animation. Inline `<Suspense>` above each
   `useLoader` read is still the finer-grained tool when different reads on
   one route should wait independently.
+- **Parameterized mounts.** A group under `include("/:locale", ...)`,
+  `include("/:locale?", ...)` or `include("/:accountId/:projectId", ...)`
+  presents at the click like one under a literal mount, and `useParams()` in
+  the destination carries the mount's params. A click that changes a mount
+  param (`/en/...` to `/de/...`) is another instance of the include: no
+  optimistic frame, a plain navigation. The group's intercepts open only from
+  one of its routes in the same mount instance. A URL the server routes
+  elsewhere (a root route that a group `/:slug` under `/:locale?` also
+  matches) never renders as a group route: the server ships the competing
+  routes with the group.
 - **Two parallel loaders with equal latency look "SSR'd" together.** Loaders
   kick off in parallel, so awaiting one (`ssr: false`) gives
   same-or-faster siblings time to settle coincidentally. Do not read "it was

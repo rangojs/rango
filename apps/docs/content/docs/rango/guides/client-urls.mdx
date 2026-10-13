@@ -140,7 +140,9 @@ export const urlpatterns = urls(({ include, layout }) => [
 ]);
 ```
 
-Patterns are local to the definition. The `include()` adds the URL prefix and the route-name prefix. `/` becomes `/catalog` (the index maps to the bare mount path), `/products/:productId` becomes `/catalog/products/:productId`, and the routes are named `catalog.index` and `catalog.product`. The browser strips the same prefix before it matches locally, so if you mount the definition somewhere else, all of its routes move with it.
+Patterns are local to the definition. The `include()` adds the URL prefix and the route-name prefix. `/` becomes `/catalog` (the index maps to the bare mount path), `/products/:productId` becomes `/catalog/products/:productId`, and the routes are named `catalog.index` and `catalog.product`. The browser matches a URL against the same patterns joined to the mount, so if you mount the definition somewhere else, all of its routes move with it.
+
+A mount with params works the same way: `include("/:locale", ...)`, `include("/:locale?", ...)` (with and without the prefix) and `include("/:accountId/:projectId", ...)` render at the click, and `useParams()` in the destination has the mount's params. A link that changes a mount param, such as a locale switch, renders when the server answers, as a plain link does. A URL that a server route outside the group serves never renders as a group route, even when a group pattern like `/:slug` also matches it.
 
 - Import the client module's default export. A `clientUrls()` object built in a server module can't cross the server/client boundary.
 - The lazy form also works: `include("/catalog", () => import("./catalog/catalog.client-urls.js"), { name: "catalog" })`. It saves nothing at startup, because the server only holds a client reference to a `"use client"` module. Use it if you want all groups mounted the same way.
@@ -239,7 +241,7 @@ export default clientUrls(({ path, intercept, loader, loading }) => [
 ]);
 ```
 
-Compared with the server [`intercept()`](/docs/rango/guides/intercepting-routes), the client form is restricted. The target must be a named route in the same definition, written with a leading dot. There is no `when` selector and no middleware. The use callback accepts only `loader()` and `loading()`, and those loaders reject `ssr: false`. Only navigations that start inside the group's mount open the modal. From outside the group, or on a hard load, the full route renders. The router renders the slot next to the group's content, so you don't place a `<ParallelOutlet>` for it.
+Compared with the server [`intercept()`](/docs/rango/guides/intercepting-routes), the client form is restricted. The target must be a named route in the same definition, written with a leading dot. There is no `when` selector and no middleware. The use callback accepts only `loader()` and `loading()`, and those loaders reject `ssr: false`. Only navigations that start on one of the group's routes open the modal, and under a mount with params only with the same params (the same locale). From anywhere else, or on a hard load, the full route renders. The router renders the slot next to the group's content, so you don't place a `<ParallelOutlet>` for it.
 
 If you need `when`, middleware, or a server handler, declare the intercept in the server tree around the include. A server-declared intercept can target a group route by its full name (`catalog.product`). When such an intercept applies, the browser skips the optimistic render, and the origin page stays on screen until the modal commits.
 
