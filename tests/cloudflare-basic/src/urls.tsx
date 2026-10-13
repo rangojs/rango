@@ -334,6 +334,10 @@ import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
+import {
+  includeScopeCollisionPatterns,
+  includeScopePublicPatterns,
+} from "./pages/include-scope.js";
 import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
 import { interceptHeldPatterns } from "./pages/intercept-held.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
@@ -2964,6 +2968,12 @@ export const urlpatterns = urls(
         include("/", prefetchTransitionPatterns, { name: "" }),
         include("/", heldBoundaryPatterns, { name: "" }),
         include("/", lateHistoryPatterns, { name: "" }),
+        // Hidden include-scope names (#1104): nested unnamed includes, and an
+        // unnamed include beside a transparent one holding another.
+        include("/", includeScopePublicPatterns),
+        include("/include-scope", includeScopeCollisionPatterns, {
+          name: "includeScope",
+        }),
         // A loader whose rerun an action skips keeps its handle pushes
         // (#1103): clientUrls() group and the ordinary urls() twin.
         include("/held-handles-client", heldHandlesClientPatterns, {

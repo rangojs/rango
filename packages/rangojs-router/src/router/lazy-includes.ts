@@ -102,34 +102,49 @@ export function evaluateLazyEntry<TEnv = any>(
   }
 
   // Async provider (`() => import("./routes")`): the route module is evaluated
-  // off the startup path, on the first request reaching this prefix. Concurrent
-  // first-hits share one in-flight promise so the import + expansion run exactly
-  // once. The eager path below stays fully synchronous (no Promise), so the
-  // per-entry match loop pays no microtask for normal includes.
+  // off the startup path, on the first request reaching this prefix. The eager
+  // path below stays fully synchronous (no Promise), so the per-entry match
+  // loop pays no microtask for normal includes.
   const lazyPatterns = entry.lazyPatterns;
   if (isIncludeProvider(lazyPatterns)) {
-    const inflight = (entry as { _lazyInflight?: Promise<void> })._lazyInflight;
-    if (inflight) return inflight;
-    const work = (async () => {
-      const resolved = resolveIncludeModule(
-        await lazyPatterns(),
-        entry.staticPrefix,
-      );
-      // Cache the resolved patterns: any later re-entry expands synchronously.
-      entry.lazyPatterns = resolved as unknown as UrlPatterns<TEnv>;
-      runExpansion(entry, deps, resolved as UrlPatterns<TEnv>);
-    })();
-    (entry as { _lazyInflight?: Promise<void> })._lazyInflight = work;
-    const clear = () => {
-      (entry as { _lazyInflight?: Promise<void> })._lazyInflight = undefined;
-    };
-    // On failure, clear the flag (lazyEvaluated stays false) so a later request
-    // can retry the import rather than wedging the route permanently.
-    work.then(clear, clear);
-    return work;
+    // Concurrent first-hits share the import; the first to resume expands.
+    return resolveEntryPatterns(entry).then((resolved) => {
+      if (!entry.lazyEvaluated) runExpansion(entry, deps, resolved);
+    });
   }
 
   runExpansion(entry, deps, lazyPatterns as UrlPatterns<TEnv>);
+}
+
+type ProviderEntry<TEnv> = RouteEntry<TEnv> & {
+  _providerInflight?: Promise<UrlPatterns<TEnv>>;
+};
+
+/**
+ * Resolve an async include entry's provider once and cache the patterns on
+ * `entry.lazyPatterns`. Concurrent callers (match-time expansion and
+ * render-time loadManifest) share one in-flight import; it clears when it
+ * settles, so a rejected import is retried by the next request.
+ */
+export function resolveEntryPatterns<TEnv = any>(
+  entry: RouteEntry<TEnv>,
+): Promise<UrlPatterns<TEnv>> {
+  const target = entry as ProviderEntry<TEnv>;
+  const lazyPatterns = target.lazyPatterns;
+  if (!isIncludeProvider(lazyPatterns)) {
+    return Promise.resolve(lazyPatterns as UrlPatterns<TEnv>);
+  }
+  target._providerInflight ??= (async () => {
+    const resolved = resolveIncludeModule(
+      await lazyPatterns(),
+      target.staticPrefix,
+    ) as UrlPatterns<TEnv>;
+    target.lazyPatterns = resolved;
+    return resolved;
+  })().finally(() => {
+    target._providerInflight = undefined;
+  });
+  return target._providerInflight;
 }
 
 /**
@@ -143,10 +158,9 @@ function runExpansion<TEnv = any>(
 ): void {
   // lazyEvaluated is set at the END, only after the handler ran and the routes
   // (and any nested includes) were spliced. Setting it up-front would mark the
-  // entry done even if the handler throws mid-expansion: the async provider
-  // path clears _lazyInflight on rejection so a later request can retry, but a
-  // premature lazyEvaluated=true would make evaluateLazyEntry short-circuit
-  // (line ~77) forever, wedging the route at 404 until the isolate restarts.
+  // entry done even if the handler throws mid-expansion, so a later request
+  // could not retry: evaluateLazyEntry would short-circuit forever, wedging the
+  // route at 404 until the isolate restarts.
   const lazyContext = entry.lazyContext;
 
   const manifest = new Map<string, EntryData>();
@@ -173,6 +187,8 @@ function runExpansion<TEnv = any>(
       rootScoped: lazyContext?.rootScoped,
       routerId: lazyContext?.routerId,
       includeScope: lazyContext?.includeScope,
+      scopePath: lazyContext?.scopePath,
+      hiddenScopePath: lazyContext?.hiddenScopePath,
     },
     () => {
       const includePrefix = (entry as any)._lazyPrefix || "";

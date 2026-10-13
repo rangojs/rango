@@ -16,7 +16,11 @@ import {
   RangoContext,
   runWithPrefixes,
 } from "../server/context.js";
-import type { EntryData, TrackedInclude } from "../server/context.js";
+import type {
+  EntryData,
+  IncludeScopePosition,
+  TrackedInclude,
+} from "../server/context.js";
 import type { TrailingSlashMode } from "../types.js";
 import { createRouteHelpers } from "../route-definition.js";
 import MapRootLayout from "../server/root-layout.js";
@@ -179,6 +183,7 @@ async function buildPrefixTreeNode(
   routeSearchSchemas?: Record<string, Record<string, string>>,
   routerId?: string,
   validateTransitionWhen?: boolean,
+  position?: IncludeScopePosition,
 ): Promise<PrefixTreeNode> {
   // Resolve an async include provider (`() => import("./routes")`) so its routes
   // are walked into the build-time manifest/types/href. Runtime matching still
@@ -222,6 +227,10 @@ async function buildPrefixTreeNode(
         mountIndex,
         ...(routerId ? { routerId } : {}),
         trackedIncludes, // Enable nested include tracking
+        // The same position runtime expansion runs this include at
+        // (lazy-includes.ts), so nested hidden names agree across realms.
+        scopePath: position?.scopePath,
+        hiddenScopePath: position?.hiddenScopePath,
       },
       () => {
         const helpers = createRouteHelpers();
@@ -304,6 +313,7 @@ async function buildPrefixTreeNode(
         routeSearchSchemas,
         routerId,
         validateTransitionWhen,
+        include,
       ),
     );
 
@@ -505,6 +515,7 @@ export async function generateManifestFull<TEnv>(
       routeSearchSchemas,
       options?.routerId,
       options?.validateTransitionWhen,
+      include,
     ),
   );
 

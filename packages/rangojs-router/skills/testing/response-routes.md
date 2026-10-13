@@ -4,6 +4,8 @@
 
 `dispatch` runs the router's REAL matching (reusing `previewMatch`) and the real global + route-level middleware chain, with no RSC render — so redirects, 404s, response routes, content negotiation, and middleware short-circuits behave exactly as in production. You SEED the request and `env`; everything else (matching, middleware, header/cookie merge) is real machinery.
 
+Matching goes through the route trie, as every request in `vite dev` and production does.
+
 ## API
 
 ### Options — `DispatchOptions<TEnv>`
@@ -78,7 +80,7 @@ describe("api routes via dispatch", () => {
 
 `dispatch` also covers, with production code paths:
 
-- trailing-slash/redirect targets (`findMatch`) — a redirected path returns a 308 with the `Location` (query preserved);
+- trailing-slash redirects from the trie — a route with `trailingSlash: "never"` or `"always"` answers the other form with a 308 and the `Location` (query preserved). A route with no `trailingSlash` serves its URL with and without a trailing slash, with no redirect, as production does;
 - the open-redirect guard on browser-followed redirects (a cross-origin `Location` is rewritten to the basename root unless `redirect(url, { external: true })`);
 - content-negotiated routes (`Vary: Accept` appended);
 - cached response routes (`cache({ ... })` around a `path.json` etc.): hit, SWR, and tag writes. The cache write is scheduled via `waitUntil` (a microtask in tests), so flush microtasks between the seeding `dispatch` and the one that asserts the hit;
@@ -90,6 +92,7 @@ describe("api routes via dispatch", () => {
 - A COMPONENT route's guard stack cannot run here. Assert it at e2e, or extract the middleware fn and unit-test it with `runMiddleware` (see `./middleware.md`).
 - JSON serialization is bare, applied in `response-route-handler.ts`: a `path.json` handler that returns a value is serialized verbatim (`JSON.stringify(value)`, status 200, `application/json`) — no envelope. Returning or throwing a `Response` (e.g. `Response.json(x)`) uses the same control-flow path. Any other thrown error takes the error's status (`RouterError.status`, else 500, or a non-200 status already set upstream in the request pipeline). On a `path.json` route the body is an RFC 9457 problem+json object `{ title, status, detail, code }` (`application/problem+json;charset=utf-8`), where `code` is the `RouterError.code`, else `"INTERNAL"`, and the `type` member is omitted. On text/html/xml/md routes the body is `text/plain`: the `RouterError` message, the error message in dev, or `"Internal Server Error"` in production. Assert the shape matching what your handler returns.
 - Setup: needs the preset (alias + virtual stubs) or a Vite-RSC env (see `./setup.md`); a bare router import throws on Vite virtuals.
+- Building the trie runs route discovery: every `include()`d `urls()` handler runs once more, and every async include provider (`() => import(...)`) is called. Count provider calls or handler runs after the first `dispatch` on that router, not from router construction. A provider that rejects fails the `dispatch`, as it fails `vite dev` and the build.
 - A router using `Prerender()`/`createLoader()`/`Static()` now constructs in a bare test (each assigns a runtime fallback `$$id`). Importing the whole router _file_ may still need the plugin (its page modules pull app deps / `virtual:` modules) — build from a focused include (your API routes) for whole-router dispatch.
 - A `throw rewrite(target)` from global or route middleware re-dispatches as the router does: global middleware matched on the target's path, the target's route middleware and handler, the same request context, `x-rango-rewrite` on the response, 508 on a loop. The visitor's URL is matched before middleware runs, so it must be a response route (or a redirect or 404) too; a rewrite target that is a component route throws the same error as a direct request.
 - A `_rsc_partial` request to a response route runs global middleware first (an auth gate can still 401/redirect), then returns `X-RSC-Reload` — route-level middleware is skipped, exactly like production.

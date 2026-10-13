@@ -131,21 +131,28 @@ describe("prefetch: false on a clientUrls() group (cloudflare-basic)", () => {
     expect(await nav.readDeferred()).toEqual([]);
   });
 
-  it("dispatch matches the group's routes: a trailing slash redirects, an unknown path is a 404", async () => {
-    // A router no serveShellRequest call has served: once one has, dispatch
-    // matches a trailing-slash URL as the route instead of redirecting it.
+  it("dispatch matches the group's routes through the trie, before and after serveShellRequest", async () => {
+    // dispatch matches through the route trie like the handler serveShellRequest
+    // drives, so a router a shell request served answers as a fresh one does
+    // (#1107). The group sets no trailingSlash: the trie serves the
+    // trailing-slash URL as the route, as production does, and the route is an
+    // RSC route dispatch does not render.
     const fresh = mount("pf-cu-dispatch");
-    const status = async (url: string) => {
-      const response = await dispatch(fresh, {
+    const served = mount("pf-cu-dispatch-served");
+    await serveShellRequest(served, "/prefetch-false/cu/loader", { env });
+    for (const target of [fresh, served]) {
+      const request = (url: string) => ({
         env,
         request: new Request(`http://localhost${url}`),
       });
-      return [response.status, response.headers.get("location")];
-    };
-    expect(await status("/prefetch-false/cu/loader/")).toEqual([
-      308,
-      "/prefetch-false/cu/loader",
-    ]);
-    expect(await status("/prefetch-false/cu/missing")).toEqual([404, null]);
+      await expect(
+        dispatch(target, request("/prefetch-false/cu/loader/")),
+      ).rejects.toThrow(/does not render RSC routes/);
+      const missing = await dispatch(
+        target,
+        request("/prefetch-false/cu/missing"),
+      );
+      expect(missing.status).toBe(404);
+    }
   });
 });

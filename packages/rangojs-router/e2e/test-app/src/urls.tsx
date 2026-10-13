@@ -39,6 +39,10 @@ import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
 import { unnamedIncludeReversePatterns } from "./urls/unnamed-include-reverse.js";
 import {
+  includeScopeCollisionPatterns,
+  includeScopePublicPatterns,
+} from "./urls/include-scope.js";
+import {
   flattenedIncludePatterns,
   namedIncludePatterns,
 } from "./urls/include-scoping-reverse.js";
@@ -1153,6 +1157,13 @@ export const urlpatterns = urls(
       include("/unnamed-reverse", unnamedIncludeReversePatterns),
       include("/flat-reverse", flattenedIncludePatterns, { name: "" }),
       include("/ns-reverse", namedIncludePatterns, { name: "ns" }),
+
+      // Hidden include-scope names (#1104): nested unnamed includes, and an
+      // unnamed include beside a transparent one holding another.
+      include("/", includeScopePublicPatterns),
+      include("/include-scope", includeScopeCollisionPatterns, {
+        name: "includeScope",
+      }),
 
       // Same patterns mounted twice under different prefixes — the
       // useReverse(routes) e2e spec exercises the hook from these.

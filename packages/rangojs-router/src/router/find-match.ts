@@ -21,6 +21,30 @@ function cloneMatchResult<TEnv>(
   return r ? { ...r, params: { ...r.params } } : null;
 }
 
+function describeUnownedTrieRoute(
+  pathname: string,
+  routeKey: string,
+  sp: string,
+  entries: RouteEntry[],
+): string {
+  const includes = entries
+    .filter((e) => e.staticPrefix === sp)
+    .map((e) => {
+      const prefix = (e as { _lazyPrefix?: string })._lazyPrefix;
+      if (prefix === undefined) return "root routes";
+      const names = e.lazyContext?.namePrefix;
+      return `include("${prefix}")${names ? ` naming "${names}.*"` : ""}`;
+    });
+  return (
+    `[@rangojs/router] The route trie matched "${pathname}" to route ` +
+    `"${routeKey}" under static prefix "${sp}", but no include there ` +
+    `registered that name at runtime (checked: ${includes.join(", ")}). ` +
+    `Build discovery and the runtime named this route differently, so it ` +
+    `cannot render. If this follows a route edit, reload the page; if it ` +
+    `persists, please report it with your route configuration.`
+  );
+}
+
 export interface FindMatchDeps<TEnv = any> {
   routesEntries: RouteEntry<TEnv>[];
   // Returns a Promise only when it had to resolve an async include provider
@@ -100,7 +124,7 @@ export function createFindMatch<TEnv = any>(
             // this loop may evaluate a candidate that is NOT the route's owner.
             // Remember the failure and keep scanning: if another candidate owns
             // the route, this sibling's failure is correctly isolated (its
-            // _lazyInflight was cleared, so a later request retries). But if NO
+            // in-flight import was cleared, so a later request retries). But if NO
             // candidate ends up owning it, the failing one WAS the owner — a
             // real, trie-matched route whose module failed to import — and we
             // rethrow below as a 5xx rather than silently 404ing (see finding 3:
@@ -128,6 +152,18 @@ export function createFindMatch<TEnv = any>(
         // fallthrough would give.
         if (!entry && candidateFailed) {
           throw candidateError;
+        }
+
+        // No candidate owns the trie's key (#1104): dev throws, production keeps the 404 fallback.
+        if (!entry && fallbackEntry && process.env.NODE_ENV !== "production") {
+          throw new Error(
+            describeUnownedTrieRoute(
+              pathname,
+              trieResult.routeKey,
+              trieResult.sp,
+              deps.routesEntries,
+            ),
+          );
         }
 
         if (!entry) entry = fallbackEntry;
