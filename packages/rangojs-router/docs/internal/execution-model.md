@@ -1018,6 +1018,11 @@ Guarantees, each pinned by a semantic matrix row:
   (`_shellCaptureForVisitor`); the target's own shell stays its own.
   `.shell("target")` reads and captures the target's shared shell, as before
   #1146. `[RW8]`
+- A navigation, prefetch or action from a page middleware rewrote diffs
+  against the route that rendered the page, not the route the visitor's URL
+  matches: `revalidate()` sees the target's params and URL, so a
+  param-scoped loader holds and a same-page navigation re-renders nothing.
+  `[RW10]`
 
 RW6 and RW7 are one rule: a URL's shared shell is read and written only by
 requests on that URL. The scar: a shared target shell renders the target's
@@ -1058,12 +1063,69 @@ page route: a response route, a redirect or no match on pass 2 is an error
 (`coreRequestHandler`), not a fresh POST that a response route's handler
 would serve as a second mutation.
 
+### Leaving a rewritten page
+
+You might expect the server to know which route the page on screen came
+from. It cannot: the rewrite was a middleware decision on an earlier
+request, and it may not hold any more. The next request from that page
+names only the visitor's URL (`X-RSC-Router-Client-Path`), and
+`resolveNavigation` (`router/navigation-snapshot.ts`) used to match that
+URL for the page being left. Under a rewrite it found the rewriting route,
+so `prevParams` were its params (`{ "*": "public-1" }` against the target's
+`{ id: "1" }`): every navigation from the page re-ran the route and its
+loaders, a `revalidate()` param predicate never held, `currentUrl` and
+`nextUrl` were in different frames, and `isSameRouteNavigation` was false
+(#1144). Actions from the page had the same root (#1145).
+
+So the payload of every rewritten request carries `metadata.rewriteTarget`,
+the target's path and search (`payloadLocation` in `rsc/full-payload.ts`,
+from the rewrite trail; absent otherwise). The browser keeps it per history
+entry (`HistoryEntryMemory.rewriteTarget`, `rememberDisplayedEntry`), so
+Back and Forward leave the right page, and sends it as
+`X-RSC-Router-Client-Route` on navigation, prefetch and action requests made
+from that page. A prefetch's source key folds it in (`buildSourceKey`), and
+the response `Vary`s on it. `resolveNavigation` matches it for `prevUrl`,
+`prevMatch` and `prevParams`, so `isSameRouteNavigation`, `fromRouteName`
+and the intercept `from` context follow; both `currentUrl` and `nextUrl` are
+then in the target's frame, and `ctx.rewrittenFrom` still gives the
+visitor's side. A shared render (a stored document, a shell) carries the
+target too: it is the same for every visitor of that entry.
+
+The header names only the page being left. What renders is matched from the
+request's own URL and middleware, so a forged value runs and skips no
+middleware: it can make the server re-render more or less of what the
+client claims to hold, which `_rsc_segments` can already do. A value of
+another origin, or one that does not parse, is ignored. The browser does not
+send it from an open intercept's source (the source is not the page on
+screen), the server ignores it beside `X-RSC-Router-Intercept-Source`, and
+that header stays the visitor's URL.
+
+Can two visitor URLs share one target? Yes: `/promo/a` and `/promo/b` can
+both rewrite to `/landing`, and the target frame alone would hold the route
+between them. That render may read `ctx.rewrittenFrom`, so when the
+visitor's URL moves, `matchPartial` marks `_visitorMoved` (`match-api.ts`,
+comparing `visitorUrl()` with the Client-Path the snapshot kept as
+`prevVisitorUrl`), and the default revalidation counts it as a search change
+(`router/revalidation.ts`, `match-middleware/cache-lookup.ts`): the route
+and its own loaders re-run, layouts stay held. A navigation to the page
+already shown, or a search change the target keeps, behaves exactly as from
+a direct visit.
+
 What this does not cover yet:
 
+- A page the document cache stored from a direct visit to the target, then
+  served to a rewritten visitor, carries no `rewriteTarget`: requests from
+  it name only the visitor's URL, as before #1144. The stored bytes are the
+  same for every visitor.
+- An intercept opened from a rewritten page is decided with the target as
+  its source, but the modal's later requests (its fill, a refresh, Back into
+  it) name the source by `X-RSC-Router-Intercept-Source`, the visitor's URL,
+  so an intercept `when()` that reads `from` sees the rewriting route there.
 - A route middleware that skips a mutation (`if (method !== "GET") return
 next()`) still re-renders the rewriting route after the action, and a page
-  a global rewrite reached cannot call an action. Both need the client to
-  send the identity of the page it shows, which lands with #1144.
+  a global rewrite reached cannot call an action. The client now names the
+  page it shows, but only to find the page being left: re-rendering the
+  target from it would let a request choose what renders.
 
 Where the old and the new URL show:
 

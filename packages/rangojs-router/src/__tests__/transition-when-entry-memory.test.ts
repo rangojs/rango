@@ -39,7 +39,7 @@ function setup() {
   window.history.replaceState({ key: "entry-a" }, "", "/a");
   // The commit of entry A records its state then.
   Tab.write("details");
-  store.rememberDisplayedEntry("a");
+  store.rememberDisplayedEntry({ routeName: "a" });
   return { Tab, store };
 }
 

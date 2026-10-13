@@ -383,6 +383,53 @@ function rewriteTests(f: Fixture) {
     await expectIdentityKept(page);
   });
 
+  test("a navigation from a page route middleware rewrote holds its route and a param-scoped loader", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await useSaveKey(page, f);
+    // /rw/catalog/:slug rewrites to /rw/items/:id: the visitor's URL matches
+    // a route whose params are not the target's (#1144).
+    await page.goto(f.url("/rw/catalog/7?sort=a"));
+    await waitForHydration(page);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 7");
+    await expect(testId(page, "rw-item-loads")).toHaveText("1");
+    await expect(testId(page, "rw-item-renders")).toHaveText("1");
+    await using _reload = await expectNoReload(page);
+    await markIdentity(page);
+
+    // A sort change re-renders the route (its search changed) and holds the
+    // loader, whose revalidate() compares the item id.
+    await testId(page, "rw-item-sort").click();
+    await expect(page).toHaveURL(/\/rw\/catalog\/7\?sort=b$/);
+    await expect(testId(page, "rw-item-renders")).toHaveText("2");
+    await expect(testId(page, "rw-item-loads")).toHaveText("1");
+    await expect(testId(page, "rw-client-location")).toHaveText(
+      "/rw/catalog/7?sort=b",
+    );
+
+    // Back to ?sort=a, then the same navigation from that entry again.
+    await goBack(page);
+    await expect(page).toHaveURL(/\/rw\/catalog\/7\?sort=a$/);
+    await expect(testId(page, "rw-client-location")).toHaveText(
+      "/rw/catalog/7?sort=a",
+    );
+    await testId(page, "rw-item-sort").click();
+    await expect(page).toHaveURL(/\/rw\/catalog\/7\?sort=b$/);
+    await expect(testId(page, "rw-client-location")).toHaveText(
+      "/rw/catalog/7?sort=b",
+    );
+    await expect(testId(page, "rw-item-loads")).toHaveText("1");
+
+    // A server action from the page re-renders against the item route: the
+    // loader's revalidate() holds it there too.
+    await testId(page, "rw-item-save").click();
+    await expect(testId(page, "rw-item-saves")).toHaveText("1");
+    await expect(testId(page, "rw-item-loads")).toHaveText("1");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 7");
+    await expectIdentityKept(page);
+  });
+
   test("a loader fetch under the lock rejects with the rule as a loaderError", async ({
     request,
   }) => {

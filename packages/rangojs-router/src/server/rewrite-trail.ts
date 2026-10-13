@@ -111,6 +111,19 @@ export function visitorUrl(reqCtx: TrailContext | undefined, url: URL): URL {
   return first ? new URL(first) : stripInternalParams(url);
 }
 
+/**
+ * The path and search of the URL a rewritten request rendered (the trail's
+ * last entry); undefined when nothing rewrote. Not request identity: it is
+ * the target, which a shared render shows to every visitor anyway.
+ */
+export function rewriteTarget(
+  reqCtx: TrailContext | undefined,
+): string | undefined {
+  const trail = rewriteTrail(reqCtx);
+  if (!trail) return undefined;
+  return pathKey(new URL(trail[trail.length - 1]!));
+}
+
 const REWRITTEN_FROM_FIX =
   "It is the visitor's URL, which the shared entry would serve to every " +
   "visitor. Read it in middleware and pass what the page needs through a " +

@@ -947,7 +947,9 @@ export function withCacheLookup<TEnv>(
 
       const entryInfo = entryRevalidateMap?.get(segment.id);
 
-      const searchChanged = ctx.prevUrl.search !== ctx.url.search;
+      const searchChanged =
+        ctx.prevUrl.search !== ctx.url.search ||
+        _getRequestContext()?._visitorMoved === true;
       const routeParamsChanged = !paramsEqual(
         ctx.matched.params,
         ctx.prevParams,

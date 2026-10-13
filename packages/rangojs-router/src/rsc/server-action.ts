@@ -24,7 +24,7 @@ import { observePhase, PHASES } from "../router/instrument.js";
 import { resolveActionRefId } from "../router/is-action.js";
 import type { TraceSpan } from "../router/tracing.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
-import { renderedLocation } from "./full-payload.js";
+import { payloadLocation } from "./full-payload.js";
 import { publicRouteName } from "../route-name.js";
 import type { RscPayload } from "./types.js";
 import {
@@ -536,7 +536,7 @@ function renderActionBoundaryResponse<TEnv>(
 
   const errorPayload: RscPayload = {
     metadata: {
-      pathname: renderedLocation(reqCtx, url).pathname,
+      ...payloadLocation(reqCtx, url),
       // routerId exposed for the frontend (current app identity); see
       // rsc-rendering.ts partial branch.
       routerId: ctx.router.id,
@@ -599,7 +599,7 @@ function renderRevalidationResponse<TEnv>(
 
   const payload: RscPayload = {
     metadata: {
-      pathname: renderedLocation(reqCtx, url).pathname,
+      ...payloadLocation(reqCtx, url),
       // routerId exposed for the frontend (current app identity); see
       // rsc-rendering.ts partial branch.
       routerId: ctx.router.id,

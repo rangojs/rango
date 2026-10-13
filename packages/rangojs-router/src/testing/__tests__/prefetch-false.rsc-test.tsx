@@ -1192,7 +1192,7 @@ describe("R7: deferral is never stored, and modes never answer each other", () =
   const PREFETCH_CACHE_CONTROL = "private, max-age=300";
   // What a response nothing may reuse answers with (rsc-rendering.ts).
   const NOT_REUSED = "private, no-cache";
-  const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
+  const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Client-Route, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
   const headersOf = (r: ServeShellRequestResult) => ({
     vary: r.response.headers.get("vary"),
     cacheControl: r.response.headers.get("cache-control"),

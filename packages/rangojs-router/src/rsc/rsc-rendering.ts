@@ -51,7 +51,7 @@ import {
 import type { HandlerContext } from "./handler-context.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
 import { publicRouteName } from "../route-name.js";
-import { buildFullPayload, renderedLocation } from "./full-payload.js";
+import { buildFullPayload, payloadLocation } from "./full-payload.js";
 import {
   capShellWindow,
   lastStoredCaptureSeq,
@@ -897,7 +897,7 @@ function* preparePayloadPlan<TEnv>(
       kind: "payload",
       payload: {
         metadata: {
-          pathname: renderedLocation(reqCtx, url).pathname,
+          ...payloadLocation(reqCtx, url),
           // routerId is serialized on every payload (including within-session
           // ones) so the frontend can read the current app/router identity. It
           // always equals the current app's id: a cross-app navigation is
@@ -1241,7 +1241,7 @@ function renderPreparedRscResponse<TEnv>(
 
   const rscHeaders: Record<string, string> = {
     "content-type": "text/x-component;charset=utf-8",
-    vary: `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`,
+    vary: `accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Client-Route, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`,
     // Router identity, so the client can verify pre-decode (before importing
     // chunks) that this content payload belongs to its app and refuse a
     // foreign one (cache/proxy/bug). Control-only reload/redirect responses

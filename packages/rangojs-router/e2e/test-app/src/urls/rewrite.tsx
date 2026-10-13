@@ -1,5 +1,6 @@
 import {
   cookies,
+  createLoader,
   createVar,
   getRequestContext,
   rewrite,
@@ -8,9 +9,13 @@ import {
   type Middleware,
 } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
-import { RwClientLocation } from "./rewrite.client.js";
+import { RwClientLocation, RwItemLoads } from "./rewrite.client.js";
 import { rwFailItem, rwSaveCart, rwSaveItem } from "./rewrite.actions.js";
-import { getRwItemSaves } from "./rewrite-saves.js";
+import {
+  bumpRwItemLoads,
+  bumpRwItemRenders,
+  getRwItemSaves,
+} from "./rewrite-saves.js";
 
 // throw rewrite() fixtures (e2e/rewrite.test.ts). The `rw-lock` cookie turns
 // the lock on per test: "on" is the maintenance recipe (pages rewrite to
@@ -177,6 +182,15 @@ function RwMaintenance(ctx: HandlerContext) {
   );
 }
 
+function rwKey(): string {
+  return cookies().get("rw-key")?.value ?? "none";
+}
+
+/** The item page's loader: counts its runs for the test's key. */
+export const RwItemLoader = createLoader(async () => ({
+  loads: bumpRwItemLoads(rwKey()),
+}));
+
 /**
  * The target of /rw/public/:id. Its save button posts to the visitor's URL,
  * whose route middleware rewrites every method (#1145).
@@ -186,9 +200,11 @@ function RwItem(ctx: HandlerContext<{ id: string }>) {
     <section data-testid="rw-item">
       <h1>{`Item ${ctx.params.id}`}</h1>
       <span data-testid="rw-item-guard">{ctx.get(RwItemGuard) ?? "none"}</span>
-      <span data-testid="rw-item-saves">
-        {String(getRwItemSaves(cookies().get("rw-key")?.value ?? "none"))}
+      <span data-testid="rw-item-saves">{String(getRwItemSaves(rwKey()))}</span>
+      <span data-testid="rw-item-renders">
+        {String(bumpRwItemRenders(rwKey()))}
       </span>
+      <RwItemLoads loader={RwItemLoader} />
       <span data-testid="rw-runs">{String(ctx.get(RwRuns) ?? 0)}</span>
       <form action={rwSaveItem}>
         <button type="submit" data-testid="rw-item-save">
@@ -230,7 +246,7 @@ function RwPprItem(ctx: HandlerContext<{ id: string }>) {
 }
 
 export const rewritePatterns = urls(
-  ({ path, layout, middleware, errorBoundary }) => [
+  ({ path, layout, middleware, errorBoundary, loader, revalidate }) => [
     layout(RwLayout, () => [
       path("/", RwIndex, { name: "index" }),
       path("/shop", RwShop, { name: "shop" }, () => [
@@ -246,7 +262,27 @@ export const rewritePatterns = urls(
           await next();
         }),
         errorBoundary(() => <RwItemBoundary />),
+        // Re-run only for another item: a sort change, or an action, holds it.
+        loader(RwItemLoader, () => [
+          revalidate(
+            ({ currentParams, nextParams }) =>
+              currentParams.id !== nextParams.id,
+          ),
+        ]),
       ]),
+      // A catch-all-style routing rewrite whose own params are not the
+      // target's (#1144): navigating from the page it shows diffs against the
+      // item route, not this one.
+      path(
+        "/catalog/:slug",
+        () => <h1>never rendered</h1>,
+        {},
+        () => [
+          middleware((ctx) => {
+            throw rewrite(`/rw/items/${ctx.params.slug}${ctx.url.search}`);
+          }),
+        ],
+      ),
       // A routing rewrite in route middleware, for every method: a server
       // action or a no-JS form post from the item page re-renders the item.
       path(

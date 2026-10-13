@@ -102,12 +102,16 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * ones, as `segments`, and the same URL as `from`. `interceptSource` sends
    * the intercept source (`X-RSC-Router-Intercept-Source`) the browser sends
    * from an open modal and with the fill of an intercept, whose `from` is
-   * that source.
+   * that source. `rewriteTarget` sends what the page at `from` carried as
+   * its payload's `metadata.rewriteTarget` when middleware rewrote it
+   * (`X-RSC-Router-Client-Route`), as the browser does: the server then
+   * diffs against the route that rendered that page.
    */
   partial?:
     | true
     | {
         from?: string;
+        rewriteTarget?: string;
         segments?: readonly string[];
         prefetch?: boolean;
         fill?: boolean;
@@ -145,6 +149,8 @@ export interface ServeShellRequestAction {
   args?: readonly unknown[];
   /** The segment ids the page holds (`_rsc_segments`). */
   segments?: readonly string[];
+  /** The page's payload `metadata.rewriteTarget`, as for `partial`. */
+  rewriteTarget?: string;
 }
 
 /** A response's handle data, as the browser consumes it. */
@@ -560,6 +566,14 @@ async function getHandler(
   return handler;
 }
 
+/** `X-RSC-Router-Client-Route`, as the browser sends it from a rewritten page. */
+function setClientRoute(
+  headers: Headers,
+  rewriteTarget: string | undefined,
+): void {
+  if (rewriteTarget) headers.set("X-RSC-Router-Client-Route", rewriteTarget);
+}
+
 async function buildActionRequest(
   url: URL,
   headers: Headers,
@@ -579,6 +593,7 @@ async function buildActionRequest(
   if (!headers.has("X-RSC-Router-Client-Path")) {
     headers.set("X-RSC-Router-Client-Path", url.href);
   }
+  setClientRoute(headers, action.rewriteTarget);
   return new Request(target, {
     method: "POST",
     headers,
@@ -618,6 +633,7 @@ async function buildRequest(
   }
   const {
     from = "/",
+    rewriteTarget,
     segments = [],
     prefetch = false,
     fill = false,
@@ -635,6 +651,7 @@ async function buildRequest(
   if (!headers.has("X-RSC-Router-Client-Path")) {
     headers.set("X-RSC-Router-Client-Path", new URL(from, url).href);
   }
+  setClientRoute(headers, rewriteTarget);
   if (interceptSource !== undefined) {
     headers.set(
       "X-RSC-Router-Intercept-Source",

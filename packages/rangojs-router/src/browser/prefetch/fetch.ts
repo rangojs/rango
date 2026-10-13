@@ -37,6 +37,7 @@ import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../../segment-fragments.js";
 import { PREFETCH_HEADER } from "../../prefetch-markers.js";
 import type { RscPayload } from "../types.js";
+import { getRegisteredStore } from "../navigation-store-handle.js";
 
 /**
  * Decoder injected at app startup (see setPrefetchDecoder). This is
@@ -202,6 +203,8 @@ function executePrefetchFetch(
   forceSourceScope: boolean,
   /** Rango state captured once by the caller (keys + header share one read). */
   rangoState: string,
+  /** The source page's rewrite target, captured with its source key. */
+  clientRoute: string | undefined,
   expectedRouterId?: string,
   signal?: AbortSignal,
 ): Promise<DecodedPrefetch | null> {
@@ -264,6 +267,7 @@ function executePrefetchFetch(
     headers: {
       "X-Rango-State": rangoState,
       "X-RSC-Router-Client-Path": window.location.href,
+      ...(clientRoute && { "X-RSC-Router-Client-Route": clientRoute }),
       [PREFETCH_HEADER]: "1",
       ...(isFragmentPassthroughEnabled() && {
         [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
@@ -407,6 +411,14 @@ function executePrefetchFetch(
 }
 
 /**
+ * The page on screen's rewrite target (HistoryEntryMemory.rewriteTarget):
+ * the server diffs a prefetch against it, as it does the navigation.
+ */
+function shownRewriteTarget(): string | undefined {
+  return getRegisteredStore()?.getHistoryEntryMemory()?.rewriteTarget;
+}
+
+/**
  * Dedup check for prefetch entry presence.
  *
  * Forced `:source` must NOT dedupe against a pre-existing wildcard entry —
@@ -456,9 +468,15 @@ export function prefetchDirect(
     return;
   }
   const sourceHref = window.location.href;
+  const clientRoute = shownRewriteTarget();
   const rangoState = getRangoState();
   const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
-  const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
+  const sourceKey = buildSourceKey(
+    rangoState,
+    sourceHref,
+    targetUrl,
+    clientRoute,
+  );
   if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
     if (IS_BROWSER_DEBUG) {
       debugLog("[prefetch] direct dedup (key already exists)", {
@@ -485,6 +503,7 @@ export function prefetchDirect(
     targetUrl.toString(),
     forceSourceScope,
     rangoState,
+    clientRoute,
     routerId,
   );
 }
@@ -510,9 +529,15 @@ export function prefetchQueued(
     return "";
   }
   const sourceHref = window.location.href;
+  const clientRoute = shownRewriteTarget();
   const rangoState = getRangoState();
   const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
-  const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
+  const sourceKey = buildSourceKey(
+    rangoState,
+    sourceHref,
+    targetUrl,
+    clientRoute,
+  );
   const queueKey = forceSourceScope ? sourceKey : wildcardKey;
   if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
     if (IS_BROWSER_DEBUG) {
@@ -541,6 +566,7 @@ export function prefetchQueued(
       fetchUrlStr,
       forceSourceScope,
       rangoState,
+      clientRoute,
       routerId,
       signal,
     ).then(() => {});

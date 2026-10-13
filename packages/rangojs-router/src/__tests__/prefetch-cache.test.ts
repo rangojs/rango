@@ -82,6 +82,20 @@ describe("prefetch cache", () => {
     );
   });
 
+  it("buildSourceKey folds in the source page's rewrite target", () => {
+    const target = new URL("http://localhost/products");
+    const shown = buildSourceKey(
+      "v1:123",
+      "http://localhost/public-1",
+      target,
+      "/item/1",
+    );
+    expect(shown).toBe("v1:123\0http://localhost/public-1\0/item/1\0/products");
+    expect(
+      buildSourceKey("v1:123", "http://localhost/public-1", target),
+    ).not.toBe(shown);
+  });
+
   it("tracks inflight keys", () => {
     expect(hasPrefetch("/products")).toBe(false);
 

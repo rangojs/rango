@@ -4,6 +4,11 @@ import type { RouteMatchResult } from "./pattern-matching.js";
 
 export interface NavigationSnapshot {
   prevUrl: URL;
+  /**
+   * The visitor's URL of the page being left when `prevUrl` is its rewrite
+   * target (X-RSC-Router-Client-Route); null otherwise.
+   */
+  prevVisitorUrl: URL | null;
   prevParams: Record<string, string>;
   prevMatch: RouteMatchResult | null;
 
@@ -95,6 +100,30 @@ export function getInterceptSourceHeader(request: Request): string | null {
   return requestHeaders(request).get("X-RSC-Router-Intercept-Source");
 }
 
+/**
+ * The URL the page on screen rendered when middleware rewrote it there
+ * (#1144): `X-RSC-Router-Client-Route`, which the browser sends from the
+ * payload's `rewriteTarget` while `X-RSC-Router-Client-Path` names the
+ * visitor's URL. The server cannot re-derive a rewrite an earlier request
+ * took, and matching the visitor's URL finds the rewriting route, so every
+ * navigation from the page re-rendered its route and loaders and a
+ * `revalidate()` param predicate never held. Same origin only. It names
+ * only the page being left; what renders is still matched from the
+ * request's own URL, so a forged value runs and skips no middleware.
+ * Ignored beside `X-RSC-Router-Intercept-Source`: an intercept's request
+ * is diffed from its source, which the header does not describe.
+ */
+function getShownRouteUrl(request: Request, origin: string): URL | null {
+  const route = requestHeaders(request).get("X-RSC-Router-Client-Route");
+  if (!route) return null;
+  try {
+    const shown = new URL(route, origin);
+    return shown.origin === origin ? shown : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function resolveNavigation(
   request: Request,
   url: URL,
@@ -113,8 +142,12 @@ export async function resolveNavigation(
   }
 
   let prevUrl: URL;
+  let prevVisitorUrl: URL | null = null;
   try {
-    prevUrl = new URL(previousUrl, url.origin);
+    const visitor = new URL(previousUrl, url.origin);
+    const shown = !interceptSourceUrl && getShownRouteUrl(request, url.origin);
+    prevUrl = shown || visitor;
+    if (shown) prevVisitorUrl = visitor;
   } catch {
     return null;
   }
@@ -154,6 +187,7 @@ export async function resolveNavigation(
 
   return {
     prevUrl,
+    prevVisitorUrl,
     prevParams,
     prevMatch,
     interceptContextUrl,
@@ -176,6 +210,7 @@ export function createNavigationSnapshot(
   const defaultUrl = new URL("http://localhost/");
   return {
     prevUrl: defaultUrl,
+    prevVisitorUrl: null,
     prevParams: {},
     prevMatch: null,
     interceptContextUrl: defaultUrl,

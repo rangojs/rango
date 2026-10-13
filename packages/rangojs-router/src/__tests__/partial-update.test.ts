@@ -208,11 +208,11 @@ describe("partial-update", () => {
         "new-route",
       );
 
-      // tx.commit called with all segment IDs (and the payload's route name)
+      // tx.commit called with all segment IDs (and the payload's metadata)
       expect(tx.commit).toHaveBeenCalledWith(
         ["L0", "L0R0"],
         expect.any(Array),
-        { routeName: undefined },
+        { shown: expect.objectContaining({ isPartial: true }) },
       );
 
       // onUpdate called with rendered tree
@@ -734,6 +734,62 @@ describe("partial-update", () => {
         ).toBe("http://localhost/list?page=6#top");
       });
     });
+
+    // #1144: the rewrite target of the page on screen goes with the request
+    // whose previousUrl names that page.
+    describe("the rewrite target of the page the client is on", () => {
+      const sentRoute = async (
+        mode?: Parameters<ReturnType<typeof createPartialUpdater>>[5],
+      ): Promise<string | undefined> => {
+        const store = createMockStore({
+          cachedSegments: [seg("R0")],
+          segmentIds: ["R0"],
+          currentUrl: "http://localhost/public-1?sort=a",
+        });
+        store.getHistoryEntryMemory.mockReturnValue({
+          routeName: "item",
+          rewriteTarget: "/item/1?sort=a",
+          state: null,
+        } as any);
+        const { client } = createMockClient({
+          metadata: {
+            isPartial: true,
+            segments: [],
+            matched: ["R0"],
+            diff: [],
+          },
+        });
+        const updater = createPartialUpdater({
+          getVersion: () => undefined,
+          store: store as any,
+          client: client as any,
+          onUpdate: vi.fn(),
+          renderSegments: vi.fn(async () => "tree"),
+        });
+        await updater(
+          "http://localhost/public-1?sort=b",
+          undefined,
+          false,
+          undefined,
+          createMockTx("http://localhost/public-1?sort=a"),
+          mode,
+        );
+        return (client.fetchPartial as any).mock.calls[0][0].clientRoute;
+      };
+
+      it("a navigation from the page sends the entry's rewrite target", async () => {
+        expect(await sentRoute()).toBe("/item/1?sort=a");
+      });
+
+      it("a navigation from an intercept's source sends none", async () => {
+        expect(
+          await sentRoute({
+            type: "navigate",
+            interceptSourceUrl: "http://localhost/shop",
+          }),
+        ).toBeUndefined();
+      });
+    });
   });
 
   describe("redirect payload validation", () => {
@@ -1253,7 +1309,7 @@ describe("partial-update", () => {
 
       // Commit with segment IDs from server
       expect(tx.commit).toHaveBeenCalledWith(["L0", "L0R0"], serverSegments, {
-        routeName: undefined,
+        shown: expect.objectContaining({ isPartial: false }),
       });
 
       expect(onUpdate).toHaveBeenCalledWith(

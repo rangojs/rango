@@ -18,6 +18,11 @@ import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 export interface RscPayload {
   metadata?: {
     pathname: string;
+    /**
+     * Path and search of the URL the route rendered for, when middleware
+     * rewrote the request there (full-payload.ts payloadLocation).
+     */
+    rewriteTarget?: string;
     segments: ResolvedSegment[];
     /** Router instance ID. When this changes between navigations, the client
      *  discards cached segments and does a full tree replacement (app switch). */
