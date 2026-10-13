@@ -230,5 +230,14 @@ export interface ClientUrlPatterns<
   readonly intercepts: readonly ClientUrlInterceptRecord[];
   readonly [CLIENT_URL_PATTERNS_BRAND]: void;
   readonly _routes?: TRoutes;
-  match(pathname: string): TrieMatchResult | null;
+  /**
+   * Match an absolute pathname against the routes joined to `mount`, the
+   * include() mount pattern (default "/"); params include the mount's. A
+   * `foreign` pattern that wins is a match whose routeKey is that pattern.
+   */
+  match(
+    pathname: string,
+    mount?: string,
+    foreign?: readonly string[],
+  ): TrieMatchResult | null;
 }

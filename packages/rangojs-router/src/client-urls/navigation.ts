@@ -1,6 +1,7 @@
 "use client";
 
 import { startTransition } from "react";
+import { sameMountInstance } from "../router/substitute-pattern-params.js";
 import type { ClientUrlPatterns } from "./types.js";
 import type { TransitionWhenFn } from "../types/segments.js";
 
@@ -13,7 +14,10 @@ export interface ClientUrlNavigationIntent {
    * screen.
    */
   readonly fromFrame: boolean;
-  /** Destination params from the local trie match (definition-local). */
+  /**
+   * Destination params: the route's and its include() mount's, the params
+   * useParams() reads after the commit.
+   */
   readonly params: Readonly<Record<string, string>>;
   /** Absolute destination pathname (mount included) and search ("?..." or ""). */
   readonly pathname: string;
@@ -29,27 +33,27 @@ export interface ClientUrlNavigationIntent {
 
 /** What the bridge needs to decide transition({ when }) at the swap. */
 export interface ClientUrlDestination {
-  /** Definition-local params of the destination match. */
+  /** Destination params, the include() mount's included. */
   readonly params: Readonly<Record<string, string>>;
   /** Canonical route name (include prefix applied); undefined when unnamed. */
   readonly routeName: string | undefined;
   /** The destination route's own `when`, from its "use client" definition. */
   readonly when: TransitionWhenFn | undefined;
-  /**
-   * Param names the ORIGIN route matched inside the group: the committed
-   * params minus these are the mount's (include prefix) params.
-   */
-  readonly originLocalParamNames: readonly string[];
   /** `history.state` the navigation will push (ClientUrlNavigationIntent.state). */
   readonly state: unknown;
 }
 
 interface ActiveClientUrlGroup {
   readonly definition: ClientUrlPatterns;
-  /** include() mount prefix the group is rendered under ("/" at root). */
+  /**
+   * include() mount the group is rendered under ("/" at root): the PATTERN
+   * (`/:locale?`), as useMount() returns it.
+   */
   readonly mount: string;
   /** include() route-name prefix ("" at root) for canonical name composition. */
   readonly namePrefix: string;
+  /** The server's routes that compete with the group's (ClientUrlsRoot). */
+  readonly foreign: readonly string[] | undefined;
   /**
    * The group route on screen (ClientUrlsRoot's committed routeId), undefined
    * while an optimistic frame is. Registered at commit.
@@ -90,34 +94,19 @@ export interface ClientUrlNavigationPresentation {
 
 let activeGroup: ActiveClientUrlGroup | null = null;
 
-/**
- * Strip the include mount prefix from an absolute pathname, yielding the
- * definition-local pathname the module trie was built from. Returns null when
- * the pathname lies outside the mount — the navigation then targets a server
- * route and gets no optimistic presentation. Mirrors joinMount() in
- * use-reverse.ts: the bare mount maps to the module index "/".
- */
-function stripMountPrefix(pathname: string, mount: string): string | null {
-  if (mount === "" || mount === "/") return pathname;
-  const normalized = mount.endsWith("/") ? mount.slice(0, -1) : mount;
-  if (pathname === normalized) return "/";
-  if (pathname.startsWith(`${normalized}/`)) {
-    return pathname.slice(normalized.length);
-  }
-  return null;
-}
-
 export function registerClientUrlGroup(
   definition: ClientUrlPatterns,
   mount: string,
   namePrefix: string,
   setIntent: (intent: ClientUrlNavigationIntent | null) => void,
   routeId?: string,
+  foreign?: readonly string[],
 ): () => void {
   const group: ActiveClientUrlGroup = {
     definition,
     mount,
     namePrefix,
+    foreign,
     routeId,
     setIntent,
   };
@@ -138,20 +127,42 @@ export function beginClientUrlNavigation(
   const group = activeGroup;
   if (!group) return null;
 
-  const localPathname = stripMountPrefix(targetUrl.pathname, group.mount);
-  if (localPathname === null) return null;
-
-  const match = group.definition.match(localPathname);
+  // Not one of the group's routes under its mount pattern, or a server route
+  // that wins the URL (a foreign leaf): no optimistic presentation.
+  const match = group.definition.match(
+    targetUrl.pathname,
+    group.mount,
+    group.foreign,
+  );
   if (!match || match.redirectTo) return null;
+  const record = group.definition.routes.find(
+    (candidate) => candidate.id === match.routeKey,
+  );
+  if (!record) return null;
+  // Other mount params (`/en/...` to `/de/...`) are another instance of the
+  // group: a frame would render the destination inside the old instance's
+  // chrome (the server's layouts above the group, still the old locale's).
+  // Such a click leaves the group: a plain navigation. History still holds the
+  // committed entry while a frame is on screen, so it is the origin.
+  if (group.mount.includes(":")) {
+    const origin = group.definition.match(
+      window.location.pathname,
+      group.mount,
+      group.foreign,
+    );
+    if (
+      !origin ||
+      !sameMountInstance(group.mount, origin.params, match.params)
+    ) {
+      return null;
+    }
+  }
 
   // Decline when an intercept would claim this target: compose the matched
   // record's canonical route name (include namePrefix + local name) and check
   // it against the current location's intercept target set. Unnamed records
   // cannot be intercept targets (intercepts target route NAMES).
-  const record = group.definition.routes.find(
-    (candidate) => candidate.id === match.routeKey,
-  );
-  const canonicalName = record?.name
+  const canonicalName = record.name
     ? group.namePrefix
       ? `${group.namePrefix}.${record.name}`
       : record.name
@@ -166,15 +177,11 @@ export function beginClientUrlNavigation(
   // screen, group.routeId is undefined and every intent swaps.
   let transitionGatedOff: boolean | undefined;
   if (decideTransition && match.routeKey !== group.routeId) {
-    const originLocal = stripMountPrefix(window.location.pathname, group.mount);
-    const originMatch =
-      originLocal === null ? null : group.definition.match(originLocal);
-    const when = record?.transition?.when;
+    const when = record.transition?.when;
     transitionGatedOff = decideTransition({
       params: match.params,
       routeName: canonicalName,
       when: typeof when === "function" ? when : undefined,
-      originLocalParamNames: Object.keys(originMatch?.params ?? {}),
       state,
     });
   }

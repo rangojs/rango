@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
 import { validateUserRouteName } from "../route-name.js";
-import { buildRouteTrie } from "../router/route-trie-builder.js";
+import { buildRouteTrie, type TrieNode } from "../router/route-trie-builder.js";
+import { joinMount } from "../router/substitute-pattern-params.js";
 import { tryTrieMatch } from "../router/trie-matching.js";
 import type { LoaderDefinition } from "../types.js";
 import { isHoistedRevalidateRef } from "./hoisted-revalidate.js";
@@ -816,26 +817,56 @@ export function clientUrls<const TItems extends ClientUrlItems>(
   collectIntercepts(items, intercepts);
   validateIntercepts(intercepts, routes);
 
-  const routeManifest: Record<string, string> = {};
-  const staticPrefixes: Record<string, string> = {};
-  const trailingSlash: Record<string, string> = {};
-  for (const route of routes) {
-    routeManifest[route.id] = route.pattern;
-    staticPrefixes[route.id] = "";
-    if (route.options?.trailingSlash) {
-      trailingSlash[route.id] = route.options.trailingSlash;
-    }
-  }
-  const trie = buildRouteTrie(routeManifest, staticPrefixes, trailingSlash);
+  const tries = new Map<string, TrieNode>();
 
   return Object.freeze({
     __brand: "client-urls" as const,
     routes: Object.freeze(routes),
     intercepts: Object.freeze(intercepts),
-    match(pathname: string) {
+    match(pathname: string, mount = "/", foreign: readonly string[] = []) {
+      const key = `${mount} ${foreign}`;
+      let trie = tries.get(key);
+      if (!trie) {
+        tries.set(key, (trie = buildClientUrlsTrie(routes, mount, foreign)));
+      }
       return tryTrieMatch(trie, pathname);
     },
   }) as ClientUrlPatterns<ExtractRoutes<TItems>>;
+}
+
+/**
+ * The router's trie over a group's routes, each pattern joined to the
+ * include() mount PATTERN (`/:locale?`, `/:accountId/:projectId`): an
+ * absolute pathname matches with the mount's params bound next to the
+ * route's, by the server's own precedence (an optional mount param expands
+ * like any other). Comparing the pathname with the mount as a literal prefix
+ * never matched a parameterized mount.
+ *
+ * `foreign` are the server's routes outside the group that compete with its
+ * routes for a URL (competingPatterns in server-projection.ts): a `/:slug`
+ * route under `/:locale?` matches a root `/login` too. Each is a leaf keyed by
+ * its own pattern, inserted last so an exact tie goes to it; a match on one is
+ * not the group's.
+ */
+export function buildClientUrlsTrie(
+  routes: readonly {
+    readonly id: string;
+    readonly pattern: string;
+    readonly options?: { readonly trailingSlash?: string };
+  }[],
+  mount: string,
+  foreign: readonly string[] = [],
+): TrieNode {
+  const routeManifest: Record<string, string> = {};
+  const trailingSlash: Record<string, string> = {};
+  for (const route of routes) {
+    routeManifest[route.id] = joinMount(mount, route.pattern);
+    if (route.options?.trailingSlash) {
+      trailingSlash[route.id] = route.options.trailingSlash;
+    }
+  }
+  for (const pattern of foreign) routeManifest[pattern] = pattern;
+  return buildRouteTrie(routeManifest, {}, trailingSlash);
 }
 
 export type {

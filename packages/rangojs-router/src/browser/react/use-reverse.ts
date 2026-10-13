@@ -2,7 +2,10 @@
 
 import { useCallback } from "react";
 import type { LocalReverseFunction } from "../../reverse.js";
-import { substitutePatternParams } from "../../router/substitute-pattern-params.js";
+import {
+  joinMount,
+  substitutePatternParams,
+} from "../../router/substitute-pattern-params.js";
 import { serializeSearchParams } from "../../search-params.js";
 import { useMount } from "./use-mount.js";
 import { useParams } from "./use-params.js";
@@ -13,22 +16,6 @@ type LocalRouteMap = Readonly<Record<string, RouteEntry>>;
 function getPattern(entry: RouteEntry | undefined): string | undefined {
   if (entry === undefined) return undefined;
   return typeof entry === "string" ? entry : entry.path;
-}
-
-/**
- * Join an include mount prefix with a mount-relative pattern.
- *
- * `pattern === "/"` is the index of the local module — under a non-root
- * mount it must collapse so `/` under `/blog` becomes `/blog`, not
- * `/blog/`. This matches `ctx.reverse(".index")` on the server.
- */
-function joinMount(mount: string, pattern: string): string {
-  if (pattern === "/") {
-    if (mount === "" || mount === "/") return "/";
-    return mount.endsWith("/") ? mount.slice(0, -1) : mount;
-  }
-  const normalizedMount = mount === "/" ? "" : mount.replace(/\/+$/, "");
-  return normalizedMount + pattern;
 }
 
 /**

@@ -108,17 +108,21 @@ export function ClientUrlsRoot({
   definition,
   routeId,
   namePrefix = "",
+  foreign,
 }: {
   definition: ClientUrlPatterns;
   routeId: string;
   /** include() route-name prefix, injected at materialization for canonical
    *  name composition (intercept-target coordination). */
   namePrefix?: string;
+  /** The server's routes that compete with the group's for a URL
+   *  (competingPatterns in server-projection.ts). */
+  foreign?: readonly string[];
 }): ReactNode {
-  // The include() mount prefix this group renders under ("/" at root). The
-  // module trie is built from definition-LOCAL patterns; navigation strips
-  // this prefix before matching (see stripMountPrefix in navigation.ts), the
-  // same way client href()/useMount resolve include-relative URLs.
+  // The include() mount pattern this group renders under ("/" at root).
+  // Navigation matches an absolute pathname against the definition's
+  // patterns joined to it (buildClientUrlsTrie in client-urls.ts), as
+  // useReverse joins it.
   const mount = useMount();
   const [intent, setIntent] = useState<ClientUrlNavigationIntent | null>(null);
 
@@ -155,8 +159,9 @@ export function ClientUrlsRoot({
         namePrefix,
         setIntent,
         optimisticRoute ? undefined : routeId,
+        foreign,
       ),
-    [definition, mount, namePrefix, routeId, optimisticRoute],
+    [definition, mount, namePrefix, routeId, optimisticRoute, foreign],
   );
 
   // Pending entries for the destination's loaders: useLoader use()s a Promise

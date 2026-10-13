@@ -267,6 +267,31 @@ boolean literal in place, and moves any other argument to the server as
 before; an imported boolean (`revalidate(FLAG)`) works there too.
 `runRevalidate` from `@rangojs/router/testing` takes the booleans as well.
 
+### Fixed: a `clientUrls()` group under a parameterized `include()` renders at the click, and its intercepts open
+
+```tsx
+include("/:locale?", shopUrls, { name: "shop" }); // shopUrls: a clientUrls() group
+```
+
+**Before.** Under `include("/:locale", ...)`, `include("/:locale?", ...)` or
+`include("/:accountId/:projectId", ...)`, every click between the group's
+routes (`/en/items/1` to `/en/items/2`) was taken for a click out of the
+group: the destination did not render at the click and waited for the server
+like a plain link, and an `intercept()` declared in the group never opened its
+modal. Under `include("/shop", ...)` the same group did both.
+
+**Now.** These mounts behave like a literal one: the destination renders at
+the click, and `useParams()` in it has the mount's params (`locale`) as after
+the commit, so `useReverse(routes)` links in it keep the locale. A click that
+changes a mount param, such as a locale switch
+(`reverse(".item", { itemId, locale: "de" })`), is another instance of the
+include: it renders when the server answers, as a plain link does, and a
+group's intercept opens only from one of the group's routes with the same
+mount params. A URL that a server route outside the group serves, such as a
+root `/login` that a group `/:slug` under `/:locale?` also matches, never
+renders as the group's route, and opens none of its intercepts. Nothing to
+change in your code.
+
 ### Fixed: a modal keeps the data of a loader that skips `revalidate()` when a link in it opens another modal
 
 **Before.** A link in an open modal to another intercepted route whose modal

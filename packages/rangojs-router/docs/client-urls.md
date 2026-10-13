@@ -103,8 +103,27 @@ export default clientUrls(({ path, layout, loader, loading }) => [
 
 Patterns are definition-local. The `include()` mount below supplies the
 `/catalog` URL prefix (the bare mount is the module index `/`) and the
-`catalog.` route-name prefix; the browser strips the same mount prefix before
-local matching, mirroring `useMount()` and client `href()`.
+`catalog.` route-name prefix. In the browser the group matches a URL against
+its patterns joined to the mount PATTERN (`buildClientUrlsTrie` in
+`client-urls.ts`, the router's own trie), the way `useReverse()` joins
+`useMount()`. A parameterized mount works the same way:
+`include("/:locale", ...)`, `include("/:locale?", ...)` (with and without the
+prefix) and `include("/:accountId/:projectId", ...)` present at the click, and
+the destination's `useParams()` carries the mount's params as after the
+commit. A click that changes a mount param (`/en/...` to `/de/...`) is
+another instance of the include: it gets no optimistic frame, and commits as
+a plain navigation (a frame would render the destination inside the old
+instance's chrome).
+
+The group's patterns can match URLs the server routes elsewhere: `/:slug`
+under `/:locale?` matches a root `/login`, and under `/:locale` a sibling
+`/:locale/about`. The server ships the routes that compete with the group's
+for a URL as ClientUrlsRoot's `foreign` prop (`competingPatterns` in
+`server-projection.ts`, walked over the router's own trie), and the browser
+adds them to the group's trie as leaves: a URL one of them wins gets no
+frame. The intercept origin gate reads the router's own match of the origin
+(`from.routeName`, or the trie key of an unnamed route, and `from.params`)
+for the same reason.
 
 Mount the definition inside the canonical `urls()` tree with `include()` —
 under an RSC layout, alongside server routes, wherever it belongs:
@@ -397,7 +416,8 @@ mount-independent: `refresh()` refetches the CURRENT route,
 first-entry guard whose fallback lands on the APP root (basename, not the
 mount — consistent with absolute semantics). During the optimistic window,
 `useParams` / `usePathname` / `useSearchParams` INSIDE the destination branch
-report the destination's local match (see "Navigation authority"), while the
+report the destination's match, the mount's params included (see
+"Navigation authority"), while the
 same hooks in chrome outside the branch keep the COMMITTED origin values until
 the canonical commit. `useRefreshLoaders` works in groups with the same
 contract as `useFetchLoader` (the refresh lane IS the fetch lane, so tagged
@@ -1137,8 +1157,9 @@ Composition limits around a client include, locked explicitly:
      dot-local NAMED route in the same
      definition and `use` may contain `loader()`/`loading()` only. No `when`,
      no middleware. Scoping is MODULE-LOCAL by contract: only navigations
-     whose origin is inside the group's mount render the modal; an outside
-     origin commits the full route. Materialization enforces this with a
+     whose origin is one of the group's routes, in the target's mount
+     instance (the same `:locale` under `include("/:locale", ...)`), render
+     the modal; any other origin commits the full route. Materialization enforces this with a
      synthesized origin-`when` — the server intercept walk resolves against
      the TARGET's parent chain and is origin-blind, so without the
      synthesized selector a client-declared intercept would claim every

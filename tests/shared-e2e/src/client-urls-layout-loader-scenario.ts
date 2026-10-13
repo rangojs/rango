@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { recordFirstFrame, type FirstFrameRecord } from "./first-frame.js";
 import { readProbe, watchFlash } from "./flash-probe.js";
 
 /**
@@ -18,84 +19,20 @@ const SERVER_DELAY_MS = 400;
 /** A first frame later than this waited for the server. */
 const FIRST_FRAME_MS = 150;
 
-interface FrameRecord {
-  clickAt: number;
-  frameAt: number;
-  cartAtFrame: string | null;
-  canonicalAt: number;
-}
-
-/**
- * Time, in the page, from the click on `link` to the first DOM batch that
- * matches one of the `frame` selectors, and to the first that matches
- * `canonical`. The cart the layout shows in that first batch is recorded too.
- */
-async function recordClick(
+/** recordFirstFrame, reading the cart the layout shows in the first frame. */
+function recordClick(
   page: Page,
   link: string,
   frame: readonly string[],
   canonical: string,
-): Promise<FrameRecord> {
-  await page.evaluate(
-    ({ frame, canonical }) => {
-      const w = window as unknown as { __cllFrame?: FrameRecord };
-      const has = (selector: string) =>
-        document.querySelector(selector) !== null;
-      const record: FrameRecord = {
-        clickAt: 0,
-        frameAt: 0,
-        cartAtFrame: null,
-        canonicalAt: 0,
-      };
-      w.__cllFrame = record;
-      document.addEventListener(
-        "click",
-        () => {
-          record.clickAt = performance.now();
-        },
-        { capture: true, once: true },
-      );
-      const observer = new MutationObserver(() => {
-        if (record.clickAt === 0) return;
-        if (record.frameAt === 0 && frame.some(has)) {
-          record.frameAt = performance.now();
-          record.cartAtFrame =
-            document.querySelector('[data-testid="cll-cart"]')?.textContent ??
-            null;
-        }
-        if (has(canonical)) {
-          record.canonicalAt = performance.now();
-          observer.disconnect();
-        }
-      });
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-        attributes: true,
-        attributeFilter: ["data-pending"],
-      });
-    },
-    { frame: [...frame], canonical },
+): Promise<FirstFrameRecord> {
+  return recordFirstFrame(
+    page,
+    link,
+    frame,
+    canonical,
+    '[data-testid="cll-cart"]',
   );
-  await page.getByTestId(link).click();
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          (window as unknown as { __cllFrame: FrameRecord }).__cllFrame
-            .canonicalAt,
-      ),
-    )
-    .toBeGreaterThan(0);
-  const record = await page.evaluate(
-    () => (window as unknown as { __cllFrame: FrameRecord }).__cllFrame,
-  );
-  test.info().annotations.push({
-    type: "timing",
-    description: `${link}: first frame ${Math.round(record.frameAt - record.clickAt)} ms, canonical ${Math.round(record.canonicalAt - record.clickAt)} ms after the click`,
-  });
-  return record;
 }
 
 async function expectLayoutKept(page: Page): Promise<void> {
@@ -147,7 +84,7 @@ export async function expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame(
     toItem.frameAt - toItem.clickAt,
     "the destination shows at the click",
   ).toBeLessThan(FIRST_FRAME_MS);
-  expect(toItem.cartAtFrame).toBe(cart);
+  expect(toItem.textAtFrame).toBe(cart);
   expect(
     toItem.canonicalAt - toItem.clickAt,
     "the item waited for the server",
@@ -187,7 +124,7 @@ export async function expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame(
     toIndex.frameAt - toIndex.clickAt,
     "the index shows at the click",
   ).toBeLessThan(FIRST_FRAME_MS);
-  expect(toIndex.cartAtFrame).toBe(shown);
+  expect(toIndex.textAtFrame).toBe(shown);
   expect(
     toIndex.canonicalAt - toIndex.clickAt,
     "the index committed with the server's answer",
@@ -330,7 +267,7 @@ export async function expectLayoutLoaderHeldAcrossNavigations(
     await expect(page.getByTestId("cll-crumbs")).toHaveText(runs);
     await expectLayoutKept(page);
   };
-  const committedWithoutTheLoader = (record: FrameRecord): void =>
+  const committedWithoutTheLoader = (record: FirstFrameRecord): void =>
     expect(
       record.canonicalAt - record.clickAt,
       "the canonical commit did not wait for the layout's loader",
