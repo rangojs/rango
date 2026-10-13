@@ -9,7 +9,8 @@ import {
 } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import { RwClientLocation } from "./rewrite.client.js";
-import { rwSaveCart } from "./rewrite.actions.js";
+import { rwSaveCart, rwSaveItem } from "./rewrite.actions.js";
+import { getRwItemSaves } from "./rewrite-saves.js";
 
 // throw rewrite() fixtures (e2e/rewrite.test.ts). The `rw-lock` cookie turns
 // the lock on per test: "on" is the maintenance recipe (pages rewrite to
@@ -23,6 +24,8 @@ const RwRuns = createVar<number>();
 const RwCount = createVar<number>();
 /** Runs of the maintenance route's own middleware. */
 const RwTargetRuns = createVar<number>();
+/** Set by the item route's own middleware: the target's chain ran. */
+const RwItemGuard = createVar<string>();
 
 /** Counts runs and adds a post-next() header (mounted on /rw/* in router.tsx). */
 export const rwCountMiddleware: Middleware = async (ctx, next) => {
@@ -148,6 +151,29 @@ function RwMaintenance(ctx: HandlerContext) {
   );
 }
 
+/**
+ * The target of /rw/public/:id. Its save button posts to the visitor's URL,
+ * whose route middleware rewrites every method (#1145).
+ */
+function RwItem(ctx: HandlerContext<{ id: string }>) {
+  return (
+    <section data-testid="rw-item">
+      <h1>{`Item ${ctx.params.id}`}</h1>
+      <span data-testid="rw-item-guard">{ctx.get(RwItemGuard) ?? "none"}</span>
+      <span data-testid="rw-item-saves">
+        {String(getRwItemSaves(cookies().get("rw-key")?.value ?? "none"))}
+      </span>
+      <span data-testid="rw-runs">{String(ctx.get(RwRuns) ?? 0)}</span>
+      <form action={rwSaveItem}>
+        <button type="submit" data-testid="rw-item-save">
+          Save item
+        </button>
+      </form>
+      <RwClientLocation />
+    </section>
+  );
+}
+
 export const rewritePatterns = urls(({ path, layout, middleware }) => [
   layout(RwLayout, () => [
     path("/", RwIndex, { name: "index" }),
@@ -158,6 +184,24 @@ export const rewritePatterns = urls(({ path, layout, middleware }) => [
       }),
     ]),
     path("/products/:slug", RwProduct, { name: "product" }),
+    path("/items/:id", RwItem, { name: "item" }, () => [
+      middleware(async (ctx, next) => {
+        ctx.set(RwItemGuard, "target");
+        await next();
+      }),
+    ]),
+    // A routing rewrite in route middleware, for every method: a server
+    // action or a no-JS form post from the item page re-renders the item.
+    path(
+      "/public/:id",
+      () => <h1>never rendered</h1>,
+      {},
+      () => [
+        middleware((ctx) => {
+          throw rewrite(`/rw/items/${ctx.params.id}`);
+        }),
+      ],
+    ),
     path("/maintenance", RwMaintenance, { name: "maintenance" }, () => [
       // The target sets its own status.
       middleware(async (ctx, next) => {

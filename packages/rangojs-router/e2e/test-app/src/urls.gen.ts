@@ -517,6 +517,7 @@ export const routes = {
   "rw.guarded": "/rw/guarded/page",
   "rw.index": "/rw",
   "rw.inlineAdmin": "/rw/inline-admin",
+  "rw.item": "/rw/items/:id",
   "rw.maintenance": "/rw/maintenance",
   "rw.product": "/rw/products/:slug",
   "rw.shop": "/rw/shop",

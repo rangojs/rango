@@ -65,6 +65,8 @@ import {
 } from "../theme/constants.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import type { RoutineTrace } from "../rsc/routine-plan.js";
+import type { ActionContinuation } from "../rsc/server-action.js";
+import type { FormActionOutcome } from "../rsc/progressive-enhancement.js";
 import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
 import {
   assertCachedHeaderWriteAllowed,
@@ -804,6 +806,18 @@ export interface RequestContext<
   _inActionRevalidation?: boolean;
 
   /**
+   * @internal The outcome of the action this request ran (a JS server
+   * action's continuation, a no-JS form post's form state), set before route
+   * middleware wraps the re-render. While it is unset, applyRewrite
+   * (rsc/rewrite-passes.ts) refuses a mutation's rewrite; once set, the
+   * request moves to the target, whose pass re-renders from it instead of
+   * running the action again (#1145).
+   */
+  _actionRan?:
+    | { kind: "action"; continuation: ActionContinuation }
+    | { kind: "form"; outcome: FormActionOutcome };
+
+  /**
    * @internal Render barrier for experimental `rendered()` API.
    * Resolves when all non-loader segments have settled and handle data
    * is available. Used by DSL loaders that call `ctx.rendered()`.
@@ -1056,6 +1070,7 @@ export type PublicRequestContext<
   | "_routeName"
   | "_prevRouteKey"
   | "_inActionRevalidation"
+  | "_actionRan"
   | "_reportedErrors"
   | "_renderErrors"
   | "_recoveredHandlerErrors"

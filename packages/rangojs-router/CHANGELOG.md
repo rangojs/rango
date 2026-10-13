@@ -320,6 +320,44 @@ string by hand if you need it. The bare `href(path, mount)` function still
 appends the mount it is given as-is: pass it a static mount, or use
 `useHref()`.
 
+### Fixed: a server action or a no-JS form post from a page route middleware rewrote re-renders that page ([#1145](https://github.com/rangojs/rango/issues/1145))
+
+**Before.** A page reached through `throw rewrite()` in a route's middleware
+posts its server actions and no-JS forms to the visitor's URL, so the same
+middleware sees them. Route middleware runs after the action, so its rewrite
+came too late: the action ran, its change was saved, and then the request
+failed with "rewrite() is not supported here: middleware threw it while
+handling a non-GET request". The page showed an error for a write that had
+happened, and a retry ran it twice.
+
+```tsx
+path(
+  "/p/:slug",
+  () => null,
+  {},
+  () => [
+    middleware(async (ctx) => {
+      const page = await getPage(ctx.params.slug);
+      throw rewrite("article", { id: page.articleId }); // GET: fine. POST: the action ran, then a 500
+    }),
+  ],
+);
+```
+
+**Now.** The same middleware works for every method. The action runs once,
+then the response re-renders the rewrite target: its global and route
+middleware run (a guard on the target applies), and the page on screen is
+revalidated in place, keeping its layout and state, with JavaScript or
+without. Nothing to change in your code.
+
+A rewrite in global middleware still refuses a mutation, before the action
+runs, so a maintenance lock that rewrites every method never runs a write
+under maintenance; return a `Response` for mutations there. Two cases wait
+for [#1144](https://github.com/rangojs/rango/issues/1144): a route middleware
+that skips mutations (`if (ctx.request.method !== "GET") return next()`)
+still re-renders the rewriting route after the action, and a page a global
+rewrite reached still cannot call an action.
+
 ### Fixed: a modal keeps the data of a loader that skips `revalidate()` when a link in it opens another modal
 
 **Before.** A link in an open modal to another intercepted route whose modal

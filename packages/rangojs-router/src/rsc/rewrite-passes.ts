@@ -21,6 +21,7 @@ import {
   rebaseRequestContext,
   type RequestContext,
 } from "../server/request-context.js";
+import { bodylessHeaders } from "../server/request-headers.js";
 import { recordRewriteHop } from "../server/rewrite-trail.js";
 
 /** Response header naming the route path a rewritten request rendered. */
@@ -93,10 +94,31 @@ export interface RewritePass {
 }
 
 /**
+ * The next pass's request when a JS action consumed the body
+ * (`new Request(url, used)` throws): the same method, headers and workerd
+ * `cf`, no body. A no-JS form post keeps its body, since the PE handler
+ * reads a clone, so a form-field check reads it on every pass.
+ */
+function bodylessPassRequest(url: URL, passRequest: Request): Request {
+  return new Request(url, {
+    method: passRequest.method,
+    headers: bodylessHeaders(passRequest),
+    signal: passRequest.signal,
+    cf: (passRequest as { cf?: unknown }).cf,
+  } as RequestInit);
+}
+
+/**
  * Move the request context to `rewrite`'s target for the next pass: check
  * that this request can be rewritten, resolve the target, count the hop,
  * then rebase the context. Throws the site error for a mutation or a loader
  * fetch, a resolution error, and RewriteLoopError.
+ *
+ * A mutation is refused only while its action has not run (a rewrite from
+ * global middleware), so a naive lock never runs it. Route middleware wraps
+ * only the re-render after the action (#1145): refusing then reports an
+ * error for a committed write, so the request moves to the target, whose
+ * pass re-renders from `reqCtx._actionRan`.
  */
 export function applyRewrite(
   rewrite: Rewrite,
@@ -110,13 +132,19 @@ export function applyRewrite(
   if (reqCtx.originalUrl.searchParams.has("_rsc_loader")) {
     throw rewriteNotSupported(rewrite, "loader-fetch");
   }
-  if (passRequest.method !== "GET" && passRequest.method !== "HEAD") {
+  if (
+    passRequest.method !== "GET" &&
+    passRequest.method !== "HEAD" &&
+    !reqCtx._actionRan
+  ) {
     throw rewriteNotSupported(rewrite, "mutation");
   }
   const target = resolveRewriteTarget(rewrite, routeMap, reqCtx.url, basename);
   const hops = recordRewriteHop(reqCtx, reqCtx.url, target);
   const url = rewriteTransportUrl(target, reqCtx.originalUrl);
-  const request = new Request(url, passRequest);
+  const request = passRequest.bodyUsed
+    ? bodylessPassRequest(url, passRequest)
+    : new Request(url, passRequest);
   rebaseRequestContext(reqCtx, request, url);
   return { request, url, target, hops };
 }

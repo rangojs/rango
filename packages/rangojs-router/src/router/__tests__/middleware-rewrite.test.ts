@@ -422,3 +422,69 @@ describe("ctx.rewrittenFrom", () => {
     expect(handlerCtx.pathname).toBe("/maintenance");
   });
 });
+
+describe("applyRewrite: a mutation", () => {
+  function postContext(): { ctx: RequestContext<any>; request: Request } {
+    const url = new URL("http://localhost/public-1?_rsc_action=a.ts%23save");
+    const request = new Request(url, {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain;charset=UTF-8",
+        "rsc-action": "a.ts#save",
+        "x-auth": "ok",
+      },
+      body: "[]",
+    });
+    const ctx = createRequestContext({ env: {}, request, url, variables: {} });
+    return { ctx, request };
+  }
+
+  it("is refused before its action ran (a rewrite from global middleware)", async () => {
+    const { ctx, request } = postContext();
+    await runWithRequestContext(ctx, async () => {
+      expect(() =>
+        applyRewrite(rewrite("/item/1"), request, ctx, {}, undefined),
+      ).toThrow(
+        'rewrite("/item/1") is not supported here: middleware threw it while handling a non-GET request',
+      );
+    });
+    expect(ctx.pathname).toBe("/public-1");
+  });
+
+  const FORM_OUTCOME = {
+    kind: "form",
+    outcome: {
+      reactFormState: null,
+      boundarylessErrorStatus: undefined,
+      directActionId: null,
+    },
+  } as const;
+
+  it("moves to the target once its action ran, as a bodyless request of the same method and headers", async () => {
+    const { ctx, request } = postContext();
+    // The action consumed the body before route middleware threw.
+    await request.text();
+    ctx._actionRan = FORM_OUTCOME;
+    const pass = await runWithRequestContext(ctx, async () =>
+      applyRewrite(rewrite("/item/1"), request, ctx, {}, undefined),
+    );
+    expect(pass.target.href).toBe("http://localhost/item/1");
+    expect(pass.url.searchParams.get("_rsc_action")).toBe("a.ts#save");
+    expect(pass.request.method).toBe("POST");
+    expect(pass.request.body).toBeNull();
+    expect(pass.request.headers.get("rsc-action")).toBe("a.ts#save");
+    expect(pass.request.headers.get("x-auth")).toBe("ok");
+    expect(ctx.pathname).toBe("/item/1");
+    expect(ctx.rewrittenFrom?.pathname).toBe("/public-1");
+  });
+
+  it("keeps a body nothing consumed (a no-JS form post: the PE handler reads a clone)", async () => {
+    const { ctx, request } = postContext();
+    ctx._actionRan = FORM_OUTCOME;
+    const pass = await runWithRequestContext(ctx, async () =>
+      applyRewrite(rewrite("/item/1"), request, ctx, {}, undefined),
+    );
+    expect(pass.request.method).toBe("POST");
+    expect(await pass.request.text()).toBe("[]");
+  });
+});

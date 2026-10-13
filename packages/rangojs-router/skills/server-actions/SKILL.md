@@ -630,6 +630,22 @@ model). Omit it and off-host targets stay blocked. `external` only waives the
 `javascript:` or `data:` URL is still neutralized, so a forged or mistaken
 `external` target can never become a scriptable navigation.
 
+## Actions on a Rewritten Page
+
+An action cannot `throw rewrite()`; use `redirect()`. But a page that
+middleware reached through `throw rewrite()` can call actions. The action
+(JS or a no-JS form post) is posted to the visitor's URL, so the same
+middleware sees it:
+
+- A rewrite in **route middleware** runs after the action, around the
+  re-render. The action runs once, then the re-render runs as the target: its
+  global and route middleware, its handlers and loaders. The page on screen
+  is revalidated in place, as at the target's own URL.
+- A rewrite in **global middleware** runs before the action and is refused
+  for a mutation: the action does not run, and the request fails with the
+  rule. A lock returns a `Response` for mutations instead. See `/middleware`
+  ("Mutations: where the middleware sits decides").
+
 ## Error Handling
 
 ### Validation errors — return them as state

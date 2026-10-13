@@ -24,6 +24,7 @@ import { observePhase, PHASES } from "../router/instrument.js";
 import { resolveActionRefId } from "../router/is-action.js";
 import type { TraceSpan } from "../router/tracing.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
+import { renderedLocation } from "./full-payload.js";
 import { publicRouteName } from "../route-name.js";
 import type { RscPayload } from "./types.js";
 import {
@@ -324,6 +325,28 @@ export async function executeServerAction<TEnv>(
 }
 
 /**
+ * The continuation for a rewrite pass after the action ran (#1145): a failed
+ * action's error boundary is re-matched on the target, since the one pass 1
+ * matched (or missed) is the rewriting route's.
+ */
+export async function continuationForRewritePass<TEnv>(
+  ctx: HandlerContext<TEnv>,
+  request: Request,
+  env: TEnv,
+  continuation: ActionContinuation,
+): Promise<ActionContinuation> {
+  if (continuation.returnValue.ok) return continuation;
+  const errorBoundary =
+    (await ctx.router.matchError(
+      request,
+      { env },
+      continuation.actionContext.actionResult,
+      "route",
+    )) ?? undefined;
+  return { ...continuation, errorBoundary };
+}
+
+/**
  * Phase 2: Revalidate after action.
  *
  * Matches affected segments, builds the RSC payload, and returns the
@@ -513,7 +536,7 @@ function renderActionBoundaryResponse<TEnv>(
 
   const errorPayload: RscPayload = {
     metadata: {
-      pathname: url.pathname,
+      pathname: renderedLocation(reqCtx, url).pathname,
       // routerId exposed for the frontend (current app identity); see
       // rsc-rendering.ts partial branch.
       routerId: ctx.router.id,
@@ -576,7 +599,7 @@ function renderRevalidationResponse<TEnv>(
 
   const payload: RscPayload = {
     metadata: {
-      pathname: url.pathname,
+      pathname: renderedLocation(reqCtx, url).pathname,
       // routerId exposed for the frontend (current app identity); see
       // rsc-rendering.ts partial branch.
       routerId: ctx.router.id,

@@ -1131,7 +1131,7 @@ const matrixRows: SemanticMatrixRow[] = [
   {
     id: "RW3",
     contract:
-      "a rewrite during a mutation is an error; the middleware's Response path for mutations works in JS and no-JS",
+      "a global-middleware rewrite of a mutation is an error before the action runs; the middleware's Response path for mutations works in JS and no-JS",
     transport: "request",
     execution: "action-followup",
     scope: "n/a",
@@ -1221,6 +1221,53 @@ const matrixRows: SemanticMatrixRow[] = [
           })
           .toBe(true);
       }
+    },
+  },
+  {
+    id: "RW5",
+    contract:
+      "a route-middleware rewrite of a mutation re-renders the target after the action ran: the action runs once, the target's global and route middleware run, in JS and no-JS",
+    transport: "request",
+    execution: "action-followup",
+    scope: "n/a",
+    assert: async ({ baseUrl, page, request }) => {
+      const key = crypto.randomUUID();
+      await page
+        .context()
+        .addCookies([{ name: "rw-key", value: key, url: baseUrl("/") }]);
+      await page.goto(baseUrl("/rw/public/5"));
+      await waitForHydration(page);
+      await expect(testId(page, "rw-item-saves")).toHaveText("0");
+      const post = page.waitForResponse(
+        (r) =>
+          r.request().method() === "POST" && r.url().includes("/rw/public/5"),
+      );
+      await testId(page, "rw-item-save").click();
+      const jsAction = await post;
+      expect(jsAction.status()).toBe(200);
+      expect(jsAction.headers()["x-rango-rewrite"]).toBe("/rw/items/5");
+      await expect(testId(page, "rw-item-saves")).toHaveText("1");
+      await expect(testId(page, "rw-item-guard")).toHaveText("target");
+      await expect(testId(page, "rw-runs")).toHaveText("2");
+
+      // A no-JS form post: the action id the server-rendered form carries.
+      const html = await (
+        await request.get(baseUrl("/rw/public/5"), {
+          headers: { cookie: `rw-key=${key}` },
+        })
+      ).text();
+      const actionField = /name="(\$ACTION_ID_[^"]+)"/.exec(html)?.[1];
+      expect(actionField).toBeDefined();
+      const form = await request.post(baseUrl("/rw/public/5"), {
+        headers: { cookie: `rw-key=${key}` },
+        multipart: { [actionField!]: "" },
+      });
+      expect(form.status()).toBe(200);
+      expect(form.headers()["x-rango-rewrite"]).toBe("/rw/items/5");
+      const rerendered = await form.text();
+      expect(rerendered).toContain('data-testid="rw-item-saves">2<');
+      expect(rerendered).toContain('data-testid="rw-item-guard">target<');
+      expect(rerendered).toContain('data-testid="rw-runs">2<');
     },
   },
 ];

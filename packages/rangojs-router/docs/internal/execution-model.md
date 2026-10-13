@@ -166,6 +166,19 @@ pass 2 (the target's URL, same request context)
       -> the target's render
 ```
 
+A mutation (flows 2 and 3) runs its action between global and route
+middleware, so a route-middleware rewrite of it fires after the action ran:
+
+```text
+pass 1 (the visitor's URL)
+  global middleware -> action executes -> route middleware: throw rewrite()
+pass 2 (the target's URL, same request context)
+  global middleware matched on the target path
+    -> the target's route middleware
+      -> the target's revalidation render (JS) or full rerender (PE)
+         from pass 1's action outcome; the action never runs again
+```
+
 See "Rewrite" below for what moves and what stays.
 
 ## Guarantees
@@ -970,13 +983,57 @@ Guarantees, each pinned by a semantic matrix row:
   rewrite after a middleware's `next()` ran the route is an error. `[RW2]`
   The `rango.middleware` span treats the throw as control flow (success),
   like a thrown `Response`.
-- A rewrite during a mutation (a JS action, a no-JS form post: any non-GET,
-  non-HEAD request) is an error reported through `onError` (phase
-  `"routing"`). A lock returns a `Response` for mutations instead, and that
-  path works in JS and no-JS. `[RW3]`
+- A global-middleware rewrite of a mutation (a JS action, a no-JS form post:
+  any non-GET, non-HEAD request) is an error reported through `onError`
+  (phase `"routing"`), before the action runs. A lock returns a `Response`
+  for mutations instead, and that path works in JS and no-JS. `[RW3]`
+- A route-middleware rewrite of a mutation moves the re-render to the target
+  after the action ran: the action runs once, the target's global and route
+  middleware run, and the target renders, in JS and no-JS. `[RW5]`
 - More than 5 hops, or a rewrite to the URL the pass is on (pathname and
   search), is a `RewriteLoopError`: `onError` (phase `"routing"`) and a 508.
   `[RW4]`
+
+Why does a mutation get two answers? Because of where each middleware sits
+around the action. Global middleware runs before the action, so refusing its
+rewrite there costs nothing, and a naive lock that rewrites every method must
+not run the mutation under maintenance. Route middleware wraps only the
+re-render after the action (flows 2 and 3), so its rewrite always arrives
+with the mutation committed. Refusing it then (as #1121 shipped) reported an
+error for a write that had already happened: the caller sees the error UI,
+retries, and the mutation runs twice (#1145). So `applyRewrite` refuses a
+mutation only while `reqCtx._actionRan` is unset. The handler sets it as soon
+as the action has run, to the JS continuation or the PE outcome (form state,
+boundaryless 500, action id), and the target's pass re-renders from it
+instead of running the action again. Once it is set, any later rewrite of
+the request moves too, a global one on the target's pass included: the
+refusal exists to keep the action from running, and it already has. The
+pass-2 request is built as a GET pass's is (`new Request(url, request)`:
+method, headers, body, workerd's `cf`), so a no-JS form post keeps its body
+(the PE handler reads a clone) and a form-field CSRF check passes on both
+passes. A JS action consumed its body, and `new Request(url, used)` throws,
+so that pass 2 is the same request without a body; middleware reading the
+body there gets an empty one. A failed JS action's
+error boundary is matched on the target, not the visitor's URL
+(`continuationForRewritePass` in `rsc/server-action.ts`). The target's
+guards run on that re-render, as on a direct visit; they never guarded the
+action itself, since route middleware never wraps action execution. Only
+the action and PE branches render from the outcome, so the target must be a
+page route: a response route, a redirect or no match on pass 2 is an error
+(`coreRequestHandler`), not a fresh POST that a response route's handler
+would serve as a second mutation.
+
+What this does not cover yet:
+
+- A route middleware that skips a mutation (`if (method !== "GET") return
+next()`) still re-renders the rewriting route after the action, and a page
+  a global rewrite reached cannot call an action. Both need the client to
+  send the identity of the page it shows, which lands with #1144.
+- A no-JS form post whose action throws renders the matched error boundary
+  before route middleware runs (`renderPeErrorBoundary`), so it is matched
+  on the visitor's URL and the rewrite never fires; the JS path renders the
+  target's boundary. PE renders every action error boundary outside route
+  middleware today, rewrite or not.
 
 Where the old and the new URL show:
 
@@ -1010,7 +1067,7 @@ Where a rewrite is not honored, and what it becomes:
 | Thrown from                                 | Result                                                                                                                         |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | middleware after its `next()` ran the route | an error: "throw rewrite() before await next()"                                                                                |
-| middleware during a mutation                | an error, onError `"routing"`                                                                                                  |
+| global middleware during a mutation         | an error before the action runs, onError `"routing"`                                                                           |
 | global middleware during a loader fetch     | the `loaderError` response `load()` rejects with (500, the rule in the message), onError `"routing"`                           |
 | a fetchable loader or its loader middleware | the loader's error response, onError `"loader"`                                                                                |
 | a server action                             | the action's error (onError `"action"`); the Rewrite's message says "use redirect()"                                           |

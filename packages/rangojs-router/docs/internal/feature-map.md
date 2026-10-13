@@ -684,10 +684,13 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   shared render), `ctx.isRewrite()`, the payload pathname and SSR seed at the
   visitor's URL (`renderedLocation`), `x-rango-rewrite`,
   `rango.rewrite.target`/`hops` span attributes. More than 5 hops or a
-  same-URL rewrite is a `RewriteLoopError` (onError "routing", 508). Refused
-  with a site error: a rewrite after `next()`, mutations, intercept
-  middleware; a loader fetch answers with the `loaderError` `load()` rejects
-  with; a handler's, loader's or server action's throw is its own error
+  same-URL rewrite is a `RewriteLoopError` (onError "routing", 508). A
+  route-middleware rewrite of a mutation (JS action, no-JS form post) runs
+  after the action, so it moves the re-render to the target from the action's
+  outcome (`reqCtx._actionRan`), never running the action again. Refused
+  with a site error: a rewrite after `next()`, a mutation's rewrite in global
+  middleware (before the action), intercept middleware; a loader fetch
+  answers with the `loaderError` `load()` rejects with; a handler's, loader's or server action's throw is its own error
   (middleware only, by design: no loader rewrites).
   `runMiddleware` reports it, `dispatch` and `serveShellRequest` re-dispatch
   it, `renderRoute` takes `rewrite`. See `docs/internal/execution-model.md` →

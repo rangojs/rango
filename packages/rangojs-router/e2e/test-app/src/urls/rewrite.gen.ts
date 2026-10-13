@@ -3,6 +3,7 @@ export const routes = {
   guarded: "/guarded/page",
   index: "/",
   inlineAdmin: "/inline-admin",
+  item: "/items/:id",
   maintenance: "/maintenance",
   product: "/products/:slug",
   shop: "/shop",
