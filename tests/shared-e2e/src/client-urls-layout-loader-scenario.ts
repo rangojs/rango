@@ -294,3 +294,98 @@ export async function expectReturnToCommittedRouteFromOptimisticFrameShowsTheDes
   expect(probe.flash, "the cart badge never showed its fallback").toBe(false);
   expect(probe.detached, "the layout never left the DOM").toBe(false);
 }
+
+/** The wait of the layout's runs loader (both apps' loader.ts). */
+const LAYOUT_LOADER_MS = 300;
+
+/**
+ * A layout() loader with no revalidate() (the runs loader: it takes 300 ms
+ * and pushes a crumb) takes a server layout's default: it keeps its data and
+ * its crumb across navigations between the layout's routes, a param
+ * navigation, a search-only change and Back, and neither cross-route canonical
+ * commit waits for it. An action re-runs it. The layout keeps its instance
+ * throughout, and its cart badge never shows its fallback.
+ */
+export async function expectLayoutLoaderHeldAcrossNavigations(
+  page: Page,
+  options: ClientUrlsLayoutLoaderOptions,
+): Promise<void> {
+  await page.goto(options.url(options.path));
+  await expect(page.getByTestId("cll-index")).toBeVisible();
+  await page.waitForFunction(() =>
+    document.documentElement.hasAttribute("data-hydrated"),
+  );
+  const runs = (await page.getByTestId("cll-runs").textContent()) ?? "";
+  expect(runs).toMatch(/^runs:\d+$/);
+  await expect(page.getByTestId("cll-crumbs")).toHaveText(runs);
+  for (const id of ["cll-layout", "cll-cart"]) {
+    await page
+      .getByTestId(id)
+      .evaluate((el) => el.setAttribute("data-e2e-kept", "1"));
+  }
+  await watchFlash(page, "cll-badge-fallback", ["cll-layout"]);
+
+  const held = async (): Promise<void> => {
+    await expect(page.getByTestId("cll-runs")).toHaveText(runs);
+    await expect(page.getByTestId("cll-crumbs")).toHaveText(runs);
+    await expectLayoutKept(page);
+  };
+  const committedWithoutTheLoader = (record: FrameRecord): void =>
+    expect(
+      record.canonicalAt - record.clickAt,
+      "the canonical commit did not wait for the layout's loader",
+    ).toBeLessThan(SERVER_DELAY_MS + LAYOUT_LOADER_MS);
+
+  committedWithoutTheLoader(
+    await recordClick(
+      page,
+      "cll-to-alpha",
+      ['[data-testid="cll-item-loading"]', '[data-testid="cll-item"]'],
+      '[data-testid="cll-item-data"]',
+    ),
+  );
+  await expect(page.getByTestId("cll-item-data")).toHaveText("item:alpha");
+  await held();
+
+  // A param navigation on the same route, Back, and a search-only change.
+  await page.getByTestId("cll-to-beta").click();
+  await expect(page.getByTestId("cll-item-data")).toHaveText("item:beta");
+  await held();
+  await page.goBack();
+  await expect(page.getByTestId("cll-item-data")).toHaveText("item:alpha");
+  await held();
+  await page.getByTestId("cll-to-alpha-compact").click();
+  await expect(page).toHaveURL(
+    options.url(`${options.path}/items/alpha?view=compact`),
+  );
+  await expect(page.getByTestId("cll-layout")).toHaveAttribute(
+    "data-pending",
+    "false",
+  );
+  await held();
+
+  committedWithoutTheLoader(
+    await recordClick(
+      page,
+      "cll-to-index",
+      ['[data-testid="cll-index"]'],
+      '[data-testid="cll-layout"][data-pending="false"] [data-testid="cll-index"]',
+    ),
+  );
+  await expect(page).toHaveURL(options.url(options.path));
+  await held();
+
+  // An action re-runs it in place. Not the bump action: the cart count
+  // another test of this group checks stays its own.
+  await page.getByTestId("cll-rerun").click();
+  await expect(page.getByTestId("cll-runs")).not.toHaveText(runs);
+  const rerun = (await page.getByTestId("cll-runs").textContent()) ?? "";
+  expect(rerun).toMatch(/^runs:\d+$/);
+  await expect(page.getByTestId("cll-crumbs")).toHaveText(rerun);
+  await expectLayoutKept(page);
+
+  const probe = await readProbe(page);
+  expect(probe.installed, "no document reload").toBe(true);
+  expect(probe.flash, "the cart badge never showed its fallback").toBe(false);
+  expect(probe.detached, "the layout never left the DOM").toBe(false);
+}

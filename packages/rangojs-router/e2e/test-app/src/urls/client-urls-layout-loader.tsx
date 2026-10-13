@@ -1,16 +1,28 @@
 "use client";
 
 import { Suspense } from "react";
-import { clientUrls, Link, useLoader, useOutlet } from "@rangojs/router/client";
+import {
+  clientUrls,
+  Link,
+  useHandle,
+  useLoader,
+  useOutlet,
+} from "@rangojs/router/client";
 import {
   ClientLayoutCartLoader,
+  ClientLayoutCrumbs,
   ClientLayoutItemLoader,
+  ClientLayoutRunsLoader,
 } from "./client-urls-layout-loader.loader.js";
-import { bumpClientLayoutCart } from "./client-urls-layout-loader.actions.js";
+import {
+  bumpClientLayoutCart,
+  rerunClientLayoutRuns,
+} from "./client-urls-layout-loader.actions.js";
 
 // A group layout that reads its own layout() loader, directly and in an
 // inline <Suspense> (the vite-rsc-demo ClientShopLayout / CartBadge shape),
-// behind a 400 ms server middleware (urls.tsx). Body:
+// behind a 400 ms server middleware (urls.tsx), and a layout() loader whose
+// default holds on every navigation, read and pushing a crumb. Body:
 // tests/shared-e2e/src/client-urls-layout-loader-scenario.ts.
 
 function CartBadge() {
@@ -21,9 +33,13 @@ function CartBadge() {
 function ShopLayout() {
   const { content, pending } = useOutlet();
   const { data } = useLoader(ClientLayoutCartLoader);
+  const { data: runs } = useLoader(ClientLayoutRunsLoader);
+  const crumbs = useHandle(ClientLayoutCrumbs) ?? [];
   return (
     <section data-testid="cll-layout" data-pending={String(pending)}>
       <p data-testid="cll-cart">{data}</p>
+      <p data-testid="cll-runs">{runs}</p>
+      <p data-testid="cll-crumbs">{crumbs.join(" ")}</p>
       <Suspense
         fallback={<span data-testid="cll-badge-fallback">loading cart</span>}
       >
@@ -34,6 +50,12 @@ function ShopLayout() {
         onClick={() => void bumpClientLayoutCart()}
       >
         Add item
+      </button>
+      <button
+        data-testid="cll-rerun"
+        onClick={() => void rerunClientLayoutRuns()}
+      >
+        Refresh runs
       </button>
       {content}
     </section>
@@ -74,6 +96,13 @@ function ShopItem() {
         Beta
       </Link>
       <Link
+        to="/client-urls-layout-loader/items/alpha?view=compact"
+        prefetch="none"
+        data-testid="cll-to-alpha-compact"
+      >
+        Compact
+      </Link>
+      <Link
         to="/client-urls-layout-loader"
         prefetch="none"
         data-testid="cll-to-index"
@@ -87,6 +116,7 @@ function ShopItem() {
 export default clientUrls(({ layout, path, loader, loading }) => [
   layout(ShopLayout, () => [
     loader(ClientLayoutCartLoader),
+    loader(ClientLayoutRunsLoader),
     path("/", ShopIndex, { name: "index" }),
     path("/items/:id", ShopItem, { name: "item" }, () => [
       loader(ClientLayoutItemLoader),

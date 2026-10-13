@@ -287,6 +287,18 @@ the build moves the predicate to the server, and it runs there with the same
 arguments, `actionResult` included, so an action from the modal re-runs only
 the loaders whose predicate says so.
 
+A group `layout()` loader revalidates as a server layout's loader does. With no
+`revalidate()` a navigation keeps it, whichever route of the layout it goes to
+and whatever params or search change (a same-route param navigation too), and
+an action re-runs it. Its `revalidate()` decides on every navigation and
+action, with that default as `defaultShouldRevalidate`: a shop layout's
+`loader(CartLoader, () => [revalidate(({ isAction }) => isAction(CartActions))])`
+runs on the document request and then only on cart actions, and the page
+commits without waiting for it. A navigation into the layout runs it. A layout
+loader that reads the route's params needs a rule that re-runs it:
+`revalidate(({ currentParams, nextParams, defaultShouldRevalidate }) =>
+currentParams.slug !== nextParams.slug ? true : defaultShouldRevalidate)`.
+
 Two scars worth copying:
 
 - A blunt `revalidate(false)` keeps serving the OLD product on product→product
@@ -486,10 +498,16 @@ too, `useOutlet().pending` ends with that commit, and one follow-up request
 own `<Suspense>` to show the page and that fallback at once; with no boundary
 React holds the page being left until the fill answers, as it would with no
 prefetch. Same rules as on a server route (`/loader` → "`prefetch: false`"):
-only a segment new to the page is deferred, so a same-route click
-(`/product/a` to `/product/b`) prefetches the loader as usual.
+the flag skips a loader in a prefetch only when the loader is new to the page.
+A loader already on screen is never deferred: if its revalidation (its
+`revalidate()` or the default) re-runs it, it runs in the prefetch with the
+rest of the destination; otherwise it is held. A same-route click
+(`/product/a` to `/product/b`) is the familiar case.
 
-- On a `layout()` of the group the flag applies to every route below it.
+- A group `layout()` loader is on screen on every route of its layout: a
+  prefetch between two of them defers nothing for it (its `revalidate()`
+  decides, and with no rule it is held), and a prefetch that enters the
+  layout defers it.
 - A flagged `loader()` on a server layout above the group is deferred while
   that layout is new to the page (entering the group from outside).
 - `loading()` in `clientUrls()` takes no options, and a flagged `loading()`
@@ -540,8 +558,9 @@ a hard load of the target URL renders the full route.
   `loading()` does not re-flash there. Across different routes, a `layout()`
   keeps its instance while the navigation stays under it, and its own
   `layout()` loaders keep their data on the optimistic frame (a cart count does
-  not suspend); only the destination's loaders and those of layouts it mounts
-  anew wait for the server. `transition()` is not needed for the
+  not suspend), and in the canonical commit when their `revalidate()` holds
+  them; only the destination's loaders and those of layouts it mounts anew
+  wait for the server. `transition()` is not needed for the
   hold; it adds the view-transition animation. Inline `<Suspense>` above each
   `useLoader` read is still the finer-grained tool when different reads on
   one route should wait independently.
