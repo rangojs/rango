@@ -39,6 +39,7 @@ import {
   discoverClientUrlProjections,
   refreshRecordedClientUrlProjections,
 } from "./client-urls-projection.js";
+import { assignClientUrlRevalidateFiles } from "../plugins/client-urls-revalidate-hoist.js";
 
 const debug = createRangoDebugger(NS.discovery);
 
@@ -195,6 +196,9 @@ async function discoverRoutersPass(
 
   await timed(debug, "inner: discover client URL projections", () =>
     discoverClientUrlProjections(state, ssrEnv, serverMod),
+  );
+  await timed(debug, "inner: register client URL predicates", () =>
+    assignClientUrlRevalidateFiles(state, rscEnv),
   );
 
   // generateManifestFull must run in the RSC runner realm: it invokes the

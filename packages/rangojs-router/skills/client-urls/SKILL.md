@@ -206,11 +206,10 @@ export default clientUrls(({ path }) => [
   item the site does not take names the component.
 - **A predicate in `.use` runs on the server,** as one in the builder does:
   the build hoists it out of the component's module with the rules below,
-  and it registers when a group that imports the module statically, directly
-  or through barrels, loads on the server. A module the group reaches only
-  through `import()`, or one outside the workspace root, gets no
-  registration; the server names the loader and key when it mounts the
-  group.
+  and it registers when a group whose routes use the component loads on the
+  server, wherever the module sits: behind barrels or in another workspace
+  package. A predicate in `node_modules` is not hoisted,
+  and route discovery fails naming its loader.
 - **Import the helpers from `@rangojs/router/client`.** The same names from
   `@rangojs/router` are the server DSL's; called in a client module they
   throw, pointing to `@rangojs/router/client`.

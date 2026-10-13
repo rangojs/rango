@@ -335,8 +335,9 @@ export async function createTempRscServer(
       transitionWhenHoistPlugin(),
       // clientUrls() revalidate() predicates move to the server here too:
       // discovery serializes the SSR copy's markers and the RSC realm
-      // registers the predicates the materialized stubs call.
-      ...clientUrlsRevalidateHoistPlugin(),
+      // registers the predicates the materialized stubs call. The index is
+      // the main plugin's, so its group modules import the files assigned here.
+      ...clientUrlsRevalidateHoistPlugin(state.clientUrlRevalidate),
       // Dev prerender must use dev-mode IDs (path-based) to match the workerd
       // runtime. forceBuild produces hashed IDs for production bundle consistency.
       exposeInternalIds(options.forceBuild ? { forceBuild: true } : undefined),

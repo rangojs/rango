@@ -52,6 +52,29 @@ export interface PluginOptions {
    * budget into its capture/render handlers.
    */
   progressiveChunkSize?: number;
+  /**
+   * The index rango()'s clientUrls() revalidate() hoist plugin shares, so
+   * discovery's temp server records keys into it and assigns the files the
+   * dev server's or build's group modules import.
+   */
+  clientUrlRevalidate?: ClientUrlRevalidateIndex;
+}
+
+/**
+ * What the clientUrls() revalidate() hoist
+ * (plugins/client-urls-revalidate-hoist.ts) shares with discovery across the
+ * plugin instances of one rango(), the dev server or build and discovery's
+ * temp server: the file of every key the hoist transform saw, in any
+ * environment, and each group's files, which discovery assigns from the
+ * group's projection and the group's `?rango-revalidate` module imports.
+ */
+export interface ClientUrlRevalidateIndex {
+  readonly fileByKey: Map<string, string>;
+  readonly filesByGroup: Map<string, readonly string[]>;
+}
+
+export function createClientUrlRevalidateIndex(): ClientUrlRevalidateIndex {
+  return { fileByKey: new Map(), filesByGroup: new Map() };
 }
 
 export interface PrecomputedEntry {
@@ -129,6 +152,7 @@ export interface DiscoveryState {
   perRouterManifestDataMap: Map<string, Record<string, string>>;
   clientUrlSourceByReferenceId?: Map<string, string>;
   clientUrlProjectionMap?: Map<string, ClientUrlProjection>;
+  clientUrlRevalidate: ClientUrlRevalidateIndex;
 
   prerenderManifestEntries: Record<string, string> | null;
   staticManifestEntries: Record<string, string> | null;
@@ -251,6 +275,8 @@ export function createDiscoveryState(
     perRouterManifestDataMap: new Map(),
     clientUrlSourceByReferenceId: new Map(),
     clientUrlProjectionMap: new Map(),
+    clientUrlRevalidate:
+      opts?.clientUrlRevalidate ?? createClientUrlRevalidateIndex(),
 
     prerenderManifestEntries: null,
     staticManifestEntries: null,

@@ -763,26 +763,45 @@ plugin-rsc's RSC copy of the group is a client-reference proxy whose imports
 are gone, so a `?rango-revalidate` import appended to the component's own
 proxy would never load: nothing on the server imports the component. The
 hoist therefore keys on `revalidate` imported from `@rangojs/router/client`
-in any module (as well as the builder's helper), and the group's
-`?rango-revalidate` module carries a **shadow graph**: it imports the
-`?rango-revalidate` module of every project source file the group imports or
-re-exports statically, and each of those does the same. A file with nothing
-to register serves `export {}`, so the chain passes through barrels and
-plain modules; a `"use server"` module ends it (no client code is behind
-one). Only these small modules load on the server, never a client module's
-code, and the key formula is unchanged, so a component module imported by
-two groups registers once. The walk stays under the workspace root (Vite's
-`searchForWorkspaceRoot`, so a component in a sibling workspace package, a
-`packages/ui` beside `apps/web`, registers), outside `node_modules` and the
-router's own `src/` (in this monorepo `@rangojs/router/client` resolves
-there, outside `node_modules`). It ends at a module whose client copies are
-loader stubs (only `createLoader()` exports, `isClientLoaderStubFile` in
-`expose-ids/loader-transform.ts`): none of its imports load in the browser.
-It skips `import()`: a predicate in a module the group reaches only that way
-has no registration, and materialization reports the missing key. In a
-build, the empty shadows tree-shake away; only modules that register reach
-the RSC bundle. A `?rango-revalidate` load reads and parses its file once,
-for both its registrations and its shadows.
+in any module (as well as the builder's helper), and **route discovery picks
+the files a group's module imports**. You might wonder how discovery knows
+them: it serializes each group's SSR copy, so the projection already lists
+every key the group reads, its components' included, and the hoist transform
+records each key's file in every environment (`ClientUrlRevalidateIndex`,
+`vite/discovery/state.ts`). After the projection pass,
+`assignClientUrlRevalidateFiles` (in the plugin module) maps each group's keys
+to their files, and the group's `?rango-revalidate` module imports the
+`?rango-revalidate` module of each, after its own registrations. Only these
+small modules load on the server, never a client module's code; a lazy
+`include()` stays lazy; and the key formula is unchanged, so a component
+module two groups read registers once. Where the file sits does not matter:
+behind barrels, in a sibling workspace package (a
+`packages/ui` beside `apps/web`), anywhere outside `node_modules`, which the
+transform never hoists.
+
+The index is one object per `rango()`: the dev server's or build's plugin and
+the plugin in discovery's temp server share it
+(`PluginOptions.clientUrlRevalidate`), so keys the temp server records reach
+the group modules the dev server or the build serves. Discovery imports the
+RSC entry before it projects, so a static group's module has loaded once
+already, with no files on a cold start or the previous ones after an edit.
+Two things cover that. Discovery imports the assigned files' modules into
+its own realm before materialization reads the registry. And when a group's
+files change, it invalidates the group's module in its environment's module
+graph, so the next evaluation (a request realm after a reload) imports the
+current files. A realm that is not discovery's never loads a group before
+its files are known: its entry imports the routes-manifest module first
+(`RSC_ENTRY_BOOTSTRAP_IMPORTS`), whose load waits for discovery, and Cloudflare
+dev invalidates the workerd graph wholesale after every rediscovery.
+
+The first version (#1140) found those files with a "shadow graph" instead:
+each group's module imported the `?rango-revalidate` module of every project
+file it imported statically, recursively, parsing each file for its imports.
+It had to stop somewhere (the workspace root minus the router's own `src/`,
+since in this monorepo `@rangojs/router/client` resolves outside
+`node_modules`), it parsed every reachable file, it loaded 50 mostly empty
+modules in the router test-app where 20 load now, and a predicate reached
+only through `import()` had no registration.
 
 In dev, the route-file watcher treats an edit of a module that imports
 `@rangojs/router/client` and assigns a `.use`

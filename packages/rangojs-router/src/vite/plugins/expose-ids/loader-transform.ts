@@ -1,32 +1,12 @@
 import type MagicString from "magic-string";
-import { detectImports, makeStubId } from "../expose-id-utils.js";
+import { makeStubId } from "../expose-id-utils.js";
 import type { CreateExportBinding } from "./types.js";
 import { hasDirective } from "@vitejs/plugin-rsc/transforms";
-import {
-  collectCreateExportBindings,
-  getImportedFnNames,
-  isExportOnlyFile,
-  offsetToLineColumn,
-} from "./export-analysis.js";
+import { isExportOnlyFile, offsetToLineColumn } from "./export-analysis.js";
 
 export function hasCreateLoaderImport(code: string): boolean {
   return /import\s*\{[^}]*\bcreateLoader\b[^}]*\}\s*from\s*["']@rangojs\/router(?:\/server)?["']/.test(
     code,
-  );
-}
-
-/**
- * Whether the client and SSR copies of a module are generateClientLoaderStubs'
- * stubs (every export a createLoader()): none of its imports load there.
- */
-export function isClientLoaderStubFile(code: string, program?: any): boolean {
-  if (!detectImports(code).loader || !code.includes("createLoader")) {
-    return false;
-  }
-  const fnNames = getImportedFnNames(code, "createLoader");
-  return isExportOnlyFile(
-    code,
-    collectCreateExportBindings(code, fnNames, program),
   );
 }
 
