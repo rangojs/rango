@@ -540,6 +540,7 @@ Use it when you need it:
 | multi-column layouts, independent slots         | [`/parallel`](./skills/parallel/SKILL.md)                                                    |
 | open a route as a modal on soft navigation      | [`/intercept`](./skills/intercept/SKILL.md)                                                  |
 | compose route modules / sub-apps                | [`/route`](./skills/route/SKILL.md), [`/composability`](./skills/composability/SKILL.md)     |
+| lay out a whole app                             | [`/app-structure`](./skills/app-structure/SKILL.md)                                          |
 | cache a single function or component            | [`/use-cache`](./skills/use-cache/SKILL.md), [`/cache-guide`](./skills/cache-guide/SKILL.md) |
 | feed live loaders from a cached shell           | [`/shell-manifest`](./skills/shell-manifest/SKILL.md)                                        |
 | edge caching with Cache-Control                 | [`/document-cache`](./skills/document-cache/SKILL.md)                                        |

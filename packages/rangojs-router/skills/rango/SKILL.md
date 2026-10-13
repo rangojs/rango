@@ -111,6 +111,7 @@ stated, greppable contract.
 | debug a slow request                    | `debugPerformance` / telemetry     | /observability          |
 | share config across routes              | factory returning a helper array   | /composability          |
 | compose a sub-app / module              | `include()`                        | /route                  |
+| lay out a whole app                     | section modules, guards, groups    | /app-structure          |
 | modal / soft navigation                 | `intercept()`                      | /intercept              |
 | route group of client components        | `clientUrls()` in `"use client"`   | /client-urls            |
 | set meta/breadcrumbs from loader data   | `ctx.use(Handle)` in the loader    | /loader                 |
@@ -306,6 +307,7 @@ Grouped by concern — read when you need to…
 | Skill                     | Description                                                                |
 | ------------------------- | -------------------------------------------------------------------------- |
 | `/router-setup`           | Create and configure the RSC router                                        |
+| `/app-structure`          | Whole-app recipes: large app with admin, multi-app, content site, shop     |
 | `/route`                  | Define routes with `urls()`, `path()`, and `include()`                     |
 | `/client-urls`            | Client-component route groups with `clientUrls()` — no handlers            |
 | `/layout`                 | Layouts that wrap child routes                                             |

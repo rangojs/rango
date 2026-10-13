@@ -49,6 +49,15 @@ const DOCS = [
     "shell-manifest",
     "use-cache",
   ].map((skill) => `packages/rangojs-router/skills/${skill}/SKILL.md`),
+  // The app-structure recipes compose the whole API surface into full apps,
+  // so a rename anywhere strands one of their snippets.
+  ...[
+    "SKILL.md",
+    "large-app.md",
+    "multi-app.md",
+    "content-site.md",
+    "e-commerce.md",
+  ].map((file) => `packages/rangojs-router/skills/app-structure/${file}`),
 ];
 
 const SRC_ROOT = path.join(REPO_ROOT, "packages/rangojs-router/src");
