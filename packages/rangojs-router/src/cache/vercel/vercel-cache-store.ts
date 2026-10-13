@@ -271,6 +271,8 @@ interface VercelShellEnvelope {
   t?: string[];
   /** initialTheme the capture render was built with (resume theme fidelity). */
   i?: string;
+  /** ShellCacheEntry.pathname (a visitor-keyed shell's rendered location). */
+  lp?: string;
   /** Capture data snapshot (ShellCacheEntry.snapshot). */
   sn: ShellSnapshotRecord[];
   /**
@@ -1158,6 +1160,7 @@ export class VercelCacheStore<
       reactVersion: env.rv,
       buildVersion: env.bv,
       initialTheme: env.i,
+      pathname: env.lp,
       snapshot: env.sn,
       docKey: env.dk,
       prunedRecords: env.pr,
@@ -1326,6 +1329,7 @@ export class VercelCacheStore<
         e: Math.min(expiresAt, now + retentionTtl * 1000),
         t: safeTags.length > 0 ? safeTags : undefined,
         i: entry.initialTheme,
+        lp: entry.pathname,
         sn: entry.snapshot,
         dk: entry.docKey,
         pr: entry.prunedRecords,
@@ -1743,7 +1747,7 @@ export class VercelCacheStore<
 
   private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
     if (!isRecord(raw)) return null;
-    const { p, po, rv, bv, c, s, e, t, i, sn, dk, pr, no } = raw;
+    const { p, po, rv, bv, c, s, e, t, i, lp, sn, dk, pr, no } = raw;
     if (typeof rv !== "string" || typeof bv !== "string") return null;
     // Document half: required unless navigationOnly (`no`), which stores
     // neither field. Tolerate a legacy navigationOnly envelope that still
@@ -1766,6 +1770,7 @@ export class VercelCacheStore<
       e,
       t: Array.isArray(t) ? (t as string[]) : undefined,
       i: typeof i === "string" ? i : undefined,
+      lp: typeof lp === "string" ? lp : undefined,
       // A non-array field reads as no records.
       sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : [],
       dk: typeof dk === "string" ? dk : undefined,

@@ -22,7 +22,10 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { bodylessHeaders } from "../server/request-headers.js";
-import { recordRewriteHop } from "../server/rewrite-trail.js";
+import {
+  recordRewriteHop,
+  recordRewriteShell,
+} from "../server/rewrite-trail.js";
 
 /** Response header naming the route path a rewritten request rendered. */
 export const REWRITE_HEADER = "x-rango-rewrite";
@@ -141,6 +144,7 @@ export function applyRewrite(
   }
   const target = resolveRewriteTarget(rewrite, routeMap, reqCtx.url, basename);
   const hops = recordRewriteHop(reqCtx, reqCtx.url, target);
+  recordRewriteShell(reqCtx, rewrite.shellAudience);
   const url = rewriteTransportUrl(target, reqCtx.originalUrl);
   const request = passRequest.bodyUsed
     ? bodylessPassRequest(url, passRequest)

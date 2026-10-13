@@ -151,12 +151,41 @@ cache miss (no shell).
 
 ### A request middleware rewrote
 
-A request middleware rewrote (`throw rewrite()`, `/middleware`) to a `ppr`
-route is served the target's shell under the target's key. The capture
-renders the target as a direct visit: `ctx.rewrittenFrom` reads `undefined`
-there and the payload carries the target's pathname, so the shell is the
-same for direct and rewritten visitors (a component that renders
-`usePathname()` shows the target's URL to a rewritten visitor on a HIT).
+A URL's shared shell is read and written only by requests on that URL. A
+request middleware rewrote (`throw rewrite()`, `/middleware`) to a `ppr` route
+neither reads the target's shell nor captures it: it renders live, at the
+visitor's location (`usePathname()`, `ctx.rewrittenFrom`), on every request.
+The target's shell is captured by a direct visit or a `router.prerender()` warm
+of the target's URL, so nothing a rewriting middleware set (a variable, the
+visitor's URL) ends up in the shell every direct visitor gets.
+
+The rewrite chooses a shell for the rewritten request with `.shell()`:
+
+```ts
+// A routing catch-all: each public URL gets a shell of its own.
+throw rewrite("item", { id }).shell("visitor");
+
+// A lock or promo page that renders nothing of the visitor's URL.
+throw rewrite("maintenance").shell("target");
+```
+
+- `.shell("visitor")` keys the shell by the visitor's URL and the target
+  (`visitorShellCacheKey(router, "/summer", "/item/1")` in a test; the target
+  route's `cache.searchParams` filter and its own partition apply). The
+  capture renders the visitor's location and `ctx.rewrittenFrom`, and a
+  variable set before the throw may be baked in, since the key covers the URL
+  it came from. Navigation replay uses the same key. A build shell of the
+  target is never served to it. Store growth is one shell per public URL;
+  `updateTag()` reaches every one of them through the shell's tags.
+- `.shell("target")` reads and captures the target's shared shell from the
+  rewritten request. The shell then shows the target's URL to a rewritten
+  visitor on a HIT (`usePathname()` hydrates against the address bar, so a
+  component that renders it mismatches), and a variable set before the throw
+  is baked into the shell direct visitors get. Use it only for a page that
+  renders neither.
+
+A rewritten navigation without `.shell()` reports
+`x-rango-ppr-replay: BYPASS; reason=rewritten`.
 
 ### Request-partitioned shells
 
@@ -1299,7 +1328,10 @@ shell-cache only public/shared pages, keep per-user content in live-lane
 loaders (no `ssr: false`) or nested promises in bake-lane loader data — NOT in
 handler output or plain bake-lane container data — mark the variable
 `{ cache: false }` so a stray shell read refuses the capture, or key per
-variant at the CDN tier.
+variant at the CDN tier. A variable a middleware sets before `throw rewrite()`
+never reaches the target's shared shell: a rewritten request captures none
+unless its rewrite opts in with `.shell("target")` (see "A request middleware
+rewrote"); with `.shell("visitor")` it lands only in that URL's own shell.
 
 ## What always renders without a shell
 
@@ -1307,7 +1339,9 @@ Non-GET, non-partial RSC/action/loader fetches, partial requests without an
 eligible captured segment snapshot, per-request CSP nonce, `streamMode:
 "allReady"`, redirects, 404s, error renders, routes without `ppr`, a document
 request the route's own `cache()` scope refuses (`cache(false)`, or a
-`condition()` returning false for it), and any store without the shell family.
+`condition()` returning false for it), a request middleware rewrote whose
+rewrite chose no shell (`rewrite(...).shell()`), and any store without the
+shell family.
 A stored shell is invalidated when
 `React.version` changes (postponed state is build-coupled) or when the router's
 document version changes, so a deploy that changes the router self-heals via

@@ -171,10 +171,11 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
   // The KV envelope cherry-picks fields, so initialTheme (theme fidelity) and the
   // capture data snapshot (HIT parity) must be explicitly carried — otherwise the
   // feature silently no-ops on the real CFCacheStore that cloudflare-basic uses.
-  it("round-trips initialTheme and the capture data snapshot through KV", async () => {
+  it("round-trips initialTheme, pathname and the capture data snapshot through KV", async () => {
     const store = new CFCacheStore({ ctx: mockCtx, kv: mockKV as any });
     const entry = shellEntry({
       initialTheme: "dark",
+      pathname: "/summer",
       snapshot: [
         {
           family: "loader",
@@ -189,6 +190,8 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
 
     const hit = await store.getShell("k");
     expect(hit?.entry.initialTheme).toBe("dark");
+    // A visitor-keyed shell's rendered location (the serve gate checks it).
+    expect(hit?.entry.pathname).toBe("/summer");
     expect(hit?.entry.snapshot).toEqual(entry.snapshot);
     // buildVersion rides the envelope (bv) — dropping it in either direction
     // would make every persisted HIT fail the validity gate (infinite MISS).

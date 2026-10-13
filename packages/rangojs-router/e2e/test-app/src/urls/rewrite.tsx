@@ -24,6 +24,8 @@ const RwRuns = createVar<number>();
 const RwCount = createVar<number>();
 /** Runs of the maintenance route's own middleware. */
 const RwTargetRuns = createVar<number>();
+/** The visitor's path, set before a rewrite to the ppr item (#1146). */
+const RwPublic = createVar<string>();
 /** Set by the item route's own middleware: the target's chain ran. */
 const RwItemGuard = createVar<string>();
 
@@ -42,6 +44,17 @@ export const rwLockMiddleware: Middleware = async (ctx, next) => {
   if (ctx.pathname === "/rw/loop-b") throw rewrite("/rw/loop-a");
   if (ctx.pathname === "/rw/gone") throw rewrite("/rw/nowhere");
   if (ctx.pathname === "/rw/self") throw rewrite("/rw/self");
+  // A rewrite to a ppr route (#1146): /rw/promo/:id chooses no shell (it
+  // renders live at the visitor's URL), /rw/summer/:id keys a shell of its
+  // own by the visitor's URL, /rw/shared/:id shares the target's shell.
+  const ppr = /^\/rw\/(promo|summer|shared)\/([\w-]+)$/.exec(ctx.pathname);
+  if (ppr) {
+    ctx.set(RwPublic, ctx.pathname);
+    const target = rewrite("rw.pprItem", { id: ppr[2]! });
+    if (ppr[1] === "summer") throw target.shell("visitor");
+    if (ppr[1] === "shared") throw target.shell("target");
+    throw target;
+  }
   // A global rewrite into a pattern-guarded path.
   if (ctx.pathname === "/rw/global-to-guarded") throw rewrite("rw.guarded");
   // A rewrite after next() ran the route: an error.
@@ -187,6 +200,19 @@ function RwItem(ctx: HandlerContext<{ id: string }>) {
   );
 }
 
+/** A ppr page that renders the location (usePathname) and the visitor's path. */
+function RwPprItem(ctx: HandlerContext<{ id: string }>) {
+  const from = ctx.rewrittenFrom;
+  return (
+    <section data-testid="rw-ppr-item">
+      <h1>{`Item ${ctx.params.id}`}</h1>
+      <span data-testid="rw-ppr-public">{ctx.get(RwPublic) ?? "none"}</span>
+      <span data-testid="rw-ppr-from">{from ? from.pathname : "none"}</span>
+      <RwClientLocation />
+    </section>
+  );
+}
+
 export const rewritePatterns = urls(({ path, layout, middleware }) => [
   layout(RwLayout, () => [
     path("/", RwIndex, { name: "index" }),
@@ -284,6 +310,10 @@ export const rewritePatterns = urls(({ path, layout, middleware }) => [
       ],
     ),
     path("/self", () => <h1>self</h1>),
+    path("/ppr/:id", RwPprItem, { name: "pprItem", ppr: true }),
+    path("/promo/:id", () => <h1>never rendered</h1>),
+    path("/summer/:id", () => <h1>never rendered</h1>),
+    path("/shared/:id", () => <h1>never rendered</h1>),
     path("/handler-throws", () => {
       throw rewrite("/rw/shop");
     }),

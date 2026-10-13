@@ -521,6 +521,7 @@ export const NamedRoutes = {
   "rw.inlineAdmin": "/rw/inline-admin",
   "rw.item": "/rw/items/:id",
   "rw.maintenance": "/rw/maintenance",
+  "rw.pprItem": "/rw/ppr/:id",
   "rw.product": "/rw/products/:slug",
   "rw.shop": "/rw/shop",
   "sc.above": "/sc/above/:id",

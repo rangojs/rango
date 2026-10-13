@@ -94,6 +94,8 @@ import {
   type DevShellLookup,
 } from "./shell-build-manifest.js";
 import { contextGet } from "../context-var.js";
+import { rewriteShellAudience, rewriteTrail } from "../server/rewrite-trail.js";
+import { visitorShellKey } from "./shell-capture-constants.js";
 import { PREFETCH_HEADER } from "../prefetch-markers.js";
 import {
   isWarmReplace,
@@ -155,10 +157,52 @@ function describePprReplayStatus(status: PprReplayStatus): string {
     : `bypass:${status.reason}`;
 }
 
+/**
+ * The shell key before the route's own partition, or undefined: a request
+ * middleware rewrote reads and captures no shell unless its rewrite chose
+ * `.shell()`, so a URL's shared shell is read and written only by requests
+ * on that URL (#1146).
+ */
+interface RequestShellBase {
+  baseKey: string;
+  /** shellSearchSeed of the URL the key names. */
+  searchSeed: string;
+  /** A visitor-keyed shell's location (ShellCacheEntry.pathname). */
+  pathname?: string;
+}
+
+function requestShellBase(
+  ctx: HandlerContext<any>,
+  reqCtx: RequestContext<any>,
+  url: URL,
+): RequestShellBase | undefined {
+  const filter = reqCtx._searchParamsFilter;
+  const trail = rewriteTrail(reqCtx);
+  const shell = rewriteShellAudience(reqCtx);
+  if (trail && shell === "visitor") {
+    const visitor = new URL(trail[0]!);
+    return {
+      baseKey: visitorShellKey(
+        ctx.router.id,
+        visitor,
+        new URL(trail[trail.length - 1]!),
+        filter,
+      ),
+      searchSeed: shellSearchSeed(visitor, filter),
+      pathname: visitor.pathname,
+    };
+  }
+  if (trail && shell !== "target") return undefined;
+  return {
+    baseKey: buildShellKey(ctx.router.id, url, filter),
+    searchSeed: shellSearchSeed(url, filter),
+  };
+}
+
 function createShellCaptureDescriptor(
   ctx: HandlerContext<any>,
   key: string,
-  searchSeed: string,
+  base: RequestShellBase,
   originSeed: string,
   pprConfig: ResolvedPprConfig,
   store: SegmentCacheStore<any>,
@@ -166,7 +210,8 @@ function createShellCaptureDescriptor(
 ): ShellCaptureDescriptor {
   return {
     key,
-    searchSeed,
+    searchSeed: base.searchSeed,
+    pathname: base.pathname,
     // Derived from the same request URL as the key (the callers compute
     // both next to each other, so they cannot drift): seeding the origin
     // keeps origin-dependent static markup (Link's data-external)
@@ -499,13 +544,15 @@ function* shellServePlan<TEnv>(
   // no shell read, no capture, so it can never degrade again. The handler
   // stripped the marker from the request and left this flag.
   if (reqCtx._shellForcedMiss) return { kind: "pass" };
+  const base = requestShellBase(ctx, reqCtx, url);
+  if (!base) return { kind: "pass" };
 
   // A per-request CSP nonce pins the route to axis 1: a shared shell would
   // freeze the capture request's nonce and CSP would reject it for every
   // other visitor. Every step below, a HIT included, therefore runs without
   // one.
   const store = reqCtx._cacheStore;
-  const baseKey = buildShellKey(ctx.router.id, url, reqCtx._searchParamsFilter);
+  const { baseKey } = base;
   if (activeRequestNonce(nonce, reqCtx) !== undefined) {
     // Declared intent that cannot be honored deserves a diagnostic (unlike an
     // undeclared route, which is silent): a ppr route gated off by an active
@@ -596,7 +643,7 @@ function* shellServePlan<TEnv>(
   const descriptor = createShellCaptureDescriptor(
     ctx,
     key,
-    shellSearchSeed(url, reqCtx._searchParamsFilter),
+    base,
     url.origin,
     pprConfig,
     store,
@@ -626,10 +673,13 @@ function* shellServePlan<TEnv>(
   // A HIT replays the handler layer from the entry's doc record (`docKey`),
   // or, for a Prerender route, from the prerender store. An entry that has
   // neither is a MISS: serving it would run handlers after the commit.
+  // The entry must have rendered this request's location: the browser
+  // hydrates against the address bar.
   if (
     cached &&
     !cached.entry.navigationOnly &&
     (cached.entry.docKey !== undefined || route?.matched?.pr === true) &&
+    cached.entry.pathname === base.pathname &&
     isValidShellHit(cached.entry, ctx.version)
   ) {
     const document = openShellDocumentMetered(reqCtx, cached);
@@ -713,7 +763,9 @@ function* shellServePlan<TEnv>(
   // compile-time constant).
   const devShellLookup = resolveDevShellLookup(reqCtx, pprConfig);
   let buildHit: Awaited<ReturnType<typeof lookupBuildShell>> = null;
-  if (key !== baseKey) {
+  if (base.pathname !== undefined) {
+    // A build shell is the target's: never served under a visitor key.
+  } else if (key !== baseKey) {
     // Probed once per path without a build shell, and not again once the
     // route warned. A search-bearing URL never reads one: nothing to probe.
     const routeName = reqCtx._classifiedRoute?.routeKey;
@@ -1286,6 +1338,8 @@ function scheduleNavigationShellCapture<TEnv>(
   const { ctx, request, env, url, reqCtx } = input;
   const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry)!;
   const store = reqCtx._cacheStore!;
+  const base = requestShellBase(ctx, reqCtx, url);
+  if (!base) return;
   scheduleShellCapture(
     ctx,
     request,
@@ -1305,7 +1359,7 @@ function scheduleNavigationShellCapture<TEnv>(
     createShellCaptureDescriptor(
       ctx,
       captureKey,
-      shellSearchSeed(url, reqCtx._searchParamsFilter),
+      base,
       url.origin,
       pprConfig,
       store,
@@ -1464,10 +1518,13 @@ async function matchPartialWithPprReplay<TEnv>(
     return runMatch({ outcome: "BYPASS", reason: "cache-disabled" });
   }
 
+  const base = requestShellBase(ctx, reqCtx, url);
+  if (!base) return runMatch({ outcome: "BYPASS", reason: "rewritten" });
+
   // The visitor's own partition (resolveShellPartition): replay never
   // crosses into another partition's shell.
   const key = await resolveRequestShellKey(
-    buildShellKey(ctx.router.id, url, reqCtx._searchParamsFilter),
+    base.baseKey,
     routeSnapshot,
     store,
     reqCtx,
@@ -1806,6 +1863,9 @@ function serveShellHit(
   descriptor: ShellCaptureDescriptor,
 ): Response {
   const { entry, prelude: preludeBytes } = document;
+  // A visitor-keyed shell shows the visitor's URL: the document cache keys
+  // this response by the target.
+  if (entry.pathname !== undefined) reqCtx._payloadVisitorLocation = true;
   const metricsStore = reqCtx._metricsStore;
   // Per-stage tail timing for the `ppr:tail` Server-Timing mirror and the
   // perf console line: always in dev, in production only when this request
@@ -1867,8 +1927,8 @@ function serveShellHit(
       payload.metadata.initialTheme = entry.initialTheme as
         | import("../theme/types.js").Theme
         | undefined;
-      // Same for the location: the capture rendered the target's.
-      payload.metadata.pathname = url.pathname;
+      // Same for the location: the key's URL, or a visitor-keyed shell's.
+      payload.metadata.pathname = entry.pathname ?? url.pathname;
     }
     // Full Flight render per request: hydration needs the whole payload (there
     // is no Flight-side resume — a React limitation, not ours).
@@ -1911,7 +1971,7 @@ function serveShellHit(
         nonce: undefined,
         // The shell key's own search — identical to the capture seed for
         // this key, so the resume tree matches the captured tree.
-        search: shellSearchSeed(url, reqCtx._searchParamsFilter),
+        search: descriptor.searchSeed,
         // The HIT request's origin — same host as the capture's (key-scoped).
         origin: url.origin,
         // The document cache reads the list before storing this composite.

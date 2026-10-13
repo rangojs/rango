@@ -112,6 +112,7 @@ export {
   PPR_REPLAY_STATUS_HEADER,
   shellCacheKey,
   SHELL_STATUS_HEADER,
+  visitorShellCacheKey,
 } from "./shell-status.js";
 export type {
   PprReplayBypassReason,

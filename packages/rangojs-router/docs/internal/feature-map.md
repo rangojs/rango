@@ -109,7 +109,9 @@ The testing exports also include `PPR_REPLAY_STATUS_HEADER`,
 `parsePprReplayStatus()`, and `assertPprReplayStatus()` with the bounded
 `PprReplayStatus` / `PprReplayBypassReason` types, and the
 `ShellCachePartition` type (`{ keys, generated }`) that `shellCacheKey()`
-takes for a store `keyGenerator` partition (#974). `./testing/e2e` re-exports the
+takes for a store `keyGenerator` partition (#974), and
+`visitorShellCacheKey(router, url, target, searchParams?, partition?)`, the
+key of a request rewritten with `rewrite(...).shell("visitor")` (#1146). `./testing/e2e` re-exports the
 same pure helpers for Playwright without pulling the Vite virtual module. A HIT
 means an eligible shell snapshot successfully decoded and supplied the partial
 match; otherwise the status carries a bounded bypass reason.
@@ -683,7 +685,15 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   `server/rewrite-trail.ts`; guarded like `cookies()`, `undefined` in a
   shared render), `ctx.isRewrite()`, the payload pathname and SSR seed at the
   visitor's URL (`renderedLocation`), `x-rango-rewrite`,
-  `rango.rewrite.target`/`hops` span attributes. More than 5 hops or a
+  `rango.rewrite.target`/`hops` span attributes. A `ppr` target's shell is
+  read and written only by requests on its URL: a rewritten request renders
+  live (no shell read, no capture: `requestShellBase` in
+  `rsc/rsc-rendering.ts`) unless the thrown value picks one with `Rewrite.shell()` (`RewriteShell`,
+  exported from the root): `"visitor"` keys a shell by the visitor's URL
+  (`visitorShellKey`, `rsc/shell-capture-constants.ts`; testing
+  `visitorShellCacheKey`) captured at the visitor's location
+  (`_shellCaptureForVisitor`, `ShellCacheEntry.pathname`), `"target"` shares
+  the target's shell (#1146). More than 5 hops or a
   same-URL rewrite is a `RewriteLoopError` (onError "routing", 508). A
   route-middleware rewrite of a mutation (JS action, no-JS form post) runs
   after the action, so it moves the re-render to the target from the action's

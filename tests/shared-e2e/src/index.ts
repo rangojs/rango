@@ -1,6 +1,7 @@
 import {
   errors,
   expect,
+  type APIRequestContext,
   type ConsoleMessage,
   type Locator,
   type Page,
@@ -2316,13 +2317,54 @@ function pushProbe(kind: string): string {
   return `${kind}-${randomUUID().slice(0, 8)}`;
 }
 
-/** Request `url` as a document until its shell is captured and HITs. */
-async function warmShellToHit(page: Page, url: string): Promise<void> {
+/** Request `url` as a document until its PPR shell is captured and HITs. */
+export async function warmShellRequestToHit(
+  request: APIRequestContext,
+  url: string,
+): Promise<void> {
   await expect(async () => {
-    const res = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+    const res = await request.get(url, { headers: PUSH_HTML_HEADERS });
     expect(res.status()).toBe(200);
     expect(res.headers()["x-rango-shell"]).toBe("HIT");
   }).toPass({ timeout: 20_000 });
+}
+
+function warmShellToHit(page: Page, url: string): Promise<void> {
+  return warmShellRequestToHit(page.request, url);
+}
+
+/**
+ * Remember the first node matching `selector` the HTML parser inserts, before
+ * hydration runs. Pair with {@link serverNodeKept}: a hydration mismatch makes
+ * React render the tree again, replacing the server node.
+ */
+export async function markServerNode(
+  page: Page,
+  selector: string,
+): Promise<void> {
+  await page.addInitScript((target) => {
+    const observer = new MutationObserver(() => {
+      const node = document.querySelector(target);
+      if (node) {
+        (window as { __rangoServerNode?: Element }).__rangoServerNode ??= node;
+        observer.disconnect();
+      }
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  }, selector);
+}
+
+/** Whether `selector` still matches the node {@link markServerNode} marked. */
+export async function serverNodeKept(
+  page: Page,
+  selector: string,
+): Promise<boolean> {
+  return page.evaluate(
+    (target) =>
+      document.querySelector(target) ===
+      (window as { __rangoServerNode?: Element }).__rangoServerNode,
+    selector,
+  );
 }
 
 async function bumpPushGeneration(

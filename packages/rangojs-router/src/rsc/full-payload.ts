@@ -95,7 +95,8 @@ export function buildFullPayload(
  * bar) agree on `usePathname()` and `useSearchParams()`. A render other
  * visitors may be served shows `url`, the target, as a direct visit does: a
  * shell capture, and a render the document cache stores (its key is the
- * target). A render that shows the visitor's URL marks
+ * target), except a visitor-keyed shell capture, whose key covers the
+ * visitor's URL. Any other render that shows the visitor's URL marks
  * `_payloadVisitorLocation`, and the document cache does not store it.
  */
 export function renderedLocation(
@@ -104,6 +105,7 @@ export function renderedLocation(
         RequestContext<any>,
         | "_variables"
         | "_shellCaptureRun"
+        | "_shellCaptureForVisitor"
         | "_documentCacheRender"
         | "_payloadVisitorLocation"
         | "res"
@@ -111,8 +113,9 @@ export function renderedLocation(
     | undefined,
   url: URL,
 ): URL {
-  if (!reqCtx || !rewriteTrail(reqCtx) || rendersForSharedAudience(reqCtx)) {
-    return url;
+  if (!reqCtx || !rewriteTrail(reqCtx)) return url;
+  if (rendersForSharedAudience(reqCtx)) {
+    return reqCtx._shellCaptureForVisitor ? visitorUrl(reqCtx, url) : url;
   }
   reqCtx._payloadVisitorLocation = true;
   return visitorUrl(reqCtx, url);

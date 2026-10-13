@@ -16,7 +16,7 @@ import {
   assertPprReplayStatus,
   assertShellStatus,
 } from "@rangojs/router/testing/e2e";
-import { expectConsole } from "@shared/e2e";
+import { expectConsole, warmShellRequestToHit } from "@shared/e2e";
 
 type BuildAxis = "dev" | "prod";
 type TransportAxis = "js" | "pe" | "request";
@@ -1268,6 +1268,85 @@ const matrixRows: SemanticMatrixRow[] = [
       expect(rerendered).toContain('data-testid="rw-item-saves">2<');
       expect(rerendered).toContain('data-testid="rw-item-guard">target<');
       expect(rerendered).toContain('data-testid="rw-runs">2<');
+    },
+  },
+  // A URL's shared PPR shell is read and written only by requests on that
+  // URL (#1146). /rw/promo/:id rewrites to the ppr /rw/ppr/:id with no
+  // .shell(); /rw/summer/:id with .shell("visitor").
+  {
+    id: "RW6",
+    contract:
+      "a rewritten request never reads a shell keyed by another URL: it renders live at the visitor's location, the target's shell warm or not",
+    transport: "request",
+    execution: "full-render",
+    scope: "n/a",
+    assert: async ({ baseUrl, request }) => {
+      const id = `rw5-${crypto.randomUUID().slice(0, 8)}`;
+      await warmShellRequestToHit(request, baseUrl(`/rw/ppr/${id}`));
+      const rewritten = await request.get(baseUrl(`/rw/promo/${id}`), {
+        headers: { Accept: "text/html" },
+      });
+      expect(rewritten.headers()["x-rango-rewrite"]).toBe(`/rw/ppr/${id}`);
+      expect(rewritten.headers()["x-rango-shell"]).toBeUndefined();
+      const html = await rewritten.text();
+      expect(html).toContain(
+        `data-testid="rw-client-location">/rw/promo/${id}<`,
+      );
+      expect(html).toContain(`data-testid="rw-ppr-from">/rw/promo/${id}<`);
+    },
+  },
+  {
+    id: "RW7",
+    contract:
+      "a rewritten request never captures the target's shared shell: only a request on the target's URL does, so nothing its first pass set is baked in",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "n/a",
+    assert: async ({ baseUrl, request }) => {
+      const id = `rw6-${crypto.randomUUID().slice(0, 8)}`;
+      for (let visit = 0; visit < 2; visit++) {
+        const rewritten = await request.get(baseUrl(`/rw/promo/${id}`), {
+          headers: { Accept: "text/html" },
+        });
+        expect(rewritten.headers()["x-rango-shell"]).toBeUndefined();
+      }
+      const direct = await request.get(baseUrl(`/rw/ppr/${id}`), {
+        headers: { Accept: "text/html" },
+      });
+      expect(direct.headers()["x-rango-shell"]).toBe("MISS");
+      await warmShellRequestToHit(request, baseUrl(`/rw/ppr/${id}`));
+      const hit = await request.get(baseUrl(`/rw/ppr/${id}`), {
+        headers: { Accept: "text/html" },
+      });
+      const html = await hit.text();
+      expect(html).toContain('data-testid="rw-ppr-public">none<');
+      expect(html).not.toContain(`/rw/promo/${id}`);
+    },
+  },
+  {
+    id: "RW8",
+    contract:
+      "rewrite().shell(\"visitor\") keys and captures a shell per visitor URL, rendered at the visitor's location; the target's own shell stays its own",
+    transport: "request",
+    execution: "shell-capture",
+    scope: "n/a",
+    assert: async ({ baseUrl, request }) => {
+      const id = `rw7-${crypto.randomUUID().slice(0, 8)}`;
+      await warmShellRequestToHit(request, baseUrl(`/rw/summer/${id}`));
+      const hit = await request.get(baseUrl(`/rw/summer/${id}`), {
+        headers: { Accept: "text/html" },
+      });
+      expect(hit.headers()["x-rango-shell"]).toBe("HIT");
+      const html = await hit.text();
+      expect(html).toContain(
+        `data-testid="rw-client-location">/rw/summer/${id}<`,
+      );
+      expect(html).toContain(`data-testid="rw-ppr-public">/rw/summer/${id}<`);
+      expect(html).toContain(`data-testid="rw-ppr-from">/rw/summer/${id}<`);
+      const direct = await request.get(baseUrl(`/rw/ppr/${id}`), {
+        headers: { Accept: "text/html" },
+      });
+      expect(direct.headers()["x-rango-shell"]).toBe("MISS");
     },
   },
 ];

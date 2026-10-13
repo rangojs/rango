@@ -11,8 +11,15 @@
 import { contextGet, contextSet, createVar } from "../context-var.js";
 import { RewriteLoopError } from "../errors.js";
 import { documentCacheStoresRender } from "../cache/document-cache-policy.js";
-import { guardIdentityRead, type IdentityReadWording } from "./context.js";
+import {
+  guardIdentityRead,
+  recordLoaderIdentityRead,
+  refuseInCacheScope,
+  type IdentityReadWording,
+} from "./context.js";
+import { isInsideIdentityExempt } from "../cache/cache-exec-scope.js";
 import { stripInternalParams } from "../router/internal-params.js";
+import type { RewriteShell } from "../route-definition/rewrite.js";
 import type { RequestContext } from "./request-context.js";
 
 /** Most rewrites one request may take; the next one is a RewriteLoopError. */
@@ -60,6 +67,25 @@ export function recordRewriteHop(
   return hops;
 }
 
+/** The `.shell()` choice of the hop that reached the route that renders. */
+const REWRITE_SHELL = createVar<RewriteShell | undefined>();
+
+export function recordRewriteShell(
+  reqCtx: TrailContext,
+  audience: RewriteShell | undefined,
+): void {
+  contextSet(reqCtx._variables, REWRITE_SHELL, audience);
+}
+
+/** The last hop's `rewrite(...).shell()` choice; undefined: none. */
+export function rewriteShellAudience(
+  reqCtx: TrailContext | undefined,
+): RewriteShell | undefined {
+  return reqCtx?._variables
+    ? (contextGet(reqCtx._variables, REWRITE_SHELL) as RewriteShell | undefined)
+    : undefined;
+}
+
 type AudienceContext = Pick<
   RequestContext<any>,
   "_shellCaptureRun" | "_documentCacheRender" | "res"
@@ -68,7 +94,8 @@ type AudienceContext = Pick<
 /**
  * A render other visitors may be served: a PPR shell capture, or a render
  * the document cache stores (its response opted in before next()). It shows
- * what a direct visit to its URL shows: no visitor theme, no visitor URL.
+ * no visitor theme, and no visitor URL unless it is a visitor-keyed shell
+ * capture (`_shellCaptureForVisitor`).
  */
 export function rendersForSharedAudience(reqCtx: AudienceContext): boolean {
   return reqCtx._shellCaptureRun === true || documentCacheStoresRender(reqCtx);
@@ -112,9 +139,9 @@ export type RewrittenFromReader = "render" | "middleware";
  * The read behind every `ctx.rewrittenFrom`. Guarded like cookies(): inside
  * a `cache()` boundary or a `"use cache"` function it throws, and a loader's
  * own `cache()` fill records it. A render other visitors may be served sees
- * `undefined`, as on a direct visit; any other render that sees the visitor's
- * URL marks `_payloadVisitorLocation`, so the document cache does not store
- * it.
+ * `undefined`, as on a direct visit, except a visitor-keyed shell capture,
+ * whose key covers the URL; any other render that sees the visitor's URL
+ * marks `_payloadVisitorLocation`, so the document cache does not store it.
  */
 function readRewrittenFrom(
   reqCtx: RequestContext<any> | undefined,
@@ -122,7 +149,15 @@ function readRewrittenFrom(
 ): string | undefined {
   if (!reqCtx) return undefined;
   if (reader === "render" && rendersForSharedAudience(reqCtx)) {
-    return undefined;
+    if (!reqCtx._shellCaptureForVisitor) return undefined;
+    // guardIdentityRead minus the capture guard: a cache() boundary, a "use
+    // cache" body or a loader's own cache() inside the capture is keyed
+    // without the URL.
+    if (!isInsideIdentityExempt()) {
+      refuseInCacheScope("ctx.rewrittenFrom", REWRITTEN_FROM_READ, reqCtx);
+      recordLoaderIdentityRead("ctx.rewrittenFrom", REWRITTEN_FROM_READ.verb);
+    }
+    return rewriteTrail(reqCtx)?.[0];
   }
   guardIdentityRead(reqCtx, "ctx.rewrittenFrom", REWRITTEN_FROM_READ);
   const href = rewriteTrail(reqCtx)?.[0];

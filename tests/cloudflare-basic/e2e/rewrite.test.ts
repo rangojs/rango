@@ -4,7 +4,12 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
-import { expectConsole } from "@shared/e2e";
+import {
+  expectConsole,
+  markServerNode,
+  serverNodeKept,
+  warmShellRequestToHit,
+} from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import {
   expectNoPageError,
@@ -100,7 +105,81 @@ async function expectIdentityKept(page: Page): Promise<void> {
   }
 }
 
+/** The node rendering usePathname(): a hydration mismatch replaces it. */
+const LOCATION_NODE = '[data-testid="rw-client-location"]';
+
 function rewriteTests(f: Fixture) {
+  test("a rewritten ppr page renders live at the visitor's URL, even with the target's shell warm", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    const hydrationErrors = watchHydrationErrors(page);
+    const id = `a1-${crypto.randomUUID().slice(0, 8)}`;
+    await warmShellRequestToHit(request, f.url(`/rw/ppr/${id}`));
+    await markServerNode(page, LOCATION_NODE);
+
+    for (let visit = 0; visit < 2; visit++) {
+      const response = await page.goto(f.url(`/rw/promo/${id}`));
+      expect(response?.headers()["x-rango-rewrite"]).toBe(`/rw/ppr/${id}`);
+      // No shell read, no capture.
+      expect(response?.headers()["x-rango-shell"]).toBeUndefined();
+      await waitForHydration(page);
+      await expect(testId(page, "rw-client-location")).toHaveText(
+        `/rw/promo/${id}`,
+      );
+      await expect(testId(page, "rw-ppr-public")).toHaveText(`/rw/promo/${id}`);
+      await expect(testId(page, "rw-ppr-from")).toHaveText(`/rw/promo/${id}`);
+      expect(await serverNodeKept(page, LOCATION_NODE)).toBe(true);
+    }
+    expect(hydrationErrors).toEqual([]);
+  });
+
+  test('a .shell("visitor") rewrite serves its own shell, hydrating at the visitor\'s URL', async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    const hydrationErrors = watchHydrationErrors(page);
+    const id = `rv-${crypto.randomUUID().slice(0, 8)}`;
+    await warmShellRequestToHit(request, f.url(`/rw/summer/${id}`));
+    await markServerNode(page, LOCATION_NODE);
+
+    const response = await page.goto(f.url(`/rw/summer/${id}`));
+    expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+    await waitForHydration(page);
+    await expect(testId(page, "rw-client-location")).toHaveText(
+      `/rw/summer/${id}`,
+    );
+    await expect(testId(page, "rw-ppr-public")).toHaveText(`/rw/summer/${id}`);
+    await expect(testId(page, "rw-ppr-from")).toHaveText(`/rw/summer/${id}`);
+    expect(await serverNodeKept(page, LOCATION_NODE)).toBe(true);
+    expect(hydrationErrors).toEqual([]);
+
+    // The target's own URL has its own shell, captured by a direct visit.
+    const direct = await request.get(f.url(`/rw/ppr/${id}`), {
+      headers: { Accept: "text/html" },
+    });
+    expect(direct.headers()["x-rango-shell"]).toBe("MISS");
+  });
+
+  test('a .shell("target") rewrite shares the target\'s shell with direct visits', async ({
+    request,
+  }) => {
+    const id = `rt-${crypto.randomUUID().slice(0, 8)}`;
+    const html = { headers: { Accept: "text/html" } };
+    const miss = await request.get(f.url(`/rw/shared/${id}`), html);
+    expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+    // The rewritten request captured the target's shell: a direct visit HITs.
+    await warmShellRequestToHit(request, f.url(`/rw/ppr/${id}`));
+    const rewritten = await request.get(f.url(`/rw/shared/${id}`), html);
+    expect(rewritten.headers()["x-rango-shell"]).toBe("HIT");
+    // The documented caveat: the shared shell shows the target's location.
+    expect(await rewritten.text()).toContain(
+      `data-testid="rw-client-location">/rw/ppr/${id}<`,
+    );
+  });
+
   test("a locked document renders the lock page at the visitor's URL", async ({
     page,
   }) => {

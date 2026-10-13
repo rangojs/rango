@@ -12,8 +12,11 @@ import * as trailModule from "../../server/rewrite-trail.js";
 import {
   MAX_REWRITE_HOPS,
   recordRewriteHop,
+  rewriteShellAudience,
   rewriteTrail,
 } from "../../server/rewrite-trail.js";
+import { renderedLocation } from "../../rsc/full-payload.js";
+import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
 import { RewriteLoopError } from "../../errors.js";
 import {
   createRequestContext,
@@ -76,6 +79,22 @@ describe("rewrite()", () => {
     expect(() =>
       (rewrite as (...args: unknown[]) => unknown)("/x", { a: "1" }),
     ).toThrow("params only with a route name");
+  });
+
+  it(".shell() returns a copy that picks the PPR shell", () => {
+    const value = rewrite("/a");
+    const visitor = value.shell("visitor");
+    expect(isRewrite(visitor)).toBe(true);
+    expect(visitor.target).toBe(value.target);
+    expect(visitor.shellAudience).toBe("visitor");
+    // The original keeps its own choice (a rewrite kept in a constant).
+    expect(value.shellAudience).toBeUndefined();
+    expect(
+      rewrite("product", { slug: "a" }).shell("target").shellAudience,
+    ).toBe("target");
+    expect(() => rewrite("/a").shell("shared" as never)).toThrow(
+      'rewrite("/a").shell() takes "visitor" or "target", not "shared".',
+    );
   });
 
   it("isRewrite recognizes a rewrite and nothing else", () => {
@@ -350,6 +369,59 @@ describe("applyRewrite", () => {
         "https://shop.test/c?y=2",
       ]);
     });
+  });
+
+  it("records the shell the hop that reached the target chose", async () => {
+    const { ctx } = contextFor("https://shop.test/a");
+    expect(rewriteShellAudience(ctx)).toBeUndefined();
+    await runWithRequestContext(ctx, async () => {
+      applyRewrite(
+        rewrite("/b").shell("visitor"),
+        ctx.request,
+        ctx,
+        ROUTES,
+        undefined,
+      );
+      expect(rewriteShellAudience(ctx)).toBe("visitor");
+      applyRewrite(rewrite("/c"), ctx.request, ctx, ROUTES, undefined);
+      expect(rewriteShellAudience(ctx)).toBeUndefined();
+      applyRewrite(
+        rewrite("/d").shell("target"),
+        ctx.request,
+        ctx,
+        ROUTES,
+        undefined,
+      );
+      expect(rewriteShellAudience(ctx)).toBe("target");
+    });
+  });
+
+  it("a visitor-keyed shell capture renders the visitor's location and rewrittenFrom", async () => {
+    const { ctx } = contextFor("https://shop.test/a?x=1");
+    await runWithRequestContext(ctx, async () => {
+      applyRewrite(rewrite("/b"), ctx.request, ctx, ROUTES, undefined);
+    });
+    const target = new URL("https://shop.test/b");
+    const shared = Object.create(ctx) as RequestContext<any>;
+    shared._shellCaptureRun = true;
+    expect(renderedLocation(shared, target).href).toBe(target.href);
+    expect(shared.rewrittenFrom).toBeUndefined();
+
+    const visitor = Object.create(ctx) as RequestContext<any>;
+    visitor._shellCaptureRun = true;
+    visitor._shellCaptureForVisitor = true;
+    expect(renderedLocation(visitor, target).href).toBe(
+      "https://shop.test/a?x=1",
+    );
+    expect(visitor.rewrittenFrom?.href).toBe("https://shop.test/a?x=1");
+    // Its key covers the URL: the read neither trips the capture guard nor
+    // marks the request's own payload as the visitor's.
+    expect(visitor._shellCaptureGuardTripped).toBeUndefined();
+    expect(ctx._payloadVisitorLocation).toBeUndefined();
+    // A "use cache" body inside the capture is keyed without the URL.
+    expect(() => runWithCacheExecScope(() => visitor.rewrittenFrom)).toThrow(
+      'ctx.rewrittenFrom cannot be read inside a "use cache" function',
+    );
   });
 
   it("counts hops in the request's variables", async () => {

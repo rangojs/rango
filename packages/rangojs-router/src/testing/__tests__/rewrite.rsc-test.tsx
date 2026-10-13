@@ -350,26 +350,30 @@ describe("where a rewrite is not supported", () => {
 });
 
 describe("a rewritten request and the caches", () => {
-  it("serves the target's PPR shell under the target's key", async () => {
+  it("neither reads nor captures the target's PPR shell without .shell()", async () => {
     const cacheStore = new MemorySegmentCacheStore();
-    const miss = await serveShellRequest(router, "/shop?lock=shell", {
-      cacheStore,
-    });
-    expect(miss.shellStatus).toBe("MISS");
-    expect(miss.key).toBe(shellCacheKey(router, "/shell-target"));
-    expect(payloadMetadata(miss.flight).pathname).toBe("/shop");
-
-    const hit = await serveShellRequest(router, "/shop?lock=shell", {
-      cacheStore,
-    });
-    expect(hit.shellStatus).toBe("HIT");
-    expect(hit.key).toBe(miss.key);
-    // The shell is the target's, as a direct visit captured it.
-    expect(payloadMetadata(hit.flight).pathname).toBe("/shell-target");
+    for (let i = 0; i < 2; i++) {
+      const rewritten = await serveShellRequest(router, "/shop?lock=shell", {
+        cacheStore,
+      });
+      expect(rewritten.shellStatus).toBeNull();
+      expect(payloadMetadata(rewritten.flight).pathname).toBe("/shop");
+    }
+    expect(
+      await cacheStore.getShell(shellCacheKey(router, "/shell-target")),
+    ).toBeNull();
+    // A direct visit captures the target's shell; the rewritten request
+    // still renders live, at its own location.
+    await serveShellRequest(router, "/shell-target", { cacheStore });
     const direct = await serveShellRequest(router, "/shell-target", {
       cacheStore,
     });
     expect(direct.shellStatus).toBe("HIT");
+    const rewritten = await serveShellRequest(router, "/shop?lock=shell", {
+      cacheStore,
+    });
+    expect(rewritten.shellStatus).toBeNull();
+    expect(payloadMetadata(rewritten.flight).pathname).toBe("/shop");
   });
 
   it("records the target and hops on the rango.request span", async () => {
@@ -682,21 +686,57 @@ describe("ctx.rewrittenFrom and shared caches (B1)", () => {
     sharedErrors.length = 0;
   });
 
-  it("a PPR shell a rewritten request captured shows what a direct visit shows", async () => {
+  it("a PPR shell shows what a direct visit shows: a rewritten request captures none", async () => {
     const cacheStore = new MemorySegmentCacheStore();
     const rewritten = await serveShellRequest(sharedRouter, "/promo-a", {
       cacheStore,
     });
-    expect(rewritten.shellStatus).toBe("MISS");
+    expect(rewritten.shellStatus).toBeNull();
     // The visitor's own render sees where it came from.
     expect(rewritten.body).toContain("item from=/promo-a");
 
     const direct = await serveShellRequest(sharedRouter, "/item", {
       cacheStore,
     });
+    expect(direct.shellStatus).toBe("MISS");
+    const hit = await serveShellRequest(sharedRouter, "/item", {
+      cacheStore,
+    });
+    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.prelude).toContain("item from=direct");
+    expect(hit.body).not.toContain("from=/promo-a");
+  });
+
+  it('a shell a rewrite shares with .shell("target") shows what a direct visit shows', async () => {
+    const targetRouter = createRouter({})
+      .use((ctx, next) => {
+        if (ctx.pathname === "/promo-t") throw rewrite("/item").shell("target");
+        return next();
+      })
+      .routes(
+        urls(({ path }) => [
+          path(
+            "/item",
+            (ctx: HandlerContext) => (
+              <p>{`item from=${ctx.rewrittenFrom?.pathname ?? "direct"}`}</p>
+            ),
+            { ppr: true },
+          ),
+          path("/promo-t", () => <p>promo</p>),
+        ]),
+      );
+    const cacheStore = new MemorySegmentCacheStore();
+    const rewritten = await serveShellRequest(targetRouter, "/promo-t", {
+      cacheStore,
+    });
+    expect(rewritten.shellStatus).toBe("MISS");
+    expect(rewritten.body).toContain("item from=/promo-t");
+    const direct = await serveShellRequest(targetRouter, "/item", {
+      cacheStore,
+    });
     expect(direct.shellStatus).toBe("HIT");
     expect(direct.prelude).toContain("item from=direct");
-    expect(direct.body).not.toContain("from=/promo-a");
+    expect(direct.body).not.toContain("from=/promo-t");
   });
 
   it("a cache() boundary refuses the read: nothing visitor-specific is stored", async () => {

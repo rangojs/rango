@@ -40,17 +40,48 @@ export function describeRewriteTarget(target: RewriteTarget): string {
 }
 
 /**
+ * Which PPR shell a rewritten request reads and captures
+ * (`rewrite(...).shell()`); without a call, none.
+ * - `"visitor"`: its own, keyed by the visitor's URL and the target, captured
+ *   with the visitor's location and `ctx.rewrittenFrom`.
+ * - `"target"`: the target's shared shell. `usePathname()` reads the target's
+ *   path on a HIT, and values set before the throw are baked in: for a page
+ *   that renders neither (a lock or promo page).
+ */
+export type RewriteShell = "visitor" | "target";
+
+/**
  * The value `rewrite()` returns, thrown by middleware. An Error, so a throw
  * where a rewrite is not supported fails loudly with the rule in its message.
  */
 export class Rewrite extends Error {
   name = "Rewrite" as const;
   readonly target: RewriteTarget;
+  /** The `shell()` choice; undefined: no shell. */
+  readonly shellAudience: RewriteShell | undefined;
 
-  constructor(target: RewriteTarget) {
+  constructor(target: RewriteTarget, shellAudience?: RewriteShell) {
     super(`${describeRewriteTarget(target)}: ${REWRITE_RULE}`);
     Object.setPrototypeOf(this, Rewrite.prototype);
     this.target = target;
+    this.shellAudience = shellAudience;
+  }
+
+  /**
+   * A copy that picks the PPR shell of a `ppr` target ({@link RewriteShell}),
+   * so a rewrite kept in a module constant keeps its own choice:
+   *
+   * ```ts
+   * throw rewrite("item", { id }).shell("visitor");
+   * ```
+   */
+  shell(audience: RewriteShell): Rewrite {
+    if (audience !== "visitor" && audience !== "target") {
+      throw new TypeError(
+        `${describeRewriteTarget(this.target)}.shell() takes "visitor" or "target", not ${JSON.stringify(audience)}.`,
+      );
+    }
+    return new Rewrite(this.target, audience);
   }
 }
 Object.defineProperty(Rewrite.prototype, REWRITE_BRAND, { value: true });
@@ -114,7 +145,8 @@ function createRewrite(
  * The request runs again as the target (global middleware, route
  * middleware, render) with the same request context: values set before the
  * throw stay readable. `ctx.url` is the target; `ctx.rewrittenFrom` is the
- * visitor's URL. See the `/middleware` skill.
+ * visitor's URL. A `ppr` target gets no shell unless `.shell()` picks one
+ * ({@link RewriteShell}). See the `/middleware` skill.
  */
 export const rewrite: RewriteFunction = createRewrite as RewriteFunction;
 

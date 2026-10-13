@@ -894,7 +894,9 @@ and a read that worked only on direct visits would break the first time a
 rewritten request reached it. A PPR shell capture and a render the document
 cache stores read it as `undefined` instead of throwing: those renders are
 the target page as a direct visit renders it, and the rewritten visitor's
-own render (outside them) still sees its URL. A response route under
+own render (outside them) still sees its URL. A shell keyed by the visitor's
+URL (`rewrite(...).shell("visitor")`, `/ppr`) reads it, since its key covers
+that URL. A response route under
 `cache()` whose handler read it is not stored.
 
 A loader body invoked from a handler with `await ctx.use(Loader)` may read

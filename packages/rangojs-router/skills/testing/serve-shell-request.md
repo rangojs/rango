@@ -205,6 +205,22 @@ expect(result.key).toBe(
 
 A partial request has no HTML step, so its `key` is the URL's key without a partition: read a partitioned route's entry from a document request's result.
 
+## A rewritten request
+
+A request middleware rewrote to a `ppr` route reads and captures no shell unless the rewrite picks one with `.shell()` (`/ppr`, "A request middleware rewrote"): its `shellStatus` is `null`. Under `.shell("visitor")` its shell is keyed by the visitor's URL and the target; `visitorShellCacheKey` builds that key (the visitor's URL, then the target; the target route's `cache.searchParams` and partition go fourth and fifth, as they go third and fourth for `shellCacheKey`):
+
+```ts
+// router.use((ctx, next) => {
+//   if (ctx.pathname === "/summer") throw rewrite("/item/1").shell("visitor");
+//   return next();
+// })
+await serveShellRequest(router, "/summer", { cacheStore }); // MISS + capture
+const hit = await serveShellRequest(router, "/summer", { cacheStore });
+expect(hit.shellStatus).toBe("HIT");
+expect(hit.key).toBe(visitorShellCacheKey(router, "/summer", "/item/1"));
+expect((await hit.readEntry())?.pathname).toBe("/summer"); // replayed on a HIT
+```
+
 ## Two routers on one cache store
 
 A shell's key starts with its router's id (`shellCacheKey(router, url)`), so two routers that share a store and serve the same host and path each read and write their own (why and when: `/host-router`, "Shared cache store"). Serve both against one store to pin it:
@@ -442,7 +458,7 @@ expect(answer).toEqual({
 
 ## A page middleware rewrites
 
-A request a middleware rewrites (`throw rewrite()`, see `/middleware`) runs through the same production handler: the visitor's pass, then the target's, with one request context. Assert what the visitor gets: the target's body and status, `x-rango-rewrite`, the visitor's pathname in the payload, and on a `ppr` target the target's shell key.
+A request a middleware rewrites (`throw rewrite()`, see `/middleware`) runs through the same production handler: the visitor's pass, then the target's, with one request context. Assert what the visitor gets: the target's body and status, `x-rango-rewrite`, the visitor's pathname in the payload, and on a `ppr` target no shell (`shellStatus` `null`) unless the rewrite picked one (see "A rewritten request" above).
 
 ```ts
 it("a locked page renders the maintenance route at its own URL", async () => {

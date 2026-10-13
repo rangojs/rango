@@ -5,6 +5,7 @@ export const routes = {
   inlineAdmin: "/inline-admin",
   item: "/items/:id",
   maintenance: "/maintenance",
+  pprItem: "/ppr/:id",
   product: "/products/:slug",
   shop: "/shop",
 } as const;

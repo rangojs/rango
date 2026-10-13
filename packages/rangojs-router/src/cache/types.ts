@@ -469,6 +469,14 @@ export interface ShellCacheEntry {
    */
   initialTheme?: string;
   /**
+   * The payload pathname of a shell keyed by the visitor's URL
+   * (`rewrite(...).shell("visitor")`, visitorShellKey); absent when the
+   * capture rendered its key's own URL. The serve tail replays it as it does
+   * `initialTheme`, and the serve gate serves the entry only to a request
+   * that renders this location.
+   */
+  pathname?: string;
+  /**
    * The CAPTURE DATA SNAPSHOT, in stored/serialized form: the doc segment
    * record every HIT replays the handler layer from (`docKey`) and the
    * bake-lane loader pins (pruned to what a HIT reads, issue #941). Replaying

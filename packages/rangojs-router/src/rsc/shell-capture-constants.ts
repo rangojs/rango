@@ -67,6 +67,8 @@ export const PPR_REPLAY_BYPASS_REASONS = [
   "no-segment-snapshot",
   "snapshot-miss",
   "explicit-cache-hit",
+  // A rewritten request whose rewrite chose no `.shell()`.
+  "rewritten",
 ] as const;
 
 /** One of {@link PPR_REPLAY_BYPASS_REASONS}. */
@@ -124,6 +126,26 @@ export function buildShellKey(
  */
 export function partitionShellKey(key: string, partition: string): string {
   return `${key}|${encodeURIComponent(partition)}`;
+}
+
+/**
+ * The shell key of a `rewrite(...).shell("visitor")` request: the visitor's
+ * URL, partitioned by `rw:` + the target's path and search (both searches
+ * filtered and sorted, shellSearchSeed). The visitor's URL keeps two public
+ * URLs of one target apart; the target keeps a conditional rewrite (an A/B
+ * arm, a lock) apart from the URL's own shell. The route's own partition
+ * composes after it.
+ */
+export function visitorShellKey(
+  routerId: string,
+  visitor: URL,
+  target: URL,
+  filter?: SearchParamsFilter,
+): string {
+  return partitionShellKey(
+    buildShellKey(routerId, visitor, filter),
+    `rw:${target.pathname}${shellSearchSeed(target, filter)}`,
+  );
 }
 
 /**

@@ -993,6 +993,30 @@ Guarantees, each pinned by a semantic matrix row:
 - More than 5 hops, or a rewrite to the URL the pass is on (pathname and
   search), is a `RewriteLoopError`: `onError` (phase `"routing"`) and a 508.
   `[RW4]`
+- A rewritten request never reads a PPR shell keyed by another URL: without
+  a `.shell()` choice it renders live at the visitor's location, the
+  target's shell warm or not (`requestShellBase` in `rsc/rsc-rendering.ts`;
+  a navigation reports `BYPASS; reason=rewritten`). `[RW6]`
+- A rewritten request never captures the target's shared shell: only a
+  request on the target's URL does (a direct visit, a `router.prerender()`
+  warm of it), so nothing its first pass set is baked into it. A capture
+  descriptor exists only for a request `requestShellBase` gives a key.
+  `[RW7]`
+- `rewrite(...).shell("visitor")` keys and captures a shell per visitor URL
+  (`visitorShellKey`: the visitor's URL partitioned by
+  `rw:<target path+search>`, the route's own partition after it), captured
+  with the visitor's location and `ctx.rewrittenFrom`
+  (`_shellCaptureForVisitor`); the target's own shell stays its own.
+  `.shell("target")` reads and captures the target's shared shell, as before
+  #1146. `[RW8]`
+
+RW6 and RW7 are one rule: a URL's shared shell is read and written only by
+requests on that URL. The scar: a shared target shell renders the target's
+pathname and the HIT tail replays it, while the browser hydrates
+`usePathname()` from the address bar, so every warm rewritten visit
+mismatched on hydration and no app code could fix it. The capture also
+inherits the first pass's variables (`Object.create(reqCtx)`), so a value a
+rewriting middleware set reached every direct visitor of the target.
 
 Why does a mutation get two answers? Because of where each middleware sits
 around the action. Global middleware runs before the action, so refusing its
@@ -1046,15 +1070,18 @@ Where the old and the new URL show:
   function it throws, and a loader's own `cache()` fill records it. A render
   other visitors may be served (`rendersForSharedAudience`: a PPR shell
   capture, a render the document cache stores) reads `undefined`, as a direct
-  visit would; any other render that reads the visitor's URL is not stored
-  by the document cache (`_payloadVisitorLocation`). A middleware ctx reads
-  it plainly: middleware runs per request and is never stored.
+  visit would, except a visitor-keyed shell capture (`_shellCaptureForVisitor`),
+  whose key covers the URL; any other render that reads the visitor's URL is
+  not stored by the document cache (`_payloadVisitorLocation`). A middleware
+  ctx reads it plainly: middleware runs per request and is never stored.
 - The payload's `metadata.pathname` and the SSR search and origin seed show
   the visitor's URL (`renderedLocation` in `rsc/full-payload.ts`), so the
   document hydrates against the address bar. `params` and `routeName` are the
-  target's. A shared render shows the target, as a direct visit does: a PPR
-  shell capture (and the HIT tail that resumes it), and a render the document
-  cache stores.
+  target's. A shared render shows the target, as a direct visit does: a
+  `.shell("target")` capture (and the HIT tail that resumes it), and a render
+  the document cache stores. A visitor-keyed capture shows the visitor's URL
+  and stores it as `ShellCacheEntry.pathname`, which its HIT tail replays; the
+  serve gate serves an entry only to a request whose rendered location it is.
 - `x-rango-rewrite: <target pathname>` on the response; `rango.request` keeps
   the visitor's `url.path` and adds `rango.rewrite.target` and
   `rango.rewrite.hops`.
@@ -1081,7 +1108,8 @@ refresh of a route that now rewrites reports nothing. Register a rewriting
 global middleware before the document cache: a pass-1 HIT for the visitor's
 URL would skip the lock. A cached target document carries the target's
 pathname, so a component rendering `usePathname()` can mismatch on hydration
-at the visitor's URL; the same holds for a PPR shell HIT. A response route
+at the visitor's URL (the document cache's equivalent of RW6 is not built);
+for a PPR shell that holds only under `.shell("target")`. A response route
 under `cache()` whose route middleware rewrites hands the pre-handler
 onResponse callbacks to the target's response (`response-cache-serve.ts`).
 The client's prefetch and history caches key by the visitor's URL and are
