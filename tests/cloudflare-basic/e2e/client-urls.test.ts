@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
+  expectComponentUseItemsDriveTheRoute,
   expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
   expectLayoutLoaderHeldAcrossNavigations,
   expectReturnToCommittedRouteFromOptimisticFrameShowsTheDestination,
@@ -158,6 +159,16 @@ function runClientUrlsSpec(f: Fixture): void {
         path: "/client-urls-layout-loader",
       },
     );
+  });
+
+  test("components' own .use items drive the route: loaders, loading(), and a revalidate() predicate run on the server", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectComponentUseItemsDriveTheRoute(page, {
+      url: (pathname) => f.url(pathname),
+      path: "/client-urls-component-use",
+    });
   });
 
   test("a group loader's revalidate() isAction() matches a target action and a namespace import", async ({

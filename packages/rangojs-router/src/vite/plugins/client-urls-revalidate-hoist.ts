@@ -1,12 +1,19 @@
-import type { Plugin } from "vite";
-import { normalizePath, parseAst } from "vite";
+import type { EnvironmentModuleNode, Plugin } from "vite";
+import { normalizePath, parseAst, searchForWorkspaceRoot } from "vite";
 import MagicString from "magic-string";
 import { createHash } from "node:crypto";
-import { relative } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { hasDirective } from "@vitejs/plugin-rsc/transforms";
 import { HOISTED_REVALIDATE_KEY } from "../../client-urls/hoisted-revalidate.js";
+import {
+  CLIENT_IMPORT_RE,
+  componentUseSignature,
+} from "../discovery/client-urls-projection.js";
 import { hasUseClientDirective } from "../utils/directive-prologue.js";
 import { offsetToLineColumn } from "./expose-ids/export-analysis.js";
+import { isClientLoaderStubFile } from "./expose-ids/loader-transform.js";
 import {
   analyzeScopes,
   collectImports,
@@ -31,13 +38,15 @@ import {
   resolveSourceTarget,
   SOURCE_FILE_RE,
   type EmittedEntry,
+  type SourceResolver,
 } from "./hoist/source.js";
 
 /**
  * clientUrls() loader `revalidate()` runs on the server, with the arguments a
- * urls() loader's predicate gets. The predicate is declared in a
- * "use client" module, so the build moves it into a server module (the
- * reverse of transition-when-hoist.ts):
+ * urls() loader's predicate gets. The predicate is declared in client code (a
+ * "use client" group, or a component's `.use` in any module the group
+ * imports), so the build moves it into a server module (the reverse of
+ * transition-when-hoist.ts):
  *
  *   loader(CartLoader, () => [
  *     revalidate((ctx) => ctx.isAction(Cart) ? ctx.actionResult?.ok : undefined),
@@ -53,31 +62,44 @@ import {
  *   import { registerClientUrlRevalidators } from "@rangojs/router/server";
  *   <the module-level imports the predicates reference>
  *   registerClientUrlRevalidators({ "<key>": (ctx) => ... });
+ *   import "<each project module the file imports>?rango-revalidate";
  *
  * plugin-rsc replaces the RSC copy of a "use client" module with client
  * reference proxies and drops everything else, so a post transform appends
- * `import "<file>?rango-revalidate"` to the proxy: the predicates register
- * when the group's module loads on the server (a lazy include stays lazy).
- * Route discovery serializes the SSR copy, so the projection carries the
- * keys; materialization (client-urls/server-projection.ts) attaches the
- * registered predicates to the loader stubs.
+ * `import "<file>?rango-revalidate"` to the proxy of every group (a
+ * "use client" module calling clientUrls()). The group's own imports are
+ * gone from the proxy, so its `?rango-revalidate` module re-imports the
+ * `?rango-revalidate` shadow of each project source file the group imports
+ * or re-exports statically, and so on down (an empty file's shadow is
+ * `export {}`; a "use server" file ends the walk): the registrations of a
+ * component module, behind any number of barrels, load with the group,
+ * without loading any client code on the server (a lazy include stays
+ * lazy). The walk stays under the workspace root (Vite's
+ * searchForWorkspaceRoot, so a sibling workspace package is walked), outside
+ * node_modules and the router's own sources, ends at a module the client copies
+ * stub whole (only createLoader() exports), and skips `import()`: a
+ * predicate reached only that way has no registration, which
+ * materialization reports. Route discovery serializes the SSR copy, so
+ * the projection carries the keys; materialization
+ * (client-urls/server-projection.ts) attaches the registered predicates to
+ * the loader stubs.
  *
  * A key hashes the project-relative file and the predicate's syntax tree
  * (formatting, comments and TypeScript excluded, so a re-printing transform
  * in one environment keeps it): two environments that saw a different
  * predicate fail loudly at materialization instead of pairing a loader with
- * the wrong one.
+ * the wrong one. A module imported by several groups registers once.
  *
- * Keyed on calls of the `revalidate` helper a clientUrls() builder callback
- * receives (destructured, renamed, or as `helpers.revalidate`), with
- * clientUrls imported from "@rangojs/router/client". The argument may
- * reference imports and globals only: a binding of the module or of an
- * enclosing function, `this`/`arguments`/`super`/`new.target`, `import()`,
- * `import.meta` other than `import.meta.env`, a browser-only global, an
- * `async` or generator function, or an import of a "use client" module is a
- * LOUD error naming file:line. Imports stay in the "use client" module too
- * (they are not pruned). Vitest does not run the plugin, so in unit tests the
- * predicate stays a plain function.
+ * Keyed on calls of the `revalidate` helper from "@rangojs/router/client":
+ * imported directly (a component's `.use`), or handed out by a clientUrls()
+ * builder callback (destructured, renamed, or as `helpers.revalidate`). The
+ * argument may reference imports and globals only: a binding of the module
+ * or of an enclosing function, `this`/`arguments`/`super`/`new.target`,
+ * `import()`, `import.meta` other than `import.meta.env`, a browser-only
+ * global, an `async` or generator function, or an import of a "use client"
+ * module is a LOUD error naming file:line. Imports stay in the client module
+ * too (they are not pruned). Vitest does not run the plugin, so in unit
+ * tests the predicate stays a plain function.
  *
  * `revalidate(true)` / `revalidate(false)` LITERALS stay in place: the
  * projection carries the boolean and materialization turns it into the
@@ -128,19 +150,24 @@ const CAPTURE_MESSAGES: LexicalCaptureMessages = {
     "loads a module at run time, which the build cannot check is server-safe.",
 };
 
-// Cheap pre-filter: every site needs a "use client" module (the directive's
-// text), clientUrls imported from the router, and a `revalidate` helper. The
-// AST walk is the authority.
+// Cheap pre-filters: a site imports the router's client entry and names a
+// `revalidate` helper; a group also names clientUrls. The AST walk is the
+// authority.
 const CLIENT_URLS_RE = /\bclientUrls\b/;
-const CLIENT_IMPORT_RE = /["']@rangojs\/router\/client["']/;
 const REVALIDATE_RE = /\brevalidate\b/;
+const CANDIDATE_RE = /\b(?:clientUrls|revalidate)\b/;
 
 function mayHoist(code: string): boolean {
+  return CLIENT_IMPORT_RE.test(code) && REVALIDATE_RE.test(code);
+}
+
+/** A clientUrls() group: its RSC proxy roots the shadow graph. */
+function isGroupModule(code: string): boolean {
   return (
     code.includes("use client") &&
     CLIENT_URLS_RE.test(code) &&
     CLIENT_IMPORT_RE.test(code) &&
-    REVALIDATE_RE.test(code)
+    hasUseClientDirective(code)
   );
 }
 
@@ -248,6 +275,8 @@ interface HoistClientUrlsRevalidateDeps {
    * specifier (the plugin resolves it and reads its directive prologue).
    */
   isClientModule?(source: string): Promise<boolean> | boolean;
+  /** `code` already parsed. */
+  readonly program?: Node;
 }
 
 interface HoistClientUrlsRevalidateResult {
@@ -261,9 +290,9 @@ interface HoistClientUrlsRevalidateResult {
 }
 
 /**
- * Hoist every clientUrls() `revalidate()` predicate of a "use client"
- * module. Returns null when there is none (boolean literals stay in place).
- * Throws, naming file:line, for a predicate that is not pure.
+ * Hoist every clientUrls() `revalidate()` predicate of a module. Returns null
+ * when there is none (boolean literals stay in place). Throws, naming
+ * file:line, for a predicate that is not pure.
  */
 export async function hoistClientUrlsRevalidates(
   code: string,
@@ -272,21 +301,15 @@ export async function hoistClientUrlsRevalidates(
 ): Promise<HoistClientUrlsRevalidateResult | null> {
   if (!mayHoist(code)) return null;
   const file = normalizePath(id.split("?", 1)[0]!);
-  let program: Node;
-  try {
-    program = parseAst(code, { lang: parseLang(file) });
-  } catch {
-    return null;
-  }
-  if (!hasDirective(program.body, "use client")) return null;
-
+  const program = deps.program ?? parseProgram(code, file);
+  if (!program) return null;
   const { moduleScope, references, scopeOf } = analyzeScopes(program);
   const imports = collectImports(program);
   const calls = findHelperCalls(program, scopeOf, moduleScope, imports, {
     sources: CLIENT_SOURCES,
     builder: "clientUrls",
     helper: "revalidate",
-    directImport: false,
+    directImport: true,
   });
   if (calls.length === 0) return null;
 
@@ -346,9 +369,12 @@ export async function hoistClientUrlsRevalidates(
         code,
         binding.node,
         binding.scope.lookup(name) === moduleScope
-          ? `\`${name}\` is declared in this "use client" module. Move the ` +
-              'predicate to its own module (without "use client") and ' +
-              "import it, or write it inline."
+          ? `\`${name}\` is declared in this ` +
+              (hasDirective(program.body, "use client")
+                ? '"use client" module'
+                : "module") +
+              ". Move the predicate to its own module (without " +
+              '"use client") and import it, or write it inline.'
           : `\`${name}\` is a binding of the enclosing function. Read what ` +
               "you need from the predicate's argument (`currentParams`, " +
               "`nextUrl`, `context`, `actionResult`, ...).",
@@ -433,6 +459,70 @@ async function isClientOnly(
   );
 }
 
+function parseProgram(code: string, file: string): Node | null {
+  try {
+    return parseAst(code, { lang: parseLang(file) });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The source files `code` (parsed: `program`) imports or re-exports
+ * statically, type-only ones aside, that `walks` accepts: each gets a
+ * `?rango-revalidate` shadow. node_modules is never walked. A "use server"
+ * module ends the walk, and so does a module the client copies stub whole
+ * (isClientLoaderStubFile): no client code is reachable through either.
+ */
+export async function shadowImportTargets(
+  program: Node,
+  code: string,
+  file: string,
+  walks: (target: string) => boolean,
+  resolver: SourceResolver,
+): Promise<string[]> {
+  if (
+    hasDirective(program.body, "use server") ||
+    isClientLoaderStubFile(code, program)
+  ) {
+    return [];
+  }
+  const typeOnly = (statement: Node, kind: "importKind" | "exportKind") =>
+    statement[kind] === "type" ||
+    (statement.specifiers?.length > 0 &&
+      statement.specifiers.every((spec: Node) => spec[kind] === "type"));
+  const sources = new Set<string>();
+  for (const statement of program.body) {
+    if (statement.type === "ImportDeclaration") {
+      if (typeOnly(statement, "importKind")) continue;
+    } else if (
+      statement.type === "ExportNamedDeclaration" ||
+      statement.type === "ExportAllDeclaration"
+    ) {
+      if (!statement.source || typeOnly(statement, "exportKind")) continue;
+    } else {
+      continue;
+    }
+    sources.add(statement.source.value);
+  }
+  const targets = await Promise.all(
+    [...sources].map((source) =>
+      resolveSourceTarget(resolver, source, file, { skipNodeModules: true }),
+    ),
+  );
+  return [
+    ...new Set(
+      targets.filter(
+        (target): target is string =>
+          target !== null &&
+          target !== file &&
+          walks(target) &&
+          SOURCE_FILE_RE.test(target),
+      ),
+    ),
+  ];
+}
+
 /** The file a `?rango-revalidate` id names, or null. */
 export function parseHoistedRevalidateId(id: string): string | null {
   const q = id.indexOf("?");
@@ -448,28 +538,56 @@ const HOISTED_ID_RE = new RegExp(
 );
 const SOURCE_ID_RE = /\.[cm]?[jt]sx?(?:\?|$)/;
 const NODE_MODULES_RE = /\/node_modules\//;
+const USE_ASSIGNMENT_RE = /\.use\s*=/;
+
+const withSlash = (dir: string): string =>
+  dir.endsWith("/") ? dir : `${dir}/`;
+
+/**
+ * The router's own sources: `src/` of the nearest package.json above this
+ * module. Not the whole package: this repo's e2e apps live under it.
+ */
+function routerSourceDir(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  while (!existsSync(join(dir, "package.json")) && dirname(dir) !== dir) {
+    dir = dirname(dir);
+  }
+  return `${withSlash(normalizePath(dir))}src/`;
+}
 
 /**
  * The plugins: a pre transform that hoists in every environment (markers in
  * the client and SSR copies, the server module recorded from the RSC
- * transform) and serves `?rango-revalidate`, and a post transform that
- * appends its import to the RSC client-reference proxy.
+ * transform, the groups noted) and serves `?rango-revalidate`, a post
+ * transform that appends its import to the RSC client-reference proxy of
+ * each group, and in dev the client's `.use` update propagation.
  *
- * `load` serves the module the RSC transform emitted, which hoisted the
- * pipeline code; the disk source is re-hoisted only when the transform has
- * not seen the current file (loadEmittedOrDisk). A file whose edit removed
- * every predicate serves an empty module to a proxy that still imports it.
+ * `load` serves the registrations the RSC transform emitted, which hoisted
+ * the pipeline code; the disk source is re-hoisted when the transform has not
+ * seen the current file (loadEmittedOrDisk), which is always the case for a
+ * component module: the RSC environment never transforms a module only a
+ * group imports. The shadow imports come from the same read and parse of
+ * the disk source. A file with neither serves an empty module.
  *
- * The transform's code filter skips a module that never mentions clientUrls,
- * so a file that stops doing so would keep its `emitted` entry: watchChange
- * drops it, together with the cached "use client" answer for an edited
- * dependency (isClientModule memoizes per resolved file; buildStart resets
- * it).
+ * A component module that exports only components is a Fast Refresh
+ * boundary, so a `.use` edit would leave the browser's group records stale
+ * (the group never re-evaluates). In dev, an update that changes a module's
+ * componentUseSignature also updates its importers, as a group edit does;
+ * any other edit keeps Fast Refresh.
+ *
+ * The transform's code filter skips a module that names neither clientUrls
+ * nor revalidate, so a file that stops doing so would keep its `emitted`
+ * entry: watchChange drops it, its group mark, and the cached "use client"
+ * answer for an edited dependency (isClientModule memoizes per resolved
+ * file; buildStart resets it).
  */
 export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
   const emitted = new Map<string, EmittedEntry<string>>();
+  const groups = new Set<string>();
   const clientModules = new Map<string, Promise<boolean>>();
+  const useSignatures = new Map<string, string>();
   let root = process.cwd();
+  let walks = (_target: string): boolean => false;
 
   const isClientFile = (file: string): Promise<boolean> => {
     let known = clientModules.get(file);
@@ -484,6 +602,14 @@ export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
     }
     return known;
   };
+  const clientModuleCheck =
+    (ctx: SourceResolver, importer: string) =>
+    async (source: string): Promise<boolean> => {
+      const target = await resolveSourceTarget(ctx, source, importer, {
+        skipNodeModules: false,
+      });
+      return target !== null && (await isClientFile(target));
+    };
 
   return [
     {
@@ -491,7 +617,13 @@ export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
       enforce: "pre",
 
       configResolved(config) {
-        root = config.root;
+        root = normalizePath(config.root);
+        const workspace = withSlash(
+          normalizePath(searchForWorkspaceRoot(config.root)),
+        );
+        const router = routerSourceDir();
+        walks = (target) =>
+          target.startsWith(workspace) && !target.startsWith(router);
       },
 
       buildStart() {
@@ -502,6 +634,7 @@ export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
         const file = normalizePath(id);
         clientModules.delete(file);
         emitted.delete(file);
+        groups.delete(file);
       },
 
       load: {
@@ -509,14 +642,41 @@ export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
         async handler(id) {
           const hoistedFile = parseHoistedRevalidateId(id);
           if (hoistedFile === null) return;
-          const module = await loadEmittedOrDisk(
+          const disk = await readSource(hoistedFile);
+          const program =
+            disk === null ? null : parseProgram(disk, hoistedFile);
+          const registrations = await loadEmittedOrDisk(
             emitted,
             hoistedFile,
-            async (disk) =>
-              (await hoistClientUrlsRevalidates(disk, hoistedFile, { root }))
-                ?.module,
+            disk,
+            async (source) =>
+              (
+                await hoistClientUrlsRevalidates(source, hoistedFile, {
+                  root,
+                  isClientModule: clientModuleCheck(this, hoistedFile),
+                  program: program ?? undefined,
+                })
+              )?.module,
           );
-          return module ?? "export {};\n";
+          const shadows = program
+            ? await shadowImportTargets(
+                program,
+                disk!,
+                hoistedFile,
+                walks,
+                this,
+              )
+            : [];
+          if (registrations === undefined && shadows.length === 0) {
+            return "export {};\n";
+          }
+          return [
+            registrations ?? "",
+            ...shadows.map(
+              (target) =>
+                `import ${JSON.stringify(`${target}?${CLIENT_URLS_REVALIDATE_QUERY}`)};\n`,
+            ),
+          ].join("");
         },
       },
 
@@ -526,7 +686,7 @@ export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
             include: SOURCE_ID_RE,
             exclude: [NODE_MODULES_RE, HOISTED_ID_RE],
           },
-          code: CLIENT_URLS_RE,
+          code: CANDIDATE_RE,
         },
         async handler(code, id) {
           if (id.includes("/node_modules/") || parseHoistedRevalidateId(id)) {
@@ -535,17 +695,14 @@ export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
           const file = normalizePath(id.split("?", 1)[0]!);
           if (!SOURCE_FILE_RE.test(file)) return;
           const rsc = this.environment?.name === "rsc";
-          if (rsc) emitted.delete(file);
+          if (rsc) {
+            emitted.delete(file);
+            if (isGroupModule(code)) groups.add(file);
+            else groups.delete(file);
+          }
           const result = await hoistClientUrlsRevalidates(code, id, {
             root,
-            isClientModule: rsc
-              ? async (source) => {
-                  const target = await resolveSourceTarget(this, source, id, {
-                    skipNodeModules: false,
-                  });
-                  return target !== null && (await isClientFile(target));
-                }
-              : undefined,
+            isClientModule: rsc ? clientModuleCheck(this, id) : undefined,
           });
           if (!result) return;
           if (rsc) await recordEmitted(emitted, file, result.module);
@@ -563,13 +720,46 @@ export function clientUrlsRevalidateHoistPlugin(): Plugin[] {
         handler(code, id) {
           if (parseHoistedRevalidateId(id)) return;
           const file = normalizePath(id.split("?", 1)[0]!);
-          if (!emitted.has(file)) return;
+          if (!groups.has(file)) return;
           const s = new MagicString(code);
           s.append(
             `\nimport ${JSON.stringify(`${file}?${CLIENT_URLS_REVALIDATE_QUERY}`)};\n`,
           );
           return { code: s.toString(), map: s.generateMap({ hires: true }) };
         },
+      },
+    },
+    {
+      name: "@rangojs/router:client-urls-component-use-hmr",
+      apply: "serve",
+      applyToEnvironment: (env) => env.name === "client",
+
+      transform: {
+        filter: {
+          id: { include: SOURCE_ID_RE, exclude: [NODE_MODULES_RE] },
+          code: USE_ASSIGNMENT_RE,
+        },
+        async handler(_code, id) {
+          // The disk source, as hotUpdate reads it: an earlier transform may
+          // re-print the module.
+          const file = normalizePath(id.split("?", 1)[0]!);
+          const disk = await readSource(file);
+          const signature = disk && componentUseSignature(disk, file);
+          if (signature) useSignatures.set(file, signature);
+        },
+      },
+
+      async hotUpdate({ file, modules, read }) {
+        if (modules.length === 0 || !SOURCE_FILE_RE.test(file)) return;
+        const next = componentUseSignature(await read(), file);
+        if (next === useSignatures.get(file)) return;
+        if (next === undefined) useSignatures.delete(file);
+        else useSignatures.set(file, next);
+        const updated = new Set<EnvironmentModuleNode>(modules);
+        for (const mod of modules) {
+          for (const importer of mod.importers) updated.add(importer);
+        }
+        return [...updated];
       },
     },
   ];

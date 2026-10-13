@@ -381,9 +381,10 @@ function serializeLoaderOptions(
       if (options.hoisted) {
         throw new Error(
           `clientUrls() revalidate() on loader "${loader.$$id}" of ${owner} ` +
-            "was not hoisted to the server: call the builder's revalidate() " +
-            "helper with an inline function, an imported predicate or a " +
-            "boolean.",
+            "was not hoisted to the server: call revalidate() (the builder's " +
+            'helper, or the one "@rangojs/router/client" exports for a ' +
+            "component's .use) with an inline function, an imported " +
+            "predicate or a boolean.",
         );
       }
       return [];
@@ -602,9 +603,12 @@ function loaderRevalidators(
           `of ${label} in "${id}" has no server ` +
           `registration (key "${key}"). The rango Vite plugin registers ` +
           "hoisted predicates when the group's module loads in the RSC " +
-          "environment; an argument that evaluated to neither a function " +
-          "nor a boolean there, or a transform that changed its syntax in " +
-          "one environment only, also causes this.",
+          "environment, with those of every project module it imports " +
+          "statically (a component's .use): a predicate in a module the " +
+          "group reaches only through import() or outside the workspace root " +
+          "has none. An argument that evaluated to neither a function nor " +
+          "a boolean there, or a transform that changed its syntax in one " +
+          "environment only, also causes this.",
       );
     }
     // Looked up per call: a dev re-evaluation of the hoisted module

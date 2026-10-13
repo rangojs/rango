@@ -28,6 +28,18 @@ export type ClientUrlItems = readonly ClientUrlItemInput[];
 
 export type ClientUrlUse = () => ClientUrlItems;
 
+/**
+ * A component path(), layout() or intercept() mounts. Its optional `use`
+ * carries its own items, as a server handler's `.use` does, built with the
+ * helpers `@rangojs/router/client` exports: they come before the mount
+ * site's explicit items (an explicit loading() or transition() wins, loaders
+ * accumulate). A page component may carry loader(), loading() and
+ * transition(); a layout or intercept component loader() and loading().
+ */
+export type ClientUrlComponent = ComponentType & {
+  readonly use?: ClientUrlUse;
+};
+
 export type ClientPathOptions<
   TName extends string = string,
   TSearch extends SearchSchema = SearchSchema,
@@ -42,13 +54,13 @@ export type ClientPathFn = <
   const TSearch extends SearchSchema = {},
 >(
   pattern: TPattern,
-  component: ComponentType,
+  component: ClientUrlComponent,
   optionsOrUse?: ClientPathOptions<TName, TSearch> | ClientUrlUse,
   use?: ClientUrlUse,
 ) => ClientUrlItem & TypedRouteItem<TName, TPattern, unknown, TSearch>;
 
 export type ClientLayoutFn = <const TItems extends ClientUrlItems>(
-  component: ComponentType,
+  component: ClientUrlComponent,
   children: () => TItems,
 ) => ClientUrlItem & TypedLayoutItem<ExtractRoutes<TItems>>;
 
@@ -192,7 +204,7 @@ export interface ClientUrlHelpers {
   readonly intercept: (
     slotName: `@${string}`,
     targetName: `.${string}`,
-    component: ComponentType,
+    component: ClientUrlComponent,
     use?: ClientUrlUse,
   ) => ClientUrlItem;
   /**
@@ -200,7 +212,8 @@ export interface ClientUrlHelpers {
    * holds previous content instead of re-streaming the loading() fallback,
    * and on experimental React the config's ViewTransition classes apply.
    * Data-only — no `when` gate (server-executed; declare it in the server
-   * tree). Valid inside a path() use callback only.
+   * tree). Valid inside a path() use callback, or a page component's
+   * `.use`.
    */
   readonly transition: (config: ClientTransitionConfig) => ClientUrlItem;
 }

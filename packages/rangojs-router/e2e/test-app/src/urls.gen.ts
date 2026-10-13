@@ -126,6 +126,8 @@ export const routes = {
   ciOrigin: "/client-urls-intercept-origin",
   "clientAction.index": "/client-urls-action",
   "clientAction.item": "/client-urls-action/items/:itemId",
+  "clientComponentUse.index": "/client-urls-component-use",
+  "clientComponentUse.item": "/client-urls-component-use/items/:id",
   "clientIntercept.detail": "/client-urls-intercept/detail/:itemId",
   "clientIntercept.index": "/client-urls-intercept",
   "clientIntercept.item": "/client-urls-intercept/items/:itemId",

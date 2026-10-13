@@ -226,6 +226,113 @@ describe("Node dev server: recovery after a failed cold discovery", () => {
   });
 });
 
+const COMPONENT_USE_SOURCE = `import { loader, revalidate } from "@rangojs/router/client";
+import { StatsLoader } from "./stats.loader";
+export function Dashboard() {
+  return null;
+}
+Dashboard.use = () => [loader(StatsLoader, () => [revalidate(() => true)])];
+`;
+
+describe("Node dev server: an edit of a clientUrls() component's .use", () => {
+  async function boot() {
+    const dev = createDevServer({ runner: true });
+    discoverRouters.mockImplementation(async (state: DiscoveryState) => {
+      commitManifest(state);
+      return dev.serverMod;
+    });
+    const plugin = startPlugin(dev);
+    await plugin.loadManifestModule();
+    expect(discoverRouters).toHaveBeenCalledTimes(1);
+    // The router module the RSC graph materialized the group's mount in.
+    const routerModule = { id: entry };
+    dev.rsc.moduleGraph.getModulesByFile = ((file: string) =>
+      file === entry.replaceAll("\\", "/")
+        ? new Set([routerModule])
+        : undefined) as never;
+    return { dev, routerModule };
+  }
+
+  it.each([
+    ["a use client module", `"use client";\n${COMPONENT_USE_SOURCE}`],
+    ["a module without use client", COMPONENT_USE_SOURCE],
+  ])(
+    "in %s rediscovers and re-materializes the router, as a group edit does",
+    async (_label, source) => {
+      const { dev, routerModule } = await boot();
+      save(dev, "src/dash/Dashboard.tsx", source);
+      await vi.waitFor(() => expect(discoverRouters).toHaveBeenCalledTimes(2));
+      expect(dev.rsc.moduleGraph.invalidateModule).toHaveBeenCalledWith(
+        routerModule,
+        expect.any(Set),
+      );
+    },
+  );
+
+  it("re-projects nothing on a save that keeps every .use, and re-projects when one changes", async () => {
+    const { dev } = await boot();
+    // The first sighting re-projects: the watcher has no earlier signature.
+    save(dev, "src/dash/Dashboard.tsx", COMPONENT_USE_SOURCE);
+    await vi.waitFor(() => expect(discoverRouters).toHaveBeenCalledTimes(2));
+    const invalidations =
+      dev.rsc.moduleGraph.invalidateModule.mock.calls.length;
+
+    // Markup only: the `.use` assignment is unchanged.
+    save(
+      dev,
+      "src/dash/Dashboard.tsx",
+      COMPONENT_USE_SOURCE.replace("return null;", 'return "edited";'),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(discoverRouters).toHaveBeenCalledTimes(2);
+    expect(dev.rsc.moduleGraph.invalidateModule).toHaveBeenCalledTimes(
+      invalidations,
+    );
+
+    save(
+      dev,
+      "src/dash/Dashboard.tsx",
+      COMPONENT_USE_SOURCE.replace(
+        "revalidate(() => true)",
+        "revalidate(false)",
+      ),
+    );
+    await vi.waitFor(() => expect(discoverRouters).toHaveBeenCalledTimes(3));
+  });
+
+  it("re-projects when a .use goes and when it comes back", async () => {
+    const { dev } = await boot();
+    save(dev, "src/dash/Dashboard.tsx", COMPONENT_USE_SOURCE);
+    await vi.waitFor(() => expect(discoverRouters).toHaveBeenCalledTimes(2));
+
+    save(
+      dev,
+      "src/dash/Dashboard.tsx",
+      COMPONENT_USE_SOURCE.replace(/^Dashboard\.use = .*\n/m, ""),
+    );
+    await vi.waitFor(() => expect(discoverRouters).toHaveBeenCalledTimes(3));
+
+    save(dev, "src/dash/Dashboard.tsx", COMPONENT_USE_SOURCE);
+    await vi.waitFor(() => expect(discoverRouters).toHaveBeenCalledTimes(4));
+  });
+
+  it("leaves alone a component without .use, or one whose .use is only in a comment", async () => {
+    const { dev } = await boot();
+    save(dev, "src/button.tsx", USE_CLIENT_SOURCE);
+    save(
+      dev,
+      "src/note.tsx",
+      `"use client";\nimport { useLoader } from "@rangojs/router/client";\n// Page.use = () => []\nexport const x = useLoader;\n`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(discoverRouters).toHaveBeenCalledTimes(1);
+    expect(dev.rsc.moduleGraph.invalidateModule).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: entry }),
+      expect.anything(),
+    );
+  });
+});
+
 /** The Cloudflare discovery temp server (a Node Vite server with an RSC runner). */
 function createTempServer({ entryError }: { entryError?: Error } = {}) {
   const serverMod = {

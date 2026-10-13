@@ -392,6 +392,44 @@ Rule of thumb: only put `loading()` in `handler.use` if you genuinely want every
 - **Validation runs at registration / first match**, not at handler definition. A handler doesn't know its mount site at definition time — the same handler used in a `path()` and an `intercept()` is validated against each mount's allowed-types set when registered.
 - **No silent shadowing.** If a disallowed item slips through (e.g., a layout factory returning `cache()` from a slot's `handler.use`), the runtime throws with the offending type and mount site named.
 
+## In `clientUrls()`: `Component.use`
+
+A client route group (`/client-urls`) takes the same pattern for its
+components: `Dashboard.use = () => [...]` on a page, layout or intercept
+component mounted by the group's `path()`, `layout()` or `intercept()`. Build
+the items with the helpers `@rangojs/router/client` exports (`loader`,
+`loading`, `revalidate`, `transition`); the `@rangojs/router` ones are the
+server DSL's and throw in a client module.
+
+```tsx
+"use client";
+import { loader, loading, revalidate } from "@rangojs/router/client";
+
+Dashboard.use = () => [
+  loader(StatsLoader, () => [
+    revalidate(({ isAction }) => isAction(StatsActions)),
+  ]),
+  loading(<DashboardSkeleton />),
+];
+```
+
+The composition rules are this skill's: the component's items first, the
+mount site's explicit items second, `loading()` and `transition()` last-wins,
+loaders accumulate. What differs:
+
+| Mount site in `clientUrls()` | The component's `.use` may return          |
+| ---------------------------- | ------------------------------------------ |
+| `path()`                     | `loader`, `loading`, `transition`          |
+| `layout()`                   | `loader`, `loading`                        |
+| `intercept()`                | `loader` (without `ssr: false`), `loading` |
+
+- No `route`, `layout`, `intercept` or `include` items: a group's routes and
+  its generated types come from the builder's own items.
+- A `revalidate()` predicate still runs on the server: the build hoists it
+  out of the component's module (see `/client-urls`, "Revalidation runs on
+  the server").
+- A `createLoader()` definition's `.use` is not read inside a group yet.
+
 ## Cross-references
 
 - `skills/route` — `path()` mount site basics
@@ -400,3 +438,4 @@ Rule of thumb: only put `loading()` in `handler.use` if you genuinely want every
 - `skills/intercept` — intercept mount site basics
 - `skills/loader` — defining `createLoader` and reading via `ctx.use()`
 - `skills/middleware` — middleware semantics and ordering
+- `skills/client-urls` — `Component.use` in a client route group

@@ -45,9 +45,14 @@ Related docs:
 | `./prerender/cloudflare`    | Cloudflare KV adapter for on-demand prerender: `createKVPrerenderStore(kv)` -> `WritablePrerenderStore`. Version- and router-scoped keys, soft `staleAt` metadata, and timestamp tag markers (`markStale(routerId, tags)`, scoped by router id) in a namespace separate from the runtime cache's `updateTag`/`revalidateTag`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 The public `./client` client-URL surface is intentionally small:
-`clientUrls` and the `ClientUrlPatterns`, `ClientUrlRouteRecord`, and
-`OutletState` types. Both client entry conditions expose the same names. There
-are no public client-URL middleware or revalidation types in the narrowed API.
+`clientUrls`, the leaf helpers `loader`, `loading`, `revalidate` and
+`transition` (the functions the builder hands out, for a component's
+`Component.use`), and the `ClientUrlPatterns`, `ClientUrlRouteRecord`,
+`ClientUrlComponent`, `ClientUrlUse` and `OutletState` types. Both client entry
+conditions expose the same names. There are no public client-URL middleware or
+revalidation types in the narrowed API. The default `.` entry's `loader`,
+`loading`, `revalidate` and `transition` stubs point a client module to
+`./client`.
 
 `renderRoute` in `./testing/dom` accepts an instance-scoped `defaultPrefetch`
 and uses the production delegated-anchor registration inside that test's RTL
@@ -188,7 +193,7 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 ### Factories
 
-`createLoader`, `createHandle`, `isHandle`, `createLocationState`, `clientUrls`, `href()`
+`createLoader`, `createHandle`, `isHandle`, `createLocationState`, `clientUrls` (with its leaf helpers `loader`, `loading`, `revalidate`, `transition` for `Component.use`), `href()`
 
 ### Deferred handle values — `ctx.use(Handle).defer()`
 
@@ -282,7 +287,23 @@ matcher as the server predicate (`isAction()`, `isAction(fn)`,
 `isAction(import * as Mod)`, `isAction({ a, b })`), built by
 `makeIsAction(actionId)` in `router/is-action.ts` — not a boolean. It requires named client component
 values and projects only the `name`, `search`, `trailingSlash`, and `ppr` path
-options. It mounts through
+options. A mounted component may carry its own leaf items as `Component.use`
+(`componentUse()` in `client-urls/client-urls.ts`): a page's `loader()`,
+`loading()` and `transition()`, a layout's or intercept's `loader()` and
+`loading()`, merged before the site's explicit items as `mergeHandlerUse`
+does on the server; structural items there throw. Its `revalidate()`
+predicates hoist from the component's module (the transform keys on
+`revalidate` imported from `./client` in any module), and register through a
+shadow graph: a group's `?rango-revalidate` module imports the
+`?rango-revalidate` module of each project file it imports statically, down
+through barrels (under the workspace root, outside `node_modules` and the
+router's `src/`, ending at `"use server"` and at a module the client stubs
+whole, `isClientLoaderStubFile`), so no client code loads on the server. The
+dev watcher treats an edit that changes such a module's `.use` assignments
+like a group edit (`componentUseSignature`), and in the browser the
+`client-urls-component-use-hmr` plugin updates the module's importers on such
+an edit, so the group's records re-evaluate. A `createLoader()` definition's own
+`.use` is not read in a group. It mounts through
 `include()` in the canonical `urls()` tree (the composition baseline —
 URL/name prefixes, wrapping RSC layouts, and middleware scope derive from the
 server tree); `.routes(ClientUrlPatterns)` is pure-client sugar for a root

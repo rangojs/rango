@@ -151,7 +151,11 @@ The dev-discovery row's transport description is superseded: readiness is an act
 The client descriptor and both runtime projections are owned by:
 
 - [`client-urls/client-urls.ts`](../../src/client-urls/client-urls.ts) - public
-  helper construction, named-component validation, flattening, and local trie.
+  helper construction (the leaf helpers `loader`, `loading`, `revalidate`,
+  `transition` are module-level exports `client.tsx` and `client.rsc.tsx`
+  re-export for `Component.use`), named-component validation, the merge of a
+  mounted component's `.use` items (`componentUse`), flattening, and local
+  trie.
 - [`client-urls/types.ts`](../../src/client-urls/types.ts) - descriptor and public
   record types.
 - [`client-urls/server-projection.ts`](../../src/client-urls/server-projection.ts) -
@@ -180,10 +184,16 @@ The client descriptor and both runtime projections are owned by:
   copy in `browser/segment-reconciler.ts` and its pushes in
   `handles/pushed-by.ts`.
 - [`vite/plugins/client-urls-revalidate-hoist.ts`](../../src/vite/plugins/client-urls-revalidate-hoist.ts) -
-  the build transform: moves each `revalidate()` argument into the server-only
-  `<file>?rango-revalidate` module, leaves the marker, appends the import to the
-  RSC client-reference proxy, and rejects what cannot run on the server. A
-  `revalidate(true | false)` literal stays in place.
+  the build transform: moves each `revalidate()` argument (the builder's
+  helper, or the one imported from `@rangojs/router/client` in any module, for
+  `Component.use`) into the server-only `<file>?rango-revalidate` module,
+  leaves the marker, appends the import to each group's RSC client-reference
+  proxy, serves the shadow graph (`shadowImportTargets`: each
+  `?rango-revalidate` module imports those of the file's static imports under
+  the workspace root), and rejects what cannot run on the server. A
+  `revalidate(true | false)` literal stays in place. In dev, its
+  `client-urls-component-use-hmr` plugin updates a component module's
+  importers in the browser when its `.use` changed.
 - [`vite/plugins/hoist/scope.ts`](../../src/vite/plugins/hoist/scope.ts),
   [`vite/plugins/hoist/literal.ts`](../../src/vite/plugins/hoist/literal.ts) and
   [`vite/plugins/hoist/source.ts`](../../src/vite/plugins/hoist/source.ts) -
@@ -205,7 +215,11 @@ state connect through
 [`segment-system.tsx`](../../src/segment-system.tsx).
 
 Vite discovery and projection installation are owned by
-[`vite/discovery/client-urls-projection.ts`](../../src/vite/discovery/client-urls-projection.ts),
+[`vite/discovery/client-urls-projection.ts`](../../src/vite/discovery/client-urls-projection.ts)
+(also `isClientUrlsComponentUseSource`, the dev watcher's sniff for a
+`Component.use` module, `componentUseSignature`, the hash of its `.use`
+assignments that the watcher and the client HMR plugin compare, and
+`CLIENT_IMPORT_RE`),
 [`vite/router-discovery.ts`](../../src/vite/router-discovery.ts),
 [`vite/discovery/discover-routers.ts`](../../src/vite/discovery/discover-routers.ts),
 [`vite/discovery/state.ts`](../../src/vite/discovery/state.ts),
@@ -217,7 +231,9 @@ Vitest Flight project share one projection step, `projectClientUrlsModule`
 appends to a `"use client"` clientUrls() module an import of its own source
 (`?rango-client-urls-source`, left untransformed) and a call to
 [`testing/internal/client-urls-projection.ts`](../../src/testing/internal/client-urls-projection.ts),
-which installs the projection under the module's reference id.
+which installs the projection under the module's reference id. The source's
+own `"use client"` project imports load as source too, so a component's
+`.use` is readable there.
 Route-type integration is owned by
 [`vite/discovery/route-types-writer.ts`](../../src/vite/discovery/route-types-writer.ts),
 [`build/route-types/include-resolution.ts`](../../src/build/route-types/include-resolution.ts),
@@ -229,10 +245,15 @@ generated-manifest adapter remains in
 [`build/route-trie.ts`](../../src/build/route-trie.ts).
 
 The owning unit tests are
-[`client-urls/__tests__/client-urls.test.ts`](../../src/client-urls/__tests__/client-urls.test.ts),
+[`client-urls/__tests__/client-urls.test.ts`](../../src/client-urls/__tests__/client-urls.test.ts)
+(`Component.use` merge and validation),
+[`vite/__tests__/client-urls-revalidate-hoist.test.ts`](../../src/vite/__tests__/client-urls-revalidate-hoist.test.ts)
+(the hoist and the shadow graph),
 [`client-urls/__tests__/client-root.test.tsx`](../../src/client-urls/__tests__/client-root.test.tsx),
 and
 [`client-urls/__tests__/server-projection.test.tsx`](../../src/client-urls/__tests__/server-projection.test.tsx).
+The userland `Component.use` test is
+[`testing/__tests__/client-urls-component-use.rsc-test.tsx`](../../src/testing/__tests__/client-urls-component-use.rsc-test.tsx).
 The public DOM seam is
 [`testing/render-route.tsx`](../../src/testing/render-route.tsx) and
 [`testing/dom.entry.ts`](../../src/testing/dom.entry.ts).

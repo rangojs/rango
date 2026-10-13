@@ -36,10 +36,20 @@ export {
 
 export { createLoader } from "./route-definition.js";
 
-export { clientUrls } from "./client-urls/client-urls.js";
+// A module that is not "use client" and declares a component's `.use` can
+// evaluate in the RSC realm too.
+export {
+  clientUrls,
+  loader,
+  loading,
+  revalidate,
+  transition,
+} from "./client-urls/client-urls.js";
 export type {
+  ClientUrlComponent,
   ClientUrlPatterns,
   ClientUrlRouteRecord,
+  ClientUrlUse,
 } from "./client-urls/client-urls.js";
 
 // "use client" hooks the default ./client entry exports. They are client

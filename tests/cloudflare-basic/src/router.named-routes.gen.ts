@@ -31,6 +31,8 @@ export const NamedRoutes = {
   cachedHandles: "/cached-handles",
   cacheLab: "/cache-lab",
   catchAll: "/*",
+  "clientComponentUse.index": "/client-urls-component-use",
+  "clientComponentUse.item": "/client-urls-component-use/items/:id",
   "clientLayoutLoader.index": "/client-urls-layout-loader",
   "clientLayoutLoader.item": "/client-urls-layout-loader/items/:id",
   "clientLoaderElement.index": "/client-urls-loader-element",

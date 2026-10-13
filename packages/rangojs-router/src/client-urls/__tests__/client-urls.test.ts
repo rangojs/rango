@@ -1,6 +1,10 @@
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   clientUrls,
+  loader as globalLoader,
+  loading as globalLoading,
+  revalidate as globalRevalidate,
+  transition as globalTransition,
   type ClientUrlBuilder,
   type ClientUrlHelpers,
   type ClientUrlItem,
@@ -891,5 +895,201 @@ describe("clientUrls", () => {
     expect(() =>
       clientUrls((() => null) as unknown as ClientUrlBuilder),
     ).toThrow("builder callback must return an array");
+  });
+});
+
+describe("clientUrls(): a mounted component's own use items (Component.use)", () => {
+  /** A named page component carrying `use`, as an app writes one. */
+  function withUse(name: string, use: unknown): ComponentType {
+    const component = { [name]: () => null }[name] as ComponentType & {
+      use?: unknown;
+    };
+    component.use = use;
+    return component;
+  }
+
+  it("the global helpers are the functions the builder hands out", () => {
+    let handed: ClientUrlHelpers | undefined;
+    clientUrls((helpers) => {
+      handed = helpers;
+      return [helpers.path("/", HomePage)];
+    });
+    expect(handed!.loader).toBe(globalLoader);
+    expect(handed!.loading).toBe(globalLoading);
+    expect(handed!.revalidate).toBe(globalRevalidate);
+    expect(handed!.transition).toBe(globalTransition);
+  });
+
+  it("path(): the component's items come first; loaders accumulate, an explicit loading() and transition() win", () => {
+    const Stats = loader("loaders#stats");
+    const Own = loader("loaders#own");
+    const predicate = () => true;
+    const Dashboard = withUse("Dashboard", () => [
+      globalLoader(Stats, () => [globalRevalidate(predicate)]),
+      globalLoading("component skeleton"),
+      globalTransition({ name: "from-component" }),
+    ]);
+
+    const merged = clientUrls(
+      ({ path, loader: useLoader, loading, transition }) => [
+        path("/dash", Dashboard, () => [
+          useLoader(Own),
+          loading("explicit skeleton"),
+          transition({ name: "explicit" }),
+        ]),
+        path("/plain", Dashboard),
+      ],
+    );
+    const [dash, plain] = merged.routes;
+    expect(dash!.loaders).toEqual([
+      { loader: Stats, revalidate: [predicate] },
+      { loader: Own, revalidate: [] },
+    ]);
+    expect(dash!.loading).toBe("explicit skeleton");
+    expect(dash!.transition).toEqual({ name: "explicit" });
+
+    // Alone, the component's own items apply; each mount site gets its own
+    // records.
+    expect(plain!.loaders).toEqual([
+      { loader: Stats, revalidate: [predicate] },
+    ]);
+    expect(plain!.loaders[0]).not.toBe(dash!.loaders[0]);
+    expect(plain!.loading).toBe("component skeleton");
+    expect(plain!.transition).toEqual({ name: "from-component" });
+  });
+
+  it("layout(): the component's loaders are layout loaders, one record shared by every route below it", () => {
+    const Cart = loader("loaders#cart");
+    const Auth = loader("loaders#auth");
+    const Shell = withUse("Shell", () => [
+      globalLoader(Cart),
+      globalLoading("shell skeleton"),
+    ]);
+    const patterns = clientUrls(({ layout, path, loader: useLoader }) => [
+      layout(Shell, () => [
+        useLoader(Auth),
+        path("/a", HomePage),
+        path("/b", UserPage),
+      ]),
+    ]);
+    const [a, b] = patterns.routes;
+    expect(a!.loaders.map((record) => record.loader)).toEqual([Cart, Auth]);
+    expect(a!.layoutLoaders).toEqual(a!.loaders);
+    expect(a!.layoutLoaders[0]).toBe(b!.layoutLoaders[0]);
+    expect(a!.layoutLoaders[1]).toBe(b!.layoutLoaders[1]);
+    expect(a!.loading).toBe("shell skeleton");
+
+    const overridden = clientUrls(({ layout, path, loading }) => [
+      layout(Shell, () => [loading("explicit"), path("/a", HomePage)]),
+    ]);
+    expect(overridden.routes[0]!.loading).toBe("explicit");
+  });
+
+  it("intercept(): the component's loaders and loading() join the intercept's", () => {
+    const Modal = loader("loaders#modal");
+    const Own = loader("loaders#own");
+    const ItemModal = withUse("ItemModal", () => [
+      globalLoader(Modal, { prefetch: false }),
+      globalLoading("modal skeleton"),
+    ]);
+    const patterns = clientUrls(({ path, intercept, loader: useLoader }) => [
+      path("/items/:id", UserPage, { name: "item" }),
+      intercept("@modal", ".item", ItemModal, () => [useLoader(Own)]),
+    ]);
+    expect(patterns.intercepts[0]!.loaders).toEqual([
+      { loader: Modal, revalidate: [], prefetch: false },
+      { loader: Own, revalidate: [] },
+    ]);
+    expect(patterns.intercepts[0]!.loading).toBe("modal skeleton");
+
+    const ssr = withUse("SsrModal", () => [
+      globalLoader(Modal, { ssr: false }),
+    ]);
+    expect(() =>
+      clientUrls(({ path, intercept }) => [
+        path("/items/:id", UserPage, { name: "item" }),
+        intercept("@modal", ".item", ssr),
+      ]),
+    ).toThrow("intercept() loaders cannot use ssr: false");
+  });
+
+  it("validates the component's items for its mount site, naming the component", () => {
+    const Page = withUse("Dashboard", () => [
+      clientUrls(({ path }) => [path("/x", HomePage)]).routes as never,
+    ]);
+    expect(() => clientUrls(({ path }) => [path("/", Page)])).toThrow(
+      "clientUrls() Dashboard.use callback must return only client URL helper items",
+    );
+
+    // Structural items: routes come from the builder's own items.
+    let nested: unknown;
+    clientUrls((helpers) => {
+      nested = helpers.path("/nested", HomePage);
+      return [helpers.path("/", HomePage)];
+    });
+    const Structural = withUse("Dashboard", () => [nested]);
+    expect(() => clientUrls(({ path }) => [path("/", Structural)])).toThrow(
+      "clientUrls() does not support path() inside Dashboard.use: routes come from the clientUrls() builder's own items",
+    );
+
+    // A layout component carries loader() and loading() only.
+    const Shell = withUse("Shell", () => [globalTransition({ name: "x" })]);
+    expect(() =>
+      clientUrls(({ layout, path }) => [
+        layout(Shell, () => [path("/", HomePage)]),
+      ]),
+    ).toThrow("clientUrls() does not support transition() inside Shell.use()");
+
+    // A revalidate() belongs inside a loader's use callback.
+    const Loose = withUse("Loose", () => [globalRevalidate(true)]);
+    expect(() => clientUrls(({ path }) => [path("/", Loose)])).toThrow(
+      "clientUrls() does not support revalidate() inside Loose.use()",
+    );
+
+    expect(() =>
+      clientUrls(({ path }) => [path("/", withUse("NotAFunction", [1]))]),
+    ).toThrow("clientUrls() NotAFunction.use expects a callback");
+    expect(() =>
+      clientUrls(({ path }) => [
+        path(
+          "/",
+          withUse("NoArray", () => null),
+        ),
+      ]),
+    ).toThrow("clientUrls() NoArray.use callback must return an array");
+
+    // One transition() per list; one in each is a merge, not an error.
+    const Twice = withUse("Twice", () => [
+      globalTransition({ name: "a" }),
+      globalTransition({ name: "b" }),
+    ]);
+    expect(() => clientUrls(({ path }) => [path("/", Twice)])).toThrow(
+      "clientUrls() path() received more than one transition()",
+    );
+    // The count is a dev check: a production bundle keeps the last one, as
+    // the server's handler.use merge does.
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      const twice = clientUrls(({ path, transition }) => [
+        path("/", Twice),
+        path("/b", HomePage, () => [
+          transition({ name: "c" }),
+          transition({ name: "d" }),
+        ]),
+      ]);
+      expect(twice.routes.map((route) => route.transition)).toEqual([
+        { name: "b" },
+        { name: "d" },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("calls the component's use once per mount site, never at render", () => {
+    const use = vi.fn(() => [globalLoading("skeleton")]);
+    const Page = withUse("Page", use);
+    clientUrls(({ path }) => [path("/a", Page), path("/b", Page)]);
+    expect(use).toHaveBeenCalledTimes(2);
   });
 });

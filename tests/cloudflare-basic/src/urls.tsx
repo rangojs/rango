@@ -358,6 +358,7 @@ import { rewritePatterns } from "./pages/rewrite.js";
 import clientUrlsInterceptPatterns from "./client-urls/intercept.js";
 import slowClientUrls, { SlowChrome } from "./client-urls/slow.js";
 import layoutLoaderClientUrls from "./client-urls-layout-loader/urls.js";
+import componentUseClientUrls from "./client-urls-component-use/urls.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
 import clientUrlsLoaderElementPatterns from "./client-urls-loader-element/urls.js";
@@ -1214,6 +1215,10 @@ export const urlpatterns = urls(
           () => [
             include("/client-urls-layout-loader", layoutLoaderClientUrls, {
               name: "clientLayoutLoader",
+            }),
+            // Components carrying their own items (Component.use).
+            include("/client-urls-component-use", componentUseClientUrls, {
+              name: "clientComponentUse",
             }),
           ],
         ),

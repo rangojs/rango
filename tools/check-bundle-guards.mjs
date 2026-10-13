@@ -149,7 +149,20 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // loaders merge with the server render (merge-segment-loaders.ts,
 // thenable-status.ts settledValue) +69B; treeless location state waits for
 // the reveal barrier (NavigationProvider.tsx) +11B. Together ~49468B.
-const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 384;
+//
+// Raised 48.375KB -> 48.5KB on 2026-10-13 for `Component.use` in
+// clientUrls() (dc-t45), measured on main d588d049 49388B -> 49497B (+109B
+// gzip; +98B without the fixture group, whose imports of the helpers add
+// export entries). A deliberate call the user approved with the feature: a
+// group's path(), layout() and intercept() read the mounted component's
+// `.use` and merge its items (client-urls/client-urls.ts componentUse), and
+// `loader`, `loading`, `revalidate`, `transition` became module-level exports
+// of `@rangojs/router/client`. None of it can load lazily: the flatten runs
+// synchronously when the group's module evaluates. The predicate hoist and
+// its shadow graph are build-side and cost the chunk nothing. One 128B step:
+// main sat 148B under the old limit, and #1137 took ~124B. Measured on top of
+// #1137 (2abd2527a) with the review fixes: 49601B.
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 512;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { normalizePath, parseAst } from "vite";
@@ -10,6 +11,9 @@ import {
   hashRefKey,
 } from "../plugins/client-ref-hashing.js";
 import { hasUseClientDirective } from "../utils/directive-prologue.js";
+import { firstCodeMatchIndex } from "../../build/route-types/source-scan.js";
+import { parseLang } from "../plugins/hoist/literal.js";
+import type { Node } from "../plugins/hoist/scope.js";
 import { createRangoDebugger, NS } from "../debug.js";
 import { findTsFiles } from "../../build/route-types/scan-filter.js";
 import type { DiscoveryState } from "./state.js";
@@ -104,6 +108,69 @@ export function recordClientUrlsModule(
   for (const productionReferenceKey of productionReferenceKeys) {
     sourceByReferenceId.set(referenceId(productionReferenceKey), source);
   }
+}
+
+/** A module that imports the router's client entry (a cheap pre-filter). */
+export const CLIENT_IMPORT_RE: RegExp = /["']@rangojs\/router\/client["']/;
+
+/**
+ * Whether an edited module can carry a clientUrls() component's own items: it
+ * imports "@rangojs/router/client" and assigns a `.use` in code (not in a
+ * comment or string). Such a module changes its groups' projections and
+ * hoisted revalidate() registrations like a group edit, with or without
+ * "use client".
+ */
+export function isClientUrlsComponentUseSource(source: string): boolean {
+  return (
+    source.includes(".use") &&
+    CLIENT_IMPORT_RE.test(source) &&
+    firstCodeMatchIndex(source, /\.use\s*=(?!=)/g) >= 0
+  );
+}
+
+/**
+ * A hash of the text of every `X.use = ...` assignment of a component-use
+ * module (isClientUrlsComponentUseSource), or undefined for any other module.
+ * Equal before and after a save, the edit (markup, hooks) left what its
+ * groups read unchanged: the dev watcher skips re-discovery and the client
+ * keeps Fast Refresh. An edit outside the assignments that changes what one
+ * means (a helper it calls, an import's source) is not seen. A module that
+ * does not parse hashes whole.
+ */
+export function componentUseSignature(
+  source: string,
+  file: string,
+): string | undefined {
+  if (!isClientUrlsComponentUseSource(source)) return undefined;
+  const hash = createHash("sha256");
+  let program: Node;
+  try {
+    program = parseAst(source, { lang: parseLang(file) });
+  } catch {
+    return hash.update(source).digest("base64");
+  }
+  const visit = (node: unknown): void => {
+    if (typeof node !== "object" || node === null) return;
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    const { type, left } = node as Node;
+    if (
+      type === "AssignmentExpression" &&
+      left.type === "MemberExpression" &&
+      !left.computed &&
+      left.property.type === "Identifier" &&
+      left.property.name === "use"
+    ) {
+      const { start, end } = node as Node;
+      hash.update(source.slice(start, end)).update("\0");
+      return;
+    }
+    for (const value of Object.values(node)) visit(value);
+  };
+  visit(program.body);
+  return hash.digest("base64");
 }
 
 export function resolveClientUrlsSource(
