@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import packageJson from "../../../package.json";
 import {
   createVersionPlugin,
   isViteDepCachePath,
@@ -417,17 +418,38 @@ describe("createVersionPlugin: the module per mode", () => {
     return plugin.load("\0@rangojs/router:version")!;
   };
 
+  const PACKAGE_LINE = `export const PACKAGE_VERSION = ${JSON.stringify(packageJson.version)};`;
+
+  it("the client environment gets only PACKAGE_VERSION; ssr and rsc keep the full module", () => {
+    for (const command of ["serve", "build"] as const) {
+      const plugin = createVersionPlugin() as Loadable & {
+        load: (this: unknown, id: string) => string | null;
+      };
+      plugin.configResolved({ command });
+      const loadIn = (name: string) =>
+        plugin.load.call(
+          { environment: { name } },
+          "\0@rangojs/router:version",
+        );
+      expect(loadIn("client")).toBe(PACKAGE_LINE);
+      for (const name of ["ssr", "rsc", "worker"]) {
+        expect(loadIn(name)).toContain("export const VERSION");
+      }
+    }
+  });
+
   it("dev: one stamp for both versions, and no table", async () => {
     await withMockedNow([0x1a2b], () => {
       expect(load("serve")).toBe(
-        `export const VERSION = "1a2b";\nexport const ROUTER_VERSIONS = undefined;`,
+        `${PACKAGE_LINE}\nexport const VERSION = "1a2b";\nexport const ROUTER_VERSIONS = undefined;`,
       );
     });
   });
 
   it("build: a placeholder for the table, and VERSION read from it", () => {
     expect(load("build")).toBe(
-      `export const ROUTER_VERSIONS = __RANGO_ROUTER_VERSIONS__;\n` +
+      `${PACKAGE_LINE}\n` +
+        `export const ROUTER_VERSIONS = __RANGO_ROUTER_VERSIONS__;\n` +
         `export const VERSION = ROUTER_VERSIONS["*"][1];`,
     );
   });

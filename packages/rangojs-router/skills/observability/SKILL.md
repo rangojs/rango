@@ -302,6 +302,17 @@ Then inspect:
   first paint.
 - the `Server-Timing` header to compare local logs with browser-network timing.
 
+## Telling a page is a Rango app
+
+Every page sets `window.__rango = { version }` (frozen, one key) from the
+bundled client entry before hydration. `version` is the exact npm semver of
+`@rangojs/router`, nothing else: no build hash, router id or config. It is for
+devtools and support; the router never reads it and no option turns it off.
+
+```js
+window.__rango; // { version: "0.24.2" }
+```
+
 ## Zero-overhead defaults
 
 `debugPerformance` is off by default, `telemetry` emits nothing unless a sink

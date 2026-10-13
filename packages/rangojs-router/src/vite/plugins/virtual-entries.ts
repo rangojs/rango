@@ -1,5 +1,6 @@
 import type { HeadScriptsOption } from "../plugin-types.js";
 import { DEFAULT_ROUTER_VERSIONS_KEY } from "../../router-versions.js";
+import { rangoVersion } from "../utils/banner.js";
 
 export const VIRTUAL_ENTRY_BROWSER: string = `
 import {
@@ -320,9 +321,27 @@ export const VIRTUAL_IDS = {
   version: "@rangojs/router:version",
 } as const;
 
+/**
+ * The npm semver of @rangojs/router, for the informational `window.__rango`
+ * marker (browser/rsc-router.tsx). Not a cache or build version.
+ */
+function getPackageVersionExport(): string {
+  return `export const PACKAGE_VERSION = ${JSON.stringify(rangoVersion)};`;
+}
+
+/**
+ * Non-RSC environments (client, ssr) get only PACKAGE_VERSION: the build
+ * module's ROUTER_VERSIONS token is replaced in server chunks only, so a
+ * client import of the full module would throw a ReferenceError.
+ */
+export function getVirtualPackageVersionContent(): string {
+  return getPackageVersionExport();
+}
+
 /** Dev: one stamp for both versions of every router, bumped on RSC edits. */
 export function getVirtualVersionContent(version: string): string {
   return [
+    getPackageVersionExport(),
     `export const VERSION = ${JSON.stringify(version)};`,
     `export const ROUTER_VERSIONS = undefined;`,
   ].join("\n");
@@ -346,6 +365,7 @@ export const ROUTER_VERSIONS_PLACEHOLDER = "__RANGO_ROUTER_VERSIONS__";
  */
 export function getVirtualBuildVersionContent(): string {
   return [
+    getPackageVersionExport(),
     `export const ROUTER_VERSIONS = ${ROUTER_VERSIONS_PLACEHOLDER};`,
     `export const VERSION = ROUTER_VERSIONS[${JSON.stringify(DEFAULT_ROUTER_VERSIONS_KEY)}][1];`,
   ].join("\n");

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added: `window.__rango` identifies a Rango page and its router version
+
+Before, nothing in the browser said a page was a Rango app or which release
+served it. Now the bundled client entry sets, once before hydration:
+
+```js
+window.__rango; // { version: "0.24.2" }, frozen
+```
+
+`version` is the exact npm semver of `@rangojs/router` and the object's only
+key: no build hash, router id, routes or config. It is informational for
+devtools, detection tools and support. The router never reads it, nothing
+depends on it, and there is no option to turn it off. It is set from the
+bundle, not an inline script, so a CSP or nonce is unaffected.
+
 ### Added: `prefetch: false` and `revalidate()` on an `intercept()`'s loaders, in `urls()` and `clientUrls()`
 
 `loader(Def, { prefetch: false })` inside `intercept()` was accepted and

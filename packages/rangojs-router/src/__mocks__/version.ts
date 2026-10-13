@@ -7,3 +7,4 @@
  */
 export const VERSION = "";
 export const ROUTER_VERSIONS: undefined = undefined;
+export const PACKAGE_VERSION = "0.0.0-test";
