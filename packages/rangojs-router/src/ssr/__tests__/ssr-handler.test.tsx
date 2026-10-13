@@ -14,6 +14,8 @@ vi.mock("../../segment-system.js", () => ({
 
 import { renderSegments } from "../../segment-system.js";
 import { renderToReadableStream as realRenderToReadableStream } from "react-dom/server";
+import { renderToReadableStream as edgeRenderToReadableStream } from "react-dom/server.edge";
+import { createServerReference } from "@vitejs/plugin-rsc/react/ssr";
 
 const mockedRenderSegments = vi.mocked(renderSegments);
 
@@ -864,6 +866,265 @@ describe("createSSRHandler", () => {
           vi.unstubAllEnvs();
           vi.resetModules();
         }
+      });
+    });
+
+    // A document whose chain has an ssr: false loader settles the Fizz tasks
+    // parked on settling thenables before its first flush (#1138). The form
+    // action is what useActionState makes of the server reference the SSR
+    // environment imports: a bound reference, whose encode suspends once.
+    describe("ssr: false first flush", () => {
+      const save = createServerReference("test#save") as (
+        previous: string | null,
+        formData: FormData,
+      ) => Promise<string>;
+      const rename = createServerReference("test#rename") as typeof save;
+
+      function SaveForm({ children }: { children?: React.ReactNode }) {
+        const [, action] = React.useActionState(save, null);
+        return (
+          <form action={action}>
+            <button>Save</button>
+            {children}
+          </form>
+        );
+      }
+
+      // Renders on the SaveForm task's retry: a second generation.
+      function RenameButton() {
+        const [, action] = React.useActionState(rename, null);
+        return <button formAction={action}>Rename</button>;
+      }
+
+      function Page({ children }: { children: React.ReactNode }) {
+        return (
+          <main>
+            <h1>Frame</h1>
+            <React.Suspense fallback={<p>Reading</p>}>
+              {children}
+            </React.Suspense>
+          </main>
+        );
+      }
+
+      // The tree arrives a turn after Fizz starts, as a Flight row or a
+      // client module does: Fizz then retries pinged tasks on setTimeout(0).
+      function segmentsAfterATurn(tree: React.ReactNode): void {
+        mockedRenderSegments.mockImplementation(
+          () => new Promise((resolve) => setTimeout(() => resolve(tree), 0)),
+        );
+      }
+
+      function ssrFalseDeps(
+        overrides: Partial<SSRDependencies> = {},
+      ): SSRDependencies {
+        return createRealDeps({
+          createFromReadableStream: vi.fn().mockResolvedValue({
+            metadata: {
+              pathname: "/",
+              params: {},
+              matched: ["/"],
+              segments: [{ id: "M0D0.loader", awaitBeforeFlush: true }],
+            },
+          }),
+          renderToReadableStream:
+            edgeRenderToReadableStream as SSRDependencies["renderToReadableStream"],
+          ...overrides,
+        });
+      }
+
+      function expectWhole(html: string): void {
+        expect(html).not.toContain("<!--$?-->");
+        expect(html).not.toContain('<div hidden id="S:');
+        expect(html).not.toContain("Reading");
+      }
+
+      /**
+       * Fizz started through the real renderer, then `onShellReady` runs when
+       * the shell is ready: a timer it sets is the turn after shell-ready.
+       */
+      function renderWithShellReadyHook(
+        onShellReady: () => void,
+      ): SSRDependencies["renderToReadableStream"] {
+        return (async (
+          ...args: Parameters<typeof edgeRenderToReadableStream>
+        ) => {
+          const stream = await edgeRenderToReadableStream(...args);
+          onShellReady();
+          return stream;
+        }) as SSRDependencies["renderToReadableStream"];
+      }
+
+      it("a useActionState form under an inline Suspense is whole in the first flush", async () => {
+        segmentsAfterATurn(
+          <Page>
+            <SaveForm />
+          </Page>,
+        );
+        const stream = await createSSRHandler(ssrFalseDeps())(
+          createMockRscStream(),
+        );
+        const html = await consumeStream(stream);
+        expect(html).toContain("Save</button>");
+        expectWhole(html);
+      });
+
+      it("an explicit progressiveChunkSize, which skips the auto-raise, still settles the form", async () => {
+        segmentsAfterATurn(
+          <Page>
+            <SaveForm />
+          </Page>,
+        );
+        const stream = await createSSRHandler(
+          ssrFalseDeps({ progressiveChunkSize: 4096 }),
+        )(createMockRscStream());
+        const html = await consumeStream(stream);
+        expect(html).toContain("Save</button>");
+        expectWhole(html);
+      });
+
+      it("a formAction button inside the form, which renders on its retry, is whole too", async () => {
+        segmentsAfterATurn(
+          <Page>
+            <SaveForm>
+              <RenameButton />
+            </SaveForm>
+          </Page>,
+        );
+        const stream = await createSSRHandler(ssrFalseDeps())(
+          createMockRscStream(),
+        );
+        const html = await consumeStream(stream);
+        expect(html).toContain("Rename</button>");
+        expectWhole(html);
+      });
+
+      it("a lazy() form with a formAction button inside, three generations, is whole too", async () => {
+        const LazyForm = React.lazy(async () => ({
+          default: () => (
+            <SaveForm>
+              <RenameButton />
+            </SaveForm>
+          ),
+        }));
+        segmentsAfterATurn(
+          <Page>
+            <LazyForm />
+          </Page>,
+        );
+        const stream = await createSSRHandler(ssrFalseDeps())(
+          createMockRscStream(),
+        );
+        const html = await consumeStream(stream);
+        expect(html).toContain("Rename</button>");
+        expectWhole(html);
+      });
+
+      it("a document already whole is returned with no turn", async () => {
+        const order: string[] = [];
+        mockedRenderSegments.mockImplementation(() =>
+          Promise.resolve(<Page>page</Page>),
+        );
+        const deps = ssrFalseDeps({
+          renderToReadableStream: renderWithShellReadyHook(() =>
+            setTimeout(() => order.push("next turn"), 0),
+          ),
+        });
+
+        await createSSRHandler(deps)(createMockRscStream());
+        order.push("stream returned");
+        expect(order).toEqual(["stream returned"]);
+      });
+
+      it("a boundary waiting on I/O still streams its fallback, after at most three turns", async () => {
+        let turns = 0;
+        let counting = true;
+        const countTurns = (): void => {
+          if (!counting) return;
+          turns++;
+          setTimeout(countTurns, 0);
+        };
+        let resolveData!: () => void;
+        const data = new Promise<void>((resolve) => {
+          resolveData = resolve;
+        });
+        function Streamed() {
+          React.use(data);
+          return <p>streamed</p>;
+        }
+        segmentsAfterATurn(
+          <Page>
+            <Streamed />
+          </Page>,
+        );
+        const deps = ssrFalseDeps({
+          renderToReadableStream: renderWithShellReadyHook(() =>
+            setTimeout(countTurns, 0),
+          ),
+        });
+
+        const stream = await createSSRHandler(deps)(createMockRscStream());
+        counting = false;
+        expect(turns).toBeGreaterThan(0);
+        expect(turns).toBeLessThanOrEqual(3);
+        resolveData();
+        const html = await consumeStream(stream);
+        expect(html).toContain("<!--$?-->");
+        expect(html).toContain("streamed");
+      });
+
+      // The #1120 scar: a document without an ssr: false loader flushes as
+      // before. A skeleton whose content lands one turn after the shell is
+      // ready is still the first flush's.
+      it("a document without an ssr: false loader is returned with no turn, so its skeleton flushes first", async () => {
+        const order: string[] = [];
+        let resolveData!: () => void;
+        const data = new Promise<void>((resolve) => {
+          resolveData = resolve;
+        });
+        function Content() {
+          React.use(data);
+          return <p>content</p>;
+        }
+        mockedRenderSegments.mockImplementation(() =>
+          Promise.resolve(
+            <main>
+              <React.Suspense fallback={<p>skeleton</p>}>
+                <Content />
+              </React.Suspense>
+            </main>,
+          ),
+        );
+        const deps = createRealDeps({
+          renderToReadableStream: renderWithShellReadyHook(() =>
+            setTimeout(() => {
+              order.push("data");
+              resolveData();
+            }, 0),
+          ),
+        });
+
+        const stream = await createSSRHandler(deps)(createMockRscStream());
+        order.push("stream returned");
+        expect(order).toEqual(["stream returned"]);
+        const reader = stream.getReader();
+        const first = new TextDecoder().decode((await reader.read()).value);
+        expect(first).toContain("skeleton");
+        reader.releaseLock();
+        expect(await consumeStream(stream)).toContain("content");
+      });
+
+      it('streamMode "allReady" keeps awaiting allReady alone', async () => {
+        segmentsAfterATurn(
+          <Page>
+            <SaveForm />
+          </Page>,
+        );
+        const stream = await createSSRHandler(ssrFalseDeps())(
+          createMockRscStream(),
+          { streamMode: "allReady" },
+        );
+        expectWhole(await consumeStream(stream));
       });
     });
   });

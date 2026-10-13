@@ -127,6 +127,7 @@ export const routes = {
   "clientSlow.d": "/client-urls-slow/d",
   "clientSlow.e": "/client-urls-slow/e",
   clientSlowLanding: "/client-urls-slow-landing",
+  "clientSsrFalseForm.index": "/client-urls-ssr-false-form",
   "clientTransition.item": "/client-urls-transition/items/:itemId",
   "clientTransition.other": "/client-urls-transition/other/:itemId",
   "clientTransition.plain": "/client-urls-transition/plain/:itemId",

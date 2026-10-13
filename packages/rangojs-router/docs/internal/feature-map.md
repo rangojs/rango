@@ -397,7 +397,12 @@ server projection.
   completed boundary over 500 bytes to an end-of-stream `<div hidden>` + `$RC`
   reveal once the shell saturates the 12800-byte default
   (`createSSRHandler`, reading `ResolvedSegment.awaitBeforeFlush` off the
-  payload). The stamp and settled-value delivery also apply to
+  payload). The same documents give Fizz up to three `setTimeout(0)` turns
+  after shell-ready, until `allReady`, before the first flush
+  (`settleSsrFalseFirstFlush`, #1138): a task parked on a thenable that
+  settles in microtasks (a `useActionState` form's bound-action encode)
+  retries on such a turn, which the first read would otherwise beat. The stamp and
+  settled-value delivery also apply to
   `loading(false)` entries and parallel-owned loaders — both already paid
   the pre-flush await and must not re-suspend at the read site.
 - `prefetch: false` — `loader(Def, { prefetch: false })` (`LoaderOptions.prefetch`)

@@ -29,6 +29,7 @@ export const routes = {
   "clientSlow.d": "/client-urls-slow/d",
   "clientSlow.e": "/client-urls-slow/e",
   clientSlowLanding: "/client-urls-slow-landing",
+  "clientSsrFalseForm.index": "/client-urls-ssr-false-form",
   "composition.detail": "/composition/detail",
   "composition.index": "/composition",
   cookieOverlay: "/cookie-overlay",

@@ -54,6 +54,25 @@ navigation (`/product/a` to `/product/b`) already worked this way. A group
 `layout()` loader now counts as on screen on every route of its layout, so a
 prefetch between those routes runs it only when its `revalidate()` asks.
 
+### Fixed: on a document with an `ssr: false` loader, a `useActionState` form under `<Suspense>` is in the HTML in place ([#1138](https://github.com/rangojs/rango/issues/1138))
+
+**Before.** A no-script document could ship such a `<Suspense>` boundary as
+its fallback, even though every loader it read was `ssr: false` and settled.
+The form's action is a bound server reference, and React suspends the form
+once while it encodes that action, then retries it on its next turn. The
+router returned the HTML stream when the shell was ready, before that turn, so
+the fallback was sent and the form went to the end of the stream in
+`<div hidden>`, swapped in by a script a browser without JavaScript never
+runs. On the test fixture it happened on every load, in dev and production.
+
+**Now.** A document whose matched routes have an `ssr: false` loader gives
+React up to three more turns to finish such retries before the first flush.
+That covers the form, a `formAction` button inside it, and the same form
+behind `lazy()`. A document already complete when the shell is ready is sent
+at once. A boundary waiting on data still streams its fallback, sent at most
+three turns later. Documents without an `ssr: false` loader, navigations and
+`streamMode: "allReady"` are unchanged.
+
 ## 0.24.2 (2026-10-13)
 
 ### Fixed: a `clientUrls()` group layout that reads its own loader keeps the instant page change on navigations between its routes

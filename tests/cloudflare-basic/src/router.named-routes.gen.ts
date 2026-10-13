@@ -42,6 +42,7 @@ export const NamedRoutes = {
   "clientSlow.e": "/client-urls-slow/e",
   "clientSlow.f": "/client-urls-slow/f",
   clientSlowLanding: "/client-urls-slow-landing",
+  "clientSsrFalseForm.index": "/client-urls-ssr-false-form",
   "composition.detail": "/composition/detail",
   "composition.index": "/composition",
   cookieOverlay: "/cookie-overlay",
