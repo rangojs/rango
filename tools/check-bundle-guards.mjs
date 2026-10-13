@@ -154,7 +154,12 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // 0.24.3 backport of the clientUrls() layout() loader revalidate fix (#1137:
 // the reconciler and handle carries of a layout loader's sibling copies).
 // main keeps its own ratchet.
-const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 512;
+//
+// Raised 48.5KB -> 48.625KB on 2026-10-13 on release/0.24.x only, for the
+// 0.24.4 backport of #1148 (a clientUrls() group under a parameterized
+// include() renders at the click; the server ships competing routes to the
+// browser): measured 49723B. main keeps its own ratchet.
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 640;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.24.4 (2026-10-13)
 
 ### Fixed: a `clientUrls()` group under a parameterized `include()` renders at the click, and its intercepts open
 
