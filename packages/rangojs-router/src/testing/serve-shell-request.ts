@@ -102,10 +102,9 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * ones, as `segments`, and the same URL as `from`. `interceptSource` sends
    * the intercept source (`X-RSC-Router-Intercept-Source`) the browser sends
    * from an open modal and with the fill of an intercept, whose `from` is
-   * that source. `rewriteTarget` sends what the page at `from` carried as
-   * its payload's `metadata.rewriteTarget` when middleware rewrote it
-   * (`X-RSC-Router-Client-Route`), as the browser does: the server then
-   * diffs against the route that rendered that page.
+   * that source. `rewriteTarget` sends the `metadata.rewriteTarget` the page at
+   * `from` carried when middleware rewrote it (`_rsc_rt`), as the browser
+   * does: the server then diffs against the route that rendered that page.
    */
   partial?:
     | true
@@ -566,14 +565,6 @@ async function getHandler(
   return handler;
 }
 
-/** `X-RSC-Router-Client-Route`, as the browser sends it from a rewritten page. */
-function setClientRoute(
-  headers: Headers,
-  rewriteTarget: string | undefined,
-): void {
-  if (rewriteTarget) headers.set("X-RSC-Router-Client-Route", rewriteTarget);
-}
-
 async function buildActionRequest(
   url: URL,
   headers: Headers,
@@ -589,11 +580,13 @@ async function buildActionRequest(
   const target = new URL(url);
   target.searchParams.set("_rsc_action", action.id);
   target.searchParams.set("_rsc_segments", (action.segments ?? []).join(","));
+  if (action.rewriteTarget) {
+    target.searchParams.set("_rsc_rt", action.rewriteTarget);
+  }
   headers.set("rsc-action", action.id);
   if (!headers.has("X-RSC-Router-Client-Path")) {
     headers.set("X-RSC-Router-Client-Path", url.href);
   }
-  setClientRoute(headers, action.rewriteTarget);
   return new Request(target, {
     method: "POST",
     headers,
@@ -642,6 +635,7 @@ async function buildRequest(
   const target = new URL(url);
   target.searchParams.set("_rsc_partial", "true");
   target.searchParams.set("_rsc_segments", segments.join(","));
+  if (rewriteTarget) target.searchParams.set("_rsc_rt", rewriteTarget);
   // As the browser sends them: browser/navigation-client.ts (fill) and
   // browser/prefetch/fetch.ts (prefetch).
   if (fill) target.searchParams.set(FILL_PARAM, "1");
@@ -651,7 +645,6 @@ async function buildRequest(
   if (!headers.has("X-RSC-Router-Client-Path")) {
     headers.set("X-RSC-Router-Client-Path", new URL(from, url).href);
   }
-  setClientRoute(headers, rewriteTarget);
   if (interceptSource !== undefined) {
     headers.set(
       "X-RSC-Router-Intercept-Source",

@@ -37,9 +37,8 @@ export type HandleData = Record<string, Record<string, unknown[]>>;
 export interface RscMetadata {
   pathname: string;
   /**
-   * Path and search of the URL the route rendered for, when middleware
-   * rewrote the request there. Kept per history entry and sent back as
-   * `X-RSC-Router-Client-Route` (HistoryEntryMemory.rewriteTarget).
+   * Path and search of the URL the route rendered, when middleware rewrote
+   * the request there. Kept per history entry and sent back as `_rsc_rt`.
    */
   rewriteTarget?: string;
   segments: ResolvedSegment[];
@@ -313,7 +312,6 @@ export interface SegmentState {
  */
 export interface ShownEntry {
   readonly routeName?: string;
-  /** RscMetadata.rewriteTarget: sent as `X-RSC-Router-Client-Route`. */
   readonly rewriteTarget?: string;
 }
 
@@ -708,11 +706,8 @@ export interface FetchPartialOptions {
   targetUrl: string;
   segmentIds: string[];
   previousUrl: string;
-  /**
-   * The rewrite target of the page at `previousUrl` (RscMetadata.rewriteTarget),
-   * sent as `X-RSC-Router-Client-Route` and folded into the source key.
-   */
-  clientRoute?: string;
+  /** The page's RscMetadata.rewriteTarget, sent as `_rsc_rt`. */
+  rewriteTarget?: string;
   signal?: AbortSignal;
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;

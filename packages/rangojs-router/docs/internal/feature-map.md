@@ -703,15 +703,13 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   middleware (before the action), intercept middleware; a loader fetch
   answers with the `loaderError` `load()` rejects with; a handler's, loader's or server action's throw is its own error
   (middleware only, by design: no loader rewrites).
-  A rewritten payload carries `metadata.rewriteTarget` (`payloadLocation`,
-  `rewriteTarget` in `server/rewrite-trail.ts`); the browser keeps it per
-  history entry (`HistoryEntryMemory.rewriteTarget`) and sends it as
-  `X-RSC-Router-Client-Route` on navigations, prefetches (folded into
-  `buildSourceKey`) and actions from that page, and `resolveNavigation`
-  matches it for the page being left (`getShownRouteUrl`), never for what
-  renders (#1144).
+  A rewritten payload carries `metadata.rewriteTarget` (`payloadLocation`);
+  the browser keeps it per history entry (`HistoryEntryMemory.rewriteTarget`)
+  and sends it as the `_rsc_rt` param on navigations, prefetches and actions
+  from that page, and `resolveNavigation` matches it for the page being left
+  (`getShownRouteUrl`), never for what renders (#1144).
   `runMiddleware` reports it, `dispatch` and `serveShellRequest` re-dispatch
-  it (`partial.rewriteTarget` / `action.rewriteTarget` send the header),
+  it (`partial.rewriteTarget` / `action.rewriteTarget` send `_rsc_rt`),
   `renderRoute` takes `rewrite`. See `docs/internal/execution-model.md` →
   "Rewrite".
 - Typed error model: `RouteNotFoundError`, `DataNotFoundError`, etc.

@@ -135,12 +135,10 @@ describe("navigation-client", () => {
     ).toBe("1");
 
     await expect(result.streamComplete).resolves.toBeUndefined();
-    expect(init.headers as Record<string, string>).not.toHaveProperty(
-      "X-RSC-Router-Client-Route",
-    );
+    expect(String(fetchUrl)).not.toContain("_rsc_rt");
   });
 
-  it("names the page's rewrite target in the headers and the source key", async () => {
+  it("names the page's rewrite target in the URL, so in both prefetch keys", async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
         new Response(null, { status: 200 }),
@@ -157,19 +155,16 @@ describe("navigation-client", () => {
     await client.fetchPartial({
       targetUrl: "/public-1?sort=b",
       previousUrl: "http://localhost/public-1?sort=a",
-      clientRoute: "/item/1?sort=a",
+      rewriteTarget: "/item/1?sort=a",
       segmentIds: ["root"],
     });
 
-    const init = (fetchMock.mock.calls[0] as [unknown, RequestInit])[1];
-    expect(
-      (init.headers as Record<string, string>)["X-RSC-Router-Client-Route"],
-    ).toBe("/item/1?sort=a");
+    const fetchUrl = new URL(String(fetchMock.mock.calls[0]![0]));
+    expect(fetchUrl.searchParams.get("_rsc_rt")).toBe("/item/1?sort=a");
     expect(buildSourceKeyMock).toHaveBeenCalledWith(
       "v1:abc",
       "http://localhost/public-1?sort=a",
-      expect.any(URL),
-      "/item/1?sort=a",
+      fetchUrl,
     );
   });
 

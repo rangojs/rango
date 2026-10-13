@@ -18,6 +18,6 @@ exports[`a prefetch of a route with no prefetch: false > is byte-identical to th
     "vary",
     "x-rsc-router-id",
   ],
-  "vary": "accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Client-Route, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
+  "vary": "accept, X-Rango-State, X-RSC-Router-Client-Path, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
 }
 `;

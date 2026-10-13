@@ -649,10 +649,10 @@ the browser sends it back with the next request from that page. A
 `revalidate()` sees the target's params and URL (`currentParams.id` against
 `nextParams.id` holds a loader on a sort change), and a navigation to the
 page already shown re-renders nothing. A move to another visitor URL with
-the same target (`/promo/a` to `/promo/b`, both rewritten to `/promo/landing`) re-runs the
-route and its loaders, which may read `ctx.rewrittenFrom`. The header only
-names the page being left: what renders still comes from the request's URL
-and your middleware.
+the same target (`/promo/a` to `/promo/b`, both rewritten to
+`/promo/landing`) re-runs the route and its loaders, which may read
+`ctx.rewrittenFrom`. The browser only names the page being left: what
+renders still comes from the request's URL and your middleware.
 
 **Testing.** `runMiddleware` reports a thrown rewrite as `result.rewrite`
 (`{ pathname, search, routeName? }`). `serveShellRequest` takes a rewritten

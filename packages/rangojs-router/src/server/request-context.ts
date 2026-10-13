@@ -803,10 +803,9 @@ export interface RequestContext<
   _prevRouteKey?: string;
 
   /**
-   * @internal A navigation from a page middleware rewrote moved the
-   * visitor's URL (router/match-api.ts): the default revalidation counts it
-   * as a search change, since that page's render may read
-   * `ctx.rewrittenFrom` while its target URL stays the same (#1144).
+   * @internal Leaving a rewritten page, the visitor's URL moved
+   * (router/match-api.ts): the default revalidation counts it as a search
+   * change, since the render may read `ctx.rewrittenFrom`.
    */
   _visitorMoved?: boolean;
 

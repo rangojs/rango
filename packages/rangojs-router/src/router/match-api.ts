@@ -377,15 +377,13 @@ export async function createMatchContextForPartial<TEnv>(
   }
 
   setRequestContextPrevRouteKey(nav.effectiveFromMatch?.routeKey);
-  // Leaving a rewritten page diffs against its target, which two visitor
-  // URLs can share: the render may read ctx.rewrittenFrom, so a move of the
-  // visitor's URL still counts as a change (#1144).
+  // Two visitor URLs can share a rewrite target, and the render may read
+  // ctx.rewrittenFrom: a move of the visitor's URL counts as a change.
   if (reqCtx && nav.prevVisitorUrl) {
     const now = visitorUrl(reqCtx, cleanUrl);
     const left = nav.prevVisitorUrl;
-    if (now.pathname + now.search !== left.pathname + left.search) {
-      reqCtx._visitorMoved = true;
-    }
+    reqCtx._visitorMoved =
+      now.pathname + now.search !== left.pathname + left.search;
   }
 
   const interceptSelectorContext: InterceptSelectorContext = {

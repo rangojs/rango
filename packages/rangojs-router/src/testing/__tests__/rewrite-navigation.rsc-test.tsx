@@ -4,7 +4,7 @@
  *
  * The payload of a rewritten request carries `metadata.rewriteTarget`, the
  * target's path and search. The browser sends it back from that page as
- * `X-RSC-Router-Client-Route` (serveShellRequest's `rewriteTarget`), and the
+ * `_rsc_rt` (serveShellRequest's `rewriteTarget`), and the
  * server diffs against the route that rendered the page, not the route the
  * visitor's URL matches: a navigation within the page holds what a direct
  * visit holds, and `revalidate()` sees the target's params and URL.
@@ -252,7 +252,7 @@ describe("visitor URLs that rewrite to one target", () => {
   });
 });
 
-describe("X-RSC-Router-Client-Route", () => {
+describe("_rsc_rt", () => {
   it("never chooses what renders: a forged value skips no middleware", async () => {
     const router = makeRouter();
     const cacheStore = new MemorySegmentCacheStore();

@@ -1241,7 +1241,7 @@ function renderPreparedRscResponse<TEnv>(
 
   const rscHeaders: Record<string, string> = {
     "content-type": "text/x-component;charset=utf-8",
-    vary: `accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Client-Route, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`,
+    vary: `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`,
     // Router identity, so the client can verify pre-decode (before importing
     // chunks) that this content payload belongs to its app and refuse a
     // foreign one (cache/proxy/bug). Control-only reload/redirect responses

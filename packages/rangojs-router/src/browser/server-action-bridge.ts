@@ -304,6 +304,11 @@ export function createServerActionBridge(
       if (rid) {
         url.searchParams.set("_rsc_rid", rid);
       }
+      // The page's rewrite target: the server diffs the re-render against it.
+      const rewriteTarget = store.getHistoryEntryMemory()?.rewriteTarget;
+      if (rewriteTarget) {
+        url.searchParams.set("_rsc_rt", rewriteTarget);
+      }
 
       // Encode arguments
       const encodedBody = await deps.encodeReply(args, { temporaryReferences });
@@ -323,8 +328,6 @@ export function createServerActionBridge(
 
       // Get intercept source URL if in intercept context
       const interceptSourceUrl = store.getInterceptSourceUrl();
-      // The page's rewrite target: the server diffs the re-render against it.
-      const clientRoute = store.getHistoryEntryMemory()?.rewriteTarget;
 
       // Track streaming token - will be set when response arrives
       let streamingToken: { end(): void } | null = null;
@@ -343,7 +346,6 @@ export function createServerActionBridge(
         headers: {
           "rsc-action": id,
           "X-RSC-Router-Client-Path": segmentState.currentUrl,
-          ...(clientRoute && { "X-RSC-Router-Client-Route": clientRoute }),
           ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
           ...(interceptSourceUrl && {
             "X-RSC-Router-Intercept-Source": interceptSourceUrl,

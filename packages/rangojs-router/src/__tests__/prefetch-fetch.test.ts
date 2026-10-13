@@ -186,7 +186,7 @@ describe("prefetch fetch reduced-data behavior", () => {
     );
     expect(headers["X-Rango-Prefetch"]).toBe("1");
     expect(headers["X-Rango-Fragment-Passthrough"]).toBe("1");
-    expect(headers).not.toHaveProperty("X-RSC-Router-Client-Route");
+    expect(fetchedUrl).not.toContain("_rsc_rt");
   });
 
   it("names the page's rewrite target from a page middleware rewrote", () => {
@@ -202,11 +202,8 @@ describe("prefetch fetch reduced-data behavior", () => {
       shownRewriteTarget = undefined;
     }
 
-    const headers = fetchMock.mock.calls[0]![1]!.headers as Record<
-      string,
-      string
-    >;
-    expect(headers["X-RSC-Router-Client-Route"]).toBe("/item/1?sort=a");
+    const fetchedUrl = new URL(String(fetchMock.mock.calls[0]![0]));
+    expect(fetchedUrl.searchParams.get("_rsc_rt")).toBe("/item/1?sort=a");
   });
 
   it("stores the decoded entry in the in-memory cache on success", async () => {
