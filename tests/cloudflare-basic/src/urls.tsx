@@ -361,6 +361,7 @@ import layoutLoaderClientUrls from "./client-urls-layout-loader/urls.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
 import clientUrlsLoaderElementPatterns from "./client-urls-loader-element/urls.js";
+import clientUrlsSsrFalseFormPatterns from "./client-urls-ssr-false-form/urls.js";
 import { clientUrlsVarsMiddleware } from "./client-urls-vars/shared.js";
 import {
   MirrorSessionLoader,
@@ -1255,6 +1256,12 @@ export const urlpatterns = urls(
             name: "clientLoaderElement",
           },
         ),
+        // A no-script document whose ssr: false loader feeds a useActionState
+        // form under an inline <Suspense> (#1138,
+        // e2e/client-urls-ssr-false-form.test.ts).
+        include("/client-urls-ssr-false-form", clientUrlsSsrFalseFormPatterns, {
+          name: "clientSsrFalseForm",
+        }),
         // Streaming useLoader demo: no-loading() route streams per-loader;
         // /gated contrasts the loading() boundary; /ppr pins live holes.
         include("/suspense-demo", suspenseDemoPatterns, {

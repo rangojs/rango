@@ -155,6 +155,25 @@ a silent 404:
 [@rangojs/router] The route trie matched "/login" to route "..." under static prefix "", but no include there registered that name at runtime (checked: ...). Build discovery and the runtime named this route differently, so it cannot render. If this follows a route edit, reload the page; if it persists, please report it with your route configuration.
 ```
 
+### Fixed: on a document with an `ssr: false` loader, a `useActionState` form under `<Suspense>` is in the HTML in place ([#1138](https://github.com/rangojs/rango/issues/1138))
+
+**Before.** A no-script document could ship such a `<Suspense>` boundary as
+its fallback, even though every loader it read was `ssr: false` and settled.
+The form's action is a bound server reference, and React suspends the form
+once while it encodes that action, then retries it on its next turn. The
+router returned the HTML stream when the shell was ready, before that turn, so
+the fallback was sent and the form went to the end of the stream in
+`<div hidden>`, swapped in by a script a browser without JavaScript never
+runs. On the test fixture it happened on every load, in dev and production.
+
+**Now.** A document whose matched routes have an `ssr: false` loader gives
+React up to three more turns to finish such retries before the first flush.
+That covers the form, a `formAction` button inside it, and the same form
+behind `lazy()`. A document already complete when the shell is ready is sent
+at once. A boundary waiting on data still streams its fallback, sent at most
+three turns later. Documents without an `ssr: false` loader, navigations and
+`streamMode: "allReady"` are unchanged.
+
 ### Changed: `dispatch` matches through the route trie, as `vite dev` and production do ([#1107](https://github.com/rangojs/rango/issues/1107))
 
 `dispatch` from `@rangojs/router/testing` matched a router with no trie by

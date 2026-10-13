@@ -768,6 +768,28 @@ Pinned dev+prod in `e2e/client-urls-loader-element.test.ts` and
 `tests/shared-e2e/src/loader-element-scenario.ts`), and by
 `src/ssr/__tests__/ssr-handler.test.tsx` ("dev client-reference loads").
 
+Settled data is not always enough on its own, either. A `useActionState` form
+under an inline `<Suspense>` whose loader is `ssr: false` shipped its fallback
+on every no-script load of the fixture, dev and production (#1138). Here is
+why. Fizz's `useActionState` binds the state onto the action, and encoding a
+bound server reference for `<form action>` throws the Flight client's
+`encodeFormData` thenable once. It settles in microtasks, but by then Fizz has
+left its opening status, so `pingTask` retries the form on a `setTimeout(0)`
+turn. `renderToReadableStream` resolves at shell-ready, so the first read beat
+that turn. Now `renderHTML` (`settleSsrFalseFirstFlush`) gives Fizz up to
+three `setTimeout(0)` turns before the first flush on a document whose
+payload carries `awaitBeforeFlush`. It stops as soon as `allReady` settles,
+and a document whole at shell-ready takes no turn. Each turn retries one
+generation: the form, a `formAction` button inside it, and the same form
+behind `lazy()` are one, two and three. A boundary waiting on I/O still
+streams its fallback, sent at most three turns later. A document without an
+`ssr: false` loader returns at shell-ready as before, so its `loading()`
+skeletons still lead the first flush. Pinned dev+prod in
+`e2e/client-urls-ssr-false-form.test.ts` and
+`tests/cloudflare-basic/e2e/client-urls-ssr-false-form.test.ts` (body
+`tests/shared-e2e/src/ssr-false-form-scenario.ts`), and by
+`src/ssr/__tests__/ssr-handler.test.tsx` ("ssr: false first flush").
+
 `loader(Def, { prefetch: false }, use?)` keeps one loader out of the route's
 `<Link>` prefetches, as on a server route
 ([prefetch-false.md](../../../docs/design/prefetch-false.md), "`clientUrls()`

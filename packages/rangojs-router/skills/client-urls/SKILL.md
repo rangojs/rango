@@ -464,7 +464,11 @@ makes the first flush, and `ssr: false` guarantees the loader's data does. It
 does not cover the client component's module: the first document a build's
 fresh server renders can still be waiting for it. The dev server matches a
 build here: when the shell is ready, it waits for the client components the
-payload has named and that are still loading, and for nothing else.
+payload has named and that are still loading, and for nothing else. On a
+document with an `ssr: false` loader, a part React finishes a moment after the
+shell, such as a `useActionState` form (React suspends it once to encode its
+action), is in the first flush too: the router gives React up to three more
+turns before it, and none when the document is already complete.
 
 ## `prefetch: false` — keep a loader out of prefetches
 
