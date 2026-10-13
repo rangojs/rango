@@ -452,6 +452,11 @@ target (`/promo/a` and `/promo/b` both to `/landing`), the route and its
 loaders re-run, as on a search change, since the page may render
 `ctx.rewrittenFrom`; layouts stay held.
 
+A query the address bar and the request write differently (`?q=a,b` against
+`?q=a%2Cb`, a space as `%20` against `+`) no longer counts as a search
+change, on any page: a navigation to the page already shown re-ran its route
+and loaders before.
+
 The param only names the page being left. What renders still comes from the
 request's URL and your middleware, so a forged value runs and skips no
 middleware. In tests, pass the page's `metadata.rewriteTarget` to

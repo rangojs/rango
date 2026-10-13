@@ -15,6 +15,7 @@ import type { RequestContext } from "../server/request-context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
 import {
+  pathKey,
   rendersForSharedAudience,
   rewriteTrail,
   visitorUrl,
@@ -134,9 +135,9 @@ export function payloadLocation(
 ): { pathname: string; rewriteTarget?: string } {
   const pathname = renderedLocation(reqCtx, url).pathname;
   const trail = rewriteTrail(reqCtx);
-  if (!trail) return { pathname };
-  const target = new URL(trail[trail.length - 1]!);
-  return { pathname, rewriteTarget: target.pathname + target.search };
+  return trail
+    ? { pathname, rewriteTarget: pathKey(new URL(trail[trail.length - 1]!)) }
+    : { pathname };
 }
 
 /**

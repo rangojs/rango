@@ -174,6 +174,28 @@ describe.each(["/item/1", "/public-1"])("a page at %s", (url) => {
     expect(loaderRuns).toBe(0);
   });
 
+  // The browser sends its own URL (`?q=a,b`); the request's URL went through
+  // URLSearchParams (`?q=a%2Cb`) when `_rsc*` params were set and stripped.
+  it("a navigation to the page already shown, with a query the two encode differently, re-renders nothing", async () => {
+    const router = makeRouter();
+    const cacheStore = new MemorySegmentCacheStore();
+    const page = await serveShellRequest(router, `${url}?q=a,b`, {
+      cacheStore,
+      partial: { from: "/" },
+    });
+    loaderRuns = 0;
+    const again = await serveShellRequest(router, `${url}?q=a,b`, {
+      cacheStore,
+      partial: {
+        from: `${url}?q=a,b`,
+        rewriteTarget: metadata(page).rewriteTarget,
+        segments: metadata(page).matched,
+      },
+    });
+    expect(metadata(again).diff).toEqual([]);
+    expect(loaderRuns).toBe(0);
+  });
+
   it("a sort change holds a loader whose revalidate() compares the route param", async () => {
     const router = makeRouter({ predicate: true });
     const cacheStore = new MemorySegmentCacheStore();

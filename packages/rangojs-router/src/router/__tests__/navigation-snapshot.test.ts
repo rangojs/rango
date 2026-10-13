@@ -246,6 +246,20 @@ describe("resolveNavigation", () => {
       expect(result!.effectiveFromMatch).toBe(target);
     });
 
+    it("names the page left with its query as the request URL has it", async () => {
+      const { request, url } = makeRequest(
+        withShown("http://localhost/item/1?q=a%2Cb", "/item/1?q=a,b"),
+        { "X-RSC-Router-Client-Path": "http://localhost/public-1?q=a,b" },
+      );
+
+      const result = await resolveNavigation(request, url, "item", {
+        findMatch,
+      });
+
+      expect(result!.prevUrl.search).toBe("?q=a%2Cb");
+      expect(result!.prevVisitorUrl!.search).toBe("?q=a%2Cb");
+    });
+
     it("is ignored beside an intercept source", async () => {
       const { request, url } = makeRequest(
         withShown("http://localhost/item/1", "/item/1"),
