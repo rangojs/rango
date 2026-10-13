@@ -75,6 +75,7 @@ import { prefetchFalsePatterns } from "./urls/prefetch-false.js";
 import { redirectGuardPatterns } from "./urls/redirect-guard.js";
 import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
+import { reverseSegmentScopePatterns } from "./urls/reverse-segment-scope.js";
 import { clientReversePatterns } from "./urls/client-reverse.js";
 import { catchAllPatterns } from "./urls/catch-all.js";
 import { useCachePatterns } from "./urls/use-cache.js";
@@ -1370,6 +1371,12 @@ export const urlpatterns = urls(
       // Reverse auto-fill test patterns (parameterized include prefix)
       include("/reverse-autofill/:tenantId", reverseAutofillPatterns, {
         name: "reverseAutofill",
+      }),
+
+      // A segment's ctx.reverse(".name") resolves in the module defining it
+      // (account layout above a nested project module).
+      include("/reverse-scope", reverseSegmentScopePatterns, {
+        name: "reverseScope",
       }),
 
       // "use cache" directive test patterns (file-level, function-level, named profiles)

@@ -266,9 +266,10 @@ export const ProductLoader = createLoader(async (ctx) => {
   // Variables set by middleware (from Rango.Vars augmentation)
   const user = ctx.get("user");
 
-  // Type-checked URLs for payloads. `.name` resolves within the current
-  // include() scope; a bare `name` resolves globally. See /route and
-  // /typesafety for scope rules and route-name autocomplete.
+  // Type-checked URLs for payloads. `.name` resolves within the include()
+  // scope of the module that declares this loader (a layout's loader in a
+  // parent module links within that module); a bare `name` resolves
+  // globally. See /links and /typesafety for scope rules and autocomplete.
   const detailUrl = ctx.reverse(".detail", { slug });
 
   return {

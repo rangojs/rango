@@ -76,9 +76,10 @@ all duplicate what the mount already knows.
   param-dependent nav links in a client component with `useReverse` (it
   re-renders from `useParams()`), or give the layout a `revalidate()` that
   compares the param.
-- Until dc-t52 is fixed, a parent module's layout resolves `.name` against
-  the matched child module: a layout of a module that includes another uses
-  global names.
+- A layout, a parallel slot and the loaders declared on them resolve `.name`
+  in the module that declares them, whichever route below them matched: a
+  parent module's layout links within its own module on every page (see
+  "Local names" below).
 
 ```typescript
 import { urls } from "@rangojs/router";
@@ -94,7 +95,7 @@ export const shopPatterns = urls(({ path, layout }) => [
 
 ### Resolution rules
 
-- **`.name`** — local route, resolved within the current `include()` scope
+- **`.name`** — local route, resolved within the `include()` scope of the module that defines the calling route, layout, parallel slot or loader
 - **`name`** — global route, from the named-routes definition
 
 The include site decides which global names exist:
@@ -132,6 +133,24 @@ Prefix a name with `.` to resolve it within the current `include()` scope. The r
   ctx.reverse(".index"); // "/magazine"
   ctx.reverse(".blog.index"); // THROWS — no magazine.blog.index
 };
+```
+
+The scope is the module that **defines** the code calling `ctx.reverse`. A route handler resolves from its own module. A `layout()`, a `parallel()` slot and the loaders declared on them resolve from the module where they are declared, whichever route below them matched. So a parent module's layout gives the same link on every page:
+
+```typescript
+// mounted at include("/:accountId", accountPatterns, { name: "account" })
+export const accountPatterns = urls(({ path, layout, include }) => [
+  layout(
+    (ctx) => <AccountNav settings={ctx.reverse(".settings")} />, // "/acme/settings" on every page below
+    () => [
+      path("/settings", AccountSettings, { name: "settings" }),
+      // projectPatterns also has a "settings" route
+      include("/:projectId", projectPatterns, { name: "project" }),
+    ],
+  ),
+]);
+// On /acme/web/issues, the account layout still links to "/acme/settings".
+// The project's issues handler's ctx.reverse(".settings") gives "/acme/web/settings".
 ```
 
 ### Auto-fill of mount params

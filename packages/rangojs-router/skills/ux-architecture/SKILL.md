@@ -445,9 +445,9 @@ ctx.reverse(".product", { slug: "b", locale: "de" }); // switch language
   old params. Put param-dependent nav links in a client component with
   `useReverse(routes)` (it re-renders from `useParams()`), or give the layout
   a `revalidate()` that compares the param.
-- A parent module's layout resolves `.name` against the matched child module
-  (dc-t52): until fixed, a layout of a module that includes another uses
-  global names.
+- A layout resolves `.name` in the module that declares it, on every page
+  below it: a parent module's layout links within its own module (`/links`,
+  "Local names").
 
 Server-built links, from the RSC as a prop or from a loader as data, with
 every param filled; the loader carries the ones that follow `:projectId`:

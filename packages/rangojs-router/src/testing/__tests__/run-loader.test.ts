@@ -122,6 +122,31 @@ describe("runLoader", () => {
     ]);
   });
 
+  it("declaredIn: a layout's loader resolves .name in its own module", async () => {
+    // An account layout's loader, on a page of the nested project module.
+    const routeMap = {
+      "account.settings": "/:accountId/settings",
+      "account.project.issues": "/:accountId/:projectId/issues",
+      "account.project.settings": "/:accountId/:projectId/settings",
+    };
+    const options = {
+      routeMap,
+      routeName: "account.project.issues",
+      params: { accountId: "acme", projectId: "web" },
+    };
+    const settings = async (ctx: { reverse: (name: string) => string }) => {
+      await Promise.resolve();
+      return ctx.reverse(".settings");
+    };
+    expect(
+      await runLoader<string>(settings, { ...options, declaredIn: "account" }),
+    ).toBe("/acme/settings");
+    // Without it, the loader resolves from the matched route, as a route's does.
+    expect(await runLoader<string>(settings, options)).toBe(
+      "/acme/web/settings",
+    );
+  });
+
   it("delegates ctx.use to opts.use resolver when provided", async () => {
     const Dep = { __brand: "loader", $$id: "x#Dep" } as LoaderDefinition<{
       count: number;

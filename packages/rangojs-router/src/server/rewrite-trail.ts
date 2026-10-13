@@ -181,14 +181,24 @@ function copyFor(holder: object, href: string | undefined): URL | undefined {
 }
 
 /**
+ * The ctx defineRewrittenFrom ran on: `holder`, or the one it derives from
+ * (a layout's ctx is an Object.create child of the route's, withReverseScope).
+ */
+function definedOn(holder: object): object {
+  while (!SOURCES.has(holder)) holder = Object.getPrototypeOf(holder);
+  return holder;
+}
+
+/**
  * Non-enumerable, like `ctx.theme`: serializing a ctx (React's dev debug
  * info) must not count as a read.
  */
 const SCOPED_DESCRIPTOR: PropertyDescriptor = {
   get(this: object): URL | undefined {
+    const owner = definedOn(this);
     const href = readRewrittenFrom(
-      SOURCES.get(this),
-      READERS.get(this) ?? "render",
+      SOURCES.get(owner),
+      READERS.get(owner) ?? "render",
     );
     return copyFor(this, href);
   },

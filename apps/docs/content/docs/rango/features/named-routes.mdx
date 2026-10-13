@@ -17,7 +17,7 @@ throw redirect(ctx.reverse("product", { slug: "espresso-cup" }));
 
 ## Server: ctx.reverse()
 
-The default way to generate URLs on the server. It's available on handler, layout, middleware, and loader contexts, and on `getRequestContext()` inside server actions. There is no standalone `reverse()` export. Local names are dot-prefixed and resolve within the current `include()` scope; global names resolve against the full route map. Results already include the router's `basename`:
+The default way to generate URLs on the server. It's available on handler, layout, middleware, and loader contexts, and on `getRequestContext()` inside server actions. There is no standalone `reverse()` export. Local names are dot-prefixed and resolve within the `include()` scope of the module that declares the calling route, layout, parallel slot or loader, so a parent module's layout links within its own module on every page below it; global names resolve against the full route map. Results already include the router's `basename`:
 
 ```tsx
 // inside shopPatterns, mounted at include("/shop", shopPatterns, { name: "shop" })

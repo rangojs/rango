@@ -280,6 +280,7 @@ import {
   InlinePricingPage,
 } from "./pages/inline.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
+import { reverseSegmentScopePatterns } from "./pages/reverse-segment-scope.js";
 import { guidesPatterns } from "./pages/guides.js";
 import {
   GuidePlainDef,
@@ -2951,6 +2952,10 @@ export const urlpatterns = urls(
 
         // Client useReverse() coverage on the Cloudflare preset
         include("/cr/:tenantId", clientReversePatterns, { name: "cr" }),
+
+        // A segment's ctx.reverse(".name") resolves in the module defining it
+        // (account layout above a nested project module).
+        include("/rss", reverseSegmentScopePatterns, { name: "rss" }),
 
         // Pre-rendered guides with passthrough (known slugs pre-rendered, unknown slugs live)
         include("/guides", guidesPatterns, { name: "guides" }),

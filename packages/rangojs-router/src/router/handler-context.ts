@@ -20,6 +20,9 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  scopeReverse,
+  type ReverseScope,
+  type ScopableReverse,
 } from "../server/context.js";
 import {
   guardRequestHeaders,
@@ -117,22 +120,8 @@ function resolveRouteName(
         ? currentRoutePrefix.substring(0, lastDot)
         : currentRoutePrefix;
 
-    // Try prefixed name at current level
-    const prefixedName = `${prefix}.${lookupName}`;
-    if (routeMap[prefixedName] !== undefined) {
-      return routeMap[prefixedName];
-    }
-
-    // Walk up parent prefixes for nested includes
-    let currentPrefix = prefix;
-    while (currentPrefix.includes(".")) {
-      const parentDot = currentPrefix.lastIndexOf(".");
-      currentPrefix = currentPrefix.substring(0, parentDot);
-      const parentPrefixedName = `${currentPrefix}.${lookupName}`;
-      if (routeMap[parentPrefixedName] !== undefined) {
-        return routeMap[parentPrefixedName];
-      }
-    }
+    const scoped = resolveInPrefix(lookupName, routeMap, prefix);
+    if (scoped !== undefined) return scoped;
 
     // Fallback: try bare name at root scope only.
     // Routes inside { name: "" } mounts are at root scope — their dot-local
@@ -159,6 +148,43 @@ function resolveRouteName(
   return routeMap[name];
 }
 
+/**
+ * `${prefix}.${lookupName}`, then the same name under each enclosing include
+ * prefix (nested includes reach their parents' routes).
+ */
+function resolveInPrefix(
+  lookupName: string,
+  routeMap: Record<string, string>,
+  prefix: string,
+): string | undefined {
+  let currentPrefix = prefix;
+  for (;;) {
+    const pattern = routeMap[`${currentPrefix}.${lookupName}`];
+    if (pattern !== undefined) return pattern;
+    const parentDot = currentPrefix.lastIndexOf(".");
+    if (parentDot === -1) return undefined;
+    currentPrefix = currentPrefix.substring(0, parentDot);
+  }
+}
+
+/**
+ * Dot-local name resolved from a segment's own include scope (ReverseScope,
+ * server/context.ts) instead of the matched route's name: a layout, parallel
+ * slot or their loader in a parent module links within that module on every
+ * route below it.
+ */
+function resolveScopedName(
+  lookupName: string,
+  routeMap: Record<string, string>,
+  scope: ReverseScope,
+): string | undefined {
+  if (scope.prefix) {
+    const scoped = resolveInPrefix(lookupName, routeMap, scope.prefix);
+    if (scoped !== undefined) return scoped;
+  }
+  return scope.rootScoped ? routeMap[lookupName] : undefined;
+}
+
 function createPrerenderPassthroughFn(
   build: boolean,
   isPassthroughRoute: boolean,
@@ -181,6 +207,26 @@ function createPrerenderPassthroughFn(
 }
 
 /**
+ * The ctx a layout's or parallel slot's handler gets: a prototype child of
+ * the request's one handler ctx with its own `reverse` in the segment's
+ * ReverseScope, so `.name` resolves in the module that declared the segment.
+ * The scope rides the object, not the call frame: it holds after an `await`
+ * and in a component the ctx is handed to. Every other field reads through
+ * live (`_currentSegmentId` as resolution moves it, ctx.set values).
+ * `_reverseScope` keys a "use cache" call that takes this ctx (cache-runtime.ts).
+ */
+export function withReverseScope<C>(
+  ctx: C,
+  scope: ReverseScope | undefined,
+): C {
+  if (scope === undefined) return ctx;
+  const scoped = Object.create(ctx as object);
+  scoped.reverse = scopeReverse((ctx as any).reverse, scope);
+  scoped._reverseScope = scope;
+  return scoped;
+}
+
+/**
  * Create a reverse function for URL generation from route names.
  * Used by both HandlerContext and MiddlewareContext.
  *
@@ -196,24 +242,23 @@ export function createReverseFunction(
   currentRoutePrefix?: string,
   currentParams?: Record<string, string>,
   rootScoped?: boolean,
-): (
-  name: string,
-  hrefParams?: Record<string, string>,
-  search?: Record<string, unknown>,
-) => string {
-  return (name, hrefParams, search) => {
-    // Resolve route name with namespace support
-    const pattern = resolveRouteName(
-      name,
-      routeMap,
-      currentRoutePrefix,
-      rootScoped,
-    );
+): ScopableReverse {
+  return (name, hrefParams, search, segmentScope) => {
+    // A dot-local name from a segment's handler or loader resolves in the
+    // segment's own include scope (withReverseScope); everything else from
+    // the route's name.
+    const scope = name.startsWith(".") ? segmentScope : undefined;
+    const pattern = scope
+      ? resolveScopedName(name.slice(1), routeMap, scope)
+      : resolveRouteName(name, routeMap, currentRoutePrefix, rootScoped);
 
     if (pattern === undefined) {
-      throw new Error(
-        `Unknown route: "${name}"${currentRoutePrefix ? ` (current route: ${currentRoutePrefix})` : ""}`,
-      );
+      const where = scope
+        ? ` (segment scope: ${scope.prefix ?? "root"})`
+        : currentRoutePrefix
+          ? ` (current route: ${currentRoutePrefix})`
+          : "";
+      throw new Error(`Unknown route: "${name}"${where}`);
     }
 
     // Merge current request params as defaults, explicit params override.

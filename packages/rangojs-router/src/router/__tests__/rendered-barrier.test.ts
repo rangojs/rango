@@ -14,6 +14,8 @@ vi.mock("../../server/context", async (importActual) => {
   return {
     track: () => () => {},
     isInsideLoaderScope: () => mockInsideLoaderScope,
+    getLoaderReverseScope: () => undefined,
+    scopeReverse: actual.scopeReverse,
     runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
     getCurrentLoaderBodyId: () => undefined,
     getHandlePushOwner: () => undefined,
@@ -30,6 +32,8 @@ vi.mock("../../server/context.js", async (importActual) => {
   return {
     track: () => () => {},
     isInsideLoaderScope: () => mockInsideLoaderScope,
+    getLoaderReverseScope: () => undefined,
+    scopeReverse: actual.scopeReverse,
     runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
     getCurrentLoaderBodyId: () => undefined,
     getHandlePushOwner: () => undefined,

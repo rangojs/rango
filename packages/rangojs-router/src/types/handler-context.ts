@@ -456,6 +456,11 @@ export type InternalHandlerContext<
   /** Route name for cache key scoping (prevents cross-route collisions). */
   _routeName?: string;
   /**
+   * The segment's ReverseScope on a layout's / parallel's ctx and its
+   * loaders' (withReverseScope): keys a "use cache" call taking the ctx.
+   */
+  _reverseScope?: import("../server/context.js").ReverseScope;
+  /**
    * @internal The on-demand overlay holds a "removed" marker for this request
    * (tryPrerenderLookup, cache-lookup.ts); gateOnDemandProducer reads it. On
    * this context, not the request's: withCacheLookup documents that the
