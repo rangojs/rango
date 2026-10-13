@@ -476,7 +476,7 @@ import { createLoader, notFound, redirect } from "@rangojs/router";
 
 export const ProductLoader = createLoader(async (ctx) => {
   const moved = LEGACY_SLUGS[ctx.params.slug];
-  if (moved) throw redirect(`/shop/product/${moved}`);
+  if (moved) throw redirect(ctx.reverse("shop.product", { slug: moved }));
   if (!(await exists(ctx.params.slug))) notFound(`No "${ctx.params.slug}"`);
   return getProduct(ctx.params.slug);
 });
@@ -655,9 +655,10 @@ a hard load of the target URL renders the full route.
   in the HTML once" as a guarantee — only the flagged loader is guaranteed.
 - **Hook semantics shift inside a group.** `usePathname` is ABSOLUTE (mount
   included) — never compare it to your own `path()` patterns; build local
-  links with `useHref()` (`groupHref("/items/1")` composes the mount).
-  `useRouter().push("cart")` (RELATIVE,
-  no leading slash) resolves against the mount; `push("/x")` stays
+  links with `useReverse(routes)` from the group's `.gen.ts`: it composes the
+  mount and fills its params, while `useHref()` and a relative
+  `useRouter().push("cart")` join the mount pattern as-is and emit a literal
+  `/:accountId/...` under a parameterized mount. `push("/x")` stays
   app-absolute by design (never auto-prefixed). `useSearchParams` carries REAL
   values during SSR (live request seeds the SSR store; on ppr routes the
   capture/resume renders seed the shell key's own sorted search — search is

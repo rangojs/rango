@@ -603,6 +603,12 @@ Redirects from actions render the **target** route tree's matched segments
 source page's — the target is what the user sees next. See `/hooks
 useLocationState` for reading flash state on the target page.
 
+Build the target by name rather than a literal path:
+`throw redirect(getRequestContext().reverse("account.settings"))`. It fills
+mount params (`:accountId`, `:locale`) from the page URL the action was called
+on, so the module that owns the action does not need to know its mount
+(`/links`).
+
 ### Same-origin by default (open-redirect protection)
 
 `redirect()` is same-origin by default on every path — JS, no-JS PE, and

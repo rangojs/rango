@@ -964,7 +964,7 @@ import { createLoader, notFound, redirect } from "@rangojs/router";
 
 export const ProductLoader = createLoader(async (ctx) => {
   const moved = LEGACY_SLUGS[ctx.params.slug];
-  if (moved) throw redirect(`/shop/product/${moved}`);
+  if (moved) throw redirect(ctx.reverse("shop.product", { slug: moved }));
 
   // Existence check BEFORE the expensive fetch: a near-instant rejection
   // usually wins the race to first flush (see the semantics below).

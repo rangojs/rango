@@ -31,7 +31,50 @@ router `basename`, so results are basename-prefixed.
 Middleware and response routes (`path.json()`, `path.text()`, …) get a
 global-only `ctx.reverse` (`GlobalReverseFunction`): no `include()` scope and no
 param auto-fill, so pass the fully qualified name and every param. A dot-local
-`.name` is a type error there. See `/middleware` and `/response-routes`.
+`.name` is a type error there. With no params object it returns the raw
+pattern (`/:accountId/settings`) instead of throwing (dc-t56). Route
+middleware can use `getRequestContext().reverse` instead: it is rebound after
+the match, takes `.name` and global names, and fills mount params. In global
+middleware (`router.use`) it fills only after `next()`. See `/middleware` and
+`/response-routes`.
+
+A server action's `getRequestContext().reverse("global.name")` fills mount
+params from the page URL the action was called on, so
+`throw redirect(getRequestContext().reverse("account.settings"))` needs no
+hardcoded path. A `.name` there resolves in that page's module; an action
+shared by pages in different modules should use global names.
+
+### The module never knows its mount
+
+Inside a module, link by local name: `ctx.reverse(".x")` on the server,
+`useReverse(routes)` with the module's own `.gen.ts` on the client. Both
+resolve against wherever the module is mounted and fill the mount's params
+from the current URL, so the same module can be mounted twice:
+
+```typescript
+include("/:locale", shopPatterns, { name: "shop" });
+include("/outlet", shopPatterns, { name: "outlet" });
+
+// in shopPatterns, on /en/... and on /outlet/...
+ctx.reverse(".product", { slug: "b" }); // "/en/product/b" and "/outlet/product/b"
+ctx.reverse(".product", { slug: "b", locale: "de" }); // "/de/product/b" (switch)
+```
+
+`/:locale?` and `/:locale` both auto-fill. `{ locale: undefined }` drops an
+optional locale (`/product/b`) and throws `Missing param "locale"` for a
+required one. Don't rebuild this by hand: `useParams().accountId` in a template
+string, `ctx.params` threaded through props, or a "current account" context
+all duplicate what the mount already knows.
+
+- A server layout stays held across navigations, its own mount param
+  (`:projectId`) changing included: partial rendering by design (`/layout`,
+  "Layout Revalidation"). Links it rendered keep the old params. Render
+  param-dependent nav links in a client component with `useReverse` (it
+  re-renders from `useParams()`), or give the layout a `revalidate()` that
+  compares the param.
+- Until dc-t52 is fixed, a parent module's layout resolves `.name` against
+  the matched child module: a layout of a module that includes another uses
+  global names.
 
 ```typescript
 import { urls } from "@rangojs/router";
@@ -109,7 +152,7 @@ export const tenantPatterns = urls(({ path }) => [
 ]);
 ```
 
-Auto-fill uses `{ ...ctx.params, ...hrefParams }` — current request params are defaults, explicit params win. Params not needed by the target route are silently ignored. Because every current param is a default, drop an optional one explicitly with `undefined` or `""` — under `include("/:locale?", ...)` on `/en/...`, a bare `ctx.reverse("menu.index")` keeps `/en`, while `ctx.reverse("menu.index", { locale: undefined })` returns `/` (see `/i18n`). A missing required param throws `Missing param "slug" for route "…"`; an unknown name throws `Unknown route: "…"`.
+Auto-fill uses `{ ...ctx.params, ...hrefParams }` — current request params are defaults, explicit params win. Params not needed by the target route are silently ignored. Because every current param is a default, drop an optional one explicitly with `undefined` or `""` — under `include("/:locale?", ...)` on `/en/...`, a bare `ctx.reverse("menu.index")` keeps `/en`, while `ctx.reverse("menu.index", { locale: undefined })` returns `/` (see `/i18n`). A missing required param throws `Missing param "slug" for route "…"`, except in middleware and response-route `ctx.reverse`, which returns the raw `/:slug/...` pattern when no params object is passed (dc-t56); an unknown name throws `Unknown route: "…"`.
 
 ### Global names (unprefixed)
 
@@ -213,6 +256,48 @@ function Nav() {
 
 `useLoader()` requires the loader to be attached to an active route. If you need on-demand fetching instead, use `useFetchLoader()`.
 
+A loader on a layout is held on navigation, like the layout. When its links follow a param of the layout's own mount (`:projectId`), give it a `revalidate()` that compares that param; links that never change can come from the layout's RSC as props:
+
+```tsx
+// urls/project.tsx (server): build the links where the names resolve
+export const ProjectNavLoader = createLoader((ctx) => ({
+  issues: ctx.reverse(".issues"), // /acme/web/issues
+  settings: ctx.reverse(".settings"), // /acme/web/settings
+  account: ctx.reverse("account.settings"), // /acme/settings, another module
+}));
+
+export const projectUrls = urls(({ layout, path, loader, revalidate }) => [
+  layout(
+    // From the RSC: fine for links that do not follow :projectId.
+    (ctx) => <ProjectShell accountHref={ctx.reverse("account.settings")} />,
+    () => [
+      // From a loader: held like the layout, re-run when the project changes.
+      loader(ProjectNavLoader, () => [
+        revalidate(({ currentParams, nextParams }) =>
+          currentParams.projectId !== nextParams.projectId ? true : undefined,
+        ),
+      ]),
+      path("/issues", Issues, { name: "issues" }),
+      path("/settings", Settings, { name: "settings" }),
+    ],
+  ),
+]);
+```
+
+```tsx
+"use client";
+export function ProjectNav() {
+  const { data: links } = useLoader(ProjectNavLoader);
+  return (
+    <nav>
+      <Link to={links.issues}>Issues</Link>
+      <Link to={links.settings}>Settings</Link>
+      <Link to={links.account}>Account</Link>
+    </nav>
+  );
+}
+```
+
 3. Return from a server action:
 
 ```tsx
@@ -286,9 +371,9 @@ function ShopNav() {
 }
 ```
 
-Use `useHref()` for local navigation within a mounted module. Use the bare `href()` function for absolute paths outside the current mount.
+Use `useHref()` for local navigation within a statically mounted module (`include("/shop", ...)`). Use the bare `href()` function for absolute paths outside the current mount.
 
-`useHref()` concatenates the mount **pattern** as-is and does not substitute params, and its argument is not checked against your routes. Under a parameterized mount (`include("/tenant/:tenantId", ...)`) it would produce `/tenant/:tenantId/cart` — use `useReverse(routes)` there, which substitutes mount params from `useParams()`.
+`useHref()` concatenates the mount **pattern** as-is and does not substitute params, and its argument is not checked against your routes. Under a parameterized mount (`include("/tenant/:tenantId", ...)`, `/:locale`, `/:locale?`) it produces `/tenant/:tenantId/cart` with no error (dc-t56), and so does a relative `useRouter().push("cart")` — use `useReverse(routes)` there, which substitutes mount params from `useParams()`.
 
 ## Client: useMount()
 
@@ -330,6 +415,27 @@ export function BlogNav() {
   );
 }
 ```
+
+### One hook per module, in a userland file
+
+Wrap the map once instead of importing it in every component:
+
+```ts
+// src/lib/links.ts
+"use client";
+import { useReverse } from "@rangojs/router/client";
+import { routes as blogRoutes } from "../urls/blog.gen.js";
+import { routes as accountRoutes } from "../urls/account.gen.js";
+
+export const useBlogReverse = () => useReverse(blogRoutes);
+export const useAccountReverse = () => useReverse(accountRoutes);
+```
+
+Components call `useAccountReverse()`; a renamed or moved module changes one
+file. The wrapper resolves like `useReverse`: against the nearest `include()`
+mount, so call a module's hook from components under that module's own mount.
+Inside a nested module it builds a wrong URL with no error (dc-t57); pass
+cross-module links from the server there.
 
 ### How it resolves
 
@@ -413,23 +519,28 @@ Both happen synchronously during `reverse()` — wrap calls in try/catch (or an 
 
 ### The leading dot is optional
 
-`reverse("post")` and `reverse(".post")` resolve **identically** — the leading dot is cosmetic. The map you import IS the scope, so there is no separate global namespace to disambiguate and the dot carries no meaning; it exists only as a readability convention and for parity with `ctx.reverse(".name")` on the server. To link into a different module, import that module's `routes`:
+`reverse("post")` and `reverse(".post")` resolve **identically** — the leading dot is cosmetic. The map you import IS the scope, so there is no separate global namespace to disambiguate and the dot carries no meaning; it exists only as a readability convention and for parity with `ctx.reverse(".name")` on the server. A module's `routes` map is right only inside that module's own mount: it resolves against the current mount, so another module's map gives a wrong URL with no error, and `useReverse(NamedRoutes)` is correct only at the root mount (under a mount it double-prefixes). There is no client API for links that cross modules under a nested mount (dc-t57). Build them on the server, where global names resolve fully, and pass them down:
 
 ```tsx
-import { routes as blogRoutes } from "../urls/blog.gen.js";
-import { routes as shopRoutes } from "../urls/shop.gen.js";
+// server layout or handler
+const links = {
+  blog: ctx.reverse("blog.index"),
+  cart: ctx.reverse("shop.cart"),
+};
+return <CrossNav links={links} />;
 
-function CrossNav() {
-  const blog = useReverse(blogRoutes);
-  const shop = useReverse(shopRoutes);
+// client component
+function CrossNav({ links }: { links: { blog: string; cart: string } }) {
   return (
     <nav>
-      <Link to={blog("index")}>Blog</Link>
-      <Link to={shop("cart")}>Cart</Link>
+      <Link to={links.blog}>Blog</Link>
+      <Link to={links.cart}>Cart</Link>
     </nav>
   );
 }
 ```
+
+Loader data is the better carrier for chrome that follows a param: a layout handler is kept across param changes, while a layout loader re-runs when its `revalidate()` compares that param (a layout loader is held on navigation by default).
 
 ### Codegen
 
@@ -512,10 +623,10 @@ a link or a whole section from prefetching at all, use the `prefetch` prop or
 | Client component | `useReverse(routes)`                               | Local names from an imported `routes` map | Typed in-module URL generation without round-tripping the server |
 | Client component | (URL passed as prop / loader data / action return) | Named routes                              | Cross-module URLs or one-off names you don't want to import      |
 | Client component | `href("/path")`                                    | Absolute paths (static strings)           | Static navigation where no named-route lookup is needed          |
-| Client component | `useHref()`                                        | Mount-prefixed paths                      | Local navigation inside `include()`                              |
+| Client component | `useHref()`                                        | Mount-prefixed paths                      | Static mounts only; never under `:param` mounts                  |
 | Client component | `useMount()`                                       | Raw mount path                            | Custom mount-aware logic                                         |
 
-> `ctx.reverse()` is server-only. On the client, either generate URLs on the server and pass them in, or import the `routes` map and use `useReverse(routes)` for in-module names.
+> `ctx.reverse()` is server-only. On the client, either generate URLs on the server and pass them in, or import the `routes` map and use `useReverse(routes)` for in-module names, inside that module's own mount.
 
 ## Complete example: mounted module
 
