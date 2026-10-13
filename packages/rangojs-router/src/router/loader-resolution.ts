@@ -64,12 +64,15 @@ import {
 } from "./segment-resolution/prefetch-deferral.js";
 import {
   assertNonCacheableReadAllowed,
+  getLoaderReverseScope,
   isInsideLoaderScope,
+  scopeReverse,
   runInsideLoaderBodyScope,
   runInsideLoaderRun,
   isInsidePushCallbackScope,
   runInsidePushCallbackScope,
   type LoaderRunIdentity,
+  type ScopableReverse,
 } from "../server/context.js";
 import { debugLog } from "./logging.js";
 
@@ -543,6 +546,11 @@ function createLoaderExecutor<TEnv>(
     // (runInsideLoaderScope in fresh.ts). Handler-invoked loaders are NOT
     // inside loader scope. This determines whether rendered() is allowed.
     const isDslLoader = isInsideLoaderScope();
+    // The body resolves ctx.reverse(".name") in its DSL declaration's module
+    // (a layout's / parallel's / cache()'s loader). A route's loader, and one
+    // a handler starts with ctx.use(), resolve from the route. One run per
+    // request: the first declaration to start it wins.
+    const reverseScope = getLoaderReverseScope();
 
     // Owning segment for ctx.handle() attribution, captured SYNCHRONOUSLY at
     // kickoff: segment resolution sets _currentSegmentId while resolving the
@@ -568,6 +576,7 @@ function createLoaderExecutor<TEnv>(
         InternalHandlerContext<any, TEnv>,
         | "_routeName"
         | "_responseType"
+        | "_reverseScope"
         | "_currentSegmentId"
         | "_claimLoaderPushes"
         | "_runLoaderIsolated"
@@ -648,9 +657,13 @@ function createLoaderExecutor<TEnv>(
       }) as LoaderContext["use"],
       method: "GET",
       body: undefined,
-      reverse: ctx.reverse as LoaderContext["reverse"],
+      reverse: scopeReverse(
+        ctx.reverse as ScopableReverse,
+        reverseScope,
+      ) as LoaderContext["reverse"],
       _routeName: internal._routeName,
       _responseType: internal._responseType,
+      _reverseScope: reverseScope,
       _currentSegmentId: owningSegmentId,
       _claimLoaderPushes: internal._claimLoaderPushes,
       _runLoaderIsolated: internal._runLoaderIsolated,

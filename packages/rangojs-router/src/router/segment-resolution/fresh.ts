@@ -38,6 +38,7 @@ import { _getRequestContext } from "../../server/request-context.js";
 import { getRouterContext } from "../router-context.js";
 import { trackStreamedHandler } from "./streamed-handler-boundary.js";
 import { observeSegmentHandler } from "../instrument.js";
+import { withReverseScope } from "../handler-context.js";
 import {
   track,
   RangoContext,
@@ -177,6 +178,7 @@ export async function resolveLoaders<TEnv>(
                 bakeLane || loaderEntry.bake === true ? segmentId : null,
               ),
             loader.$$id,
+            loaderEntry.reverseScope,
           ),
           entry,
           segmentId,
@@ -227,6 +229,7 @@ export async function resolveLoaders<TEnv>(
             bakeLane || loaderEntry.bake === true ? segmentId : null,
           ),
         loader.$$id,
+        loaderEntry.reverseScope,
       ),
       entry,
       segmentId,
@@ -646,6 +649,7 @@ export async function resolveParallelEntry<TEnv>(
   >;
 
   const slotsToResolve = slotNames ?? (Object.keys(slots) as `@${string}`[]);
+  const slotContext = withReverseScope(context, parallelEntry.reverseScope);
 
   for (const slot of slotsToResolve) {
     // Try static lookup first — in production, handler bodies are evicted
@@ -683,7 +687,7 @@ export async function resolveParallelEntry<TEnv>(
                 `${parentShortCode}.${slot}`,
                 `${parallelEntry.id}.${slot}`,
                 handler,
-                context,
+                slotContext,
               )
             : handler;
         if (result instanceof Promise) {
@@ -708,7 +712,7 @@ export async function resolveParallelEntry<TEnv>(
                 `${parentShortCode}.${slot}`,
                 `${parallelEntry.id}.${slot}`,
                 handler,
-                context,
+                slotContext,
               )
             : handler;
         doneParallelHandler();

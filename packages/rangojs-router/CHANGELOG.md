@@ -410,6 +410,52 @@ that skips mutations (`if (ctx.request.method !== "GET") return next()`)
 still re-renders the rewriting route after the action, and a page a global
 rewrite reached still cannot call an action.
 
+### Fixed: a layout's `ctx.reverse(".name")` links within its own module on every page below it
+
+**Before.** One handler ctx serves the whole request, built from the matched
+route's name. A `layout()`, a `parallel()` slot or one of their loaders in a
+parent module resolved a local name from the matched route's module first.
+With an account module holding a project module, both naming a route
+`settings`:
+
+```tsx
+const accountPatterns = urls(({ path, layout, include }) => [
+  layout(
+    (ctx) => <AccountNav settings={ctx.reverse(".settings")} />,
+    () => [
+      path("/settings", AccountSettings, { name: "settings" }),
+      include("/:projectId", projectPatterns, { name: "project" }),
+    ],
+  ),
+]);
+// include("/:accountId", accountPatterns, { name: "account" })
+```
+
+the account layout linked to `/acme/settings` on `/acme/settings`, and to the
+project's `/acme/web/settings` on `/acme/web/issues`. A root layout's
+`ctx.reverse(".home")` threw `Unknown route` on every page inside a named
+`include()`.
+
+**Now.** A layout, a parallel slot and the loaders declared on them resolve
+`.name` in the module where they are declared, on every route below them:
+the account layout links to `/acme/settings` on both pages. That holds for
+the ctx the layout hands to a component (`<AccountNav ctx={ctx} />`) too. A
+route handler and its loaders resolve from the route, as before, also when a
+layout's handler starts the route's loader first with `ctx.use()`. Global
+names, mount-param autofill and explicit params are unchanged, and so is
+`getRequestContext().reverse`, which resolves from the route. To test such a
+loader alone, pass
+`runLoader(Loader, { routeMap, routeName, declaredIn: "account" })` from
+`@rangojs/router/testing`.
+
+A layout's and a slot's `ctx` is now its own object that reads every field
+through the route's, so `{ ...ctx }` there no longer copies those fields:
+read the ones you need instead. A `"use cache"` function called with a layout's,
+slot's or their loader's `ctx` also keys by that module. No extra cold
+cache: a router upgrade already starts a new cache version (a dependency
+version is part of it). With a store that pins `version`, those entries are
+written once more.
+
 ### Fixed: a modal keeps the data of a loader that skips `revalidate()` when a link in it opens another modal
 
 **Before.** A link in an open modal to another intercepted route whose modal

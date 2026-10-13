@@ -39,6 +39,7 @@ import {
   type RequestContext,
 } from "../server/request-context.js";
 import { createReverseFunction } from "../router/handler-context.js";
+import { scopeReverse, type ReverseScope } from "../server/context.js";
 import { NOCACHE_SYMBOL } from "../cache/taint.js";
 import { defineRewrittenFrom } from "../server/rewrite-trail.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
@@ -134,6 +135,13 @@ export interface RunLoaderOptions<TEnv = any> {
   routeMap?: Record<string, string>;
   /** Matched route name for scoped `.name` reverse resolution. */
   routeName?: string;
+  /**
+   * Include name prefix of the module whose `layout()` / `parallel()` /
+   * `cache()` declares the loader (`"account"`, or `""` for the root module).
+   * `ctx.reverse(".name")` then resolves in that module, as such a loader's
+   * does in production, instead of from `routeName`.
+   */
+  declaredIn?: string;
   /** HTTP method surfaced as `ctx.method`. Defaults to "GET". */
   method?: string;
   /** Request body surfaced as `ctx.body`. */
@@ -279,9 +287,21 @@ function runWithLoaderContext<R>(
   const loaderSeeds = new Map<unknown, unknown>(opts.loaders ?? []);
   let renderedResolved = false;
 
+  // A layout's / parallel's loader: `.name` resolves in its declaring module.
+  const reverseScope: ReverseScope | undefined =
+    opts.declaredIn === undefined
+      ? undefined
+      : { prefix: opts.declaredIn || undefined, rootScoped: !opts.declaredIn };
   return runWithRequestContext(reqCtx, () => {
     const reverse = opts.routeMap
-      ? createReverseFunction(opts.routeMap, opts.routeName, opts.params ?? {})
+      ? scopeReverse(
+          createReverseFunction(
+            opts.routeMap,
+            opts.routeName,
+            opts.params ?? {},
+          ),
+          reverseScope,
+        )
       : ((() => {
           throw new Error(
             "ctx.reverse() requires the `routeMap` option in runLoader(). " +
@@ -289,7 +309,10 @@ function runWithLoaderContext<R>(
           );
         }) as TestLoaderContext["reverse"]);
 
-    const loaderCtx: TestLoaderContext & { _routeName?: string } = {
+    const loaderCtx: TestLoaderContext & {
+      _routeName?: string;
+      _reverseScope?: ReverseScope;
+    } = {
       params: opts.params ?? {},
       routeParams: (opts.params ?? {}) as Record<string, string>,
       request: reqCtx.request,
@@ -346,6 +369,7 @@ function runWithLoaderContext<R>(
       formData: opts.formData,
       reverse: reverse as TestLoaderContext["reverse"],
       _routeName: reqCtx._routeName,
+      _reverseScope: reverseScope,
       rendered:
         opts.rendered !== undefined && opts.rendered !== false
           ? async () => {

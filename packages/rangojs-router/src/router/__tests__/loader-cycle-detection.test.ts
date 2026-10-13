@@ -4,6 +4,8 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("../../server/context", () => ({
   track: () => () => {},
   isInsideLoaderScope: () => false,
+  getLoaderReverseScope: () => undefined,
+  scopeReverse: <R>(reverse: R): R => reverse,
   runInsideLoaderBodyScope: <T>(fn: () => T): T => fn(),
   getCurrentLoaderBodyId: () => undefined,
   getLoaderBodyTags: () => undefined,

@@ -92,6 +92,12 @@ export type EntryPropCommon = {
   cache?: EntryCacheConfig;
   /** URL prefix from include() scope, used for MountContext on client */
   mountPath?: string;
+  /**
+   * Include scope the entry's handler and loaders resolve `ctx.reverse(".name")`
+   * in. Structural entries only (layout, cache, parallel, wrapping
+   * middleware); a route resolves from its own name. See ReverseScope.
+   */
+  reverseScope?: ReverseScope;
   /** clientUrls() group key (PathOptions.clientGroup); route entries only. */
   clientGroup?: string;
 };
@@ -163,6 +169,13 @@ export type LoaderEntry = {
    * (router/segment-resolution/prefetch-deferral.ts).
    */
   prefetch?: false;
+  /**
+   * The declaring layout's / parallel's / cache()'s include scope, for the
+   * loader body's `ctx.reverse(".name")` (its DSL kickoff carries it,
+   * runInsideLoaderScope). Unset on a route's loaders: they resolve from the
+   * route's name.
+   */
+  reverseScope?: ReverseScope;
 };
 
 /**
@@ -780,6 +793,54 @@ export function getRootScoped(): boolean {
 }
 
 /**
+ * The include scope a segment's dot-local `ctx.reverse(".name")` resolves in.
+ *
+ * One handler ctx serves every segment of a request and is built from the
+ * matched route's name (match-api.ts), so a parent module's layout resolved
+ * `.settings` from the matched CHILD module's prefix first: on
+ * `/acme/web/issues` the account layout's `.settings` hit the project
+ * module's route. Structural entries (layout, cache, parallel, wrapping
+ * middleware) and the loaders they declare capture the scope where the DSL
+ * defined them. Their handler gets a ctx whose `reverse` carries it
+ * (withReverseScope, router/handler-context.ts), and their loaders' DSL
+ * kickoff carries it in the loader scope (runInsideLoaderScope) for the
+ * loader ctx the executor builds. Global names and mount-param autofill do
+ * not change.
+ */
+export interface ReverseScope {
+  /** Include name prefix ("account.project"); undefined outside named includes. */
+  readonly prefix: string | undefined;
+  /** getRootScoped() where the segment was defined: bare-name fallback allowed. */
+  readonly rootScoped: boolean;
+}
+
+/** The ReverseScope of the DSL position being evaluated. */
+export function getReverseScope(): ReverseScope {
+  return { prefix: getNamePrefix(), rootScoped: getRootScoped() };
+}
+
+/**
+ * A createReverseFunction result (router/handler-context.ts). The internal
+ * 4th argument resolves dot names in a segment's ReverseScope instead of the
+ * route's name.
+ */
+export type ScopableReverse = (
+  name: string,
+  hrefParams?: Record<string, string>,
+  search?: Record<string, unknown>,
+  segmentScope?: ReverseScope,
+) => string;
+
+/** `reverse` with dot names resolved in `scope`, if any. */
+export function scopeReverse(
+  reverse: ScopableReverse,
+  scope: ReverseScope | undefined,
+): ScopableReverse {
+  if (scope === undefined) return reverse;
+  return (name, hrefParams, search) => reverse(name, hrefParams, search, scope);
+}
+
+/**
  * Stamp build-time scope identity onto a Static() definition at mount time.
  * The bake collector (prerender-collection.ts) renders defs OUTSIDE any
  * evaluation scope and used to iterate the registry first-non-null, so these
@@ -925,6 +986,8 @@ interface LoaderScope {
   active: true;
   /** $$id of the DSL loader this scope resolves (runInsideLoaderScope). */
   loaderId?: string;
+  /** The declaring entry's ReverseScope (LoaderEntry.reverseScope). */
+  reverseScope?: ReverseScope;
 }
 const loaderScopeALS: AsyncLocalStorage<LoaderScope> = ((globalThis as any)[
   LOADER_SCOPE_KEY
@@ -1488,8 +1551,21 @@ export function assertCachedHeaderWriteAllowed(
  * are bypassed because loaders are always fresh (never cached) and
  * their side effects (setCookie, header, etc.) are safe.
  */
-export function runInsideLoaderScope<T>(fn: () => T, loaderId?: string): T {
-  return loaderScopeALS.run({ active: true, loaderId }, fn);
+export function runInsideLoaderScope<T>(
+  fn: () => T,
+  loaderId?: string,
+  reverseScope?: ReverseScope,
+): T {
+  return loaderScopeALS.run({ active: true, loaderId, reverseScope }, fn);
+}
+
+/**
+ * The ReverseScope of the DSL loader kickoff around this call: a loader the
+ * kickoff starts, and one its body starts with ctx.use(), resolve dot names
+ * in it. A handler's ctx.use(Loader) runs outside any kickoff: none.
+ */
+export function getLoaderReverseScope(): ReverseScope | undefined {
+  return loaderScopeALS.getStore()?.reverseScope;
 }
 
 /**

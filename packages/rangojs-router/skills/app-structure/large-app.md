@@ -806,8 +806,9 @@ reverse(".issues", { projectId: "api" }); // /acme/api/issues
   design), so links it rendered keep the old project. Render the project
   switcher and nav in a client component with `useReverse(routes)`, or give
   the layout a `revalidate()` comparing `projectId`.
-- The account layout resolves `.settings` against the matched project module
-  (dc-t52): until fixed, use `account.settings` there.
+- The account layout's `ctx.reverse(".settings")` resolves in the account
+  module on every page below it, the project's pages included: it links to
+  `/acme/settings`, not the project's settings route.
 
 Links built on the server, from the RSC as a prop or from a loader as data,
 carry every param already filled; the client component only renders them:

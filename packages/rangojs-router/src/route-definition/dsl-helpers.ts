@@ -11,6 +11,7 @@ import type {
 import {
   getContext,
   getNamePrefix,
+  getReverseScope,
   getUrlPrefix,
   requireDslContext,
   stampStaticDefScope,
@@ -399,6 +400,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
       cache: cacheConfig,
       handler: RootLayout,
       ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+      reverseScope: getReverseScope(),
     } satisfies EntryData;
 
     // Attach to parent's layout array (cache entries are structural like layouts)
@@ -438,6 +440,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     // Cache entries render like layouts (with Outlet as default handler)
     handler: RootLayout, // RootLayout just renders <Outlet />
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+    reverseScope: getReverseScope(),
   } satisfies EntryData;
 
   // Run children with cache entry as parent
@@ -527,6 +530,7 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
     handler: RootLayout,
     middleware: [...fns],
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+    reverseScope: getReverseScope(),
   } satisfies EntryData;
 
   // Run children callback. If the second arg was actually a middleware fn
@@ -648,6 +652,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     parent: null, // Parallels don't participate in parent chain traversal
     handler: unwrappedSlots,
     ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
+    reverseScope: getReverseScope(),
     ...(hasStaticSlot
       ? {
           isStaticPrerender: true as const,
@@ -838,6 +843,8 @@ const intercept = (
       parallel: {},
       intercept: [],
       cache: undefined,
+      // Its loaders resolve `.name` like the intercept handler: from the route.
+      reverseScope: undefined,
       get loading() {
         return entry.loading;
       },
@@ -930,6 +937,10 @@ const loader: RouteHelpers<any, any>["loader"] = (
     ...(optionsGiven?.ssr === false &&
       ctx.isSSR && { awaitBeforeFlush: true as const }),
     ...(optionsGiven?.prefetch === false && { prefetch: false as const }),
+    // The declaring layout's / parallel's / cache()'s scope. A route's (and
+    // an intercept's) loaders have none: they resolve from the route's name,
+    // like the handler.
+    ...(ctx.parent.reverseScope && { reverseScope: ctx.parent.reverseScope }),
   };
 
   // Merge handler.use defaults (attached to the loader definition) with explicit use
@@ -1161,6 +1172,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     parent: ctx.parent,
     handler: unwrappedHandler,
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+    reverseScope: getReverseScope(),
     ...(isStatic
       ? {
           isStaticPrerender: true as const,

@@ -1339,6 +1339,67 @@ Expected visibility pattern:
 - layout-level `@panel` can see layout data (handler-first), not path-local handler data.
   Pinned by the `[S3]`/`[S6]` semantic matrix rows.
 
+### Dot-local `ctx.reverse` follows the defining module
+
+`ctx.reverse(".name")` resolves in the `include()` scope of the module that
+defines the code calling it, not the matched route's:
+
+| Caller                                                                      | Scope                                         |
+| --------------------------------------------------------------------------- | --------------------------------------------- |
+| Route handler, its loaders, intercept handler and loaders                   | the matched route's name (unchanged)          |
+| `layout()` handler                                                          | the module where the `layout()` is declared   |
+| `parallel()` slot handler                                                   | the module where the `parallel()` is declared |
+| Loader declared on a layout, parallel, `cache()` or wrapping `middleware()` | the declaring module                          |
+| Loader a handler starts with `ctx.use()` but no entry declares              | the matched route's name                      |
+
+Why: one handler ctx serves every segment of a request, built from the
+matched route's name (`match-api.ts`). A parent module's layout resolved
+`.settings` from the matched child module first, so on `/acme/web/issues` the
+account layout linked to the project's settings, while the same layout on
+`/acme/settings` linked to the account's.
+
+How: the DSL stamps `EntryData.reverseScope` (`getReverseScope()`,
+`server/context.ts`) on layout, cache, parallel and wrapping-middleware
+entries, and a loader copies its declaring entry's (`LoaderEntry.reverseScope`;
+an intercept's temporary parent clears it). A layout's or slot's handler gets
+`withReverseScope(ctx, entry.reverseScope)` (`router/handler-context.ts`): a
+prototype child of the request's handler ctx whose own `reverse` passes the
+scope to `createReverseFunction`'s internal fourth argument. Every other field
+reads through, live. The scope rides the object, not the call frame, so it
+holds after an `await` and in a server component the handler hands the ctx
+to, which React renders after the handler returned.
+
+Loaders take it from their DSL kickoff: `runInsideLoaderScope` (the loader
+scope fresh.ts and revalidation.ts already open per kickoff) carries
+`loaderEntry.reverseScope`, and the loader executor (`loader-resolution.ts`)
+builds the loader ctx's `reverse` in `getLoaderReverseScope()`. A layout
+handler's `ctx.use(RouteLoader)` runs outside any kickoff, so the route's
+loader resolves from the route even when a layout starts it first. Global
+names, mount-param autofill and explicit params do not change. A
+`"use cache"` function taking a scoped ctx keys by its `_reverseScope` too
+(`cache-runtime.ts`).
+
+Limits:
+
+- A loader runs once per request, keyed by its `$$id`. A loader Def declared
+  in two modules resolves in the scope of the declaration that starts it
+  first (outer entries resolve first).
+- Only the ctx carries the scope. `getRequestContext().reverse(".name")`
+  resolves from the matched route everywhere, a layout included.
+- A layout's or slot's ctx is a different object from the route's. Its own
+  fields are `reverse` and `_reverseScope`, so `{ ...ctx }` there copies only
+  those. A getter keyed by its holder resolves through the prototype chain
+  (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
+  child inherits.
+- `Static()` layouts and slots bake at build time through
+  `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
+  through this scope. At one include level that gives the same module; in a
+  nested module the last name segment is dropped.
+
+Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
+`runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,
+and the `reverse-segment-scope` e2e (test-app and cloudflare-basic).
+
 ### Cache-safety contract for context variables
 
 Context variables have a cache-safety flag controlled at two levels:

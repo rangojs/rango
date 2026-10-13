@@ -508,6 +508,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           if (ctx._routeName) {
             keyArgs.push(ctx._routeName);
           }
+          // A layout's / parallel's / their loader's ctx resolves dot names
+          // in its own module (withReverseScope), so one route's segments
+          // can reverse the same name differently.
+          const scope = ctx._reverseScope;
+          if (scope) {
+            keyArgs.push(
+              `reverse-scope:${scope.prefix ?? ""}:${scope.rootScoped}`,
+            );
+          }
           keyArgs.push(ctx.pathname, ctx.params);
           if (ctx._responseType) {
             keyArgs.push(ctx._responseType);

@@ -22,7 +22,10 @@ import {
   createStaticContext,
   createReverseFunction,
   stripInternalParams,
+  withReverseScope,
 } from "../handler-context";
+import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import type { InternalHandlerContext } from "../../types.js";
 
 beforeEach(() => {
   getSearchSchemaMock.mockReset();
@@ -531,6 +534,79 @@ describe("createReverseFunction", () => {
         false,
       );
       expect(() => reverse(".flatIndex")).toThrow("Unknown route");
+    });
+  });
+
+  describe("segment reverse scope (withReverseScope)", () => {
+    // include("/:accountId", account, { name: "account" }) containing
+    // include("/:projectId", project, { name: "project" }).
+    const nestedMap: Record<string, string> = {
+      home: "/",
+      "account.settings": "/:accountId/settings",
+      "account.billing": "/:accountId/billing",
+      "account.project.issues": "/:accountId/:projectId/issues",
+      "account.project.settings": "/:accountId/:projectId/settings",
+    };
+    const params = { accountId: "acme", projectId: "web" };
+    const routeReverse = () =>
+      createReverseFunction(nestedMap, "account.project.issues", params, false);
+    const inScope = (scope: ReverseScope) =>
+      scopeReverse(routeReverse(), scope);
+
+    it("without a segment scope a dot name resolves from the matched route", () => {
+      expect(routeReverse()(".settings")).toBe("/acme/web/settings");
+    });
+
+    it("in a parent module's scope a dot name resolves in that module", () => {
+      const reverse = inScope({ prefix: "account", rootScoped: false });
+      expect(reverse(".settings")).toBe("/acme/settings");
+      // Explicit params still win over the request's.
+      expect(reverse(".settings", { accountId: "other" })).toBe(
+        "/other/settings",
+      );
+    });
+
+    it("walks up enclosing includes from the segment's own prefix", () => {
+      const reverse = inScope({ prefix: "account.project", rootScoped: false });
+      expect(reverse(".settings")).toBe("/acme/web/settings");
+      expect(reverse(".billing")).toBe("/acme/billing");
+    });
+
+    it("a root-scoped segment falls back to bare names; a named one does not", () => {
+      expect(inScope({ prefix: undefined, rootScoped: true })(".home")).toBe(
+        "/",
+      );
+      expect(() =>
+        inScope({ prefix: "account", rootScoped: false })(".home"),
+      ).toThrow('Unknown route: ".home" (segment scope: account)');
+    });
+
+    it("leaves global names to the global lookup", () => {
+      const reverse = inScope({ prefix: "account", rootScoped: false });
+      expect(reverse("account.project.settings")).toBe("/acme/web/settings");
+      expect(() => reverse("account.missing")).toThrow(
+        'Unknown route: "account.missing" (current route: account.project.issues)',
+      );
+    });
+
+    it("withReverseScope: the scope rides the ctx; other fields read through live", () => {
+      const ctx = {
+        params,
+        reverse: routeReverse(),
+        _currentSegmentId: "L0",
+      } as unknown as InternalHandlerContext<any, any>;
+      const scope = { prefix: "account", rootScoped: false };
+      const scoped = withReverseScope(ctx, scope);
+      // Destructured and called later, as a component handed the ctx does.
+      const { reverse } = scoped;
+      ctx._currentSegmentId = "L1";
+      expect(reverse(".settings")).toBe("/acme/settings");
+      expect(scoped._currentSegmentId).toBe("L1");
+      expect(scoped.params).toBe(params);
+      expect(scoped._reverseScope).toBe(scope);
+      // The shared ctx keeps the route's resolution.
+      expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
+      expect(withReverseScope(ctx, undefined)).toBe(ctx);
     });
   });
 

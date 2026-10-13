@@ -59,6 +59,7 @@ import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { isLayoutLoaderCopy } from "../../client-urls/layout-loader-copies.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeSegmentHandler } from "../instrument.js";
+import { withReverseScope } from "../handler-context.js";
 import { runInSegmentTagScope } from "../../cache/cache-tag.js";
 import { trackStreamedHandler } from "./streamed-handler-boundary.js";
 import {
@@ -356,6 +357,7 @@ export async function resolveOwnerLoaders<TEnv>(
           bakeLane || loaderEntry.bake === true ? segmentId : null,
         ),
       loaderId,
+      loaderEntry.reverseScope,
     );
   const start = (
     loaderEntry: LoaderEntry,
@@ -629,10 +631,11 @@ async function resolveParallelSlotComponent<TEnv>(args: {
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         parallelId;
       handlerRan = true;
+      const slotContext = withReverseScope(context, parallelEntry.reverseScope);
       if (hasLoadingFallback) {
         const result =
           typeof handler === "function"
-            ? runInSegmentTagScope(parallelId, handler, context)
+            ? runInSegmentTagScope(parallelId, handler, slotContext)
             : handler;
         if (result instanceof Promise) {
           warnOnStreamedResponse(result, parallelId);
@@ -651,7 +654,7 @@ async function resolveParallelSlotComponent<TEnv>(args: {
       } else {
         component =
           typeof handler === "function"
-            ? await runInSegmentTagScope(parallelId, handler, context)
+            ? await runInSegmentTagScope(parallelId, handler, slotContext)
             : handler;
       }
     }
