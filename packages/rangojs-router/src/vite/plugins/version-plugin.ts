@@ -2,6 +2,7 @@ import { parseAst, type Plugin } from "vite";
 import {
   VIRTUAL_IDS,
   getVirtualBuildVersionContent,
+  getVirtualPackageVersionContent,
   getVirtualVersionContent,
 } from "./virtual-entries.js";
 import { hasUseClientDirective } from "../utils/directive-prologue.js";
@@ -170,6 +171,12 @@ export function createVersionPlugin(): Plugin {
 
     load(id) {
       if (id === "\0" + VIRTUAL_IDS.version) {
+        const environment = this?.environment?.name;
+        // The browser gets PACKAGE_VERSION only (ROUTER_VERSIONS is filled in
+        // server chunks); every other environment keeps the full module.
+        if (environment === "client") {
+          return getVirtualPackageVersionContent();
+        }
         return isDev
           ? getVirtualVersionContent(currentVersion)
           : getVirtualBuildVersionContent();

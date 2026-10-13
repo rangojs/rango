@@ -37,6 +37,7 @@ import {
   setPrefetchConcurrency,
   setPrefetchDecoder,
 } from "./prefetch/loader.js";
+import { publishRangoMarker } from "./rango-marker.js";
 import { setAppVersion } from "./app-version.js";
 import {
   isInterceptSegment,
@@ -185,6 +186,7 @@ export async function initBrowserApp(
   } = options;
 
   bootLog("initBrowserApp start");
+  publishRangoMarker();
   // Before any location read (the history key, the navigation store, the
   // event controller): the server rendered the marked request for the clean
   // URL, so the client starts from the same one and hydration agrees.

@@ -17,6 +17,13 @@ declare module "@rangojs/router:version" {
   export const VERSION: string;
 
   /**
+   * The npm semver of @rangojs/router (`1.2.3`). Informational: the browser
+   * entry publishes it as `window.__rango`. Every environment exports it; only
+   * the RSC environment also exports `VERSION` and `ROUTER_VERSIONS`.
+   */
+  export const PACKAGE_VERSION: string;
+
+  /**
    * Per-router cache versions computed at build time: router id to
    * `[data, document]`, with `"*"` holding the whole-build pair.
    * `undefined` in dev, where `VERSION` is used for both.

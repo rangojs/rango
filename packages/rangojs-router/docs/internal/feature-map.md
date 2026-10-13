@@ -129,7 +129,7 @@ These subpaths are consumed by the Vite plugin, RSC handler, or build tooling. T
 | `./internal/rsc-handler`             | RSC handler internals                                                                                                                                                                                                                                                                                                    |
 | `./internal/browser/dev-discovery`   | Browser-only Cloudflare dev stale-document convergence helper                                                                                                                                                                                                                                                            |
 | `./cache-runtime`                    | Cache runtime dependencies                                                                                                                                                                                                                                                                                               |
-| `./types`                            | Type declarations for the `@rangojs/router:version` virtual module (`VERSION`, `ROUTER_VERSIONS`; `ROUTER_VERSIONS` is `undefined` in dev)                                                                                                                                                                               |
+| `./types`                            | Type declarations for the `@rangojs/router:version` virtual module (`VERSION`, `ROUTER_VERSIONS`, `PACKAGE_VERSION`; `ROUTER_VERSIONS` is `undefined` in dev; `PACKAGE_VERSION` is the router npm semver and the only export the client and SSR environments get)                                                        |
 
 ### CLI
 
@@ -144,6 +144,10 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 ---
 
 ## Client API
+
+### Client globals
+
+`window.__rango = Object.freeze({ version })` is the only global the browser entry publishes: the exact npm semver of `@rangojs/router` (`PACKAGE_VERSION` from the `@rangojs/router:version` virtual), so devtools, detection tools and support can tell a page is a Rango app and which release serves it. Set once from the bundled client entry (`initBrowserApp` calls `publishRangoMarker()` in `browser/rango-marker.ts`), never from an inline script, so no CSP or nonce change. Write-only: no router code reads it (`browser/__tests__/rango-marker.test.ts` greps `src/` for reads), it has one key, no build hash, router id or config, and no option turns it off.
 
 ### Components
 
