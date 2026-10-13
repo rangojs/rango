@@ -404,6 +404,62 @@ function trackDocumentClientLoads<T>(decode: () => T): {
 }
 
 /**
+ * Cap on settleSsrFalseFirstFlush's turns. Each turn retries one generation of
+ * tasks parked on thenables that settle in microtasks. A useActionState form
+ * is one generation (the Flight client caches the encoding, so the retry
+ * encodes synchronously); a formAction button inside it renders on that retry
+ * and is a second; the same form behind `lazy()` adds a third. ssr-handler
+ * tests pin all three. A deeper chain flushes its fallback as before.
+ */
+const SSR_FALSE_FIRST_FLUSH_TURNS = 3;
+
+/**
+ * True when the matched chain has a `loader(Def, { ssr: false })` entry: its
+ * payload segments carry `awaitBeforeFlush` (fresh.ts).
+ */
+function hasAwaitBeforeFlush(payload: {
+  metadata?: { segments?: readonly { awaitBeforeFlush?: true }[] };
+}): boolean {
+  return payload.metadata?.segments?.some((s) => s.awaitBeforeFlush) === true;
+}
+
+/**
+ * ssr: false documents only: before the first flush, give Fizz the turns a
+ * task waiting on an already-settling thenable needs, so a boundary that
+ * waits on nothing else completes in place (#1138).
+ *
+ * Fizz's useActionState binds its state onto the action, and the
+ * `<form action>` encode of that bound server reference throws the Flight
+ * client's encodeFormData thenable once (defaultEncodeFormAction). It settles
+ * in microtasks, but once the request has left its opening status, Fizz's
+ * pingTask retries the task on a setTimeout(0) turn. renderToReadableStream
+ * resolves at shell-ready, so the first read would flush the boundary's
+ * fallback before that turn, which a browser without JavaScript keeps (the
+ * form lands in `<div hidden id="S:n">`).
+ *
+ * A document already whole (allReady settled) returns with no macrotask.
+ * Otherwise one setTimeout(0) at a time until allReady, at most
+ * SSR_FALSE_FIRST_FLUSH_TURNS: a timer set after Fizz's ping fires after it.
+ * A boundary waiting on I/O (an unflagged loader, a streamed promise) still
+ * streams its fallback, after at most that many turns.
+ */
+async function settleSsrFalseFirstFlush(
+  allReady: Promise<void>,
+): Promise<void> {
+  let whole = false;
+  const settle = (): void => {
+    whole = true;
+  };
+  // Promise.resolve: a stub renderer's stream may carry no allReady.
+  Promise.resolve(allReady).then(settle, settle);
+  // A settled allReady's reaction was queued before this continuation's.
+  await Promise.resolve();
+  for (let turn = 0; !whole && turn < SSR_FALSE_FIRST_FLUSH_TURNS; turn++) {
+    await macrotask();
+  }
+}
+
+/**
  * Route an SSR error through the deps.onError notification callback with the
  * "rendering" phase. Swallows callback failures so a broken reporter never
  * masks the original error. Shared by renderHTML, capture, and resume so the
@@ -832,13 +888,10 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // Awaiting the payload here is latency-neutral: fizz cannot emit even
       // <html> until this same promise settles. A rejection lands in the
       // catch below — the same reportRenderError path a shell error takes.
-      let progressiveChunkSize = deps.progressiveChunkSize;
-      if (progressiveChunkSize === undefined) {
-        const resolved = await payload;
-        if (resolved.metadata?.segments?.some((s) => s.awaitBeforeFlush)) {
-          progressiveChunkSize = Number.MAX_SAFE_INTEGER;
-        }
-      }
+      const awaitsBeforeFlush = hasAwaitBeforeFlush(await payload);
+      const progressiveChunkSize =
+        deps.progressiveChunkSize ??
+        (awaitsBeforeFlush ? Number.MAX_SAFE_INTEGER : undefined);
 
       // Render React tree to HTML stream
       // Pass formState for useActionState progressive enhancement if provided
@@ -870,6 +923,9 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // cannot process streamed HTML.
       if (streamMode === "allReady") {
         await htmlStream.allReady;
+      } else if (awaitsBeforeFlush) {
+        // The shell rendered from the payload, so it has settled.
+        await settleSsrFalseFirstFlush(htmlStream.allReady);
       }
 
       // The entry's Fizz hint at default priority, after the head chunk

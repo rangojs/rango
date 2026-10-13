@@ -34,6 +34,8 @@ export { runActionFailureTests } from "./action-failure-scenario.js";
 export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
 export { runHeldHandlesTests } from "./held-handles-scenario.js";
 export { runLoaderElementTests } from "./loader-element-scenario.js";
+export { runSsrFalseFormTests } from "./ssr-false-form-scenario.js";
+export type { SsrFalseFormScenarioOptions } from "./ssr-false-form-scenario.js";
 export {
   expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
   expectLayoutLoaderHeldAcrossNavigations,

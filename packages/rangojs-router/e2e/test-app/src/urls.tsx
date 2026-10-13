@@ -147,6 +147,7 @@ import {
   actionFailurePatterns,
 } from "./urls/action-failure.js";
 import clientUrlsLoaderElementPatterns from "./urls/client-urls-loader-element.js";
+import clientUrlsSsrFalseFormPatterns from "./urls/client-urls-ssr-false-form.js";
 import heldHandlesClientPatterns from "./urls/held-handles.client-urls.js";
 import { heldHandlesPatterns } from "./urls/held-handles.js";
 import { historyHandlesPatterns } from "./urls/history-handles.js";
@@ -1028,6 +1029,11 @@ export const urlpatterns = urls(
       // from a loader's answer (client-urls-loader-element.test.ts).
       include("/client-urls-loader-element", clientUrlsLoaderElementPatterns, {
         name: "clientLoaderElement",
+      }),
+      // A no-script document whose ssr: false loader feeds a useActionState
+      // form under an inline <Suspense> (#1138, client-urls-ssr-false-form.test.ts).
+      include("/client-urls-ssr-false-form", clientUrlsSsrFalseFormPatterns, {
+        name: "clientSsrFalseForm",
       }),
       // A loader whose rerun an action skips keeps its handle pushes (#1103):
       // clientUrls() group and the ordinary urls() twin.

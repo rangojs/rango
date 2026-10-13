@@ -42,6 +42,7 @@ export const routes = {
   "clientSlow.e": "/client-urls-slow/e",
   "clientSlow.f": "/client-urls-slow/f",
   clientSlowLanding: "/client-urls-slow-landing",
+  "clientSsrFalseForm.index": "/client-urls-ssr-false-form",
   "clientUrlsIntercept.index": "/__client-urls-intercept",
   "clientUrlsIntercept.note": "/__client-urls-intercept/note/:noteId",
   "composition.detail": "/composition/detail",
