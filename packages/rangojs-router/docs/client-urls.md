@@ -649,6 +649,43 @@ from the modal re-runs only the loaders whose predicate says so. Pinned dev+prod
 in `e2e/client-urls.test.ts` ("a clientUrls() intercept loader's revalidate()
 sees the action result") in both apps.
 
+A `layout()` loader of the group revalidates as a server layout's loader
+does. Its default is a layout's (`nav:non-route-skip`, `router/revalidation.ts`):
+a navigation keeps it, whichever route of the layout it goes to and whatever
+params or search change, a same-route param navigation included, and an
+action re-runs it (`action:loader-segment`). Its `revalidate()` decides on
+every navigation and action, with that default as `defaultShouldRevalidate`
+and the origin route's params as `currentParams`. A loader that reads the
+route's params therefore needs a rule, as on a server layout.
+
+Two pieces make that hold across routes. The layout's loaders are copied into
+every route record below it (`applyConfig`, `client-urls.ts`), and a loader
+segment's id names its route (`${routeShortCode}D${index}.${$$id}`), so the
+destination's copy used to be a segment the client lacked, and it ran whatever
+its predicate said; with no predicate it also took the route's default and ran
+on every param change. Now the projection numbers each route's layout loader
+records (`ClientUrlProjectionRoute.layoutLoaders`), and materialization
+records for each copy the ids the same loader has under the layout's other
+routes (`client-urls/layout-loader-copies.ts`; it reads every group route's
+shortCode with `peekShortCode`, also the routes an evaluation for one route
+skips). A request whose page holds one of them holds the destination's copy
+(`withLayoutLoaderCopies` in `router/match-api.ts`), and the copy's revalidation
+input is a layout's (`isLayoutLoaderCopy` in
+`router/segment-resolution/revalidation.ts`). A held copy is left out of the
+response while `matched` names it under the destination route. The browser
+carries the page's copy to that id (`carried` in
+`browser/segment-reconciler.ts`) with its handle pushes
+(`mergePartialHandleData`, `handles/pushed-by.ts`, never from a slot), so the
+layout keeps its data and the canonical commit does not wait for the loader. A
+navigation into the layout, from outside the group or from a group route
+outside the layout, runs it. The same loader declared on another `layout()` is
+another loader. Pinned by
+`src/testing/__tests__/client-urls-layout-revalidate.rsc-test.tsx` and dev+prod
+in both apps' `e2e/client-urls.test.ts` ("a layout() loader with no
+revalidate() keeps its data and crumb across route switches, a param
+navigation, a search change and Back"), which also times the canonical commit
+under a 400 ms server delay.
+
 ### After an action
 
 A common misread is that a group hands the server only a verdict and the
@@ -777,10 +814,19 @@ prefetch of the route defers it while its segment is new to the client. An
 in-group click still presents the destination at the click; with the
 prefetch adopted it then commits the prefetched tree at once (the URL, the
 history entry and the unflagged loaders' data), `useOutlet().pending` ends
-with that commit, and one fill request runs only the flagged loaders. A
-`layout()` loader with the flag is flagged on every route below it, and a
-flagged `loader()` on a server layout above the group is deferred too while
-that layout is new to the client. `loading()` inside `clientUrls()` takes no
+with that commit, and one fill request runs only the flagged loaders.
+
+The flag skips a loader in a prefetch only when the loader is new to the page.
+A loader already on screen is never deferred: if its revalidation (its
+`revalidate()` or the default) re-runs it, it runs in the prefetch with the
+rest of the destination; otherwise it is held. The familiar case is a
+same-route navigation (`/product/a` to `/product/b`), where the loader keeps
+its segment id. A group `layout()` loader behaves the same on every route of
+its layout: the page holds its copy (see the `revalidate()` paragraph on
+`layout()` loaders above), so a prefetch between two of those routes defers
+nothing for it, and one that enters the layout defers it. A flagged `loader()`
+on a server layout above the group is deferred while that layout is new to
+the client. `loading()` inside `clientUrls()` takes no
 options, a flagged `loading()` on a server layout above the group defers
 nothing for its routes. On an `intercept()` loader the flag works as in
 `urls()`: the projection carries it on the intercept

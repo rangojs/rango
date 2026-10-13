@@ -266,7 +266,16 @@ into the constant predicate (`toShouldRevalidateFn`,
 `router/revalidation.ts`). A non-literal argument is hoisted whatever it
 evaluates to; the registry stores a boolean as the constant predicate and
 leaves any other non-function unregistered, so it fails at materialization.
-Scope and capture analysis is shared with the
+A `layout()` loader takes a layout's revalidation default (held on a
+navigation, re-run on an action; `isLayoutLoaderCopy`) and its predicate also
+decides on navigations between that layout's routes: the projection numbers
+each route's layout loader records
+(`layoutLoaders`), materialization records each copy's ids under the layout's
+other routes (`client-urls/layout-loader-copies.ts`), the partial match holds
+the destination's copy when the page holds one (`withLayoutLoaderCopies`,
+`router/match-api.ts`), and the browser carries the held copy and its handle
+pushes to the destination's id (`browser/segment-reconciler.ts`,
+`handles/pushed-by.ts`). Scope and capture analysis is shared with the
 `transition({ when })` hoist through `vite/plugins/hoist/scope.ts` and
 `hoist/literal.ts`. `isAction` is the same callable
 matcher as the server predicate (`isAction()`, `isAction(fn)`,

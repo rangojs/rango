@@ -108,6 +108,58 @@ dropped from the page with them.
 
 **Now.** They stay, as a skipped route loader's do.
 
+### Fixed: a `clientUrls()` `layout()` loader is held across its layout's routes and follows its `revalidate()`, as on a server layout
+
+**Before.** In a `clientUrls()` group, a loader declared on a `layout()` ran
+again on every navigation to another route under that layout, whatever its
+`revalidate()` said, even `() => false`. A shop layout's cart loader with
+`revalidate(({ isAction }) => isAction(CartActions))` ran on every click
+between the product list and a product page, and the server's answer waited
+for it. With no `revalidate()`, it also ran on every param or search change of
+one route, as a route's own loader does.
+
+```tsx
+export default clientUrls(({ layout, path, loader, revalidate }) => [
+  layout(ShopLayout, () => [
+    // Ran on / -> /product/a and on /product/a -> /: now only on cart actions.
+    loader(CartLoader, () => [
+      revalidate(({ isAction }) => isAction(CartActions)),
+    ]),
+    path("/", ShopIndex),
+    path("/product/:slug", ProductPage),
+  ]),
+]);
+```
+
+**Now.** A group `layout()` loader takes a server layout's revalidation
+default. A navigation keeps it, whichever route of the layout it goes to and
+whatever params or search change, and an action re-runs it. Its
+`revalidate()` decides on every navigation and action, with that default as
+`defaultShouldRevalidate`. A loader it holds keeps its data and its handle
+pushes, the layout stays mounted with no fallback shown, and the page commits
+without waiting for it. A navigation into the layout, from outside the group or
+from a group route outside the layout, runs its loaders, as before.
+
+**Upgrading.** A group `layout()` loader with no `revalidate()` that reads the
+route's params or search no longer re-runs when they change. Give it a rule,
+as on a server layout:
+
+```tsx
+loader(ShopNavLoader, () => [
+  revalidate(({ currentParams, nextParams, defaultShouldRevalidate }) =>
+    currentParams.slug !== nextParams.slug ? true : defaultShouldRevalidate,
+  ),
+]),
+```
+
+**`prefetch: false`.** The flag skips a loader in a prefetch only when the
+loader is new to the page. A loader already on screen is never deferred: if
+its revalidation (its `revalidate()` or the default) re-runs it, it runs in the
+prefetch with the rest of the destination; otherwise it is held. A same-route
+navigation (`/product/a` to `/product/b`) already worked this way. A group
+`layout()` loader now counts as on screen on every route of its layout, so a
+prefetch between those routes runs it only when its `revalidate()` asks.
+
 ### Fixed: generated route files list routes in the same order in every locale
 
 **Before.** The order of names in `*.gen.ts` followed the machine's locale

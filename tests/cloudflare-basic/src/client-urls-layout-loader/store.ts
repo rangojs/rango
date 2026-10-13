@@ -9,3 +9,11 @@ export function getClientLayoutCart(): number {
 export function bumpClientLayoutCartCount(): void {
   cart += 1;
 }
+
+/** Runs of the layout's runs loader. */
+let runs = 0;
+
+export function countClientLayoutRun(): number {
+  runs += 1;
+  return runs;
+}

@@ -1373,6 +1373,14 @@ should not be treated as equivalent.
   `evaluateRevalidation` like any loader's, with the `urls()` arguments; no
   client-supplied decision exists. Pinned by semantic-matrix row R2
   (`e2e/semantic-matrix.test.ts`).
+- A `clientUrls()` group `layout()` loader is projected onto every route
+  below the layout but revalidates as a layout's loader: its copy's decision
+  input is a non-route segment (`isLayoutLoaderCopy`,
+  `router/segment-resolution/revalidation.ts`), so a navigation holds it
+  (`nav:non-route-skip`, params and search changes included) and an action
+  re-runs it (`action:loader-segment`). The page's copy under another route of
+  the layout counts as the destination's (`client-urls/layout-loader-copies.ts`).
+  Pinned by `src/testing/__tests__/client-urls-layout-revalidate.rsc-test.tsx`.
 - Default decisions during action revalidation (no `revalidate()` configured;
   seeds for user predicates — see `evaluateRevalidation` in
   `router/revalidation.ts`):

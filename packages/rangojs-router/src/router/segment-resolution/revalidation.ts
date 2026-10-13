@@ -56,6 +56,7 @@ import {
   buildLoaderErrorContext,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
+import { isLayoutLoaderCopy } from "../../client-urls/layout-loader-copies.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeSegmentHandler } from "../instrument.js";
 import { runInSegmentTagScope } from "../../cache/cache-tag.js";
@@ -291,7 +292,9 @@ export async function resolveOwnerLoaders<TEnv>(
               component: null,
               params: ctx.params,
               loaderId: loader.$$id,
-              belongsToRoute,
+              // A clientUrls() layout() loader's copy is projected onto the
+              // route but owned by a layout: it takes a layout's default.
+              belongsToRoute: belongsToRoute && !isLayoutLoaderCopy(loader),
             };
 
             return await revalidateHeld({

@@ -1137,10 +1137,13 @@ What happens:
 - A **prefetch** of the route does not run the loader and does not read its
   `cache()`; the payload marks it deferred. The rest of the page prefetches as
   usual.
-- Only on a route the browser does not show yet. A loader the page already
-  holds, on a same-route navigation such as `/product/a` to `/product/b`, runs
-  in the prefetch when it revalidates, exactly as without the flag, and the
-  click sends no second request. The rule: a click that adopts a prefetch is
+- Only on a loader new to the page. A loader already on screen is never
+  deferred: if its revalidation (its `revalidate()` or the default) re-runs
+  it, it runs in the prefetch with the rest of the destination, exactly as
+  without the flag, and the click sends no second request; otherwise it is
+  held. The familiar case is a same-route navigation such as `/product/a` to
+  `/product/b`; a `clientUrls()` group `layout()` loader is on screen on every
+  route of its layout the same way. The rule: a click that adopts a prefetch is
   never worse than the same click with no prefetch at all (one exception: a
   click before its prefetch has answered, under "The limits"), and content on
   screen is never swapped for a fallback because of the flag. For the same
