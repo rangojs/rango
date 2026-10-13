@@ -52,6 +52,15 @@ above keep their instance. A no-JS form post is unchanged. Not covered yet:
 an `intercept()`'s loaders and a parallel slot's loaders under its own
 `loading()`, which are decoded above the slot's content.
 
+### Changed: `LateHandlePushError` names `.defer()` as the way to push from an async component
+
+A server component that pushes a handle after an `await` (a title, a crumb)
+still throws `LateHandlePushError`; that is the design. The message now says
+what to do instead: push from the route or layout handler, or reserve the
+slot there with `ctx.use(Handle).defer()` and resolve it from the component
+(`/breadcrumbs`, "Deferred content"). Production keeps the generic Server
+Components error. Nothing to change in your code.
+
 ### Fixed: an `errorBoundary()` fallback clears when a later action or navigation re-runs its loader without error
 
 A loader's failure that showed its `errorBoundary()` fallback, on a

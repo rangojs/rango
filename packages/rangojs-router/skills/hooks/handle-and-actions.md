@@ -39,6 +39,10 @@ the capture, so its pushes always apply client-side; with `ssr: false` they
 bake into the shell. See `/loader` → "Writing Handles from Loaders". `useHandle`
 re-renders on every handle update, late loader pushes included.
 
+A server component that pushes after an `await` throws `LateHandlePushError`:
+reserve the slot in the handler with `ctx.use(Handle).defer()` and resolve it
+from the component (`/breadcrumbs`, "Deferred content").
+
 On a document load `useHandle` hydrates with the handle data its HTML was
 rendered from, wherever the reader sits; late loader pushes reach every reader
 once the document has finished streaming and every boundary has hydrated (see

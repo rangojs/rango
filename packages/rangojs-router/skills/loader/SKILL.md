@@ -1030,7 +1030,9 @@ there every push a loader makes on that request applies post-hydration (see
 `/ppr`, "Handles on a shell HIT"). A `useHandle` reader inside this loader's
 `loading()` or `<Suspense>` hydrates with the data its HTML was rendered
 from and shows a later push right after, so a push after an `await` causes
-no hydration mismatch there.
+no hydration mismatch there. A loader body may push after an `await`; a server
+component that does throws `LateHandlePushError`, so it resolves a slot its
+handler reserved with `.defer()` instead (`/breadcrumbs`, "Deferred content").
 
 Under `cache()`, loader pushes are not stored with the cached segments: the
 loader re-runs on every hit and its live push is the only copy. (`ppr` keeps

@@ -30,6 +30,8 @@ export type {
 } from "./streamed-boundary-scenarios.js";
 export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
 export { runLateHandleHistoryTests } from "./late-handle-history-scenario.js";
+export { runHandlesAfterAwaitTests } from "./handles-after-await-scenario.js";
+export type { HandlesAfterAwaitScenarioOptions } from "./handles-after-await-scenario.js";
 export { runActionFailureTests } from "./action-failure-scenario.js";
 export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
 export { runHeldHandlesTests } from "./held-handles-scenario.js";

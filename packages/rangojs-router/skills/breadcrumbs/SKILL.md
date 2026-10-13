@@ -137,6 +137,11 @@ path("/product/:id", async (ctx) => {
 Async content is a `Promise<ReactNode>`. Resolve it in your component
 with React's `use()` hook wrapped in `<Suspense>`.
 
+A server component that pushes a crumb after an `await` throws
+`LateHandlePushError`. Reserve the crumb in the handler with `.defer()` and
+resolve it from the component (see "Deferred content" below); the same works
+for a `Meta` title.
+
 A crumb the HANDLER pushes is handler output. In a route `cache()` entry and
 in a `ppr` shell it is stored resolved: the cache write, or the shell capture
 (within `ppr.captureTimeout`), waits for a `content` promise and for a
