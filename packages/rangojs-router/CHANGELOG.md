@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Fixed: loader `ctx.reverse` and `getRequestContext().reverse` accept the params the runtime fills
+
+In a typed app, `ctx.reverse("account.settings")` in a loader, or
+`getRequestContext().reverse("account.settings")` in a server action, failed
+with TS2769 when the route has params, although at run time both fill them from
+the matched route (as handlers do). You had to thread `ctx.params.accountId`
+by hand.
+
+Before:
+
+```ts
+const SettingsLoader = createLoader(async (ctx) =>
+  ctx.reverse("account.settings", { accountId: ctx.params.accountId }),
+);
+```
+
+After:
+
+```ts
+const SettingsLoader = createLoader(async (ctx) =>
+  ctx.reverse("account.settings"),
+);
+```
+
+Explicit params still win and unknown param names still error. Before the
+route match (global middleware ahead of `next()`) nothing is filled, so a
+required param still throws `Missing param`; middleware `ctx.reverse` is
+unchanged (global names, no fill).
+
 ### Added: `clientUrls()` components carry their own items (`Component.use`), predicates included
 
 A component mounted in a `clientUrls()` group may now declare its own loaders,

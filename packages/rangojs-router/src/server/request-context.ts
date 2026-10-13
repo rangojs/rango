@@ -23,7 +23,7 @@ import {
   serializeStateCookie,
 } from "../browser/cookie-name.js";
 import type { LoaderDefinition, LoaderContext } from "../types.js";
-import type { ScopedReverseFunction } from "../reverse.js";
+import type { AutofillAwareReverseFunction } from "../types/handler-context.js";
 import type {
   DefaultEnv,
   DefaultReverseRouteMap,
@@ -774,8 +774,15 @@ export interface RequestContext<
    * Generate URLs from route names.
    * Uses the global route map. After route matching, scoped (`.name`) resolution
    * works within the matched include() scope.
+   *
+   * Params are optional in the type because the fill depends on the phase.
+   * After the route match (route middleware, handlers, loaders, server actions)
+   * missing params come from the matched route's params; explicit params win.
+   * In global middleware before `next()` nothing is matched and the fill is
+   * empty, so a route with a required param throws `Missing param "<name>" for
+   * route "<route>"` at runtime (a param-less route still resolves).
    */
-  reverse: ScopedReverseFunction<
+  reverse: AutofillAwareReverseFunction<
     Record<string, string>,
     DefaultReverseRouteMap
   >;

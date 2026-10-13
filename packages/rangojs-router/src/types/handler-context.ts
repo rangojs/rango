@@ -89,7 +89,13 @@ type AutofillSearchFromEntry<TMap, TKey> = TKey extends keyof TMap
     : Record<string, unknown>
   : Record<string, unknown>;
 
-type AutofillAwareReverseFunction<TLocalRoutes, TGlobalRoutes> =
+/**
+ * `ScopedReverseFunction` whose global-name params are optional: the runtime
+ * fills missing ones from the matched route's params (`createReverseFunction`
+ * in `router/handler-context.ts`, explicit params win). Shared by handler,
+ * loader and request-context `reverse`.
+ */
+export type AutofillAwareReverseFunction<TLocalRoutes, TGlobalRoutes> =
   ScopedReverseFunction<TLocalRoutes, TGlobalRoutes> & {
     <TName extends keyof TGlobalRoutes & string>(
       name: TName,

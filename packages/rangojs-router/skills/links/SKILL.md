@@ -24,7 +24,11 @@ links to JSON/text endpoints see `/response-routes`.
 
 Available on the handler context (route handlers, layouts, parallels), on
 middleware and loader contexts, and on `getRequestContext()` inside server
-actions. Resolves named routes using the full route map. This is the default
+actions. In loaders and in actions (after the route match) params the matched
+route carries are optional, as in handlers: `ctx.reverse("account.settings")`
+fills `accountId` from the matched params. In global middleware before `next()`
+nothing is matched, so a route with a required param throws `Missing param`.
+Resolves named routes using the full route map. This is the default
 way to generate URLs on the server. Patterns in the map already include the
 router `basename`, so results are basename-prefixed.
 

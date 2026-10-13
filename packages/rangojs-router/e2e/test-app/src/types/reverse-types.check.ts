@@ -301,8 +301,8 @@ if (false as boolean) {
   // @ts-expect-error - invalid route name should fail
   ctx.reverse("nonexistent.route");
 
-  // @ts-expect-error - missing required params should fail
-  ctx.reverse("blog.post");
+  // Params are optional: the runtime fills them from the matched route
+  const _blogPostFilled: string = ctx.reverse("blog.post");
 
   // @ts-expect-error - wrong param name should fail
   ctx.reverse("blog.post", { wrongParam: "test" });

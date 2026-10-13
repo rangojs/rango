@@ -8,6 +8,7 @@
 import "./augment.js";
 import type {
   Handler,
+  LoaderContext,
   MiddlewareContext,
   ResponseHandlerContext,
   RouteLocation,
@@ -17,6 +18,7 @@ import type {
   TransitionWhenFn,
 } from "../index.js";
 import type { DefaultRouteName } from "../types/global-namespace.js";
+import type { RequestContext } from "../server/request-context.js";
 import type { InterceptWhenFn } from "../server/context.js";
 import { href } from "../href-client.js";
 import { rewrite, type Rewrite } from "../route-definition/rewrite.js";
@@ -61,6 +63,32 @@ function responseReverse(ctx: ResponseHandlerContext): void {
   ctx.reverse("nope");
 }
 void responseReverse;
+
+// Loader ctx.reverse and getRequestContext().reverse take the same optional
+// params as handlers: after the route match the runtime fills them from the
+// matched route's params.
+function loaderReverse(ctx: LoaderContext): void {
+  ctx.reverse("home");
+  ctx.reverse("blog.post");
+  ctx.reverse("blog.post", { slug: "hello" });
+  ctx.reverse("search", {}, { q: "hats" });
+  // @ts-expect-error - unknown param name is rejected
+  ctx.reverse("blog.post", { slugg: "hello" });
+  // @ts-expect-error - unknown global name is rejected
+  ctx.reverse("nope");
+}
+void loaderReverse;
+
+function requestContextReverse(ctx: RequestContext): void {
+  ctx.reverse("home");
+  ctx.reverse("blog.post");
+  ctx.reverse("blog.post", { slug: "hello" });
+  // @ts-expect-error - unknown param name is rejected
+  ctx.reverse("blog.post", { slugg: "hello" });
+  // @ts-expect-error - unknown global name is rejected
+  ctx.reverse("nope");
+}
+void requestContextReverse;
 
 function middlewareReverse(ctx: MiddlewareContext): void {
   ctx.reverse("blog.post", { slug: "hello" });

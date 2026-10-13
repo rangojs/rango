@@ -105,6 +105,23 @@ describe("runLoader", () => {
     expect(result).toBe("/blog/hello");
   });
 
+  it("ctx.reverse fills a global route's params from the matched params when none are passed", async () => {
+    const result = await runLoader<string[]>(
+      async (ctx) => [
+        ctx.reverse("account.settings"),
+        ctx.reverse("account.settings", { accountId: "other" }),
+      ],
+      {
+        routeMap: { "account.settings": "/accounts/:accountId/settings" },
+        params: { accountId: "acme" },
+      },
+    );
+    expect(result).toEqual([
+      "/accounts/acme/settings",
+      "/accounts/other/settings",
+    ]);
+  });
+
   it("delegates ctx.use to opts.use resolver when provided", async () => {
     const Dep = { __brand: "loader", $$id: "x#Dep" } as LoaderDefinition<{
       count: number;
