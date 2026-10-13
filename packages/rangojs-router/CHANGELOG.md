@@ -52,6 +52,45 @@ above keep their instance. A no-JS form post is unchanged. Not covered yet:
 an `intercept()`'s loaders and a parallel slot's loaders under its own
 `loading()`, which are decoded above the slot's content.
 
+### Breaking: `intercept()` no longer takes `middleware()`; the target route's middleware runs for the modal
+
+Migration: move the intercept's middleware into the target route's
+`middleware()`, which runs for the modal too, or into its loaders. A value the
+intercept's loaders read with `ctx.get()` is set by the route's middleware.
+
+Before: an intercept's own middleware ran only when the modal rendered live.
+A runtime `cache()` hit or a `Prerender()` target served the modal without
+it, so a guard in it was skipped there and a loader reading its `ctx.set()`
+got nothing.
+
+```tsx
+path("/photos/:id", PhotoPage, { name: "photo" }),
+intercept("@modal", ".photo", PhotoModal, () => [
+  middleware(requireViewer), // skipped on a cache() hit
+  loader(PhotoLoader),
+]),
+```
+
+Now `intercept()` throws when the routes are defined, for `middleware()` in
+its use() or in its handler's `.use`:
+
+```text
+middleware() is not valid inside intercept("@modal", ".photo") use() (including the handler's .use): move it to the route's middleware() (it runs for the modal too) or into the loaders.
+```
+
+The target route's middleware runs on every request that renders the modal,
+cache hits and prerendered targets included:
+
+```tsx
+path("/photos/:id", PhotoPage, { name: "photo" }, () => [
+  middleware(requireViewer), // runs for the page and the modal
+]),
+intercept("@modal", ".photo", PhotoModal, () => [loader(PhotoLoader)]),
+```
+
+Work that belongs to the modal alone goes in the intercept's loader.
+`clientUrls()` intercepts never accepted `middleware()` and are unchanged.
+
 ### Fixed: a no-JS form post whose action throws renders its error boundary inside route middleware
 
 **Before.** When a server action posted by a form without JavaScript threw,

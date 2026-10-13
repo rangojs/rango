@@ -75,16 +75,22 @@ const router = createRouter({}).routes(
         () => <main>shell</main>,
         () => [
           path("/list", () => <ul>list</ul>, { name: "list" }),
-          path("/item/:id", () => <article>item</article>, { name: "item" }),
+          path(
+            "/item/:id",
+            () => <article>item</article>,
+            { name: "item" },
+            () => [
+              middleware(async (_ctx, next) => {
+                ran("route-middleware");
+                await next();
+              }),
+            ],
+          ),
           intercept(
             "@modal",
             ".item",
             () => <dialog>{`modal-run-${ran("modal")}`}</dialog>,
             () => [
-              middleware(async (_ctx, next) => {
-                ran("modal-middleware");
-                await next();
-              }),
               loader(LoaderA),
               loader(LoaderB, { prefetch: false }),
               loading(<p>modal-loading</p>),
@@ -262,10 +268,10 @@ describe("a prefetch of an intercept from its source", () => {
       a: count("a"),
       b: count("b"),
       modal: count("modal"),
-      // Intercept middleware runs on each request that resolves the slot live;
-      // a cache() hit or a Prerender() target runs none (a known gap).
-      middleware: count("modal-middleware"),
-    }).toEqual({ a: 1, b: 1, modal: 1, middleware: 2 });
+      // The target route's middleware runs for the modal on the prefetch and
+      // on the fill.
+      routeMiddleware: count("route-middleware"),
+    }).toEqual({ a: 1, b: 1, modal: 1, routeMiddleware: 2 });
   });
 
   it("with the modal open (slot and loaders held), defers nothing", async () => {

@@ -21,7 +21,7 @@ No-JS form POST (progressive enhancement):
   global middleware → action executes → route middleware → full page re-render → HTML response
 
 Intercept request:
-  global middleware → route middleware → intercept middleware → intercept handler / loaders
+  global middleware → route middleware (the target route's) → intercept handler / loaders
 
 Fetchable loader call (useFetchLoader / load()):
   global middleware → per-loader middleware → loader   (route middleware does not run)

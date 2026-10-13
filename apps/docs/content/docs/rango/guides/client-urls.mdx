@@ -241,9 +241,9 @@ export default clientUrls(({ path, intercept, loader, loading }) => [
 ]);
 ```
 
-Compared with the server [`intercept()`](/docs/rango/guides/intercepting-routes), the client form is restricted. The target must be a named route in the same definition, written with a leading dot. There is no `when` selector and no middleware. The use callback accepts only `loader()` and `loading()`, and those loaders reject `ssr: false`. Only navigations that start on one of the group's routes open the modal, and under a mount with params only with the same params (the same locale). From anywhere else, or on a hard load, the full route renders. The router renders the slot next to the group's content, so you don't place a `<ParallelOutlet>` for it.
+Compared with the server [`intercept()`](/docs/rango/guides/intercepting-routes), the client form is restricted. The target must be a named route in the same definition, written with a leading dot. There is no `when` selector. The use callback accepts only `loader()` and `loading()`, and those loaders reject `ssr: false`. Only navigations that start on one of the group's routes open the modal, and under a mount with params only with the same params (the same locale). From anywhere else, or on a hard load, the full route renders. The router renders the slot next to the group's content, so you don't place a `<ParallelOutlet>` for it.
 
-If you need `when`, middleware, or a server handler, declare the intercept in the server tree around the include. A server-declared intercept can target a group route by its full name (`catalog.product`). When such an intercept applies, the browser skips the optimistic render, and the origin page stays on screen until the modal commits.
+If you need `when` or a server handler, declare the intercept in the server tree around the include. A server-declared intercept can target a group route by its full name (`catalog.product`). When such an intercept applies, the browser skips the optimistic render, and the origin page stays on screen until the modal commits.
 
 ## Loaders in a group
 
@@ -563,7 +563,7 @@ A navigation from a group page to `/admin/audit-log` doesn't match any group rou
     href="/docs/rango/guides/intercepting-routes"
     title="Intercepting Routes"
   >
-    The full server `intercept()` with `when` and middleware.
+    The full server `intercept()` with `when` and server handlers.
   </Card>
   <Card href="/docs/rango/features/navigation" title="Navigation">
     Links, prefetch, and programmatic navigation.

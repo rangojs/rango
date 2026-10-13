@@ -82,7 +82,6 @@ export interface AppVariables {
   chainGlobal?: string;
   chainAction?: string;
   chainRouteReport?: string;
-  chainIntercept?: string;
   // ALS scope propagation test variables
   alsRequestId?: string;
   alsActionProbe?: string;

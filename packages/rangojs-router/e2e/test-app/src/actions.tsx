@@ -579,18 +579,12 @@ export async function mwChainFormAction(_formData: FormData): Promise<void> {
  */
 export async function alsScopeAction(): Promise<void> {
   const ctx = getRequestContext();
-  const {
-    AlsGlobalMark,
-    AlsRouteMark,
-    AlsInterceptMark,
-    customGlobalAls,
-    customRouteAls,
-  } = await import("./urls/als-scope.js");
+  const { AlsGlobalMark, AlsRouteMark, customGlobalAls, customRouteAls } =
+    await import("./urls/als-scope.js");
   // Build scope snapshot from action's perspective
   const parts: string[] = [];
   if (ctx.get(AlsGlobalMark)) parts.push("global");
   if (ctx.get(AlsRouteMark)) parts.push("route");
-  if (ctx.get(AlsInterceptMark)) parts.push("intercept");
   ctx.set("alsActionProbe", parts.length > 0 ? parts.join(",") : "none");
   // Build custom ALS snapshot — action should see top-mw but NOT dsl-mw
   const customParts: string[] = [];

@@ -788,45 +788,6 @@ describe("a loader fetch under a rewriting middleware (S1)", () => {
   });
 });
 
-describe("intercept middleware cannot rewrite", () => {
-  it("fails the navigation with the intercept error", async () => {
-    const interceptErrors: OnErrorContext[] = [];
-    const interceptRouter = createRouter({
-      onError: (context) => {
-        interceptErrors.push(context);
-      },
-    }).routes(
-      urls(({ path, layout, intercept, middleware }) => [
-        layout(
-          () => <main>shell</main>,
-          () => [
-            path("/list", () => <ul>list</ul>, { name: "list" }),
-            path("/item/:id", () => <article>item</article>, { name: "item" }),
-            intercept(
-              "@modal",
-              ".item",
-              () => <dialog>modal</dialog>,
-              () => [
-                middleware(() => {
-                  throw rewrite("/list");
-                }),
-              ],
-            ),
-          ],
-        ),
-      ]),
-    );
-    const result = await serveShellRequest(interceptRouter, "/item/1", {
-      cacheStore: new MemorySegmentCacheStore(),
-      partial: { from: "/list" },
-    });
-    expect(result.response.status).toBe(500);
-    expect(interceptErrors.map((e) => e.error.message).join()).toContain(
-      'rewrite("/list") is not supported here: intercept middleware threw it',
-    );
-  });
-});
-
 describe("cache middleware around a route-middleware rewrite (N5)", () => {
   it("a stale document-cache refresh of a route that now rewrites reports nothing", async () => {
     let locked = false;

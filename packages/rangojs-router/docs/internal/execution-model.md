@@ -64,10 +64,18 @@ takes the same path. Pinned by `[A3]`.
 
 ```text
 global middleware
-  -> route middleware
-  -> intercept middleware
+  -> route middleware (the target route's)
   -> intercept loaders (loader segments of the slot), then the intercept handler
 ```
+
+An intercept has no middleware of its own: `intercept()` rejects `middleware()`
+in its use() and its handler's `.use` when the routes are defined
+(`validateInterceptUseItems`, `route-definition/resolve-handler-use.ts`). The
+target route's middleware runs for the modal on every pass, a runtime
+`cache()` hit and a `Prerender()` target included, so a guard or a
+`ctx.set()` the intercept's loaders read goes there. Intercept middleware ran
+only when the slot resolved live, which let a cached or prerendered modal skip
+its guard; it was removed in 0.25.0.
 
 An intercept's loaders are loader segments of its slot,
 `${parent}.${slot}D${i}.${$$id}`, resolved by the same funnel as a route's
@@ -78,10 +86,8 @@ rest, as it keeps a route loader it holds (pinned by the `[I3]` semantic matrix
 row). The intercept handler re-runs on every request that resolves the
 intercept, except a fill (flow 5) in which the client holds the slot: there
 neither the handler nor the intercept's layout runs, only the loaders the
-client lacks run, and its middleware runs when the slot resolves live. A
-runtime `cache()` hit or a `Prerender()` target serves the stored slot and runs
-no intercept middleware, in a fill or not: only `resolveInterceptEntry` calls
-`executeInterceptMiddleware`, and that is a known gap. The browser folds the
+client lacks run. A runtime `cache()` hit or a `Prerender()` target serves the
+stored slot and resolves only its loaders. The browser folds the
 loader segments back onto the slot before it builds the tree
 (`segment-system.tsx` `foldInterceptLoaders`), so the page under the modal
 keeps its element tree.
@@ -880,7 +886,7 @@ Rules that are easy to break:
 - Never recovered: no boundary found, a thrown `Response` (the redirect
   limitation above), a `Skip`, a throwing fallback, `recover: false`
   (`throwOnError` for prerender and on-demand refresh, which must reject, and
-  the intercept `skipMiddleware` background re-render, which must not write a
+  the intercept `background` re-render, which must not write a
   fallback, #878).
 - `loading(fallback, { ssr: false })` awaits the handler on a document load, so
   the document takes the sync `catchSegmentError` lane; a client navigation
@@ -1104,7 +1110,6 @@ Where a rewrite is not honored, and what it becomes:
 | global middleware during a loader fetch     | the `loaderError` response `load()` rejects with (500, the rule in the message), onError `"routing"`                           |
 | a fetchable loader or its loader middleware | the loader's error response, onError `"loader"`                                                                                |
 | a server action                             | the action's error (onError `"action"`); the Rewrite's message says "use redirect()"                                           |
-| intercept middleware                        | an error naming the intercept site                                                                                             |
 | a route handler or a loader                 | the error boundary / loader error UI; the message says to throw `rewrite()` from route middleware (middleware only, by design) |
 | a returned (not thrown) `Rewrite`           | an error: "throw it, don't return it"                                                                                          |
 
@@ -1175,9 +1180,10 @@ The variadic form `middleware(fn1, fn2, fn3)` is not supported. Use
 
 ### Intercept scope
 
-Bindings set by intercept middleware are visible only to the intercept
-render path. Direct navigation to the same target route does not execute
-intercept middleware. Pinned by the `[I2]` semantic matrix row.
+An intercept sees the bindings of the target route's middleware, the same ones
+a direct navigation to that route sees; it has no middleware of its own
+(flow 4). Direct navigation to the target renders the full page with no
+intercept. Pinned by the `[I2]` semantic matrix row.
 
 Soft navigation triggers the intercept only when the route's `when()`
 selector returns true for the navigation's `from`/`to` locations

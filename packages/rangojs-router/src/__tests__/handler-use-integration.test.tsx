@@ -595,40 +595,9 @@ describe("handler.use integration", () => {
   // -----------------------------------------------------------------------
 
   describe("intercept()", () => {
-    it("applies handler.use items to intercept entry", () => {
-      const testMw = async (_ctx: any, next: any) => next();
-      const InterceptHandler: Handler = Object.assign(
-        () => <div>Intercept</div>,
-        {
-          use: () => [middleware(testMw)],
-        },
-      );
-
-      const urlPatterns = urls(({ path }) => [
-        layout(
-          () => <div>Layout</div>,
-          () => [
-            path("/", () => <div>Home</div>, { name: "home" }),
-            intercept("@modal", "home", InterceptHandler),
-          ],
-        ),
-      ]);
-
-      runInContext(ctx, () => urlPatterns.handler());
-      const entry = ctx.manifest.get("home");
-      let layoutEntry = entry!.parent;
-      while (layoutEntry && layoutEntry.type !== "layout") {
-        layoutEntry = layoutEntry.parent;
-      }
-      const interceptEntry = layoutEntry?.intercept?.[0];
-      expect(interceptEntry).toBeDefined();
-      expect(interceptEntry!.middleware).toContain(testMw);
-    });
-
     it("handler.use items reach the intercept entry via runtime merging", () => {
-      // A redundant but explicit assertion that intercept() walks the full
-      // resolveHandlerUse → mergeHandlerUse path for loaders (and their own
-      // revalidate()) too, not just middleware.
+      // intercept() walks the full resolveHandlerUse → mergeHandlerUse path
+      // for loaders and their own revalidate().
       const revalidateFn = () => true;
       const loaderDef = {
         __brand: "loader" as const,
@@ -706,6 +675,11 @@ describe("handler.use integration", () => {
     // route-definition/dsl-helpers.ts.
     it.each([
       [
+        "middleware()",
+        () => middleware(async (_ctx: any, next: any) => next()),
+        "move it to the route's middleware() (it runs for the modal too) or into the loaders",
+      ],
+      [
         "errorBoundary()",
         () => errorBoundary(<div>Modal error</div>),
         "put it on the enclosing layout or path",
@@ -770,13 +744,21 @@ describe("handler.use integration", () => {
     });
 
     it("merges handler.use before explicit use in intercept", () => {
-      const mwA = async (_ctx: any, next: any) => next();
-      const mwB = async (_ctx: any, next: any) => next();
+      const loaderA = {
+        __brand: "loader" as const,
+        $$id: "int-loader-a",
+        fn: async () => ({}),
+      };
+      const loaderB = {
+        __brand: "loader" as const,
+        $$id: "int-loader-b",
+        fn: async () => ({}),
+      };
 
       const InterceptHandler: Handler = Object.assign(
         () => <div>Intercept</div>,
         {
-          use: () => [middleware(mwA)],
+          use: () => [loader(loaderA as any)],
         },
       );
 
@@ -786,7 +768,7 @@ describe("handler.use integration", () => {
           () => [
             path("/", () => <div>Home</div>, { name: "home" }),
             intercept("@modal", "home", InterceptHandler, () => [
-              middleware(mwB),
+              loader(loaderB as any),
             ]),
           ],
         ),
@@ -799,7 +781,10 @@ describe("handler.use integration", () => {
         layoutEntry = layoutEntry.parent;
       }
       const interceptEntry = layoutEntry?.intercept?.[0];
-      expect(interceptEntry!.middleware).toEqual([mwA, mwB]);
+      expect(interceptEntry!.loader.map((l) => l.loader)).toEqual([
+        loaderA,
+        loaderB,
+      ]);
     });
   });
 

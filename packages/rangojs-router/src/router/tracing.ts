@@ -24,8 +24,8 @@
  * registry; do not call traceSpan directly from new code.
  *
  * Phase coverage (all via observePhase): rango.request (span-only; handler:total
- * metered directly), rango.middleware (span-only incl. intercept middleware;
- * pre/post metered directly), rango.action (action:<id>; server-action
+ * metered directly), rango.middleware (span-only; pre/post metered directly),
+ * rango.action (action:<id>; server-action
  * execution, JS + no-JS/PE), rango.loader (loader:<id>; single metering site at
  * useLoader, plus the fetchable path), rango.handler (span-only, one per segment
  * route/layout handler execution; the handler:<id> perf metric is owned by the

@@ -10,18 +10,16 @@ import {
 /**
  * Async context (ALS) propagation tests.
  *
- * Validates three scope contracts:
+ * Validates two scope contracts:
  *
  * 1. Request scope (router.use) — visible everywhere: global middleware,
  *    route middleware, handlers, layouts, parallels, loaders, intercepts,
  *    and async server components before and after await.
  *
  * 2. Render scope (route middleware) — visible in the render tree for
- *    normal render, PE rerender, and action follow-up revalidation,
- *    but NOT inside the action itself. This is a hard contract boundary.
- *
- * 3. Intercept scope (intercept middleware) — visible only in the
- *    intercept render path, not in direct navigation of the target route.
+ *    normal render, PE rerender, action follow-up revalidation, and the
+ *    intercept's render, but NOT inside the action itself. This is a hard
+ *    contract boundary.
  */
 
 function alsScopeTests(mode: "dev" | "build") {
@@ -270,10 +268,10 @@ function alsScopeTests(mode: "dev" | "build") {
     });
 
     // ========================================================================
-    // Intercept scope: intercept middleware only visible in intercept render
+    // Intercept render: route middleware runs for the modal
     // ========================================================================
 
-    test("intercept handler sees intercept scope [global,route,intercept]", async ({
+    test("intercept handler sees request and render scope [global,route]", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -285,21 +283,21 @@ function alsScopeTests(mode: "dev" | "build") {
       await expect(testId(page, "als-modal")).toBeVisible({ timeout: 10000 });
 
       await expect(testId(page, "als-intercept-scope")).toHaveText(
-        "global,route,intercept",
+        "global,route",
       );
       await expect(testId(page, "als-intercept-request-id")).not.toHaveText(
         "none",
       );
     });
 
-    test("direct navigation to intercept target does NOT see intercept scope", async ({
+    test("direct navigation to the intercept target sees the same scope [global,route]", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
       await page.goto(f.url("/als-scope/detail/test-slug"));
       await waitForHydration(page);
 
-      // Direct navigation — no intercept middleware runs
+      // Direct navigation — no intercept, same route middleware
       await expect(testId(page, "als-detail-scope")).toHaveText("global,route");
       await expect(testId(page, "als-modal")).not.toBeVisible();
     });

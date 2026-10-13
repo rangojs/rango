@@ -7,12 +7,10 @@ import { AlsScopeActionButton } from "../components/AlsScopeActionButton.js";
 import { alsScopeAction } from "../actions.js";
 
 // Typed context variables for each middleware scope.
-// Global middleware sets AlsGlobalMark; route middleware sets AlsRouteMark;
-// intercept middleware sets AlsInterceptMark.
-// Each probe reads all three to show its scope visibility.
+// Global middleware sets AlsGlobalMark; route middleware sets AlsRouteMark.
+// Each probe reads both to show its scope visibility.
 export const AlsGlobalMark = createVar<string>();
 export const AlsRouteMark = createVar<string>();
-export const AlsInterceptMark = createVar<string>();
 
 // Custom AsyncLocalStorage instances owned by the application (not the framework).
 // Top-level .use() middleware calls next() inside customGlobalAls.run().
@@ -25,17 +23,14 @@ export const customRouteAls = new AsyncLocalStorage<string>();
 /**
  * Async context (ALS) propagation test fixture.
  *
- * Validates three scope contracts:
+ * Validates two scope contracts:
  *
  * 1. Request scope (router.use) — AlsGlobalMark is visible everywhere:
  *    handlers, layouts, parallels, loaders, intercepts, async server
  *    components, streamed children, and server actions.
  *
  * 2. Render scope (route middleware) — AlsRouteMark is visible in the
- *    render tree but NOT inside the action itself.
- *
- * 3. Intercept scope (intercept middleware) — AlsInterceptMark is visible
- *    only in the intercept render path.
+ *    render tree, the intercept's included, but NOT inside the action itself.
  *
  * Each probe outputs a "scope snapshot" string: the comma-joined list of
  * which markers are present (e.g. "global,route" or "global").
@@ -45,7 +40,6 @@ function buildScopeSnapshot(ctx: { get: (v: any) => any }): string {
   const parts: string[] = [];
   if (ctx.get(AlsGlobalMark)) parts.push("global");
   if (ctx.get(AlsRouteMark)) parts.push("route");
-  if (ctx.get(AlsInterceptMark)) parts.push("intercept");
   return parts.length > 0 ? parts.join(",") : "none";
 }
 
@@ -273,12 +267,6 @@ export const alsScopePatterns = urls(
             );
           },
           { when: ({ from }) => from.url.pathname.startsWith("/als-scope") },
-          () => [
-            middleware(async (ctx, next) => {
-              ctx.set(AlsInterceptMark, "applied");
-              await next();
-            }),
-          ],
         ),
       ],
     ),

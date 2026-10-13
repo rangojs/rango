@@ -353,7 +353,7 @@ describe('"use cache": loader and middleware ctx reads (#940)', () => {
     );
   });
 
-  it("a middleware ctx read stays allowed inside a cache() subtree's render scope (intercept middleware)", async () => {
+  it("a middleware ctx read stays allowed inside a cache() subtree's render scope", async () => {
     const store = new MemorySegmentCacheStore();
     const read = RangoContext.run({ insideCacheScope: true } as any, () =>
       inMiddleware(store, "a", async (ctx) => ctx.get(Tenant)),

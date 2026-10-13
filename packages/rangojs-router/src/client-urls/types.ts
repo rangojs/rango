@@ -139,7 +139,7 @@ export interface ClientUrlRouteRecord {
 
 /**
  * A restricted intercept declared inside clientUrls(). Compared to the server
- * intercept() there is no `when` selector, no middleware, and the target must
+ * intercept() there is no `when` selector, and the target must
  * be a dot-local NAMED route in the same definition — every field is
  * JSON-projectable, which is what makes the declaration legal in a
  * "use client" module. `targetName` is stored bare (no leading dot).

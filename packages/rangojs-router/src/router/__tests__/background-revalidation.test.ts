@@ -210,6 +210,25 @@ describe("withBackgroundRevalidation", () => {
     });
   });
 
+  describe("an intercept re-render", () => {
+    it("resolves the intercept with background: true, so a handler error rejects instead of caching its fallback", async () => {
+      const interceptResult = {
+        intercept: { slotName: "@modal" },
+        entry: { id: "layout" },
+      };
+      const ctx = makeCtx({ interceptResult } as any);
+
+      const middleware = withBackgroundRevalidation(ctx, makeState());
+      await drain(middleware(toAsyncGen([])));
+      await waitUntilFns[0]();
+
+      expect(mockRouterCtx.resolveInterceptEntry).toHaveBeenCalledTimes(1);
+      const call = mockRouterCtx.resolveInterceptEntry.mock.calls[0] as any[];
+      expect(call[0]).toBe(interceptResult.intercept);
+      expect(call.at(-1)).toEqual({ background: true });
+    });
+  });
+
   describe("handle store isolation (regression: cross-task contamination)", () => {
     it("resolves against a fresh handleStore on a derived context, never swapping the shared field", async () => {
       const ctx = makeCtx();

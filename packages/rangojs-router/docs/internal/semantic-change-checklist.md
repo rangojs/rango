@@ -38,7 +38,7 @@ revalidation, intercepts, prerender, or request context propagation.
 
 ## Intercepts
 
-- Did intercept middleware order change?
+- Does the target route's middleware still run for the intercept on every pass (live, `cache()` hit, `Prerender()` target)?
 - Are intercept and full-route paths consistent with contract?
 - Are direct vs soft navigation semantics still stable?
 

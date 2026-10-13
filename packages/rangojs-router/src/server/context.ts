@@ -246,7 +246,6 @@ export type InterceptEntry = {
   slotName: `@${string}`; // e.g., "@modal"
   routeName: string; // e.g., "card"
   handler: ReactNode | Handler<any, any, any>;
-  middleware: MiddlewareFn<any, any>[];
   loader: LoaderEntry[];
   loading?: ReactNode | false;
   transition?: TransitionConfig;

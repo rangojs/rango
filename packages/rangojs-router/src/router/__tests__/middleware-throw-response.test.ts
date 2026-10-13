@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  executeMiddleware,
-  executeInterceptMiddleware,
-} from "../middleware.js";
+import { executeMiddleware } from "../middleware.js";
 import type { MiddlewareEntry, MiddlewareFn } from "../middleware-types.js";
 
 // A thrown Response from middleware is control flow, not an error. It must be
@@ -157,50 +154,5 @@ describe("executeMiddleware: thrown Response short-circuit", () => {
     expect(response.status).toBe(418);
     expect(await response.text()).toBe("from-inner");
     expect(response.headers.get("X-Inner")).toBe("yes");
-  });
-});
-
-describe("executeInterceptMiddleware: thrown Response short-circuit", () => {
-  it("returns the thrown Response and merges stub headers", async () => {
-    const middleware: MiddlewareFn = (ctx) => {
-      ctx.header("X-Stub", "stub-value");
-      throw new Response("thrown-intercept", {
-        status: 418,
-        headers: { "X-Thrown": "yes" },
-      });
-    };
-
-    const stubResponse = new Response(null);
-    const result = await executeInterceptMiddleware(
-      [middleware],
-      new Request("http://localhost/"),
-      {},
-      {},
-      {},
-      stubResponse,
-    );
-
-    expect(result).toBeInstanceOf(Response);
-    expect(result!.status).toBe(418);
-    expect(await result!.text()).toBe("thrown-intercept");
-    expect(result!.headers.get("X-Thrown")).toBe("yes");
-    expect(result!.headers.get("X-Stub")).toBe("stub-value");
-  });
-
-  it("non-Response throws still propagate as errors", async () => {
-    const middleware: MiddlewareFn = () => {
-      throw new Error("real error");
-    };
-
-    await expect(
-      executeInterceptMiddleware(
-        [middleware],
-        new Request("http://localhost/"),
-        {},
-        {},
-        {},
-        new Response(null),
-      ),
-    ).rejects.toThrow("real error");
   });
 });

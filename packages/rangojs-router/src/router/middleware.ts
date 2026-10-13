@@ -34,11 +34,7 @@ import { assertNonCacheableReadAllowed } from "../server/context.js";
 import { readGuardedTheme } from "../server/cookie-store.js";
 import { defineSlot, slotAccessor } from "../server/slot-accessors.js";
 import type { Theme } from "../theme/types.js";
-import {
-  isRewrite,
-  rewriteNotSupported,
-  type Rewrite,
-} from "../route-definition/rewrite.js";
+import { isRewrite, type Rewrite } from "../route-definition/rewrite.js";
 import { defineRewrittenFrom } from "../server/rewrite-trail.js";
 
 // Re-export types consumed through this module's path.
@@ -324,8 +320,8 @@ export function createMiddlewareContext<TEnv>(
     waitUntil: reqCtx ? reqCtx.waitUntil.bind(reqCtx) : fireAndForgetWaitUntil,
 
     get: ((keyOrVar: any) => {
-      // "use cache" only: intercept middleware runs inside a cache()
-      // subtree's render scope, and a middleware read is never cached there.
+      // "use cache" only: middleware runs before any cache() subtree
+      // renders, so the cache() read guard never applies to it.
       if (
         isNonCacheable(variables, keyOrVar) &&
         getCacheExecScope() !== undefined
@@ -517,13 +513,11 @@ function mergeReqCtxStub(
 // Clone `base` with stub headers merged into a fresh Headers (the clone keeps
 // the body mutable for post-next() modifications). Set-Cookie is always
 // appended; other headers obey stubOverridesNonCookie (see mergeStubHeaders).
-// mergeReqCtx folds in RequestContext stub cookies/headers; the intercept
-// short-circuit path passes false (its reqCtx headers are not merged here),
-// which is the one deliberate divergence between the call sites.
+// RequestContext stub cookies/headers are folded in last.
 function mergeResponse(
   base: Response,
   stub: Headers,
-  opts: { stubOverridesNonCookie: boolean; mergeReqCtx: boolean },
+  opts: { stubOverridesNonCookie: boolean },
 ): Response {
   const mergedHeaders = new Headers(base.headers);
   // The reserved external-redirect marker is never a trust signal and must never
@@ -532,9 +526,7 @@ function mergeResponse(
   // guard would not touch) to the client. The opt-in is the out-of-band brand.
   mergedHeaders.delete(EXTERNAL_REDIRECT_MARKER);
   mergeStubHeaders(mergedHeaders, stub, opts.stubOverridesNonCookie);
-  if (opts.mergeReqCtx) {
-    mergeReqCtxStub(mergedHeaders, _getRequestContext());
-  }
+  mergeReqCtxStub(mergedHeaders, _getRequestContext());
   const merged = new Response(base.body, {
     status: base.status,
     statusText: base.statusText,
@@ -597,7 +589,6 @@ export async function executeMiddleware<TEnv>(
       // and reqCtx stub headers are merged in.
       responseHolder.response = mergeResponse(response, stubResponse.headers, {
         stubOverridesNonCookie: true,
-        mergeReqCtx: true,
       });
 
       return responseHolder.response;
@@ -740,7 +731,6 @@ export async function executeMiddleware<TEnv>(
       // (stubOverridesNonCookie=false); reqCtx stub headers still merge in.
       const merged = mergeResponse(result, stubResponse.headers, {
         stubOverridesNonCookie: false,
-        mergeReqCtx: true,
       });
       responseHolder.response = merged;
       return merged;
@@ -794,137 +784,6 @@ export async function executeMiddleware<TEnv>(
   }
 
   return finalResponse;
-}
-
-/**
- * Execute middleware for intercepts (simplified execution)
- *
- * Intercepts use a shared stubResponse from the request context. This function:
- * - Runs middleware in sequence with a simple next() chain
- * - Returns Response if any middleware short-circuits (returns OR throws a Response, or redirects, BEFORE next())
- * - Returns null if all middleware calls next() - headers set after next() remain on stubResponse
- *
- * @param middlewares - Array of middleware functions
- * @param request - Original request
- * @param env - Environment bindings
- * @param params - Route params
- * @param variables - Shared variables object
- * @param stubResponse - Response from request context for collecting headers/cookies
- */
-export async function executeInterceptMiddleware<TEnv>(
-  middlewares: MiddlewareFn<TEnv>[],
-  request: Request,
-  env: TEnv,
-  params: Record<string, string>,
-  variables: Record<string, any>,
-  stubResponse: Response,
-  reverse?: (
-    name: string,
-    params?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string,
-): Promise<Response | null> {
-  if (middlewares.length === 0) {
-    return null;
-  }
-
-  let index = 0;
-  let earlyResponse: Response | null = null;
-
-  // Use provided stubResponse - headers/cookies set here will be merged by the caller
-  const responseHolder: ResponseHolder = { response: stubResponse };
-
-  const next = async (): Promise<Response> => {
-    if (index >= middlewares.length || earlyResponse) {
-      return stubResponse;
-    }
-
-    const ordinal = index;
-    const middleware = middlewares[index++];
-    const ctx = createMiddlewareContext(
-      request,
-      env,
-      params,
-      variables,
-      responseHolder,
-      reverse,
-    );
-
-    let nextCalled = false;
-    const guardedNext = (): Promise<Response> => {
-      if (nextCalled) {
-        throw new Error(
-          `[@rangojs/router] Intercept middleware called next() more than once.`,
-        );
-      }
-      nextCalled = true;
-      return next();
-    };
-
-    // Span-wrap each intercept middleware as rango.middleware (metric:false —
-    // intercept runs inside the render phase already metered by render:total, so
-    // it contributes a span but no separate perf metric). Bare MiddlewareFns
-    // have no pattern, so the label is scoped to "*" like a pattern-less entry.
-    const label = getMiddlewareMetricLabel(
-      { handler: middleware, pattern: null } as MiddlewareEntry<TEnv>,
-      ordinal,
-    );
-
-    const result: Response | void = await observePhase(
-      PHASES.middleware(label),
-      async () => {
-        try {
-          return await middleware(ctx, guardedNext);
-        } catch (error) {
-          // Thrown Response is short-circuit control flow, parity with the
-          // explicit-return path below. Absorb it INSIDE the span so the tracing
-          // runner settles rango.middleware as success, not STATUS_ERROR (same
-          // reasoning as executeMiddleware's main chain). Real errors propagate.
-          if (error instanceof Response) return error;
-          if (isRewrite(error)) throw rewriteNotSupported(error, "intercept");
-          throw error;
-        }
-      },
-    );
-    if (isRewrite(result)) throw returnedRewriteError(middleware);
-
-    if (result instanceof Response) {
-      earlyResponse = result;
-      return result;
-    }
-
-    return stubResponse;
-  };
-
-  await next();
-
-  // Return early response if middleware short-circuited (returned Response BEFORE next())
-  if (earlyResponse) {
-    // Capture in const for TypeScript narrowing (earlyResponse is `let` which loses narrowing in callbacks)
-    const response: Response = earlyResponse;
-
-    // Merge any headers/cookies set on stub into the early response
-    let hasStubHeaders = false;
-    stubResponse.headers.forEach(() => {
-      hasStubHeaders = true;
-    });
-
-    if (hasStubHeaders) {
-      // Only fill in missing headers — the returned Response's explicit headers
-      // take precedence (stubOverridesNonCookie=false), matching executeMiddleware.
-      // mergeReqCtx=false: the intercept path deliberately does NOT merge reqCtx
-      // stub headers here (pinned by intercept-middleware-headers.test.ts).
-      return mergeResponse(response, stubResponse.headers, {
-        stubOverridesNonCookie: false,
-        mergeReqCtx: false,
-      });
-    }
-    return response;
-  }
-
-  // All middleware completed without short-circuit
-  // Headers/cookies set on stubResponse will be merged into the final response by the caller
-  return null;
 }
 
 /**

@@ -159,7 +159,7 @@ export interface RouterContext<TEnv = any> {
     handlerContext: HandlerContext<any, TEnv>,
     belongsToRoute: boolean,
     revalidationContext?: RevalidationContext,
-    options?: { skipMiddleware?: boolean },
+    options?: { background?: boolean },
   ) => Promise<ResolvedSegment[]>;
 
   collectWithMarkers?: <T>(

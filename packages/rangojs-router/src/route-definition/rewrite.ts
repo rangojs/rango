@@ -29,8 +29,8 @@ const REWRITE_RULE =
   "rewrite() is for middleware: throw it from router.use() or route " +
   "middleware (middleware() in urls()), before await next(), while it " +
   "handles a GET or HEAD page request. Loaders and route handlers can't " +
-  "rewrite: throw rewrite() from the route's middleware instead. Intercept " +
-  "middleware and loader fetches can't either. In a server action use " +
+  "rewrite: throw rewrite() from the route's middleware instead. Middleware " +
+  "in loader fetches can't either. In a server action use " +
   "redirect(); for a mutation return a Response from middleware.";
 
 export function describeRewriteTarget(target: RewriteTarget): string {
@@ -151,7 +151,7 @@ function createRewrite(
 export const rewrite: RewriteFunction = createRewrite as RewriteFunction;
 
 /** A dispatch site that cannot honor a rewrite. */
-export type RewriteSite = "mutation" | "loader-fetch" | "intercept";
+export type RewriteSite = "mutation" | "loader-fetch";
 
 const SITE_MESSAGE: Record<RewriteSite, string> = {
   mutation:
@@ -161,9 +161,6 @@ const SITE_MESSAGE: Record<RewriteSite, string> = {
   "loader-fetch":
     "middleware threw it during a loader fetch (useFetchLoader, load(), " +
     "useRefreshLoaders). Return a Response there.",
-  intercept:
-    "intercept middleware threw it. Rewrite from router.use() or the " +
-    "route's middleware(), or return a Response.",
 };
 
 /** The error a rewrite becomes at a site that cannot honor it. */

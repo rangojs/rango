@@ -740,8 +740,7 @@ Key properties:
   parking made visible); the revalidation lanes keep their inner `rango.*`
   spans, now nested under the wrapper. Toggle with
   `spans: { background: false }`.
-- **Full phase coverage.** Intercept-route middleware emits `rango.middleware`,
-  and action-revalidation renders emit `rango.render`, so an action
+- **Full phase coverage.** Action-revalidation renders emit `rango.render`, so an action
   revalidation's loaders nest under a `rango.render` parent like a normal
   navigation.
 

@@ -1140,7 +1140,7 @@ Composition limits around a client include, locked explicitly:
   `revalidate()` on the surrounding server tree is unaffected by the group.
 - Intercepts come in TWO declaration forms, split by the projection boundary:
   1. **Server-declared** (a wrapping layout or route in the server tree) — the
-     full form: `when` selectors, middleware, server handlers. Server-executed
+     full form: `when` selectors and server handlers. Server-executed
      material cannot cross from a `"use client"` module, so anything beyond
      the restricted form below lives here. To keep that wiring next to the
      routes it belongs to, co-locate a small server module with the client
@@ -1156,8 +1156,9 @@ Composition limits around a client include, locked explicitly:
      JSON-projectable form:
      `intercept(slot, ".localTarget", Component, use?)` where the target is a
      dot-local NAMED route in the same
-     definition and `use` may contain `loader()`/`loading()` only. No `when`,
-     no middleware. Scoping is MODULE-LOCAL by contract: only navigations
+     definition and `use` may contain `loader()`/`loading()` only. No `when`
+     (neither form takes `middleware()`: the target route's middleware runs
+     for the modal). Scoping is MODULE-LOCAL by contract: only navigations
      whose origin is one of the group's routes, in the target's mount
      instance (the same `:locale` under `include("/:locale", ...)`), render
      the modal; any other origin commits the full route. Materialization enforces this with a

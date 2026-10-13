@@ -17,15 +17,6 @@ vi.mock("../../server/request-context.js", () => ({
   // resolveLoaderData (intercept loaders' funnel) reads it for the PPR lane.
   _getRequestContext: vi.fn(() => undefined),
 }));
-vi.mock("../middleware.js", () => ({
-  executeInterceptMiddleware: vi.fn(() => null),
-}));
-vi.mock("../handler-context.js", () => ({
-  createReverseFunction: vi.fn(),
-}));
-vi.mock("../../route-map-builder.js", () => ({
-  getGlobalRouteMap: vi.fn(),
-}));
 vi.mock("../segment-resolution.js", () => ({
   handleHandlerResult: vi.fn((x: any) => x),
   buildLoaderErrorContext: vi.fn(() => ({})),
@@ -80,7 +71,6 @@ function makeInterceptEntry(
     slotName: "@modal",
     routeName: "test",
     handler: null as any,
-    middleware: [],
     loader: [
       {
         loader: { $$id: "test-loader" } as any,

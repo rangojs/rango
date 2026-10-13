@@ -5,7 +5,7 @@
  * way a throwing intercept loader does.
  *
  * Also pinned: a thrown/returned Response propagates, the background cache
- * re-render (skipMiddleware) rejects (also for a streamed handler: a fallback
+ * re-render rejects (also for a streamed handler: a fallback
  * there would be cached), and an async handler error under loading() streams,
  * resolves to the declared boundary and records the failure on the request so
  * cacheRoute refuses to store it.
@@ -321,7 +321,7 @@ describe("intercept handler lanes left unchanged", () => {
     });
   });
 
-  it("the background re-render (skipMiddleware) still rejects", async () => {
+  it("the background re-render still rejects", async () => {
     const parentEntry = {
       type: "layout",
       shortCode: "L9",
@@ -336,7 +336,6 @@ describe("intercept handler lanes left unchanged", () => {
       handler: () => {
         throw new Error("background modal failed");
       },
-      middleware: [],
       loader: [],
       when: [],
     } as any;
@@ -371,14 +370,14 @@ describe("intercept handler lanes left unchanged", () => {
           true,
           deps,
           undefined,
-          { skipMiddleware: true },
+          { background: true },
         ),
       ),
     ).rejects.toThrow("background modal failed");
     expect(deps.callOnError).not.toHaveBeenCalled();
   });
 
-  it("the background re-render (skipMiddleware) of a streamed handler rejects and records nothing", async () => {
+  it("the background re-render of a streamed handler rejects and records nothing", async () => {
     const parentEntry = {
       type: "layout",
       shortCode: "L9",
@@ -394,7 +393,6 @@ describe("intercept handler lanes left unchanged", () => {
         throw new Error("background streamed modal failed");
       },
       loading: <div>modal-loading</div>,
-      middleware: [],
       loader: [],
       when: [],
     } as any;
@@ -428,7 +426,7 @@ describe("intercept handler lanes left unchanged", () => {
         true,
         deps,
         undefined,
-        { skipMiddleware: true },
+        { background: true },
       ),
     );
     const slot = result.find((seg: any) => seg.slot === "@modal");

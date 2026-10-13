@@ -17,7 +17,7 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  *   - Orphan layouts: pathless layouts (top-level + nested in path) with parallels
  *   - Handler-first execution: layout ctx.set -> handler ctx.set -> orphan ctx.get
  *     (the wrapping orphan layout reads data from the handler it wraps)
- *   - Intercept chain: global mw -> route mw -> intercept mw -> handler -> loader
+ *   - Intercept chain: global mw -> route mw -> intercept handler -> intercept loader
  *   - Progressive enhancement: form POST works without JavaScript
  *   - Action within intercept modal: triggers revalidation of modal content
  */
@@ -304,13 +304,9 @@ test.describe("Middleware chain (dev)", () => {
     await expect(testId(page, "intercept-global-var")).toHaveText(
       "from-global",
     );
-    // Intercept handler sees route mw var
+    // Intercept handler sees route mw var: route middleware runs for the modal
     await expect(testId(page, "intercept-route-var")).toHaveText(
       "from-route-mw",
-    );
-    // Intercept handler sees intercept-specific mw var
-    await expect(testId(page, "intercept-mw-var")).toHaveText(
-      "from-intercept-mw",
     );
 
     // Intercept loader sees cookies from global + route mw
@@ -748,9 +744,6 @@ test.describe("Middleware chain (production)", () => {
     );
     await expect(testId(page, "intercept-route-var")).toHaveText(
       "from-route-mw",
-    );
-    await expect(testId(page, "intercept-mw-var")).toHaveText(
-      "from-intercept-mw",
     );
 
     await expect(testId(page, "intercept-loader-global-cookie")).toHaveText(
