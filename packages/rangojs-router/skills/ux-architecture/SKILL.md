@@ -146,13 +146,13 @@ app-structure skill.
 
 ### 2.3 Where a layout goes
 
-|                      | A server `layout()` around the `include()`                                                                            | A client `layout()` inside the group                                                                                                              |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stays mounted across | Every navigation below it, between groups too.                                                                        | Navigations between the routes it wraps (#1124). The route component inside it mounts anew on a route change; it is a different page.             |
-| Its own code re-runs | Never on a navigation or an action by default. `revalidate()` opts in; the handler time adds to each such navigation. | It is a client component: it re-renders with React state, never re-fetched.                                                                       |
-| Can hold             | Server components, `parallel()` slots, `middleware()`, `errorBoundary()`, `intercept()`.                              | Client components only. `useOutlet()` gives `content` and `pending`, which is true from the click to the commit of a navigation inside the group. |
-| A `loader()` on it   | Held on navigation, re-run after every action unless its `revalidate()` narrows that.                                 | Re-runs when params or search change and after every action unless its `revalidate()` says otherwise (and see "Known gaps").                      |
-| Use it for           | App-wide chrome and its data: session, account menu, cart badge, notifications.                                       | Area chrome: section nav, tabs, a busy indicator from `pending`.                                                                                  |
+|                      | A server `layout()` around the `include()`                                                                            | A client `layout()` inside the group                                                                                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Stays mounted across | Every navigation below it, between groups too.                                                                        | Navigations between the routes it wraps (#1124). The route component inside it mounts anew on a route change; it is a different page.                                    |
+| Its own code re-runs | Never on a navigation or an action by default. `revalidate()` opts in; the handler time adds to each such navigation. | It is a client component: it re-renders with React state, never re-fetched.                                                                                              |
+| Can hold             | Server components, `parallel()` slots, `middleware()`, `errorBoundary()`, `intercept()`.                              | Client components only. `useOutlet()` gives `content` and `pending`, which is true from the click to the commit of a navigation inside the group.                        |
+| A `loader()` on it   | Held on navigation, re-run after every action unless its `revalidate()` narrows that.                                 | The same as on a server layout: held on navigation, whatever route of the layout or params change, and re-run after every action unless its `revalidate()` narrows that. |
+| Use it for           | App-wide chrome and its data: session, account menu, cart badge, notifications.                                       | Area chrome: section nav, tabs, a busy indicator from `pending`.                                                                                                         |
 
 A server layout handler that reads request data (a cookie, the session,
 `ctx.params`) renders it once and keeps it. Data that must refresh goes in a
@@ -174,7 +174,8 @@ shapes"):
 | ---------------------------------------- | ------------------------------------ | --------------- |
 | A server `path()`, or anything inside it | Re-runs when params or search change | Re-runs         |
 | A server `layout()` above the route      | Held                                 | Re-runs         |
-| A `clientUrls()` `path()` or `layout()`  | Re-runs when params or search change | Re-runs         |
+| A `clientUrls()` `path()`                | Re-runs when params or search change | Re-runs         |
+| A `clientUrls()` `layout()`              | Held                                 | Re-runs         |
 | Any segment the page does not hold yet   | Runs; a predicate cannot stop it     | Runs            |
 
 The four predicates most apps need (all run on the server, in `clientUrls()`
@@ -229,14 +230,17 @@ them right:
   default you are changing: the ternary narrows a loader that re-runs after
   every action; `isAction(X) || undefined` adds a re-run where the default
   skips (a server layout's own handler).
-- Never `() => false` on data keyed by a param: product to product then keeps
-  showing the first product. Never `() => true` as a habit: it re-runs on
+- `revalidate(true)` and `revalidate(false)` are shorthands for `() => true`
+  and `() => false`.
+- Never `revalidate(false)` on data keyed by a param: product to product then
+  keeps showing the first product. Never `revalidate(true)` as a habit: it re-runs on
   every navigation and action, and where its read is on screen the navigation
   either waits for it (a held commit) or shows that read's fallback again (an
   urgent one).
-- Chrome data that does not depend on the URL, on a group `layout()`: a bare
-  `isAction(CartActions)` is right there. It is a hard `false` on navigation,
-  which is what a cart badge wants, and `true` after a cart action. This is the
+- Chrome data that does not depend on the URL, on a group `layout()`: the
+  default already holds it on navigation, and a bare `isAction(CartActions)`
+  narrows the actions that re-run it to the cart's. It is a hard `false` on
+  navigation, which is what a cart badge wants, and `true` after a cart action. This is the
   vite-rsc-demo's `CartLoader` rule.
 - A predicate in a `clientUrls()` module may reference imports and globals
   only. A predicate shared by several loaders goes in a module without
@@ -287,6 +291,10 @@ The rule: **prefetch broadly, and flag what is expensive.**
   query, a third-party API, a large payload), personalised (every visible link
   runs it again for that user), or rarely needed (a reviews tab). Cheap
   loaders stay prefetched, so their data is there at the click.
+- `prefetch: false` only skips a loader that is new to the page. A loader
+  already on screen whose `revalidate()` re-runs it for the destination is
+  prefetched with it, so the click does not wait on a fill for data the page
+  is already showing.
 - The trade-off, measured on a `clientUrls()` tab in a consumer app (dev, a
   loaded machine): with the tab's loader flagged, a hover then a click 150 ms
   later showed the content in 843 to 918 ms; with the tab prefetched whole, in
@@ -395,8 +403,9 @@ it), `client-shop.predicates.ts`, and the mount in `src/urls/index.tsx`, in
 the router repository (not shipped in the package). Its e2e suites
 `tests/vite-rsc-demo/e2e/client-shop-*.test.ts` pin each behaviour in dev and
 production. The sketch below differs in one place: the cart loader sits on the
-server layout, because a group `layout()` loader re-runs on every cross-route
-navigation today (see "Known gaps").
+server layout, so the badge also survives entering and leaving the group. The
+demo keeps it on the group `layout()`, which holds it across the group's
+routes as well.
 
 ```tsx
 // src/urls.tsx (server)
@@ -763,11 +772,11 @@ Each entry: what the user sees, why, the fix.
    loader read by a client component in the layout, with a `revalidate()` rule;
    or `revalidate()` on the layout, paying its handler time on every navigation
    it re-runs on.
-4. **`revalidate(() => true)` everywhere.** Every navigation and action re-runs
+4. **`revalidate(true)` everywhere.** Every navigation and action re-runs
    the loader, prefetches carry it, and where its read is on screen the
    navigation waits for it or shows its fallback again. Fix: rules that name
    what changes the data (2.4).
-5. **`revalidate(() => false)` on data keyed by a param.** Product to product
+5. **`revalidate(false)` on data keyed by a param.** Product to product
    keeps showing the first product. Fix: compare the identifying param.
 6. **A loader that throws a transient failure.** After an action, a direct
    `await action()` rejects although the action ran, or an error boundary
@@ -814,23 +823,6 @@ Each entry: what the user sees, why, the fix.
 
 These are open. Each says what you see and what to do meanwhile.
 
-- **A group `layout()` loader re-runs on every navigation between
-  different routes of the group, whatever its `revalidate()` returns.** A
-  layout's loaders are copied into each route's record
-  (`src/client-urls/client-urls.ts`, `applyConfig`) and loader segment ids are
-  per route (`src/router/segment-resolution/revalidation.ts`), so the
-  destination's copy is new to the page and runs. Measured with
-  `serveShellRequest`: a layout loader with `revalidate(() => false)` ran 0
-  times on a param navigation and 1 time on `/items/a` to `/`. Cost: one
-  wasted run per cross-route click, and the commit of the navigation waits for
-  it where the layout reads it. The click itself still shows the destination
-  at once (fixed in 0.24.2, #1131). Workaround: put the loader on a server
-  `layout()` around the `include()` and read it from a client component there
-  or inside the group (`useLoader` looks up through enclosing layouts,
-  `src/use-loader.tsx`). Measured the same way, a server layout loader with
-  the cart ternary ran 0 times on param, search and cross-route navigations in
-  the group and on entering it, and once on a cart action. Check
-  `CHANGELOG.md` for the fix before you rely on either behaviour.
 - **An `intercept()`'s own `middleware()` does not run when the modal
   is served from a `cache()` hit or a `Prerender()` target.** Only the live
   path calls it (`src/router/intercept-resolution.ts`); the cache-hit path
