@@ -494,6 +494,43 @@ function noJsRewriteTests(f: Fixture) {
     expect(new URL(page.url()).pathname).toBe("/rw/public/8");
   });
 
+  test("a no-JS form post whose action throws on a page route middleware rewrote renders the target's error boundary inside its route middleware", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/rw/public/10"));
+    await expect(testId(page, "rw-item-fail")).toBeVisible();
+
+    const post = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/public/10"),
+    );
+    await testId(page, "rw-item-fail").click();
+    const response = await post;
+    expect(response.status()).toBe(500);
+    expect(response.headers()["x-rango-rewrite"]).toBe("/rw/items/10");
+
+    await expect(testId(page, "rw-item-boundary-guard")).toHaveText("target");
+    await expect(testId(page, "rw-public-boundary")).toHaveCount(0);
+    expect(new URL(page.url()).pathname).toBe("/rw/public/10");
+  });
+
+  test("a no-JS form post whose action throws renders its route's error boundary inside its route middleware", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/rw/items/11"));
+    await expect(testId(page, "rw-item-fail")).toBeVisible();
+
+    const post = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/items/11"),
+    );
+    await testId(page, "rw-item-fail").click();
+    const response = await post;
+    expect(response.status()).toBe(500);
+    expect(response.headers()["x-rango-rewrite"]).toBeUndefined();
+    await expect(testId(page, "rw-item-boundary-guard")).toHaveText("target");
+  });
+
   test("middleware that rewrites a no-JS form post fails with the rule", async ({
     page,
     request,

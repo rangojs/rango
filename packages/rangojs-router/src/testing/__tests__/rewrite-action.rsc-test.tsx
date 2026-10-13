@@ -29,6 +29,7 @@ import {
   createLoader,
   createRouter,
   createVar,
+  getRequestContext,
   rewrite,
   urls,
   type HandlerContext,
@@ -61,6 +62,19 @@ async function saveForm(_prev: unknown, _form: FormData): Promise<string> {
 async function failingSave(): Promise<string> {
   actionRuns++;
   throw new Error("save failed");
+}
+
+async function failingSaveForm(
+  _prev: unknown,
+  _form: FormData,
+): Promise<string> {
+  actionRuns++;
+  throw new Error("save failed");
+}
+
+/** The item's boundary: it reads what the item's route middleware set. */
+function ItemBoundary() {
+  return <p>{`item boundary guard=${getRequestContext().get(Guard)}`}</p>;
 }
 
 const router = createRouter({
@@ -126,9 +140,10 @@ const router = createRouter({
           middleware(async (ctx, next) => {
             ctx.set(Guard, "target");
             await next();
+            ctx.header("x-item-route-mw", "ran");
           }),
           loader(ItemLoader),
-          errorBoundary(() => <p>item boundary</p>),
+          errorBoundary(() => <ItemBoundary />),
         ],
       ),
       path(
@@ -283,7 +298,7 @@ describe("a JS action from a page route middleware rewrote", () => {
     });
     expect(actionRuns).toBe(1);
     expect(result.response.status).toBe(500);
-    expect(result.flight).toContain("item boundary");
+    expect(result.flight).toContain("item boundary guard=target");
     expect(result.flight).not.toContain("fallback boundary");
     expect(errors.map((e) => e.phase)).toEqual(["action"]);
   });
@@ -365,6 +380,54 @@ describe("a no-JS form post from a page route middleware rewrote", () => {
     expect(actionRuns).toBe(1);
     expect(result.response.status).toBe(403);
     expect(result.body).toBe("Denied");
+  });
+
+  it("renders the target's error boundary inside its route middleware when the action throws", async () => {
+    const result = await serveShellRequest(router, "/public-2", {
+      cacheStore: new MemorySegmentCacheStore(),
+      form: createActionForm(failingSaveForm, {
+        id: "actions.ts#failingSaveForm",
+        fields: CSRF,
+      }),
+    });
+    expect(actionRuns).toBe(1);
+    expect(result.response.status).toBe(500);
+    expect(result.response.headers.get("x-rango-rewrite")).toBe("/item/2");
+    expect(result.response.headers.get("x-item-route-mw")).toBe("ran");
+    expect(result.body).toContain("item boundary guard=target");
+    expect(result.body).not.toContain("fallback boundary");
+    expect(metadata(result.flight).pathname).toBe("/public-2");
+    expect(errors.map((e) => [e.phase, e.handledByBoundary])).toEqual([
+      ["action", true],
+    ]);
+  });
+
+  it("renders the target's error boundary when the rewriting route has none", async () => {
+    const result = await serveShellRequest(router, "/bare/3", {
+      cacheStore: new MemorySegmentCacheStore(),
+      form: createActionForm(failingSaveForm, {
+        id: "actions.ts#failingSaveFormBare",
+        useActionState: false,
+        fields: CSRF,
+      }),
+    });
+    expect(actionRuns).toBe(1);
+    expect(result.response.status).toBe(500);
+    expect(result.body).toContain("item boundary guard=target");
+  });
+
+  it("renders a direct post's error boundary inside its route middleware", async () => {
+    const result = await serveShellRequest(router, "/item/4", {
+      cacheStore: new MemorySegmentCacheStore(),
+      form: createActionForm(failingSaveForm, {
+        id: "actions.ts#failingSaveFormDirect",
+        fields: CSRF,
+      }),
+    });
+    expect(actionRuns).toBe(1);
+    expect(result.response.status).toBe(500);
+    expect(result.response.headers.get("x-item-route-mw")).toBe("ran");
+    expect(result.body).toContain("item boundary guard=target");
   });
 
   it("a rewrite in global middleware is still refused before the action runs", async () => {

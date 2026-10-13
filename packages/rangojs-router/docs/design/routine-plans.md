@@ -13,8 +13,8 @@ runs, executed by one runner (`runRoutine` in
 `src/rsc/routine-plan.ts`): `requestRenderPlan` in `src/rsc/rsc-rendering.ts`
 (navigation documents and partials), `actionRevalidationPlan` in
 `src/rsc/server-action.ts` (post-action revalidation, success and deferred
-error boundary), and `peRenderPlan` / `peErrorBoundaryPlan` in
-`src/rsc/progressive-enhancement.ts` (no-JS re-render and error boundary). The
+error boundary), and `peRenderPlan` in `src/rsc/progressive-enhancement.ts`
+(no-JS re-render; its error boundary renders as a one-step routine). The
 code you read and the execution you observe are projections of the same
 instruction sequence, so they cannot drift apart.
 

@@ -19,6 +19,7 @@ import { attachTransitionWhen } from "./attach-transition-when.js";
 import { payloadInitialTheme, renderedLocation } from "./full-payload.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
+import type { MatchResult } from "../types.js";
 import {
   createResponseWithMergedHeaders,
   finalizeResponse,
@@ -89,11 +90,19 @@ export async function handleProgressiveEnhancement<TEnv>(
     trace,
   };
   try {
+    const reqCtx = getRequestContext();
     // A rewrite pass after the form's action ran: re-render, never run it again.
-    const ran = getRequestContext()._actionRan;
-    return await (ran?.kind === "form"
-      ? rerenderAfterFormAction(input, ran.outcome)
-      : handleProgressiveEnhancementInner(input));
+    const ran = reqCtx._actionRan;
+    if (ran?.kind === "form") {
+      return await rerenderAfterFormAction(
+        input,
+        await outcomeForRewritePass(input, ran.outcome),
+      );
+    }
+    const outcome = await runFormAction(input);
+    if (!outcome || outcome instanceof Response) return outcome;
+    reqCtx._actionRan = { kind: "form", outcome };
+    return await rerenderAfterFormAction(input, outcome);
   } finally {
     if (trace && trace.entries.length > 0) {
       console.log(
@@ -115,10 +124,15 @@ interface PeRequestInput<TEnv> {
   trace: RoutineTrace | undefined;
 }
 
-async function handleProgressiveEnhancementInner<TEnv>(
+/**
+ * Run the no-JS form's action, outside route middleware. Returns the outcome
+ * the re-render renders from, a Response that ends the request (a redirect, a
+ * 400 for an unparseable body), or null for a POST that is not a form action.
+ */
+async function runFormAction<TEnv>(
   input: PeRequestInput<TEnv>,
-): Promise<Response | null> {
-  const { ctx, request, env, url, handleStore, nonce, trace } = input;
+): Promise<FormActionOutcome | Response | null> {
+  const { ctx, request, env, url } = input;
   // Clone the request to read FormData without consuming it.
   // Wrap in try-catch so malformed POST bodies are reported as action
   // errors, not routing errors from the outer catch in handler.ts.
@@ -127,32 +141,10 @@ async function handleProgressiveEnhancementInner<TEnv>(
     formData = await request.clone().formData();
   } catch (error) {
     // Attempt error boundary rendering so the user sees a meaningful page.
-    const errorHtml = await renderPeErrorBoundary(
-      ctx,
-      request,
-      env,
-      url,
-      error,
-      handleStore,
-      nonce,
-      trace,
-    );
-    if (errorHtml) {
-      ctx.callOnError(error, "action", {
-        request,
-        url,
-        env,
-        handledByBoundary: true,
-      });
-      return errorHtml;
+    const failure = await matchPeFailure(input, error, undefined, false);
+    if (failure.boundary) {
+      return { reactFormState: null, directActionId: null, failure };
     }
-
-    ctx.callOnError(error, "action", {
-      request,
-      url,
-      env,
-      handledByBoundary: false,
-    });
     console.error("[RSC] Progressive enhancement form parse error:", error);
     return createResponseWithMergedHeaders(null, { status: 400 });
   }
@@ -178,13 +170,7 @@ async function handleProgressiveEnhancementInner<TEnv>(
   // Execute action and return HTML
   let actionResult: unknown = undefined;
   let reactFormState: ReactFormState | null = null;
-  // Status for the fall-through re-render after a boundaryless action error.
-  // When an action throws and NO error boundary matches, the PE path re-renders
-  // the page (below) the same way it would after a successful action. Without
-  // this the re-render serves HTTP 200, diverging from the JS path which serves
-  // 500 (server-action.ts sets actionStatus=500 for the same boundaryless error).
-  // 500 is carried only into the final HTML response, never the redirect branch.
-  let boundarylessErrorStatus: number | undefined;
+  let failure: PeFailure | undefined;
 
   if (isUseActionState) {
     // Decode and extract action identity before execution so error
@@ -203,33 +189,7 @@ async function handleProgressiveEnhancementInner<TEnv>(
       // Handle thrown redirect (e.g., throw redirect('/path'))
       const redirectResponse = extractRedirectResponse(error);
       if (redirectResponse) return redirectResponse;
-
-      // Attempt error boundary rendering for the PE path
-      const errorHtml = await renderPeErrorBoundary(
-        ctx,
-        request,
-        env,
-        url,
-        error,
-        handleStore,
-        nonce,
-        trace,
-        useActionStateId,
-        true, // an action ran and threw
-      );
-      if (errorHtml) return errorHtml;
-
-      ctx.callOnError(error, "action", {
-        request,
-        url,
-        env,
-        actionId: useActionStateId,
-        handledByBoundary: false,
-      });
-      console.error("[RSC] Progressive enhancement action error:", error);
-      // No boundary matched — the fall-through re-render must carry 500 to match
-      // the JS path's boundaryless-error status (server-action.ts).
-      boundarylessErrorStatus = 500;
+      failure = await matchPeFailure(input, error, useActionStateId, true);
     }
   } else if (isDirectAction && directActionId) {
     const temporaryReferences = ctx.createTemporaryReferenceSet();
@@ -258,34 +218,15 @@ async function handleProgressiveEnhancementInner<TEnv>(
       // Handle thrown redirect (e.g., throw redirect('/path'))
       const redirectResponse = extractRedirectResponse(error);
       if (redirectResponse) return redirectResponse;
-
-      // Attempt error boundary rendering for the PE path
-      const errorHtml = await renderPeErrorBoundary(
-        ctx,
-        request,
-        env,
-        url,
-        error,
-        handleStore,
-        nonce,
-        trace,
-        directActionId,
-        true, // an action ran and threw
-      );
-      if (errorHtml) return errorHtml;
-
-      ctx.callOnError(error, "action", {
-        request,
-        url,
-        env,
-        actionId: directActionId,
-        handledByBoundary: false,
-      });
-      console.error("[RSC] Progressive enhancement action error:", error);
-      // No boundary matched — the fall-through re-render must carry 500 to match
-      // the JS path's boundaryless-error status (server-action.ts).
-      boundarylessErrorStatus = 500;
+      failure = await matchPeFailure(input, error, directActionId, true);
     }
+  }
+
+  if (failure?.boundary) {
+    return { reactFormState: null, directActionId, failure };
+  }
+  if (failure) {
+    console.error("[RSC] Progressive enhancement action error:", failure.error);
   }
 
   // Handle Response returned from action during PE.
@@ -315,21 +256,47 @@ async function handleProgressiveEnhancementInner<TEnv>(
     console.error("[RSC] Failed to decode form state:", error);
   }
 
-  const outcome: FormActionOutcome = {
-    reactFormState,
-    boundarylessErrorStatus,
-    directActionId,
-  };
-  getRequestContext()._actionRan = { kind: "form", outcome };
-  return rerenderAfterFormAction(input, outcome);
+  return { reactFormState, directActionId, failure };
 }
 
 /** What a no-JS form post's action left for the re-render (`_actionRan`). */
 export interface FormActionOutcome {
   reactFormState: ReactFormState | null;
-  /** Status for the re-render after a boundaryless action error. */
-  boundarylessErrorStatus: number | undefined;
   directActionId: string | null;
+  /** The action threw, or the form body did not parse. */
+  failure?: PeFailure;
+}
+
+/**
+ * A failed no-JS form post and the error boundary matched for it. The boundary
+ * renders in place of the page, inside route middleware as the JS path renders
+ * its own (server-action.ts `errorBoundary`). With none, the page re-renders
+ * with 500, the JS path's status for the same boundaryless error.
+ */
+export interface PeFailure {
+  error: unknown;
+  actionId: string | null | undefined;
+  boundary: MatchResult | null;
+}
+
+/**
+ * The outcome for a rewrite pass: a failure's boundary is re-matched on the
+ * target, since pass 1 matched (or missed) the rewriting route's
+ * (`continuationForRewritePass` in server-action.ts).
+ */
+async function outcomeForRewritePass<TEnv>(
+  input: PeRequestInput<TEnv>,
+  outcome: FormActionOutcome,
+): Promise<FormActionOutcome> {
+  const { failure } = outcome;
+  if (!failure) return outcome;
+  const boundary = await input.ctx.router.matchError(
+    input.request,
+    { env: input.env },
+    failure.error,
+    "route",
+  );
+  return { ...outcome, failure: { ...failure, boundary } };
 }
 
 /** The re-render after a no-JS form post's action, wrapped in route middleware. */
@@ -339,6 +306,7 @@ async function rerenderAfterFormAction<TEnv>(
 ): Promise<Response> {
   const { ctx, request, env, url, handleStore, nonce, routeMwInfo, trace } =
     input;
+  const { failure } = outcome;
 
   // Re-render the page and return HTML.
   // Route middleware wraps the render so context variables, headers, and
@@ -379,6 +347,11 @@ async function rerenderAfterFormAction<TEnv>(
     );
   };
 
+  const boundary = failure?.boundary;
+  const render = boundary
+    ? () => renderPeErrorBoundary(input, failure?.actionId, boundary)
+    : renderPage;
+
   // Execute route middleware wrapping the render, if any.
   // finalizeResponse drains onResponse callbacks that middleware short-circuits
   // may leave behind (executeMiddleware does not finalize them itself).
@@ -389,13 +362,13 @@ async function rerenderAfterFormAction<TEnv>(
         request,
         env,
         routeMwInfo.variables,
-        renderPage,
+        render,
         routeMwInfo.routeReverse,
       ),
     );
   }
 
-  return renderPage();
+  return render();
 }
 
 interface PeRenderInput<TEnv> extends FormActionOutcome {
@@ -441,7 +414,7 @@ function renderPeResponse<TEnv>(
     handleStore,
     nonce,
     reactFormState,
-    boundarylessErrorStatus,
+    failure,
     directActionId,
   } = input;
 
@@ -489,13 +462,10 @@ function renderPeResponse<TEnv>(
       url,
       payload,
       init: {
-        // boundarylessErrorStatus is set only when the action threw and no error
-        // boundary matched; it makes the re-render carry 500 like the JS path.
-        // The redirect branch in peRenderPlan returns before this, so a redirect
-        // re-render keeps its 308 and is never overridden.
-        ...(boundarylessErrorStatus !== undefined
-          ? { status: boundarylessErrorStatus }
-          : {}),
+        // A failure reaching the page render matched no boundary: 500, like
+        // the JS path. The redirect branch in peRenderPlan returns before
+        // this, so a redirect re-render keeps its 308.
+        ...(failure ? { status: 500 } : {}),
         headers: { "content-type": "text/html;charset=utf-8" },
       },
       tracking: stageTracking,
@@ -515,80 +485,22 @@ function renderPeResponse<TEnv>(
   );
 }
 
-interface PeErrorBoundaryInput<TEnv> {
-  ctx: HandlerContext<TEnv>;
-  request: Request;
-  env: TEnv;
-  url: URL;
-  error: unknown;
-  handleStore: ReturnType<typeof getRequestContext>["_handleStore"];
-  nonce: string | undefined;
-  actionId: string | null | undefined;
-  actionRan: boolean;
-}
-
-type PeErrorMatch<TEnv> = NonNullable<
-  Awaited<ReturnType<HandlerContext<TEnv>["router"]["matchError"]>>
->;
-
 /**
- * Attempt to render an error boundary as full HTML for the PE path.
- * Returns null if no error boundary is found (caller falls through to
- * normal page re-render).
+ * Match an error boundary for a failed PE post and report the error, handled
+ * or not. A matchError failure reports the ORIGINAL error as unhandled and
+ * rethrows the match failure.
  */
-async function renderPeErrorBoundary<TEnv>(
-  ctx: HandlerContext<TEnv>,
-  request: Request,
-  env: TEnv,
-  url: URL,
+async function matchPeFailure<TEnv>(
+  input: PeRequestInput<TEnv>,
   error: unknown,
-  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
-  nonce: string | undefined,
-  trace: RoutineTrace | undefined,
-  actionId?: string | null,
+  actionId: string | null | undefined,
   // True when an action actually ran and threw (vs a malformed form body, where
   // no action executed). Drives _inActionRevalidation for JS/PE parity — it must
   // NOT be inferred from actionId, since a useActionState bound action can run
   // and throw with no $$id (actionId === undefined) yet still be an action error.
-  actionRan = false,
-): Promise<Response | null> {
-  return runRoutine(
-    peErrorBoundaryPlan({
-      ctx,
-      request,
-      env,
-      url,
-      error,
-      handleStore,
-      nonce,
-      actionId,
-      actionRan,
-    }),
-    { trace, owner: getRequestContext() },
-  );
-}
-
-/** PE error boundary: match a boundary for the thrown error, then render it. */
-function* peErrorBoundaryPlan<TEnv>(
-  input: PeErrorBoundaryInput<TEnv>,
-): RoutinePlan<Response | null> {
-  const boundary = yield* step("match:error", () =>
-    matchPeErrorBoundary(input),
-  );
-  if (!boundary) return null;
-  return yield* step("render", () => renderPeErrorResponse(input, boundary));
-}
-
-/**
- * Match an error boundary for the PE path, owning the reporting protocol:
- * a matchError failure reports the ORIGINAL error as unhandled and rethrows
- * the match failure; a miss returns null; a hit reports handled and stamps
- * params + action gate context before the render.
- */
-async function matchPeErrorBoundary<TEnv>(
-  input: PeErrorBoundaryInput<TEnv>,
-): Promise<PeErrorMatch<TEnv> | null> {
-  const { ctx, request, env, url, error, actionId, actionRan } = input;
+  actionRan: boolean,
+): Promise<PeFailure> {
+  const { ctx, request, env, url } = input;
 
   // JS/PE parity for an action-triggered error re-render: a stale
   // `foregroundOnAction` cache entry inside the error boundary must foreground
@@ -600,9 +512,9 @@ async function matchPeErrorBoundary<TEnv>(
     getRequestContext()._inActionRevalidation = true;
   }
 
-  let errorResult;
+  let boundary: MatchResult | null;
   try {
-    errorResult = await ctx.router.matchError(request, { env }, error, "route");
+    boundary = await ctx.router.matchError(request, { env }, error, "route");
   } catch (matchErr) {
     ctx.callOnError(error, "action", {
       request,
@@ -614,31 +526,41 @@ async function matchPeErrorBoundary<TEnv>(
     throw matchErr;
   }
 
-  if (!errorResult) return null;
-
   ctx.callOnError(error, "action", {
     request,
     url,
     env,
     actionId: actionId ?? undefined,
-    handledByBoundary: true,
+    handledByBoundary: !!boundary,
   });
+  return { error, actionId, boundary };
+}
 
-  setRequestContextParams(errorResult.params, errorResult.routeName);
-
-  return errorResult;
+/** Render a failed PE post's boundary, inside route middleware. */
+function renderPeErrorBoundary<TEnv>(
+  input: PeRequestInput<TEnv>,
+  actionId: string | null | undefined,
+  boundary: MatchResult,
+): Promise<Response> {
+  return runRoutine(
+    step("render", () => renderPeErrorResponse(input, actionId, boundary)),
+    { trace: input.trace, owner: getRequestContext() },
+  );
 }
 
 /** Render the matched PE error boundary as a full HTML document. */
 function renderPeErrorResponse<TEnv>(
-  input: PeErrorBoundaryInput<TEnv>,
-  errorResult: PeErrorMatch<TEnv>,
+  input: PeRequestInput<TEnv>,
+  actionId: string | null | undefined,
+  errorResult: MatchResult,
 ): Promise<Response> {
-  const { ctx, request, env, url, handleStore, nonce, actionId } = input;
+  const { ctx, request, env, url, handleStore, nonce } = input;
+
+  setRequestContextParams(errorResult.params, errorResult.routeName);
 
   const payload: RscPayload = {
     metadata: {
-      pathname: url.pathname,
+      pathname: renderedLocation(getRequestContext(), url).pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
       segments: attachTransitionWhen(errorResult.segments, getRequestContext()),

@@ -10,3 +10,8 @@ export async function rwSaveCart(): Promise<void> {}
 export async function rwSaveItem(): Promise<void> {
   bumpRwItemSaves(cookies().get("rw-key")?.value ?? "none");
 }
+
+/** The item page's failing save: its error boundary is the target's. */
+export async function rwFailItem(): Promise<void> {
+  throw new Error("rw item save failed");
+}

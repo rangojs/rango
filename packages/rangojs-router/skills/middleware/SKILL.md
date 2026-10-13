@@ -59,7 +59,7 @@ only between a route handler and its child/orphan layouts and parallels (so
 their latency overlaps rendering rather than blocking it. See `/loader` →
 "Parallel and streaming".
 
-The contract is: **route middleware wraps rendering regardless of transport** (JS-enabled RSC stream or no-JS HTML). During PE re-render, route middleware observes action-set state (cookies, context variables) the same way it does during JS-enabled post-action revalidation.
+The contract is: **route middleware wraps rendering regardless of transport** (JS-enabled RSC stream or no-JS HTML). During PE re-render, route middleware observes action-set state (cookies, context variables) the same way it does during JS-enabled post-action revalidation. When the action throws, the `errorBoundary()` render is wrapped too, in both transports: the boundary reads the middleware's `ctx.set()` values and the response carries its headers.
 
 Revalidation is still partial. Route middleware wraps the render pass that
 does happen, but it does not force unrelated outer segments to recompute.
@@ -554,7 +554,8 @@ middleware sees it:
   routing rewrite there (A/B, URL override, the `discontinued` example
   above) rewrites every method, as written: the action runs once, then the
   re-render runs as the target (its global and route middleware, its
-  render), and the page keeps its layout and state. Don't skip mutations
+  render, or its error boundary when the action threw), and the page keeps
+  its layout and state. Don't skip mutations
   with `if (ctx.request.method !== "GET") return next()` in route
   middleware: the re-render would then show the rewriting route instead of
   the page on screen. A `Response` returned from route middleware for a
