@@ -383,11 +383,10 @@ holds its client components' HTML and its `ssr: false` loaders' data, and
 every other loader is a hole; handler output baked from a tagged
 `"use cache"` read, as in the catalog above, needs `urls()` routes. The router
 repository's `tests/vite-rsc-demo/src/urls/client-shop.client.tsx` is a full
-example (index, product, a cart badge, param-sensitive predicates). Through
-0.24.2, register the cart loader on a server layout above the include rather
-than on the group's `layout()`: a group layout's loader re-runs on every
-navigation between the group's routes, whatever its `revalidate()` says
-([`./large-app.md`](./large-app.md#known-gap-through-0242-a-group-layout-loader)).
+example (index, product, a cart badge, param-sensitive predicates). A cart
+loader on the group's `layout()` is held across the group's routes, as on a
+server layout. Register it on a server layout above the include instead when
+the badge must also survive entering and leaving the group.
 
 ## Checkout
 

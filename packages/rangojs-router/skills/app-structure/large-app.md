@@ -792,20 +792,6 @@ into a `predev` script so a new route never waits for a manual run.
 | JSON API                                   | `path.json()` in `urls/api.tsx`                                | Outside the RSC pipeline; guard state-changing routes against CSRF                                                                                    |
 | A cached read shared by users              | `"use cache"` + `cacheTag()` inside the loader                 | Loaders stay live; the expensive call is what caches, and `updateTag()` reaches every user                                                            |
 
-## Known gap through 0.24.2: a group `layout()` loader
-
-Through 0.24.2, a `loader()` on a group's `layout()` re-runs on every
-navigation between different routes of the group, whatever its `revalidate()`
-returns, `() => false` included; a same-route param navigation respects it.
-The destination's copy of the loader has a route-scoped segment id, so the
-server sees it as new. The cost is a wasted loader run per cross-route click,
-and the canonical commit waits for it.
-
-Until the fix ships, register a loader that the whole group shares on the
-server layout above the include, as `ViewerLoader` is on `AppShell` here:
-there `revalidate()` applies and navigations hold it. A loader on the group's
-`layout()` that should re-run on every route change anyway is not affected.
-
 ## Mistakes this shape avoids
 
 - **Trusting the include's guard for actions and refetches.** It wraps renders
@@ -815,7 +801,6 @@ there `revalidate()` applies and navigations hold it. A loader on the group's
   a redirect loop.
 - **Reading the session in a `ppr` handler** (a marketing header with the
   user's name): the capture is refused and the page never serves a shell.
-- **A shared loader on a group `layout()` through 0.24.2**: see above.
 - **`prefetch: false` on every loader**: each click then waits for a fill.
   Flag the expensive, rarely-clicked ones.
 - **A bare `isAction(refs)` predicate**: it is a hard `false` on navigation

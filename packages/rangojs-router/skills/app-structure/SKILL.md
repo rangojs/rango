@@ -156,13 +156,12 @@ Name every section include. A name is what `ctx.reverse("settings.profile")`,
 type-check against, and an unnamed include keeps its routes out of
 `router.named-routes.gen.ts` altogether.
 
-Through 0.24.2, give a name to every include that sits inside an included
-module. With the route trie live (every request in `vite dev` and in
-production), an unnamed include inside another unnamed include answers 404
-for all of its routes, with no warning from the build (#1104), and an unnamed
-include inside a `{ name: "" }` include can render another module's handler
-when two modules name a route alike. One unnamed level in the root module is
-fine.
+In 0.24.x, give a name to every include that sits inside an included module.
+With the route trie live (every request in `vite dev` and in production), an
+unnamed include inside another unnamed include answers 404 for all of its
+routes, with no warning from the build (#1104), and an unnamed include inside
+a `{ name: "" }` include can render another module's handler when two modules
+name a route alike. One unnamed level in the root module is fine.
 
 ## Where shared chrome lives
 
