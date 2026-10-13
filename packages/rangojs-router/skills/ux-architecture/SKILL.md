@@ -390,6 +390,132 @@ The rule: **prefetch broadly, and flag what is expensive.**
   (`tests/shared-e2e/src/held-handles-scenario.ts`), and a link back to a page
   you visited keeps that page's (#1115).
 
+### 2.12 Links by name, never by string
+
+A hardcoded `"/dashboard/traffic"` keeps working until someone moves the
+`include()` mount or renames the path, then breaks without a type error. A
+name follows the move. Inside a module, link by local name, never by its
+mount: `ctx.reverse(".x")` on the server and `useReverse(routes)` on the
+client resolve against wherever the module is mounted and fill the mount's
+params (`:locale`, `:accountId`, `:projectId`) from the current URL. The
+module never knows its prefix, so it can be mounted twice. Pick the tool by
+where the link is built (`/links`):
+
+| Where the link is built                                            | Use                                                                                                                                                                                              |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Server handler, layout, loader                                     | `ctx.reverse(".local")` or `ctx.reverse("global.name")`; pass the string to client components as a prop. `scopedReverse` types the local names.                                                  |
+| Client component linking inside one module or `clientUrls()` group | `useReverse(routes)` with `routes` from that module's generated `.gen.ts`. Mount-aware, fills params from `useParams()`, and only that module's names reach the client bundle.                   |
+| Client component that needs a global name                          | Prefer a prop from the server. `router.named-routes.gen.ts` works with `useReverse` as an escape hatch, but is correct only at the root mount and pulls every route name into the client bundle. |
+| A static path with no route behind it                              | `href("/about")`.                                                                                                                                                                                |
+
+The maps exist only if they are generated and committed: the Vite plugin
+writes them on `vite dev` and `vite build`, `rango generate src` writes them
+without Vite (`/typesafety`, "Generated Files and CLI Setup"). A group module
+`dashboard.client.tsx` gets `dashboard.client.gen.ts` beside it. The recipes
+below use these.
+
+```ts
+// one shopUrls module at include("/:locale", ...) and include("/outlet", ...)
+ctx.reverse(".product", { slug: "b" }); // /en/product/b, /outlet/product/b
+ctx.reverse(".product", { slug: "b", locale: "de" }); // switch language
+// /:locale? only: { locale: undefined } drops it; on a required /:locale it
+// throws `Missing param "locale"`
+```
+
+- Explicit params override the filled ones: `reverse(".issues", { projectId })`.
+- Middleware `ctx.reverse` takes global names only and fills nothing; with no
+  params object it returns the raw `/:accountId/...` pattern, so pass every
+  param. `getRequestContext().reverse` in route middleware does fill (rebound
+  after the match); in global middleware only after `next()`.
+- An action's `getRequestContext().reverse("global.name")` fills from the page
+  URL: `throw redirect(getRequestContext().reverse("account.settings"))`.
+- Wrap each module's map once in a userland file
+  (`export const useAccountReverse = () => useReverse(accountRoutes)` in
+  `src/lib/links.ts`) and call that hook in components, under that module's
+  own mount (`/links`, "One hook per module").
+- Not these: `useParams().accountId` in a template string, `ctx.params`
+  passed down as props to build links, a "current account" context, or
+  `useHref()` / relative `router.push()` under a parameterized mount (they
+  emit a literal `/:accountId/...`; no error).
+- `useReverse` with another module's map, or `useReverse(NamedRoutes)` under
+  a mount, gives a wrong URL with no error. Build cross-module links on the
+  server and pass them as props or loader data (dc-t57).
+- A server layout stays held across navigations, its own `:projectId`
+  changing included: partial rendering by design. Links it rendered keep the
+  old params. Put param-dependent nav links in a client component with
+  `useReverse(routes)` (it re-renders from `useParams()`), or give the layout
+  a `revalidate()` that compares the param.
+- A parent module's layout resolves `.name` against the matched child module
+  (dc-t52): until fixed, a layout of a module that includes another uses
+  global names.
+
+Server-built links, from the RSC as a prop or from a loader as data, with
+every param filled; the loader carries the ones that follow `:projectId`:
+
+```tsx
+// urls/project.tsx (server): build the links where the names resolve
+export const ProjectNavLoader = createLoader((ctx) => ({
+  issues: ctx.reverse(".issues"), // /acme/web/issues
+  settings: ctx.reverse(".settings"), // /acme/web/settings
+  account: ctx.reverse("account.settings"), // /acme/settings, another module
+}));
+
+export const projectUrls = urls(({ layout, path, loader, revalidate }) => [
+  layout(
+    // From the RSC: fine for links that do not follow :projectId.
+    (ctx) => <ProjectShell accountHref={ctx.reverse("account.settings")} />,
+    () => [
+      // From a loader: held like the layout, re-run when the project changes.
+      loader(ProjectNavLoader, () => [
+        revalidate(({ currentParams, nextParams }) =>
+          currentParams.projectId !== nextParams.projectId ? true : undefined,
+        ),
+      ]),
+      path("/issues", Issues, { name: "issues" }),
+      path("/settings", Settings, { name: "settings" }),
+    ],
+  ),
+]);
+```
+
+```tsx
+"use client";
+export function ProjectNav() {
+  const { data: links } = useLoader(ProjectNavLoader);
+  return (
+    <nav>
+      <Link to={links.issues}>Issues</Link>
+      <Link to={links.settings}>Settings</Link>
+      <Link to={links.account}>Account</Link>
+    </nav>
+  );
+}
+```
+
+### 2.13 Rewrite or redirect
+
+Both send the visitor somewhere other than the matched route. Pick on what
+the visitor should see.
+
+|                 | `throw redirect(...)` | `throw rewrite(...)`                            |
+| --------------- | --------------------- | ----------------------------------------------- |
+| Cost            | An extra round trip   | None: the same response renders the other route |
+| Address bar     | Changes to the target | Keeps the visitor's URL                         |
+| Reload or share | Lands on the target   | Hits the original URL, which rewrites again     |
+
+- Rewrite fits a maintenance page, a flag or A/B variant, a legacy or alias
+  URL served by the canonical route, a geo split. Redirect fits a login gate
+  or a moved page, where the new address should show and be bookmarked.
+- Middleware only: a loader or handler cannot rewrite, and a rewrite during a
+  server action or form post is an error. Answer mutations with a `Response`
+  (a 503 for maintenance) as in `/middleware`, "Rewrite".
+- The target can be a path or a route name (`rewrite("maintenance")`,
+  `rewrite("product", { slug })`). Global middleware and the target's own
+  route middleware run again for the target, so guards still apply.
+- A loop answers 508 with `RewriteLoopError`: past the hop limit, or a rewrite
+  to the URL the request is already on (semantic-matrix rows RW3 and RW4 pin
+  this and the mutation error).
+
 ## 3. Recipes
 
 Each recipe is a sketch: the placements are the point. Imports of your own
@@ -416,26 +542,29 @@ import * as CartActions from "./shop/cart.actions.js";
 
 export const urlpatterns = urls(
   ({ layout, include, loader, revalidate, errorBoundary }) => [
-    layout(ShopShell, () => [
-      errorBoundary(<ShopError />),
-      loader(CartLoader, () => [
-        revalidate(({ isAction }) =>
-          isAction() ? isAction(CartActions) : undefined,
-        ),
-      ]),
-      include("/shop", shopUrls, { name: "shop" }),
-    ]),
+    layout(
+      (ctx) => <ShopShell shopHref={ctx.reverse("shop.index")} />,
+      () => [
+        errorBoundary(<ShopError />),
+        loader(CartLoader, () => [
+          revalidate(({ isAction }) =>
+            isAction() ? isAction(CartActions) : undefined,
+          ),
+        ]),
+        include("/shop", shopUrls, { name: "shop" }),
+      ],
+    ),
   ],
 );
 ```
 
 ```tsx
 // src/shop/shell.tsx (server component) and cart-badge.tsx ("use client")
-function ShopShell() {
+function ShopShell({ shopHref }: { shopHref: string }) {
   return (
     <>
       <header>
-        <Link to="/shop">Shop</Link>
+        <Link to={shopHref}>Shop</Link>
         <Suspense fallback={<span>Cart</span>}>
           <CartBadge />
         </Suspense>
@@ -515,17 +644,24 @@ result; nothing else is needed for the badge.
 ```tsx
 // src/dashboard/dashboard.client.tsx, mounted under the app's server shell
 "use client";
-import { clientUrls, Link, useOutlet } from "@rangojs/router/client";
+import {
+  clientUrls,
+  Link,
+  useOutlet,
+  useReverse,
+} from "@rangojs/router/client";
 import { bySearch } from "../predicates.js";
+import { routes } from "./dashboard.client.gen.js"; // generated, committed
 
 function DashboardLayout() {
   const { content, pending } = useOutlet();
+  const reverse = useReverse(routes);
   return (
     <section aria-busy={pending}>
       <nav>
-        <Link to="/dashboard">Overview</Link>
-        <Link to="/dashboard/traffic">Traffic</Link>
-        <Link to="/dashboard/reports">Reports</Link>
+        <Link to={reverse("overview")}>Overview</Link>
+        <Link to={reverse("traffic")}>Traffic</Link>
+        <Link to={reverse("reports")}>Reports</Link>
       </nav>
       {content}
     </section>
@@ -868,6 +1004,7 @@ These are open. Each says what you see and what to do meanwhile.
 | Layout forms, outlets, layout revalidation, contracts              | `/layout`                                |
 | `path()`, `loading()` options, handler data ownership              | `/route`                                 |
 | Link prefetch strategies, `data-prefetch-scope`, URL generation    | `/links`                                 |
+| Middleware order, `throw rewrite()`, redirects                     | `/middleware`                            |
 | Modals                                                             | `/intercept`                             |
 | Slots                                                              | `/parallel`                              |
 | `transition()`, view transitions and their costs                   | `/view-transitions`                      |
