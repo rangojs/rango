@@ -51,6 +51,7 @@ export {
   PPR_REPLAY_STATUS_HEADER,
   shellCacheKey,
   SHELL_STATUS_HEADER,
+  visitorShellCacheKey,
   type PprReplayBypassReason,
   type PprReplayStatus,
   type ShellCachePartition,

@@ -124,6 +124,7 @@ export {
   rewrite,
   type Rewrite,
   type RewriteFunction,
+  type RewriteShell,
 } from "./route-definition/rewrite.js";
 export { RewriteLoopError } from "./errors.js";
 

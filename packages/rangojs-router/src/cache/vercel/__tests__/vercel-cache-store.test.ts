@@ -608,11 +608,12 @@ describe("VercelCacheStore", () => {
 
     // The envelope cherry-picks fields, so initialTheme (theme fidelity) and the
     // capture data snapshot (HIT parity) must be explicitly carried.
-    it("round-trips initialTheme and the capture data snapshot", async () => {
+    it("round-trips initialTheme, pathname and the capture data snapshot", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
       const entry = shellEntry({
         initialTheme: "dark",
+        pathname: "/summer",
         snapshot: [
           {
             family: "loader",
@@ -624,6 +625,8 @@ describe("VercelCacheStore", () => {
       await s.putShell("k", entry, 60, 300);
       const hit = await s.getShell("k");
       expect(hit?.entry.initialTheme).toBe("dark");
+      // A visitor-keyed shell's rendered location (the serve gate checks it).
+      expect(hit?.entry.pathname).toBe("/summer");
       expect(hit?.entry.snapshot).toEqual(entry.snapshot);
     });
 

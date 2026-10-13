@@ -39,6 +39,7 @@ import {
   SHELL_STATUS_HEADER,
   buildShellKey,
   partitionShellKey,
+  visitorShellKey,
   type PprReplayBypassReason,
 } from "../rsc/shell-capture-constants.js";
 import {
@@ -119,6 +120,45 @@ export function shellCacheKey(
     resolved,
     compileSearchParamsFilter(searchParams),
   );
+  return withPartition(key, partition);
+}
+
+/**
+ * Shell store key of a request middleware rewrote with
+ * `throw rewrite(...).shell("visitor")`: the visitor's `url`, partitioned by
+ * the rewrite's `target` (its path and search), as production builds it
+ * (`visitorShellKey`, `rsc/shell-capture-constants.ts`). `searchParams` is
+ * the target route's `cache.searchParams` config, applied to the visitor's
+ * search; `partition` is the target route's own, as for
+ * {@link shellCacheKey}, composed after the target's.
+ *
+ * ```ts
+ * const hit = await serveShellRequest(router, "/summer", { cacheStore });
+ * expect(hit.key).toBe(visitorShellCacheKey(router, "/summer", "/item/1"));
+ * ```
+ */
+export function visitorShellCacheKey(
+  router: { readonly id: string },
+  url: URL | string,
+  target: URL | string,
+  searchParams?: CacheSearchParams,
+  partition?: string | readonly string[] | ShellCachePartition,
+): string {
+  const visitor =
+    typeof url === "string" ? new URL(url, "http://localhost") : url;
+  const key = visitorShellKey(
+    router.id,
+    visitor,
+    new URL(target, visitor),
+    compileSearchParamsFilter(searchParams),
+  );
+  return withPartition(key, partition);
+}
+
+function withPartition(
+  key: string,
+  partition: string | readonly string[] | ShellCachePartition | undefined,
+): string {
   if (partition === undefined) return key;
   const { keys = [], generated = [] }: ShellCachePartition =
     typeof partition === "string"

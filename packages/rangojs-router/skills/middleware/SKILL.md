@@ -520,7 +520,9 @@ carries `x-rango-rewrite: <target pathname>`.
 inside a `cache()` boundary or a `"use cache"` function throws (pass what
 you need in from middleware), and a render other visitors may be served (a
 PPR shell capture, a page the document cache stores) reads `undefined`, as a
-direct visit does.
+direct visit does. A shell keyed by the visitor's URL
+(`rewrite(...).shell("visitor")`, see Caches) reads it, since its key covers
+that URL.
 
 **Middleware only, by design.** `rewrite()` is a middleware tool. A route
 handler or a loader (any loader, `ssr: false` included) cannot rewrite: its
@@ -596,12 +598,26 @@ the trail, `/a -> /b -> /a`) through `onError` with phase `"routing"`.
 - The document cache keys a rewritten request by the target's URL, as a
   direct visit. Register the rewriting middleware **before**
   `createDocumentCacheMiddleware()`: a cache hit for the visitor's URL would
-  be served before your middleware runs. A page the document cache stores,
-  and a PPR shell of the target, are rendered as a direct visit to the
-  target: they carry the target's pathname and `ctx.rewrittenFrom` is
-  `undefined` there, so a component that renders `usePathname()` can
-  mismatch on hydration at the visitor's URL when such a page is served to
-  a rewritten request.
+  be served before your middleware runs. A page the document cache stores
+  is rendered as a direct visit to the target: it carries the target's
+  pathname and `ctx.rewrittenFrom` is `undefined` there, so a component that
+  renders `usePathname()` can mismatch on hydration at the visitor's URL
+  when such a page is served to a rewritten request.
+- A PPR shell (`ppr` target) is read and written only by requests on its
+  URL. A rewritten request renders live at the visitor's URL, and a direct
+  visit captures the target's shell, so values you set before the throw
+  never reach it. Pick a shell for the rewritten request with `.shell()` on
+  the thrown value: `"visitor"` keys a shell by the visitor's URL, captured
+  with the visitor's location and `ctx.rewrittenFrom` (one shell per public
+  URL, the right choice for a routing catch-all); `"target"` reads and
+  captures the target's shared shell, which shows the target's URL to the
+  visitor on a HIT and bakes in what the rewriting middleware set, so keep it
+  for a lock or promo page that renders neither:
+
+  ```typescript
+  throw rewrite("item", { id }).shell("visitor");
+  ```
+
 - The client's prefetch and history caches keep a rewritten page under the
   visitor's URL, and nothing tells them about the rewrite: a page prefetched
   during a lock shows the lock page for up to `prefetchCacheTTL` after the

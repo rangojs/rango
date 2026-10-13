@@ -108,6 +108,58 @@ route match (global middleware ahead of `next()`) nothing is filled, so a
 required param still throws `Missing param`; middleware `ctx.reverse` is
 unchanged (global names, no fill).
 
+### Changed: a rewritten request to a `ppr` route renders live unless the rewrite picks a shell with `.shell()` ([#1146](https://github.com/rangojs/rango/issues/1146))
+
+A middleware that rewrites to a `ppr` route (`throw rewrite("item", { id })`)
+used to read and capture the target's shared shell. A warm visit then showed
+the target's path in `usePathname()` while the address bar showed the
+visitor's, so the page mismatched on hydration and React rendered it again,
+while a cold visit did not. A value the middleware set before the throw was
+baked into the shell that every direct visitor of the target got.
+
+Now a URL's shared shell is read and written only by requests on that URL. A
+rewritten request renders live at the visitor's URL on every visit, and the
+target's shell is captured by direct visits (or a `router.prerender()` warm)
+only. To keep a shell for rewritten requests, choose one on the thrown value:
+
+Before:
+
+```ts
+router.use((ctx, next) => {
+  const id = publicIds.get(ctx.pathname);
+  if (!id) return next();
+  ctx.set(PublicPath, ctx.pathname);
+  throw rewrite("item", { id }); // served the target's shell
+});
+```
+
+Now:
+
+```ts
+router.use((ctx, next) => {
+  const id = publicIds.get(ctx.pathname);
+  if (!id) return next();
+  ctx.set(PublicPath, ctx.pathname);
+  // A shell per public URL, rendered at that URL with ctx.rewrittenFrom set.
+  throw rewrite("item", { id }).shell("visitor");
+});
+```
+
+- `.shell("visitor")`: a shell keyed by the visitor's URL and the target,
+  captured with the visitor's location and `ctx.rewrittenFrom`. One shell per
+  public URL; the target's own shell stays its own.
+- `.shell("target")`: the target's shared shell, as before. Keep it for a
+  lock or promo page that renders neither the path nor anything the rewriting
+  middleware set.
+- No call: no shell for the rewritten request. A navigation to it reports
+  `x-rango-ppr-replay: BYPASS; reason=rewritten`.
+
+If you do nothing, rewritten requests to a `ppr` route lose prelude-first
+streaming and render like a cache miss. Direct visits keep their shells.
+Tests can build the visitor key with `visitorShellCacheKey(router, url,
+target)` from `@rangojs/router/testing`. The document cache still serves a
+stored target document to a rewritten request.
+
 ### Added: `clientUrls()` components carry their own items (`Component.use`), predicates included
 
 A component mounted in a `clientUrls()` group may now declare its own loaders,

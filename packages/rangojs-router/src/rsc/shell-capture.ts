@@ -1064,6 +1064,13 @@ export interface ShellCaptureDescriptor {
   /** Store the snapshot for navigation replay, never the captured HTML prelude. */
   navigationOnly?: true;
   /**
+   * Set for a shell keyed by the visitor's URL (`rewrite(...).shell("visitor")`,
+   * visitorShellKey): the capture renders the visitor's location
+   * (`RequestContext._shellCaptureForVisitor`) and stores it as
+   * ShellCacheEntry.pathname.
+   */
+  pathname?: string;
+  /**
    * lastStoredCaptureSeq(key) when a document request read the store and
    * missed. The request schedules its capture only after rendering the MISS,
    * so a capture another request started can store in between; a later
@@ -1878,6 +1885,9 @@ async function attemptCapture(
     descriptor.navigationOnly ? { request, url } : undefined,
   );
   const { derivedCtx, freshHandleStore } = derivation;
+  if (descriptor.pathname !== undefined) {
+    derivedCtx._shellCaptureForVisitor = true;
+  }
   // The capture generation starts before matching or any snapshot read
   // (ShellCacheEntry.createdAt): a tag invalidated after it wins.
   const captureStartedAt = Date.now();
@@ -2647,6 +2657,7 @@ async function captureAndStoreShell(
           // default, #971). The serve tail replays it so the resume tree
           // matches the frozen prelude — see ShellCacheEntry.initialTheme.
           initialTheme: payloadInitialTheme(reqCtx),
+          pathname: capture.pathname,
           snapshot,
           prunedRecords: snapshot.length > 0 ? prunedRecords : undefined,
           // The canonical doc segment record's key, published by the doc

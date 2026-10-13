@@ -280,6 +280,14 @@ The public DOM seam is
   owns invocation and error classification; [rsc/helpers.ts](../../src/rsc/helpers.ts)
   owns returned/thrown `Response` rewrapping and callback brand preservation;
   [testing/dispatch.ts](../../src/testing/dispatch.ts) reuses both contracts.
+- A rewritten request's PPR shell (#1146; the middleware rewrite row above
+  owns the rest): [rsc/rsc-rendering.ts](../../src/rsc/rsc-rendering.ts)
+  (`requestShellBase`), [server/rewrite-trail.ts](../../src/server/rewrite-trail.ts)
+  (`rewriteShellAudience`, the `_shellCaptureForVisitor` reads),
+  [rsc/shell-capture-constants.ts](../../src/rsc/shell-capture-constants.ts)
+  (`visitorShellKey`), [testing/shell-status.ts](../../src/testing/shell-status.ts)
+  (`visitorShellCacheKey`),
+  [testing/**tests**/rewrite-ppr-shell.rsc-test.tsx](../../src/testing/__tests__/rewrite-ppr-shell.rsc-test.tsx).
 - Dev+build: [vite/rango.ts](../../src/vite/rango.ts), [build/route-types/\*](../../src/build/route-types/), [build/generate-route-types.ts](../../src/build/generate-route-types.ts).
 - Package type publishing: [package.json](../../package.json) maps public
   type conditions to declarations emitted by

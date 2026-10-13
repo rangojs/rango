@@ -47,6 +47,8 @@ export interface ShellFrameHead {
   ta?: number;
   /** ShellCacheEntry.initialTheme */
   i?: string;
+  /** ShellCacheEntry.pathname (a visitor-keyed shell's rendered location). */
+  lp?: string;
   /** ShellCacheEntry.docKey; navigation replay needs it after any round trip. */
   dk?: string;
   /** ShellCacheEntry.prunedRecords (diagnostic). */
@@ -79,6 +81,7 @@ function isShellFrameHead(value: unknown): value is ShellFrameHead {
         head.t.every((tag) => typeof tag === "string"))) &&
     (head.ta === undefined || isFiniteNumber(head.ta)) &&
     (head.i === undefined || typeof head.i === "string") &&
+    (head.lp === undefined || typeof head.lp === "string") &&
     (head.dk === undefined || typeof head.dk === "string") &&
     (head.pr === undefined || typeof head.pr === "string") &&
     (head.no === undefined || head.no === true) &&

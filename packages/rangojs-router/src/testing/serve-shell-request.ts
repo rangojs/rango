@@ -207,9 +207,12 @@ export interface ServeShellRequestResult {
    * The shell key production resolved for this request: for a document the
    * serve path read and captured (a MISS or a HIT), the key it used, request
    * partition included (a route partitioned by `cache({ key })` or the
-   * store's `keyGenerator`). Otherwise (a route without `ppr`, a request
-   * passed to axis 1 before its key was resolved, a partial request) the
-   * document URL's key without a partition, as `shellCacheKey` builds it.
+   * store's `keyGenerator`), and for a request middleware rewrote with
+   * `rewrite(...).shell("visitor")` the visitor's key, as
+   * `visitorShellCacheKey` builds it. Otherwise (a route without `ppr`, a
+   * request passed to axis 1 before its key was resolved, a rewritten
+   * request whose rewrite chose no shell, a partial request) the document
+   * URL's key without a partition, as `shellCacheKey` builds it.
    */
   key: string;
   /**

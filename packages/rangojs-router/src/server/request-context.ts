@@ -348,6 +348,13 @@ export interface RequestContext<
   _shellCaptureRun?: boolean;
 
   /**
+   * @internal Set beside `_shellCaptureRun` when the shell is keyed by the
+   * visitor's URL (`rewrite(...).shell("visitor")`): the capture renders the
+   * visitor's location and `ctx.rewrittenFrom`; the theme stays the default.
+   */
+  _shellCaptureForVisitor?: boolean;
+
+  /**
    * @internal Bake-lane loader containers collected DURING a shell capture:
    * segment-key -> the loader's (pre-wrap) result promise. Populated by
    * resolveLoaderData for bake-lane loaders (lane rule: see its JSDoc in
@@ -1038,6 +1045,7 @@ export type PublicRequestContext<
   | "_onDemandProducer"
   | "_searchParamsFilter"
   | "_shellCaptureRun"
+  | "_shellCaptureForVisitor"
   | "_shellImplicitCache"
   | "_shellLoaderSeed"
   | "_shellCaptureLoaderRecords"
