@@ -2,7 +2,7 @@ import type { ContextVar } from "../context-var.js";
 import type { Handle } from "../handle.js";
 import type { HandlePush } from "../defer.js";
 import type { MiddlewareFn } from "../router/middleware.js";
-import type { ScopedReverseFunction } from "../reverse.js";
+import type { AutofillAwareReverseFunction } from "./handler-context.js";
 import type { SearchSchema, ResolveSearchSchema } from "../search-params.js";
 import type { UseItems, LoaderUseItem } from "../route-types.js";
 import type {
@@ -134,9 +134,10 @@ export type LoaderContext<
   /**
    * Generate URLs from route names.
    * Same scoped reverse as route handlers — `.name` resolves within the
-   * current include() scope, `name` resolves globally.
+   * current include() scope, `name` resolves globally, and params the matched
+   * route already carries (e.g. include() mount params) are filled in.
    */
-  reverse: ScopedReverseFunction<
+  reverse: AutofillAwareReverseFunction<
     Record<string, string>,
     DefaultReverseRouteMap
   >;

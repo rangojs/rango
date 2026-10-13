@@ -377,6 +377,7 @@ Internal API (`RangoInternal`, not exported):
 ### URL Typing and Generation
 
 - `route()` macro expansion, `href()`, `href.<format>()`, `reverse()`, scoped reverse APIs
+- `AutofillAwareReverseFunction` (`types/handler-context.ts`): the `reverse` type of handlers, `LoaderContext` and `RequestContext` (global-name params optional; the runtime fills them from the matched route, none before the match)
 - `GlobalReverseFunction`: the global-only `ctx.reverse` type of middleware and response-route handlers (no `include()` scope, no param auto-fill; `.name` is a type error)
 - `ProblemDetails` (RFC 9457) error type and response-route type extraction
 

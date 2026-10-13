@@ -241,7 +241,7 @@ so response-shaping belongs in middleware or the handler).
 | `method`           | `string`                        | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.                                                                                                          |
 | `body`             | `TBody \| undefined`            | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                                                                                                                 |
 | `formData`         | `FormData \| undefined`         | Present when a fetchable loader is invoked via form submission.                                                                                                                                |
-| `reverse`          | `ScopedReverseFunction`         | Generate type-checked URLs from route names (same scoped semantics as route handlers).                                                                                                         |
+| `reverse`          | `AutofillAwareReverseFunction`  | Generate type-checked URLs from route names (same scoped semantics as route handlers; params the matched route carries are optional).                                                          |
 
 ### Example
 
