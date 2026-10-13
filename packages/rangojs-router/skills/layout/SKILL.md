@@ -234,7 +234,9 @@ among the path's children (`/caching`).
 A standalone `layout()` renders when it is first mounted and is then kept as-is:
 
 - **Navigation** between routes it already wraps does not re-render it — even
-  when the URL params change.
+  when the URL params change. Links it rendered with `ctx.reverse` (mount
+  params auto-filled) keep the old params too; render param-dependent nav in a
+  client component with `useReverse(routes)` (`/links`).
 - **Actions** skip it too (the revalidation trace calls this
   `action:parent-chain-skip`).
 
