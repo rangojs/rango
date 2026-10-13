@@ -5,6 +5,17 @@ vi.mock("../browser/rango-state", () => ({
   invalidateRangoState: vi.fn(),
 }));
 
+// The page on screen's rewrite target, as the registered store remembers it.
+let shownRewriteTarget: string | undefined;
+vi.mock("../browser/navigation-store-handle", () => ({
+  getRegisteredStore: () => ({
+    getHistoryEntryMemory: () =>
+      shownRewriteTarget === undefined
+        ? undefined
+        : { routeName: "item", rewriteTarget: shownRewriteTarget, state: null },
+  }),
+}));
+
 import {
   prefetchDirect,
   prefetchQueued,
@@ -175,6 +186,27 @@ describe("prefetch fetch reduced-data behavior", () => {
     );
     expect(headers["X-Rango-Prefetch"]).toBe("1");
     expect(headers["X-Rango-Fragment-Passthrough"]).toBe("1");
+    expect(headers).not.toHaveProperty("X-RSC-Router-Client-Route");
+  });
+
+  it("names the page's rewrite target from a page middleware rewrote", () => {
+    setupBrowser({ saveData: false, reducedData: false });
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve({ ok: false, body: null } as unknown as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    shownRewriteTarget = "/item/1?sort=a";
+    try {
+      prefetchDirect("/blog", ["segment.a"], "v1");
+    } finally {
+      shownRewriteTarget = undefined;
+    }
+
+    const headers = fetchMock.mock.calls[0]![1]!.headers as Record<
+      string,
+      string
+    >;
+    expect(headers["X-RSC-Router-Client-Route"]).toBe("/item/1?sort=a");
   });
 
   it("stores the decoded entry in the in-memory cache on success", async () => {

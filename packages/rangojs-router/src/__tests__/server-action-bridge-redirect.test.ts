@@ -112,6 +112,7 @@ function createMockStore() {
     })),
     markCacheAsStaleAndBroadcast: vi.fn(),
     getInterceptSourceUrl: vi.fn(() => null),
+    getHistoryEntryMemory: vi.fn(() => undefined),
     getHistoryKey: vi.fn(() => "/"),
     setHistoryKey: vi.fn(),
     getCachedSegments: vi.fn(),

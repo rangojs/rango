@@ -304,7 +304,7 @@ export function createNavigationBridge(
         // Save current scroll position before changing URL
         handleNavigationStart();
 
-        const shallowRouteName = store.getHistoryEntryMemory()?.routeName;
+        const shallowShown = store.getHistoryEntryMemory();
 
         // Update browser URL (carry intercept context into history state)
         const historyState = buildHistoryState(
@@ -320,7 +320,7 @@ export function createNavigationBridge(
         // Ensure new history entry has a scroll restoration key
         ensureHistoryKey();
         // Same route, new entry (transition({ when }) back/forward source).
-        store.rememberDisplayedEntry(shallowRouteName);
+        store.rememberDisplayedEntry(shallowShown);
         // Treeless: readers take the entry's state with setLocation below.
         eventController.commitLocationState(historyState, true);
 

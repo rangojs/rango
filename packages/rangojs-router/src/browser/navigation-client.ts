@@ -79,6 +79,7 @@ export function createNavigationClient(
         targetUrl,
         segmentIds,
         previousUrl,
+        clientRoute,
         signal,
         staleRevalidation,
         interceptSourceUrl,
@@ -149,7 +150,12 @@ export function createNavigationClient(
         !isActionFenceActive();
       const rangoState = getRangoState();
       const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
-      const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);
+      const cacheKey = buildSourceKey(
+        rangoState,
+        previousUrl,
+        fetchUrl,
+        clientRoute,
+      );
 
       let cachedEntry: DecodedPrefetch | null = null;
       let hitKey: string | null = null;
@@ -267,6 +273,7 @@ export function createNavigationClient(
             }),
             headers: {
               "X-RSC-Router-Client-Path": previousUrl,
+              ...(clientRoute && { "X-RSC-Router-Client-Route": clientRoute }),
               // Reuse the single per-operation read (see rangoState above): the
               // cache-key lookup and this header must agree on one value, and the
               // cookie read has side effects (external-rotation notify) we do not

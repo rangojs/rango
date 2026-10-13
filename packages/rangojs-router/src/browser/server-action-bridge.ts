@@ -323,6 +323,8 @@ export function createServerActionBridge(
 
       // Get intercept source URL if in intercept context
       const interceptSourceUrl = store.getInterceptSourceUrl();
+      // The page's rewrite target: the server diffs the re-render against it.
+      const clientRoute = store.getHistoryEntryMemory()?.rewriteTarget;
 
       // Track streaming token - will be set when response arrives
       let streamingToken: { end(): void } | null = null;
@@ -341,6 +343,7 @@ export function createServerActionBridge(
         headers: {
           "rsc-action": id,
           "X-RSC-Router-Client-Path": segmentState.currentUrl,
+          ...(clientRoute && { "X-RSC-Router-Client-Route": clientRoute }),
           ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
           ...(interceptSourceUrl && {
             "X-RSC-Router-Intercept-Source": interceptSourceUrl,
@@ -899,7 +902,7 @@ export function createServerActionBridge(
             fullSegments,
             currentHandleData,
           );
-          store.rememberDisplayedEntry(metadata?.routeName);
+          store.rememberDisplayedEntry(metadata);
 
           const actionUpdate = { root: newTree, metadata: metadata! };
           if (process.env.NODE_ENV !== "production") auditTreeCause("action");

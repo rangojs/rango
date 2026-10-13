@@ -16,7 +16,7 @@ import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
-import { payloadInitialTheme, renderedLocation } from "./full-payload.js";
+import { payloadInitialTheme, payloadLocation } from "./full-payload.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
@@ -447,7 +447,7 @@ function renderPeResponse<TEnv>(
 
   const payload: RscPayload = {
     metadata: {
-      pathname: renderedLocation(getRequestContext(), url).pathname,
+      ...payloadLocation(getRequestContext(), url),
       routerId: ctx.router.id,
       basename: ctx.router.basename,
       segments: attachTransitionWhen(match.segments, getRequestContext()),
@@ -638,7 +638,7 @@ function renderPeErrorResponse<TEnv>(
 
   const payload: RscPayload = {
     metadata: {
-      pathname: url.pathname,
+      ...payloadLocation(getRequestContext(), url),
       routerId: ctx.router.id,
       basename: ctx.router.basename,
       segments: attachTransitionWhen(errorResult.segments, getRequestContext()),

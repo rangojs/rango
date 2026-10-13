@@ -214,6 +214,71 @@ describe("resolveNavigation", () => {
     expect(result!.prevParams).toEqual({ id: "1" });
   });
 
+  describe("X-RSC-Router-Client-Route (a page middleware rewrote, #1144)", () => {
+    const target = makeMatch({ routeKey: "item", params: { id: "1" } });
+    const findMatch = (pathname: string) =>
+      pathname === "/item/1"
+        ? target
+        : makeMatch({ routeKey: "fallback", params: { "*": "public-1" } });
+
+    it("matches the page's rewrite target, not the visitor's URL", async () => {
+      const { request, url } = makeRequest("http://localhost/item/1?sort=b", {
+        "X-RSC-Router-Client-Path": "http://localhost/public-1?sort=a",
+        "X-RSC-Router-Client-Route": "/item/1?sort=a",
+      });
+
+      const result = await resolveNavigation(request, url, "item", {
+        findMatch,
+      });
+
+      expect(result!.prevMatch).toBe(target);
+      expect(result!.prevParams).toEqual({ id: "1" });
+      expect(result!.prevUrl.href).toBe("http://localhost/item/1?sort=a");
+      expect(result!.isSameRouteNavigation).toBe(true);
+      expect(result!.effectiveFromMatch).toBe(target);
+    });
+
+    it("is ignored beside an intercept source", async () => {
+      const { request, url } = makeRequest("http://localhost/item/1", {
+        "X-RSC-Router-Client-Path": "/public-1",
+        "X-RSC-Router-Client-Route": "/item/1",
+        "X-RSC-Router-Intercept-Source": "/list",
+      });
+
+      const result = await resolveNavigation(request, url, "item", {
+        findMatch,
+      });
+
+      expect(result!.prevUrl.pathname).toBe("/public-1");
+    });
+
+    it("is ignored without a navigation context", async () => {
+      const { request, url } = makeRequest("http://localhost/item/1", {
+        "X-RSC-Router-Client-Route": "/item/1",
+      });
+
+      expect(
+        await resolveNavigation(request, url, "item", { findMatch }),
+      ).toBeNull();
+    });
+
+    it("is ignored when it names another origin or does not parse", async () => {
+      for (const route of ["https://evil.example/item/1", "http://[bad"]) {
+        const { request, url } = makeRequest("http://localhost/item/1", {
+          "X-RSC-Router-Client-Path": "/public-1",
+          "X-RSC-Router-Client-Route": route,
+        });
+
+        const result = await resolveNavigation(request, url, "item", {
+          findMatch,
+        });
+
+        expect(result!.prevUrl.pathname).toBe("/public-1");
+        expect(result!.prevMatch!.routeKey).toBe("fallback");
+      }
+    });
+  });
+
   it("sets prevParams to empty object when no prevMatch", async () => {
     const { request, url } = makeRequest("http://localhost/new", {
       "X-RSC-Router-Client-Path": "/unknown",

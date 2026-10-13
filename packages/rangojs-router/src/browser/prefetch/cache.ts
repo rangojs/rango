@@ -13,7 +13,7 @@
  *   source segment trees; `_rsc_segments` is omitted from this key. Invalidated
  *   automatically when Rango state bumps (deploy or server-action invalidation).
  * - Source-scoped: built by `buildSourceKey(rangoState, sourceHref, target)`
- *   — shape `rangoState\0sourceHref\0/target?...`. Embeds the Rango state
+ *   — shape `rangoState\0sourceHref[\0clientRoute]\0/target?...`. Embeds the Rango state
  *   (so rotation invalidates source-scoped entries too), the source href, and
  *   the exact source segment tree. Populated when the server tags a
  *   response with `X-RSC-Prefetch-Scope: source` (a route an intercept
@@ -168,7 +168,7 @@ let generation = 0;
  *   remain reusable after another prefetched navigation commits. Key shape:
  *   `rangoState\0/target?...`.
  * - Source-scoped: use `buildSourceKey()`. Key shape:
- *   `rangoState\0sourceHref\0/target?...` — embeds the Rango state so
+ *   `rangoState\0sourceHref[\0clientRoute]\0/target?...` — embeds the Rango state so
  *   rotation invalidates source-scoped entries alongside wildcard ones,
  *   plus the source page href so the key is unique per originating page.
  *   Populated either when the server tags a response with
@@ -188,21 +188,26 @@ export function buildPrefetchKey(prefix: string, targetUrl: URL): string {
 
 /**
  * Build a source-scoped cache key. Key shape:
- * `rangoState\0sourceHref\0/target?...`.
+ * `rangoState\0sourceHref[\0clientRoute]\0/target?...`.
  *
  * - `rangoState` is included so state rotation invalidates source-scoped
  *   entries alongside wildcard ones.
  * - `sourceHref` makes the key unique per originating page.
+ * - `clientRoute`, the source page's rewrite target (#1144), when it has
+ *   one: the server diffs against it, so an entry prefetched while a rewrite
+ *   held is not adopted after it lifts.
  */
 export function buildSourceKey(
   rangoState: string,
   sourceHref: string,
   targetUrl: URL,
+  clientRoute?: string,
 ): string {
   return (
     rangoState +
     "\0" +
     sourceHref +
+    (clientRoute ? "\0" + clientRoute : "") +
     "\0" +
     targetUrl.pathname +
     targetUrl.search

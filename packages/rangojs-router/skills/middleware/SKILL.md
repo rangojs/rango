@@ -642,10 +642,24 @@ the trail, `/a -> /b -> /a`) through `onError` with phase `"routing"`.
   };
   ```
 
+**Navigating from a rewritten page.** A navigation, prefetch or action from
+the page diffs against the route that rendered it, as one from a direct
+visit does: the payload carries the target (`metadata.rewriteTarget`), and
+the browser sends it back with the next request from that page. A
+`revalidate()` sees the target's params and URL (`currentParams.id` against
+`nextParams.id` holds a loader on a sort change), and a navigation to the
+page already shown re-renders nothing. A move to another visitor URL with
+the same target (`/promo/a` to `/promo/b`, both rewritten to `/promo/landing`) re-runs the
+route and its loaders, which may read `ctx.rewrittenFrom`. The header only
+names the page being left: what renders still comes from the request's URL
+and your middleware.
+
 **Testing.** `runMiddleware` reports a thrown rewrite as `result.rewrite`
 (`{ pathname, search, routeName? }`). `serveShellRequest` takes a rewritten
 page request through the full production pipeline (document or `partial`
 navigation): the target's middleware, render, status and `x-rango-rewrite`.
+Pass the page's `metadata.rewriteTarget` as `partial.rewriteTarget` (or
+`action.rewriteTarget`) to send a request from it as the browser does.
 With `action` or `form` (from `createActionForm`) it posts a mutation to the
 visitor's URL, so a route-middleware rewrite's re-render is testable too.
 `dispatch` re-dispatches too, for response routes only: it matches the

@@ -135,6 +135,42 @@ describe("navigation-client", () => {
     ).toBe("1");
 
     await expect(result.streamComplete).resolves.toBeUndefined();
+    expect(init.headers as Record<string, string>).not.toHaveProperty(
+      "X-RSC-Router-Client-Route",
+    );
+  });
+
+  it("names the page's rewrite target in the headers and the source key", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const createFromFetch = vi.fn(
+      async (responsePromise: Promise<Response>) => {
+        await responsePromise;
+        return { metadata: { matched: [], diff: [], isPartial: true } };
+      },
+    );
+    const client = createNavigationClient({ createFromFetch } as any);
+
+    await client.fetchPartial({
+      targetUrl: "/public-1?sort=b",
+      previousUrl: "http://localhost/public-1?sort=a",
+      clientRoute: "/item/1?sort=a",
+      segmentIds: ["root"],
+    });
+
+    const init = (fetchMock.mock.calls[0] as [unknown, RequestInit])[1];
+    expect(
+      (init.headers as Record<string, string>)["X-RSC-Router-Client-Route"],
+    ).toBe("/item/1?sort=a");
+    expect(buildSourceKeyMock).toHaveBeenCalledWith(
+      "v1:abc",
+      "http://localhost/public-1?sort=a",
+      expect.any(URL),
+      "/item/1?sort=a",
+    );
   });
 
   // The signal cancels the request until its response arrives, for every

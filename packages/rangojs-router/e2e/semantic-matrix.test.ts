@@ -1349,6 +1349,49 @@ const matrixRows: SemanticMatrixRow[] = [
       expect(direct.headers()["x-rango-shell"]).toBe("MISS");
     },
   },
+  // Requests from a rewritten page (#1144, #1145): /rw/catalog/:slug
+  // rewrites to /rw/items/:id, whose loader re-runs only for another id.
+  {
+    id: "RW9",
+    contract:
+      "a navigation or action from a page middleware rewrote diffs against the route that rendered it (the payload's rewriteTarget, sent back as X-RSC-Router-Client-Route): revalidate() sees the target's params, so a param-scoped loader holds",
+    transport: "request",
+    execution: "partial-render",
+    scope: "n/a",
+    assert: async ({ baseUrl, page }) => {
+      await page
+        .context()
+        .addCookies([
+          { name: "rw-key", value: crypto.randomUUID(), url: baseUrl("/") },
+        ]);
+      // The first request for ?sort=b: a production viewport prefetch, or
+      // the click's own navigation.
+      const navigation = page.waitForRequest((r) =>
+        r.url().includes("/rw/catalog/9?sort=b&_rsc_partial"),
+      );
+      await page.goto(baseUrl("/rw/catalog/9?sort=a"));
+      await waitForHydration(page);
+      await expect(testId(page, "rw-item-loads")).toHaveText("1");
+      await testId(page, "rw-item-sort").click();
+      expect((await navigation).headers()["x-rsc-router-client-route"]).toBe(
+        "/rw/items/9?sort=a",
+      );
+      await expect(testId(page, "rw-client-location")).toHaveText(
+        "/rw/catalog/9?sort=b",
+      );
+      await expect(testId(page, "rw-item-renders")).toHaveText("2");
+      await expect(testId(page, "rw-item-loads")).toHaveText("1");
+      const post = page.waitForRequest(
+        (r) => r.method() === "POST" && r.url().includes("/rw/catalog/9"),
+      );
+      await testId(page, "rw-item-save").click();
+      expect((await post).headers()["x-rsc-router-client-route"]).toBe(
+        "/rw/items/9?sort=b",
+      );
+      await expect(testId(page, "rw-item-saves")).toHaveText("1");
+      await expect(testId(page, "rw-item-loads")).toHaveText("1");
+    },
+  },
 ];
 
 function registerSemanticMatrixSuite(build: BuildAxis): void {

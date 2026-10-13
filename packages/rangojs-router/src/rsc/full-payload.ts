@@ -16,6 +16,7 @@ import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
 import {
   rendersForSharedAudience,
+  rewriteTarget,
   rewriteTrail,
   visitorUrl,
 } from "../server/rewrite-trail.js";
@@ -42,7 +43,7 @@ export function buildFullPayload(
 ): RscPayload {
   return {
     metadata: {
-      pathname: renderedLocation(reqCtx, url).pathname,
+      ...payloadLocation(reqCtx, url),
       routerId: ctx.router.id,
       basename: ctx.router.basename,
       segments: attachTransitionWhen(m.segments, reqCtx),
@@ -119,6 +120,25 @@ export function renderedLocation(
   }
   reqCtx._payloadVisitorLocation = true;
   return visitorUrl(reqCtx, url);
+}
+
+/**
+ * A payload's location fields: `pathname` (renderedLocation), and
+ * `rewriteTarget` when middleware rewrote the request. The browser keeps
+ * the target with the history entry and sends it back as
+ * `X-RSC-Router-Client-Route` on the next navigation, prefetch or action
+ * from that page (router/navigation-snapshot.ts resolveNavigation), so the
+ * server diffs against the route that rendered the page, not the route the
+ * visitor's URL matches (#1144). Absent, not undefined, on every other
+ * payload.
+ */
+export function payloadLocation(
+  reqCtx: Parameters<typeof renderedLocation>[0],
+  url: URL,
+): { pathname: string; rewriteTarget?: string } {
+  const pathname = renderedLocation(reqCtx, url).pathname;
+  const target = rewriteTarget(reqCtx);
+  return target ? { pathname, rewriteTarget: target } : { pathname };
 }
 
 /**

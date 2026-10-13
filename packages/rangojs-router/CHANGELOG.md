@@ -381,6 +381,53 @@ string by hand if you need it. The bare `href(path, mount)` function still
 appends the mount it is given as-is: pass it a static mount, or use
 `useHref()`.
 
+### Fixed: a navigation, prefetch or action from a page middleware rewrote diffs against the route that rendered it ([#1144](https://github.com/rangojs/rango/issues/1144))
+
+**Before.** On a page reached through `throw rewrite()`, the router took the
+page you were leaving to be the route the visitor's URL matches, the one that
+rewrote. Its params are not the target's, so every navigation from the page,
+including a sort change or a link to the page already shown, re-ran the
+target's route and every loader under it, and a `revalidate()` that compares
+a param never held:
+
+```tsx
+path("/*", Fallback, { name: "fallback" }, () => [
+  middleware((ctx, next) => {
+    if (ctx.pathname.startsWith("/public-")) {
+      throw rewrite(`/item/${ctx.pathname.slice(8)}${ctx.url.search}`);
+    }
+    return next();
+  }),
+]);
+loader(ItemLoader, () => [
+  // At /public-1: currentParams { "*": "public-1" }, nextParams { id: "1" }
+  revalidate(
+    ({ currentParams, nextParams }) => currentParams.id !== nextParams.id,
+  ),
+]);
+```
+
+**Now.** The payload of a rewritten request carries the target
+(`metadata.rewriteTarget`, its path and search). The browser keeps it with
+the history entry and sends it back as `X-RSC-Router-Client-Route` on
+navigations, prefetches and server actions from that page, and the server
+diffs against the target: at `/public-1`, `currentParams` is `{ id: "1" }`,
+`currentUrl` and `nextUrl` are both the target's, and `fromRouteName` is
+`"item"`. A navigation from the page holds what the same navigation from
+`/item/1` holds. Nothing to change in your code; the workaround of comparing
+`context.rewrittenFrom` in a predicate can go.
+
+When the visitor's URL moves to another one that rewrites to the same
+target (`/promo/a` and `/promo/b` both to `/landing`), the route and its
+loaders re-run, as on a search change, since the page may render
+`ctx.rewrittenFrom`; layouts stay held.
+
+The header only names the page being left. What renders still comes from the
+request's URL and your middleware, so a forged value runs and skips no
+middleware. Responses add it to `Vary`. In tests, pass the page's
+`metadata.rewriteTarget` to `serveShellRequest` as `partial.rewriteTarget` or
+`action.rewriteTarget`.
+
 ### Fixed: a server action or a no-JS form post from a page route middleware rewrote re-renders that page ([#1145](https://github.com/rangojs/rango/issues/1145))
 
 **Before.** A page reached through `throw rewrite()` in a route's middleware
@@ -413,11 +460,11 @@ without. Nothing to change in your code.
 
 A rewrite in global middleware still refuses a mutation, before the action
 runs, so a maintenance lock that rewrites every method never runs a write
-under maintenance; return a `Response` for mutations there. Two cases wait
-for [#1144](https://github.com/rangojs/rango/issues/1144): a route middleware
-that skips mutations (`if (ctx.request.method !== "GET") return next()`)
-still re-renders the rewriting route after the action, and a page a global
-rewrite reached still cannot call an action.
+under maintenance; return a `Response` for mutations there. Two cases stay
+as they are: a route middleware that skips mutations (`if
+(ctx.request.method !== "GET") return next()`) still re-renders the rewriting
+route after the action, and a page a global rewrite reached still cannot call
+an action.
 
 ### Fixed: a layout's `ctx.reverse(".name")` links within its own module on every page below it
 
