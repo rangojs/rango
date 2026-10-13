@@ -87,6 +87,19 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
   input.cachedSegments.forEach((s) => cachedSegments.set(s.id, s));
 
   const diffSet = new Set(diff);
+  // A clientUrls() layout() loader the server held on a navigation between
+  // two routes of the layout (client-urls/layout-loader-copies.ts): matched
+  // names it under the destination route, the page holds it under the group
+  // route it leaves. Its copy keeps its data under the new id.
+  const origin = input.cachedSegments.find((s) => s.clientGroup);
+  const destination =
+    origin &&
+    input.serverSegments.find((s) => s.clientGroup === origin.clientGroup);
+  const carried = (id: string) => {
+    const copy =
+      destination && cachedSegments.get(id.replace(destination.id, origin.id));
+    return copy && { ...copy, id };
+  };
   if (IS_BROWSER_DEBUG) {
     debugLog(
       `[reconcile] actor=${actor}, matched=${matched.length}, diff=${diff.length}`,
@@ -102,7 +115,7 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
   const segments = matched
     .map((segId: string) => {
       const fromServer = serverSegments.get(segId);
-      const fromCache = cachedSegments.get(segId);
+      let fromCache = cachedSegments.get(segId);
 
       if (fromServer) {
         const inDiff = diffSet.has(segId);
@@ -179,6 +192,7 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
       }
 
       // Fall back to cached segment (server expects client to already have it)
+      fromCache ??= carried(segId);
       if (!fromCache) {
         if (actor === "action") {
           console.error(`[Browser] MISSING SEGMENT: ${segId} not in cache!`);

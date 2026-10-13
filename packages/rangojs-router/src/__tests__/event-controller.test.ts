@@ -1401,6 +1401,114 @@ describe("createEventController", () => {
         ]);
       });
     });
+
+    // A clientUrls() layout() loader the server held on a navigation between
+    // two routes of the layout (client-urls/layout-loader-copies.ts): matched
+    // registers it on the destination route R1, new to the page, and the
+    // page filed its pushes under the route it leaves, R0.
+    describe("a clientUrls() layout() loader held across the group's routes keeps its pushes", () => {
+      const pageData = (): HandleData => ({
+        Crumbs: { L0: ["app"], R0: ["page:a", "cart:1", "item:a"] },
+        [pushedByKey("Crumbs")]: { R0: [null, "cart", "item"] },
+        Meta: { R0: [{ title: "Cart 1" }] },
+        [pushedByKey("Meta")]: { R0: ["cart"] },
+      });
+      const toIndex = ["L0", "R1", "R1D0.cart"];
+
+      it("moves them to the destination route, ahead of what it delivered", () => {
+        const ctrl = createController();
+        ctrl.setHandleData(pageData(), ["L0", "R0", "R0D0.cart", "R0D1.item"]);
+
+        ctrl.setHandleData({ Crumbs: { R1: ["page:index"] } }, toIndex, true, [
+          "R1",
+        ]);
+
+        const { data } = ctrl.getHandleState();
+        expect(data.Crumbs).toEqual({
+          L0: ["app"],
+          R1: ["cart:1", "page:index"],
+        });
+        expect(data[pushedByKey("Crumbs")]).toEqual({ R1: ["cart", null] });
+        expect(data.Meta).toEqual({ R1: [{ title: "Cart 1" }] });
+
+        // A later yield of the same response keeps them in place.
+        ctrl.setHandleData(
+          { Crumbs: { R1: ["page:index", "page:more"] } },
+          toIndex,
+          true,
+          ["R1"],
+        );
+        expect(ctrl.getHandleState().data.Crumbs.R1).toEqual([
+          "cart:1",
+          "page:index",
+          "page:more",
+        ]);
+      });
+
+      it("a loader that re-ran takes no pushes from the route the page leaves", () => {
+        const ctrl = createController();
+        ctrl.setHandleData(pageData(), ["L0", "R0", "R0D0.cart", "R0D1.item"]);
+
+        ctrl.setHandleData(
+          {
+            Crumbs: { R1: ["cart:2"] },
+            [pushedByKey("Crumbs")]: { R1: ["cart"] },
+          },
+          toIndex,
+          true,
+          ["R1", "R1D0.cart"],
+        );
+
+        const { data } = ctrl.getHandleState();
+        expect(data.Crumbs).toEqual({ L0: ["app"], R1: ["cart:2"] });
+        expect(data.Meta).toEqual({});
+      });
+
+      it("takes no push of the same loader from an intercept slot the page closes", () => {
+        // The open modal's own loader(CartLoader) pushed under its slot.
+        const ctrl = createController();
+        ctrl.setHandleData(
+          {
+            Crumbs: {
+              L0: ["app"],
+              R0: ["page:a", "cart:1"],
+              "L0.@modal": ["cart:1"],
+            },
+            [pushedByKey("Crumbs")]: {
+              R0: [null, "cart"],
+              "L0.@modal": ["cart"],
+            },
+          },
+          ["L0", "R0", "R0D0.cart", "L0.@modal", "L0.@modalD0.cart"],
+        );
+
+        ctrl.setHandleData({ Crumbs: { R1: ["page:index"] } }, toIndex, true, [
+          "R1",
+        ]);
+
+        expect(ctrl.getHandleState().data.Crumbs).toEqual({
+          L0: ["app"],
+          R1: ["cart:1", "page:index"],
+        });
+      });
+
+      it("a kept segment takes no push from a slot the page closes", () => {
+        // No clientUrls(): a layout holds loader X and pushed no title; the
+        // closing modal's own X pushed one.
+        const ctrl = createController();
+        ctrl.setHandleData(
+          {
+            Title: { "L0.@modal": ["Product 7"] },
+            [pushedByKey("Title")]: { "L0.@modal": ["X"] },
+          },
+          ["L0", "L0D0.X", "L0R0", "L0.@modal", "L0.@modalD0.X"],
+        );
+
+        ctrl.setHandleData({}, ["L0", "L0D0.X", "L0R1"], true, ["L0R1"]);
+
+        expect(ctrl.getHandleState().data.Title).toEqual({});
+      });
+    });
   });
 
   // Issue #1035: a component React hydrates, however late its boundary,

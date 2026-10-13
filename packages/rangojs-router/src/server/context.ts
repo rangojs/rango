@@ -445,6 +445,53 @@ function bumpCounter(store: HelperContext, key: string): number {
   return store.counters[key]++;
 }
 
+type ShortCodeType = "layout" | "parallel" | "route" | "loader" | "cache";
+
+/**
+ * The next shortCode of `type` under the store's parent, which `take`
+ * consumes; a peek may look `ahead` past it. A root entry is prefixed with the
+ * mount index and counted per mount. A child is counted per parent with
+ * includeScope appended: while a lazy include's direct children evaluate,
+ * includeScope is a per-include token like "I0" / "I1I0" that partitions the
+ * parent's counter namespace so routes inside one include cannot collide with
+ * siblings declared outside it.
+ */
+function nextShortCode(
+  store: HelperContext,
+  type: ShortCodeType,
+  take: boolean,
+  ahead = 0,
+): string {
+  const parent = store.parent;
+  const prefix = SHORT_CODE_PREFIX[type];
+  const mountPrefix =
+    store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
+  const includeScope = store.includeScope ?? "";
+  const counterKey = parent
+    ? `${parent.shortCode}${includeScope}_${type}`
+    : mountPrefix
+      ? `${mountPrefix}_root_${type}`
+      : `root_${type}`;
+  const index = take
+    ? bumpCounter(store, counterKey)
+    : (store.counters[counterKey] ?? 0) + ahead;
+  return parent
+    ? `${parent.shortCode}${includeScope}${prefix}${index}`
+    : `${mountPrefix}${prefix}${index}`;
+}
+
+/**
+ * The shortCode the `ahead`-th next `getShortCode(type)` call in this DSL
+ * context returns, without taking it. clientUrls() materialization reads the
+ * code of every group route this way, including the routes an evaluation for
+ * another route skips (client-urls/layout-loader-copies.ts).
+ */
+export function peekShortCode(type: ShortCodeType, ahead: number): string {
+  const store = RangoContext.getStore();
+  invariant(store, "No context RangoContext available");
+  return nextShortCode(store, type, false, ahead);
+}
+
 export const getContext = (): {
   context: AsyncLocalStorage<HelperContext>;
   getStore: () => HelperContext;
@@ -522,29 +569,7 @@ export const getContext = (): {
     ) => {
       const store = context.getStore();
       invariant(store, "No context RangoContext available");
-
-      const parent = store.parent;
-      const prefix = SHORT_CODE_PREFIX[type];
-      const mountPrefix =
-        store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
-
-      const includeScope = store.includeScope ?? "";
-
-      if (!parent) {
-        // Root entry: prefix with mount index and use mount-scoped counter
-        const counterKey = mountPrefix
-          ? `${mountPrefix}_root_${type}`
-          : `root_${type}`;
-        return `${mountPrefix}${prefix}${bumpCounter(store, counterKey)}`;
-      } else {
-        // Child entry: use parent-scoped counter with includeScope appended.
-        // When we're evaluating a lazy include's direct children, includeScope
-        // is a per-include token like "I0" / "I1I0" that partitions the
-        // parent's counter namespace so routes inside one include cannot
-        // collide with siblings declared outside it.
-        const counterKey = `${parent.shortCode}${includeScope}_${type}`;
-        return `${parent.shortCode}${includeScope}${prefix}${bumpCounter(store, counterKey)}`;
-      }
+      return nextShortCode(store, type, true);
     },
     runWithStore: <T>(
       store: HelperContext,

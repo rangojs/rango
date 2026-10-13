@@ -38,6 +38,10 @@ import {
   clearClientUrlRevalidators,
   registerClientUrlRevalidators,
 } from "../revalidate-registry.js";
+import {
+  isLayoutLoaderCopy,
+  withLayoutLoaderCopies,
+} from "../layout-loader-copies.js";
 import { runRevalidate } from "../../testing/run-revalidate.js";
 
 const { getLoaderLazyMock } = vi.hoisted(() => ({
@@ -146,6 +150,7 @@ describe("client URL server projection", () => {
           },
           loaderIds: ["loaders#session", "loaders#account"],
           hasLoading: true,
+          layoutLoaders: [0],
         },
       ],
       intercepts: [],
@@ -506,6 +511,99 @@ describe("client URL server projection", () => {
       params: { id: "42" },
       redirectTo: "/accounts/42/",
     });
+  });
+
+  it("records each layout() loader copy's ids under the other routes of its layout()", () => {
+    const CartLoader = loaderDefinition("loaders#cart");
+    const ItemLoader = loaderDefinition("loaders#item");
+    const WishLoader = loaderDefinition("loaders#wish");
+    const source = clientUrls(({ layout, path, loader }) => [
+      layout(AppLayout, () => [
+        loader(CartLoader),
+        path("/", AccountPage, { name: "index" }),
+        path("/items/:id", AccountPage, { name: "item" }, () => [
+          loader(ItemLoader),
+        ]),
+        layout(AppLayout, () => [
+          loader(WishLoader),
+          path("/wish", AccountPage, { name: "wish" }),
+        ]),
+      ]),
+      path("/outside", AccountPage, { name: "outside" }),
+      // The same loader on another layout() is another layout's loader.
+      layout(AppLayout, () => [
+        loader(CartLoader),
+        path("/other", AccountPage, { name: "other" }),
+      ]),
+    ]);
+    const projection = serializeClientUrlPatterns(source);
+    expect(projection.routes.map((route) => route.layoutLoaders)).toEqual([
+      [0],
+      [0],
+      [0, 1],
+      undefined,
+      [2],
+    ]);
+
+    const evaluate = (forRoute?: string) => {
+      const manifest = new Map<string, EntryData>();
+      RangoContext.run(
+        {
+          manifest,
+          patterns: new Map(),
+          trailingSlash: new Map(),
+          searchSchemas: new Map(),
+          namespace: "test",
+          parent: null,
+          counters: {},
+          forRoute,
+        },
+        () =>
+          materializeClientUrlPatterns(
+            clientReference("app.urls#copies"),
+            projection,
+          ).handler(),
+      );
+      return manifest;
+    };
+    const all = evaluate();
+    const code = (name: string) => all.get(name)!.shortCode;
+    const cart = (name: string) => `${code(name)}D0.loaders#cart`;
+    const holding = (...ids: string[]) => new Set(ids);
+
+    // An evaluation for one route reads the codes of the routes it skips.
+    const item = evaluate("item").get("item")!;
+    expect(item.shortCode).toBe(code("item"));
+    expect([...withLayoutLoaderCopies(holding(cart("index")), item)]).toEqual([
+      cart("index"),
+      cart("item"),
+    ]);
+    // A nested layout's route holds the outer layout's loader too.
+    expect(
+      withLayoutLoaderCopies(holding(cart("wish")), item).has(cart("item")),
+    ).toBe(true);
+    const wish = all.get("wish")!;
+    expect(
+      withLayoutLoaderCopies(holding(`${code("item")}D1.loaders#item`), wish)
+        .size,
+    ).toBe(1);
+
+    // Only layout() loader copies take a layout's revalidation default.
+    expect(item.loader.map(({ loader }) => isLayoutLoaderCopy(loader))).toEqual(
+      [true, false],
+    );
+    expect(
+      all
+        .get("outside")!
+        .loader.map(({ loader }) => isLayoutLoaderCopy(loader)),
+    ).toEqual([]);
+
+    // Another layout's copy of the same loader, or no copy: nothing held.
+    const none = holding(cart("other"), code("outside"));
+    expect(withLayoutLoaderCopies(none, item)).toBe(none);
+    expect(
+      withLayoutLoaderCopies(holding(cart("index")), all.get("other")!),
+    ).toEqual(holding(cart("index")));
   });
 
   it("serializes intercept records as JSON-safe data without components", () => {

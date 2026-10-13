@@ -2,8 +2,10 @@ import * as React from "react";
 import type { SearchSchemaValue } from "../search-params.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import {
+  getContext,
   getNamePrefix,
   getUrlPrefix,
+  peekShortCode,
   type InterceptSelectorContext,
 } from "../server/context.js";
 import type {
@@ -21,6 +23,7 @@ import type { AllUseItems } from "../route-types.js";
 import { urls } from "../urls/urls-function.js";
 import { isHoistedRevalidateRef } from "./hoisted-revalidate.js";
 import { getClientUrlRevalidator } from "./revalidate-registry.js";
+import { setLayoutLoaderCopies } from "./layout-loader-copies.js";
 import {
   ClientUrlsGroupLayout,
   ClientUrlsInterceptLoading,
@@ -32,6 +35,7 @@ import { createClientUrlsWhenRef } from "../transition-when-ref.js";
 import type {
   ClientTransitionConfig,
   ClientUrlInterceptRecord,
+  ClientUrlLoaderRecord,
   ClientUrlPatterns,
   ClientUrlRouteRecord,
 } from "./types.js";
@@ -106,6 +110,11 @@ export interface ClientUrlProjectionRoute {
    *  the registered predicates (revalidate-registry.ts). Absent when no
    *  loader declares one. */
   readonly loaderRevalidate?: readonly (readonly string[])[];
+  /** One per leading loader its layout()s declare
+   *  (ClientUrlRouteRecord.layoutLoaders): the record's ordinal in the
+   *  definition. Two routes whose loader at an index carries the same ordinal
+   *  hold one layout() loader (layout-loader-copies.ts). Absent when none. */
+  readonly layoutLoaders?: readonly number[];
   /** Data-only transition config (never `when`); absent in projections
    *  serialized before transition support. */
   readonly transition?: Readonly<ClientTransitionConfig>;
@@ -299,7 +308,13 @@ function indicesWhere<T>(
 function serializeRoute(
   route: ClientUrlRouteRecord,
   options: SerializeClientUrlPatternsOptions,
+  ordinals: Map<ClientUrlLoaderRecord, number>,
 ): ClientUrlProjectionRoute {
+  // flattenLayout creates a layout()'s records once for every route below it.
+  const layoutLoaders = route.layoutLoaders.map((record) => {
+    if (!ordinals.has(record)) ordinals.set(record, ordinals.size);
+    return ordinals.get(record)!;
+  });
   const loaderIds = route.loaders.map(({ loader }, index) => {
     if (typeof loader.$$id !== "string" || loader.$$id.length === 0) {
       throw projectionError(
@@ -355,6 +370,9 @@ function serializeRoute(
           ),
         }
       : {}),
+    ...(layoutLoaders.length > 0
+      ? { layoutLoaders: Object.freeze(layoutLoaders) }
+      : {}),
     ...(transition ? { transition } : {}),
     ...(typeof route.transition?.when === "function"
       ? { transitionWhen: true as const }
@@ -388,10 +406,11 @@ export function serializeClientUrlPatterns(
   patterns: ClientUrlPatterns,
   options: SerializeClientUrlPatternsOptions = {},
 ): ClientUrlProjection {
+  const ordinals = new Map<ClientUrlLoaderRecord, number>();
   return Object.freeze({
     version: 1 as const,
     routes: Object.freeze(
-      patterns.routes.map((route) => serializeRoute(route, options)),
+      patterns.routes.map((route) => serializeRoute(route, options, ordinals)),
     ),
     intercepts: Object.freeze(
       (patterns.intercepts ?? []).map(serializeIntercept),
@@ -613,9 +632,39 @@ function materializeRouteItems(
   // builders must run where the items belong: at the module top level for the
   // flat (no-intercept) shape, or inside the group layout's children callback
   // when intercepts wrap the group.
-  const buildRouteItems = (): AllUseItems[] =>
-    projection.routes.map(
-      (route) =>
+  const buildRouteItems = (): AllUseItems[] => {
+    // Each route's shortCode, read before path() takes them: one per route,
+    // in order, from the same counter. An evaluation for one route skips the
+    // others' entries, not their codes.
+    const codes = projection.routes.map((_, ahead) =>
+      peekShortCode("route", ahead),
+    );
+    // A route's use(), recording each layout() loader copy's ids under the
+    // other routes of its layout() (layout-loader-copies.ts). path() runs it
+    // with the route entry as parent, whose loaders it has created on return.
+    const recordingCopies =
+      <T>(routeIndex: number, use: () => T) =>
+      (): T => {
+        const items = use();
+        const entry = getContext().getParent()!;
+        projection.routes[routeIndex].layoutLoaders?.forEach(
+          (ordinal, loaderIndex) =>
+            setLayoutLoaderCopies(
+              entry.loader[loaderIndex].loader,
+              projection.routes.flatMap((other, otherIndex) =>
+                otherIndex !== routeIndex &&
+                other.layoutLoaders?.[loaderIndex] === ordinal
+                  ? [
+                      `${codes[otherIndex]}D${loaderIndex}.${other.loaderIds[loaderIndex]}`,
+                    ]
+                  : [],
+              ),
+            ),
+        );
+        return items;
+      };
+    return projection.routes.map(
+      (route, routeIndex) =>
         path(
           route.pattern,
           () =>
@@ -625,7 +674,7 @@ function materializeRouteItems(
               namePrefix,
             }),
           materializedPathOptions(route, clientGroup),
-          () => [
+          recordingCopies(routeIndex, () => [
             ...route.loaderIds.map((id, loaderIndex) => {
               const revalidators = loaderRevalidators(
                 reference,
@@ -669,9 +718,10 @@ function materializeRouteItems(
                   }),
                 ]
               : []),
-          ],
+          ]),
         ) as AllUseItems,
     );
+  };
 
   const intercepts = projection.intercepts ?? [];
   if (intercepts.length === 0) return buildRouteItems();

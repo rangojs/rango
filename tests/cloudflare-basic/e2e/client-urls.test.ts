@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
   expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
+  expectLayoutLoaderHeldAcrossNavigations,
   expectReturnToCommittedRouteFromOptimisticFrameShowsTheDestination,
 } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
@@ -131,6 +132,16 @@ function runClientUrlsSpec(f: Fixture): void {
   }) => {
     using _ = expectNoPageError(page);
     await expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame(page, {
+      url: (pathname) => f.url(pathname),
+      path: "/client-urls-layout-loader",
+    });
+  });
+
+  test("a layout() loader with no revalidate() keeps its data and crumb across route switches, a param navigation, a search change and Back, and an action re-runs it", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectLayoutLoaderHeldAcrossNavigations(page, {
       url: (pathname) => f.url(pathname),
       path: "/client-urls-layout-loader",
     });

@@ -341,6 +341,13 @@ request's `_rsc_segments`. This is what defines the unit:
   route and its loader segments) behaves as it does without the flag. The
   prefetch runs everything and the click sends no fill. A prefetch taken on
   another page is not used for that click (R15).
+- A `clientUrls()` group `layout()` loader is held the same way on every route
+  of its layout: the copy under the route the page leaves counts as the
+  destination's (`client-urls/layout-loader-copies.ts`), so between two of those
+  routes it is never deferred, and its `revalidate()` (or a layout's default,
+  which holds it) decides whether it runs in the prefetch. A prefetch that
+  enters the layout defers it. Pinned for every loader kind by
+  `src/testing/__tests__/prefetch-false-on-screen.rsc-test.tsx`.
 
 **R15. A prefetch that deferred something is adopted only on the page it was
 made on.** What a prefetch defers depends on what its source page holds

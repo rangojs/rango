@@ -13,6 +13,7 @@ import {
 import {
   expectConsole,
   expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
+  expectLayoutLoaderHeldAcrossNavigations,
   expectReturnToCommittedRouteFromOptimisticFrameShowsTheDestination,
 } from "@shared/e2e";
 
@@ -793,6 +794,16 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
   }) => {
     using _ = expectNoPageError(page);
     await expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame(page, {
+      url: (pathname) => f.url(pathname),
+      path: "/client-urls-layout-loader",
+    });
+  });
+
+  test("a layout() loader with no revalidate() keeps its data and crumb across route switches, a param navigation, a search change and Back, and an action re-runs it", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectLayoutLoaderHeldAcrossNavigations(page, {
       url: (pathname) => f.url(pathname),
       path: "/client-urls-layout-loader",
     });

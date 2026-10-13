@@ -256,7 +256,16 @@ code only) when the group's module loads. Route discovery serializes the SSR
 copy, so the projection carries per-loader keys (`loaderRevalidate`);
 `client-urls/server-projection.ts` attaches the registered predicates to the
 materialized loader stubs and fails loudly at materialization for a key with no
-registration. Scope and capture analysis is shared with the
+registration. A `layout()` loader takes a layout's revalidation default (held on a
+navigation, re-run on an action; `isLayoutLoaderCopy`) and its predicate also
+decides on navigations between that layout's routes: the projection numbers
+each route's layout loader records
+(`layoutLoaders`), materialization records each copy's ids under the layout's
+other routes (`client-urls/layout-loader-copies.ts`), the partial match holds
+the destination's copy when the page holds one (`withLayoutLoaderCopies`,
+`router/match-api.ts`), and the browser carries the held copy and its handle
+pushes to the destination's id (`browser/segment-reconciler.ts`,
+`handles/pushed-by.ts`). Scope and capture analysis is shared with the
 `transition({ when })` hoist through `vite/plugins/hoist/scope.ts` and
 `hoist/literal.ts`. `isAction` is the same callable
 matcher as the server predicate (`isAction()`, `isAction(fn)`,

@@ -170,6 +170,13 @@ The client descriptor and both runtime projections are owned by:
   the server registry of hoisted predicates by key
   (`registerClientUrlRevalidators`, re-exported from `server.ts`); the
   materialization in `server-projection.ts` attaches them to loader stubs.
+- [`client-urls/layout-loader-copies.ts`](../../src/client-urls/layout-loader-copies.ts) -
+  the ids a `layout()` loader's copy has under the layout's other routes,
+  recorded at materialization; `withLayoutLoaderCopies` makes the page's copy
+  hold the destination route's (`router/match-api.ts`), so the loader's
+  `revalidate()` decides between the layout's routes. The browser carries the
+  copy in `browser/segment-reconciler.ts` and its pushes in
+  `handles/pushed-by.ts`.
 - [`vite/plugins/client-urls-revalidate-hoist.ts`](../../src/vite/plugins/client-urls-revalidate-hoist.ts) -
   the build transform: moves each `revalidate()` argument into the server-only
   `<file>?rango-revalidate` module, leaves the marker, appends the import to the

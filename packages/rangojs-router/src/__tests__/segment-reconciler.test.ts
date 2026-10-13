@@ -507,6 +507,71 @@ describe("segment-reconciler", () => {
       });
     });
 
+    // A clientUrls() layout() loader the server held on a navigation between
+    // two routes of the layout (client-urls/layout-loader-copies.ts): matched
+    // names it under the destination route, the page holds it under the
+    // route it leaves.
+    describe("a clientUrls() layout() loader held across the group's routes", () => {
+      const layout = seg("M0L0", { type: "layout" });
+      const origin = seg("M0L0R0", { clientGroup: "/shop" });
+      const cart = seg("M0L0R0D0.cart", {
+        type: "loader",
+        loaderId: "cart",
+        loaderData: { cart: 1 } as any,
+      });
+      const destination = seg("M0L0R1", { clientGroup: "/shop" });
+      const item = seg("M0L0R1D1.item", {
+        type: "loader",
+        loaderId: "item",
+        loaderData: "item:a",
+      });
+      const navigate = (
+        actor: "navigation" | "stale-revalidation",
+        cached: ResolvedSegment[],
+      ) =>
+        reconcileSegments({
+          actor,
+          matched: ["M0L0", "M0L0R1", "M0L0R1D0.cart", "M0L0R1D1.item"],
+          diff: ["M0L0R1", "M0L0R1D1.item"],
+          serverSegments: [destination, item],
+          cachedSegments: cached,
+        });
+
+      it.each(["navigation", "stale-revalidation"] as const)(
+        "carries the page's copy, its data unchanged, to the id matched names (%s)",
+        (actor) => {
+          const result = navigate(actor, [layout, origin, cart]);
+          expect(result.segments.map((s) => s.id)).toEqual([
+            "M0L0",
+            "M0L0R1",
+            "M0L0R1D0.cart",
+            "M0L0R1D1.item",
+          ]);
+          const carried = result.segments[2];
+          expect(carried).toEqual({ ...cart, id: "M0L0R1D0.cart" });
+          expect(carried.loaderData).toBe(cart.loaderData);
+        },
+      );
+
+      it("carries nothing to a segment the server sent", () => {
+        const result = navigate("navigation", [
+          layout,
+          { ...origin, loading: "origin skeleton" as any },
+          cart,
+        ]);
+        expect(result.segments[1]).toBe(destination);
+      });
+
+      it("carries nothing from a route of another group", () => {
+        const result = navigate("navigation", [
+          layout,
+          { ...origin, clientGroup: "/other" },
+          cart,
+        ]);
+        expect(result.segments.map((s) => s.id)).not.toContain("M0L0R1D0.cart");
+      });
+    });
+
     describe("intercept splitting", () => {
       it("separates intercept segments from main segments", () => {
         const layout = seg("L0", { type: "layout" });

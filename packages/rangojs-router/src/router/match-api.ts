@@ -54,6 +54,7 @@ import {
   type RouteSnapshot,
 } from "./route-snapshot.js";
 import { resolveNavigation } from "./navigation-snapshot.js";
+import { withLayoutLoaderCopies } from "../client-urls/layout-loader-copies.js";
 import {
   partialDeferralMode,
   planPrefetchDeferral,
@@ -419,9 +420,16 @@ export async function createMatchContextForPartial<TEnv>(
             )
           : null);
 
+  // The page's copy of a clientUrls() layout() loader under the route it
+  // leaves holds the destination route's (client-urls/layout-loader-copies.ts).
+  const held = withLayoutLoaderCopies(
+    nav.clientSegmentSet,
+    snapshot.manifestEntry,
+  );
+
   // Make a mutable copy of clientSegmentSet so we can delete entries
   // for same-route navigation forcing
-  const clientSegmentSet = new Set(nav.clientSegmentSet);
+  const clientSegmentSet = new Set(held);
 
   if (
     nav.isSameRouteNavigation &&
@@ -481,9 +489,9 @@ export async function createMatchContextForPartial<TEnv>(
     }),
     matched,
     cacheScope,
-    // As the request listed them, not the copy forced above: see
+    // What the page holds, not the copy forced above: see
     // prefetch-deferral.ts.
-    nav.clientSegmentSet,
+    held,
   );
   (handlerContext as InternalHandlerContext<any, TEnv>)._prefetchDeferral =
     deferral;

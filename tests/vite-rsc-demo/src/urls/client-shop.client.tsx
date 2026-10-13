@@ -842,10 +842,11 @@ function ClientShopProductPage() {
 
 export default clientUrls(({ path, layout, loader, revalidate }) => [
   layout(ClientShopLayout, () => [
-    // Cart state changes ONLY through actions: revalidate on the action
-    // POST, skip on every navigation. One add-to-cart then produces three
-    // freshness outcomes in a single commit — cart refreshes, product and
-    // related hold.
+    // Cart state changes ONLY through actions. A layout() loader skips every
+    // navigation by default, between the shop's routes and on param changes
+    // alike; this rule narrows the actions that re-run it to the shop's. One
+    // add-to-cart then produces three freshness outcomes in a single commit —
+    // cart refreshes, product and related hold.
     loader(CartLoader, () => [
       revalidate(({ isAction }) => isAction(ShopActions)),
     ]),
