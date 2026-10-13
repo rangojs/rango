@@ -474,7 +474,7 @@ export function createNavigationStore(
       entryMemory.delete(key);
       entryMemory.set(key, {
         routeName: shown?.routeName ?? previous?.routeName,
-        rewriteTarget: shown ? shown.rewriteTarget : previous?.rewriteTarget,
+        rewriteTarget: (shown ?? previous)?.rewriteTarget,
         state: window.history.state,
       });
       if (entryMemory.size > HISTORY_ENTRY_MEMORY_SIZE) {

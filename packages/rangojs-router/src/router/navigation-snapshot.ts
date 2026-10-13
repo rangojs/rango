@@ -4,10 +4,7 @@ import type { RouteMatchResult } from "./pattern-matching.js";
 
 export interface NavigationSnapshot {
   prevUrl: URL;
-  /**
-   * The visitor's URL of the page being left when `prevUrl` is its rewrite
-   * target (X-RSC-Router-Client-Route); null otherwise.
-   */
+  /** The visitor's URL of the page left, when `prevUrl` is its rewrite target. */
   prevVisitorUrl: URL | null;
   prevParams: Record<string, string>;
   prevMatch: RouteMatchResult | null;
@@ -101,24 +98,18 @@ export function getInterceptSourceHeader(request: Request): string | null {
 }
 
 /**
- * The URL the page on screen rendered when middleware rewrote it there
- * (#1144): `X-RSC-Router-Client-Route`, which the browser sends from the
- * payload's `rewriteTarget` while `X-RSC-Router-Client-Path` names the
- * visitor's URL. The server cannot re-derive a rewrite an earlier request
- * took, and matching the visitor's URL finds the rewriting route, so every
- * navigation from the page re-rendered its route and loaders and a
- * `revalidate()` param predicate never held. Same origin only. It names
- * only the page being left; what renders is still matched from the
- * request's own URL, so a forged value runs and skips no middleware.
- * Ignored beside `X-RSC-Router-Intercept-Source`: an intercept's request
- * is diffed from its source, which the header does not describe.
+ * The URL the page left rendered, when middleware rewrote it there (#1144):
+ * `_rsc_rt`, the payload's `rewriteTarget` the browser sends back while
+ * `X-RSC-Router-Client-Path` names the visitor's URL. Matching the visitor's
+ * URL would find the rewriting route. Same origin only. It names the page
+ * left, never what renders, so a forged value runs or skips no middleware.
  */
-function getShownRouteUrl(request: Request, origin: string): URL | null {
-  const route = requestHeaders(request).get("X-RSC-Router-Client-Route");
-  if (!route) return null;
+function getShownRouteUrl(url: URL): URL | null {
+  const shown = url.searchParams.get("_rsc_rt");
+  if (!shown) return null;
   try {
-    const shown = new URL(route, origin);
-    return shown.origin === origin ? shown : null;
+    const parsed = new URL(shown, url.origin);
+    return parsed.origin === url.origin ? parsed : null;
   } catch {
     return null;
   }
@@ -145,7 +136,8 @@ export async function resolveNavigation(
   let prevVisitorUrl: URL | null = null;
   try {
     const visitor = new URL(previousUrl, url.origin);
-    const shown = !interceptSourceUrl && getShownRouteUrl(request, url.origin);
+    // An intercept's request diffs from its source, which _rsc_rt does not name.
+    const shown = !interceptSourceUrl && getShownRouteUrl(url);
     prevUrl = shown || visitor;
     if (shown) prevVisitorUrl = visitor;
   } catch {

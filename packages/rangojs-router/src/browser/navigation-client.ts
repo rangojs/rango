@@ -79,7 +79,7 @@ export function createNavigationClient(
         targetUrl,
         segmentIds,
         previousUrl,
-        clientRoute,
+        rewriteTarget,
         signal,
         staleRevalidation,
         interceptSourceUrl,
@@ -116,6 +116,11 @@ export function createNavigationClient(
       if (routerId) {
         fetchUrl.searchParams.set("_rsc_rid", routerId);
       }
+      // The page left's rewrite target (#1144), in both prefetch keys like
+      // the params above: buildPrefetchUrl sets it in the same place.
+      if (rewriteTarget) {
+        fetchUrl.searchParams.set("_rsc_rt", rewriteTarget);
+      }
       // A param, not a header: the document cache decides from the raw URL
       // (cache/document-cache.ts), and it keeps the fill out of every
       // prefetch key below.
@@ -150,12 +155,7 @@ export function createNavigationClient(
         !isActionFenceActive();
       const rangoState = getRangoState();
       const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
-      const cacheKey = buildSourceKey(
-        rangoState,
-        previousUrl,
-        fetchUrl,
-        clientRoute,
-      );
+      const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);
 
       let cachedEntry: DecodedPrefetch | null = null;
       let hitKey: string | null = null;
@@ -273,7 +273,6 @@ export function createNavigationClient(
             }),
             headers: {
               "X-RSC-Router-Client-Path": previousUrl,
-              ...(clientRoute && { "X-RSC-Router-Client-Route": clientRoute }),
               // Reuse the single per-operation read (see rangoState above): the
               // cache-key lookup and this header must agree on one value, and the
               // cookie read has side effects (external-rotation notify) we do not

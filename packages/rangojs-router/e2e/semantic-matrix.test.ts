@@ -1429,7 +1429,7 @@ const matrixRows: SemanticMatrixRow[] = [
   {
     id: "RW10",
     contract:
-      "a navigation or action from a page middleware rewrote diffs against the route that rendered it (the payload's rewriteTarget, sent back as X-RSC-Router-Client-Route): revalidate() sees the target's params, so a param-scoped loader holds",
+      "a navigation or action from a page middleware rewrote diffs against the route that rendered it (the payload's rewriteTarget, sent back as _rsc_rt): revalidate() sees the target's params, so a param-scoped loader holds",
     transport: "request",
     execution: "partial-render",
     scope: "n/a",
@@ -1448,9 +1448,9 @@ const matrixRows: SemanticMatrixRow[] = [
       await waitForHydration(page);
       await expect(testId(page, "rw-item-loads")).toHaveText("1");
       await testId(page, "rw-item-sort").click();
-      expect((await navigation).headers()["x-rsc-router-client-route"]).toBe(
-        "/rw/items/9?sort=a",
-      );
+      expect(
+        new URL((await navigation).url()).searchParams.get("_rsc_rt"),
+      ).toBe("/rw/items/9?sort=a");
       await expect(testId(page, "rw-client-location")).toHaveText(
         "/rw/catalog/9?sort=b",
       );
@@ -1460,7 +1460,7 @@ const matrixRows: SemanticMatrixRow[] = [
         (r) => r.method() === "POST" && r.url().includes("/rw/catalog/9"),
       );
       await testId(page, "rw-item-save").click();
-      expect((await post).headers()["x-rsc-router-client-route"]).toBe(
+      expect(new URL((await post).url()).searchParams.get("_rsc_rt")).toBe(
         "/rw/items/9?sort=b",
       );
       await expect(testId(page, "rw-item-saves")).toHaveText("1");

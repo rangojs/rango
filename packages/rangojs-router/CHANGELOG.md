@@ -439,9 +439,9 @@ loader(ItemLoader, () => [
 
 **Now.** The payload of a rewritten request carries the target
 (`metadata.rewriteTarget`, its path and search). The browser keeps it with
-the history entry and sends it back as `X-RSC-Router-Client-Route` on
-navigations, prefetches and server actions from that page, and the server
-diffs against the target: at `/public-1`, `currentParams` is `{ id: "1" }`,
+the history entry and sends it back (the `_rsc_rt` param) on navigations,
+prefetches and server actions from that page, and the server diffs against
+the target: at `/public-1`, `currentParams` is `{ id: "1" }`,
 `currentUrl` and `nextUrl` are both the target's, and `fromRouteName` is
 `"item"`. A navigation from the page holds what the same navigation from
 `/item/1` holds. Nothing to change in your code; the workaround of comparing
@@ -452,11 +452,10 @@ target (`/promo/a` and `/promo/b` both to `/landing`), the route and its
 loaders re-run, as on a search change, since the page may render
 `ctx.rewrittenFrom`; layouts stay held.
 
-The header only names the page being left. What renders still comes from the
+The param only names the page being left. What renders still comes from the
 request's URL and your middleware, so a forged value runs and skips no
-middleware. Responses add it to `Vary`. In tests, pass the page's
-`metadata.rewriteTarget` to `serveShellRequest` as `partial.rewriteTarget` or
-`action.rewriteTarget`.
+middleware. In tests, pass the page's `metadata.rewriteTarget` to
+`serveShellRequest` as `partial.rewriteTarget` or `action.rewriteTarget`.
 
 ### Fixed: a server action or a no-JS form post from a page route middleware rewrote re-renders that page ([#1145](https://github.com/rangojs/rango/issues/1145))
 

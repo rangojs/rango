@@ -1067,49 +1067,46 @@ would serve as a second mutation.
 
 You might expect the server to know which route the page on screen came
 from. It cannot: the rewrite was a middleware decision on an earlier
-request, and it may not hold any more. The next request from that page
-names only the visitor's URL (`X-RSC-Router-Client-Path`), and
-`resolveNavigation` (`router/navigation-snapshot.ts`) used to match that
-URL for the page being left. Under a rewrite it found the rewriting route,
-so `prevParams` were its params (`{ "*": "public-1" }` against the target's
-`{ id: "1" }`): every navigation from the page re-ran the route and its
-loaders, a `revalidate()` param predicate never held, `currentUrl` and
-`nextUrl` were in different frames, and `isSameRouteNavigation` was false
-(#1144). Actions from the page had the same root (#1145).
+request. The next request names only the visitor's URL
+(`X-RSC-Router-Client-Path`), and `resolveNavigation`
+(`router/navigation-snapshot.ts`) used to match that URL for the page being
+left. Under a rewrite it found the rewriting route, so `prevParams` were its
+params (`{ "*": "public-1" }` against the target's `{ id: "1" }`): every
+navigation from the page re-ran the route and its loaders, a `revalidate()`
+param predicate never held, and `isSameRouteNavigation` was false (#1144;
+actions had the same root, #1145).
 
-So the payload of every rewritten request carries `metadata.rewriteTarget`,
-the target's path and search (`payloadLocation` in `rsc/full-payload.ts`,
-from the rewrite trail; absent otherwise). The browser keeps it per history
-entry (`HistoryEntryMemory.rewriteTarget`, `rememberDisplayedEntry`), so
-Back and Forward leave the right page, and sends it as
-`X-RSC-Router-Client-Route` on navigation, prefetch and action requests made
-from that page. A prefetch's source key folds it in (`buildSourceKey`), and
-the response `Vary`s on it. `resolveNavigation` matches it for `prevUrl`,
-`prevMatch` and `prevParams`, so `isSameRouteNavigation`, `fromRouteName`
-and the intercept `from` context follow; both `currentUrl` and `nextUrl` are
-then in the target's frame, and `ctx.rewrittenFrom` still gives the
-visitor's side. A shared render (a stored document, a shell) carries the
-target too: it is the same for every visitor of that entry.
+So the payload of a rewritten request carries `metadata.rewriteTarget`, the
+target's path and search (`payloadLocation` in `rsc/full-payload.ts`, from
+the rewrite trail). The browser keeps it per history entry
+(`HistoryEntryMemory.rewriteTarget`), so Back and Forward leave the right
+page, and sends it as the `_rsc_rt` param on navigation, prefetch and action
+requests from that page. `resolveNavigation` matches it for `prevUrl`,
+`prevMatch` and `prevParams`; `isSameRouteNavigation`, `fromRouteName` and
+the intercept `from` context follow, `currentUrl` and `nextUrl` share the
+target's frame, and `ctx.rewrittenFrom` still gives the visitor's side.
 
-The header names only the page being left. What renders is matched from the
+Why a param and not a header? It is client state that shapes the diff, like
+`_rsc_segments`: in the URL it is part of every prefetch key and every HTTP
+cache key, with no `Vary` and no key folding, so a prefetch made on a
+rewritten page is adopted only from a page with the same target.
+
+It names only the page being left. What renders is matched from the
 request's own URL and middleware, so a forged value runs and skips no
-middleware: it can make the server re-render more or less of what the
-client claims to hold, which `_rsc_segments` can already do. A value of
-another origin, or one that does not parse, is ignored. The browser does not
-send it from an open intercept's source (the source is not the page on
-screen), the server ignores it beside `X-RSC-Router-Intercept-Source`, and
-that header stays the visitor's URL.
+middleware; it can make the server re-render more or less of what the client
+claims to hold, which `_rsc_segments` can already do. A value of another
+origin, or one that does not parse, is ignored. The browser does not send it
+from an intercept's source, and the server ignores it beside
+`X-RSC-Router-Intercept-Source`.
 
 Can two visitor URLs share one target? Yes: `/promo/a` and `/promo/b` can
 both rewrite to `/landing`, and the target frame alone would hold the route
-between them. That render may read `ctx.rewrittenFrom`, so when the
-visitor's URL moves, `matchPartial` marks `_visitorMoved` (`match-api.ts`,
-comparing `visitorUrl()` with the Client-Path the snapshot kept as
-`prevVisitorUrl`), and the default revalidation counts it as a search change
-(`router/revalidation.ts`, `match-middleware/cache-lookup.ts`): the route
-and its own loaders re-run, layouts stay held. A navigation to the page
-already shown, or a search change the target keeps, behaves exactly as from
-a direct visit.
+between them, though its render may read `ctx.rewrittenFrom`. So when the
+visitor's URL moves, `matchPartial` sets `_visitorMoved` (`match-api.ts`,
+`visitorUrl()` against the snapshot's `prevVisitorUrl`), and the default
+revalidation counts it as a search change (`router/revalidation.ts`,
+`match-middleware/cache-lookup.ts`): the route and its loaders re-run,
+layouts stay held.
 
 What this does not cover yet:
 
@@ -1121,6 +1118,9 @@ What this does not cover yet:
   its source, but the modal's later requests (its fill, a refresh, Back into
   it) name the source by `X-RSC-Router-Intercept-Source`, the visitor's URL,
   so an intercept `when()` that reads `from` sees the rewriting route there.
+- Entering a rewritten page from its own target URL (`/item/1` to
+  `/public-1`) holds the route, as before #1144, though `ctx.rewrittenFrom`
+  changed: `_visitorMoved` is set only when leaving a rewritten page.
 - A route middleware that skips a mutation (`if (method !== "GET") return
 next()`) still re-renders the rewriting route after the action, and a page
   a global rewrite reached cannot call an action. The client now names the

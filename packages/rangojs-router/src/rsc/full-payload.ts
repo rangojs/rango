@@ -16,7 +16,6 @@ import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
 import {
   rendersForSharedAudience,
-  rewriteTarget,
   rewriteTrail,
   visitorUrl,
 } from "../server/rewrite-trail.js";
@@ -123,22 +122,21 @@ export function renderedLocation(
 }
 
 /**
- * A payload's location fields: `pathname` (renderedLocation), and
- * `rewriteTarget` when middleware rewrote the request. The browser keeps
- * the target with the history entry and sends it back as
- * `X-RSC-Router-Client-Route` on the next navigation, prefetch or action
- * from that page (router/navigation-snapshot.ts resolveNavigation), so the
- * server diffs against the route that rendered the page, not the route the
- * visitor's URL matches (#1144). Absent, not undefined, on every other
- * payload.
+ * A payload's `pathname` (renderedLocation) and, when middleware rewrote the
+ * request, `rewriteTarget`: the path and search the route rendered (the
+ * trail's last URL). The browser keeps it per history entry and sends it
+ * back as `_rsc_rt`, so the next request from the page diffs against the
+ * route that rendered it (navigation-snapshot.ts resolveNavigation, #1144).
  */
 export function payloadLocation(
   reqCtx: Parameters<typeof renderedLocation>[0],
   url: URL,
 ): { pathname: string; rewriteTarget?: string } {
   const pathname = renderedLocation(reqCtx, url).pathname;
-  const target = rewriteTarget(reqCtx);
-  return target ? { pathname, rewriteTarget: target } : { pathname };
+  const trail = rewriteTrail(reqCtx);
+  if (!trail) return { pathname };
+  const target = new URL(trail[trail.length - 1]!);
+  return { pathname, rewriteTarget: target.pathname + target.search };
 }
 
 /**

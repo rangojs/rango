@@ -189,20 +189,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // during render or in the click handler. Trimmed from +183B before raising
 // (no helper, no navigateTo wrapper, href() reused for the join). One 128B
 // step: main sat 11B under the old limit.
-//
-// Raised 49KB -> 49.125KB on 2026-10-13 for #1144 (dc-t63), measured on main
-// 75ce70ba8 50092B -> 50234B (+142B gzip): a page middleware rewrote sends
-// the target it rendered (payload `rewriteTarget`, kept per history entry in
-// navigation-store.ts rememberDisplayedEntry) as X-RSC-Router-Client-Route on
-// navigation (navigation-client.ts, partial-update.ts), prefetch
-// (prefetch/fetch.ts, folded into buildSourceKey) and action
-// (server-action-bridge.ts) requests, so the server diffs against the route
-// that rendered the page. None of it can load lazily: every request from the
-// page carries it. Trimmed from +144B (the fill always names its payload's
-// target and the server ignores it beside an intercept source); dropping the
-// source-key fold saves only 11B. One 128B step: main sat 84B under the old
-// limit.
-const ROUTER_CHUNK_GZIP_MAX = 49.125 * 1024;
+const ROUTER_CHUNK_GZIP_MAX = 49 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

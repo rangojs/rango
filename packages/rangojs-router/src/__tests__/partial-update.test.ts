@@ -212,7 +212,7 @@ describe("partial-update", () => {
       expect(tx.commit).toHaveBeenCalledWith(
         ["L0", "L0R0"],
         expect.any(Array),
-        { shown: expect.objectContaining({ isPartial: true }) },
+        { metadata: expect.objectContaining({ isPartial: true }) },
       );
 
       // onUpdate called with rendered tree
@@ -774,7 +774,7 @@ describe("partial-update", () => {
           createMockTx("http://localhost/public-1?sort=a"),
           mode,
         );
-        return (client.fetchPartial as any).mock.calls[0][0].clientRoute;
+        return (client.fetchPartial as any).mock.calls[0][0].rewriteTarget;
       };
 
       it("a navigation from the page sends the entry's rewrite target", async () => {
@@ -1309,7 +1309,7 @@ describe("partial-update", () => {
 
       // Commit with segment IDs from server
       expect(tx.commit).toHaveBeenCalledWith(["L0", "L0R0"], serverSegments, {
-        shown: expect.objectContaining({ isPartial: false }),
+        metadata: expect.objectContaining({ isPartial: false }),
       });
 
       expect(onUpdate).toHaveBeenCalledWith(

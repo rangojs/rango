@@ -115,8 +115,8 @@ on the public origin fails the comparison. That only affects requests without
 `X-RSC-Router-Client-Path`, which the rango client always sends, and it
 degrades to a full match.
 
-A page middleware rewrote also sends `X-RSC-Router-Client-Route`, the
-target it rendered (#1144). `getShownRouteUrl` accepts it only on the request
+A request from a page middleware rewrote also carries `_rsc_rt`, the target
+that page rendered (#1144). `getShownRouteUrl` accepts it only on the request
 URL's origin, and only when the request has a navigation context. It names
 the page being left (`prevMatch`, `prevParams`); what renders is matched from
 the request's own URL and middleware, so a forged value runs and skips no
