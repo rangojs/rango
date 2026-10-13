@@ -8,6 +8,8 @@ export const routes = {
   "actionFailureClient.throw": "/action-failure-client/throw",
   "actionFailureClient.throwLoading": "/action-failure-client/throw-loading",
   "actionFailureServer.data": "/action-failure-server/data",
+  "actionFailureServer.item": "/action-failure-server/items/:id",
+  "actionFailureServer.items": "/action-failure-server/items",
   "actionFailureServer.throw": "/action-failure-server/throw",
   "actionFailureServer.throwLoading": "/action-failure-server/throw-loading",
   actionLocationState: "/action-location-state",

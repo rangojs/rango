@@ -26,7 +26,7 @@ Data fetching happens in server-side [loaders](/docs/rango/features/loaders). Cl
 | `useMount()`              | Current `include()` mount path                | `string`                                                                        |
 | `useReverse(routes)`      | Local reverse for imported routes             | `(name, params?, search?) => string`                                            |
 | `useHandle()`             | Accumulated handle data                       | `T` (handle type)                                                               |
-| `useAction()`             | Server action state                           | state, actionId, payload, error, result                                         |
+| `useAction()`             | Server action state                           | state, actionId, payload, error, result, revalidationError                      |
 | `useLocationState()`      | History state (persistent or flash)           | `T \| undefined`                                                                |
 | `useOutlet()`             | Outlet content and client-route pending state | `{ content: ReactNode, pending: boolean }`                                      |
 | `useScrollRestoration()`  | Save and restore scroll positions             | `void`                                                                          |
@@ -324,14 +324,17 @@ Tracks the lifecycle of a server action wherever on the page it was invoked. If 
 import { useAction } from "@rangojs/router/client";
 import { addToCart } from "../actions/cart";
 
-const { state, error, result } = useAction(addToCart);
+const { state, error, result, revalidationError } = useAction(addToCart);
 // state: 'idle' | 'loading' | 'streaming'; also actionId and payload (the call's arguments)
+// revalidationError: a loader that threw while it re-ran after the action (error stays null)
 
 // Match by export name (a suffix match; ambiguous if two "use server" files export the same name)
 const isAdding = useAction("addToCart", (s) => s.state === "loading");
 ```
 
 Pass an action imported directly into the client component, or its export name as a string. An action received as a prop from a server component has lost the metadata `useAction` needs and throws, so use the string form there.
+
+`revalidationError` is set when the action succeeded but a loader threw while it re-ran after it: the call resolved, and the loader threw at its read, where the nearest error boundary caught it (see [A loader that fails on its re-run](/docs/rango/guides/client-urls#a-loader-that-fails-on-its-re-run)).
 
 ## State and cache control
 

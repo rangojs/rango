@@ -245,6 +245,50 @@ const matrixRows: SemanticMatrixRow[] = [
     },
   },
   {
+    id: "R3",
+    contract:
+      "an action whose revalidation loader throws resolves with its result; the loader throws at its read, where the nearest boundary catches it, the page around it keeps its instance, useAction reports the error, and a later good rerun recovers",
+    transport: "js",
+    execution: "action-followup",
+    scope: "n/a",
+    url: "/action-failure-server/throw",
+    assert: async ({ baseUrl, build, page }) => {
+      // A fresh run scopes the fixture's failure switch and run counter.
+      await openJsPage(
+        page,
+        baseUrl(`/action-failure-server/throw?run=${crypto.randomUUID()}`),
+      );
+      await expect(testId(page, "af-value")).toHaveText("stock:1");
+      await testId(page, "af-page").evaluate((el) =>
+        el.setAttribute("data-e2e-kept", "1"),
+      );
+
+      // The loader throws once on its rerun after the action. A build
+      // redacts the message.
+      const reported =
+        build === "prod"
+          ? "An error occurred"
+          : "stock service unavailable (run 2)";
+      await testId(page, "af-fail").click();
+      await expect(testId(page, "af-outcome")).toHaveText("resolved:failing");
+      await expect(testId(page, "af-app-boundary")).toHaveText(reported);
+      await expect(testId(page, "af-revalidation-error")).toHaveText(reported);
+      await expect(testId(page, "af-page")).toHaveAttribute(
+        "data-e2e-kept",
+        "1",
+      );
+
+      // The next action reruns it without error.
+      await testId(page, "af-recover").click();
+      await expect(testId(page, "af-value")).toHaveText("stock:3");
+      await expect(testId(page, "af-app-boundary")).toHaveCount(0);
+      await expect(testId(page, "af-page")).toHaveAttribute(
+        "data-e2e-kept",
+        "1",
+      );
+    },
+  },
+  {
     id: "S4",
     contract:
       "PE action follow-up keeps in-scope child visibility to handler data",

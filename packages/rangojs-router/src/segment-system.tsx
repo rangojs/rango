@@ -11,7 +11,7 @@ import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
 import { isRenderableLoading } from "./types/boundaries.js";
 import { isPlaceholder } from "./types/segments.js";
-import { decodeLoaderResults } from "./decode-loader-results.js";
+import { decodeLoaderResults, isLoaderError } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
 import { invariant } from "./errors.js";
 import {
@@ -314,16 +314,20 @@ function wrapDefaultOutletContent(
  * `settledFallback` is that node; the caller plants it and, for a redirect,
  * replaces the whole page (an ancestor reading the loader would still throw).
  *
- * `settle` is the forceAwait/action lane of a loader set that holds a
- * deferred loader (`prefetch: false`, see settlesLoaders): every other loader is
- * settled like a flagged one, so the commit stays whole for them, and the
- * deferred one keeps its hole for the read site to suspend on. A settled
- * error with no boundary is left to the read site there, where the aggregate
- * lane it replaces would have thrown it.
+ * `settle` is the action lane, and the forceAwait lane of a loader set that
+ * holds a deferred loader (`prefetch: false`, see settlesLoaders): every other
+ * loader is settled like a flagged one, so the commit stays whole for them,
+ * and the deferred one keeps its hole for the read site to suspend on. A
+ * settled error with no boundary is left to the read site there, where the
+ * aggregate lane it replaces would have thrown it. `inPlace` (the action
+ * lane) leaves every loader error to its read site, its errorBoundary()
+ * fallback riding the throw, as on a navigation: the nearest boundary to the
+ * read catches it, and the action resolves.
  */
 async function buildLoaderStreams(
   loaders: ResolvedSegment[],
   settle?: boolean,
+  inPlace?: boolean,
 ): Promise<{
   streams: Record<string, unknown>;
   awaitedIds: string[] | undefined;
@@ -338,6 +342,7 @@ async function buildLoaderStreams(
       const value = await l.loaderData;
       streams[l.loaderId!] = value;
       if (l.awaitBeforeFlush) (awaitedIds ??= []).push(l.loaderId!);
+      if (inPlace && isLoaderError(value)) continue;
       (settledIds ??= []).push(l.loaderId!);
       (settledValues ??= []).push(value);
     } else {
@@ -483,7 +488,12 @@ export async function renderSegments(
     );
   }
   // Separate segments by type, passing intercept segments for explicit injection
-  const tree = segmentTreeWalk(normalizedSegments, normalizedInterceptSegments);
+  const tree = [
+    ...segmentTreeWalk(normalizedSegments, normalizedInterceptSegments),
+  ];
+  // The action lane hands loaders as settled streams (buildLoaderStreams),
+  // never the build-time aggregate decode, so a loader error throws at its read.
+  const decodeInBuild = settleLoaders && !isAction;
   // Dev only: the wrapper chain per segment, compared with the previous
   // tree's (suspense-audit.ts, I5).
   const treeAudit =
@@ -512,7 +522,8 @@ export async function renderSegments(
   );
   // Render content segments as siblings
   let content: ReactNode = null;
-  for (const node of tree) {
+  for (let i = 0; i < tree.length; i++) {
+    const node = tree[i]!;
     invariant(
       node.segment.type === "layout" ||
         node.segment.type === "route" ||
@@ -564,7 +575,7 @@ export async function renderSegments(
             .join(",")
         : "";
     // Route identity the per-route remount used to provide; group routes key
-    // by the group instead and pass it to the error boundary as its resetKey.
+    // by the group instead and pass it to the error boundary's reset.
     const idParamsKey = paramStr ? `${id}-${paramStr}` : id;
     const key = clientGroup ? `cg:${clientGroup}` : idParamsKey;
 
@@ -690,7 +701,13 @@ export async function renderSegments(
     // lane changes remount the subtree (docs/tree-structure.md).
     if (loaderEntries.length > 0 || clientGroup) {
       nodeContent = createElement(StreamedLoaderErrorBoundary, {
-        resetKey: idParamsKey,
+        // Leaf first: tree.slice(i) is this segment and its ancestors. A
+        // read walks up the chain, so this boundary can catch an ancestor
+        // loader's marker and resets when that loader's data changes too.
+        reset: [
+          idParamsKey,
+          ...tree.slice(i).flatMap((n) => n.loaders.map((l) => l.loaderData)),
+        ],
         children: nodeContent,
       });
     }
@@ -708,7 +725,7 @@ export async function renderSegments(
       // for content-suspending routes (segment-loader-promise.ts).
       let boundaryLoaderStreams: Record<string, unknown> | undefined;
       let boundaryAwaitedLoaderIds: string[] | undefined;
-      if (settlesLoaders(loaderEntries, settleLoaders)) {
+      if (settlesLoaders(loaderEntries, decodeInBuild)) {
         const awaitStart = segDebug ? performance.now() : 0;
         boundaryLoaderData =
           loaderDataPromise instanceof Promise
@@ -726,9 +743,11 @@ export async function renderSegments(
           streams: boundaryLoaderStreams,
           awaitedIds: boundaryAwaitedLoaderIds,
           settledFallback,
-        } = await buildLoaderStreams(loaderEntries, settleLoaders));
+        } = await buildLoaderStreams(loaderEntries, settleLoaders, isAction));
         if (settledFallback !== undefined) {
-          if (isLoaderRedirectNode(settledFallback)) {
+          // An action keeps its layouts: the redirect replaces this segment's
+          // content and navigates.
+          if (!isAction && isLoaderRedirectNode(settledFallback)) {
             content = settledFallback;
             break;
           }
@@ -786,13 +805,14 @@ export async function renderSegments(
       // per-loader UNDECODED results (possibly pending promises) through
       // OutletProvider.loaderStreams — useLoader suspends at the read site to
       // the nearest CONSUMER Suspense boundary. forceAwait (popstate, stale
-      // revalidation, fully-prefetched) and action lanes keep the blocking
-      // await so those commits stay whole with no fallback flash.
+      // revalidation, fully-prefetched) keeps the blocking await so those
+      // commits stay whole with no fallback flash; the action lane awaits
+      // each loader in buildLoaderStreams for the same reason.
       let loaderData: Record<string, any> = {};
       let errorFallback: ReactNode = null;
       let loaderStreams: Record<string, unknown> | undefined;
       let awaitedLoaderIds: string[] | undefined;
-      if (settlesLoaders(layoutLoaders, settleLoaders)) {
+      if (settlesLoaders(layoutLoaders, decodeInBuild)) {
         const layoutAwaitStart = segDebug ? performance.now() : 0;
         const resolvedData = await buildLoaderPromise(layoutLoaders);
         if (segDebug) {
@@ -820,9 +840,11 @@ export async function renderSegments(
           streams: loaderStreams,
           awaitedIds: awaitedLoaderIds,
           settledFallback,
-        } = await buildLoaderStreams(layoutLoaders, settleLoaders));
+        } = await buildLoaderStreams(layoutLoaders, settleLoaders, isAction));
         if (settledFallback !== undefined) {
-          if (isLoaderRedirectNode(settledFallback)) {
+          // An action keeps its layouts: the redirect replaces this segment's
+          // content and navigates.
+          if (!isAction && isLoaderRedirectNode(settledFallback)) {
             content = settledFallback;
             break;
           }

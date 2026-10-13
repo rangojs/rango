@@ -248,6 +248,13 @@ export interface TrackedActionState {
 
   /** Result data from the action (preserved after completion) */
   result: unknown | null;
+
+  /**
+   * The error of a loader that threw while it re-ran after this successful
+   * action (the first, when several did). The loader also throws at its
+   * useLoader read, where the nearest error boundary catches it.
+   */
+  revalidationError: unknown | null;
 }
 
 /**

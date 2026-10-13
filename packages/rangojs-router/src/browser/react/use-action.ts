@@ -11,18 +11,8 @@ import {
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
 import type { TrackedActionState } from "../types.js";
+import { DEFAULT_ACTION_STATE } from "../event-controller.js";
 import { invariant } from "../../errors.js";
-
-/**
- * Default action state (idle with no payload)
- */
-const DEFAULT_ACTION_STATE: TrackedActionState = {
-  state: "idle",
-  actionId: null,
-  payload: null,
-  error: null,
-  result: null,
-};
 
 /**
  * Extract action ID from a server action function or string.
@@ -49,10 +39,13 @@ function getActionId(action: ServerActionFunction | string): string {
     return action;
   }
 
-  // If we get here, this is likely an action passed as prop from a server component
-  // These lose their metadata during RSC serialization
+  // If we get here, this is likely an action passed as prop from a server
+  // component: these lose their metadata during RSC serialization. The
+  // guidance is dev-only: it was about 225 B gzip of every client build that
+  // calls useAction.
   throw new Error(
-    `useAction: Cannot extract action ID from function reference.
+    process.env.NODE_ENV !== "production"
+      ? `useAction: Cannot extract action ID from function reference.
 
 This typically happens when an action is passed as a prop from a server component.
 Actions passed through RSC lose their metadata during serialization.
@@ -65,7 +58,8 @@ Solutions:
 2. Use the action name as a string:
    const state = useAction("myAction");
 
-The string must match the exported function name from your "use server" file.`,
+The string must match the exported function name from your "use server" file.`
+      : "useAction: Cannot extract action ID from function reference.",
   );
 }
 

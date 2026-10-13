@@ -1430,6 +1430,43 @@ should not be treated as equivalent.
   - revalidate that outer segment too, or
   - load/guard the data in the child independently.
 
+- **A loader that throws on the action's revalidation does not fail the
+  action (JS transport).** The action has run and returned, so its call
+  resolves with its result, on every route (`urls()` with or without
+  `loading()`, a `clientUrls()` group). The loader's error entry rides to
+  its `useLoader` read, as on a navigation, and throws there: the nearest
+  boundary to the read catches it. That is the app's own error boundary
+  when one sits around the read, else the segment's `errorBoundary()`
+  fallback (rendered by the router's `StreamedLoaderErrorBoundary` from the
+  marker the throw carries), else the router's root boundary. What sits
+  outside that boundary keeps its instance and React state. The commit still
+  waits for every loader, so it stays one commit with no fallback. The error
+  is reported to `onError` (phase `"loader"`, `isPartial: true`) and to the
+  action's `useAction()` state as `revalidationError`. The page holds the
+  loader as after any rerun; a later action or navigation that reruns it
+  hands its segment new loader data, which clears an `errorBoundary()`
+  fallback it left (the boundary resets on the identity of its segment's
+  loader data). `notFound()`/`redirect()` from the loader are control flow
+  and keep their build-time path. Every refetch the action runs (after
+  concurrent actions, after a navigation during the action, after an HMR
+  update) renders in action mode the same way, and one the call waits for
+  reports its loader's error as the action's `revalidationError`; an answer
+  cached while a sibling is still fetching (`concurrent-skip`) is never
+  rendered, resolves at its metadata and reports nothing. A loader
+  `redirect()` replaces only the route's content and navigates; the layouts
+  keep their instance. The error boundary's reset covers the segment's own
+  and its ancestors' loader data, since a read walks up the chain. Source:
+  `buildLoaderStreams` (`inPlace`) and the `settleLoaders && !isAction`
+  branches of `segment-system.tsx`, `revalidationErrorOf`
+  (`decode-loader-results.ts`) called from
+  `browser/server-action-bridge.ts` and from `partial-update.ts` in `action`
+  mode. Pinned by the `[R3]` semantic matrix row and `e2e/action-failure.test.ts`
+  (both apps, dev + production). Not covered: an `intercept()` slot's
+  aggregated loaders, and a parallel slot's loaders under its own
+  `loading()`, which decode above the slot's content; the
+  `forceAwait` lanes (a fully prefetched click, back/forward), which still
+  decode in the build.
+
 - **A fill request (`prefetch: false`) is the same rule with no way out.**
   Deferred work runs in the fill, after the prefetch already rendered the
   rest. Middleware runs there as on any render pass, so what middleware puts
@@ -1550,6 +1587,12 @@ For equivalent action intents, JS and PE paths should match on:
 - segment data expectations for revalidated/rerendered scopes
 
 When behavior diverges, treat it as a contract bug unless explicitly documented.
+
+Documented divergence: a loader that throws on the action's revalidation. The
+JS transport resolves the call, throws at the loader's read where the nearest
+boundary catches it, and reports `revalidationError` (`[R3]`); a PE form post
+renders the whole document after the action, so the loader's failure renders
+as on a page load, and there is no call or `useAction()` state to report to.
 
 ## Contract Change Process
 

@@ -2923,3 +2923,116 @@ describe("partial-update: a navigation left after its response arrived", () => {
     expect(nav.onUpdate).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("an action refetch whose loader throws on its rerun", () => {
+  // Every action refetch (server-action-bridge.ts refetchRoute) renders in
+  // action mode: the failed entry is committed for its read site (the loader
+  // throws in place there), the page holds the loader as after any rerun,
+  // and the refetch resolves with the error for the action's
+  // revalidationError.
+  const loader = (data: unknown) =>
+    seg("R0D0.stock", {
+      type: "loader",
+      loaderId: "stock",
+      loaderData: Promise.resolve(data),
+    } as Partial<ResolvedSegment>);
+
+  async function refetch(
+    entry: unknown,
+    mode: { type: "action" | "navigate" },
+  ) {
+    const held = loader({ __loaderResult: true, ok: true, data: "stock:1" });
+    const rerun = loader(entry);
+    const store = createMockStore({
+      cachedSegments: [seg("R0"), held],
+      segmentIds: ["R0", "R0D0.stock"],
+    });
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: true,
+        segments: [seg("R0", { component: "updated" }), rerun],
+        matched: ["R0", "R0D0.stock"],
+        diff: ["R0", "R0D0.stock"],
+        resolvedIds: ["R0", "R0D0.stock"],
+      },
+    });
+    const onUpdate = vi.fn();
+    const renderSegments = vi.fn(
+      async (_segments: ResolvedSegment[], _options?: unknown) => "tree",
+    );
+    const tx = createMockTx();
+    const result = await createPartialUpdater({
+      getVersion: () => undefined,
+      store: store as any,
+      client: client as any,
+      onUpdate,
+      renderSegments,
+    })("http://localhost/", [], false, undefined, tx as any, mode);
+    return { result, rerun, renderSegments, tx, onUpdate };
+  }
+
+  it("commits the failed entry with isAction, holds the loader, and resolves with the error", async () => {
+    const t = await refetch(
+      {
+        __loaderResult: true,
+        ok: false,
+        error: { message: "stock service unavailable" },
+        fallback: null,
+      },
+      { type: "action" },
+    );
+    const [rendered, options] = t.renderSegments.mock.calls[0]!;
+    expect(rendered[1]).toBe(t.rerun);
+    expect(options).toMatchObject({ isAction: true });
+    expect(t.tx.commit).toHaveBeenCalledWith(
+      ["R0", "R0D0.stock"],
+      [expect.objectContaining({ component: "updated" }), t.rerun],
+      expect.anything(),
+    );
+    expect(t.onUpdate).toHaveBeenCalledTimes(1);
+    expect(t.result).toMatchObject({ message: "stock service unavailable" });
+  });
+
+  it("a full-update fallback in action mode resolves with the error too", async () => {
+    const failedLoader = loader({
+      __loaderResult: true,
+      ok: false,
+      error: { message: "stock service unavailable" },
+      fallback: null,
+    });
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: false,
+        segments: [seg("R0"), failedLoader],
+      },
+    });
+    const result = await createPartialUpdater({
+      getVersion: () => undefined,
+      store: createMockStore() as any,
+      client: client as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    })("http://localhost/", [], false, undefined, createMockTx() as any, {
+      type: "action",
+    });
+    expect(result).toMatchObject({ message: "stock service unavailable" });
+  });
+
+  it("resolves with nothing for a rerun that succeeds, or on a navigation", async () => {
+    const ok = await refetch(
+      { __loaderResult: true, ok: true, data: "stock:2" },
+      { type: "action" },
+    );
+    expect(ok.result).toBeUndefined();
+    const nav = await refetch(
+      {
+        __loaderResult: true,
+        ok: false,
+        error: { message: "stock service unavailable" },
+        fallback: null,
+      },
+      { type: "navigate" },
+    );
+    expect(nav.result).toBeUndefined();
+  });
+});

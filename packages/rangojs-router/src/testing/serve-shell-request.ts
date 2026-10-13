@@ -62,6 +62,8 @@ import { FILL_PARAM, PREFETCH_HEADER } from "../prefetch-markers.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import { withoutPushedBy } from "../handles/pushed-by.js";
 import type { HandleData } from "../server/handle-store.js";
+import type { ResolvedSegment } from "../types.js";
+import { revalidationErrorOf } from "../decode-loader-results.js";
 import { _getRequestContext } from "../server/request-context.js";
 import {
   parsePprReplayStatus,
@@ -161,6 +163,25 @@ export interface ShellRequestHandles {
   late: HandleData[];
 }
 
+/**
+ * An `action` request's answer, as browser/server-action-bridge.ts reads it.
+ */
+export interface ShellRequestAction {
+  /** False when the action threw: the call rejects with `result`. */
+  ok: boolean;
+  /** What the call resolves (or rejects) with. */
+  result: unknown;
+  /**
+   * The error of the first loader that threw while it re-ran in the action's
+   * revalidation, the value `useAction(action).revalidationError` reports.
+   * That loader throws at its `useLoader` read, where the nearest boundary
+   * catches it, and the call still resolves. `null` when every loader
+   * answered (a `notFound()` or `redirect()` is not an error), or `ok` is
+   * false, as `useAction` reports it.
+   */
+  revalidationError: Error | null;
+}
+
 /** Result of {@link serveShellRequest}. */
 export interface ServeShellRequestResult {
   /** The handler's Response. Its body is already read: see `body`. */
@@ -221,6 +242,13 @@ export interface ServeShellRequestResult {
    * hydrates without it.
    */
   readPayloadFormState(): Promise<unknown>;
+  /**
+   * For an `action` request, the call's answer as the browser reads it: its
+   * result and the `revalidationError` its loaders' reruns report.
+   * Undefined when no Flight was rendered or the payload carries no action
+   * result.
+   */
+  readAction(): Promise<ShellRequestAction | undefined>;
 }
 
 type ShellHandler = ReturnType<typeof createRSCHandler>;
@@ -353,6 +381,24 @@ async function decodePayloadHandles(
   return {
     hydration: withoutPushedBy(await resolveDeferredHandleValues(hydration)),
     late,
+  };
+}
+
+/** An action payload's answer, read as the browser's action bridge reads it. */
+async function decodeAction(
+  flight: string,
+): Promise<ShellRequestAction | undefined> {
+  const { returnValue, metadata } = await decodePayload<{
+    returnValue?: { ok: boolean; data: unknown };
+    metadata?: { segments?: ResolvedSegment[] };
+  }>(flight);
+  if (!returnValue) return undefined;
+  return {
+    ok: returnValue.ok,
+    result: returnValue.data,
+    revalidationError:
+      (returnValue.ok && (await revalidationErrorOf(metadata?.segments))) ||
+      null,
   };
 }
 
@@ -735,6 +781,9 @@ export async function serveShellRequest<TEnv = any>(
         formState?: Promise<unknown>;
       }>(flight);
       return payload.formState;
+    },
+    async readAction() {
+      return flight ? decodeAction(flight) : undefined;
     },
   };
 }

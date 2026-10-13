@@ -107,6 +107,9 @@ function AddToCartButton({ productId }: { productId: string }) {
   // payload: unknown[] | FormData | null (the call's arguments)
   // error: unknown | null (whatever the action threw)
   // result: unknown | null (return value)
+  // revalidationError: unknown | null (a loader that threw while it reran
+  //   after the action; the action succeeded and the loader threw at its
+  //   read: /client-urls -> "A loader that fails on its rerun")
 
   return (
     // .bind keeps the form progressively enhanced; useAction still matches it

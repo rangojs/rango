@@ -39,6 +39,7 @@ import {
 import { mergeLocationState } from "./history-state.js";
 import { stampLocationState } from "./react/location-state-shared.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
+import { revalidationErrorOf } from "../decode-loader-results.js";
 import { getAppVersion } from "./app-version.js";
 import {
   decideCommitGatedOff,
@@ -173,6 +174,7 @@ export function createServerActionBridge(
    * Refetch current route via a navigation transaction.
    * Encapsulates the repeated pattern of creating a navTx + fetchPartialUpdate
    * used by navigated-away, hmr-missing, and consolidation-needed scenarios.
+   * Resolves with the error of a loader that threw on the refetch.
    */
   async function refetchRoute(opts?: {
     segments?: string[];
@@ -180,7 +182,7 @@ export function createServerActionBridge(
     actionId?: string;
     /** transition({ when }) `action` fields for the refetch commit. */
     action?: TransitionWhenActionInput;
-  }): Promise<void> {
+  }): Promise<Error | undefined> {
     const src = opts?.interceptSourceUrl ?? null;
     const navTx = createNavigationTransaction(
       store,
@@ -189,7 +191,7 @@ export function createServerActionBridge(
       { replace: true, skipLoadingState: true },
     );
     try {
-      await fetchPartialUpdate(
+      return await fetchPartialUpdate(
         window.location.href,
         opts?.segments ?? [],
         false,
@@ -677,6 +679,8 @@ export function createServerActionBridge(
       const fullSegments = reconciled.segments;
 
       const returnData = returnValue?.data;
+      // A loader that threw while it re-ran: reported, not thrown.
+      let revalidationError: Error | undefined;
 
       if (returnValue && !returnValue.ok) {
         handle.fail(returnValue.data);
@@ -754,7 +758,7 @@ export function createServerActionBridge(
           // route. Invalidation is deferred to finalizeAction(); here we only
           // trigger the revalidation refetch (suppressed on keep).
           if (!keepCache) {
-            await refetchRoute({
+            revalidationError = await refetchRoute({
               interceptSourceUrl: store.getInterceptSourceUrl(),
               actionId: id,
               action: whenAction,
@@ -771,7 +775,7 @@ export function createServerActionBridge(
           // resolving last must discharge a directive-free sibling's repair.
           // See the keep row in docs/design/rango-state-cookie.md (the all-keep
           // edge, and the benign re-mark-stale-after-refetch end-state delta).
-          await refetchRoute({
+          revalidationError = await refetchRoute({
             interceptSourceUrl,
             actionId: id,
             action: whenAction,
@@ -794,7 +798,7 @@ export function createServerActionBridge(
           handle.clearConsolidation();
 
           // Ungated on keepCache, same as hmr-missing above (see the keep row).
-          await refetchRoute({
+          revalidationError = await refetchRoute({
             segments: segmentsToSend,
             interceptSourceUrl,
             actionId: id,
@@ -824,6 +828,9 @@ export function createServerActionBridge(
               currentHandleData,
             );
           }
+          // Not rendered: the sibling's refetch reruns these loaders and
+          // reports its own. Resolve when the metadata lands, without waiting
+          // for this answer's loader chunks.
           break;
         }
 
@@ -854,6 +861,7 @@ export function createServerActionBridge(
                 ? reconciled.interceptSegments
                 : undefined,
           });
+          revalidationError = await revalidationErrorOf(segments);
 
           // Re-check if user navigated away (could happen during async renderSegments)
           if (window.location.pathname !== actionStartPathname) {
@@ -904,7 +912,7 @@ export function createServerActionBridge(
         }
       }
 
-      handle.complete(returnData);
+      handle.complete(returnData, revalidationError);
       return returnData;
     } catch (error) {
       // What the call rejects with (a revalidation render that threw, a

@@ -6,6 +6,10 @@ export const routes = {
   loaderError: "/loader-error",
   notFound: "/not-found",
   notFoundLoader: "/not-found-loader",
+  revalidation: "/revalidation",
+  "revalidationGroup.index": "/revalidation/group",
+  revalidationLoading: "/revalidation/loading",
+  revalidationRouteBoundary: "/revalidation/route-boundary",
   throwError: "/throw",
 } as const;
 export type routes = typeof routes;

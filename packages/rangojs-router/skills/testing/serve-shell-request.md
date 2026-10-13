@@ -30,18 +30,19 @@ A `Prerender` route is served as in production: from the artifact `router.matchF
 
 ### Returns — `ServeShellRequestResult`
 
-| Field          | Type                                              | Meaning                                                                                                                                                                                     |
-| -------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shellStatus`  | `"HIT" \| "MISS" \| null`                         | `x-rango-shell`; null when the serve path did not consider the request (not a `ppr` route, a nonce'd request, a partial request).                                                           |
-| `replayStatus` | `PprReplayStatus \| null`                         | `x-rango-ppr-replay` on a partial request: `{ outcome: "HIT", freshness }` or `{ outcome: "BYPASS", reason }`.                                                                              |
-| `prelude`      | `string \| undefined`                             | The prelude a HIT served (the capture's Flight text). `undefined` unless `shellStatus` is `"HIT"`.                                                                                          |
-| `flight`       | `string \| undefined`                             | The Flight payload this request rendered: a HIT's tail, a document render, or a partial response. `undefined` when no Flight rendered (a redirect, a middleware response).                  |
-| `key`          | `string`                                          | The shell key the serve path resolved for a document it read (MISS or HIT), request partition included. Otherwise (no `ppr`, a partial request) the URL's key without a partition.          |
-| `readEntry`    | `() => Promise<ShellCacheEntry \| null>`          | Reads the document entry under `key` from the request's store (a passive `getShell`). A read: on a store with a shell memo it warms the memo, so call it after the reads you count.         |
-| `readHandles`  | `() => Promise<ShellRequestHandles \| undefined>` | Decodes the response's handle data as the browser reads it: `{ hydration, late }` (see "Handles and loader data"). `undefined` when no Flight rendered.                                     |
-| `readDeferred` | `() => Promise<string[] \| undefined>`            | The ids of the segments the payload marks deferred (a prefetch skipped them; the fill renders them), in payload order. `[]` when nothing was deferred, `undefined` when no Flight rendered. |
-| `response`     | `Response`                                        | Status and headers. Its body is already read.                                                                                                                                               |
-| `body`         | `string`                                          | The body text.                                                                                                                                                                              |
+| Field          | Type                                              | Meaning                                                                                                                                                                                                                            |
+| -------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shellStatus`  | `"HIT" \| "MISS" \| null`                         | `x-rango-shell`; null when the serve path did not consider the request (not a `ppr` route, a nonce'd request, a partial request).                                                                                                  |
+| `replayStatus` | `PprReplayStatus \| null`                         | `x-rango-ppr-replay` on a partial request: `{ outcome: "HIT", freshness }` or `{ outcome: "BYPASS", reason }`.                                                                                                                     |
+| `prelude`      | `string \| undefined`                             | The prelude a HIT served (the capture's Flight text). `undefined` unless `shellStatus` is `"HIT"`.                                                                                                                                 |
+| `flight`       | `string \| undefined`                             | The Flight payload this request rendered: a HIT's tail, a document render, or a partial response. `undefined` when no Flight rendered (a redirect, a middleware response).                                                         |
+| `key`          | `string`                                          | The shell key the serve path resolved for a document it read (MISS or HIT), request partition included. Otherwise (no `ppr`, a partial request) the URL's key without a partition.                                                 |
+| `readEntry`    | `() => Promise<ShellCacheEntry \| null>`          | Reads the document entry under `key` from the request's store (a passive `getShell`). A read: on a store with a shell memo it warms the memo, so call it after the reads you count.                                                |
+| `readHandles`  | `() => Promise<ShellRequestHandles \| undefined>` | Decodes the response's handle data as the browser reads it: `{ hydration, late }` (see "Handles and loader data"). `undefined` when no Flight rendered.                                                                            |
+| `readDeferred` | `() => Promise<string[] \| undefined>`            | The ids of the segments the payload marks deferred (a prefetch skipped them; the fill renders them), in payload order. `[]` when nothing was deferred, `undefined` when no Flight rendered.                                        |
+| `readAction`   | `() => Promise<ShellRequestAction \| undefined>`  | For an `action` request, the call's answer as the browser reads it: `{ ok, result, revalidationError }` (see "A server action called from the page"). `undefined` when no Flight rendered or the payload carries no action result. |
+| `response`     | `Response`                                        | Status and headers. Its body is already read.                                                                                                                                                                                      |
+| `body`         | `string`                                          | The body text.                                                                                                                                                                                                                     |
 
 ### `resetShellTestState(): Promise<void>`
 
@@ -418,6 +419,26 @@ const result = await serveShellRequest(router, "/shop", {
 ```
 
 This is the request a `clientUrls()` group's `revalidate()` sees on an action: the action's return value as `actionResult`, its last `FormData` argument as `formData`. The pinned example is `src/testing/__tests__/client-urls-revalidate.rsc-test.tsx`. Not with `partial` or `form`.
+
+`result.readAction()` reads the call's answer as `browser/server-action-bridge.ts` reads the response: `ok` (false when the action threw, and the call rejects with `result`), `result` (what the call resolves with), and `revalidationError`, the error of the first loader that threw while it re-ran in the action's revalidation, the value `useAction(action).revalidationError` reports (`null` when none did). Such a loader does not fail the call: in the browser it throws at its `useLoader` read, where the nearest error boundary catches it. A `notFound()` or `redirect()` from the loader is not an error.
+
+```tsx
+const answer = await (
+  await serveShellRequest(router, "/stock", {
+    action: {
+      ref: saveStock,
+      id: "src/actions/stock.ts#saveStock",
+      segments: held,
+    },
+  })
+).readAction();
+expect(answer).toEqual({
+  ok: true,
+  result: { saved: true },
+  // a build redacts the message; onError gets the error itself
+  revalidationError: expect.objectContaining({ message: "An error occurred" }),
+});
+```
 
 ## A page middleware rewrites
 

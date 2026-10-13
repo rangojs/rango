@@ -16,9 +16,10 @@ import type { NavigationStoreContextValue } from "../browser/react/context.js";
 import type { HandleData } from "../browser/types.js";
 import type { ResolvedSegment } from "../types.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
-import type {
-  EventController,
-  DerivedNavigationState,
+import {
+  DEFAULT_ACTION_STATE,
+  type EventController,
+  type DerivedNavigationState,
 } from "../browser/event-controller.js";
 
 /**
@@ -111,13 +112,7 @@ function createSsrEventController(opts: {
     getState: () => state,
     getLocation: () => location,
     subscribe: () => () => {},
-    getActionState: () => ({
-      state: "idle",
-      actionId: null,
-      payload: null,
-      error: null,
-      result: null,
-    }),
+    getActionState: () => DEFAULT_ACTION_STATE,
     subscribeToAction: () => () => {},
     subscribeToHandles: () => () => {},
     flushRouteState: () => {},

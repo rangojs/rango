@@ -2,6 +2,83 @@
 
 ## Unreleased
 
+### Breaking: a loader that throws while it re-runs after a server action throws at its read, and the action resolves
+
+Migration: code that caught the rejection of `await action()` to learn that
+the page could not refresh reads `useAction(action).revalidationError`, or
+catches the error where the data is read, with an error boundary.
+
+Before: the action ran and returned, but where the loader's error landed
+depended on the route. On a `clientUrls()` route, or a `urls()` route without
+`loading()`, `await action()` rejected with the loader's error, and a
+`<form action>`, `useActionState` or `useTransition` call handed that
+rejection to the nearest React error boundary above the form (the router's
+root one if the app had none), which replaced the page. On a `urls()` route
+with `loading()` the call resolved and the router's root boundary replaced
+the page, skipping any boundary inside the route. Under an `errorBoundary()`
+its fallback replaced the route, skipping a boundary of yours nearer the
+read.
+
+```tsx
+const result = await saveStock(sku); // rejected: "stock service unavailable"
+```
+
+Now it behaves as a navigation does, on every route and from every call
+site. The call resolves with the action's return value. The loader throws at
+its `useLoader` read, and the nearest boundary to the read catches it: your
+React error boundary around the read, else the `errorBoundary()` that covers
+the route, else the router's root one. Everything outside that boundary keeps
+its React state, and loaders that re-ran without error commit in the same
+commit. The error is reported to `onError` on the server, as before, and in
+the browser as the new `revalidationError` field of `useAction()`, with
+`error` left `null`:
+
+```tsx
+<StockBoundary>
+  <StockList /> {/* useLoader(StockLoader) throws here */}
+</StockBoundary>;
+const result = await saveStock(sku); // { saved: true }
+const { error, revalidationError } = useAction(saveStock);
+// error: null, revalidationError: Error("stock service unavailable")
+```
+
+Every refetch the router runs for an action (after several actions at once,
+after a navigation during it, after an HMR update) follows the same rule and
+reports to the `revalidationError` of the action that ran it; with several
+actions at once, that is the one whose refetch covers them all. A loader that
+throws `notFound()` or `redirect()` keeps its path: a `redirect()` (a deleted
+record's page) replaces the route's content and navigates, and the layouts
+above keep their instance. A no-JS form post is unchanged. Not covered yet:
+an `intercept()`'s loaders and a parallel slot's loaders under its own
+`loading()`, which are decoded above the slot's content.
+
+### Fixed: an `errorBoundary()` fallback clears when a later action or navigation re-runs its loader without error
+
+A loader's failure that showed its `errorBoundary()` fallback, on a
+navigation or (now) after an action, kept the fallback on screen until the
+route or its params changed, even after a later action or same-route
+navigation re-ran the loader successfully. Now the fallback clears in the
+commit that brings the loader's new data, whether the loader is the route's
+own or a layout's that the route reads. A commit that did not re-run the
+loader keeps it, and nothing else on the page remounts.
+
+### Added: `readAction()` on `serveShellRequest()`'s result
+
+For an `action` request, `result.readAction()` reads the call's answer as
+the browser does: `{ ok, result, revalidationError }`, where
+`revalidationError` is the error of the first loader that threw while it
+re-ran in the action's revalidation, the value
+`useAction(action).revalidationError` reports (`null` when none did).
+
+```tsx
+const answer = await (
+  await serveShellRequest(router, "/stock", {
+    action: { ref: saveStock, id: "src/actions/stock.ts#saveStock", segments },
+  })
+).readAction();
+// { ok: true, result: { saved: true }, revalidationError: Error(...) }
+```
+
 ### Fixed: loader `ctx.reverse` and `getRequestContext().reverse` accept the params the runtime fills
 
 In a typed app, `ctx.reverse("account.settings")` in a loader, or

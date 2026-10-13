@@ -777,8 +777,14 @@ describe("segment-system", () => {
         expect(collectByType(tree, MockRouteContentWrapper)).toHaveLength(0);
       });
 
-      it("pre-resolves loader promises when isAction is true", async () => {
+      // The action lane awaits every loader before the commit, as
+      // forceAwait does, but hands each settled entry to its read site
+      // (buildLoaderStreams) instead of decoding the set in the build: a
+      // loader that threw on its rerun throws in place at its useLoader read,
+      // and the action resolves (dc-t28).
+      it("hands settled per-loader streams to the loading() boundary when isAction is true", async () => {
         const loadingSkeleton = createElement("div", null, "Loading...");
+        const entry = { __loaderResult: true, ok: true, data: { count: 5 } };
 
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route", loading: loadingSkeleton }),
@@ -786,7 +792,7 @@ describe("segment-system", () => {
             id: "R0D0.data",
             type: "loader",
             loaderId: "test",
-            loaderData: Promise.resolve({ count: 5 }),
+            loaderData: Promise.resolve(entry),
           }),
         ];
 
@@ -795,8 +801,100 @@ describe("segment-system", () => {
         const boundaries = collectByType(tree, MockLoaderBoundary);
 
         expect(boundaries).toHaveLength(1);
-        // When isAction, the promise should be pre-resolved to an array
-        expect(Array.isArray(boundaries[0].props.loaderDataPromise)).toBe(true);
+        expect(boundaries[0].props.loaderStreams).toEqual({ test: entry });
+      });
+
+      for (const loading of [
+        undefined,
+        createElement("div", null, "Loading..."),
+      ]) {
+        const lane = loading ? "with loading()" : "without loading()";
+        it(`leaves a loader error to its read site, its errorBoundary() fallback riding the throw (${lane})`, async () => {
+          const errorFallback = createElement("div", null, "Error occurred");
+          const failed = {
+            __loaderResult: true,
+            ok: false,
+            error: { message: "stock service unavailable" },
+            fallback: errorFallback,
+          };
+          const loaderData = Promise.resolve(failed);
+          const segments: ResolvedSegment[] = [
+            seg({ id: "R0", type: "route", loading }),
+            seg({
+              id: "R0D0.stock",
+              type: "loader",
+              loaderId: "stock",
+              loaderData,
+            }),
+          ];
+
+          const tree = toTreeNode(
+            await renderSegments(segments, { isAction: true }),
+          );
+          const [boundary] = collectByType(
+            tree,
+            MockStreamedLoaderErrorBoundary,
+          );
+          expect(boundary).toBeDefined();
+          expect(boundary!.props.reset).toEqual(["R0", loaderData]);
+          const holder = loading
+            ? collectByType(tree, MockLoaderBoundary)[0]!
+            : collectByType(tree, MockOutletProvider)[0]!;
+          expect(holder.props.children).not.toBe(errorFallback);
+          let thrown: unknown;
+          try {
+            decodeLoaderEntry(holder.props.loaderStreams.stock);
+          } catch (e) {
+            thrown = e;
+          }
+          expect((thrown as Error).message).toBe("stock service unavailable");
+          expect((thrown as any)[LOADER_ERROR_FALLBACK]).toBe(errorFallback);
+        });
+      }
+
+      it("does not reject the build for a loader error with no boundary when isAction is true", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.stock",
+            type: "loader",
+            loaderId: "stock",
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              error: { message: "stock service unavailable" },
+              fallback: null,
+            }),
+          }),
+        ];
+        await expect(
+          renderSegments(segments, { isAction: true }),
+        ).resolves.toBeDefined();
+      });
+
+      it("still places a notFound() signal at build time when isAction is true", async () => {
+        const notFoundUi = createElement("div", null, "Not found");
+        const segments: ResolvedSegment[] = [
+          seg({ id: "R0", type: "route" }),
+          seg({
+            id: "R0D0.item",
+            type: "loader",
+            loaderId: "item",
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              notFound: true,
+              error: { message: "gone" },
+              fallback: notFoundUi,
+            }),
+          }),
+        ];
+        const tree = toTreeNode(
+          await renderSegments(segments, { isAction: true }),
+        );
+        expect(collectByType(tree, MockOutletProvider)[0]!.props.children).toBe(
+          notFoundUi,
+        );
       });
     });
 

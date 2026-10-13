@@ -67,5 +67,6 @@ export type {
   ServeShellRequestAction,
   ServeShellRequestOptions,
   ServeShellRequestResult,
+  ShellRequestAction,
   ShellRequestHandles,
 } from "./serve-shell-request.js";
