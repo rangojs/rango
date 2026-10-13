@@ -46,6 +46,18 @@ export function requestHeaders(request: Request): Headers {
 }
 
 /**
+ * A copy of `request`'s headers for a bodyless mirror of it (the PE
+ * re-render, a rewrite pass after an action), without the body-framing ones.
+ */
+export function bodylessHeaders(request: Request): Headers {
+  const headers = new Headers(requestHeaders(request));
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  headers.delete("transfer-encoding");
+  return headers;
+}
+
+/**
  * Shadow `request.headers` with an own, non-enumerable getter that calls
  * `beforeRead` and returns the request's own Headers (stable per request, so
  * a header set through it stays visible to every reader). Idempotent. Leaves

@@ -79,6 +79,7 @@ import type { SegmentCacheStore } from "../cache/types.js";
 import { buildRouterTrieFromUrlpatterns } from "./manifest-init.js";
 import { handleProgressiveEnhancement } from "./progressive-enhancement.js";
 import {
+  continuationForRewritePass,
   executeServerAction,
   revalidateAfterAction,
   type ActionContinuation,
@@ -973,6 +974,20 @@ export function createRSCHandler<
     // "middleware-short-circuit").
     getRequestContext()._requestMode = plan.mode;
 
+    // A rewrite pass after the action ran: only the branch that ran it
+    // re-renders from its outcome; any other plan would serve the POST as a
+    // fresh request.
+    const actionRan = getRequestContext()._actionRan;
+    if (
+      actionRan &&
+      plan.mode !== (actionRan.kind === "action" ? "action" : "pe-render")
+    ) {
+      throw new Error(
+        `A rewrite after a server action or form post must target a page ` +
+          `route; ${url.pathname} ${plan.mode === "response" ? "is a response route" : "is not one"}.`,
+      );
+    }
+
     // ---- 2. Terminal plans (no execution needed) ----
     if (plan.mode === "redirect") {
       // Redirects are handled by the pipeline (match/matchPartial),
@@ -1224,51 +1239,64 @@ export function createRSCHandler<
 
     // ---- Action: execute action, then revalidate wrapped in route middleware ----
     if (plan.mode === "action") {
-      let actionContinuation: ActionContinuation | undefined;
-      try {
-        // Instrument the action execution as its own phase (action:<actionId> +
-        // rango.action), so a POST shows the mutation time AND which action ran,
-        // not just the downstream revalidation render. The action's own
-        // loaders/fetches nest under rango.action.
-        const actionOutcome = await withTimeout(
-          observePhase(PHASES.action(plan.actionId), () =>
-            executeServerAction(
-              handlerCtx,
+      const reqCtx = getRequestContext();
+      const ran = reqCtx._actionRan;
+      let actionContinuation: ActionContinuation;
+      if (ran?.kind === "action") {
+        // A rewrite pass after the action ran: never run it again.
+        actionContinuation = await continuationForRewritePass(
+          handlerCtx,
+          request,
+          env,
+          ran.continuation,
+        );
+      } else {
+        try {
+          // Instrument the action execution as its own phase (action:<actionId> +
+          // rango.action), so a POST shows the mutation time AND which action ran,
+          // not just the downstream revalidation render. The action's own
+          // loaders/fetches nest under rango.action.
+          const actionOutcome = await withTimeout(
+            observePhase(PHASES.action(plan.actionId), () =>
+              executeServerAction(
+                handlerCtx,
+                request,
+                env,
+                url,
+                plan.actionId,
+                handleStore,
+              ),
+            ),
+            router.timeouts.actionMs,
+            "action",
+          );
+          if (actionOutcome.timedOut) {
+            return handleTimeoutResponse(
               request,
               env,
               url,
+              "action",
+              actionOutcome.durationMs,
+              plan.route.routeKey,
               plan.actionId,
-              handleStore,
-            ),
-          ),
-          router.timeouts.actionMs,
-          "action",
-        );
-        if (actionOutcome.timedOut) {
-          return handleTimeoutResponse(
+            );
+          }
+          const result = actionOutcome.result;
+          // Response means redirect or error boundary — done.
+          if (result instanceof Response) return result;
+          actionContinuation = result;
+          reqCtx._actionRan = { kind: "action", continuation: result };
+        } catch (error) {
+          callOnError(error, "action", {
             request,
-            env,
             url,
-            "action",
-            actionOutcome.durationMs,
-            plan.route.routeKey,
-            plan.actionId,
-          );
+            env,
+            actionId: plan.actionId,
+            handledByBoundary: false,
+          });
+          console.error(`[RSC] Action error:`, error);
+          throw error;
         }
-        const result = actionOutcome.result;
-        // Response means redirect or error boundary — done.
-        if (result instanceof Response) return result;
-        actionContinuation = result;
-      } catch (error) {
-        callOnError(error, "action", {
-          request,
-          url,
-          env,
-          actionId: plan.actionId,
-          handledByBoundary: false,
-        });
-        console.error(`[RSC] Action error:`, error);
-        throw error;
       }
 
       // Revalidation render wrapped in route middleware.

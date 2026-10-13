@@ -71,6 +71,35 @@ async function waitForOnError(
   return found!;
 }
 
+/** A cookie keying the item saves to this test (src/pages/rewrite-saves.ts). */
+async function useSaveKey(page: Page, f: Fixture): Promise<void> {
+  await page
+    .context()
+    .addCookies([
+      { name: "rw-key", value: crypto.randomUUID(), url: f.url("/") },
+    ]);
+}
+
+/** Mark the layout's and the page's DOM nodes before an action. */
+async function markIdentity(page: Page): Promise<void> {
+  for (const id of ["rw-layout", "rw-item"]) {
+    await testId(page, id).evaluate((el) => {
+      (el as HTMLElement & { __rwMark?: boolean }).__rwMark = true;
+    });
+  }
+}
+
+/** The marked nodes are still mounted: neither the layout nor the page remounted. */
+async function expectIdentityKept(page: Page): Promise<void> {
+  for (const id of ["rw-layout", "rw-item"]) {
+    expect(
+      await testId(page, id).evaluate(
+        (el) => (el as HTMLElement & { __rwMark?: boolean }).__rwMark === true,
+      ),
+    ).toBe(true);
+  }
+}
+
 function rewriteTests(f: Fixture) {
   test("a locked document renders the lock page at the visitor's URL", async ({
     page,
@@ -249,6 +278,38 @@ function rewriteTests(f: Fixture) {
     expect(reported.phase).toBe("routing");
   });
 
+  test("a JS action from a page route middleware rewrote re-renders that page and runs once", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await useSaveKey(page, f);
+    await page.goto(f.url("/rw/public/7"));
+    await waitForHydration(page);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 7");
+    await expect(testId(page, "rw-item-saves")).toHaveText("0");
+    await using _reload = await expectNoReload(page);
+    await markIdentity(page);
+
+    const post = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/public/7"),
+    );
+    await testId(page, "rw-item-save").click();
+    const response = await post;
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-rango-rewrite"]).toBe("/rw/items/7");
+
+    await expect(testId(page, "rw-item-saves")).toHaveText("1");
+    // The target's route middleware and its global middleware ran on the
+    // re-render (one global run per pass).
+    await expect(testId(page, "rw-item-guard")).toHaveText("target");
+    await expect(testId(page, "rw-runs")).toHaveText("2");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 7");
+    await expect(testId(page, "rw-client-location")).toHaveText("/rw/public/7");
+    expect(new URL(page.url()).pathname).toBe("/rw/public/7");
+    await expectIdentityKept(page);
+  });
+
   test("a loader fetch under the lock rejects with the rule as a loaderError", async ({
     request,
   }) => {
@@ -330,6 +391,29 @@ function noJsRewriteTests(f: Fixture) {
     const response = await post;
     expect(response.status()).toBe(503);
     await expect(page.locator("body")).toHaveText("Maintenance");
+  });
+
+  test("a no-JS form post from a page route middleware rewrote re-renders that page and runs once", async ({
+    page,
+  }) => {
+    await useSaveKey(page, f);
+    await page.goto(f.url("/rw/public/8"));
+    await expect(testId(page, "rw-item-saves")).toHaveText("0");
+
+    const post = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/public/8"),
+    );
+    await testId(page, "rw-item-save").click();
+    const response = await post;
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-rango-rewrite"]).toBe("/rw/items/8");
+
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 8");
+    await expect(testId(page, "rw-item-saves")).toHaveText("1");
+    await expect(testId(page, "rw-item-guard")).toHaveText("target");
+    await expect(testId(page, "rw-runs")).toHaveText("2");
+    expect(new URL(page.url()).pathname).toBe("/rw/public/8");
   });
 
   test("middleware that rewrites a no-JS form post fails with the rule", async ({

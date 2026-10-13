@@ -6,7 +6,7 @@
  * reference. We detect these and return HTML instead of RSC stream.
  */
 
-import { requestHeaders } from "../server/request-headers.js";
+import { bodylessHeaders, requestHeaders } from "../server/request-headers.js";
 import {
   getRequestContext,
   setRequestContextParams,
@@ -16,7 +16,7 @@ import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
-import { payloadInitialTheme } from "./full-payload.js";
+import { payloadInitialTheme, renderedLocation } from "./full-payload.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import {
@@ -78,17 +78,22 @@ export async function handleProgressiveEnhancement<TEnv>(
   // renders and the re-render), so a PE request prints ONE tree. A non-PE form
   // POST (no $ACTION fields) drives no plan and stays silent.
   const trace = INTERNAL_RANGO_DEBUG ? createRoutineTrace("pe") : undefined;
+  const input: PeRequestInput<TEnv> = {
+    ctx,
+    request,
+    env,
+    url,
+    handleStore,
+    nonce,
+    routeMwInfo,
+    trace,
+  };
   try {
-    return await handleProgressiveEnhancementInner(
-      ctx,
-      request,
-      env,
-      url,
-      handleStore,
-      nonce,
-      routeMwInfo,
-      trace,
-    );
+    // A rewrite pass after the form's action ran: re-render, never run it again.
+    const ran = getRequestContext()._actionRan;
+    return await (ran?.kind === "form"
+      ? rerenderAfterFormAction(input, ran.outcome)
+      : handleProgressiveEnhancementInner(input));
   } finally {
     if (trace && trace.entries.length > 0) {
       console.log(
@@ -98,16 +103,22 @@ export async function handleProgressiveEnhancement<TEnv>(
   }
 }
 
+/** One PE request's inputs, shared by the action run and the re-render. */
+interface PeRequestInput<TEnv> {
+  ctx: HandlerContext<TEnv>;
+  request: Request;
+  env: TEnv;
+  url: URL;
+  handleStore: ReturnType<typeof getRequestContext>["_handleStore"];
+  nonce: string | undefined;
+  routeMwInfo: PeRouteMiddlewareInfo | undefined;
+  trace: RoutineTrace | undefined;
+}
+
 async function handleProgressiveEnhancementInner<TEnv>(
-  ctx: HandlerContext<TEnv>,
-  request: Request,
-  env: TEnv,
-  url: URL,
-  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
-  nonce: string | undefined,
-  routeMwInfo: PeRouteMiddlewareInfo | undefined,
-  trace: RoutineTrace | undefined,
+  input: PeRequestInput<TEnv>,
 ): Promise<Response | null> {
+  const { ctx, request, env, url, handleStore, nonce, trace } = input;
   // Clone the request to read FormData without consuming it.
   // Wrap in try-catch so malformed POST bodies are reported as action
   // errors, not routing errors from the outer catch in handler.ts.
@@ -304,6 +315,31 @@ async function handleProgressiveEnhancementInner<TEnv>(
     console.error("[RSC] Failed to decode form state:", error);
   }
 
+  const outcome: FormActionOutcome = {
+    reactFormState,
+    boundarylessErrorStatus,
+    directActionId,
+  };
+  getRequestContext()._actionRan = { kind: "form", outcome };
+  return rerenderAfterFormAction(input, outcome);
+}
+
+/** What a no-JS form post's action left for the re-render (`_actionRan`). */
+export interface FormActionOutcome {
+  reactFormState: ReactFormState | null;
+  /** Status for the re-render after a boundaryless action error. */
+  boundarylessErrorStatus: number | undefined;
+  directActionId: string | null;
+}
+
+/** The re-render after a no-JS form post's action, wrapped in route middleware. */
+async function rerenderAfterFormAction<TEnv>(
+  input: PeRequestInput<TEnv>,
+  outcome: FormActionOutcome,
+): Promise<Response> {
+  const { ctx, request, env, url, handleStore, nonce, routeMwInfo, trace } =
+    input;
+
   // Re-render the page and return HTML.
   // Route middleware wraps the render so context variables, headers, and
   // cookies set by route middleware are available during re-render — matching
@@ -313,11 +349,8 @@ async function handleProgressiveEnhancementInner<TEnv>(
     // custom headers) so loaders that read request headers/cookies behave
     // identically under PE and the JS action path. Drop body-framing headers
     // from the bodyless GET and force the HTML accept.
-    const headers = new Headers(requestHeaders(request));
+    const headers = bodylessHeaders(request);
     headers.delete("content-type");
-    headers.delete("content-length");
-    headers.delete("content-encoding");
-    headers.delete("transfer-encoding");
     headers.set("accept", "text/html");
     const renderRequest = new Request(url.toString(), {
       method: "GET",
@@ -340,9 +373,7 @@ async function handleProgressiveEnhancementInner<TEnv>(
         renderRequest,
         handleStore,
         nonce,
-        reactFormState,
-        boundarylessErrorStatus,
-        directActionId,
+        ...outcome,
       }),
       { trace, owner: getRequestContext() },
     );
@@ -367,7 +398,7 @@ async function handleProgressiveEnhancementInner<TEnv>(
   return renderPage();
 }
 
-interface PeRenderInput<TEnv> {
+interface PeRenderInput<TEnv> extends FormActionOutcome {
   ctx: HandlerContext<TEnv>;
   request: Request;
   env: TEnv;
@@ -375,9 +406,6 @@ interface PeRenderInput<TEnv> {
   renderRequest: Request;
   handleStore: ReturnType<typeof getRequestContext>["_handleStore"];
   nonce: string | undefined;
-  reactFormState: ReactFormState | null;
-  boundarylessErrorStatus: number | undefined;
-  directActionId: string | null;
 }
 
 /** PE re-render: match the bodyless GET mirror, then render full HTML. */
@@ -419,7 +447,7 @@ function renderPeResponse<TEnv>(
 
   const payload: RscPayload = {
     metadata: {
-      pathname: url.pathname,
+      pathname: renderedLocation(getRequestContext(), url).pathname,
       routerId: ctx.router.id,
       basename: ctx.router.basename,
       segments: attachTransitionWhen(match.segments, getRequestContext()),
