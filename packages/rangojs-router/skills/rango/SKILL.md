@@ -308,6 +308,7 @@ Grouped by concern — read when you need to…
 | `/router-setup`           | Create and configure the RSC router                                        |
 | `/route`                  | Define routes with `urls()`, `path()`, and `include()`                     |
 | `/client-urls`            | Client-component route groups with `clientUrls()` — no handlers            |
+| `/ux-architecture`        | Recipes for fast, stable navigation with `urls()` and `clientUrls()`       |
 | `/layout`                 | Layouts that wrap child routes                                             |
 | `/parallel`               | Multi-column layouts and sidebars                                          |
 | `/intercept`              | Modal/slide-over patterns for soft navigation                              |
