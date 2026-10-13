@@ -49,6 +49,8 @@ const URL_EXAMPLES = new Set([
   "/e2e", // testing: @rangojs/router/testing/e2e subpath entry
   "/v2", // router-setup: example basename
   "/i", // intercept, prerender: intercept storage-key suffix convention
+  "/app", // app-structure: example section mount
+  "/settings", // app-structure: example section mount
 ]);
 
 const skillDirs = fs

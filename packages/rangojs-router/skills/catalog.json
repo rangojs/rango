@@ -10,6 +10,12 @@
       "path": "skills/api-client/SKILL.md"
     },
     {
+      "name": "app-structure",
+      "description": "Concrete urls() layouts for whole Rango apps, with the file tree, router.tsx, the root urls.tsx with sync include() of section modules, and where middleware, server layouts, clientUrls() groups, response routes, caching, prerender, PPR and boundaries sit. Recipes for a large signed-in app with a protected admin area (auth, onboarding, app, settings and admin as clientUrls() groups under one server shell), several apps under createHostRouter(), a docs site or blog, and a shop. Use when starting or restructuring a Rango app, laying out urls() files, splitting an app into sections or separate apps, or setting up a dashboard, SaaS, multi-app, static or content site, or e-commerce app.",
+      "argumentHint": "[large-app|multi-app|content-site|e-commerce]",
+      "path": "skills/app-structure/SKILL.md"
+    },
+    {
       "name": "breadcrumbs",
       "description": "Built-in Breadcrumbs handle for accumulating breadcrumb navigation across route segments. Use when building a breadcrumb trail for nested routes, or asking how to show the current navigation path in a layout.",
       "argumentHint": "[setup]",
