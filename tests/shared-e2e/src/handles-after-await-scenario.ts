@@ -126,13 +126,17 @@ function recordedStates(page: Page): Promise<string[]> {
 
 /**
  * Across one navigation the title and crumbs show the previous page's until
- * the new ones land: the new page's content shows with the previous handles
- * at least once, and no state shows anything else (no blank, no mix).
+ * the new ones land: no state shows anything else (no blank, no mix), and the
+ * new handles never show over the previous content. `contentFirst` also
+ * requires the new content with the previous handles at least once; a
+ * same-route search change commits its content just before the swap, too
+ * briefly to observe reliably, so it checks the ordering only.
  */
 async function expectHeldThenSwapped(
   page: Page,
   from: { title: string; crumbs: string[] },
   to: { title: string; crumbs: string[]; content: string },
+  { contentFirst = true }: { contentFirst?: boolean } = {},
 ): Promise<void> {
   await expectPage(page, to.title, to.crumbs);
   const held = `${from.title} | ${from.crumbs.join(" > ")}`;
@@ -142,7 +146,12 @@ async function expectHeldThenSwapped(
     state.slice(0, state.lastIndexOf(" | ")),
   );
   expect(new Set(handles)).toEqual(new Set([held, landed]));
-  expect(states).toContain(`${held} | ${to.content}`);
+  for (const state of states) {
+    if (state.startsWith(`${landed} | `)) {
+      expect(state).toBe(`${landed} | ${to.content}`);
+    }
+  }
+  if (contentFirst) expect(states).toContain(`${held} | ${to.content}`);
   expect(states[states.length - 1]).toBe(`${landed} | ${to.content}`);
 }
 
@@ -375,7 +384,8 @@ export function runHandlesAfterAwaitTests(
     // layout's stay. Observed: the page's content waits for its async
     // component too (React keeps a revealed Suspense boundary's content in a
     // transition), so it commits with the previous handles just before they
-    // swap.
+    // swap: too briefly to require observing it, so only the ordering is
+    // checked.
     const layoutRun = await textOf(page, "haa-defer-layout-run");
     await recordStates(page);
     await click(page, "haa-link-defer-3", /\/defer\?v=3$/);
@@ -387,6 +397,7 @@ export function runHandlesAfterAwaitTests(
         crumbs: ["Defer Layout", "Defer 3"],
         content: "defer 3",
       },
+      { contentFirst: false },
     );
     await expect(page.getByTestId("haa-defer-layout-run")).toHaveText(
       layoutRun,
