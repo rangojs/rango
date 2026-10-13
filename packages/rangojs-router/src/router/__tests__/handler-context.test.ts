@@ -394,10 +394,23 @@ describe("createReverseFunction", () => {
       expect(reverse("about")).toBe("/about");
     });
 
-    it("should return raw pattern when no currentParams and no hrefParams", () => {
-      const reverse = createReverseFunction(routeMap, "tenant.index");
-      // Without any params, substitution is skipped (existing behavior)
-      expect(reverse(".settings")).toBe("/tenant/:tenantId/settings");
+    it("throws Missing param when no currentParams and no hrefParams (never the raw pattern)", () => {
+      // Middleware and response-route ctx.reverse get createReverseFunction(map)
+      // alone. A route with a required param must throw, not return
+      // "/tenant/:tenantId/settings" as a URL.
+      const reverse = createReverseFunction(routeMap);
+      expect(() => reverse("tenant.settings")).toThrow(
+        'Missing param "tenantId" for route "tenant.settings"',
+      );
+      expect(() =>
+        createReverseFunction(routeMap, "tenant.index")(".settings"),
+      ).toThrow('Missing param "tenantId"');
+    });
+
+    it("resolves a static route with no params object at all", () => {
+      const reverse = createReverseFunction(routeMap);
+      expect(reverse("about")).toBe("/about");
+      expect(reverse("about", undefined, { q: "x" })).toBe("/about?q=x");
     });
 
     it("should throw when hrefParams provided but missing required param", () => {
@@ -545,6 +558,12 @@ describe("createReverseFunction", () => {
     it("omits optional constrained param when not provided", () => {
       const reverse = createReverseFunction(optionalMap, "i18n.blog");
       expect(reverse("i18n.blog", {})).toBe("/blog");
+    });
+
+    it("omits an absent optional param with no params object at all", () => {
+      // Pre-fix this returned the raw "/:locale(en|gb)?/blog".
+      const reverse = createReverseFunction(optionalMap);
+      expect(reverse("i18n.blog")).toBe("/blog");
     });
 
     it("throws for missing required param when optional params exist", () => {

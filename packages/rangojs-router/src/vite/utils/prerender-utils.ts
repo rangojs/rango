@@ -10,10 +10,27 @@ import {
 import { resolve } from "node:path";
 
 import { escapeRegExp } from "../../regex-escape.js";
+import { substitutePatternParams } from "../../router/substitute-pattern-params.js";
 import { encodePathRemainder } from "../../router/url-params.js";
 
 export function encodePathParam(value: unknown): string {
   return encodePathRemainder(String(value), encodeURIComponent);
+}
+
+/**
+ * `ctx.reverse` of a build-time `getParams()`. Substitutes like the dev-mode
+ * one (`createReverseFunction`, router/prerender-match.ts): a missing required
+ * param throws `Missing param`, with or without a params object, instead of
+ * leaving a literal `:param` in the URL.
+ */
+export function createGetParamsReverse(
+  routes: Record<string, string>,
+): (name: string, params?: Record<string, string>) => string {
+  return (name, params) => {
+    const pattern = routes[name];
+    if (!pattern) throw new Error(`Unknown route: "${name}"`);
+    return substitutePatternParams(pattern, params ?? {}, name);
+  };
 }
 
 export function substituteRouteParams(

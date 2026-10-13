@@ -188,7 +188,8 @@ function createPrerenderPassthroughFn(
  * generation. This enables auto-filling mount params from include() prefixes:
  * inner handlers can call ctx.reverse(".sibling") without explicitly passing
  * params that are already known from the current URL match.
- * Explicitly passed hrefParams take priority over currentParams.
+ * Explicitly passed hrefParams take priority over currentParams. A required
+ * param that neither supplies throws `Missing param`.
  */
 export function createReverseFunction(
   routeMap: Record<string, string>,
@@ -215,14 +216,13 @@ export function createReverseFunction(
       );
     }
 
-    // Merge current request params as defaults, explicit params override
-    const effectiveParams = currentParams
-      ? { ...currentParams, ...hrefParams }
-      : hrefParams;
+    // Merge current request params as defaults, explicit params override.
+    // Always substitute, even with no params at all (middleware and
+    // response-route reverse pass neither): a route with a required param
+    // must throw `Missing param`, never return its raw `:param` pattern.
+    const effectiveParams = { ...currentParams, ...hrefParams };
 
-    let result = effectiveParams
-      ? substitutePatternParams(pattern, effectiveParams, name)
-      : pattern;
+    let result = substitutePatternParams(pattern, effectiveParams, name);
 
     // Append search params as query string
     if (search) {

@@ -1,5 +1,6 @@
 import { urls } from "@rangojs/router";
 import { ClientReverseNav } from "../components/ClientReverseNav.js";
+import { MountParamNav } from "../components/MountParamNav.js";
 
 /**
  * URL patterns for the client-side useReverse() hook tests.
@@ -17,9 +18,19 @@ const clientReverseNestedPatterns = urls(({ path }) => [
   path("/", () => <ClientReverseNav />, { name: "index" }),
 ]);
 
+/** useReverse surface plus the useHref / relative push surface. */
+function MountedNavs() {
+  return (
+    <>
+      <ClientReverseNav />
+      <MountParamNav />
+    </>
+  );
+}
+
 export const clientReversePatterns = urls(({ path, include }) => [
-  path("/", () => <ClientReverseNav />, { name: "index" }),
-  path("/posts/:postId", () => <ClientReverseNav />, { name: "detail" }),
+  path("/", () => <MountedNavs />, { name: "index" }),
+  path("/posts/:postId", () => <MountedNavs />, { name: "detail" }),
   path("/items/:itemId/:section?", () => <ClientReverseNav />, {
     name: "optional",
   }),

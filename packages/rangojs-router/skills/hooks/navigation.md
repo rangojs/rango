@@ -103,7 +103,10 @@ structured-clone-safe data; see [`./state.md`](./state.md)).
 Target resolution: a path starting with `/` is app-absolute and gets the
 router `basename` prefixed. A relative path (`"cart"`, `"./cart"`) resolves
 against the current `include()` mount, so `router.push("cart")` inside
-`include("/shop", ...)` navigates to `/shop/cart`.
+`include("/shop", ...)` navigates to `/shop/cart`. A parameterized mount is
+filled from the current route params: inside `include("/:accountId", ...)` at
+`/acme/board`, `router.push("cart")` navigates to `/acme/cart`; a missing
+mount param rejects the returned promise.
 
 #### Skipping revalidation
 

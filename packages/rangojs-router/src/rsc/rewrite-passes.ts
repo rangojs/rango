@@ -45,11 +45,9 @@ export function resolveRewriteTarget(
   const path =
     "path" in target
       ? prefixBasename(target.path, basename)
-      : // `{}`, not undefined: a route with params then throws for the
-        // missing ones instead of resolving to its raw pattern.
-        createReverseFunction(routeMap)(
+      : createReverseFunction(routeMap)(
           target.name,
-          target.params ?? {},
+          target.params,
           target.search,
         );
   const resolved = stripInternalParams(new URL(path, base.origin));

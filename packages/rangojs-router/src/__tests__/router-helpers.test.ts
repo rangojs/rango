@@ -605,6 +605,12 @@ describe("createReverse", () => {
     );
   });
 
+  it("throws for a missing param with no params object (never the raw pattern)", () => {
+    expect(() => reverse("blog.post" as any)).toThrow(
+      'Missing param "slug" for route "blog.post"',
+    );
+  });
+
   it("substitutes constrained required param", () => {
     const r = createReverse({
       "i18n.blog": "/:locale(en|gb)/blog",

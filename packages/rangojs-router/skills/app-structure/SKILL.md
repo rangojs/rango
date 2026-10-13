@@ -83,10 +83,10 @@ here for the rules they share.
      params override (`{ locale: "de" }` switches; `{ locale: undefined }`
      drops an optional `/:locale?` and throws for a required `/:locale`).
      `scopedReverse` types the local names.
-   - Middleware `ctx.reverse` takes global names only and fills nothing; with
-     no params object it returns the raw `/:accountId/...` pattern, so pass
-     every param. `getRequestContext().reverse` in route middleware does fill;
-     in global middleware only after `next()`.
+   - Middleware `ctx.reverse` takes global names only and fills nothing, so
+     pass every param; a missing one throws `Missing param`.
+     `getRequestContext().reverse` in route middleware does fill; in global
+     middleware only after `next()`.
    - An action's `getRequestContext().reverse("global.name")` fills from the
      page URL; use global names.
    - A client component linking within one module or `clientUrls()` group:
@@ -102,9 +102,9 @@ here for the rules they share.
      only at the root mount and pulls every route name into the client
      bundle).
    - Not these: `useParams().accountId` in a template string, `ctx.params`
-     passed down as props, a "current account" context, `useHref()` or a
-     relative `router.push()` under a parameterized mount (literal
-     `/:accountId/...`), `href("/path")` for anything but static paths.
+     passed down as props, a "current account" context, `href("/path")` for
+     anything but static paths. `useHref()` and a relative `router.push()`
+     fill the mount's params but take unchecked paths: prefer `useReverse`.
 8. **Rewrite is middleware only.** A maintenance page, a flag or an alias
    URL is a `router.use()` middleware that does `throw rewrite("name")` for
    GET and answers mutations with a `Response`; the

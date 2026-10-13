@@ -1,8 +1,39 @@
 import { describe, it, expect } from "vitest";
 import {
+  createGetParamsReverse,
   substituteRouteParams,
   encodePathParam,
 } from "../utils/prerender-utils.js";
+
+describe("createGetParamsReverse (build-time getParams ctx.reverse)", () => {
+  const reverse = createGetParamsReverse({
+    "blog.post": "/blog/:slug",
+    "shop.index": "/:locale?/shop",
+    about: "/about",
+  });
+
+  it("substitutes params like the runtime reverse", () => {
+    expect(reverse("blog.post", { slug: "a b" })).toBe("/blog/a%20b");
+    expect(reverse("about")).toBe("/about");
+  });
+
+  it("throws Missing param, with or without a params object, never a literal :param", () => {
+    expect(() => reverse("blog.post")).toThrow(
+      'Missing param "slug" for route "blog.post"',
+    );
+    expect(() => reverse("blog.post", {})).toThrow(
+      'Missing param "slug" for route "blog.post"',
+    );
+  });
+
+  it("drops an absent optional param", () => {
+    expect(reverse("shop.index")).toBe("/shop");
+  });
+
+  it("throws Unknown route for an unknown name", () => {
+    expect(() => reverse("nope")).toThrow('Unknown route: "nope"');
+  });
+});
 
 describe("substituteRouteParams", () => {
   it("substitutes simple dynamic param", () => {

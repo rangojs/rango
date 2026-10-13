@@ -172,7 +172,7 @@ function ShopNav() {
 }
 ```
 
-Use `useHref()` for local navigation. Use the bare `href()` function for absolute paths. The function `useHref()` returns is referentially stable within a mount, so it is safe as a hook dependency or memoized prop.
+Use `useHref()` for local navigation. Use the bare `href()` function for absolute paths. Under a parameterized mount (`include("/:accountId", ...)`) it fills the mount's params from the current route params (`/acme/cart` at `/acme/board`); a missing one makes the returned function throw `Missing param`. The function is referentially stable while the mount's own param values stay the same, so it is safe as a hook dependency or memoized prop.
 
 ### useMount()
 

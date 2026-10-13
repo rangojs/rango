@@ -406,9 +406,9 @@ export function createReverse<TRoutes extends Record<string, string>>(
       throw new Error(`Unknown route: ${name}`);
     }
 
-    let result = params
-      ? substitutePatternParams(pattern, params, name)
-      : pattern;
+    // Always substitute: a required param with no params object throws
+    // `Missing param` rather than returning the raw `:param` pattern.
+    let result = substitutePatternParams(pattern, params ?? {}, name);
 
     // Append search params as query string
     if (search) {

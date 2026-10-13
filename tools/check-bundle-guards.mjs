@@ -178,7 +178,18 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // time (the chunk drops it in an app that never calls it), to pin
 // revalidationError in both apps. useAction's getActionId guidance became
 // dev-only in the same change (about 225B less for every app calling it).
-const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 896;
+//
+// Raised 48.875KB -> 49KB on 2026-10-13 for dc-t56 (#1151), measured on main
+// be7ef4e82 50037B -> 50135B (+98B gzip): useHref() and relative
+// useRouter().push/replace/prefetch fill a parameterized include() mount from
+// the route params (substitutePatternParams, already in the chunk for
+// useReverse) instead of emitting a literal `/:accountId/...` URL. useHref
+// reads the params through a string selector, so it re-renders only when the
+// mount's own values change. None of it can load lazily: both hooks resolve
+// during render or in the click handler. Trimmed from +183B before raising
+// (no helper, no navigateTo wrapper, href() reused for the join). One 128B
+// step: main sat 11B under the old limit.
+const ROUTER_CHUNK_GZIP_MAX = 49 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

@@ -155,9 +155,10 @@ describe("dispatch", () => {
     const res = await dispatch(router, { request: "/api/self/42" });
     const body = (await res.json()) as { reversed?: string; error?: string };
     // Pin the exact production behavior: with no explicit params the :id segment
-    // is left unsubstituted (the raw pattern), NOT auto-filled from the request.
-    expect(body.reversed).toBe("/api/self/:id");
-    expect(body.error).toBeUndefined();
+    // is NOT auto-filled from the request, and the raw pattern is never
+    // returned as a URL: the missing required param throws.
+    expect(body.reversed).toBeUndefined();
+    expect(body.error).toBe('Missing param "id" for route "api.self"');
   });
 
   it("short-circuits a partial (_rsc_partial) request to X-RSC-Reload without running the handler", async () => {
