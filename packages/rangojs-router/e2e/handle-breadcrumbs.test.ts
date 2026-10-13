@@ -103,7 +103,7 @@ function breadcrumbTests(mode: "dev" | "build") {
         ).toBeVisible();
         await expect(
           page.getByText(
-            /async jsx subtree suspended and later tried to push a handle/i,
+            /reserve the slot there with ctx\.use\(Handle\)\.defer\(\)/,
           ),
         ).toBeVisible();
       } else {

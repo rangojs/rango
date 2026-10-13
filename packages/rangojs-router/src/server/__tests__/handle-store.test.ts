@@ -222,6 +222,19 @@ describe("HandleStore settlement", () => {
     );
   });
 
+  it("LateHandlePushError points at reserving the slot with .defer()", async () => {
+    const store = createHandleStore();
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _ of store.stream()) {
+      // no-op
+    }
+
+    expect(() => store.push("meta", "seg1", "late")).toThrow(
+      /reserve the slot there with ctx\.use\(Handle\)\.defer\(\) and resolve it from the component/,
+    );
+  });
+
   it("onError callback fires before LateHandlePushError is thrown", async () => {
     const store = createHandleStore();
     const errors: Error[] = [];

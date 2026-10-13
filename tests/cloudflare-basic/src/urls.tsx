@@ -321,6 +321,7 @@ import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { lateHistoryPatterns } from "./pages/late-history.js";
+import { handlesAfterAwaitPatterns } from "./pages/handles-after-await.js";
 import { heldHandlesPatterns } from "./pages/held-handles.js";
 import { historyHandlesPatterns } from "./pages/history-handles.js";
 import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
@@ -3015,6 +3016,9 @@ export const urlpatterns = urls(
         include("/", prefetchTransitionPatterns, { name: "" }),
         include("/", heldBoundaryPatterns, { name: "" }),
         include("/", lateHistoryPatterns, { name: "" }),
+        // Meta and Breadcrumbs pushed after an await from each place
+        // (e2e/handles-after-await.test.ts).
+        include("/", handlesAfterAwaitPatterns, { name: "" }),
         // Hidden include-scope names (#1104): nested unnamed includes, and an
         // unnamed include beside a transparent one holding another.
         include("/", includeScopePublicPatterns),

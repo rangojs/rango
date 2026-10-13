@@ -89,6 +89,7 @@ import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-reval
 import { hashNavigationPatterns } from "./urls/hash-navigation.js";
 import { linkBehaviorPatterns } from "./urls/link-behavior.js";
 import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
+import { handlesAfterAwaitPatterns } from "./urls/handles-after-await.js";
 import { breadcrumbTrailPatterns } from "./urls/breadcrumb-trail.js";
 import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
 import { authBoundaryPatterns } from "./urls/auth-boundary.js";
@@ -1137,6 +1138,9 @@ export const urlpatterns = urls(
       include("/", handlePatterns, { name: "" }),
       include("/", hydrationPatterns, { name: "" }),
       include("/", delayedBreadcrumbPatterns, { name: "" }),
+      // Meta and Breadcrumbs pushed after an await from each place
+      // (handles-after-await.test.ts).
+      include("/", handlesAfterAwaitPatterns, { name: "" }),
       include("/", breadcrumbTrailPatterns, { name: "" }),
 
       // Trailing slash patterns

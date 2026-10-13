@@ -47,8 +47,9 @@ function createLateHandlePushError(
 ): Error {
   const error = new Error(
     `Handle "${handleName}" for segment "${segmentId}" was pushed after handle collection completed. ` +
-      `This usually means an async JSX subtree suspended and later tried to push a handle during streaming. ` +
-      `Push handles from the route/layout handler or during the initial synchronous JSX render instead.`,
+      `This usually means an async component pushed it after an await. ` +
+      `Push from the route or layout handler, or reserve the slot there with ` +
+      `ctx.use(Handle).defer() and resolve it from the component.`,
   );
   error.name = "LateHandlePushError";
   return error;
