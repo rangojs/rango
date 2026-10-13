@@ -91,6 +91,41 @@ slot there with `ctx.use(Handle).defer()` and resolve it from the component
 (`/breadcrumbs`, "Deferred content"). Production keeps the generic Server
 Components error. Nothing to change in your code.
 
+### Fixed: a loader that throws on a fully prefetched click or on Back/Forward throws at its read, as on a plain click
+
+A plain click already threw a failing loader's error at its `useLoader` read,
+where your error boundary caught it. A click whose prefetch had finished, and
+Back/Forward onto a page restored from the history cache, took another path:
+
+- A fully prefetched click replaced the whole page, layouts included, with
+  the router's root error page.
+- Back/Forward onto a page whose loader had failed fetched the page again.
+  Without `loading()` on the route, the page you left stayed on screen under
+  the restored URL; with `loading()`, the root error page replaced it.
+
+```tsx
+<StockBoundary>
+  <StockList /> {/* useLoader(StockLoader) throws */}
+</StockBoundary>
+// prefetched click: root error page, layout remounted
+```
+
+Now these navigations behave as a plain click: the error throws at the read,
+the nearest boundary there catches it (your error boundary, else the route's
+`errorBoundary()`, else the router's root one), and the layouts keep their
+instance and state. Back/Forward restores the page from the history cache as
+it was shown, error included, without a request. A loader `redirect()` on
+these navigations replaces only the route's content and navigates. The same
+holds when a click renders cached segments and when you leave an intercept.
+The background refresh after Back/Forward onto a stale page is the
+exception: a loader that fails there now leaves the page you are looking at
+on screen on every route, and the browser console logs
+`[Browser] Background revalidation failed`. Before, only a route without
+`loading()` or `errorBoundary()` kept it; with `loading()` the root error
+page replaced it, and with `errorBoundary()` its fallback did. Not
+covered yet, as for actions: an `intercept()`'s loaders and a parallel
+slot's loaders under its own `loading()`.
+
 ### Fixed: an `errorBoundary()` fallback clears when a later action or navigation re-runs its loader without error
 
 A loader's failure that showed its `errorBoundary()` fallback, on a

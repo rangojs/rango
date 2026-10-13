@@ -19,9 +19,8 @@ import { resolveSameOriginRedirect } from "./redirect-origin.js";
  *
  * Own module (not route-content-wrapper.tsx) because BOTH consumers need it
  * without a cycle: the StreamedLoaderErrorBoundary redirect branch (read-site
- * throw path) and decodeLoaderResults (aggregate forceAwait/action path, which
- * runs during the server tree build and cannot throw — it plants this element
- * in the errorFallback slot instead).
+ * throw path) and decodeLoaderResults (the tree build's settled results, which
+ * cannot throw — it plants this element in the errorFallback slot instead).
  */
 export function LoaderRedirect({
   to,

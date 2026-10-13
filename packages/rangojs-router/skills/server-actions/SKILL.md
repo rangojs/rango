@@ -710,9 +710,9 @@ For a recoverable "already gone" case, return a result the form can show
 ### A loader that fails on the revalidation render
 
 A loader that throws while it reruns after the action does not undo the
-action, which has already run and returned. It behaves as on a navigation, on
-every route, called directly or from `<form action>`, `useActionState` or
-`useTransition`:
+action, which has already run and returned. It behaves as on a navigation (a
+plain or fully prefetched click, Back/Forward), on every route, called
+directly or from `<form action>`, `useActionState` or `useTransition`:
 
 - The call resolves with the action's result.
 - The loader throws in place, at its `useLoader` read, and the nearest

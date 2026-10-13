@@ -327,6 +327,46 @@ const matrixRows: SemanticMatrixRow[] = [
     },
   },
   {
+    id: "R4",
+    contract:
+      "a loader that throws on a fully-prefetched click, or on Back onto an entry restored from the history cache, throws at its read, where the nearest boundary catches it; the layout keeps its instance",
+    transport: "js",
+    execution: "partial-render",
+    scope: "in-scope-child",
+    url: "/settled-lane-errors/",
+    assert: async ({ build, page }) => {
+      const reported =
+        build === "prod" ? "An error occurred" : "stock service unavailable";
+      await testId(page, "sle-layout").evaluate((el) =>
+        el.setAttribute("data-e2e-kept", "1"),
+      );
+      const expectInPlace = async (): Promise<void> => {
+        await expect(testId(page, "sle-app-boundary")).toHaveText(reported);
+        await expect(testId(page, "sle-layout")).toHaveAttribute(
+          "data-e2e-kept",
+          "1",
+        );
+      };
+
+      // A click whose prefetch has drained commits on the forceAwait lane.
+      const prefetched = page.waitForResponse(
+        (response) =>
+          isPrefetchRequest(response.request()) &&
+          new URL(response.url()).pathname === "/settled-lane-errors/fail",
+      );
+      await testId(page, "sle-prefetch-fail").hover();
+      await (await prefetched).finished();
+      await testId(page, "sle-prefetch-fail").click();
+      await expectInPlace();
+
+      // Back onto it restores the entry from the history cache.
+      await testId(page, "sle-link-ok").click();
+      await expect(testId(page, "sle-ok")).toBeVisible();
+      await page.goBack();
+      await expectInPlace();
+    },
+  },
+  {
     id: "S4",
     contract:
       "PE action follow-up keeps in-scope child visibility to handler data",

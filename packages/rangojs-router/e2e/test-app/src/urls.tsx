@@ -160,6 +160,7 @@ import clientUrlsComponentUsePatterns from "./urls/client-urls-component-use.js"
 import clientUrlsLocalePatterns from "./urls/client-urls-locale.js";
 import clientUrlsCompetePatterns from "./urls/client-urls-compete.js";
 import { CompeteServerPage } from "./urls/client-urls-compete.server.js";
+import { settledLaneErrorsPatterns } from "./urls/settled-lane-errors.js";
 import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
@@ -1000,6 +1001,11 @@ export const urlpatterns = urls(
           }),
           include("/client-urls-compete/:locale", clientUrlsCompetePatterns, {
             name: "clientCompete",
+          }),
+          // A loader error or redirect() committed by a fully-prefetched
+          // click or a back/forward restore (settled-lane-errors.test.ts).
+          include("/settled-lane-errors", settledLaneErrorsPatterns, {
+            name: "settledLaneErrors",
           }),
         ],
       ),

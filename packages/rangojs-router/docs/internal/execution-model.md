@@ -1608,16 +1608,40 @@ should not be treated as equivalent.
   `redirect()` replaces only the route's content and navigates; the layouts
   keep their instance. The error boundary's reset covers the segment's own
   and its ancestors' loader data, since a read walks up the chain. Source:
-  `buildLoaderStreams` (`inPlace`) and the `settleLoaders && !isAction`
-  branches of `segment-system.tsx`, `revalidationErrorOf`
+  `buildLoaderStreams` (`settle`) in `segment-system.tsx`, `revalidationErrorOf`
   (`decode-loader-results.ts`) called from
   `browser/server-action-bridge.ts` and from `partial-update.ts` in `action`
   mode. Pinned by the `[R3]` semantic matrix row and `e2e/action-failure.test.ts`
   (both apps, dev + production). Not covered: an `intercept()` slot's
   aggregated loaders, and a parallel slot's loaders under its own
-  `loading()`, which decode above the slot's content; the
-  `forceAwait` lanes (a fully prefetched click, back/forward), which still
-  decode in the build.
+  `loading()`, which decode above the slot's content.
+
+- **The same holds on every navigation lane that commits whole.** A fully
+  prefetched click, back/forward restored from the history cache, a click
+  that renders cached segments and leaving an intercept all await every
+  loader before the commit (`forceAwait`), so nothing suspends, and hand
+  each settled entry to its read: a loader error throws there, the nearest
+  boundary to the read catches it, and the layouts keep their instance. The
+  one exception is the background refresh after back/forward onto a stale
+  entry (`stale-revalidation`): nobody asked for it and the page on screen
+  works, so a loader it re-ran that threw makes `partial-update.ts` reject
+  after the build and before the commit, so nothing on screen changes, and
+  `navigation-bridge.ts` logs `[Browser] Background revalidation failed` (the
+  owner's call for dc-t65). A loader `redirect()` replaces only the route's
+  content and navigates; `notFound()` renders its
+  not-found UI in the segment. Only the document lane (SSR and its
+  hydration) decodes a settled entry in the build, for a `{ ssr: false }`
+  loader, and replaces the whole page for its `redirect()`, because Fizz has
+  no boundary to catch a throw at the read (dc-t65). Before, these lanes
+  decoded the set in the build: an error with no `errorBoundary()` rejected
+  `renderSegments`, so a fully prefetched click put the whole page under the
+  root boundary and back/forward refetched the entry (in the e2e fixture,
+  without `loading()`, the previous page stayed on screen under the restored
+  URL); with `loading()` the decode threw above the route. Pinned by the
+  `[R4]` semantic matrix row, `e2e/settled-lane-errors.test.ts` (both apps,
+  dev + production, the stale-refresh exception included),
+  `src/__tests__/action-loader-error-in-place.test.tsx` and
+  `src/__tests__/partial-update.test.ts`.
 
 - **A fill request (`prefetch: false`) is the same rule with no way out.**
   Deferred work runs in the fill, after the prefetch already rendered the

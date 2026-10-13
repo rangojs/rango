@@ -99,10 +99,15 @@ status on its chunks) is that array from its first call: the sources of a page a
 `prefetch: false` fill settled without a render are first aggregated by the next
 navigation that keeps them. A boundary may get the promise in one tree and the settled
 array in a later one: that is a different value at a different time (rule 6), not a
-switch under a render. The action lane hands a route's or layout's loaders as
+switch under a render. Every lane that settles loader data before its commit (the
+action lane, and the `forceAwait` lanes: back/forward, a cached or fully prefetched
+click, stale revalidation, leaving an intercept) hands a route's or layout's loaders as
 per-loader streams of their settled entries (`buildLoaderStreams` with `settle`),
 not the decoded aggregate, so each read decodes its entry synchronously and a loader
-error throws there, at its read, inside the segment's own boundaries (#1129). The value path still calls `use()`: `Suspender` and
+error throws there, at its read, inside the segment's own boundaries (#1129, dc-t65).
+Only the document lane decodes in the build, for a `{ ssr: false }` loader's entry. A
+stale revalidation whose loader threw hands React nothing: it keeps the page on screen.
+The value path still calls `use()`: `Suspender` and
 `LoaderResolver` call `use(SETTLED_THENABLE)` when they are handed the value, as every
 `useLoader` read with route context does. Without it, a place that suspended in `use()`
 on mount and then finishes without it logs React's "This library called use() to suspend

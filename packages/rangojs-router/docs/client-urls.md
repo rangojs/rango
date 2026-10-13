@@ -887,10 +887,12 @@ Keeping the old data instead (the first draft of #1129) was rejected: it
 differs from navigation and from `errorBoundary()`, and it shows stale data
 silently unless the app reads the report.
 
-How it works. The action lane no longer decodes loader results in the build
-(`segment-system.tsx:728` and `:815`, `decodeInBuild` is
-`settleLoaders && !isAction`). It takes
-`buildLoaderStreams` with `settle` and `inPlace` (`:345`): every loader is
+How it works. The action lane no longer decodes loader results in the build,
+and since dc-t65 neither does any `forceAwait` lane (a fully prefetched
+click, back/forward, cached segments, leaving an intercept, stale
+revalidation): only the document lane does. A stale revalidation whose
+loader threw commits nothing at all and is logged (`partial-update.ts`). Every settled lane takes
+`buildLoaderStreams` with `settle` (`segment-system.tsx:323`): every loader is
 still awaited before the commit, so the commit is one commit with no
 fallback, and each settled entry is handed to its read through
 `loaderStreams`, the channel a navigation uses. A plain error stays out of
@@ -901,7 +903,7 @@ the `LOADER_ERROR_FALLBACK` marker (`decode-loader-results.ts`
 `notFound()` and `redirect()` are control flow and are still placed at build
 time, in the segment's content. A `redirect()` must never take the
 document-lane shortcut that replaces the whole page there
-(`!isAction && isLoaderRedirectNode`, `:750` and `:847`): a delete action
+(`!settleLoaders && isLoaderRedirectNode` in `segment-system.tsx`): a delete action
 whose item loader then redirects to the list would unmount every layout
 before the redirect navigation mounted them again. The planted node replaces
 the segment's `StreamedLoaderErrorBoundary`-wrapped content, so the wrapper
@@ -937,7 +939,7 @@ when its `resetKey` (the segment's route and params) changed, so an
 `errorBoundary()` fallback stayed after a later action or same-route
 navigation whose rerun succeeded. Its `reset` prop is now the segment's
 route-and-params key followed by the `loaderData` of each loader of the
-segment and of its ancestors (`segment-system.tsx:709`), and it resets when
+segment and of its ancestors (`segment-system.tsx:695`), and it resets when
 one of them is a different object (`route-content-wrapper.tsx:72`). The
 ancestors matter because a read walks up the chain: a route that reads its
 layout's loader catches that loader's marker at its own boundary, so it has
@@ -965,10 +967,7 @@ What it does not cover, each keeping its earlier behaviour:
 - An `intercept()` slot's loaders ride on the slot as one aggregate, decoded
   by the slot's `LoaderResolver` while React renders, above the slot's
   content. So do a parallel slot's loaders under the slot's own `loading()`
-  (`segment-system.tsx:898`, slots take no streams).
-- The `forceAwait` lanes (a fully prefetched click, a back/forward restore)
-  still decode in the build; extending the rule to them is a separate
-  decision.
+  (`segment-system.tsx:850`, slots take no streams).
 - A no-JS form post renders the whole document after the action, so a loader
   that throws there behaves as on a page load, with no call to resolve.
 

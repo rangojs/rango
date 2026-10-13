@@ -1044,6 +1044,14 @@ export function createPartialUpdater(
         newTree = await renderSegments(reconciled.mainSegments, renderOptions);
       }
 
+      // A background refresh keeps the stale page on screen when a loader it
+      // re-ran threw (its entries settled in the build): nothing is committed,
+      // and navigation-bridge logs the rejection (dc-t65). Every other lane
+      // throws it at the read. Before the abort check: the await yields.
+      if (mode.type === "stale-revalidation") {
+        const failed = await revalidationErrorOf(serverSegments);
+        if (failed) throw failed;
+      }
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted before commit)");
         return;
