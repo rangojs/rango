@@ -189,6 +189,44 @@ const matrixRows: SemanticMatrixRow[] = [
     },
   },
   {
+    id: "A3",
+    contract:
+      "a thrown action renders its error boundary inside route middleware in JS and no-JS: the boundary reads the middleware's ctx.set and the response carries its header",
+    transport: "request",
+    execution: "action-followup",
+    scope: "n/a",
+    assert: async ({ baseUrl, page, request }) => {
+      // Fixture: test-app/src/urls/action-route-mw.tsx.
+      expectConsole(page, {
+        allow: [/\[Browser\] Action failed: Error: action-route-mw boom/],
+      });
+      await page.goto(baseUrl("/action-route-mw"));
+      await waitForHydration(page);
+      const post = page.waitForResponse((r) => r.url().includes("_rsc_action"));
+      await testId(page, "action-route-mw-throw-btn").click();
+      const jsAction = await post;
+      expect(jsAction.status()).toBe(500);
+      expect(jsAction.headers()["x-action-route-mw"]).toBe("applied");
+      await expect(testId(page, "action-route-mw-boundary-var")).toHaveText(
+        "from-route-mw",
+      );
+
+      const html = await (
+        await request.get(baseUrl("/action-route-mw"))
+      ).text();
+      const actionField = /name="(\$ACTION_ID_[^"]+)"/.exec(html)?.[1];
+      expect(actionField).toBeDefined();
+      const form = await request.post(baseUrl("/action-route-mw"), {
+        multipart: { [actionField!]: "" },
+      });
+      expect(form.status()).toBe(500);
+      expect(form.headers()["x-action-route-mw"]).toBe("applied");
+      expect(await form.text()).toContain(
+        'data-testid="action-route-mw-boundary-var">from-route-mw<',
+      );
+    },
+  },
+  {
     id: "R1",
     contract:
       "partial action revalidation does not preserve upstream ctx.set data when the producer segment does not rerun",
@@ -1347,6 +1385,43 @@ const matrixRows: SemanticMatrixRow[] = [
         headers: { Accept: "text/html" },
       });
       expect(direct.headers()["x-rango-shell"]).toBe("MISS");
+    },
+  },
+  {
+    id: "RW9",
+    contract:
+      "a thrown action on a page route middleware rewrote renders the target's error boundary inside the target's route middleware, in JS and no-JS",
+    transport: "request",
+    execution: "action-followup",
+    scope: "n/a",
+    assert: async ({ baseUrl, request }) => {
+      // The item page renders the save form, then the failing one.
+      const html = await (await request.get(baseUrl("/rw/public/9"))).text();
+      const failId = [...html.matchAll(/name="\$ACTION_ID_([^"]+)"/g)][1]?.[1];
+      expect(failId).toBeDefined();
+
+      const jsAction = await request.post(
+        baseUrl(`/rw/public/9?_rsc_action=${encodeURIComponent(failId!)}`),
+        { headers: { "rsc-action": failId! }, data: "[]" },
+      );
+      expect(jsAction.status()).toBe(500);
+      expect(jsAction.headers()["x-rango-rewrite"]).toBe("/rw/items/9");
+      const flight = await jsAction.text();
+      expect(flight).toContain(
+        '"data-testid":"rw-item-boundary-guard","children":"target"',
+      );
+      expect(flight).not.toContain("rw-public-boundary");
+
+      const form = await request.post(baseUrl("/rw/public/9"), {
+        multipart: { [`$ACTION_ID_${failId}`]: "" },
+      });
+      expect(form.status()).toBe(500);
+      expect(form.headers()["x-rango-rewrite"]).toBe("/rw/items/9");
+      const document = await form.text();
+      expect(document).toContain(
+        'data-testid="rw-item-boundary-guard">target<',
+      );
+      expect(document).not.toContain("rw-public-boundary");
     },
   },
 ];

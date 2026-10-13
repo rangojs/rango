@@ -52,6 +52,36 @@ above keep their instance. A no-JS form post is unchanged. Not covered yet:
 an `intercept()`'s loaders and a parallel slot's loaders under its own
 `loading()`, which are decoded above the slot's content.
 
+### Fixed: a no-JS form post whose action throws renders its error boundary inside route middleware
+
+**Before.** When a server action posted by a form without JavaScript threw,
+the router rendered the route's `errorBoundary()` before the route's
+middleware ran. A value the middleware set with `ctx.set()` was missing in
+the boundary, a header it set was missing on the response, and a guard in it
+did not run for the error page. With JavaScript, the same error rendered
+inside the middleware. On a page that route middleware reached with
+`throw rewrite()`, the rewrite never fired, so the no-JS error showed the
+rewriting route's boundary instead of the page's.
+
+```tsx
+path("/items/:id", ItemPage, { name: "item" }, () => [
+  middleware(async (ctx, next) => {
+    ctx.set(Shop, await loadShop(ctx));
+    await next();
+  }),
+  errorBoundary(() => <ItemError />), // reads Shop: undefined without JavaScript
+]);
+```
+
+**Now.** The boundary renders inside route middleware with JavaScript or
+without: it reads what the middleware set, the response carries the
+middleware's headers and cookies, and a guard that returns a `Response`
+answers in place of the error page. On a rewritten page the error shows the
+target's boundary, rendered inside the target's middleware. The action still
+runs once, before route middleware. A form body that does not parse renders
+its boundary the same way, and `onError` reports it once (it reported it
+twice when a boundary rendered). Nothing to change in your code.
+
 ### Changed: `LateHandlePushError` names `.defer()` as the way to push from an async component
 
 A server component that pushes a handle after an `await` (a title, a crumb)

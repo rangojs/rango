@@ -201,6 +201,87 @@ describe("handleProgressiveEnhancement — boundaryless action error status (C1)
   });
 });
 
+// dc-t66: a no-JS action error's boundary renders inside route middleware, as
+// the JS path's (server-action.ts errorBoundary continuation). Before, it was
+// rendered and returned before route middleware ran.
+describe("handleProgressiveEnhancement — the error boundary renders inside route middleware", () => {
+  it.each([
+    ["an action that throws", buildDirectActionRequest],
+    ["a form body that does not parse", buildMalformedFormRequest],
+  ])("%s", async (_label, buildRequest) => {
+    const request = buildRequest();
+    const reqCtx = makeReqCtx(request);
+    const ctx = makeStubCtx({
+      actionThrows: true,
+      matchErrorResult: makeTransitionBoundaryResult(),
+    });
+    const res = await runWithRequestContext(reqCtx, () =>
+      handleProgressiveEnhancement(
+        ctx,
+        request,
+        {},
+        new URL(request.url),
+        false,
+        reqCtx._handleStore,
+        undefined,
+        {
+          routeMiddleware: [
+            {
+              handler: async (mwCtx, next) => {
+                await next();
+                mwCtx.header("x-route-mw", "ran");
+              },
+              params: {},
+            },
+          ],
+          variables: reqCtx._variables,
+        },
+      ),
+    );
+
+    expect(res!.status).toBe(500);
+    expect(res!.headers.get("x-route-mw")).toBe("ran");
+    expect(ctx.callOnError).toHaveBeenCalledTimes(1);
+    expect(ctx.callOnError).toHaveBeenCalledWith(
+      expect.anything(),
+      "action",
+      expect.objectContaining({ handledByBoundary: true }),
+    );
+  });
+
+  it("a route-middleware guard's Response answers in place of the boundary", async () => {
+    const request = buildDirectActionRequest();
+    const reqCtx = makeReqCtx(request);
+    const ctx = makeStubCtx({
+      actionThrows: true,
+      matchErrorResult: makeTransitionBoundaryResult(),
+    });
+    const res = await runWithRequestContext(reqCtx, () =>
+      handleProgressiveEnhancement(
+        ctx,
+        request,
+        {},
+        new URL(request.url),
+        false,
+        reqCtx._handleStore,
+        undefined,
+        {
+          routeMiddleware: [
+            {
+              handler: async () => new Response("Denied", { status: 403 }),
+              params: {},
+            },
+          ],
+          variables: reqCtx._variables,
+        },
+      ),
+    );
+
+    expect(res!.status).toBe(403);
+    expect(await res!.text()).toBe("Denied");
+  });
+});
+
 // F12: the PE re-render request must preserve the original POST request's
 // headers (Authorization, Cookie, custom headers) so loaders that read request
 // headers/cookies behave identically under PE and the JS action path. It must

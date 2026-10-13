@@ -52,6 +52,14 @@ global middleware
 A progressive-enhancement action returns a full HTML document response, not a
 Flight stream. Pinned by the `[P1]` semantic matrix row.
 
+A thrown action's error boundary is matched before route middleware and
+rendered inside it, in both flows: route middleware wraps the error render as
+it wraps the rerender, so the boundary reads its `ctx.set()` values and the
+response carries its headers. JS keeps the match in the continuation's
+`errorBoundary` (`rsc/server-action.ts`), PE in the outcome's `failure`
+(`rsc/progressive-enhancement.ts`). A no-JS form body that does not parse
+takes the same path. Pinned by `[A3]`.
+
 ### 4) Intercept request
 
 ```text
@@ -190,6 +198,7 @@ See "Rewrite" below for what moves and what stays.
   - normal renders
   - post-action revalidation renders
   - PE full rerenders
+  - a thrown action's error-boundary render, JS and PE (`[A3]`)
 - Route middleware does not wrap action execution itself.
 - Handler-first ordering is guaranteed within a full render pass:
   route handler runs before its child/orphan layouts and parallel children.
@@ -1028,7 +1037,7 @@ error for a write that had already happened: the caller sees the error UI,
 retries, and the mutation runs twice (#1145). So `applyRewrite` refuses a
 mutation only while `reqCtx._actionRan` is unset. The handler sets it as soon
 as the action has run, to the JS continuation or the PE outcome (form state,
-boundaryless 500, action id), and the target's pass re-renders from it
+the failure and its boundary, action id), and the target's pass re-renders from it
 instead of running the action again. Once it is set, any later rewrite of
 the request moves too, a global one on the target's pass included: the
 refusal exists to keep the action from running, and it already has. The
@@ -1037,9 +1046,11 @@ method, headers, body, workerd's `cf`), so a no-JS form post keeps its body
 (the PE handler reads a clone) and a form-field CSRF check passes on both
 passes. A JS action consumed its body, and `new Request(url, used)` throws,
 so that pass 2 is the same request without a body; middleware reading the
-body there gets an empty one. A failed JS action's
-error boundary is matched on the target, not the visitor's URL
-(`continuationForRewritePass` in `rsc/server-action.ts`). The target's
+body there gets an empty one. A failed action's error boundary is matched
+on the target, not the visitor's URL, and renders inside the target's route
+middleware, in JS and no-JS (`continuationForRewritePass` in
+`rsc/server-action.ts`, `outcomeForRewritePass` in
+`rsc/progressive-enhancement.ts`; `[RW9]`). The target's
 guards run on that re-render, as on a direct visit; they never guarded the
 action itself, since route middleware never wraps action execution. Only
 the action and PE branches render from the outcome, so the target must be a
@@ -1053,11 +1064,6 @@ What this does not cover yet:
 next()`) still re-renders the rewriting route after the action, and a page
   a global rewrite reached cannot call an action. Both need the client to
   send the identity of the page it shows, which lands with #1144.
-- A no-JS form post whose action throws renders the matched error boundary
-  before route middleware runs (`renderPeErrorBoundary`), so it is matched
-  on the visitor's URL and the rewrite never fires; the JS path renders the
-  target's boundary. PE renders every action error boundary outside route
-  middleware today, rewrite or not.
 
 Where the old and the new URL show:
 

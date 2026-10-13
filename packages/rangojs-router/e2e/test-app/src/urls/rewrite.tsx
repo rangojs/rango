@@ -9,7 +9,7 @@ import {
 } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import { RwClientLocation } from "./rewrite.client.js";
-import { rwSaveCart, rwSaveItem } from "./rewrite.actions.js";
+import { rwFailItem, rwSaveCart, rwSaveItem } from "./rewrite.actions.js";
 import { getRwItemSaves } from "./rewrite-saves.js";
 
 // throw rewrite() fixtures (e2e/rewrite.test.ts). The `rw-lock` cookie turns
@@ -195,7 +195,23 @@ function RwItem(ctx: HandlerContext<{ id: string }>) {
           Save item
         </button>
       </form>
+      <form action={rwFailItem}>
+        <button type="submit" data-testid="rw-item-fail">
+          Fail save
+        </button>
+      </form>
       <RwClientLocation />
+    </section>
+  );
+}
+
+/** The item's error boundary: it reads what the item's route middleware set. */
+function RwItemBoundary() {
+  return (
+    <section data-testid="rw-item-boundary">
+      <span data-testid="rw-item-boundary-guard">
+        {getRequestContext().get(RwItemGuard) ?? "none"}
+      </span>
     </section>
   );
 }
@@ -213,112 +229,116 @@ function RwPprItem(ctx: HandlerContext<{ id: string }>) {
   );
 }
 
-export const rewritePatterns = urls(({ path, layout, middleware }) => [
-  layout(RwLayout, () => [
-    path("/", RwIndex, { name: "index" }),
-    path("/shop", RwShop, { name: "shop" }, () => [
-      middleware(async (ctx, next) => {
-        await next();
-        ctx.header("x-rw-shop-post", "ran");
-      }),
-    ]),
-    path("/products/:slug", RwProduct, { name: "product" }),
-    path("/items/:id", RwItem, { name: "item" }, () => [
-      middleware(async (ctx, next) => {
-        ctx.set(RwItemGuard, "target");
-        await next();
-      }),
-    ]),
-    // A routing rewrite in route middleware, for every method: a server
-    // action or a no-JS form post from the item page re-renders the item.
-    path(
-      "/public/:id",
-      () => <h1>never rendered</h1>,
-      {},
-      () => [
-        middleware((ctx) => {
-          throw rewrite(`/rw/items/${ctx.params.id}`);
-        }),
-      ],
-    ),
-    path("/maintenance", RwMaintenance, { name: "maintenance" }, () => [
-      // The target sets its own status.
-      middleware(async (ctx, next) => {
-        ctx.set(RwTargetRuns, (ctx.get(RwTargetRuns) ?? 0) + 1);
-        getRequestContext().setStatus(503);
-        ctx.header("Retry-After", "600");
-        await next();
-      }),
-    ]),
-    path(
-      "/guarded/page",
-      () => <h1 data-testid="rw-guarded">Guarded page</h1>,
-      { name: "guarded" },
-    ),
-    path(
-      "/to-guarded",
-      () => <h1>never rendered</h1>,
-      {},
-      () => [
-        middleware(() => {
-          throw rewrite("rw.guarded");
-        }),
-      ],
-    ),
-    path(
-      "/inline-admin",
-      () => <h1 data-testid="rw-inline-admin">Inline admin</h1>,
-      { name: "inlineAdmin" },
-    ),
-    path(
-      "/to-inline-admin",
-      () => <h1>never rendered</h1>,
-      {},
-      () => [
-        middleware(() => {
-          throw rewrite("/rw/inline-admin");
-        }),
-      ],
-    ),
-    // A route middleware chain that rewrites from its inner middleware: the
-    // outer one's code after next() never runs.
-    path(
-      "/route-to-maintenance",
-      () => <h1>never rendered</h1>,
-      {},
-      () => [
+export const rewritePatterns = urls(
+  ({ path, layout, middleware, errorBoundary }) => [
+    layout(RwLayout, () => [
+      path("/", RwIndex, { name: "index" }),
+      path("/shop", RwShop, { name: "shop" }, () => [
         middleware(async (ctx, next) => {
           await next();
-          ctx.header("x-rw-route-post", "visitor");
+          ctx.header("x-rw-shop-post", "ran");
         }),
-        middleware(() => {
-          throw rewrite("rw.maintenance");
-        }),
-      ],
-    ),
-    path("/global-to-guarded", () => <h1>never rendered</h1>),
-    path("/after", () => <h1 data-testid="rw-after">after page</h1>),
-    path(
-      "/boom",
-      () => <h1>boom page</h1>,
-      {},
-      () => [
-        middleware(async (_ctx, next) => {
+      ]),
+      path("/products/:slug", RwProduct, { name: "product" }),
+      path("/items/:id", RwItem, { name: "item" }, () => [
+        middleware(async (ctx, next) => {
+          ctx.set(RwItemGuard, "target");
           await next();
-          throw new Error("boom after render");
         }),
-      ],
-    ),
-    path("/self", () => <h1>self</h1>),
-    path("/ppr/:id", RwPprItem, { name: "pprItem", ppr: true }),
-    path("/promo/:id", () => <h1>never rendered</h1>),
-    path("/summer/:id", () => <h1>never rendered</h1>),
-    path("/shared/:id", () => <h1>never rendered</h1>),
-    path("/handler-throws", () => {
-      throw rewrite("/rw/shop");
-    }),
-    path("/loop-a", () => <h1>loop a</h1>),
-    path("/loop-b", () => <h1>loop b</h1>),
-    path("/gone", () => <h1>gone</h1>),
-  ]),
-]);
+        errorBoundary(() => <RwItemBoundary />),
+      ]),
+      // A routing rewrite in route middleware, for every method: a server
+      // action or a no-JS form post from the item page re-renders the item.
+      path(
+        "/public/:id",
+        () => <h1>never rendered</h1>,
+        {},
+        () => [
+          middleware((ctx) => {
+            throw rewrite(`/rw/items/${ctx.params.id}`);
+          }),
+          errorBoundary(() => <p data-testid="rw-public-boundary">visitor</p>),
+        ],
+      ),
+      path("/maintenance", RwMaintenance, { name: "maintenance" }, () => [
+        // The target sets its own status.
+        middleware(async (ctx, next) => {
+          ctx.set(RwTargetRuns, (ctx.get(RwTargetRuns) ?? 0) + 1);
+          getRequestContext().setStatus(503);
+          ctx.header("Retry-After", "600");
+          await next();
+        }),
+      ]),
+      path(
+        "/guarded/page",
+        () => <h1 data-testid="rw-guarded">Guarded page</h1>,
+        { name: "guarded" },
+      ),
+      path(
+        "/to-guarded",
+        () => <h1>never rendered</h1>,
+        {},
+        () => [
+          middleware(() => {
+            throw rewrite("rw.guarded");
+          }),
+        ],
+      ),
+      path(
+        "/inline-admin",
+        () => <h1 data-testid="rw-inline-admin">Inline admin</h1>,
+        { name: "inlineAdmin" },
+      ),
+      path(
+        "/to-inline-admin",
+        () => <h1>never rendered</h1>,
+        {},
+        () => [
+          middleware(() => {
+            throw rewrite("/rw/inline-admin");
+          }),
+        ],
+      ),
+      // A route middleware chain that rewrites from its inner middleware: the
+      // outer one's code after next() never runs.
+      path(
+        "/route-to-maintenance",
+        () => <h1>never rendered</h1>,
+        {},
+        () => [
+          middleware(async (ctx, next) => {
+            await next();
+            ctx.header("x-rw-route-post", "visitor");
+          }),
+          middleware(() => {
+            throw rewrite("rw.maintenance");
+          }),
+        ],
+      ),
+      path("/global-to-guarded", () => <h1>never rendered</h1>),
+      path("/after", () => <h1 data-testid="rw-after">after page</h1>),
+      path(
+        "/boom",
+        () => <h1>boom page</h1>,
+        {},
+        () => [
+          middleware(async (_ctx, next) => {
+            await next();
+            throw new Error("boom after render");
+          }),
+        ],
+      ),
+      path("/self", () => <h1>self</h1>),
+      path("/ppr/:id", RwPprItem, { name: "pprItem", ppr: true }),
+      path("/promo/:id", () => <h1>never rendered</h1>),
+      path("/summer/:id", () => <h1>never rendered</h1>),
+      path("/shared/:id", () => <h1>never rendered</h1>),
+      path("/handler-throws", () => {
+        throw rewrite("/rw/shop");
+      }),
+      path("/loop-a", () => <h1>loop a</h1>),
+      path("/loop-b", () => <h1>loop b</h1>),
+      path("/gone", () => <h1>gone</h1>),
+    ]),
+  ],
+);

@@ -455,7 +455,6 @@ describe("applyRewrite: a mutation", () => {
     kind: "form",
     outcome: {
       reactFormState: null,
-      boundarylessErrorStatus: undefined,
       directActionId: null,
     },
   } as const;
