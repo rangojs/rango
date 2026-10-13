@@ -76,8 +76,10 @@
  *   a focused include, or use e2e.
  */
 
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseLang } from "../vite/plugins/hoist/literal.js";
 import {
   isUseCacheCandidate,
   transformUseCache,
@@ -155,6 +157,41 @@ const CLIENT_ENTRY_RSC_PATH: string = here("src/client.rsc.tsx").replaceAll(
 const CLIENT_URLS_INSTALLER_PATH: string = here(
   "src/testing/internal/client-urls-projection.ts",
 ).replaceAll("\\", "/");
+
+/**
+ * Whether a clientUrls() source's import loads as source too: a
+ * `"use client"` module, or a barrel (imports and `export ... from` only).
+ * Vite loads lazily, as in the transform: this module must load where it is
+ * not installed (installed-vitest-config.test.ts).
+ */
+async function loadsAsSource(code: string, file: string): Promise<boolean> {
+  if (!code.includes("use client") && !code.includes("export")) return false;
+  const { parseAstAsync } = await import("vite");
+  const { hasDirective } = await import("@vitejs/plugin-rsc/transforms");
+  type Body = Parameters<typeof hasDirective>[0];
+  let body: Body;
+  try {
+    // The file as it is on disk, TypeScript included.
+    body = (
+      (await parseAstAsync(code, { lang: parseLang(file) })) as unknown as {
+        body: Body;
+      }
+    ).body;
+  } catch {
+    return false;
+  }
+  if (hasDirective(body, "use client")) return true;
+  const nodes = body as unknown as { type: string; source?: unknown }[];
+  return (
+    nodes.some((node) => node.type !== "ImportDeclaration") &&
+    nodes.every(
+      (node) =>
+        node.type === "ImportDeclaration" ||
+        node.type === "ExportAllDeclaration" ||
+        (node.type === "ExportNamedDeclaration" && node.source != null),
+    )
+  );
+}
 
 /**
  * Appended to a transformed `"use client"` clientUrls() module: install the
@@ -270,11 +307,24 @@ export function rangoTestConfig(
 }
 
 /** A minimal Vite plugin shape (avoids a hard dependency on Vite's types). */
+/** The part of a Vite plugin context {@link rangoUseClientTransform} resolves with. */
+interface SourceResolveContext {
+  resolve(
+    source: string,
+    importer?: string,
+    options?: { skipSelf?: boolean },
+  ): Promise<{ id: string; external?: boolean | string } | null>;
+}
+
 interface FlightTransformPlugin {
   name: string;
   resolveId: {
     order: "pre";
-    handler(source: string, importer: string | undefined): string | undefined;
+    handler(
+      this: SourceResolveContext,
+      source: string,
+      importer: string | undefined,
+    ): Promise<string | undefined>;
   };
   transform(
     code: string,
@@ -347,19 +397,36 @@ export function rangoUseClientTransform(): FlightTransformPlugin {
     resolveId: {
       // Before Vite's resolver, which resolves the bare specifier first.
       order: "pre",
-      handler(source, importer) {
+      async handler(source, importer) {
+        if (!importer?.includes(CLIENT_URLS_SOURCE_QUERY)) return undefined;
         // A clientUrls() module's source resolves the router's client entry
         // as the RSC environment does (the react-server condition): this
         // project resolves it to client.tsx, a "use client" module whose
         // clientUrls is a client reference here. Both entries export the
-        // same clientUrls.
+        // same clientUrls and helpers.
+        if (source === "@rangojs/router/client") return CLIENT_ENTRY_RSC_PATH;
+        // Its "use client" project imports load as source too, as the app's
+        // SSR copy runs them: a component's `.use` and its name are
+        // unreadable on a client reference. So do the barrels between them,
+        // which hold no state; any other module stays one shared instance.
+        const resolved = await this.resolve(source, importer, {
+          skipSelf: true,
+        });
+        if (!resolved || resolved.external) return undefined;
+        const { id } = resolved;
+        const file = id.split("?", 1)[0]!;
         if (
-          source === "@rangojs/router/client" &&
-          importer?.includes(CLIENT_URLS_SOURCE_QUERY)
+          id.startsWith("\0") ||
+          id.includes("/node_modules/") ||
+          id.includes(CLIENT_URLS_SOURCE_QUERY) ||
+          !/\.[cm]?[jt]sx?$/.test(file)
         ) {
-          return CLIENT_ENTRY_RSC_PATH;
+          return undefined;
         }
-        return undefined;
+        const code = await readFile(file, "utf-8").catch(() => "");
+        return (await loadsAsSource(code, file))
+          ? `${id}${id.includes("?") ? "&" : "?"}${CLIENT_URLS_SOURCE_QUERY}`
+          : undefined;
       },
     },
     async transform(code, id) {

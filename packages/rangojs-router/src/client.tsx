@@ -309,10 +309,18 @@ export {
   type UseLoaderOptions,
 } from "./use-loader.js";
 
-export { clientUrls } from "./client-urls/client-urls.js";
+export {
+  clientUrls,
+  loader,
+  loading,
+  revalidate,
+  transition,
+} from "./client-urls/client-urls.js";
 export type {
+  ClientUrlComponent,
   ClientUrlPatterns,
   ClientUrlRouteRecord,
+  ClientUrlUse,
 } from "./client-urls/client-urls.js";
 
 /**

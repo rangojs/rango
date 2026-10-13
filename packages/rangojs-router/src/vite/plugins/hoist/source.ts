@@ -65,19 +65,20 @@ export async function recordEmitted<T>(
 }
 
 /**
- * What a `?rango-*` load serves for `hoistedFile`: the transform's emission
- * when it saw the current disk source (or the file is gone), else
- * `rehoist(disk)`. The transform hoists the pipeline code, which an earlier
- * plugin may have changed, so re-hoisting the disk source is the fallback only
- * for an environment loading before the RSC transform ran or for an edit the
- * RSC environment has not re-transformed yet. Undefined when neither exists.
+ * What a `?rango-*` load serves for `hoistedFile`, whose source on disk is
+ * `disk` (readSource): the transform's emission when it saw that source (or
+ * the file is gone), else `rehoist(disk)`. The transform hoists the pipeline
+ * code, which an earlier plugin may have changed, so re-hoisting the disk
+ * source is the fallback only for an environment loading before the RSC
+ * transform ran or for an edit the RSC environment has not re-transformed
+ * yet. Undefined when neither exists.
  */
 export async function loadEmittedOrDisk<T>(
   emitted: ReadonlyMap<string, EmittedEntry<T>>,
   hoistedFile: string,
+  disk: string | null,
   rehoist: (disk: string) => Promise<T | undefined>,
 ): Promise<T | undefined> {
-  const disk = await readSource(hoistedFile);
   const entry = emitted.get(normalizePath(hoistedFile));
   if (entry && (disk === null || entry.disk === disk)) return entry.value;
   return disk === null ? undefined : rehoist(disk);

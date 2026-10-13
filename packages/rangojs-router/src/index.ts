@@ -134,6 +134,14 @@ function serverOnlyStubError(name: string): Error {
   );
 }
 
+/** A stub whose name `@rangojs/router/client` exports for clientUrls(). */
+function clientUrlsHelperStubError(name: string): Error {
+  return new Error(
+    `${name}() is only available from "@rangojs/router" in a react-server/RSC environment. ` +
+      `In a "use client" module (a clientUrls() component's .use), import ${name}() from "@rangojs/router/client".`,
+  );
+}
+
 /**
  * Error-throwing stub for server-only `urls` function.
  */
@@ -276,7 +284,7 @@ export function middleware(): never {
   throw serverOnlyStubError("middleware");
 }
 export function revalidate(): never {
-  throw serverOnlyStubError("revalidate");
+  throw clientUrlsHelperStubError("revalidate");
 }
 // Cache tag APIs are server-only (real implementations in index.rsc.ts). These
 // stubs keep the named-export shape identical under the default/non-react-server
@@ -291,10 +299,10 @@ export function revalidateTag(): never {
   throw serverOnlyStubError("revalidateTag");
 }
 export function loader(): never {
-  throw serverOnlyStubError("loader");
+  throw clientUrlsHelperStubError("loader");
 }
 export function loading(): never {
-  throw serverOnlyStubError("loading");
+  throw clientUrlsHelperStubError("loading");
 }
 export function parallel(): never {
   throw serverOnlyStubError("parallel");
@@ -309,7 +317,7 @@ export function notFoundBoundary(): never {
   throw serverOnlyStubError("notFoundBoundary");
 }
 export function transition(): never {
-  throw serverOnlyStubError("transition");
+  throw clientUrlsHelperStubError("transition");
 }
 
 // Request context type (safe for client)

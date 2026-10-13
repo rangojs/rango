@@ -11,6 +11,7 @@ import {
   waitForHydration,
 } from "./helper";
 import {
+  expectComponentUseItemsDriveTheRoute,
   expectConsole,
   expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
   expectLayoutLoaderHeldAcrossNavigations,
@@ -927,6 +928,16 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
         path: "/client-urls-layout-loader",
       },
     );
+  });
+
+  test("components' own .use items drive the route: loaders, loading(), and a revalidate() predicate run on the server", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectComponentUseItemsDriveTheRoute(page, {
+      url: (pathname) => f.url(pathname),
+      path: "/client-urls-component-use",
+    });
   });
 
   test("a layout() keeps its DOM across an action and a same-route param navigation (#1124)", async ({

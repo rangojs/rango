@@ -64,6 +64,7 @@ import {
 } from "./discovery/self-gen-tracking.js";
 import { discoverRouters } from "./discovery/discover-routers.js";
 import {
+  componentUseSignature,
   recordClientUrlsModule,
   refreshRecordedClientUrlProjections,
 } from "./discovery/client-urls-projection.js";
@@ -2043,6 +2044,17 @@ export function createRouterDiscoveryPlugin(
           }, 100);
         };
 
+        // The `.use` signature of each component-use module at its last
+        // save: a save that keeps it (markup, hooks) re-projects nothing.
+        const componentUseSignatures = new Map<string, string>();
+        const componentUseChanged = (file: string, source: string) => {
+          const next = componentUseSignature(source, file);
+          const changed = next !== componentUseSignatures.get(file);
+          if (next === undefined) componentUseSignatures.delete(file);
+          else componentUseSignatures.set(file, next);
+          return changed;
+        };
+
         const handleRouteFileChange = (filePath: string) => {
           if (isOutsideApp(filePath)) {
             debugDiscovery?.(
@@ -2105,7 +2117,18 @@ export function createRouterDiscoveryPlugin(
               hasClientUrls =
                 firstCodeMatchIndex(source, /\bclientUrls\(/g) >= 0;
             }
-            if (!inRecoveryMode && isUseClient && !hasClientUrls) return;
+            // A component whose `.use` a group reads changes the group's
+            // projection too (its loaders, loading(), revalidate() keys):
+            // on its first save, and when a `.use` changed, came or went.
+            const hasComponentUse = componentUseChanged(filePath, source);
+            if (
+              !inRecoveryMode &&
+              isUseClient &&
+              !hasClientUrls &&
+              !hasComponentUse
+            ) {
+              return;
+            }
             // Cheap raw pre-check first; only when a candidate token is present
             // do we confirm it occurs in real code (not a comment/string) via a
             // single allocation-free code-region scan. Most saved files contain
@@ -2127,7 +2150,8 @@ export function createRouterDiscoveryPlugin(
               !inRecoveryMode &&
               !hasUrls &&
               !hasCreateRouter &&
-              !hasClientUrls
+              !hasClientUrls &&
+              !hasComponentUse
             ) {
               return;
             }
@@ -2143,11 +2167,12 @@ export function createRouterDiscoveryPlugin(
               );
             } else {
               debugDiscovery?.(
-                "watcher: %s matches (urls=%s, router=%s, clientUrls=%s)",
+                "watcher: %s matches (urls=%s, router=%s, clientUrls=%s, componentUse=%s)",
                 filePath,
                 hasUrls,
                 hasCreateRouter,
                 hasClientUrls,
+                hasComponentUse,
               );
             }
             // A "use client" clientUrls module is an HMR-accepted client
@@ -2159,7 +2184,10 @@ export function createRouterDiscoveryPlugin(
             // against the refreshed projection (installed by the pre-entry
             // refresh in discover-routers.ts).
             const mainRscEnv = (server.environments as any)?.rsc;
-            if (isUseClient && hasClientUrls && mainRscEnv?.runner) {
+            if (
+              ((isUseClient && hasClientUrls) || hasComponentUse) &&
+              mainRscEnv?.runner
+            ) {
               const rscGraph = mainRscEnv.moduleGraph;
               if (rscGraph?.getModulesByFile) {
                 // Importers must be invalidated too: the virtual RSC entry

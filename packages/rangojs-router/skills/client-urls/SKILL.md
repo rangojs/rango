@@ -142,6 +142,86 @@ At the top level of the builder only `path()`, `layout()` and `intercept()`
 are accepted, and the builder must define at least one `path()`. Any helper
 name not in this table throws (`clientUrls() has no route() helper`).
 
+`loader`, `loading`, `revalidate` and `transition` are also exported from
+`@rangojs/router/client`, the same functions the builder hands out, for a
+component's own items (next section).
+
+## A component's own items: `Component.use`
+
+A page, layout or intercept component can carry its own items, as a server
+handler does with `.use` (`/handler-use`): its loaders, its skeleton and its
+revalidation rules travel with it instead of being repeated at every `path()`
+that mounts it. Build them with the helpers from `@rangojs/router/client`. The
+component's module needs no `clientUrls()`, and no `"use client"` of its own
+when a group imports it.
+
+```tsx
+// src/dash/Dashboard.tsx
+"use client";
+import { loader, loading, revalidate, useLoader } from "@rangojs/router/client";
+import * as StatsActions from "./stats.actions";
+import { StatsLoader } from "./stats.loader";
+
+export function Dashboard() {
+  const { data } = useLoader(StatsLoader);
+  return <StatsView stats={data} />;
+}
+Dashboard.use = () => [
+  loader(StatsLoader, () => [
+    revalidate(({ isAction }) => isAction(StatsActions)),
+  ]),
+  loading(<DashboardSkeleton />),
+];
+```
+
+```tsx
+// src/urls/app.client.tsx
+"use client";
+import { clientUrls } from "@rangojs/router/client";
+import { Dashboard } from "../dash/Dashboard";
+
+export default clientUrls(({ path }) => [
+  path("/dash", Dashboard, { name: "dash" }),
+]);
+```
+
+| Component mounted by | Its `.use` may return                          |
+| -------------------- | ---------------------------------------------- |
+| `path()`             | `loader()`, `loading()`, `transition()`        |
+| `layout()`           | `loader()`, `loading()`                        |
+| `intercept()`        | `loader()` (without `ssr: false`), `loading()` |
+
+- **Merge order is the server's.** The component's items come first and the
+  mount site's own items second: an explicit `loading()` or `transition()`
+  wins, loaders accumulate (the same definition in both gives two loaders, as
+  `loader(Def)` twice does). A layout component's loaders are layout loaders,
+  shared by every route below it.
+- **No routes inside `.use`.** `path()`, `layout()` and `intercept()` there
+  throw (`clientUrls() does not support path() inside Dashboard.use`): route
+  types and the generated `.gen.ts` are read from the builder's own items.
+  Unlike a server layout handler's `.use`, a client layout's cannot add
+  routes.
+- **`.use` runs when the group is defined**, once per mount site (in the
+  browser, during SSR and in discovery), never at render. The error for an
+  item the site does not take names the component.
+- **A predicate in `.use` runs on the server,** as one in the builder does:
+  the build hoists it out of the component's module with the rules below,
+  and it registers when a group that imports the module statically, directly
+  or through barrels, loads on the server. A module the group reaches only
+  through `import()`, or one outside the workspace root, gets no
+  registration; the server names the loader and key when it mounts the
+  group.
+- **Import the helpers from `@rangojs/router/client`.** The same names from
+  `@rangojs/router` are the server DSL's; called in a client module they
+  throw, pointing to `@rangojs/router/client`.
+- In dev, an edit of a component's `.use` refreshes its groups' projections
+  and predicates, as an edit of the group does.
+- Under `isolatedDeclarations` (a library's sources), an exported function
+  cannot take an assigned property: declare the component unexported,
+  assign `.use`, and export it through a const typed `ClientUrlComponent`.
+- A `createLoader()` definition's own `.use` (`Def.use`) is not read inside
+  `clientUrls()` yet: put its `revalidate()` on the `loader()` call.
+
 `include`, `parallel`, `cache`, `middleware`, `errorBoundary`,
 `notFoundBoundary` **throw** — and that is a design position, not a gap.
 Client route groups are a PERFORMANCE surface (instant presentation, held
@@ -201,10 +281,11 @@ the arguments and type of a `urls()` loader's (`ShouldRevalidateFn` from
 browser before the request goes out; there is no client-computed decision and
 no hybrid.
 
-You still write the predicate in the `"use client"` module. The rango Vite
-plugin hoists each `revalidate()` argument into a server-only module, leaves a
-key in the browser and SSR copies, and registers the predicate when the
-group's module loads on the server (a lazy `include()` stays lazy). The cost
+You still write the predicate in the `"use client"` module, or in a
+component's `.use`. The rango Vite plugin hoists each `revalidate()` argument
+into a server-only module, leaves a key in the browser and SSR copies, and
+registers the predicate when the group's module loads on the server, with
+those of the modules it imports (a lazy `include()` stays lazy). The cost
 is a rule: **the argument may reference imports and globals only.** Anything
 else is a build error naming `file:line:column`, starting
 `[rango] clientUrls() revalidate() at ...: revalidate() runs on the server; ...`.

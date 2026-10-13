@@ -2,6 +2,80 @@
 
 ## Unreleased
 
+### Added: `clientUrls()` components carry their own items (`Component.use`), predicates included
+
+A component mounted in a `clientUrls()` group may now declare its own loaders,
+skeleton and revalidation rules, as a server handler does with `.use`. Before,
+`Dashboard.use` was ignored: the page failed at run time with `useLoader`
+"not found in context", and every `path()` that mounted the component had to
+repeat its items.
+
+Before:
+
+```tsx
+// app.urls.tsx
+"use client";
+export default clientUrls(({ path, loader, loading, revalidate }) => [
+  path("/dash", Dashboard, () => [
+    loader(StatsLoader, () => [
+      revalidate(({ isAction }) => isAction(StatsActions)),
+    ]),
+    loading(<DashboardSkeleton />),
+  ]),
+]);
+```
+
+Now:
+
+```tsx
+// Dashboard.tsx: no clientUrls() here
+import { loader, loading, revalidate, useLoader } from "@rangojs/router/client";
+
+export function Dashboard() {
+  const { data } = useLoader(StatsLoader);
+  return <StatsView stats={data} />;
+}
+Dashboard.use = () => [
+  loader(StatsLoader, () => [
+    revalidate(({ isAction }) => isAction(StatsActions)),
+  ]),
+  loading(<DashboardSkeleton />),
+];
+```
+
+```tsx
+// app.urls.tsx
+"use client";
+export default clientUrls(({ path }) => [path("/dash", Dashboard)]);
+```
+
+- `@rangojs/router/client` exports `loader`, `loading`, `revalidate` and
+  `transition`, the same functions the builder hands out. Imported from
+  `@rangojs/router` in a client module they still throw, now pointing to
+  `@rangojs/router/client`.
+- A page component's `.use` may return `loader()`, `loading()` and
+  `transition()`; a layout's or an intercept's `loader()` and `loading()`.
+  The component's items come before the mount site's: an explicit
+  `loading()` or `transition()` wins, loaders accumulate. `path()`,
+  `layout()` and `intercept()` inside `.use` throw, naming the component:
+  routes and their generated types come from the builder's own items.
+- A `revalidate()` predicate in `.use` runs on the server. The build hoists
+  it from the component's module, with or without `"use client"`, and
+  registers it when a group that imports the module statically (directly or
+  through barrels) loads on the server, a component in a sibling workspace
+  package included. A module the group reaches only through `import()`, or
+  outside the workspace root, has no registration, and the server names the
+  loader when it mounts the group.
+- In dev, editing a component's `.use` refreshes its groups, on the server
+  and in the browser, without a restart. A save that leaves every `.use`
+  unchanged (a markup edit) stays a Fast Refresh and re-runs no route
+  discovery.
+- `@rangojs/router/testing`: `rangoUseClientTransform` loads a group's
+  `"use client"` project imports as source, so `serveShellRequest` and
+  `dispatch` see a component's `.use`, predicates included.
+- Not yet: a `createLoader()` definition's own `.use` is still ignored inside
+  a group.
+
 ### Added: `window.__rango` identifies a Rango page and its router version
 
 Before, nothing in the browser said a page was a Rango app or which release

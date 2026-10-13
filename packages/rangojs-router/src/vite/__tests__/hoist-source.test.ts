@@ -86,17 +86,23 @@ describe("loadEmittedOrDisk", () => {
     await writeFile(file, "one");
     const emitted = new Map<string, EmittedEntry<string>>();
     await recordEmitted(emitted, file, "emitted");
-    expect(await loadEmittedOrDisk(emitted, file, rehoist)).toBe("emitted");
+    expect(
+      await loadEmittedOrDisk(emitted, file, await readSource(file), rehoist),
+    ).toBe("emitted");
   });
 
   it("re-hoists the disk source once it changed, or when nothing was emitted", async () => {
     const file = `${dir}/edited.ts`;
     await writeFile(file, "one");
     const emitted = new Map<string, EmittedEntry<string>>();
-    expect(await loadEmittedOrDisk(emitted, file, rehoist)).toBe("disk:one");
+    expect(
+      await loadEmittedOrDisk(emitted, file, await readSource(file), rehoist),
+    ).toBe("disk:one");
     await recordEmitted(emitted, file, "emitted");
     await writeFile(file, "two");
-    expect(await loadEmittedOrDisk(emitted, file, rehoist)).toBe("disk:two");
+    expect(
+      await loadEmittedOrDisk(emitted, file, await readSource(file), rehoist),
+    ).toBe("disk:two");
   });
 
   it("serves the emission of a file that is gone and undefined when there is none", async () => {
@@ -105,7 +111,11 @@ describe("loadEmittedOrDisk", () => {
     const emitted = new Map<string, EmittedEntry<string>>([
       [gone, { disk: "one", value: "emitted" }],
     ]);
-    expect(await loadEmittedOrDisk(emitted, gone, rehoist)).toBe("emitted");
-    expect(await loadEmittedOrDisk(new Map(), gone, rehoist)).toBeUndefined();
+    expect(
+      await loadEmittedOrDisk(emitted, gone, await readSource(gone), rehoist),
+    ).toBe("emitted");
+    expect(
+      await loadEmittedOrDisk(new Map(), gone, await readSource(gone), rehoist),
+    ).toBeUndefined();
   });
 });

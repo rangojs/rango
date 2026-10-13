@@ -40,6 +40,8 @@ export {
   expectReturnToCommittedRouteFromOptimisticFrameShowsTheDestination,
 } from "./client-urls-layout-loader-scenario.js";
 export type { ClientUrlsLayoutLoaderOptions } from "./client-urls-layout-loader-scenario.js";
+export { expectComponentUseItemsDriveTheRoute } from "./client-urls-component-use-scenario.js";
+export type { ClientUrlsComponentUseOptions } from "./client-urls-component-use-scenario.js";
 export type { LoaderElementScenarioOptions } from "./loader-element-scenario.js";
 export type { HeldHandlesScenarioOptions } from "./held-handles-scenario.js";
 export { runHistoryCacheHandlesTests } from "./history-cache-handles-scenario.js";

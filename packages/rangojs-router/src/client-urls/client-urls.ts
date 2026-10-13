@@ -8,6 +8,7 @@ import type {
   ClientPathOptions,
   ClientTransitionConfig,
   ClientUrlBuilder,
+  ClientUrlComponent,
   ClientUrlHelpers,
   ClientUrlInterceptRecord,
   ClientUrlItem,
@@ -223,10 +224,60 @@ function rejectItems(
   }
 }
 
+const STRUCTURAL_ITEMS = new Set<InternalItem["type"]>([
+  "path",
+  "layout",
+  "intercept",
+]);
+const LEAF_ITEMS = new Set<InternalItem["type"]>(["loader", "loading"]);
+const PATH_USE_ITEMS = new Set<InternalItem["type"]>([
+  "loader",
+  "loading",
+  "transition",
+]);
+
+/**
+ * A mounted component's own items (`Dashboard.use = () => [...]`, the server
+ * handler.use pattern), validated for the mount site, followed by the site's
+ * `explicit` items, as mergeHandlerUse orders them on the server
+ * (route-definition/resolve-handler-use.ts): an explicit loading() or
+ * transition() wins, loaders accumulate.
+ */
+function componentUse(
+  component: ClientUrlComponent,
+  allowed: ReadonlySet<InternalItem["type"]>,
+  explicit: InternalItem[],
+): InternalItem[] {
+  const use = component.use;
+  if (use === undefined) return explicit;
+  const label = `${component.name}.use`;
+  const items = runUse(use, label);
+  if (process.env.NODE_ENV !== "production") {
+    const structural = items.find((item) => STRUCTURAL_ITEMS.has(item.type));
+    if (structural) {
+      throw new Error(
+        `clientUrls() does not support ${structural.type}() inside ${label}: ` +
+          "routes come from the clientUrls() builder's own items, which " +
+          "route types and .gen.ts are generated from. Declare it there.",
+      );
+    }
+  }
+  rejectItems(items, allowed, label);
+  if (process.env.NODE_ENV !== "production") assertTransitionCount(items);
+  return [...items, ...explicit];
+}
+
+/** Dev-only: in production the last transition() wins (addPathRecord). */
+function assertTransitionCount(items: readonly InternalItem[]): void {
+  if (items.filter((item) => item.type === "transition").length > 1) {
+    throw new Error("clientUrls() path() received more than one transition()");
+  }
+}
+
 function assertNamedComponent(
   component: unknown,
   helper: "path" | "layout" | "intercept",
-): asserts component is ComponentType {
+): asserts component is ClientUrlComponent {
   // Build-time handler wrappers get a TARGETED rejection ahead of the generic
   // shape check: their handler code cannot live in a "use client" bundle and
   // their render runs at build, so accepting one could only fail later and
@@ -275,10 +326,139 @@ function assertLoaderDefinition(
   }
 }
 
+// Stateless item constructors: the builder callback hands these out, and
+// `@rangojs/router/client` exports them for a component's `.use`.
+
+export const loader: ClientUrlHelpers["loader"] = (
+  definition,
+  optionsOrUse,
+  maybeUse,
+) => {
+  assertLoaderDefinition(definition);
+  // Same options-or-use disambiguation as the server DSL loader(): the
+  // 2-arg loader(Def, use) form is untouched.
+  if (typeof optionsOrUse === "function" && maybeUse !== undefined) {
+    throw new Error(
+      "clientUrls() loader() received two use() callbacks. Pass loader(Def, options, use) or loader(Def, use).",
+    );
+  }
+  const options = typeof optionsOrUse === "function" ? undefined : optionsOrUse;
+  const use = typeof optionsOrUse === "function" ? optionsOrUse : maybeUse;
+  if ((options as { stream?: unknown } | undefined)?.stream !== undefined) {
+    throw new Error(
+      "clientUrls() loader() stream was replaced: use loader(Def, { ssr: false }) — the same knob as loading(fallback, { ssr: false }) — to await the loader before first flush on document requests.",
+    );
+  }
+  // Inline, not errors.ts assertBooleanOption: this module is in the
+  // client router chunk, where the helper costs 20 B gzip.
+  if (options?.ssr !== undefined && typeof options.ssr !== "boolean") {
+    throw new Error(
+      `clientUrls() loader() ssr must be a boolean (got ${JSON.stringify(options.ssr)}). Omit it (or pass true) to stream on every render.`,
+    );
+  }
+  if (
+    process.env.NODE_ENV !== "production" &&
+    options?.prefetch !== undefined &&
+    typeof options.prefetch !== "boolean"
+  ) {
+    throw new Error(
+      `clientUrls() loader() prefetch must be a boolean (got ${JSON.stringify(options.prefetch)}). Omit it (or pass true) to run the loader in prefetches.`,
+    );
+  }
+  const items = use ? runUse(use, "loader use") : [];
+  rejectItems(items, new Set(["revalidate"]), "loader");
+  return toPublicItem({
+    [ITEM_KIND]: true,
+    type: "loader",
+    definition,
+    revalidate: items
+      .filter(
+        (item): item is Extract<InternalItem, { type: "revalidate" }> =>
+          item.type === "revalidate",
+      )
+      .map((item) => item.fn),
+    ...(options?.ssr === false ? { ssr: false as const } : {}),
+    ...(options?.prefetch === false ? { prefetch: false as const } : {}),
+  });
+};
+
+export const revalidate: ClientUrlHelpers["revalidate"] = (fn) => {
+  // Dev-only: client-urls-revalidate-hoist.ts rejects the rest at build.
+  if (
+    process.env.NODE_ENV !== "production" &&
+    typeof fn !== "function" &&
+    typeof fn !== "boolean" &&
+    !isHoistedRevalidateRef(fn)
+  ) {
+    throw new Error(
+      "clientUrls() revalidate() expects a predicate function or a boolean",
+    );
+  }
+  return toPublicItem({
+    [ITEM_KIND]: true,
+    type: "revalidate",
+    fn,
+  });
+};
+
+export const loading: ClientUrlHelpers["loading"] = (component) =>
+  toPublicItem({ [ITEM_KIND]: true, type: "loading", component });
+
+export const transition: ClientUrlHelpers["transition"] = (config) => {
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    throw new Error("clientUrls() transition() expects a configuration object");
+  }
+  for (const key of Reflect.ownKeys(config)) {
+    if (!TRANSITION_CONFIG_KEYS.has(key)) {
+      throw new Error(
+        `clientUrls() transition() option ${JSON.stringify(String(key))} is not supported`,
+      );
+    }
+  }
+  if (config.name !== undefined && typeof config.name !== "string") {
+    throw new Error("clientUrls() transition() name must be a string");
+  }
+  if (config.when !== undefined && typeof config.when !== "function") {
+    throw new TypeError(
+      process.env.NODE_ENV !== "production"
+        ? `clientUrls() transition() when must be a function (it runs in the browser), got ${config.when === null ? "null" : typeof config.when}`
+        : "clientUrls() transition() when must be a function",
+    );
+  }
+  if (
+    config.viewTransition !== undefined &&
+    config.viewTransition !== "auto" &&
+    config.viewTransition !== false
+  ) {
+    throw new Error(
+      'clientUrls() transition() viewTransition must be "auto" or false',
+    );
+  }
+  for (const key of ["enter", "exit", "update", "share", "default"] as const) {
+    const value = config[key];
+    if (value === undefined || typeof value === "string") continue;
+    const isStringMap =
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      Object.values(value).every((entry) => typeof entry === "string");
+    if (!isStringMap) {
+      throw new Error(
+        `clientUrls() transition() ${key} must be a string or a string map of transition types`,
+      );
+    }
+  }
+  return toPublicItem({
+    [ITEM_KIND]: true,
+    type: "transition",
+    config: { ...config },
+  });
+};
+
 function createHelpers(): ClientUrlHelpers {
   const path = ((
     pattern: string,
-    component: ComponentType,
+    component: ClientUrlComponent,
     optionsOrUse?: ClientPathOptions | ClientUrlUse,
     maybeUse?: ClientUrlUse,
   ): ClientUrlItem => {
@@ -333,24 +513,20 @@ function createHelpers(): ClientUrlHelpers {
     }
 
     const items = use ? runUse(use, "path use") : [];
-    rejectItems(items, new Set(["loader", "loading", "transition"]), "path");
-    if (items.filter((item) => item.type === "transition").length > 1) {
-      throw new Error(
-        "clientUrls() path() received more than one transition()",
-      );
-    }
+    rejectItems(items, PATH_USE_ITEMS, "path");
+    if (process.env.NODE_ENV !== "production") assertTransitionCount(items);
     return toPublicItem({
       [ITEM_KIND]: true,
       type: "path",
       pattern,
       component,
       options,
-      use: items,
+      use: componentUse(component, PATH_USE_ITEMS, items),
     });
   }) as ClientUrlHelpers["path"];
 
   const layout = ((
-    component: ComponentType,
+    component: ClientUrlComponent,
     children: ClientUrlUse,
   ): ClientUrlItem => {
     assertNamedComponent(component, "layout");
@@ -360,152 +536,15 @@ function createHelpers(): ClientUrlHelpers {
       new Set(["path", "layout", "loader", "loading", "intercept"]),
       "layout",
     );
+    // Merged here, before flattenLayout's applyConfig creates the layout's
+    // loader records once for every route below it (layoutLoaders identity).
     return toPublicItem({
       [ITEM_KIND]: true,
       type: "layout",
       component,
-      children: items,
+      children: componentUse(component, LEAF_ITEMS, items),
     });
   }) as ClientUrlHelpers["layout"];
-
-  const loader: ClientUrlHelpers["loader"] = (
-    definition,
-    optionsOrUse,
-    maybeUse,
-  ) => {
-    assertLoaderDefinition(definition);
-    // Same options-or-use disambiguation as the server DSL loader(): the
-    // 2-arg loader(Def, use) form is untouched.
-    if (typeof optionsOrUse === "function" && maybeUse !== undefined) {
-      throw new Error(
-        "clientUrls() loader() received two use() callbacks. Pass loader(Def, options, use) or loader(Def, use).",
-      );
-    }
-    const options =
-      typeof optionsOrUse === "function" ? undefined : optionsOrUse;
-    const use = typeof optionsOrUse === "function" ? optionsOrUse : maybeUse;
-    if ((options as { stream?: unknown } | undefined)?.stream !== undefined) {
-      throw new Error(
-        "clientUrls() loader() stream was replaced: use loader(Def, { ssr: false }) — the same knob as loading(fallback, { ssr: false }) — to await the loader before first flush on document requests.",
-      );
-    }
-    // Inline, not errors.ts assertBooleanOption: this module is in the
-    // client router chunk, where the helper costs 20 B gzip.
-    if (options?.ssr !== undefined && typeof options.ssr !== "boolean") {
-      throw new Error(
-        `clientUrls() loader() ssr must be a boolean (got ${JSON.stringify(options.ssr)}). Omit it (or pass true) to stream on every render.`,
-      );
-    }
-    if (
-      process.env.NODE_ENV !== "production" &&
-      options?.prefetch !== undefined &&
-      typeof options.prefetch !== "boolean"
-    ) {
-      throw new Error(
-        `clientUrls() loader() prefetch must be a boolean (got ${JSON.stringify(options.prefetch)}). Omit it (or pass true) to run the loader in prefetches.`,
-      );
-    }
-    const items = use ? runUse(use, "loader use") : [];
-    rejectItems(items, new Set(["revalidate"]), "loader");
-    return toPublicItem({
-      [ITEM_KIND]: true,
-      type: "loader",
-      definition,
-      revalidate: items
-        .filter(
-          (item): item is Extract<InternalItem, { type: "revalidate" }> =>
-            item.type === "revalidate",
-        )
-        .map((item) => item.fn),
-      ...(options?.ssr === false ? { ssr: false as const } : {}),
-      ...(options?.prefetch === false ? { prefetch: false as const } : {}),
-    });
-  };
-
-  const revalidate: ClientUrlHelpers["revalidate"] = (fn) => {
-    // Dev-only: client-urls-revalidate-hoist.ts rejects the rest at build.
-    if (
-      process.env.NODE_ENV !== "production" &&
-      typeof fn !== "function" &&
-      typeof fn !== "boolean" &&
-      !isHoistedRevalidateRef(fn)
-    ) {
-      throw new Error(
-        "clientUrls() revalidate() expects a predicate function or a boolean",
-      );
-    }
-    return toPublicItem({
-      [ITEM_KIND]: true,
-      type: "revalidate",
-      fn,
-    });
-  };
-
-  const loading: ClientUrlHelpers["loading"] = (component) =>
-    toPublicItem({ [ITEM_KIND]: true, type: "loading", component });
-
-  const transition: ClientUrlHelpers["transition"] = (config) => {
-    if (
-      typeof config !== "object" ||
-      config === null ||
-      Array.isArray(config)
-    ) {
-      throw new Error(
-        "clientUrls() transition() expects a configuration object",
-      );
-    }
-    for (const key of Reflect.ownKeys(config)) {
-      if (!TRANSITION_CONFIG_KEYS.has(key)) {
-        throw new Error(
-          `clientUrls() transition() option ${JSON.stringify(String(key))} is not supported`,
-        );
-      }
-    }
-    if (config.name !== undefined && typeof config.name !== "string") {
-      throw new Error("clientUrls() transition() name must be a string");
-    }
-    if (config.when !== undefined && typeof config.when !== "function") {
-      throw new TypeError(
-        process.env.NODE_ENV !== "production"
-          ? `clientUrls() transition() when must be a function (it runs in the browser), got ${config.when === null ? "null" : typeof config.when}`
-          : "clientUrls() transition() when must be a function",
-      );
-    }
-    if (
-      config.viewTransition !== undefined &&
-      config.viewTransition !== "auto" &&
-      config.viewTransition !== false
-    ) {
-      throw new Error(
-        'clientUrls() transition() viewTransition must be "auto" or false',
-      );
-    }
-    for (const key of [
-      "enter",
-      "exit",
-      "update",
-      "share",
-      "default",
-    ] as const) {
-      const value = config[key];
-      if (value === undefined || typeof value === "string") continue;
-      const isStringMap =
-        typeof value === "object" &&
-        value !== null &&
-        !Array.isArray(value) &&
-        Object.values(value).every((entry) => typeof entry === "string");
-      if (!isStringMap) {
-        throw new Error(
-          `clientUrls() transition() ${key} must be a string or a string map of transition types`,
-        );
-      }
-    }
-    return toPublicItem({
-      [ITEM_KIND]: true,
-      type: "transition",
-      config: { ...config },
-    });
-  };
 
   const intercept: ClientUrlHelpers["intercept"] = (
     slotName,
@@ -528,8 +567,9 @@ function createHelpers(): ClientUrlHelpers {
       );
     }
     assertNamedComponent(component, "intercept");
-    const items = use ? runUse(use, "intercept use") : [];
-    rejectItems(items, new Set(["loader", "loading"]), "intercept");
+    const own = use ? runUse(use, "intercept use") : [];
+    rejectItems(own, LEAF_ITEMS, "intercept");
+    const items = componentUse(component, LEAF_ITEMS, own);
     for (const item of items) {
       // Intercept loaders run on soft navigations only — a document-render
       // await can never apply, so accepting the flag would be silently inert.
@@ -613,11 +653,12 @@ function addPathRecord(
   const routeContext = applyConfig(context, item.use);
   const options = item.options ? Object.freeze({ ...item.options }) : undefined;
   // Route-scoped only: transition() is rejected outside path() use callbacks,
-  // so there is no layout-level inheritance to fold in.
-  const transitionItem = item.use.find(
-    (useItem): useItem is Extract<InternalItem, { type: "transition" }> =>
-      useItem.type === "transition",
-  );
+  // so there is no layout-level inheritance to fold in. The last one wins:
+  // the explicit use callback's over the component's `.use`.
+  let transitionItem: Extract<InternalItem, { type: "transition" }> | undefined;
+  for (const useItem of item.use) {
+    if (useItem.type === "transition") transitionItem = useItem;
+  }
   routes.push(
     Object.freeze({
       id: `client-route-${routes.length}`,
@@ -800,6 +841,7 @@ export function clientUrls<const TItems extends ClientUrlItems>(
 export type {
   ClientTransitionConfig,
   ClientUrlBuilder,
+  ClientUrlComponent,
   ClientUrlHelpers,
   ClientUrlInterceptRecord,
   ClientUrlItem,

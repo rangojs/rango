@@ -463,7 +463,8 @@ global map entirely.
   a `transition()` (ViewTransition classes/name, `viewTransition`, and a
   browser-run `when`), and a per-loader `revalidate()` inside `clientUrls()`
   that the build moves to the server;
-- named client component values for paths, layouts, and intercepts;
+- named client component values for paths, layouts, and intercepts, each of
+  which may carry its own items as `Component.use` (below);
 - mounting through `include()` in the canonical `urls()` tree, with URL and
   route-name prefixes, wrapping RSC layouts, and prefix-scoped middleware
   deriving from the server tree;
@@ -685,6 +686,116 @@ in both apps' `e2e/client-urls.test.ts` ("a layout() loader with no
 revalidate() keeps its data and crumb across route switches, a param
 navigation, a search change and Back"), which also times the canonical commit
 under a 400 ms server delay.
+
+### A component's own items: `Component.use`
+
+You may already know the server pattern: a handler carries `.use`, and every
+`path()` that mounts it gets its loader and skeleton
+(`skills/handler-use/SKILL.md`). A group's components take the same shape,
+in a module of their own:
+
+```tsx
+// Dashboard.tsx: no clientUrls() here
+import { loader, loading, revalidate, useLoader } from "@rangojs/router/client";
+
+export function Dashboard() {
+  const { data } = useLoader(StatsLoader);
+  return <StatsView stats={data} />;
+}
+Dashboard.use = () => [
+  loader(StatsLoader, () => [
+    revalidate(({ isAction }) => isAction(StatsActions)),
+  ]),
+  loading(<DashboardSkeleton />),
+];
+```
+
+```tsx
+// app.urls.tsx
+"use client";
+import { clientUrls } from "@rangojs/router/client";
+import { Dashboard } from "./Dashboard";
+
+export default clientUrls(({ path }) => [path("/dash", Dashboard)]);
+```
+
+`loader`, `loading`, `revalidate` and `transition` are module-level functions
+in `client-urls/client-urls.ts`, exported from `@rangojs/router/client`
+(`client.tsx` and `client.rsc.tsx`); the builder hands out the same ones.
+`path()`, `layout()` and `intercept()` read the mounted component's `use`
+(`componentUse()`), validate its items for the site, and put them BEFORE the
+site's explicit items, as `mergeHandlerUse`
+(`src/route-definition/resolve-handler-use.ts`) does on the server, so an
+explicit `loading()` or `transition()` wins and loaders accumulate. A page
+component may carry `loader()`, `loading()` and `transition()`; a layout or
+intercept component `loader()` and `loading()`. `path()`, `layout()` and
+`intercept()` inside a `.use` throw: the typed route map (`ExtractRoutes`) and
+`.gen.ts` are computed from the builder's literal items, which is also why a
+group has no `include()`. A layout's merge happens before `flattenLayout`'s
+`applyConfig`, so its `.use` loaders are created once and shared as
+`layoutLoaders` by every route below it (#1124/#1131). Projection and
+materialization need nothing new: the flatten already folded the items into
+`route.loaders`, `route.loading` and `route.transition`.
+
+The predicate is the hard part. The component's module is not the group, and
+plugin-rsc's RSC copy of the group is a client-reference proxy whose imports
+are gone, so a `?rango-revalidate` import appended to the component's own
+proxy would never load: nothing on the server imports the component. The
+hoist therefore keys on `revalidate` imported from `@rangojs/router/client`
+in any module (as well as the builder's helper), and the group's
+`?rango-revalidate` module carries a **shadow graph**: it imports the
+`?rango-revalidate` module of every project source file the group imports or
+re-exports statically, and each of those does the same. A file with nothing
+to register serves `export {}`, so the chain passes through barrels and
+plain modules; a `"use server"` module ends it (no client code is behind
+one). Only these small modules load on the server, never a client module's
+code, and the key formula is unchanged, so a component module imported by
+two groups registers once. The walk stays under the workspace root (Vite's
+`searchForWorkspaceRoot`, so a component in a sibling workspace package, a
+`packages/ui` beside `apps/web`, registers), outside `node_modules` and the
+router's own `src/` (in this monorepo `@rangojs/router/client` resolves
+there, outside `node_modules`). It ends at a module whose client copies are
+loader stubs (only `createLoader()` exports, `isClientLoaderStubFile` in
+`expose-ids/loader-transform.ts`): none of its imports load in the browser.
+It skips `import()`: a predicate in a module the group reaches only that way
+has no registration, and materialization reports the missing key. In a
+build, the empty shadows tree-shake away; only modules that register reach
+the RSC bundle. A `?rango-revalidate` load reads and parses its file once,
+for both its registrations and its shadows.
+
+In dev, the route-file watcher treats an edit of a module that imports
+`@rangojs/router/client` and assigns a `.use`
+(`isClientUrlsComponentUseSource`, `vite/discovery/client-urls-projection.ts`)
+like a group edit: discovery refreshes the projections and the router's RSC
+modules are invalidated, so the next request materializes the new keys. Only
+when what a group reads changed, though: the watcher keeps each module's
+`componentUseSignature`, a hash of its `.use` assignments' text, and a save
+that keeps it (markup, hooks: page components are the most-edited files)
+skips both. Its first save, and a save that adds or removes a `.use`,
+re-project. An edit outside the assignments that changes what one means (a
+local helper the callback calls, an import's source) is not seen until the
+next `.use` edit.
+
+The browser needs the same care. A component module that exports only
+components is a Fast Refresh boundary, so a `.use` edit used to refresh the
+component and leave the group's route records, flattened when the group
+evaluated, as they were: the next navigation rendered the old `loading()`.
+In dev, the `client-urls-component-use-hmr` plugin compares the same
+signature in the client environment and, when it changed, updates the
+module's importers too, so the group re-evaluates as it does when you edit
+the group itself (today that ends in a page reload). A markup edit stays a
+Fast Refresh, with every instance kept. Pinned by
+`e2e/client-urls-hmr-component-use.test.ts`. In
+Vitest, `rangoUseClientTransform` loads a group's `"use client"` project
+imports as source too (`?rango-client-urls-source`): a client reference has
+no `.use` to read.
+
+A `createLoader()` definition's own `.use` is still ignored inside a group (the
+materialized stub, `createLoaderStub`, has none). Pinned dev+prod by
+`e2e/client-urls.test.ts` in both apps (a group whose layout and page carry
+`.use`, through a barrel in cloudflare-basic), by
+`e2e/client-urls-hmr-component-use.test.ts` (dev-only), and by
+`src/testing/__tests__/client-urls-component-use.rsc-test.tsx`.
 
 ### After an action
 

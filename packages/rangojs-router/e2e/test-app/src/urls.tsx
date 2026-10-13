@@ -153,6 +153,7 @@ import { historyHandlesPatterns } from "./urls/history-handles.js";
 import { interceptHeldPatterns } from "./urls/intercept-held.js";
 import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
 import clientUrlsLayoutLoaderPatterns from "./urls/client-urls-layout-loader.js";
+import clientUrlsComponentUsePatterns from "./urls/client-urls-component-use.js";
 import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
@@ -955,6 +956,12 @@ export const urlpatterns = urls(
             {
               name: "clientLayoutLoader",
             },
+          ),
+          // Components carrying their own items (Component.use).
+          include(
+            "/client-urls-component-use",
+            clientUrlsComponentUsePatterns,
+            { name: "clientComponentUse" },
           ),
         ],
       ),

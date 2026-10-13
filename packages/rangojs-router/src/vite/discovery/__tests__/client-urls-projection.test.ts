@@ -4,6 +4,7 @@ import { serializeClientUrlPatterns } from "../../../client-urls/server-projecti
 import { computeProductionHash } from "../../plugins/client-ref-hashing.js";
 import {
   discoverClientUrlProjections,
+  isClientUrlsComponentUseSource,
   recordClientUrlsModule,
   refreshRecordedClientUrlProjections,
   resolveClientUrlsSource,
@@ -36,6 +37,40 @@ function createServerModule() {
 
 const patterns = clientUrls(({ path }) => [path("/", HomePage)]);
 const projection = serializeClientUrlPatterns(patterns);
+
+describe("isClientUrlsComponentUseSource", () => {
+  const CLIENT = 'import { loader } from "@rangojs/router/client";\n';
+
+  it("matches a module importing @rangojs/router/client that assigns a .use", () => {
+    expect(
+      isClientUrlsComponentUseSource(
+        `${CLIENT}export function Page() {}\nPage.use = () => [loader(L)];\n`,
+      ),
+    ).toBe(true);
+    expect(
+      isClientUrlsComponentUseSource(
+        `"use client";\n${CLIENT}Page.use=() => [];\n`,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not match without the client entry, a .use only in a comment or string, or a comparison", () => {
+    expect(
+      isClientUrlsComponentUseSource(
+        'import { loader } from "./dsl";\nPage.use = () => [];\n',
+      ),
+    ).toBe(false);
+    expect(
+      isClientUrlsComponentUseSource(`${CLIENT}// Page.use = () => []\n`),
+    ).toBe(false);
+    expect(
+      isClientUrlsComponentUseSource(`${CLIENT}const s = "Page.use = x";\n`),
+    ).toBe(false);
+    expect(
+      isClientUrlsComponentUseSource(`${CLIENT}if (Page.use == null) {}\n`),
+    ).toBe(false);
+  });
+});
 
 describe("recordClientUrlsModule", () => {
   it("resolves development and production default-export references to a queryless absolute source", () => {

@@ -7,9 +7,10 @@ import {
   beforeEach,
   vi,
 } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { normalizePath, parseAst, transformWithOxc } from "vite";
 import { hasUseClientDirective } from "../utils/directive-prologue.js";
 import {
@@ -59,9 +60,10 @@ async function hoist(
 async function hoistError(
   code: string,
   deps: Partial<Parameters<typeof hoistClientUrlsRevalidates>[2]> = {},
+  file: string = FILE,
 ): Promise<Error> {
   try {
-    await hoist(code, deps);
+    await hoist(code, deps, file);
   } catch (error) {
     return error as Error;
   }
@@ -270,10 +272,132 @@ export default Rango.clientUrls(({ path, loader, revalidate }) => [
     expect(namespace!.keys).toEqual([key("() => true")]);
   });
 
-  it("leaves a module alone without use client, without the router's clientUrls, or without the builder's helper", async () => {
-    expect(
-      await hoist(group("() => true").replace('"use client";\n', "")),
-    ).toBeNull();
+  describe("a component's .use: revalidate imported from @rangojs/router/client", () => {
+    const COMPONENT = "/app/src/dash/Dashboard.tsx";
+    const componentKey = (source: string) =>
+      revalidateKey("src/dash/Dashboard.tsx", source);
+    /** A page component module whose `.use` declares `revalidate(<arg>)`. */
+    const component = (arg: string, head = '"use client";\n') =>
+      `${head}import { loader, loading, revalidate } from "@rangojs/router/client";
+import * as StatsActions from "./stats.actions";
+import { StatsLoader } from "./stats.loader";
+export function Dashboard() {
+  return null;
+}
+Dashboard.use = () => [
+  loader(StatsLoader, () => [revalidate(${arg})]),
+  loading(null),
+];
+`;
+
+    it("hoists the predicate of a component module, with or without use client", async () => {
+      const predicate = "({ isAction }) => isAction(StatsActions)";
+      for (const head of ['"use client";\n', ""]) {
+        const result = await hoist(component(predicate, head), {}, COMPONENT);
+        expect(result!.keys).toEqual([componentKey(predicate)]);
+        expect(result!.code).toContain(
+          `loader(StatsLoader, () => [revalidate({ $$rangoRevalidate: "${componentKey(predicate)}" })])`,
+        );
+        expect(result!.module).toBe(
+          [
+            'import { registerClientUrlRevalidators as __rango_registerClientUrlRevalidators } from "@rangojs/router/server";',
+            'import * as StatsActions from "./stats.actions";',
+            "__rango_registerClientUrlRevalidators({",
+            `  ${JSON.stringify(componentKey(predicate))}: ${predicate},`,
+            "});",
+            "",
+          ].join("\n"),
+        );
+      }
+    });
+
+    it("finds the helper renamed or through a namespace import, and leaves a boolean literal in place", async () => {
+      const result = await hoist(
+        `import { revalidate as r } from "@rangojs/router/client";
+import * as Rango from "@rangojs/router/client";
+export const items = () => [
+  Rango.loader(A, () => [r(() => 1 === 1), r(false)]),
+  Rango.loader(B, () => [Rango.revalidate(() => 2 === 2), Rango.revalidate(true)]),
+];
+`,
+        {},
+        COMPONENT,
+      );
+      expect(result!.keys).toEqual([
+        componentKey("() => 1 === 1"),
+        componentKey("() => 2 === 2"),
+      ]);
+      expect(result!.code).toContain("r(false)");
+      expect(result!.code).toContain("Rango.revalidate(true)");
+      expect(await hoist(component("true"), {}, COMPONENT)).toBeNull();
+    });
+
+    it("leaves alone a revalidate from another module or a shadowing local", async () => {
+      expect(
+        await hoist(
+          `import "@rangojs/router/client";
+import { revalidate } from "./elsewhere";
+export const x = revalidate(() => true);
+`,
+          {},
+          COMPONENT,
+        ),
+      ).toBeNull();
+      expect(
+        await hoist(
+          `import { loader } from "@rangojs/router/client";
+export const items = (revalidate) => [loader(A, () => [revalidate(() => true)])];
+`,
+          {},
+          COMPONENT,
+        ),
+      ).toBeNull();
+    });
+
+    it("rejects an impure predicate, naming the component module's file:line", async () => {
+      const local = await hoistError(
+        component("() => LIMIT > 1").replace(
+          "export function Dashboard",
+          "const LIMIT = 3;\nexport function Dashboard",
+        ),
+        {},
+        COMPONENT,
+      );
+      expect(local.message).toMatch(
+        /^\[rango\] clientUrls\(\) revalidate\(\) at \/app\/src\/dash\/Dashboard\.tsx:\d+:/,
+      );
+      expect(local.message).toContain(
+        '`LIMIT` is declared in this "use client" module.',
+      );
+      const plain = await hoistError(
+        component("() => LIMIT > 1", "").replace(
+          "export function Dashboard",
+          "const LIMIT = 3;\nexport function Dashboard",
+        ),
+        {},
+        COMPONENT,
+      );
+      expect(plain.message).toContain(
+        '`LIMIT` is declared in this module. Move the predicate to its own module (without "use client")',
+      );
+      expect(
+        (await hoistError(component("() => !!window"), {}, COMPONENT)).message,
+      ).toContain("`window` is a browser global");
+      const clientImport = await hoistError(
+        component("() => useThing()").replace(
+          "import { StatsLoader }",
+          'import { useThing } from "./hooks";\nimport { StatsLoader }',
+        ),
+        { isClientModule: (source) => source === "./hooks" },
+        COMPONENT,
+      );
+      expect(clientImport.message).toContain(
+        '`useThing` is imported from "./hooks", a client-only module',
+      );
+    });
+  });
+
+  it("leaves a module alone without the router's clientUrls or revalidate", async () => {
     expect(
       await hoist(`"use client";
 import { clientUrls } from "./my-dsl";
@@ -504,18 +628,20 @@ export default clientUrls(({ path, loader, revalidate }) => [
       vi.mocked(parseAst).mockClear();
     });
 
-    it("does not parse a module that never mentions clientUrls", async () => {
+    it("does not parse a module that never names revalidate", async () => {
       const code = `"use client";
-import { useNavigation } from "@rangojs/router/client";
-export const revalidate = () => useNavigation();
+import { clientUrls, useNavigation } from "@rangojs/router/client";
+export default clientUrls(({ path }) => [path("/", () => useNavigation())]);
 `;
       expect(await hoist(code)).toBeNull();
       expect(parseAst).not.toHaveBeenCalled();
     });
 
-    it("does not parse a module without a use client directive text", async () => {
-      const code = group("() => true").replace('"use client";\n', "");
-      expect(code).not.toContain("use client");
+    it("does not parse a module that never imports @rangojs/router/client", async () => {
+      const code = group("() => true").replace(
+        '"@rangojs/router/client"',
+        '"./my-dsl"',
+      );
       expect(await hoist(code)).toBeNull();
       expect(parseAst).not.toHaveBeenCalled();
     });
@@ -650,46 +776,64 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
     ).toBeUndefined();
   });
 
-  it("appends the registration import to the RSC proxy of a file with predicates only", async () => {
+  it("appends the shadow import to the RSC proxy of every group, with or without predicates, and of no other module", async () => {
     const { transform, register } = hooks(dir);
-    const id = `${dir}/proxy.client.tsx`;
     const proxy =
       'import * as $$ReactServer from "x";\nexport default $$ReactServer.registerClientReference(() => {}, "/proxy.client.tsx", "default");\n';
+    const appended = (id: string) =>
+      `${proxy}\nimport ${JSON.stringify(`${id}?rango-revalidate`)};\n`;
 
+    const id = `${dir}/proxy.client.tsx`;
     await transform.call(env("rsc"), group("() => true"), id);
-    const out = (await register.call(env("rsc"), proxy, id)) as {
-      code: string;
-    };
-    expect(out.code).toBe(
-      `${proxy}\nimport ${JSON.stringify(`${id}?rango-revalidate`)};\n`,
+    expect(await register.call(env("rsc"), proxy, id)).toEqual(
+      expect.objectContaining({ code: appended(id) }),
     );
 
+    // Its predicates may sit in a component module it imports.
     const plain = `${dir}/plain.client.tsx`;
     await transform.call(
       env("rsc"),
       `${HEAD}export default clientUrls(({ path }) => [path("/", P)]);\n`,
       plain,
     );
+    expect(await register.call(env("rsc"), proxy, plain)).toEqual(
+      expect.objectContaining({ code: appended(plain) }),
+    );
+
+    // A component module with predicates is reached through its groups.
+    const component = `${dir}/Component.tsx`;
+    await transform.call(
+      env("rsc"),
+      `"use client";
+import { loader, revalidate } from "@rangojs/router/client";
+export function Component() { return null; }
+Component.use = () => [loader(A, () => [revalidate(() => true)])];
+`,
+      component,
+    );
+    expect(await register.call(env("rsc"), proxy, component)).toBeUndefined();
+
+    // A module that stops being a group loses the import.
+    await transform.call(
+      env("rsc"),
+      '"use client";\nexport const clientUrls = 1;\n',
+      plain,
+    );
     expect(await register.call(env("rsc"), proxy, plain)).toBeUndefined();
   });
 
-  it("leaves a module of boolean literals as is, and drops the registration import once an edit leaves only literals", async () => {
-    const { transform, register } = hooks(dir);
+  it("leaves a module of boolean literals as is", async () => {
+    const { transform, load } = hooks(dir);
     const id = `${dir}/literal.client.tsx`;
-    const proxy =
-      'import * as $$ReactServer from "x";\nexport default $$ReactServer.registerClientReference(() => {}, "/literal.client.tsx", "default");\n';
     for (const name of ["client", "ssr", "rsc"]) {
       expect(
         await transform.call(env(name), group("false"), id),
       ).toBeUndefined();
     }
-    expect(await register.call(env("rsc"), proxy, id)).toBeUndefined();
-
-    // A predicate edited into a literal (HMR re-transforms the file).
-    await transform.call(env("rsc"), group("() => false"), id);
-    expect(await register.call(env("rsc"), proxy, id)).toBeDefined();
-    await transform.call(env("rsc"), group("false"), id);
-    expect(await register.call(env("rsc"), proxy, id)).toBeUndefined();
+    await writeFile(id, group("false"));
+    expect(await load.call(env("rsc"), `${id}?rango-revalidate`)).toBe(
+      "export {};\n",
+    );
   });
 
   it("registers its post transform in the rsc environment only", () => {
@@ -792,6 +936,12 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
       vi.mocked(hasUseClientDirective).mockClear();
     });
 
+    // The group's own code is checked too (it roots the shadow graph).
+    const depChecks = () =>
+      vi
+        .mocked(hasUseClientDirective)
+        .mock.calls.filter(([text]) => !text.includes("clientUrls")).length;
+
     it("parses only a dependency that contains the directive text", async () => {
       const { transform } = hooks(dir);
       await writeFile(dep(), "export const flag = true;\n");
@@ -800,7 +950,7 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
         usesFlag,
         `${dir}/guard.client.tsx`,
       );
-      expect(hasUseClientDirective).not.toHaveBeenCalled();
+      expect(depChecks()).toBe(0);
 
       await writeFile(
         join(dir, "memo-dep.ts"),
@@ -812,7 +962,7 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
         usesFlag,
         `${dir}/guard.client.tsx`,
       );
-      expect(hasUseClientDirective).toHaveBeenCalledTimes(1);
+      expect(depChecks()).toBe(1);
     });
 
     it("remembers a dependency until buildStart or a change to it", async () => {
@@ -843,18 +993,201 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
     });
   });
 
+  describe("the shadow graph: a group's ?rango-revalidate module carries its imports' registrations", () => {
+    let app: string;
+    const files: Record<string, string> = {
+      // The group: no predicate of its own.
+      "app.urls.tsx": `"use client";
+import { clientUrls } from "@rangojs/router/client";
+import { Dashboard } from "./dash";
+import { Shell } from "./Shell";
+import type { Config } from "./config";
+import { pkg } from "pkg";
+import { shared } from "../outside/shared";
+export const lazy = () => import("./Lazy");
+export default clientUrls(({ path, layout }) => [
+  layout(Shell, () => [path("/dash", Dashboard)]),
+]);
+`,
+      "other.urls.tsx": `"use client";
+import { clientUrls } from "@rangojs/router/client";
+import { Dashboard } from "./dash";
+export default clientUrls(({ path }) => [path("/", Dashboard)]);
+`,
+      // A barrel: a value re-export of each kind, and a type-only one.
+      "dash/index.ts": `export * from "./Dashboard";
+export { helper } from "./helper";
+export type { Stats } from "./types";
+`,
+      "dash/Dashboard.tsx": `import { loader, loading, revalidate } from "@rangojs/router/client";
+import * as StatsActions from "./stats.actions";
+import { StatsLoader } from "./stats.loader";
+export function Dashboard() {
+  return null;
+}
+Dashboard.use = () => [
+  loader(StatsLoader, () => [revalidate(({ isAction }) => isAction(StatsActions)), revalidate(false)]),
+  loading(null),
+];
+`,
+      "dash/helper.ts": "export const helper = 1;\n",
+      "dash/types.ts": "export interface Stats { n: number }\n",
+      "dash/stats.actions.ts": `"use server";
+import { db } from "./db";
+export async function bump() { db.n++; }
+`,
+      "dash/db.ts": "export const db = { n: 0 };\n",
+      "dash/stats.loader.ts":
+        'import { createLoader } from "@rangojs/router";\nimport { db } from "./db";\nexport const StatsLoader = createLoader(async () => db.n);\n',
+      "Shell.tsx": '"use client";\nexport function Shell() { return null; }\n',
+      "config.ts": "export interface Config { a: 1 }\n",
+      "Lazy.tsx": "export const Lazy = 1;\n",
+    };
+    const predicate = "({ isAction }) => isAction(StatsActions)";
+
+    beforeAll(async () => {
+      app = normalizePath(join(dir, "app"));
+      for (const [name, text] of Object.entries(files)) {
+        await mkdir(dirname(join(app, name)), { recursive: true });
+        await writeFile(join(app, name), text);
+      }
+    });
+
+    /** Resolve like Vite: relative to the importer, extension and index lookup. */
+    const rsc = {
+      environment: { name: "rsc" },
+      async resolve(source: string, importer?: string) {
+        if (source === "pkg") return { id: "/app/node_modules/pkg/index.js" };
+        if (source.startsWith("@rangojs/")) {
+          return { id: "/repo/packages/rangojs-router/src/client.rsc.tsx" };
+        }
+        const base = normalizePath(join(dirname(importer!), source));
+        for (const candidate of [
+          base,
+          `${base}.ts`,
+          `${base}.tsx`,
+          `${base}/index.ts`,
+        ]) {
+          if (
+            candidate.startsWith(`${app}/`) &&
+            files[candidate.slice(app.length + 1)] !== undefined
+          ) {
+            return { id: candidate };
+          }
+        }
+        return source.startsWith("../") ? { id: base + ".ts" } : null;
+      },
+    };
+    const shadow = (name: string) =>
+      `import ${JSON.stringify(`${app}/${name}?rango-revalidate`)};\n`;
+
+    it("a group's module imports the shadow of each project module it imports statically", async () => {
+      const { load } = hooks(app);
+      const out = await load.call(rsc, `${app}/app.urls.tsx?rango-revalidate`);
+      // No registrations of its own; node_modules, outside the root, a
+      // type-only import and import() are not walked.
+      expect(out).toBe(shadow("dash/index.ts") + shadow("Shell.tsx"));
+    });
+
+    it("a barrel's shadow follows its value re-exports", async () => {
+      const { load } = hooks(app);
+      expect(
+        await load.call(rsc, `${app}/dash/index.ts?rango-revalidate`),
+      ).toBe(shadow("dash/Dashboard.tsx") + shadow("dash/helper.ts"));
+      expect(
+        await load.call(rsc, `${app}/dash/helper.ts?rango-revalidate`),
+      ).toBe("export {};\n");
+    });
+
+    it("the component's shadow registers its predicate under the key its client and SSR copies carry", async () => {
+      const { load, transform } = hooks(app);
+      const file = `${app}/dash/Dashboard.tsx`;
+      const key = revalidateKey("dash/Dashboard.tsx", predicate);
+      const out = (await load.call(rsc, `${file}?rango-revalidate`)) as string;
+      expect(out).toBe(
+        [
+          'import { registerClientUrlRevalidators as __rango_registerClientUrlRevalidators } from "@rangojs/router/server";',
+          'import * as StatsActions from "./stats.actions";',
+          "__rango_registerClientUrlRevalidators({",
+          `  ${JSON.stringify(key)}: ${predicate},`,
+          "});",
+          "",
+        ].join("\n") +
+          shadow("dash/stats.actions.ts") +
+          shadow("dash/stats.loader.ts"),
+      );
+      for (const name of ["client", "ssr"]) {
+        const marked = (await transform.call(
+          { environment: { name } },
+          files["dash/Dashboard.tsx"],
+          file,
+        )) as { code: string };
+        expect(marked.code).toContain(
+          `revalidate({ $$rangoRevalidate: "${key}" }), revalidate(false)`,
+        );
+      }
+    });
+
+    it('a "use server" module ends the walk', async () => {
+      const { load } = hooks(app);
+      expect(
+        await load.call(rsc, `${app}/dash/stats.actions.ts?rango-revalidate`),
+      ).toBe("export {};\n");
+    });
+
+    it("a load parses the file once, for its registrations and its shadows", async () => {
+      const { load } = hooks(app);
+      vi.mocked(parseAst).mockClear();
+      await load.call(rsc, `${app}/dash/Dashboard.tsx?rango-revalidate`);
+      expect(parseAst).toHaveBeenCalledTimes(1);
+    });
+
+    it("a module the client copies stub whole (only createLoader() exports) ends the walk", async () => {
+      const { load } = hooks(app);
+      expect(
+        await load.call(rsc, `${app}/dash/stats.loader.ts?rango-revalidate`),
+      ).toBe("export {};\n");
+    });
+
+    it("a module two groups import is one shadow id", async () => {
+      const { load } = hooks(app);
+      const other = await load.call(
+        rsc,
+        `${app}/other.urls.tsx?rango-revalidate`,
+      );
+      expect(other).toBe(shadow("dash/index.ts"));
+    });
+
+    it('rejects, when the shadow loads, a predicate importing a "use client" module', async () => {
+      const { load } = hooks(app);
+      const file = `${app}/dash/Bad.tsx`;
+      files["dash/Bad.tsx"] = "";
+      await writeFile(
+        file,
+        `import { loader, revalidate } from "@rangojs/router/client";
+import { Shell } from "../Shell";
+export function Bad() { return null; }
+Bad.use = () => [loader(A, () => [revalidate(() => Shell.length > 0)])];
+`,
+      );
+      await expect(load.call(rsc, `${file}?rango-revalidate`)).rejects.toThrow(
+        '`Shell` is imported from "../Shell"',
+      );
+    });
+  });
+
   it("load serves the RSC transform's module, re-hoists an edited file from disk, and an empty module without predicates", async () => {
     const { transform, load } = hooks(dir);
     const file = `${dir}/served.client.tsx`;
     await writeFile(file, group("() => 'disk'"));
     // An earlier plugin changed the pipeline text: the transform's module wins.
     await transform.call(env("rsc"), group("() => 'pipeline'"), file);
-    expect(await load.call({}, `${file}?rango-revalidate`)).toContain(
+    expect(await load.call(env("rsc"), `${file}?rango-revalidate`)).toContain(
       "() => 'pipeline'",
     );
 
     await writeFile(file, group("() => 'edited'"));
-    expect(await load.call({}, `${file}?rango-revalidate`)).toContain(
+    expect(await load.call(env("rsc"), `${file}?rango-revalidate`)).toContain(
       "() => 'edited'",
     );
 
@@ -863,9 +1196,146 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
       plain,
       `${HEAD}export default clientUrls(({ path }) => [path("/", P)]);\n`,
     );
-    expect(await load.call({}, `${plain}?rango-revalidate`)).toBe(
+    expect(await load.call(env("rsc"), `${plain}?rango-revalidate`)).toBe(
       "export {};\n",
     );
-    expect(await load.call({}, file)).toBeUndefined();
+    expect(await load.call(env("rsc"), file)).toBeUndefined();
+  });
+
+  describe("the walk's bound: the workspace root, without the router's own sources", () => {
+    const routerDir = normalizePath(
+      join(dirname(fileURLToPath(import.meta.url)), "../../.."),
+    );
+    const groupSource = `"use client";
+import { clientUrls } from "@rangojs/router/client";
+import { Dashboard } from "@acme/ui";
+import { Local } from "./local";
+export default clientUrls(({ path }) => [path("/", Dashboard)]);
+`;
+    const shadow = (file: string) =>
+      `import ${JSON.stringify(`${file}?rango-revalidate`)};\n`;
+
+    it("hoists the .use predicate of a component in a sibling workspace package, outside the Vite root", async () => {
+      const ws = normalizePath(join(dir, "ws"));
+      const web = `${ws}/apps/web`;
+      const dashboard = `${ws}/packages/ui/src/Dashboard.tsx`;
+      const predicate = "({ isAction }) => isAction(StatsActions)";
+      await mkdir(`${web}/src`, { recursive: true });
+      await mkdir(dirname(dashboard), { recursive: true });
+      await writeFile(
+        `${ws}/pnpm-workspace.yaml`,
+        "packages: [apps/*, packages/*]\n",
+      );
+      await writeFile(`${web}/src/app.urls.tsx`, groupSource);
+      await writeFile(
+        dashboard,
+        `import { loader, revalidate } from "@rangojs/router/client";
+import * as StatsActions from "./stats.actions";
+export function Dashboard() {
+  return null;
+}
+Dashboard.use = () => [loader(StatsLoader, () => [revalidate(${predicate})])];
+`,
+      );
+      const resolver = {
+        environment: { name: "rsc" },
+        async resolve(source: string) {
+          if (source === "@acme/ui") return { id: dashboard };
+          if (source === "./local") return { id: `${web}/src/local.tsx` };
+          if (source === "./stats.actions") {
+            return { id: `${ws}/packages/ui/src/stats.actions.ts` };
+          }
+          return { id: `${routerDir}/src/client.rsc.tsx` };
+        },
+      };
+      const { load } = hooks(web);
+      expect(
+        await load.call(resolver, `${web}/src/app.urls.tsx?rango-revalidate`),
+      ).toBe(shadow(dashboard) + shadow(`${web}/src/local.tsx`));
+      const registration = (await load.call(
+        resolver,
+        `${dashboard}?rango-revalidate`,
+      )) as string;
+      expect(registration).toContain(
+        `${JSON.stringify(revalidateKey("../../packages/ui/src/Dashboard.tsx", predicate))}: ${predicate},`,
+      );
+    });
+
+    it("never walks into the router's own sources, inside the workspace", async () => {
+      // This repo's own layout: the app, the router and a sibling package
+      // share one pnpm workspace.
+      const app = `${routerDir}/e2e/test-app`;
+      const sibling = normalizePath(
+        join(routerDir, "../../tests/cloudflare-basic/src/Dashboard.tsx"),
+      );
+      const file = `${dir}/router-bound.urls.tsx`;
+      await writeFile(file, groupSource);
+      const resolver = {
+        environment: { name: "rsc" },
+        async resolve(source: string) {
+          if (source === "@acme/ui") return { id: sibling };
+          if (source === "./local") return { id: `${app}/src/local.tsx` };
+          return { id: `${routerDir}/src/client.tsx` };
+        },
+      };
+      const { load } = hooks(app);
+      expect(await load.call(resolver, `${file}?rango-revalidate`)).toBe(
+        shadow(sibling) + shadow(`${app}/src/local.tsx`),
+      );
+    });
+  });
+
+  describe("dev: a .use edit updates the group in the browser", () => {
+    const head = `import { loader, loading } from "@rangojs/router/client";
+export function Page() {
+  return null;
+}
+`;
+    const withUse = `${head}Page.use = () => [loading("a")];\n`;
+
+    async function setup() {
+      const plugin = clientUrlsRevalidateHoistPlugin()[2]!;
+      const file = `${dir}/hmr/Page.tsx`;
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, withUse);
+      const transform = (plugin.transform as unknown as ObjectHook).handler;
+      await transform.call({ environment: { name: "client" } }, withUse, file);
+      const group = { id: `${dir}/hmr/app.urls.tsx` };
+      const page = { id: file, importers: new Set([group]) };
+      const hotUpdate = (source: string) =>
+        (plugin.hotUpdate as Hook).call(
+          { environment: { name: "client" } },
+          { file, modules: [page], read: async () => source },
+        );
+      return { plugin, transform, hotUpdate, page, group };
+    }
+
+    it("runs in the client environment of the dev server only", () => {
+      const plugin = clientUrlsRevalidateHoistPlugin()[2]!;
+      expect(plugin.apply).toBe("serve");
+      const applies = plugin.applyToEnvironment as (env: {
+        name: string;
+      }) => boolean;
+      expect(applies({ name: "client" })).toBe(true);
+      expect(applies({ name: "ssr" })).toBe(false);
+      expect(applies({ name: "rsc" })).toBe(false);
+    });
+
+    it("keeps Fast Refresh for a save that leaves every .use unchanged", async () => {
+      const { hotUpdate } = await setup();
+      expect(
+        await hotUpdate(withUse.replace("return null;", 'return "edited";')),
+      ).toBeUndefined();
+    });
+
+    it("updates the importers too when a .use changes, goes or comes back", async () => {
+      const { hotUpdate, page, group } = await setup();
+      expect(
+        await hotUpdate(withUse.replace('loading("a")', 'loading("b")')),
+      ).toEqual([page, group]);
+      expect(await hotUpdate(head)).toEqual([page, group]);
+      expect(await hotUpdate(head)).toBeUndefined();
+      expect(await hotUpdate(withUse)).toEqual([page, group]);
+    });
   });
 });

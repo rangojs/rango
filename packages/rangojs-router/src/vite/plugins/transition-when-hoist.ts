@@ -362,6 +362,7 @@ export function transitionWhenHoistPlugin(): Plugin {
       const modules = await loadEmittedOrDisk(
         emitted,
         hoisted.file,
+        await readSource(hoisted.file),
         async (disk) =>
           (await hoistTransitionWhens(disk, hoisted.file))?.modules,
       );
