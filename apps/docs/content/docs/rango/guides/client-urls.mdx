@@ -306,13 +306,17 @@ What the predicate sees on each request:
 - **Document requests and no-JS form posts** hold no segments, so every loader renders whatever a predicate says.
 - **The refetch that follows an action** is a GET on which `isAction()` is false, as in `urls()`.
 
-A predicate can be an inline arrow or function, an imported predicate (`revalidate(isCartAction)`), a namespace member (`revalidate(Predicates.cart)`), or a call of an imported factory (`revalidate(makePredicate("cart"))`). It can use globals such as `URL` and `Boolean`, and `import.meta.env`. Anything else is a build error that names the file, line, and column and starts `[rango] clientUrls() revalidate() at ...: revalidate() runs on the server;`:
+A predicate can be an inline arrow or function, an imported predicate (`revalidate(isCartAction)`), a namespace member (`revalidate(Predicates.cart)`), or a call of an imported factory (`revalidate(makePredicate("cart"))`). It can use globals such as `URL` and `Boolean`, and `import.meta.env`.
+
+`revalidate(true)` and `revalidate(false)` work in a group too. A boolean literal stays in place, since there is nothing to move. Any other argument moves to the server whatever it evaluates to, because the build can't tell an imported boolean from an imported predicate: `revalidate(HOLD_SESSION)` with an imported flag works, and a value that is neither a function nor a boolean fails when the server mounts the group, naming the route and loader.
+
+Anything else is a build error that names the file, line, and column and starts `[rango] clientUrls() revalidate() at ...: revalidate() runs on the server;`:
 
 - A binding declared in the same `"use client"` module. Move the predicate to its own module without `"use client"` and import it, or write it inline.
 - A binding of an enclosing function. Read it from the predicate's argument.
 - `this`, `arguments`, `super`, `new.target`, `import()`, or `import.meta` other than `import.meta.env`.
 - A browser-only global: `window`, `document`, `navigator`, `localStorage`, `sessionStorage`, `location`, or `history`. Put the input on the request, in a cookie or a search param, and read it from the argument, or refresh the loader with `useRefreshLoaders`.
-- An `async` or generator function, a spread, a second argument, no argument, or a value that is not a function (an object, array, or string literal).
+- An `async` or generator function, a spread, a second argument, no argument, or a literal that is neither a function nor a boolean (an object, array, string, number, or `null`).
 - An import of `client-only`, or of a module whose directive is `"use client"`: on the server its exports are client references. An import of a `"use server"` module is fine, because on the server it is the real action, which `isAction(ref)` matches.
 
 A `server-only` or `node:` import works on the server, but the import also stays in the `"use client"` module, which is not pruned for the browser, so it must still load there.

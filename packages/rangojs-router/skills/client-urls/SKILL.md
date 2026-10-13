@@ -213,6 +213,14 @@ else is a build error naming `file:line:column`, starting
   (`revalidate(isCartAction)`), a namespace member (`P.cart`), a call of an
   imported factory (`makePredicate("cart")`), and globals such as `URL`,
   `Boolean` and `import.meta.env`.
+- `revalidate(true)` / `revalidate(false)`, shorthand for `() => true` /
+  `() => false`: a boolean LITERAL stays in place (nothing to hoist). Any
+  other argument is hoisted whatever it evaluates to, because the build cannot
+  tell an imported boolean from an imported predicate: the server evaluates
+  it, and a boolean result is the same constant answer
+  (`revalidate(HOLD_SESSION)` with an imported flag works). A value that is
+  neither fails when the server mounts the group, naming the route and
+  loader.
 - A binding declared in the same `"use client"` module is rejected: move the
   predicate to its own module without `"use client"` and import it, or write it
   inline. A binding of an enclosing function is rejected: read it from the
@@ -223,7 +231,8 @@ else is a build error naming `file:line:column`, starting
   request (a cookie or a search param) and read it from the argument, or
   refresh with `useRefreshLoaders`.
 - An `async` or generator function, a spread, a second argument, no argument,
-  or a non-function value (object, array or string literal) is rejected.
+  or a literal that is neither a function nor a boolean (object, array,
+  string, number or `null`) is rejected.
 - An import of `client-only`, or of a module whose directive prologue is
   `"use client"`, is rejected (on the server its exports are client
   references). A `"use server"` import is fine: on the server it is the real
@@ -280,7 +289,7 @@ the loaders whose predicate says so.
 
 Two scars worth copying:
 
-- A blunt `() => false` keeps serving the OLD product on product→product
+- A blunt `revalidate(false)` keeps serving the OLD product on product→product
   navigations (same route, new param). Make predicates param-sensitive:
   return `defaultShouldRevalidate` when the identifying param changed.
 - One action, per-loader outcomes: a cart badge loader revalidates on cart

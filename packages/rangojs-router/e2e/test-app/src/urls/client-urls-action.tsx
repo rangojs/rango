@@ -18,6 +18,7 @@ import {
   clientUrlsScopeAction,
 } from "./client-urls-result.actions.js";
 import {
+  ClientUrlsAlwaysLoader,
   ClientUrlsCounterLoader,
   ClientUrlsIsActionNsLoader,
   ClientUrlsIsActionTargetLoader,
@@ -40,7 +41,9 @@ import {
  * Three freshness outcomes from one counter in one commit.
  *
  * The index route's result and scoped loaders pin what only a server-run
- * predicate can see: the action's result and its form data.
+ * predicate can see: the action's result and its form data. Its always
+ * loader (revalidate(true)) re-runs on a same-URL navigation, where the
+ * default holds the result loader and revalidate(false) the session loader.
  */
 
 function ActionClientLayout() {
@@ -61,6 +64,7 @@ function ActionClientIndex() {
   const { data: ns } = useLoader(ClientUrlsIsActionNsLoader);
   const { data: result } = useLoader(ClientUrlsResultLoader);
   const { data: scoped } = useLoader(ClientUrlsScopedLoader);
+  const { data: always } = useLoader(ClientUrlsAlwaysLoader);
 
   return (
     <div data-testid="ca-index">
@@ -70,6 +74,10 @@ function ActionClientIndex() {
       <span data-testid="ca-is-action-ns-runs">{ns.runs}</span>
       <span data-testid="ca-result-runs">{result.runs}</span>
       <span data-testid="ca-scoped-runs">{scoped.runs}</span>
+      <span data-testid="ca-always-runs">{always.runs}</span>
+      <Link to="/client-urls-action" prefetch="none" data-testid="ca-self">
+        This page
+      </Link>
       <button
         data-testid="ca-bump"
         onClick={() => void bumpClientUrlsCounter()}
@@ -158,7 +166,7 @@ export default clientUrls(({ layout, path, loader, revalidate }) => [
     // Session pattern: load once, never revalidate — the server applies it
     // to every request kind (the action POST and same-route param-nav GETs,
     // prefetched or not).
-    loader(ClientUrlsSessionLoader, () => [revalidate(() => false)]),
+    loader(ClientUrlsSessionLoader, () => [revalidate(false)]),
     // Rename-safe identity: re-run only when the imported target action
     // fired. A decoy (or the bump action) hard-falses and holds.
     loader(ClientUrlsIsActionTargetLoader, () => [
@@ -183,6 +191,7 @@ export default clientUrls(({ layout, path, loader, revalidate }) => [
       loader(ClientUrlsScopedLoader, () => [
         revalidate(({ formData }) => formData?.get("scope") === "all"),
       ]),
+      loader(ClientUrlsAlwaysLoader, () => [revalidate(true)]),
     ]),
     path("/items/:itemId", ActionClientItem, { name: "item" }, () => [
       loader(ClientUrlsItemLoader),

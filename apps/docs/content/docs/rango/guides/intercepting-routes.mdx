@@ -153,7 +153,7 @@ The intercept handler reads context variables set by all upstream middleware lay
 ```tsx
 intercept("@modal", "product", <ProductModal />, () => [
   loader(ProductLoader, () => [cache()]),
-  loader(ProductCartLoader, () => [revalidate(() => true)]),
+  loader(ProductCartLoader, () => [revalidate(true)]),
   loader(RecommendationsLoader),
 ]);
 ```
@@ -169,13 +169,13 @@ A `revalidate()` placed directly in the intercept's `use()` (or returned from it
 ```tsx
 // Throws: revalidate() is not valid inside intercept("@modal", "product") use()
 intercept("@modal", "product", <ProductModal />, () => [
-  revalidate(() => false),
+  revalidate(false),
   loader(ProductLoader),
 ]);
 
 // Correct: the loader owns the decision
 intercept("@modal", "product", <ProductModal />, () => [
-  loader(ProductLoader, () => [revalidate(() => false)]),
+  loader(ProductLoader, () => [revalidate(false)]),
 ]);
 ```
 
@@ -195,7 +195,7 @@ layout(ProductLayout, () => [
   intercept("@modal", "product", <ProductModal />, () => [
     loader(ProductLoader, () => [
       revalidate(revalidateProductShell), // reruns with the producer
-      revalidate(() => false), // otherwise keep the loaded data
+      revalidate(false), // otherwise keep the loaded data
     ]),
   ]),
 ]);

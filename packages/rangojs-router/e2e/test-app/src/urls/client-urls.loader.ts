@@ -63,6 +63,14 @@ export const ClientUrlsScopedLoader = createLoader(async () => {
   return { runs: clientUrlsScopedRuns };
 });
 
+// revalidate(true) probe: re-runs on every navigation, including a same-URL
+// one where the default holds the group's loaders.
+let clientUrlsAlwaysRuns = 0;
+export const ClientUrlsAlwaysLoader = createLoader(async () => {
+  clientUrlsAlwaysRuns += 1;
+  return { runs: clientUrlsAlwaysRuns };
+});
+
 /**
  * Loader-thrown redirect() WITH state. The await forces settlement during
  * Flight serialization (the streaming lane — metadata already flushed), so

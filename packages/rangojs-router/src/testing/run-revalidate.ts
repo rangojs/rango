@@ -10,7 +10,10 @@
  * a re-implementation. Pass an array to test a chain in declaration order.
  */
 
-import { evaluateRevalidation } from "../router/revalidation.js";
+import {
+  evaluateRevalidation,
+  toShouldRevalidateFn,
+} from "../router/revalidation.js";
 import { runWithRequestContext } from "../server/request-context.js";
 import type { ResolvedSegment, ShouldRevalidateFn } from "../types.js";
 import {
@@ -81,12 +84,16 @@ export interface RunRevalidateOptions<TEnv = any> {
 const DEFAULT_URL = "http://localhost/";
 
 /**
- * Run one revalidate() predicate, or a chain in declaration order, the way
- * the router does for a request. Resolves to the final decision: true
- * re-runs the segment, false keeps the client's copy.
+ * Run one revalidate() argument, or a chain in declaration order, the way
+ * the router does for a request: a predicate, or `true` / `false` as
+ * `revalidate()` takes them. Resolves to the final decision: true re-runs
+ * the segment, false keeps the client's copy.
  */
 export async function runRevalidate<TEnv = any>(
-  fn: ShouldRevalidateFn<any, TEnv> | readonly ShouldRevalidateFn<any, TEnv>[],
+  fn:
+    | ShouldRevalidateFn<any, TEnv>
+    | boolean
+    | readonly (ShouldRevalidateFn<any, TEnv> | boolean)[],
   opts: RunRevalidateOptions<TEnv> = {},
 ): Promise<boolean> {
   const currentUrl = toURL(opts.currentUrl, new URL(DEFAULT_URL));
@@ -124,7 +131,7 @@ export async function runRevalidate<TEnv = any>(
       nextUrl,
       revalidations: fns.map((entry, index) => ({
         name: `runRevalidate#${index}`,
-        fn: entry,
+        fn: toShouldRevalidateFn(entry),
       })),
       routeKey: opts.routeName ?? "",
       context: (opts.context ?? ctx) as RevalidateArgs["context"],

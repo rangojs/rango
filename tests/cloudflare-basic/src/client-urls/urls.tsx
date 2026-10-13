@@ -16,7 +16,9 @@ import {
   clientUrlsTargetAction,
 } from "./actions.js";
 import {
+  ClientUrlsAlwaysLoader,
   ClientUrlsDetailLoader,
+  ClientUrlsHeldLoader,
   ClientUrlsIsActionNsLoader,
   ClientUrlsIsActionTargetLoader,
   ClientUrlsResultLoader,
@@ -150,6 +152,8 @@ function ClientUrlsIndex(): ReactNode {
   const { data: target } = useLoader(ClientUrlsIsActionTargetLoader);
   const { data: ns } = useLoader(ClientUrlsIsActionNsLoader);
   const { data: result } = useLoader(ClientUrlsResultLoader);
+  const { data: always } = useLoader(ClientUrlsAlwaysLoader);
+  const { data: held } = useLoader(ClientUrlsHeldLoader);
 
   return (
     <section data-testid="client-urls-index">
@@ -157,6 +161,11 @@ function ClientUrlsIndex(): ReactNode {
       <span data-testid="cu-is-action-target-runs">{target.runs}</span>
       <span data-testid="cu-is-action-ns-runs">{ns.runs}</span>
       <span data-testid="cu-result-runs">{result.runs}</span>
+      <span data-testid="cu-always-runs">{always.runs}</span>
+      <span data-testid="cu-held-runs">{held.runs}</span>
+      <Link to="/__client-urls" prefetch="none" data-testid="cu-self">
+        This page
+      </Link>
       <button
         data-testid="cu-is-action-target"
         onClick={() => void clientUrlsTargetAction()}
@@ -232,6 +241,9 @@ export default clientUrls(({ layout, path, loader, loading, revalidate }) => [
       // An imported predicate: the build moves it to the server with the
       // inline ones.
       loader(ClientUrlsResultLoader, () => [revalidate(onResultOk)]),
+      // Boolean literals stay in place; the server applies the constant.
+      loader(ClientUrlsAlwaysLoader, () => [revalidate(true)]),
+      loader(ClientUrlsHeldLoader, () => [revalidate(false)]),
     ]),
     path("/:slug", ClientUrlsDetail, () => [
       loader(ClientUrlsDetailLoader),

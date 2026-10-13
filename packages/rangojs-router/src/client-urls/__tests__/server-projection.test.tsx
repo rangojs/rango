@@ -950,6 +950,43 @@ describe("client URL server projection", () => {
       );
     });
 
+    it("projects an intercept loader's revalidate(true | false) and runs it on the server", async () => {
+      const source = clientUrls(({ path, intercept, loader, revalidate }) => [
+        path("/items/:id", AccountPage, { name: "item" }),
+        intercept("@modal", ".item", AccountPage, () => [
+          loader(loaderDefinition("loaders#always"), () => [revalidate(true)]),
+          loader(loaderDefinition("loaders#never"), () => [
+            revalidate(false),
+            revalidate(marker("k-modal-flag")),
+          ]),
+        ]),
+      ]);
+      registerClientUrlRevalidators({ "k-modal-flag": true });
+      const projection = serializeClientUrlPatterns(source, { hoisted: true });
+      expect(projection.intercepts![0]!.loaderRevalidate).toEqual([
+        [true],
+        [false, "k-modal-flag"],
+      ]);
+      expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
+
+      const [always, never] = materializeRoute(
+        clientReference("app.urls#intercept-literals"),
+        projection,
+        "item",
+      ).parent!.intercept[0]!.loader;
+      const sameUrl = { currentUrl: "http://localhost/items/1" };
+      // A same-URL navigation: the default holds, true re-runs.
+      expect(await runRevalidate(always!.revalidate, sameUrl)).toBe(true);
+      // An action: the default re-runs, false holds and ends the chain
+      // before the hoisted true.
+      expect(
+        await runRevalidate(never!.revalidate, {
+          ...sameUrl,
+          action: "src/modal.ts#save",
+        }),
+      ).toBe(false);
+    });
+
     it("fails at materialization when a hoisted key has no server registration", () => {
       const source = clientUrls(({ path, loader, revalidate }) => [
         path("/items/:id", AccountPage, { name: "item" }, () => [
@@ -967,6 +1004,97 @@ describe("client URL server projection", () => {
       ).toThrow(
         'clientUrls() revalidate() on loader "loaders#cart" of route "/items/:id" in "/src/shop.client.tsx#default" has no server registration (key "k-missing")',
       );
+    });
+
+    it("projects a revalidate(true | false) literal as itself and materializes it as the constant predicate", async () => {
+      const source = clientUrls(({ path, loader, revalidate }) => [
+        path("/items/:id", AccountPage, { name: "item" }, () => [
+          loader(loaderDefinition("loaders#always"), () => [revalidate(true)]),
+          loader(loaderDefinition("loaders#never"), () => [
+            revalidate(false),
+            revalidate(marker("k-after-false")),
+          ]),
+          loader(loaderDefinition("loaders#plain")),
+        ]),
+      ]);
+      const projection = serializeClientUrlPatterns(source, { hoisted: true });
+      expect(projection.routes[0].loaderRevalidate).toEqual([
+        [true],
+        [false, "k-after-false"],
+        [],
+      ]);
+      // The serialized projection is what discovery hands the server.
+      expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
+
+      let afterFalseCalls = 0;
+      registerClientUrlRevalidators({
+        "k-after-false": () => {
+          afterFalseCalls++;
+          return true;
+        },
+      });
+      const [always, never, plain] = materializeRoute(
+        clientReference("app.urls#literals"),
+        projection,
+        "item",
+      ).loader;
+      const sameUrl = { currentUrl: "http://localhost/items/1" };
+      const action = { ...sameUrl, action: "src/cart.ts#checkout" };
+      // A same-URL navigation: the default holds, true re-runs.
+      expect(await runRevalidate(plain.revalidate, sameUrl)).toBe(false);
+      expect(await runRevalidate(always.revalidate, sameUrl)).toBe(true);
+      // An action: the default re-runs, false holds and ends the chain.
+      expect(await runRevalidate(plain.revalidate, action)).toBe(true);
+      expect(await runRevalidate(never.revalidate, action)).toBe(false);
+      expect(afterFalseCalls).toBe(0);
+    });
+
+    it("runs a hoisted expression the server evaluated to a boolean, and rejects any other value at materialization", async () => {
+      const source = clientUrls(({ path, loader, revalidate }) => [
+        path("/items/:id", AccountPage, { name: "item" }, () => [
+          loader(loaderDefinition("loaders#flag"), () => [
+            revalidate(marker("k-flag")),
+          ]),
+        ]),
+      ]);
+      const projection = serializeClientUrlPatterns(source, { hoisted: true });
+      registerClientUrlRevalidators({ "k-flag": false });
+      const [flag] = materializeRoute(
+        clientReference("app.urls#flag"),
+        projection,
+        "item",
+      ).loader;
+      expect(
+        await runRevalidate(flag.revalidate, { action: "src/cart.ts#x" }),
+      ).toBe(false);
+      // Looked up per call: a dev re-evaluation that flips the flag applies.
+      registerClientUrlRevalidators({ "k-flag": true });
+      expect(await runRevalidate(flag.revalidate)).toBe(true);
+
+      registerClientUrlRevalidators({ "k-flag": "yes" as never });
+      expect(() =>
+        materializeRoute(clientReference("app.urls#flag"), projection, "item"),
+      ).toThrow(
+        'clientUrls() revalidate() on loader "loaders#flag" of route "/items/:id" in "app.urls#flag" has no server registration (key "k-flag")',
+      );
+    });
+
+    it("attaches a definition object's own revalidate(true | false)", async () => {
+      const source = clientUrls(({ path, loader, revalidate }) => [
+        path("/items/:id", AccountPage, { name: "item" }, () => [
+          loader(loaderDefinition("loaders#always"), () => [revalidate(true)]),
+          loader(loaderDefinition("loaders#never"), () => [revalidate(false)]),
+        ]),
+      ]);
+      const [always, never] = materializeRoute(
+        source,
+        serializeClientUrlPatterns(source),
+        "item",
+      ).loader;
+      expect(await runRevalidate(always.revalidate)).toBe(true);
+      expect(
+        await runRevalidate(never.revalidate, { action: "src/cart.ts#x" }),
+      ).toBe(false);
     });
 
     it("attaches a definition object's own predicates", async () => {

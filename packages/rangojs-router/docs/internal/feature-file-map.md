@@ -167,13 +167,15 @@ The client descriptor and both runtime projections are owned by:
   the `{ $$rangoRevalidate: "<key>" }` marker the browser and SSR copies of a
   "use client" module keep in place of a loader's `revalidate()` predicate.
 - [`client-urls/revalidate-registry.ts`](../../src/client-urls/revalidate-registry.ts) -
-  the server registry of hoisted predicates by key
+  the server registry of hoisted `revalidate()` predicates by key (a hoisted
+  boolean is stored as its constant predicate)
   (`registerClientUrlRevalidators`, re-exported from `server.ts`); the
   materialization in `server-projection.ts` attaches them to loader stubs.
 - [`vite/plugins/client-urls-revalidate-hoist.ts`](../../src/vite/plugins/client-urls-revalidate-hoist.ts) -
   the build transform: moves each `revalidate()` argument into the server-only
   `<file>?rango-revalidate` module, leaves the marker, appends the import to the
-  RSC client-reference proxy, and rejects what cannot run on the server.
+  RSC client-reference proxy, and rejects what cannot run on the server. A
+  `revalidate(true | false)` literal stays in place.
 - [`vite/plugins/hoist/scope.ts`](../../src/vite/plugins/hoist/scope.ts),
   [`vite/plugins/hoist/literal.ts`](../../src/vite/plugins/hoist/literal.ts) and
   [`vite/plugins/hoist/source.ts`](../../src/vite/plugins/hoist/source.ts) -

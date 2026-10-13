@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import {
-  getNumericContent,
+  parseNumber,
   testId,
   waitForHydration,
   writeFileBumpMtime,
@@ -15,6 +15,8 @@ import { execSync } from "node:child_process";
  * hashes its source, so an edit of its body changes the key. The next action
  * must run the edited predicate without a restart: discovery refreshes the
  * projection to the new key, and the RSC realm registers the edited module.
+ * A revalidate(true | false) literal is not hoisted: the refreshed projection
+ * carries the boolean itself.
  *
  * Serial + isolated server: mutates a shared source file.
  */
@@ -79,30 +81,36 @@ test.describe.serial("client-urls-hmr-revalidate", () => {
 
   /**
    * On a fresh /client-urls-action page, click `button`; once the action
-   * committed, did the result loader re-run? "unsettled" when the action did
-   * not commit (a cold dev server re-optimizing deps reloads the page).
+   * committed, did the result loader re-run? "unsettled" when the page did
+   * not load or the action did not commit: an edit's full reload, a cold
+   * dev server re-optimizing deps, or the dev server's transient
+   * re-discovery error after a program reload can land mid-call. Every wait
+   * is bounded, so the caller's poll retries within its timeout.
    */
   async function decide(
     page: Page,
     button: "ca-result-ok" | "ca-result-fail",
   ): Promise<"reran" | "held" | "unsettled"> {
-    await page.goto(f.url("/client-urls-action"));
-    await waitForHydration(page);
-    const readCount = async (): Promise<number> =>
-      Number(
-        (await testId(page, "ca-loader").textContent())?.replace("count:", ""),
-      );
-    const runs = await getNumericContent(testId(page, "ca-result-runs"));
-    const count = await readCount();
-    await testId(page, button).click();
+    const read = async (id: string): Promise<number> =>
+      parseNumber(await testId(page, id).textContent({ timeout: 5_000 }));
     try {
-      await expect.poll(readCount, { timeout: 5_000 }).toBe(count + 1);
+      await page.goto(f.url("/client-urls-action"), { timeout: 8_000 });
+      await page.waitForFunction(
+        () => document.documentElement.hasAttribute("data-hydrated"),
+        undefined,
+        { timeout: 8_000 },
+      );
+      await waitForHydration(page);
+      const runs = await read("ca-result-runs");
+      const count = await read("ca-loader");
+      await testId(page, button).click({ timeout: 5_000 });
+      await expect
+        .poll(() => read("ca-loader"), { timeout: 5_000 })
+        .toBe(count + 1);
+      return (await read("ca-result-runs")) > runs ? "reran" : "held";
     } catch {
       return "unsettled";
     }
-    return (await getNumericContent(testId(page, "ca-result-runs"))) > runs
-      ? "reran"
-      : "held";
   }
 
   test("editing a revalidate() body changes the next action's decision without a restart", async ({
@@ -126,5 +134,48 @@ test.describe.serial("client-urls-hmr-revalidate", () => {
     await expect
       .poll(() => decide(page, "ca-result-ok"), { timeout: WATCHER_TIMEOUT })
       .toBe("reran");
+  });
+
+  /** The fixture with the result loader's revalidate() argument replaced. */
+  function withResultRevalidate(arg: string): string {
+    const head = "loader(ClientUrlsResultLoader, () => [";
+    const start = originalContent.indexOf(head);
+    const end = originalContent.indexOf("]),", start);
+    expect(start).toBeGreaterThan(-1);
+    return (
+      originalContent.slice(0, start) +
+      `${head}revalidate(${arg})` +
+      originalContent.slice(end)
+    );
+  }
+
+  test("editing the predicate into revalidate(false) or revalidate(true) changes the next action's decision without a restart", async ({
+    page,
+  }) => {
+    await expect
+      .poll(() => decide(page, "ca-result-fail"), {
+        timeout: WATCHER_TIMEOUT,
+      })
+      .toBe("held");
+
+    // A literal stays in place: the refreshed projection carries it.
+    writeFileBumpMtime(fixturePath, withResultRevalidate("true"));
+    await expect
+      .poll(() => decide(page, "ca-result-fail"), {
+        timeout: WATCHER_TIMEOUT,
+      })
+      .toBe("reran");
+
+    writeFileBumpMtime(fixturePath, withResultRevalidate("false"));
+    await expect
+      .poll(() => decide(page, "ca-result-ok"), { timeout: WATCHER_TIMEOUT })
+      .toBe("held");
+
+    // Back to the hoisted predicate.
+    writeFileBumpMtime(fixturePath, originalContent);
+    await expect
+      .poll(() => decide(page, "ca-result-ok"), { timeout: WATCHER_TIMEOUT })
+      .toBe("reran");
+    expect(await decide(page, "ca-result-fail")).toBe("held");
   });
 });

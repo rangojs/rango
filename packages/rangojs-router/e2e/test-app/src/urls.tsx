@@ -1279,7 +1279,7 @@ export const urlpatterns = urls(
         name: "parallelRevalAfterAction",
       }),
 
-      // Regression: revalidate(() => false) on a route-scoped parallel slot
+      // Regression: revalidate(false) on a route-scoped parallel slot
       // must not blank the slot on the soft nav that first introduces it
       include("/", parallelNewSlotRevalPatterns, {
         name: "parallelNewSlotReval",

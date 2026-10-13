@@ -148,13 +148,13 @@ its handler's `.use`) throws at definition time. Attach it to the loader:
 ```typescript
 // Throws: revalidate() is not valid inside intercept("@modal", "product") use()
 intercept("@modal", "product", <ProductModal />, () => [
-  revalidate(() => false),
+  revalidate(false),
   loader(ProductLoader),
 ]);
 
 // Correct: the loader owns the decision
 intercept("@modal", "product", <ProductModal />, () => [
-  loader(ProductLoader, () => [revalidate(() => false)]),
+  loader(ProductLoader, () => [revalidate(false)]),
 ]);
 ```
 
@@ -180,7 +180,7 @@ layout(ProductLayout, () => [
   intercept("@modal", "product", <ProductModal />, () => [
     loader(ProductLoader, () => [
       revalidate(revalidateProductShell), // reruns with the producer
-      revalidate(() => false), // otherwise keep the loaded data
+      revalidate(false), // otherwise keep the loaded data
     ]),
   ]),
 ]);
@@ -201,7 +201,7 @@ export const revalidateProduct = () => [
 layout(ProductLayout, () => [
   revalidateProduct(),
   intercept("@modal", "product", <ProductModal />, () => [
-    loader(ProductLoader, () => [revalidateProduct(), revalidate(() => false)]),
+    loader(ProductLoader, () => [revalidateProduct(), revalidate(false)]),
   ]),
 ]);
 ```
@@ -311,7 +311,7 @@ intercept(
   <ProductModal />,
   () => [
     loader(ProductLoader, () => [cache()]),
-    loader(ProductCartLoader, () => [revalidate(() => true)]),
+    loader(ProductCartLoader, () => [revalidate(true)]),
     loader(RecommendationsLoader),
   ]
 )

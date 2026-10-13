@@ -180,7 +180,7 @@ layout(LocaleLayout, () => [
 ]);
 ```
 
-`revalidate(() => false)` on a standalone layout only restates the default. Revalidate callbacks must be synchronous; the full set of return shapes (hard boolean, soft `{ defaultShouldRevalidate }`, or defer) is covered in [Loaders](/docs/rango/features/loaders).
+`revalidate(false)` on a standalone layout only restates the default. Revalidate callbacks must be synchronous; the full set of return shapes (hard boolean, soft `{ defaultShouldRevalidate }`, or defer) is covered in [Loaders](/docs/rango/features/loaders).
 
 Partial revalidation does not re-run non-revalidated ancestors just to rebuild their `ctx.set()` state. If child segments read data established by this layout or by a handler above them, revalidate the outer segment too.
 

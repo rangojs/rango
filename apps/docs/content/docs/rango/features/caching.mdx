@@ -76,6 +76,8 @@ A segment the client doesn't hold yet always renders. [Execution Model](/docs/ra
 
 A predicate returns one of three things. `true` or `false` is a **hard** decision: it ends the chain of revalidators on that segment and overrides the default. `undefined` (or no return) **defers** to the next revalidator or the default. The callback must be synchronous — a returned Promise is ignored — so move async work into a loader.
 
+For a constant hard decision, pass the boolean itself: `revalidate(true)` is `revalidate(() => true)` (re-run on every navigation and action) and `revalidate(false)` is `revalidate(() => false)` (keep the client's copy once it holds one). A defer has no shorthand, so write the function.
+
 The predicate receives the action's full context — match _which_ action by reference with `ctx.isAction()` (rename-safe), branch on _what it returned_ with `ctx.actionResult`:
 
 ```tsx

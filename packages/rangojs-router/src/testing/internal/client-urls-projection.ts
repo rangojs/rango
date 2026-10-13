@@ -21,7 +21,8 @@ import type { ShouldRevalidateFn } from "../../types.js";
  * predicates are plain functions. Each is registered under a key named for
  * its reference, route or intercept, and loader, as the plugin's generated
  * module registers its own, and the projection carries the keys:
- * materialization attaches them and the server runs them, as in an app.
+ * materialization attaches them and the server runs them, as in an app. A
+ * boolean rides in the projection as itself, as the plugin leaves a literal.
  */
 export function installClientUrlsProjection(
   referenceId: string,
@@ -60,6 +61,7 @@ function withRevalidateKeys(
       ({ revalidate }, loaderIndex) =>
         revalidate.map((entry, index) => {
           if (isHoistedRevalidateRef(entry)) return entry.$$rangoRevalidate;
+          if (typeof entry === "boolean") return entry;
           const key = `${referenceId}:${owner}:${loaderIndex}:${index}`;
           fns[key] = entry;
           return key;

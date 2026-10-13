@@ -423,10 +423,16 @@ function createHelpers(): ClientUrlHelpers {
   };
 
   const revalidate: ClientUrlHelpers["revalidate"] = (fn) => {
-    // The build leaves a marker in place of the predicate it moved to the
-    // server (vite/plugins/client-urls-revalidate-hoist.ts).
-    if (typeof fn !== "function" && !isHoistedRevalidateRef(fn)) {
-      throw new Error("clientUrls() revalidate() expects a predicate function");
+    // Dev-only: client-urls-revalidate-hoist.ts rejects the rest at build.
+    if (
+      process.env.NODE_ENV !== "production" &&
+      typeof fn !== "function" &&
+      typeof fn !== "boolean" &&
+      !isHoistedRevalidateRef(fn)
+    ) {
+      throw new Error(
+        "clientUrls() revalidate() expects a predicate function or a boolean",
+      );
     }
     return toPublicItem({
       [ITEM_KIND]: true,

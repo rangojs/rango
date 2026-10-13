@@ -57,11 +57,13 @@ export interface ClientUrlLoaderRecord {
   /**
    * Per-loader revalidate() predicates, run on the server; empty = the
    * router's defaults. Under the rango Vite plugin the browser and SSR copies
-   * hold the marker the build left in place of each hoisted predicate.
+   * hold the marker the build left in place of each hoisted predicate; a
+   * boolean literal stays in place.
    */
   readonly revalidate: readonly (
     | ShouldRevalidateFn<any, DefaultEnv>
     | HoistedRevalidateRef
+    | boolean
   )[];
   /**
    * loader(Def, { ssr: false }): document renders await this loader before
@@ -175,10 +177,11 @@ export interface ClientUrlHelpers {
    * names, ...): the build moves it out of this "use client" module. It may
    * reference imports and globals only; a binding of this module, `this`,
    * `import()`, a browser global, an `async` function or an import from a
-   * "use client" module fails the build with its file and line.
+   * "use client" module fails the build with its file and line. A boolean
+   * is shorthand for `() => true` / `() => false`.
    */
   readonly revalidate: (
-    fn: ShouldRevalidateFn<any, DefaultEnv>,
+    fn: ShouldRevalidateFn<any, DefaultEnv> | boolean,
   ) => ClientUrlItem;
   /**
    * Declare an intercept for a named route in THIS definition. The target is

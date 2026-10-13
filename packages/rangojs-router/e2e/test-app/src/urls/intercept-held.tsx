@@ -122,7 +122,7 @@ export const interceptHeldPatterns = urls(
               loader={InterceptHeldLoader}
             />
           ),
-          () => [loader(InterceptHeldLoader, () => [revalidate(() => false)])],
+          () => [loader(InterceptHeldLoader, () => [revalidate(false)])],
         ),
 
         path("/rerun/:id", FullPage("ih-rerun-page"), { name: "rerunItem" }),
@@ -150,7 +150,7 @@ export const interceptHeldPatterns = urls(
             />
           ),
           () => [
-            loader(InterceptHeldLoader, () => [revalidate(() => false)]),
+            loader(InterceptHeldLoader, () => [revalidate(false)]),
             loader(InterceptRerunLoader),
           ],
         ),

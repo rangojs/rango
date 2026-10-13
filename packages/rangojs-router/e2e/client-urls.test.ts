@@ -541,7 +541,7 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
   }) => {
     using _ = expectNoPageError(page);
 
-    // The session loader never revalidates (revalidate(() => false)); the
+    // The session loader never revalidates (revalidate(false)); the
     // counter loader follows defaults. The action bump makes them diverge,
     // and the param nav is the probe: its GET re-evaluates the held route's
     // loaders (params changed -> default true), so without the predicate the
@@ -700,6 +700,37 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "ca-scoped-runs")).toHaveText(String(afterAll));
   });
 
+  test("a same-URL navigation re-runs the revalidate(true) group loader; the default and revalidate(false) hold", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Same params and search: the default holds the group's loaders (the
+    // result loader's predicate defers on a navigation), revalidate(false)
+    // holds the session loader, and revalidate(true) re-runs the always
+    // loader. Each value on screen changes only when its loader re-ran.
+    await page.goto(f.url("/client-urls-action"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const readAlways = (): Promise<number> =>
+      getNumericContent(testId(page, "ca-always-runs"));
+    const always = await readAlways();
+    const result = await testId(page, "ca-result-runs").textContent();
+    const session = await testId(page, "ca-session").textContent();
+
+    await testId(page, "ca-self").click();
+    await expect.poll(readAlways).toBeGreaterThan(always);
+    await expect(testId(page, "ca-result-runs")).toHaveText(result!);
+    await expect(testId(page, "ca-session")).toHaveText(session!);
+
+    // Once more: the decision holds on every same-URL navigation.
+    const again = await readAlways();
+    await testId(page, "ca-self").click();
+    await expect.poll(readAlways).toBeGreaterThan(again);
+    await expect(testId(page, "ca-result-runs")).toHaveText(result!);
+  });
+
   test.describe("without JavaScript", () => {
     test.use({ javaScriptEnabled: false });
 
@@ -707,7 +738,7 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
       page,
     }) => {
       // A document holds no segments, so no predicate keeps anything: the
-      // session loader (revalidate(() => false)) renders the bumped count
+      // session loader (revalidate(false)) renders the bumped count
       // the counter loader renders, and the scoped loader runs although its
       // predicate says no.
       await page.goto(f.url("/client-urls-action"));

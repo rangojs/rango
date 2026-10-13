@@ -5,7 +5,7 @@ import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
  * Regression fixture for the floored "new-segment" seed — see the
  * `defaultOverride` floor in src/router/segment-resolution/revalidation.ts.
  *
- * /with-slot owns a ROUTE-scoped @panel carrying revalidate(() => false);
+ * /with-slot owns a ROUTE-scoped @panel carrying revalidate(false);
  * /no-slot is a sibling under the same layout without it. Arriving from
  * /no-slot is the only way to reach /with-slot with @panel absent from the
  * request's client segment set, which is what used to blank the slot.
@@ -44,7 +44,7 @@ export const parallelNewSlotRevalPatterns = urls(
                 ),
               },
               // The exact opt-out that used to blank the slot.
-              () => [revalidate(() => false)],
+              () => [revalidate(false)],
             ),
           ],
         ),

@@ -547,6 +547,24 @@ naming the loader, route and module. The scope and capture analysis is shared
 with the `transition({ when })` hoist (`src/vite/plugins/hoist/scope.ts`,
 `hoist/literal.ts`).
 
+`revalidate(true)` and `revalidate(false)`, shorthand for `() => true` and
+`() => false`, take a different path when the argument is a boolean LITERAL:
+the plugin leaves it in place (it is the same constant in every environment),
+the projection carries the boolean itself in `loaderRevalidate` beside the
+keys, and materialization turns it into the constant predicate
+(`toShouldRevalidateFn`, `src/router/revalidation.ts`). A module whose only
+`revalidate()` calls are literals gets no `?rango-revalidate` module. Any
+other argument is hoisted whatever it evaluates to: the build cannot tell an
+imported boolean from an imported predicate (both are identifiers), so
+instead of rejecting one it lets the server evaluate the expression. The
+registry stores a boolean result as the same constant predicate, so
+`revalidate(HOLD_SESSION)` with an imported flag works; it leaves a value
+that is neither a function nor a boolean unregistered, and materialization
+fails with the missing-key error, naming the loader, route and module. The
+browser copy's argument check is dev-only: in a build the plugin checks a
+literal at its call site and the server checks any other argument when it
+mounts the group.
+
 What the argument may be, and what the build rejects (every error names
 `file:line:column` and starts `[rango] clientUrls() revalidate() at ...:
 revalidate() runs on the server; ...`):
@@ -568,7 +586,8 @@ revalidate() runs on the server; ...`):
   the request (a cookie or a search param) and read it from the argument, or
   refresh with `useRefreshLoaders`.
 - **An `async` or generator function; a spread, a second argument, or no
-  argument; a non-function value** (an object, array or string literal).
+  argument; a literal that is neither a function nor a boolean** (an object,
+  array, string, number or `null`).
 - **An import of `client-only`, or of a module whose directive prologue is
   `"use client"`:** on the server its exports are client references. A
   `"use server"` import is fine (on the server it is the real action, which
@@ -615,10 +634,12 @@ server from the request it received, like every `urls()` predicate; the
 client's `_rsc_segments` still only tells the server what it holds, and a
 predicate never bypasses middleware or authorization. Pinned dev+prod in
 `e2e/client-urls.test.ts` (after an action, one loader of the group
-refreshes while a sibling with `revalidate(() => false)` keeps its held value
+refreshes while a sibling with `revalidate(false)` keeps its held value
 in the same commit; `isAction(target)` vs `isAction(* as Actions)` pin
-identity; an `actionResult` predicate, a `formData` predicate, and a
-prefetched param navigation) and in `semantic-matrix.test.ts` row R2.
+identity; an `actionResult` predicate, a `formData` predicate, a
+prefetched param navigation, and a same-URL navigation that re-runs a
+`revalidate(true)` loader the default holds) and in
+`semantic-matrix.test.ts` row R2.
 
 `intercept()` loaders inside `clientUrls()` apply their `revalidate()` the
 same way: the build moves each predicate to the server, the projection carries

@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
   clientUrls,
   type ClientUrlBuilder,
@@ -810,6 +810,59 @@ describe("clientUrls", () => {
         ]),
       ]),
     ).toThrow("does not support loading() inside loader()");
+  });
+
+  it("stores revalidate(true | false) as the boolean, in declaration order with predicates", () => {
+    const onAction = () => undefined;
+    const patterns = clientUrls(
+      ({ path, layout, loader: useLoader, revalidate, intercept }) => [
+        layout(AppLayout, () => [
+          useLoader(loader("loaders#held"), () => [revalidate(false)]),
+          path("/", HomePage, { name: "home" }, () => [
+            useLoader(loader("loaders#chain"), () => [
+              revalidate(true),
+              revalidate(onAction),
+            ]),
+          ]),
+          path("/detail", AccountPage, { name: "detail" }),
+          intercept("@modal", ".detail", AccountPage, () => [
+            useLoader(loader("loaders#modal"), () => [revalidate(false)]),
+          ]),
+        ]),
+      ],
+    );
+    expect(
+      patterns.routes[0].loaders.map(({ revalidate: fns }) => fns),
+    ).toEqual([[false], [true, onAction]]);
+    expect(patterns.intercepts[0].loaders[0].revalidate).toEqual([false]);
+  });
+
+  it("rejects a revalidate() argument that is neither a predicate nor a boolean, outside production", () => {
+    for (const value of [undefined, null, 0, "true"]) {
+      expect(() =>
+        clientUrls(({ path, loader: useLoader, revalidate }) => [
+          path("/", HomePage, () => [
+            useLoader(loader("loaders#a"), () => [revalidate(value as never)]),
+          ]),
+        ]),
+      ).toThrow(
+        "clientUrls() revalidate() expects a predicate function or a boolean",
+      );
+    }
+    // A production build rejected it at its call site (the hoist plugin), so
+    // the browser bundle skips the check.
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      expect(() =>
+        clientUrls(({ path, loader: useLoader, revalidate }) => [
+          path("/", HomePage, () => [
+            useLoader(loader("loaders#a"), () => [revalidate(null as never)]),
+          ]),
+        ]),
+      ).not.toThrow();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("keeps the marker the build leaves in place of a hoisted predicate", () => {
