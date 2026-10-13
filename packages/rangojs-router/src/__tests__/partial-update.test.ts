@@ -3115,6 +3115,42 @@ describe("an action refetch whose loader throws on its rerun", () => {
     expect(onUpdate).not.toHaveBeenCalled();
   });
 
+  // A full payload (isPartial: false) answers the refresh when the server
+  // could not match it partially: the same rule keeps the page (dc-t68).
+  it("a stale revalidation answered with a full payload whose loader throws rejects and commits nothing", async () => {
+    let caught: unknown;
+    const onUpdate = vi.fn();
+    const tx = createMockTx();
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: false,
+        segments: [
+          seg("R0", { component: "updated" }),
+          loader({
+            __loaderResult: true,
+            ok: false,
+            error: { message: "stock service unavailable" },
+            fallback: null,
+          }),
+        ],
+      },
+    });
+    await createPartialUpdater({
+      getVersion: () => undefined,
+      store: createMockStore({ cachedSegments: [seg("R0")] }) as any,
+      client: client as any,
+      onUpdate,
+      renderSegments: vi.fn(async () => "tree"),
+    })("http://localhost/", ["R0"], false, undefined, tx as any, {
+      type: "stale-revalidation",
+    }).catch((error: unknown) => {
+      caught = error;
+    });
+    expect(caught).toMatchObject({ message: "stock service unavailable" });
+    expect(tx.commit).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
   it("a stale revalidation aborted while it reads its loaders commits nothing", async () => {
     const controller = new AbortController();
     // Read only by the error check: the abort lands inside its await.

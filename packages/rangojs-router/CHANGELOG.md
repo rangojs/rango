@@ -165,6 +165,18 @@ page replaced it, and with `errorBoundary()` its fallback did. Not
 covered yet, as for actions: an `intercept()`'s loaders and a parallel
 slot's loaders under its own `loading()`.
 
+### Fixed: the background refresh after Back/Forward keeps the page when the server answers it with a full page
+
+The refresh after Back/Forward onto a stale page keeps the page on screen
+when a loader it re-ran fails (above). The server answers that refresh with
+a full page instead of a partial one when the request arrives without the
+URL of the page it was sent from (a proxy that drops the
+`X-RSC-Router-Client-Path` and `Referer` headers). On that answer the
+loader's error still showed at its read, and the failed page was stored for
+the next Back. Now that answer keeps the page as well: nothing on screen
+changes, the browser console logs `[Browser] Background revalidation failed`,
+and the entry stays stale, so the next Back refreshes it again.
+
 ### Fixed: an `errorBoundary()` fallback clears when a later action or navigation re-runs its loader without error
 
 A loader's failure that showed its `errorBoundary()` fallback, on a

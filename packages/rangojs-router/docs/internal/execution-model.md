@@ -1704,6 +1704,9 @@ should not be treated as equivalent.
   entry (`stale-revalidation`): nobody asked for it and the page on screen
   works, so a loader it re-ran that threw makes `partial-update.ts` reject
   after the build and before the commit, so nothing on screen changes, and
+  the entry is not re-cached. That holds for a partial answer and for a full
+  one (`isPartial: false`, a refresh the server could not match partially;
+  dc-t68), and
   `navigation-bridge.ts` logs `[Browser] Background revalidation failed` (the
   owner's call for dc-t65). A loader `redirect()` replaces only the route's
   content and navigates; `notFound()` renders its
