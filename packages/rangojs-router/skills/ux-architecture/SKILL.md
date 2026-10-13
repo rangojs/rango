@@ -423,10 +423,10 @@ ctx.reverse(".product", { slug: "b", locale: "de" }); // switch language
 ```
 
 - Explicit params override the filled ones: `reverse(".issues", { projectId })`.
-- Middleware `ctx.reverse` takes global names only and fills nothing; with no
-  params object it returns the raw `/:accountId/...` pattern, so pass every
-  param. `getRequestContext().reverse` in route middleware does fill (rebound
-  after the match); in global middleware only after `next()`.
+- Middleware `ctx.reverse` takes global names only and fills nothing, so
+  pass every param; a missing one throws `Missing param`.
+  `getRequestContext().reverse` in route middleware does fill (rebound after
+  the match); in global middleware only after `next()`.
 - An action's `getRequestContext().reverse("global.name")` fills from the page
   URL: `throw redirect(getRequestContext().reverse("account.settings"))`.
 - Wrap each module's map once in a userland file
@@ -434,9 +434,9 @@ ctx.reverse(".product", { slug: "b", locale: "de" }); // switch language
   `src/lib/links.ts`) and call that hook in components, under that module's
   own mount (`/links`, "One hook per module").
 - Not these: `useParams().accountId` in a template string, `ctx.params`
-  passed down as props to build links, a "current account" context, or
-  `useHref()` / relative `router.push()` under a parameterized mount (they
-  emit a literal `/:accountId/...`; no error).
+  passed down as props to build links, or a "current account" context.
+  `useHref()` and relative `router.push()` fill the mount's params too, but
+  take unchecked path strings: prefer the typed `useReverse` map.
 - `useReverse` with another module's map, or `useReverse(NamedRoutes)` under
   a mount, gives a wrong URL with no error. Build cross-module links on the
   server and pass them as props or loader data (dc-t57).

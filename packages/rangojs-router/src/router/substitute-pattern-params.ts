@@ -20,8 +20,9 @@ import { parsePattern } from "./parse-pattern.js";
  *                         omit when absent.
  *
  * Shared by `ctx.reverse()` (server), `createReverse()` (typed runtime
- * helper), and `useReverse()` (client hook). The behavior must stay
- * identical across all three call sites.
+ * helper), `useReverse()` (client hook), and the include() mount fill of
+ * `useHref()` and relative `useRouter().push`. The behavior must stay
+ * identical across all of them.
  */
 export function substitutePatternParams(
   pattern: string,

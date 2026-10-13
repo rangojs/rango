@@ -55,6 +55,37 @@ function describeForMode(label: string, mode: "dev" | "build") {
       await expect(page).toHaveURL(/\/cr\/zeta$/);
       await assertReverseSurface(page, { tenantId: "zeta" });
     });
+
+    test("useHref and relative push fill the :tenantId mount (no literal :param URL)", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // SSR parity: useHref fills the mount before hydration too.
+      await page.goto(f.url("/cr/acme"));
+      const ssrHref = await testId(page, "cr-cf-href-post").textContent();
+      expect(ssrHref).toBe("/cr/acme/posts/p7");
+
+      await waitForHydration(page);
+
+      await testId(page, "cr-cf-href-link").click();
+      await expect(page).toHaveURL(/\/cr\/acme\/posts\/p7$/);
+      await expect(testId(page, "cr-cf-tenant")).toHaveText("acme");
+
+      await testId(page, "cr-cf-push-post").click();
+      await expect(page).toHaveURL(/\/cr\/acme\/posts\/p8$/);
+      await expect(testId(page, "cr-cf-tenant")).toHaveText("acme");
+
+      // A param navigation to another tenant: both follow the new value.
+      await testId(page, "cr-cf-link").click();
+      await expect(page).toHaveURL(/\/cr\/zeta$/);
+      await expect(testId(page, "cr-cf-href-post")).toHaveText(
+        "/cr/zeta/posts/p7",
+      );
+      await testId(page, "cr-cf-push-post").click();
+      await expect(page).toHaveURL(/\/cr\/zeta\/posts\/p8$/);
+      await expect(testId(page, "cr-cf-tenant")).toHaveText("zeta");
+    });
   });
 }
 

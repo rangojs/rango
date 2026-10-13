@@ -84,16 +84,26 @@ describe("runMiddleware", () => {
       params: { slug: "hello" },
     });
     const rev = (ctx as unknown as { reverse: (n: string) => string }).reverse;
-    expect(rev("post")).toBe("/blog/:slug");
+    expect(() => rev("post")).toThrow('Missing param "slug" for route "post"');
   });
 
   it("ctx.reverse does NOT auto-fill the current params (production parity)", async () => {
     // Production app/response middleware get createReverseFunction(routeMap)
     // alone — no route name or current params. Reversing a :slug route with no
-    // explicit params must leave it unsubstituted, NOT fill from the request.
+    // explicit params must NOT fill from the request, and must throw rather
+    // than return the raw "/blog/:slug" pattern as a URL.
     let reversed: string | undefined;
+    let error: string | undefined;
     const mw: MiddlewareFn = async (ctx, next) => {
-      reversed = (ctx as { reverse: (n: string) => string }).reverse("post");
+      const reverse = (
+        ctx as { reverse: (n: string, p?: Record<string, string>) => string }
+      ).reverse;
+      try {
+        reversed = reverse("post");
+      } catch (e) {
+        error = (e as Error).message;
+      }
+      expect(reverse("post", { slug: "world" })).toBe("/blog/world");
       return next();
     };
     await runMiddleware(mw, {
@@ -102,7 +112,8 @@ describe("runMiddleware", () => {
       routeName: "post",
       params: { slug: "hello" },
     });
-    expect(reversed).toBe("/blog/:slug");
+    expect(reversed).toBeUndefined();
+    expect(error).toBe('Missing param "slug" for route "post"');
   });
 
   it("passes through (next called once) and returns the downstream 200", async () => {

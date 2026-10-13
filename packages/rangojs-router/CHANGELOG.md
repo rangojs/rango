@@ -292,6 +292,59 @@ root `/login` that a group `/:slug` under `/:locale?` also matches, never
 renders as the group's route, and opens none of its intercepts. Nothing to
 change in your code.
 
+### Fixed: `useHref`, relative `useRouter().push` and `ctx.reverse` no longer return a URL with a literal `:param`
+
+Five APIs returned a URL that still held a route pattern's `:param` instead
+of a value or an error, and the browser then navigated to it.
+
+**Before.** Under `include("/:accountId/:projectId", ...)` at
+`/acme/web/board`:
+
+```tsx
+const href = useHref();
+href("/issues"); // "/:accountId/:projectId/issues"
+useRouter().push("issues"); // navigates to "/:accountId/:projectId/issues"
+```
+
+In middleware or a response route, `ctx.reverse("account.project.issues")`
+with no params object returned `"/:accountId/:projectId/issues"` (with `{}` it
+threw). `router.reverse(name)` did the same.
+
+**Now.**
+
+```tsx
+const href = useHref();
+href("/issues"); // "/acme/web/issues"
+useRouter().push("issues"); // navigates to "/acme/web/issues"
+```
+
+- `useHref()` fills the mount's params from `useParams()`, as `useReverse`
+  does. Relative `useRouter().push`, `replace` and `prefetch` fill them the
+  same way, from the committed route params. A static mount works as before.
+  A mount param missing from the current match throws `Missing param` when
+  the `href` function is called; `push` and `replace` return a rejected
+  promise, and `prefetch` skips the target.
+- Middleware and response-route `ctx.reverse(name)`, and `router.reverse(name)`,
+  throw `Missing param "accountId" for route "account.project.issues"` when
+  called with no params object for a route with a required param, as every
+  other reverse does. They still do not fill params from the request: pass
+  them. An absent optional param is dropped (`/:locale?/blog` gives `/blog`,
+  before `/:locale?/blog`), and a bare `*` with no value collapses
+  (`/files/*` gives `/files`), as with an explicit params object. A route with
+  no `:param` or `*` is unchanged.
+- A `Prerender` `getParams()` `ctx.reverse(name)` in a production build
+  substitutes the same way as in dev: a missing required param throws
+  `Missing param`. Before, the build returned the pattern with no params
+  object and left the missing `:param` in the URL with `{}`, while dev threw
+  for `{}`.
+
+If you worked around the first two with `useReverse(routes)` or a hand-built
+prefix, it keeps working. Code that relied on `ctx.reverse(name)` or
+`router.reverse(name)` returning the pattern now throws; write the pattern
+string by hand if you need it. The bare `href(path, mount)` function still
+appends the mount it is given as-is: pass it a static mount, or use
+`useHref()`.
+
 ### Fixed: a modal keeps the data of a loader that skips `revalidate()` when a link in it opens another modal
 
 **Before.** A link in an open modal to another intercepted route whose modal

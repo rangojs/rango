@@ -101,7 +101,7 @@ import { href, Link } from "@rangojs/router/client";
 <Link to={href(`/blog/${slug}`)}>Post</Link>;
 ```
 
-`href()` is not basename-aware: `<Link>` and `useRouter().push()` prefix root-relative paths with the router's `basename`, but a plain `<a href>` or `fetch()` gets the raw path. `useHref()` is the mount-aware variant — inside `include("/shop", …)`, `useHref()("/cart")` returns `/shop/cart`. It doesn't substitute params, so under a parameterized mount use `useReverse(routes)` instead.
+`href()` is not basename-aware: `<Link>` and `useRouter().push()` prefix root-relative paths with the router's `basename`, but a plain `<a href>` or `fetch()` gets the raw path. `useHref()` is the mount-aware variant — inside `include("/shop", …)`, `useHref()("/cart")` returns `/shop/cart`. Under a parameterized mount it fills the mount's params from the current URL (`include("/:accountId", …)` at `/acme/board` gives `/acme/cart`); for typed links to named routes prefer `useReverse(routes)`.
 
 ## When to use what
 

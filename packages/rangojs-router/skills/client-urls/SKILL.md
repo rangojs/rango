@@ -726,9 +726,10 @@ a hard load of the target URL renders the full route.
 - **Hook semantics shift inside a group.** `usePathname` is ABSOLUTE (mount
   included) — never compare it to your own `path()` patterns; build local
   links with `useReverse(routes)` from the group's `.gen.ts`: it composes the
-  mount and fills its params, while `useHref()` and a relative
-  `useRouter().push("cart")` join the mount pattern as-is and emit a literal
-  `/:accountId/...` under a parameterized mount. `push("/x")` stays
+  mount and fills its params. `useHref()` (`groupHref("/items/1")`) and a
+  relative `useRouter().push("cart")` also fill `:param` mount segments from
+  the current params (a missing one throws, or rejects the push), but append
+  the rest unchecked. `push("/x")` stays
   app-absolute by design (never auto-prefixed). `useSearchParams` carries REAL
   values during SSR (live request seeds the SSR store; on ppr routes the
   capture/resume renders seed the shell key's own sorted search — search is

@@ -9,6 +9,7 @@
 import { contextSet, hasContextVars } from "../../context-var.js";
 import { sha256 } from "./build-versions.js";
 import {
+  createGetParamsReverse,
   encodePathParam,
   substituteRouteParams,
   runWithConcurrency,
@@ -76,12 +77,7 @@ export async function expandPrerenderRoutes(
   for (const { manifest: m } of allManifests) {
     if (m.routeManifest) Object.assign(allRoutes, m.routeManifest);
   }
-  const getParamsReverse = (name: string, params?: Record<string, string>) => {
-    const pattern = allRoutes[name];
-    if (!pattern) throw new Error(`Unknown route: "${name}"`);
-    if (!params) return pattern;
-    return substituteRouteParams(pattern, params);
-  };
+  const getParamsReverse = createGetParamsReverse(allRoutes);
 
   let resolvedRoutes = 0;
   let totalDynamic = 0;

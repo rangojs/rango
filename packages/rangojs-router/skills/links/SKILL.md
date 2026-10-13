@@ -35,8 +35,8 @@ router `basename`, so results are basename-prefixed.
 Middleware and response routes (`path.json()`, `path.text()`, …) get a
 global-only `ctx.reverse` (`GlobalReverseFunction`): no `include()` scope and no
 param auto-fill, so pass the fully qualified name and every param. A dot-local
-`.name` is a type error there. With no params object it returns the raw
-pattern (`/:accountId/settings`) instead of throwing (dc-t56). Route
+`.name` is a type error there. A missing required param throws
+`Missing param`, with or without a params object. Route
 middleware can use `getRequestContext().reverse` instead: it is rebound after
 the match, takes `.name` and global names, and fills mount params. In global
 middleware (`router.use`) it fills only after `next()`. See `/middleware` and
@@ -156,7 +156,7 @@ export const tenantPatterns = urls(({ path }) => [
 ]);
 ```
 
-Auto-fill uses `{ ...ctx.params, ...hrefParams }` — current request params are defaults, explicit params win. Params not needed by the target route are silently ignored. Because every current param is a default, drop an optional one explicitly with `undefined` or `""` — under `include("/:locale?", ...)` on `/en/...`, a bare `ctx.reverse("menu.index")` keeps `/en`, while `ctx.reverse("menu.index", { locale: undefined })` returns `/` (see `/i18n`). A missing required param throws `Missing param "slug" for route "…"`, except in middleware and response-route `ctx.reverse`, which returns the raw `/:slug/...` pattern when no params object is passed (dc-t56); an unknown name throws `Unknown route: "…"`.
+Auto-fill uses `{ ...ctx.params, ...hrefParams }` — current request params are defaults, explicit params win. Params not needed by the target route are silently ignored. Because every current param is a default, drop an optional one explicitly with `undefined` or `""` — under `include("/:locale?", ...)` on `/en/...`, a bare `ctx.reverse("menu.index")` keeps `/en`, while `ctx.reverse("menu.index", { locale: undefined })` returns `/` (see `/i18n`). A missing required param throws `Missing param "slug" for route "…"` (in middleware and response routes too, with or without a params object); an unknown name throws `Unknown route: "…"`.
 
 ### Global names (unprefixed)
 
@@ -375,9 +375,9 @@ function ShopNav() {
 }
 ```
 
-Use `useHref()` for local navigation within a statically mounted module (`include("/shop", ...)`). Use the bare `href()` function for absolute paths outside the current mount.
+Use `useHref()` for local navigation within a mounted module (`include("/shop", ...)` or `include("/tenant/:tenantId", ...)`). Use the bare `href()` function for absolute paths outside the current mount.
 
-`useHref()` concatenates the mount **pattern** as-is and does not substitute params, and its argument is not checked against your routes. Under a parameterized mount (`include("/tenant/:tenantId", ...)`, `/:locale`, `/:locale?`) it produces `/tenant/:tenantId/cart` with no error (dc-t56), and so does a relative `useRouter().push("cart")` — use `useReverse(routes)` there, which substitutes mount params from `useParams()`.
+Under a parameterized mount (`include("/tenant/:tenantId", ...)`, `/:locale`, `/:locale?`), `useHref()` fills the mount's params from `useParams()`, the same way `useReverse` does: at `/tenant/acme/board`, `href("/cart")` returns `/tenant/acme/cart`. A mount param missing from the current match makes the returned function throw `Missing param "tenantId" for route "/tenant/:tenantId"`; it never returns a URL with a literal `:tenantId`. Relative `useRouter().push("cart")` / `replace` / `prefetch` fill the mount from the committed route params at call time; a missing one rejects the `push`/`replace` promise and skips the `prefetch`. Only the mount is filled: the path argument is appended verbatim and is not checked against your routes, so for a link to a named route with its own params prefer `useReverse(routes)`.
 
 ## Client: useMount()
 
@@ -395,7 +395,7 @@ function MountInfo() {
 }
 ```
 
-`useMount()` reads from `MountContext`, which is automatically set by `include()` in the segment tree. Nested includes return the nearest mount's full URL prefix (e.g. `/shop/admin`), and a parameterized include returns its pattern (`/tenant/:tenantId`), not the matched URL. `href(path, mount)` is the non-hook equivalent of `useHref()`.
+`useMount()` reads from `MountContext`, which is automatically set by `include()` in the segment tree. Nested includes return the nearest mount's full URL prefix (e.g. `/shop/admin`), and a parameterized include returns its pattern (`/tenant/:tenantId`), not the matched URL. `href(path, mount)` concatenates the mount it is given as-is; it is the non-hook equivalent of `useHref()` only under a static mount (`useHref()` also fills mount params).
 
 ## Client: useReverse(routes)
 
@@ -627,7 +627,7 @@ a link or a whole section from prefetching at all, use the `prefetch` prop or
 | Client component | `useReverse(routes)`                               | Local names from an imported `routes` map | Typed in-module URL generation without round-tripping the server |
 | Client component | (URL passed as prop / loader data / action return) | Named routes                              | Cross-module URLs or one-off names you don't want to import      |
 | Client component | `href("/path")`                                    | Absolute paths (static strings)           | Static navigation where no named-route lookup is needed          |
-| Client component | `useHref()`                                        | Mount-prefixed paths                      | Static mounts only; never under `:param` mounts                  |
+| Client component | `useHref()`                                        | Mount-prefixed paths                      | Local paths inside `include()`; fills `:param` mount segments    |
 | Client component | `useMount()`                                       | Raw mount path                            | Custom mount-aware logic                                         |
 
 > `ctx.reverse()` is server-only. On the client, either generate URLs on the server and pass them in, or import the `routes` map and use `useReverse(routes)` for in-module names, inside that module's own mount.

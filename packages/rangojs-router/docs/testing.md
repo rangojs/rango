@@ -697,6 +697,19 @@ const { getByTestId } = await renderRoute(
 // useMount() -> "/shop"; useReverse({ product: "/c/:slug" })("product", { slug: "wine" }) -> "/shop/c/wine"
 ```
 
+A parameterized include takes its pattern as the mount, exactly as production's
+MountContext carries it; seed the mount's values with `params`. `useHref` and
+relative `useRouter().push` then fill the mount
+(`render-route-param-mount.test.tsx`):
+
+```tsx
+const { getByTestId, router } = await renderRoute(
+  [{ path: "/board", Component: Board }],
+  { mount: "/:accountId", request: "/board", params: { accountId: "acme" } },
+);
+// useHref()("/issues") -> "/acme/issues"; useRouter().push("issues") -> router.pathname() "/acme/issues"
+```
+
 To test the router-wide prefetch fallback, pass the same strategy through
 `defaultPrefetch`. `renderRoute` scopes it to that rendered tree and uses the
 production delegated-anchor registration, including basename/resource checks

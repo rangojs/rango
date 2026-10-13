@@ -351,7 +351,8 @@ of them mean. The working set below is pinned dev+prod by the hook probe
   never the definition-local path the group's patterns matched. Don't
   compare it against your own `path()` patterns under a non-root mount.
 - **`useHref`** is the correct way to build group-local links:
-  `groupHref("/items/1")` composes the mount wherever the group is mounted.
+  `groupHref("/items/1")` composes the mount wherever the group is mounted,
+  filling `:param` mount segments from `useParams()`.
   Hand-written absolute `to=` strings also work but hardcode the mount.
 - **`useSearchParams` carries real values during SSR**: the live
   request's search seeds the SSR store, so search-derived branches SSR

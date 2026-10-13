@@ -2,7 +2,9 @@
 
 import { useCallback } from "react";
 import { href, type ValidPaths } from "../../href-client.js";
+import { substitutePatternParams } from "../../router/substitute-pattern-params.js";
 import { useMount } from "./use-mount.js";
+import { useParams } from "./use-params.js";
 
 /**
  * Client-side hook for mount-aware URL resolution.
@@ -10,6 +12,12 @@ import { useMount } from "./use-mount.js";
  * Returns an href function that automatically prepends the current
  * include() mount prefix. Inside an include("/shop", ...) scope,
  * the returned function resolves local paths relative to /shop.
+ *
+ * Under a parameterized mount (`include("/:accountId", ...)`) the mount's
+ * params are filled from the current route params, as `useReverse` does:
+ * `href("/issues")` at `/acme/board` returns `/acme/issues`. A mount param
+ * missing from the current match throws `Missing param` when the returned
+ * function is called.
  *
  * For absolute paths (outside the current mount), use the bare
  * href() function directly instead.
@@ -37,11 +45,22 @@ import { useMount } from "./use-mount.js";
  */
 export function useHref(): (path: `/${string}`) => string {
   const mount = useMount();
-  // Memoize on `mount` (stable within a route) so the returned function is
-  // referentially stable across re-renders — a consumer can safely pass it as a
-  // dependency or a prop to a memoized child without forcing re-renders.
+  // The filled mount (it starts with "/"), or the Missing param message. The
+  // selector also runs in the params subscription, so it must not throw, and
+  // a string lets useParams skip the re-render, and keeps the returned
+  // function stable, unless the mount's own values change.
+  const base = useParams((p) => {
+    try {
+      return substitutePatternParams(mount, p, mount);
+    } catch (e) {
+      return (e as Error).message;
+    }
+  });
   return useCallback(
-    (path: `/${string}`) => href(path as ValidPaths, mount),
-    [mount],
+    (path: `/${string}`) => {
+      if (!base.startsWith("/")) throw new Error(base);
+      return href(path as ValidPaths, base);
+    },
+    [base],
   );
 }

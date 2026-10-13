@@ -6,6 +6,8 @@ import { useMount } from "./use-mount.js";
 import { prefetchDirect } from "../prefetch/loader.js";
 import { getAppVersion } from "../app-version.js";
 import { prefixBasename } from "../../router/basename.js";
+import { substitutePatternParams } from "../../router/substitute-pattern-params.js";
+import { href, type ValidPaths } from "../../href-client.js";
 import type { RouterInstance, RouterNavigateOptions } from "../types.js";
 
 /**
@@ -22,7 +24,12 @@ import type { RouterInstance, RouterNavigateOptions } from "../types.js";
  *
  * RELATIVE paths (no leading `/`, no scheme/query/hash) resolve against the
  * current include() mount: `router.push("cart")` inside `include("/shop")`
- * navigates to `/shop/cart`. Absolute paths stay APP-absolute — unlike
+ * navigates to `/shop/cart`. Under a parameterized mount
+ * (`include("/:accountId", ...)`) the mount's params are filled from the
+ * current route params: `router.push("issues")` at `/acme/board` navigates
+ * to `/acme/issues`, and a missing mount param rejects the push/replace
+ * promise with `Missing param` (a prefetch skips the target).
+ * Absolute paths stay APP-absolute — unlike
  * basename, the mount is scoped, and absolute pushes legitimately target
  * outside it, so they are never auto-prefixed.
  *
@@ -70,16 +77,32 @@ export function useRouter(): RouterInstance {
       ) {
         return withBasename(url);
       }
-      const base = mount === "/" ? "" : mount.replace(/\/$/, "");
-      return withBasename(`${base}/${relative}`);
+      // The mount is the include()'s URL pattern: fill its params from the
+      // committed params at call time (not render time, so this object stays
+      // stable across navigations), as useHref does.
+      return withBasename(
+        href(
+          `/${relative}` as ValidPaths,
+          substitutePatternParams(
+            mount,
+            ctx!.eventController.getParams(),
+            mount,
+          ),
+        ),
+      );
     }
 
+    // push/replace are async so a target that cannot resolve (a missing
+    // mount param) rejects the returned promise instead of throwing.
     return {
-      push(url: string, options?: RouterNavigateOptions): Promise<void> {
+      async push(url: string, options?: RouterNavigateOptions): Promise<void> {
         return ctx.navigate(resolveTarget(url), { ...options, replace: false });
       },
 
-      replace(url: string, options?: RouterNavigateOptions): Promise<void> {
+      async replace(
+        url: string,
+        options?: RouterNavigateOptions,
+      ): Promise<void> {
         return ctx.navigate(resolveTarget(url), { ...options, replace: true });
       },
 
@@ -90,8 +113,16 @@ export function useRouter(): RouterInstance {
       prefetch(url: string, options?: { key?: ":source" }): void {
         const segmentState = ctx.store?.getSegmentState();
         if (segmentState) {
+          let target: string;
+          try {
+            target = resolveTarget(url);
+          } catch {
+            // A prefetch is a hint: a target that cannot resolve (missing
+            // mount param) is skipped; push/replace report the error.
+            return;
+          }
           prefetchDirect(
-            resolveTarget(url),
+            target,
             segmentState.currentSegmentIds,
             getAppVersion(),
             ctx.store?.getRouterId?.(),

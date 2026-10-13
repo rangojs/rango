@@ -617,7 +617,10 @@ path.json(
 
 A dot-local name (`ctx.reverse(".comments")`) is a type error here. The
 runtime reverse has no scope to resolve it against, so untyped (JS) code that
-calls it throws `Unknown route` and the route answers 500.
+calls it throws `Unknown route` and the route answers 500. Leaving out a
+required param (`ctx.reverse("blog.api.comments")`) throws
+`Missing param "slug" for route "blog.api.comments"`, with or without a params
+object; it never returns the `/:slug` pattern as a URL.
 
 ## Content Negotiation
 

@@ -274,7 +274,9 @@ declare global {
  * Type-safe href function for client-side use
  *
  * Without mount: identity function, validates absolute paths at compile time.
- * With mount: prepends mount path, for use with useMount() inside include() scopes.
+ * With mount: prepends the mount as given. `useMount()` under a parameterized
+ * include returns its pattern (`/:accountId`), which this does not fill: use
+ * `useHref()` there, which substitutes the mount params.
  *
  * @param path - A valid path matching one of the registered route patterns
  * @param mount - Optional mount prefix from useMount() for include-scoped paths
