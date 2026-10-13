@@ -149,7 +149,12 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // loaders merge with the server render (merge-segment-loaders.ts,
 // thenable-status.ts settledValue) +69B; treeless location state waits for
 // the reveal barrier (NavigationProvider.tsx) +11B. Together ~49468B.
-const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 384;
+//
+// Raised 48.375KB -> 48.5KB on 2026-10-13 on release/0.24.x only, for the
+// 0.24.3 backport of the clientUrls() layout() loader revalidate fix (#1137:
+// the reconciler and handle carries of a layout loader's sibling copies).
+// main keeps its own ratchet.
+const ROUTER_CHUNK_GZIP_MAX = 48 * 1024 + 512;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

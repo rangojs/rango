@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.24.3 (2026-10-13)
 
 ### Fixed: a `clientUrls()` `layout()` loader is held across its layout's routes and follows its `revalidate()`, as on a server layout
 
