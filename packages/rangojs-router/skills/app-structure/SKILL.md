@@ -70,6 +70,47 @@ here for the rules they share.
    `clientUrls()` module, the local `routes` map that `useReverse(routes)` and
    `Handler<".name", routes>` read. Regenerate and commit both whenever a
    `path()` or `include()` changes.
+7. **Link by name, never by string. Inside a module, by local name, never by
+   its mount.** Moving an `include()` mount or renaming a path then updates
+   every link; a hardcoded `"/app/projects"` breaks silently. A local name
+   (`ctx.reverse(".x")`, `useReverse(routes)`) resolves against wherever the
+   module is mounted and fills the mount's params (`:locale`, `:accountId`,
+   `:projectId`) from the current URL, so the module never knows its prefix
+   and can be mounted twice. The maps exist only if generated and committed
+   (rule 6).
+   - Server handlers, layouts, parallel slots, loaders: `ctx.reverse(".local")`
+     or `ctx.reverse("global.name")`; both fill mount params, and explicit
+     params override (`{ locale: "de" }` switches; `{ locale: undefined }`
+     drops an optional `/:locale?` and throws for a required `/:locale`).
+     `scopedReverse` types the local names.
+   - Middleware `ctx.reverse` takes global names only and fills nothing; with
+     no params object it returns the raw `/:accountId/...` pattern, so pass
+     every param. `getRequestContext().reverse` in route middleware does fill;
+     in global middleware only after `next()`.
+   - An action's `getRequestContext().reverse("global.name")` fills from the
+     page URL; use global names.
+   - A client component linking within one module or `clientUrls()` group:
+     `useReverse(routes)`, `routes` imported from that module's `.gen.ts`
+     (`import { routes } from "./app.client.gen"`). Mount-aware, fills params
+     from `useParams()`, and only that module's names reach the client bundle.
+     Wrap each map once in `src/lib/links.ts`
+     (`export const useAppReverse = () => useReverse(appRoutes)`) and call
+     that hook in components under that module's own mount (`/links`).
+   - A URL from another module: generate it on the server and pass it as a
+     prop or loader data. Another module's map, or `router.named-routes.gen.ts`
+     under a mount, gives a wrong URL with no error (the latter is correct
+     only at the root mount and pulls every route name into the client
+     bundle).
+   - Not these: `useParams().accountId` in a template string, `ctx.params`
+     passed down as props, a "current account" context, `useHref()` or a
+     relative `router.push()` under a parameterized mount (literal
+     `/:accountId/...`), `href("/path")` for anything but static paths.
+8. **Rewrite is middleware only.** A maintenance page, a flag or an alias
+   URL is a `router.use()` middleware that does `throw rewrite("name")` for
+   GET and answers mutations with a `Response`; the
+   address bar keeps the visitor's URL. A loader, handler or server action
+   cannot rewrite, and a loop answers 508. Redirect when the new URL should
+   show (`/middleware`, "Rewrite").
 
 ## A small app: one module
 

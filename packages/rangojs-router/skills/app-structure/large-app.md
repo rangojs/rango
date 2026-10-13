@@ -52,7 +52,7 @@ src/
   middleware/
     session.ts                loadSession (global): CurrentUser from the cookie
     guards.ts                 requireUser, requireOnboarded, requireAdmin, requireUserForFetch
-    maintenance.ts            optional: throw rewrite() to a maintenance page
+    maintenance.ts            optional: throw rewrite("maintenance"), a global router.use()
     same-origin.ts            requireSameOrigin for /api (see /response-routes, CSRF)
   shell/
     app-shell.tsx             server layout: nav, user menu slot, <Outlet />
@@ -165,7 +165,8 @@ export const requireUserForFetch: Middleware = async (ctx, next) => {
 
 `ctx.reverse()` in middleware takes global names only and fills no params
 from the request, so the guards name full routes (`auth.login`) and pass the
-search object the login route's schema declares.
+search object the login route's schema declares. (`getRequestContext().reverse`
+in route middleware does fill mount params after the match.)
 
 ```ts
 // src/middleware/maintenance.ts (optional)
@@ -280,7 +281,7 @@ export function AppShell(ctx: HandlerContext) {
           <Link to={ctx.reverse("settings.profile")}>Settings</Link>
         </nav>
         <Suspense fallback={<span className="avatar-skeleton" />}>
-          <UserMenu />
+          <UserMenu adminHref={ctx.reverse("admin.users")} />
         </Suspense>
       </header>
       <main>
@@ -295,16 +296,16 @@ export function AppShell(ctx: HandlerContext) {
 // src/shell/user-menu.tsx
 "use client";
 
-import { Link, href, useLoader } from "@rangojs/router/client";
+import { Link, useLoader } from "@rangojs/router/client";
 import { ViewerLoader } from "../loaders/viewer";
 import { logout } from "../actions/auth";
 
-export function UserMenu() {
+export function UserMenu({ adminHref }: { adminHref: string }) {
   const { data: viewer } = useLoader(ViewerLoader);
   return (
     <div className="user-menu">
       <span>{viewer.name}</span>
-      {viewer.role === "admin" ? <Link to={href("/admin")}>Admin</Link> : null}
+      {viewer.role === "admin" ? <Link to={adminHref}>Admin</Link> : null}
       <form action={logout}>
         <button type="submit">Sign out</button>
       </form>
@@ -670,7 +671,8 @@ import { CurrentUser } from "../middleware/session";
 
 export async function renameProject(_prev: unknown, formData: FormData) {
   // Route middleware does not wrap actions: check here.
-  if (!getRequestContext().get(CurrentUser)) throw redirect("/auth/login");
+  const ctx = getRequestContext();
+  if (!ctx.get(CurrentUser)) throw redirect(ctx.reverse("auth.login"));
   const projectId = String(formData.get("projectId"));
   await db.projects.rename(projectId, String(formData.get("name")));
   await updateTag(`project:${projectId}`); // every user's cached copy
@@ -770,12 +772,85 @@ The include names make the route names: `auth.login`, `app.dashboard`,
 - A group's components link inside the group with `useReverse(routes)` and
   the group's generated map (`./app.client.gen`): mount-aware, params filled
   from the URL.
-- Static paths on the client: `href("/admin")`.
+- A server action redirects by name too: `getRequestContext().reverse("auth.login")`
+  (global names; see `renameProject`). Client components that need a URL from
+  another module take it as a prop from the server layout, as `UserMenu` does.
+- Static paths with no route behind them: `href("/healthz")`.
 
 Generated and committed: `src/router.named-routes.gen.ts`, and from
 `rango generate src` one `*.gen.ts` per module (`urls/app.client.gen.ts`,
 `urls/auth.client.gen.ts`, …, `urls/api.gen.ts`). Wire `rango generate src`
 into a `predev` script so a new route never waits for a manual run.
+
+### URL-scoped tenants
+
+If the account or project is in the URL, nest the includes and let every
+module link by local name; none of them reads `:accountId` itself.
+
+```tsx
+// router.tsx urls: include("/:accountId", accountUrls, { name: "account" })
+// urls/account.tsx: include("/:projectId", projectUrls, { name: "project" })
+
+// urls/project.tsx, on /acme/web/issues
+ctx.reverse(".issue", { issueId: "7" }); // /acme/web/issues/7
+ctx.reverse("account.settings"); // /acme/settings, cross-module: global name
+// urls/project.client.tsx
+const reverse = useReverse(routes); // ./project.client.gen
+reverse(".issues", { projectId: "api" }); // /acme/api/issues
+```
+
+- A link into another module (the project nav's "Account settings") is built
+  on the server and passed as a prop or loader data. `useReverse(accountRoutes)`
+  in a project component gives a wrong URL with no error (dc-t57).
+- A server layout stays held when `:projectId` changes (partial rendering by
+  design), so links it rendered keep the old project. Render the project
+  switcher and nav in a client component with `useReverse(routes)`, or give
+  the layout a `revalidate()` comparing `projectId`.
+- The account layout resolves `.settings` against the matched project module
+  (dc-t52): until fixed, use `account.settings` there.
+
+Links built on the server, from the RSC as a prop or from a loader as data,
+carry every param already filled; the client component only renders them:
+
+```tsx
+// urls/project.tsx (server): build the links where the names resolve
+export const ProjectNavLoader = createLoader((ctx) => ({
+  issues: ctx.reverse(".issues"), // /acme/web/issues
+  settings: ctx.reverse(".settings"), // /acme/web/settings
+  account: ctx.reverse("account.settings"), // /acme/settings, another module
+}));
+
+export const projectUrls = urls(({ layout, path, loader, revalidate }) => [
+  layout(
+    // From the RSC: fine for links that do not follow :projectId.
+    (ctx) => <ProjectShell accountHref={ctx.reverse("account.settings")} />,
+    () => [
+      // From a loader: held like the layout, re-run when the project changes.
+      loader(ProjectNavLoader, () => [
+        revalidate(({ currentParams, nextParams }) =>
+          currentParams.projectId !== nextParams.projectId ? true : undefined,
+        ),
+      ]),
+      path("/issues", Issues, { name: "issues" }),
+      path("/settings", Settings, { name: "settings" }),
+    ],
+  ),
+]);
+```
+
+```tsx
+"use client";
+export function ProjectNav() {
+  const { data: links } = useLoader(ProjectNavLoader);
+  return (
+    <nav>
+      <Link to={links.issues}>Issues</Link>
+      <Link to={links.settings}>Settings</Link>
+      <Link to={links.account}>Account</Link>
+    </nav>
+  );
+}
+```
 
 ## Why each piece sits where it does
 
