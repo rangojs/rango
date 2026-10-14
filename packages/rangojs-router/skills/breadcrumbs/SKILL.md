@@ -207,7 +207,7 @@ consumer sees it — `useHandle(Breadcrumbs)` returns the resolved item, never a
 `Promise`, so you read it like any sync crumb (no `use()`, no thenable narrowing).
 On a full/SSR load the value is resolved server-side; on a soft navigation the
 breadcrumbs HOLD the previous resolved value until the deferred value lands, then
-swap in — no blank, no pending entry. If the slot times out to `else: null`/
+swap in — no blank, no pending entry. The hold-then-swap is deliberate: a handle never holds the page and never shows the next page's values over the old one (see [hooks](../hooks/handle-and-actions.md#when-handle-values-change-by-design)). If the slot times out to `else: null`/
 undefined, the entry is simply dropped. Use `.defer()` only when even
 `label`/`href` are unknown at handler time AND the producer is a component,
 not a loader — a loader-produced crumb pushes directly from the loader body

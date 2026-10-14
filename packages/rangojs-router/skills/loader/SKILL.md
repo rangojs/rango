@@ -1024,6 +1024,7 @@ Delivery is async **by the race model**: pushes that settle before the handler
 barrier ride the SSR handle snapshot (in the SSR'd document — `<Html.Meta />`,
 `useHandle` reads); later pushes stream to the client and apply post-hydration
 on document loads (`metadata.handlesLate`) or progressively on navigations.
+Handle values land on their own channel and never hold the page, so an effect that needs a late push keys on the handle value, not the URL (see [hooks](../hooks/handle-and-actions.md#when-handle-values-change-by-design)).
 A push before your slow fetch usually beats the barrier; a push derived from
 the fetched data usually does not. When it MUST be in the document, use
 `ssr: false` below. A loader with its own `cache()` keeps its pushes on a hit —

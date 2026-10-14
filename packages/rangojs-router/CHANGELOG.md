@@ -553,9 +553,16 @@ keyed on `usePathname()` carries the new page's handle metadata and
 `document.title`. On a page React holds in a transition (a `transition()`
 route, a same-route search change, a fully prefetched click), a value that
 arrives during the wait is applied right after the page commits, in the same
-task, before the browser paints; an effect of the page that runs on the URL
-change alone reads the previous page's value, so key it on the handle value
-too. A crumb whose `content` is a promise read with `use()` inside
+task, before the browser paints; an effect that runs on the URL change
+alone can read the previous page's value. That is by design: handle values are
+async, and `push(promise)` resolves whenever it resolves, possibly well after
+the page, with the previous value on screen until then. To tie a value to a page
+(an analytics `page_view`), put the path in the value
+(`ctx.use(PageView)({ path: ctx.pathname + ctx.url.search })` from a root
+`parallel()` slot with `revalidate(true)`, collected to the last item) and key
+the effect on the value, deduped by path; it then fires once per page for sync
+and async values alike and not for an action's revalidation. See the hooks
+skill, `useHandle`, "When handle values change (by design)". A crumb whose `content` is a promise read with `use()` inside
 `<Suspense>` never holds the page: the page changes when its response arrives
 and only the crumb's content waits, whether the crumb keeps its `<Suspense>`
 across pages or mounts a new one.

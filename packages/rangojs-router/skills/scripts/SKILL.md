@@ -133,6 +133,17 @@ re-pushed inline script. The GTM demo does exactly this: a root-layout `Script`
 bootstrap fires the first page_view on document load, and a `"use client"`
 `<GtmPageViews>` component fires a page_view on every subsequent soft navigation.
 
+**Key that component on a handle value that carries the page's path, not on the
+URL.** Handle values arrive on their own channel, by design: on a page React
+holds in a transition (`transition()`, a same-route search change, a prefetched
+click) the URL changes before the destination's `content_group` and title land,
+so an effect keyed on `usePathname()` sends the previous page's tagging. Push
+the navigation's `pathname + search` into your `Gtm` handle (collected as `page.path`) from a root
+`parallel()` slot with `revalidate(true)`, read the tagging with `useHandle(Gtm)`,
+and send the page_view when `page.path` differs from the last path sent (seed it
+with the landing path, which the bootstrap already sent). The pattern, its
+trade-offs and the code are in [hooks](../hooks/handle-and-actions.md#when-handle-values-change-by-design).
+
 ## The inline-self-inject rule (GTM/GA4/Segment)
 
 If an inline bootstrap must run **before** an external loader, do NOT push the
@@ -202,6 +213,6 @@ warns once per key. See `/ppr` → "What always renders without a shell".
 - **Partytown / web-worker offloading** — push the worker config with
   `type: "text/partytown"` and wire Partytown's own nonce config manually.
 
-A full GTM + GA4-style integration (page_view on first render + soft nav, nonce,
+A full GTM + GA4-style integration (page_view on first render + soft nav keyed on a path-carrying handle value, nonce,
 ecommerce events) lives in the router repository's `tests/vite-rsc-demo` app
 (not shipped in this package).
