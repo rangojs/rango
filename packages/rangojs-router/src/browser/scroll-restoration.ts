@@ -75,7 +75,8 @@ let customGetKey: GetScrollKeyFunction | null = null;
 /**
  * Scroll key of the entry on screen. At popstate history.state already belongs
  * to the destination, so this is the only way to save the page being left
- * under its own key (see handleTraversalStart).
+ * under its own key (see handleTraversalStart). A traversal moves it when its
+ * restore commits (handleNavigationEnd), not at its event.
  */
 let displayedKey: string | null = null;
 
@@ -283,10 +284,12 @@ export function cancelScrollRestorationPolling(): void {
  *
  * @param options.retryIfStreaming - If true, poll while streaming until we can scroll to target
  * @param options.isStreaming - Function to check if streaming is in progress
+ * @param options.committed - React has committed the restored tree (a layout effect)
  */
 export function restoreScrollPosition(options?: {
   retryIfStreaming?: boolean;
   isStreaming?: () => boolean;
+  committed?: boolean;
 }): boolean {
   // Clear any pending polling
   cancelScrollRestorationPolling();
@@ -297,6 +300,11 @@ export function restoreScrollPosition(options?: {
   if (typeof savedY !== "number") {
     return false;
   }
+
+  // Once React committed the restored tree, scroll now, so a view
+  // transition's new snapshot is taken at the restored position, while the
+  // page still streams too.
+  if (options?.committed) window.scrollTo(0, savedY);
 
   // If streaming, poll until streaming ends then scroll to saved position
   if (options?.retryIfStreaming && options?.isStreaming?.()) {
@@ -319,9 +327,8 @@ export function restoreScrollPosition(options?: {
     return true;
   }
 
-  // Not streaming — scroll after React commits and browser paints.
-  // startTransition defers the DOM commit, so scrolling synchronously
-  // would be overwritten when React replaces the content.
+  // Not streaming: scroll (again) on the next frame, for layout that settles
+  // after the commit and for a caller that ran before it.
   deferToNextPaint(() => {
     window.scrollTo(0, savedY);
     debugLog("[Scroll] Restored position:", savedY, "for key:", key);
@@ -374,18 +381,18 @@ export function handleNavigationStart(): void {
 
 /**
  * Handle scroll for a back/forward traversal, at popstate before anything
- * renders: save the page being left under ITS key (history has already moved,
- * so saveCurrentScrollPosition would use the destination's key) and track the
- * destination as the displayed entry.
+ * renders: save the page on screen under ITS key (history has already moved,
+ * so saveCurrentScrollPosition would use the destination's key). A second
+ * traversal before the first one's restore commits (a rapid double Back, a
+ * deferred animated restore) saves the page still on screen, never an entry
+ * it did not show.
  */
 export function handleTraversalStart(): void {
   if (!initialized) return;
-  const leftKey = displayedKey;
-  trackDisplayedEntry();
   // A key shared with the destination (a getKey that collapses entries, e.g.
   // by pathname) keeps the destination's saved position.
-  if (leftKey !== null && leftKey !== displayedKey) {
-    saveScrollPosition(leftKey, window.scrollY);
+  if (displayedKey !== null && displayedKey !== getScrollKey()) {
+    saveScrollPosition(displayedKey, window.scrollY);
   }
 }
 
@@ -394,13 +401,15 @@ export function handleTraversalStart(): void {
  * @param options.restore - If true, restore saved position (for popstate)
  * @param options.scroll - If false, don't scroll at all
  * @param options.isStreaming - Function to check if streaming is in progress (for retry logic)
+ * @param options.committed - Called after React committed the new tree
  */
 export function handleNavigationEnd(options: {
   restore?: boolean;
   scroll?: boolean;
   isStreaming?: () => boolean;
+  committed?: boolean;
 }): void {
-  const { restore = false, scroll = true, isStreaming } = options;
+  const { restore = false, scroll = true, isStreaming, committed } = options;
 
   // Don't scroll if explicitly disabled or not in a browser
   if (scroll === false || typeof window === "undefined") {
@@ -412,11 +421,17 @@ export function handleNavigationEnd(options: {
   // matters during cross-app navigation where ScrollRestoration unmounts
   // and remounts, creating a brief window where initialized is false.
   if (restore) {
-    if (
-      initialized &&
-      restoreScrollPosition({ retryIfStreaming: true, isStreaming })
-    ) {
-      return;
+    if (initialized) {
+      trackDisplayedEntry();
+      if (
+        restoreScrollPosition({
+          retryIfStreaming: true,
+          isStreaming,
+          committed,
+        })
+      ) {
+        return;
+      }
     }
     // An "auto" entry (no <Html.ScrollRestoration>, or created before it mounted)
     // is restored by the browser. A scrollTo here races that restore, and
@@ -438,9 +453,8 @@ export function handleNavigationEnd(options: {
   // against unmeasured layout, so sync scroll is correct here even
   // before the new tree's scrollHeight settles.
   //
-  // (The restore branch above keeps deferToNextPaint because savedY
-  // depends on the new tree's max scroll; sync scrollTo against an
-  // unmeasured DOM would clamp savedY to whatever the old/zero max was.)
+  // (The restore branch above also scrolls again on the next frame: savedY
+  // depends on the new tree's max scroll, which can grow after the commit.)
   if (scrollToHash()) {
     return;
   }

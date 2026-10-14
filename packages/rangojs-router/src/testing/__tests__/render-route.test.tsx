@@ -9,6 +9,7 @@ import { useReverse } from "../../browser/react/use-reverse.js";
 import { useHref } from "../../browser/react/use-href.js";
 import { useNavigation } from "../../browser/react/use-navigation.js";
 import { usePathname } from "../../browser/react/use-pathname.js";
+import { useSearchParams } from "../../browser/react/use-search-params.js";
 import { useLoader } from "../../use-loader.js";
 import { useHandle } from "../../browser/react/use-handle.js";
 import { useMount } from "../../browser/react/use-mount.js";
@@ -563,16 +564,16 @@ describe("renderRoute handles reach LAYOUT components, not just the leaf", () =>
   });
 });
 
-describe("renderRoute navigation lifecycle is frozen at idle", () => {
-  // navigate() never starts the navigation lifecycle (no server fetch), so the
-  // transition state useNavigation/useLinkStatus/useAction read never leaves
-  // "idle". A test that asserts a non-idle state would silently pass; the helper
-  // warns once so that false-confidence trap is loud.
-  it("stays idle across navigate() and warns once, naming the affected hooks", async () => {
+describe("renderRoute navigate() drives the navigation lifecycle", () => {
+  // As a click does in production (navigation-transaction.ts): useNavigation()
+  // reads loading from the call and idle with the commit.
+  it("reads loading from the call and idle after the commit, without a warning", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
+      const states: string[] = [];
       function Page() {
         const nav = useNavigation();
+        states.push(nav.state);
         return <span data-testid="state">{nav.state}</span>;
       }
       const { getByTestId, router } = await renderRoute(
@@ -581,19 +582,55 @@ describe("renderRoute navigation lifecycle is frozen at idle", () => {
       );
 
       expect(getByTestId("state").textContent).toBe("idle");
-      await router.navigate("/a");
-      // Contract: the transition state is frozen at idle even after navigate().
+      await router.navigate("/a?b=1");
       expect(getByTestId("state").textContent).toBe("idle");
-      await router.navigate("/a");
-
-      const navWarns = warn.mock.calls.filter((c) =>
-        String(c[0]).includes("navigate()"),
-      );
-      expect(navWarns).toHaveLength(1);
-      expect(String(navWarns[0][0])).toMatch(/useNavigation\(\)\.state/);
+      expect(states.filter((v, i) => states[i - 1] !== v)).toEqual([
+        "idle",
+        "loading",
+        "idle",
+      ]);
+      expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("renderRoute navigate() superseded by a newer navigate()", () => {
+  // As production's partial-update.ts returns on its aborted signal: the
+  // older navigation commits nothing, so its tree never shows with the
+  // location it was leaving.
+  const TagLoader = {
+    __brand: "loader",
+  } as unknown as LoaderDefinition<string>;
+
+  it("commits only the newer navigation's tree", async () => {
+    const renders: string[] = [];
+    function Page() {
+      const [search] = useSearchParams();
+      const { data } = useLoader(TagLoader);
+      renders.push(`${search} ${data}`);
+      return <span data-testid="page">{`${search} ${data}`}</span>;
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/p", Component: Page }],
+      { request: "/p?x=1", loaders: [[TagLoader, "one"]] },
+    );
+
+    const trees: unknown[] = [];
+    const unsubscribe = router.store.onUpdate((update) => trees.push(update));
+
+    const older = router.navigate("/p?x=2", { loaders: [[TagLoader, "two"]] });
+    const newer = router.navigate("/p?x=3", {
+      loaders: [[TagLoader, "three"]],
+    });
+    await Promise.all([older, newer]);
+    unsubscribe();
+
+    expect(trees).toHaveLength(1);
+    expect(getByTestId("page").textContent).toBe("x=3 three");
+    expect(renders.filter((entry) => entry.endsWith(" two"))).toEqual([]);
+    expect(router.pathname()).toBe("/p");
   });
 });
 

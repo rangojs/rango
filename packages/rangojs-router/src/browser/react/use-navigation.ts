@@ -4,7 +4,7 @@ import {
   useContext,
   useState,
   useEffect,
-  useOptimistic,
+  useLayoutEffect,
   startTransition,
   useRef,
 } from "react";
@@ -46,22 +46,19 @@ export function useNavigation<T>(
     throw new Error("useNavigation must be used within NavigationProvider");
   }
 
-  const [baseValue, setBaseValue] = useState<T | PublicNavigationState>(() => {
+  const [value, setValue] = useState<T | PublicNavigationState>(() => {
     const publicState = toPublicState(
       ctx.eventController.getHydrationSnapshot()?.state ??
         ctx.eventController.getState(),
     );
     return selector ? selector(publicState) : publicState;
   });
-  const prevState = useRef(baseValue);
-
-  // Tracks whether the most recent setOptimisticValue call pinned the value
-  // to a non-idle state. Used to decide whether to emit a release update when
-  // returning to idle, so the optimistic store doesn't stay pinned if a
-  // parent transition (e.g. <Link> click) is still pending.
-  const optimisticPinnedRef = useRef(false);
-
-  const [value, setOptimisticValue] = useOptimistic(baseValue);
+  const prevState = useRef(value);
+  // The value on screen: a set value that differs has not committed yet.
+  const committedRef = useRef(value);
+  useLayoutEffect(() => {
+    committedRef.current = value;
+  });
 
   // Store selector in a ref so the subscription callback always uses the
   // latest selector without re-subscribing on every render (inline functions
@@ -71,10 +68,28 @@ export function useNavigation<T>(
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
-  // Subscribe to event controller state changes (only runs on client)
+  // Subscribe to event controller state changes (only runs on client).
+  //
+  // The value commits in the lane of the notification that carries it, as
+  // the location hooks' values do: NavigationProvider flushes a navigation's
+  // notification into the transition that commits its tree, so idle commits
+  // with the destination's location (useSearchParams, usePathname,
+  // useParams). An optimistic update renders in the sync lane, ahead of that
+  // transition, and put idle on screen with the location being left (#1164).
   useEffect(() => {
+    let last: DerivedNavigationState | undefined;
     const update = () => {
       const currentState = ctx.eventController.getState();
+      // Neither the state nor the location moved (the stream starting or
+      // ending): while a value of this hook's is held, a transition, which
+      // React entangles with it, so it never commits ahead of the location.
+      // Otherwise urgent: a transition of its own would start a view
+      // transition, and could commit ahead of a held page and take its
+      // transition types.
+      const quiet =
+        currentState.state === last?.state &&
+        currentState.location === last.location;
+      last = currentState;
       const publicState = toPublicState(currentState);
       const nextSelected = selectorRef.current
         ? selectorRef.current(publicState)
@@ -82,35 +97,10 @@ export function useNavigation<T>(
 
       // Check if selected value has changed
       if (!shallowEqual(nextSelected, prevState.current)) {
+        const held = prevState.current !== committedRef.current;
         prevState.current = nextSelected;
-
-        // Check if any actions are in progress for optimistic updates
-        const hasInflightActions =
-          ctx.eventController.getInflightActions().size > 0;
-
-        const shouldPin = hasInflightActions || publicState.state !== "idle";
-
-        if (shouldPin) {
-          // Pin the optimistic store so the loading value shows immediately
-          // even if a parent transition (e.g. <Link> click) defers the
-          // urgent setBaseValue commit.
-          startTransition(() => {
-            setOptimisticValue(nextSelected);
-          });
-          optimisticPinnedRef.current = true;
-        } else if (optimisticPinnedRef.current) {
-          // Release a previously-pinned optimistic value. Without this,
-          // useOptimistic keeps returning the stale loading value while
-          // any parent transition is still pending, even after baseValue
-          // flipped to idle.
-          startTransition(() => {
-            setOptimisticValue(nextSelected);
-          });
-          optimisticPinnedRef.current = false;
-        }
-
-        // Always update base state so UI reflects current state
-        setBaseValue(nextSelected);
+        if (quiet && held) startTransition(() => setValue(nextSelected));
+        else setValue(nextSelected);
       }
     };
 

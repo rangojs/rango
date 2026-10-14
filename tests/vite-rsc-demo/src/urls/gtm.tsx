@@ -1,7 +1,7 @@
 import { urls, Meta, Script, type Handler } from "@rangojs/router";
 import { Gtm, DEFAULT_GTM_ID, generateGtmInit } from "../handles/gtm.js";
 import { GtmDemoLoader } from "../loaders/gtm-demo.js";
-import { GtmDemoPage } from "../pages/gtm-demo.js";
+import { GtmDemoPage, GtmScenarioPage } from "../pages/gtm-demo.js";
 
 /**
  * Route handler. Pushes per-route tagging SYNCHRONOUSLY:
@@ -45,6 +45,36 @@ const GtmDemoHandler: Handler<"/"> = (ctx) => {
   return <GtmDemoPage />;
 };
 
-export const gtmDemoPatterns = urls(({ path, loader }) => [
+/**
+ * Soft-nav page_view scenarios (GtmPageViews keys on the Gtm handle value, which
+ * carries the navigation's path from the root @gtmPath slot):
+ * - /transition: a transition() route, so React holds the page being left and
+ *   the destination's handle values land in the commit after the page.
+ * - /same-title: pushes the SAME title as /gtm, so a title change cannot be what
+ *   triggers the page_view.
+ * - /untagged: pushes no Gtm tagging of its own; its path comes from the slot.
+ */
+const GtmTransitionHandler: Handler<"/transition"> = (ctx) => {
+  ctx.use(Gtm)({ page: { content_group: "transition" } });
+  ctx.use(Meta)({ title: "GTM Transition" });
+  return <GtmScenarioPage id="gtm-transition" title="GTM Transition" />;
+};
+
+const GtmSameTitleHandler: Handler<"/same-title"> = (ctx) => {
+  ctx.use(Gtm)({ page: { content_group: "same-title" } });
+  ctx.use(Meta)({ title: "GTM Demo" });
+  return <GtmScenarioPage id="gtm-same-title" title="GTM Demo" />;
+};
+
+const GtmUntaggedHandler: Handler<"/untagged"> = () => (
+  <GtmScenarioPage id="gtm-untagged" title="Untagged" />
+);
+
+export const gtmDemoPatterns = urls(({ path, loader, transition }) => [
   path("/", GtmDemoHandler, { name: "index" }, () => [loader(GtmDemoLoader)]),
+  path("/transition", GtmTransitionHandler, { name: "transition" }, () => [
+    transition({ viewTransition: false }),
+  ]),
+  path("/same-title", GtmSameTitleHandler, { name: "sameTitle" }),
+  path("/untagged", GtmUntaggedHandler, { name: "untagged" }),
 ]);

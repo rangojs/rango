@@ -65,9 +65,9 @@ describe("renderRoute against vite-rsc-demo client components", () => {
       [{ path: "/shop", Component: LoadingSpinner }],
       { request: "/shop" },
     );
-    // renderRoute cannot seed a non-idle navigation state (loading/streaming),
-    // so only the idle branch is observable here — the loading/streaming
-    // rendering is covered by e2e. Pin the idle contract POSITIVELY: the
+    // No navigation runs here, so only the idle branch is observable (a held
+    // router.navigate() would show the loading one; streaming is covered by
+    // e2e). Pin the idle contract POSITIVELY: the
     // component must have mounted (read useNavigation without throwing) and
     // rendered its reserved-space wrapper with NO spinner spans. Asserting only
     // the absence of "Loading..."/"Streaming..." would pass even if the

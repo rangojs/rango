@@ -13,6 +13,7 @@ import { peFormStatePatterns } from "./urls/pe-form-state.js";
 import { suspenseCasesPatterns } from "./urls/suspense-cases.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
+import { transitionKindsPatterns } from "./urls/transition-kinds.js";
 
 import { errorsPatterns } from "./urls/errors.js";
 import {
@@ -25,6 +26,10 @@ import {
 } from "./urls/meta.js";
 import { hooksPatterns } from "./urls/hooks.js";
 import { renderStabilityPatterns } from "./urls/render-stability.js";
+import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
+import { asyncHandlesPatterns } from "./urls/async-handles.js";
+import { handlesCommitPatterns } from "./urls/handles-commit.js";
+import { vtBackPatterns } from "./urls/vt-back.js";
 import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
@@ -1163,6 +1168,8 @@ export const urlpatterns = urls(
       // Raw <Suspense> (no loading() DSL) streaming route
       include("/", suspenseStreamPatterns, { name: "" }),
       include("/", conditionalTransitionPatterns, { name: "" }),
+      // #1165: each transition commit carries its kind as a transition type.
+      include("/", transitionKindsPatterns, { name: "" }),
 
       // #622 follow-up (HIGH): shared layout + client-mount-suspense children
       include("/", clientSuspensePatterns, { name: "" }),
@@ -1202,6 +1209,13 @@ export const urlpatterns = urls(
 
       // Hook render-stability fixture (render/commit tracking)
       include("/", renderStabilityPatterns, { name: "" }),
+      include("/", navIdleLocationPatterns, { name: "" }),
+      // A navigation's title and crumbs commit with its page.
+      include("/", handlesCommitPatterns, { name: "" }),
+      // Async handle values: awaited in SSR, held then swapped on navs.
+      include("/", asyncHandlesPatterns, { name: "" }),
+      // A cached back/forward animates under transition().
+      include("/", vtBackPatterns, { name: "" }),
 
       // Shared-refetch regression scenario
       include("/", sharedRefetchPatterns, { name: "" }),

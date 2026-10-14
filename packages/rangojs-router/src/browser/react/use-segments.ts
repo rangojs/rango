@@ -1,8 +1,9 @@
 "use client";
 
-import { useContext, useState, useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
-import { shallowEqual } from "./shallow-equal.js";
+import { useCommitAnchoredState } from "./use-handle.js";
+import type { RouteStateSignal } from "../event-controller.js";
 
 /**
  * Segments state returned by useSegments hook
@@ -71,7 +72,8 @@ export function useSegments<T>(
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
-  const [state, setState] = useState<T | SegmentsState>(() => {
+  // Commits with the page it describes (useCommitAnchoredState).
+  const [state, setState] = useCommitAnchoredState<T | SegmentsState>(() => {
     if (!ctx) {
       const fallbackLocation = new URL("/", "http://localhost");
       const fallbackState = buildSegmentsState(fallbackLocation, []);
@@ -88,8 +90,6 @@ export function useSegments<T>(
     return selector ? selector(segmentsState) : segmentsState;
   });
 
-  const prevState = useRef(state);
-
   useEffect(() => {
     if (!ctx) {
       return;
@@ -103,7 +103,7 @@ export function useSegments<T>(
       state: SegmentsState;
     } | null = null;
 
-    const updateState = () => {
+    const updateState = (signal?: RouteStateSignal) => {
       const location = ctx.eventController.getLocation() as URL;
       const { routeSegmentIds } = ctx.eventController.getHandleState();
       if (
@@ -118,17 +118,13 @@ export function useSegments<T>(
         };
       }
       const sel = selectorRef.current;
-      const nextSelected = sel ? sel(cache.state) : cache.state;
-      if (!shallowEqual(nextSelected, prevState.current)) {
-        prevState.current = nextSelected;
-        setState(nextSelected);
-      }
+      setState(sel ? sel(cache.state) : cache.state, signal);
     };
 
     // Catch up with a change between the seeding render and this effect.
     updateState();
 
-    const unsubscribeNav = ctx.eventController.subscribe(updateState);
+    const unsubscribeNav = ctx.eventController.subscribe(() => updateState());
     const unsubscribeHandles =
       ctx.eventController.subscribeToHandles(updateState);
 

@@ -23,13 +23,16 @@
  *     SEEDED directly into client context (see the `loaders` / `locationState` /
  *     `handles` / `outletPending` options) — nothing is executed on the server.
  *     This exercises the context read path, not the run path.
- *   - navigate() does NOT drive the navigation lifecycle: useNavigation().state,
- *     useLinkStatus().pending, and useAction().state stay "idle". Assert
- *     pending/loading/submitting transition states with renderServerTree / e2e
- *     instead (navigate() warns once if used). The one pending state it does
- *     model is the held-navigation useLoader().isLoading: a `transition` spec
- *     plus a pending Promise seeded via navigate(url, { loaders }) commits
- *     through production's commitInTransition (browser/partial-update.ts).
+ *   - navigate() drives the navigation lifecycle as a click does:
+ *     useNavigation() reads loading from the call and idle with the commit,
+ *     and useLinkStatus().pending is true for a link to the destination until
+ *     the commit is handed to React. A `transition` spec plus a pending
+ *     Promise seeded via navigate(url, { loaders }) commits through
+ *     production's commitInTransition (browser/partial-update.ts), which React
+ *     holds: useNavigation() stays loading and the held reader's
+ *     useLoader().isLoading reads true until the data lands. Without
+ *     `transition` the commit is urgent (production's same-structure hold is
+ *     not modeled). useAction().state stays idle: no action runs.
  *   - A spec's transition({ when }) decides every commit with production's
  *     browser decision: navigate() and useRouter().push model kind "push",
  *     useRouter().replace kind "replace", refresh() kind "revalidate".
@@ -81,7 +84,10 @@ import type {
   NavigationBridge,
   UpdateSubscriber,
 } from "../browser/types.js";
-import type { EventController } from "../browser/event-controller.js";
+import type {
+  EventController,
+  NavigationHandle,
+} from "../browser/event-controller.js";
 import type { ResolvedSegment, RscMetadata } from "../browser/types.js";
 import { NavigationProvider } from "../browser/react/NavigationProvider.js";
 import {
@@ -407,9 +413,10 @@ export interface TestRouterHandle {
    * pending Promise suspends the read like a streaming Flight chunk. When a
    * spec in the chain has `transition`, the commit goes through production's
    * commitInTransition: the reader stays on screen with
-   * `useLoader().isLoading === true` until the promise settles. Settle it
-   * inside RTL's `act()` to flush the commit. Without `transition` the commit
-   * is urgent and the read suspends to the nearest Suspense boundary.
+   * `useLoader().isLoading === true`, and `useNavigation().state` reads
+   * "loading", until the promise settles. Settle it inside RTL's `act()` to
+   * flush the commit. Without `transition` the commit is urgent and the read
+   * suspends to the nearest Suspense boundary.
    *
    * @example
    * await router.navigate("/products/2", { loaders: [[ProductLoader, next]] });
@@ -429,10 +436,16 @@ export interface TestRouterHandle {
    * location state as a production replace does). With neither, history is
    * left alone and readers keep the state they have: `navigate(url)` and
    * `navigate(url, { replace: false })` are the same call.
+   *
+   * `options.handles` are the destination's handle pushes (`[handle,
+   * values]`, attached to its leaf route as in `renderRoute`'s own
+   * `handles`). They arrive on the response's handle stream, so `useHandle`
+   * readers take them with the page's commit: while React holds the page,
+   * readers keep the values of the page being left.
    */
   navigate(
     url: string,
-    options?: Pick<RenderRouteOptions, "loaders"> &
+    options?: Pick<RenderRouteOptions, "loaders" | "handles"> &
       Pick<NavigateOptions, "state" | "replace" | "transition">,
   ): Promise<void>;
   /**
@@ -791,17 +804,36 @@ export async function renderRoute(
     };
   }
 
-  let warnedNavLifecycle = false;
+  type NavigateCall = Pick<RenderRouteOptions, "loaders" | "handles"> & {
+    history?: Pick<NavigateOptionsInternal, "state" | "replace" | "transition">;
+    kind?: TransitionWhenKind;
+    transition?: boolean;
+  };
+  // The navigation's lifecycle, as navigation-transaction.ts drives it:
+  // useNavigation() reads loading from the call, delivered before the commit
+  // as a click's notification goes out while its response is in flight, and
+  // idle with the location at the commit, which React may hold.
   const navigate = async (
     target: string,
-    navOptions?: Pick<RenderRouteOptions, "loaders"> & {
-      history?: Pick<
-        NavigateOptionsInternal,
-        "state" | "replace" | "transition"
-      >;
-      kind?: TransitionWhenKind;
-      transition?: boolean;
-    },
+    navOptions?: NavigateCall,
+  ): Promise<void> => {
+    const handle = eventController.startNavigation(
+      new URL(target, TEST_ORIGIN).href,
+    );
+    // Synchronous, in the caller's task: a <Link> click's own act() scope
+    // takes it, and no act() of the caller's can overlap it.
+    act(() => eventController.flushRouteState());
+    try {
+      await commitNavigation(handle, target, navOptions);
+    } finally {
+      // Back to idle when the commit never came (a render that threw).
+      handle[Symbol.dispose]();
+    }
+  };
+  const commitNavigation = async (
+    handle: NavigationHandle,
+    target: string,
+    navOptions?: NavigateCall,
   ): Promise<void> => {
     // A useRouter().push/replace or <Link> navigation (`history`) writes its
     // entry the way production does (navigation-bridge.ts navigate ->
@@ -819,21 +851,6 @@ export async function renderRoute(
             : undefined,
         )
       : undefined;
-    // No server fetch, so the navigation lifecycle never starts: the state
-    // useNavigation()/useLinkStatus()/useAction() read stays "idle" — asserting
-    // a pending/loading/submitting state here proves nothing. Warn once (per
-    // render) under the test runner so that false-confidence trap is loud.
-    if (isUnderTestRunner() && !warnedNavLifecycle) {
-      warnedNavLifecycle = true;
-      console.warn(
-        "renderRoute: navigate()/useRouter().push do NOT drive the navigation " +
-          "lifecycle. useNavigation().state, useLinkStatus().pending, and " +
-          'useAction().state stay "idle" here. Assert params/pathname/content ' +
-          "after navigate(); use renderServerTree or e2e to assert " +
-          "pending/loading/submitting transition states. A held " +
-          "useLoader().isLoading is modeled: see navigate(url, { loaders }).",
-      );
-    }
     const nextUrl = new URL(target, TEST_ORIGIN);
     const match = resolve(nextUrl.pathname);
     const segments = buildSegments(
@@ -843,6 +860,23 @@ export async function renderRoute(
       mount,
     );
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
+    // The destination's handle pushes arrive on the response's handle
+    // stream, as production's do, behind the page's commit.
+    const navHandles = navOptions?.handles;
+    if (navHandles) {
+      const leafId =
+        [...segments].reverse().find((s) => s.type === "route")?.id ??
+        segments[segments.length - 1]?.id;
+      const pushed: HandleDataSeed = {};
+      for (const [h, values] of navHandles) {
+        if (leafId === undefined) continue;
+        const id = (h as unknown as { $$id: string }).$$id;
+        (pushed[id] ??= {})[leafId] = values;
+      }
+      metadata.handles = (async function* () {
+        yield pushed;
+      })();
+    }
     // Production's browser-run transition({ when }) decision
     // (browser/partial-update.ts): the committed location is the source.
     const kind: TransitionWhenKind =
@@ -872,7 +906,10 @@ export async function renderRoute(
       outletPending: options.outletPending,
       transitionGatedOff: gatedOff,
     });
-    eventController.setLocation(nextUrl);
+    // A newer navigate() started meanwhile: this one commits nothing, as
+    // production's (browser/partial-update.ts) returns on its aborted signal.
+    if (handle.signal.aborted) return;
+    handle.complete(nextUrl);
     eventController.setParams(match.params);
     store.setCurrentUrl(nextUrl.href);
     store.setSegmentIds(segments.map((s) => s.id));
@@ -892,9 +929,14 @@ export async function renderRoute(
       // same-structure / fully-prefetched / optimistic hold lanes are not
       // modeled: without transition() the commit stays urgent.
       if (shouldStartViewTransition(segments, gatedOff)) {
-        commitInTransition(store.loaders, emit, segments, { root, metadata }, [
-          "navigation",
-        ]);
+        commitInTransition(
+          store.loaders,
+          emit,
+          segments,
+          { root, metadata },
+          kind,
+          ["navigation"],
+        );
       } else {
         emit({ root, metadata });
       }
@@ -1024,6 +1066,7 @@ export async function renderRoute(
     navigate: (target, navOptions) =>
       navigate(target, {
         loaders: navOptions?.loaders,
+        handles: navOptions?.handles,
         transition: navOptions?.transition,
         history:
           navOptions?.state !== undefined || navOptions?.replace

@@ -67,6 +67,12 @@ export interface GtmPageInfo {
  * constant, so the handle only carries per-route page tagging). */
 export interface GtmEntry {
   page?: GtmPageInfo;
+  /**
+   * The navigation's own path (pathname + search), pushed by the app-wide
+   * `@gtmPath` slot. It is applied last in collectGtm, so it becomes
+   * `page.path` even when a route also sets `page.path`.
+   */
+  path?: string;
 }
 
 /** The merged value read on the client via useHandle(Gtm). */
@@ -76,11 +82,14 @@ export interface GtmConfig {
 
 function collectGtm(segments: GtmEntry[][]): GtmConfig {
   const page: GtmPageInfo = {};
+  let path: string | undefined;
   for (const segment of segments) {
     for (const entry of segment) {
       if (entry.page) Object.assign(page, entry.page);
+      if (entry.path !== undefined) path = entry.path;
     }
   }
+  if (path !== undefined) page.path = path;
   return { page };
 }
 
@@ -173,6 +182,19 @@ window.dataLayer.push({"gtm.start":new Date().getTime(),event:"gtm.js"});
 window.dataLayer.push(${pageView});
 (function(d,s,i){var j=d.createElement(s);j.async=true;j.src="https://www.googletagmanager.com/gtm.js?id="+encodeURIComponent(i);var f=d.getElementsByTagName(s)[0];f.parentNode.insertBefore(j,f);})(document,"script",${id});`;
 }
+
+/**
+ * App-wide, UI-less slot that stamps every navigation's own path onto the Gtm
+ * handle. Mount it at the route root with
+ * `parallel({ "@gtmPath": GtmPath }, () => [revalidate(true)])`: `revalidate(true)`
+ * re-runs it on every navigation, so each page's tagging value carries the path
+ * it belongs to (see GtmPageViews). It stays separate from the `@gtm` bootstrap
+ * slot, which must not re-push its Script per navigation.
+ */
+export const GtmPath: Handler<"/"> = (ctx) => {
+  ctx.use(Gtm)({ path: ctx.pathname + ctx.url.search });
+  return null;
+};
 
 /**
  * Composable GTM bootstrap slot. Pushes the inline GTM Script (init dataLayer,

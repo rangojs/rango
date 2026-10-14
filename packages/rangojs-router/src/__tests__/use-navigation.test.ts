@@ -44,6 +44,8 @@ vi.mock("react", async () => {
       capturedEffectFn = fn;
       capturedEffectDeps = deps;
     }),
+    // A render here is a commit: the value it rendered is on screen.
+    useLayoutEffect: vi.fn((fn: () => void) => fn()),
     useOptimistic: vi.fn((base: any) => {
       optimisticValue = base;
       return [base, setOptimistic];

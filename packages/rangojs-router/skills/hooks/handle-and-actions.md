@@ -39,6 +39,103 @@ the capture, so its pushes always apply client-side; with `ssr: false` they
 bake into the shell. See `/loader` → "Writing Handles from Loaders". `useHandle`
 re-renders on every handle update, late loader pushes included.
 
+### When handle values change (by design)
+
+Handle values are reactive and arrive on their own channel, by design. A value
+belongs to the segment that pushed it and reaches `useHandle` when that push
+settles. The page never waits for a handle, and a handle never shows the next
+page's values over the page being left:
+
+| Case                                                                                                                                       | What `useHandle` returns                                                                                                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Document load                                                                                                                              | The values the HTML was rendered from. `push(promise)` and `.defer()` are awaited during SSR, so the document ships the resolved value. |
+| Navigation to a page that commits at once (a cold click that mounts new segments)                                                          | The destination's values, in the page's commit; the page's effects read them                                                            |
+| Navigation to a page React holds in a transition (`transition()`, same-route search change, fully prefetched click, a handler that awaits) | The page being left keeps its values; the destination's land in the commit right after the page, in the same task, before paint         |
+| `push(promise)` or `.defer()` on a client navigation                                                                                       | The previous value, then the new one when the promise resolves, possibly well after the page                                            |
+
+You never see a pending value, a blank, or the destination's title over the old
+page. A crumb whose `content` is a promise read with `use()` in `<Suspense>`
+never holds the page either; only that boundary waits for it.
+
+**What this means for effects.** An effect keyed only on the URL
+(`usePathname()`) can run before the destination's values arrive and read the
+previous page's value. That is the contract, not a bug. When a reader must tie a
+handle value to a page (an analytics `page_view`), put the page's path in the
+handle value and key the effect on the value, deduped by path:
+
+```ts
+// handles/page-view.ts
+import { createHandle } from "@rangojs/router";
+
+export interface PageView {
+  path: string;
+  title?: string;
+}
+
+// Collect the item, not the array of segment arrays.
+export const PageView = createHandle<PageView, PageView | undefined>(
+  (segments) => segments.flat().at(-1),
+);
+```
+
+```tsx
+// urls: a root slot that re-runs on every navigation
+parallel(
+  {
+    "@pageView": (ctx) => {
+      ctx.use(PageView)({ path: ctx.pathname + ctx.url.search });
+      return null;
+    },
+  },
+  () => [revalidate(true)],
+);
+```
+
+```tsx
+"use client";
+import { useEffect, useRef } from "react";
+import { useHandle } from "@rangojs/router/client";
+import { PageView } from "./handles/page-view";
+
+export function PageViews() {
+  const pv = useHandle(PageView);
+  // Seeded with the landing path: the first page_view is sent elsewhere (a
+  // bootstrap script). Start from `null` to send it from here instead. The
+  // component also renders on the server, where there is no `window`.
+  const last = useRef(
+    typeof window === "undefined"
+      ? null
+      : window.location.pathname + window.location.search,
+  );
+  useEffect(() => {
+    if (!pv || pv.path === last.current) return;
+    last.current = pv.path;
+    gtag("event", "page_view", { page_path: pv.path, page_title: pv.title });
+  }, [pv]);
+  return null;
+}
+```
+
+The effect fires once per page, because the value carries its own path: the
+previous page's value has the previous path and is skipped, and the destination's
+fires when it arrives. Trade-offs:
+
+- Dedupe is by path. Include `ctx.url.search` in `path` if search-only
+  navigations count; a same-URL refresh or an action's revalidation re-delivers
+  an equal value and sends nothing. Under dev StrictMode the mount effect runs
+  twice; the path check covers it.
+- Select or collect the item, not an array: `useHandle` keeps its reference
+  while the value is equal one level deep, and an array of objects is rebuilt on
+  every delivery (an action's included). With the default collector, use
+  `useHandle(PageView, (s) => s.at(-1)?.at(-1))`.
+- Async values arrive later. With `push(promise)` the page_view fires when the
+  promise resolves, with the resolved value; read the title from the value, not
+  from `document.title`.
+- A page that pushes nothing under its own `PageView` keeps the previous value
+  and fires nothing for itself; the root slot above stamps the path on every
+  navigation so every route counts.
+- Back/Forward fires (the entry's path differs from the current one).
+
 A server component that pushes after an `await` throws `LateHandlePushError`:
 reserve the slot in the handler with `ctx.use(Handle).defer()` and resolve it
 from the component (`/breadcrumbs`, "Deferred content").

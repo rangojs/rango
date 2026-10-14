@@ -1435,11 +1435,15 @@ has to match is what the page being left can observe while it waits:
   notification of the click has gone out (its notifier is debounced), so the
   state after the commit used to reach React in the batch React was holding,
   and `useNavigation()` read `idle` on the page being left for the whole
-  wait. `PartialUpdateConfig.fill.flush()` (`eventController.flushRouteState`)
-  now delivers the state before the render's awaits: React commits `loading`
-  in the next microtask, and the tree's update arrives after it. While React
-  holds that update, the state it carries (`idle`, the new location) is held
-  with it.
+  wait. `PartialUpdateConfig.fill.flush()` (`eventController.flushRouteState`
+  in `flushSync`) now delivers the state before the render's awaits, and
+  React commits `loading` before the tree's update arrives. It has to be
+  synchronous: `useNavigation()` sets its state where the controller's
+  notification runs, and at default priority `loading` joined the tree's
+  urgent update, which brings `idle` with the new URL (#1164), in the one
+  batch React holds, so `loading` never showed (the parity e2e caught it in
+  both apps). While React holds that update, the state it carries (`idle`,
+  the new location) is held with it.
 - **The URL hooks**: `useNavigation().location` moves with the page, in both
   (the `hook` column in "Limits"). Same mechanism: the location it reads is
   controller state, and it arrives in the batch React holds. `usePathname`

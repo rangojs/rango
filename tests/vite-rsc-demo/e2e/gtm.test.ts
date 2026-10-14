@@ -367,6 +367,118 @@ async function checkNoJsHead(page: Page, url: Url) {
   await expect(page.locator("noscript")).toBeAttached();
 }
 
+// Soft-nav page_view scenarios. GtmPageViews keys on the Gtm handle value, which
+// carries its page's path (root @gtmPath slot), so each navigation yields exactly
+// one page_view with ITS OWN tagging, including on a held transition() page where
+// the new URL is visible before the destination's handle values land.
+async function pageViews(page: Page): Promise<DataLayerEvent[]> {
+  return (await readDataLayer(page)).filter((e) => e.event === "page_view");
+}
+
+async function settle(page: Page) {
+  // No further page_view may trail in after the expected one.
+  await page.waitForTimeout(600);
+}
+
+async function gotoGtm(page: Page, url: Url, path = "/gtm") {
+  await page.goto(url(path));
+  await waitForHydration(page);
+  await expect(testId(page, "gtm-demo")).toBeVisible();
+}
+
+async function checkTransitionRoute(page: Page, url: Url) {
+  using _ = expectNoPageError(page);
+  await gotoGtm(page, url);
+
+  await page.locator('a[href="/gtm/transition"]').first().click();
+  await expect(testId(page, "gtm-transition")).toBeVisible();
+  await expect.poll(async () => (await pageViews(page)).length).toBe(2);
+  await settle(page);
+
+  const pvs = await pageViews(page);
+  expect(pvs.map((e) => e.page_path)).toEqual(["/gtm", "/gtm/transition"]);
+  expect(pvs[1].content_group, "this route's content_group, not /gtm's").toBe(
+    "transition",
+  );
+  expect(pvs[1].page_title, "this route's title, not the previous page's").toBe(
+    "GTM Transition",
+  );
+  expect(pvs[1].page_location).toContain("/gtm/transition");
+}
+
+async function checkSameTitleRoute(page: Page, url: Url) {
+  using _ = expectNoPageError(page);
+  await gotoGtm(page, url);
+
+  await page.locator('a[href="/gtm/same-title"]').first().click();
+  await expect(testId(page, "gtm-same-title")).toBeVisible();
+  await expect.poll(async () => (await pageViews(page)).length).toBe(2);
+  await settle(page);
+
+  const pvs = await pageViews(page);
+  expect(pvs.map((e) => e.page_path)).toEqual(["/gtm", "/gtm/same-title"]);
+  expect(pvs[1].content_group).toBe("same-title");
+  expect(pvs[1].page_title).toBe("GTM Demo");
+}
+
+async function checkQueryOnlyNav(page: Page, url: Url) {
+  using _ = expectNoPageError(page);
+  await gotoGtm(page, url);
+
+  await page.locator('a[href="/gtm?q=a"]').first().click();
+  await expect.poll(() => pageViewPaths(page)).toEqual(["/gtm", "/gtm?q=a"]);
+  await page.locator('a[href="/gtm?q=b"]').first().click();
+  await expect
+    .poll(() => pageViewPaths(page))
+    .toEqual(["/gtm", "/gtm?q=a", "/gtm?q=b"]);
+  await settle(page);
+  expect(await pageViewPaths(page)).toEqual(["/gtm", "/gtm?q=a", "/gtm?q=b"]);
+}
+
+async function checkUntaggedRoute(page: Page, url: Url) {
+  using _ = expectNoPageError(page);
+  await gotoGtm(page, url);
+
+  await page.locator('a[href="/gtm/untagged"]').first().click();
+  await expect(testId(page, "gtm-untagged")).toBeVisible();
+  await expect.poll(async () => (await pageViews(page)).length).toBe(2);
+  await settle(page);
+
+  const pvs = await pageViews(page);
+  expect(pvs.map((e) => e.page_path)).toEqual(["/gtm", "/gtm/untagged"]);
+  expect(pvs[1].content_group, "no tagging of its own").toBeUndefined();
+}
+
+// A server action revalidates the route (and the @gtmPath slot), which re-delivers
+// the same Gtm value: the path is unchanged, so no page_view is sent.
+async function checkActionSendsNoPageView(page: Page, url: Url) {
+  using _ = expectNoPageError(page);
+  await gotoGtm(page, url);
+
+  await page.locator('a[href="/gtm/transition"]').first().click();
+  await expect
+    .poll(() => pageViewPaths(page))
+    .toEqual(["/gtm", "/gtm/transition"]);
+  await testId(page, "gtm-action").click();
+  await settle(page);
+  await testId(page, "gtm-action").click();
+  await settle(page);
+  expect(await pageViewPaths(page)).toEqual(["/gtm", "/gtm/transition"]);
+}
+
+// A hard load fires only the inline bootstrap's page_view: GtmPageViews seeds
+// with the initial path, so neither hydration nor StrictMode's double-mount adds
+// one (including a hard load of a transition() route and of a query URL).
+async function checkNoDuplicateOnHardLoad(page: Page, url: Url) {
+  using _ = expectNoPageError(page);
+  for (const path of ["/gtm/transition", "/gtm?q=a", "/gtm/untagged"]) {
+    await page.goto(url(path));
+    await waitForHydration(page);
+    await settle(page);
+    expect(await pageViewPaths(page), `hard load ${path}`).toEqual([path]);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // dev
 // ---------------------------------------------------------------------------
@@ -417,6 +529,45 @@ devTest.describe("gtm", () => {
     "CSP (Report-Only in dev) nonce matches the GTM script nonce",
     async ({ page, devServerURL }) => {
       await checkCspAndNonce(page, (p) => devURL(devServerURL, p), false);
+    },
+  );
+
+  devTest(
+    "transition() route: one page_view with that route's tagging",
+    async ({ page, devServerURL }) => {
+      await checkTransitionRoute(page, (p) => devURL(devServerURL, p));
+    },
+  );
+
+  devTest("same-title route: one page_view", async ({ page, devServerURL }) => {
+    await checkSameTitleRoute(page, (p) => devURL(devServerURL, p));
+  });
+
+  devTest(
+    "query-only navigation: one page_view per new path",
+    async ({ page, devServerURL }) => {
+      await checkQueryOnlyNav(page, (p) => devURL(devServerURL, p));
+    },
+  );
+
+  devTest(
+    "route without Gtm tagging: one page_view, path from the slot",
+    async ({ page, devServerURL }) => {
+      await checkUntaggedRoute(page, (p) => devURL(devServerURL, p));
+    },
+  );
+
+  devTest(
+    "hard load: no duplicate page_view (hydration, StrictMode)",
+    async ({ page, devServerURL }) => {
+      await checkNoDuplicateOnHardLoad(page, (p) => devURL(devServerURL, p));
+    },
+  );
+
+  devTest(
+    "server action: no extra page_view",
+    async ({ page, devServerURL }) => {
+      await checkActionSendsNoPageView(page, (p) => devURL(devServerURL, p));
     },
   );
 
@@ -472,6 +623,38 @@ prodDescribe("gtm", (f) => {
     page,
   }) => {
     await checkCspAndNonce(page, (p) => f.url(p), true);
+  });
+
+  test("transition() route: one page_view with that route's tagging", async ({
+    page,
+  }) => {
+    await checkTransitionRoute(page, (p) => f.url(p));
+  });
+
+  test("same-title route: one page_view", async ({ page }) => {
+    await checkSameTitleRoute(page, (p) => f.url(p));
+  });
+
+  test("query-only navigation: one page_view per new path", async ({
+    page,
+  }) => {
+    await checkQueryOnlyNav(page, (p) => f.url(p));
+  });
+
+  test("route without Gtm tagging: one page_view, path from the slot", async ({
+    page,
+  }) => {
+    await checkUntaggedRoute(page, (p) => f.url(p));
+  });
+
+  test("hard load: no duplicate page_view (hydration, StrictMode)", async ({
+    page,
+  }) => {
+    await checkNoDuplicateOnHardLoad(page, (p) => f.url(p));
+  });
+
+  test("server action: no extra page_view", async ({ page }) => {
+    await checkActionSendsNoPageView(page, (p) => f.url(p));
   });
 
   test.describe("no-js", () => {

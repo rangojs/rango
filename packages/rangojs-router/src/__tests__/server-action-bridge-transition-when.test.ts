@@ -81,8 +81,11 @@ function setup(payload: unknown, cached: ResolvedSegment[]) {
   const setServerCallback = vi.fn();
   const renderSegments = vi.fn(async (..._args: any[]) => "tree");
   const commitLanes: boolean[] = [];
-  const onUpdate = vi.fn(() => {
+  // NavigationProvider reads the tag to hold route state for a transition.
+  const inTransitionTags: boolean[] = [];
+  const onUpdate = vi.fn((update: { inTransition?: true }) => {
     commitLanes.push(lane.inTransition);
+    inTransitionTags.push(update.inTransition === true);
   });
   createServerActionBridge({
     store: store as any,
@@ -101,7 +104,7 @@ function setup(payload: unknown, cached: ResolvedSegment[]) {
     id: string,
     args: unknown[],
   ) => Promise<unknown>;
-  return { callback, renderSegments, store, commitLanes };
+  return { callback, renderSegments, store, commitLanes, inTransitionTags };
 }
 
 afterEach(() => {
@@ -211,7 +214,7 @@ describe("server-action-bridge transition({ when })", () => {
     "the normal action commit with when -> %s commits in lanes %j",
     async (result, lanes) => {
       const when = vi.fn(() => result);
-      const { callback, commitLanes } = setup(
+      const { callback, commitLanes, inTransitionTags } = setup(
         {
           metadata: {
             pathname: "/items/1",
@@ -226,6 +229,7 @@ describe("server-action-bridge transition({ when })", () => {
       );
       await callback("hash#save", []);
       expect(commitLanes).toEqual(lanes);
+      expect(inTransitionTags).toEqual(lanes);
     },
   );
 

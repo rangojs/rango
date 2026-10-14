@@ -505,9 +505,16 @@ export function NavigationProvider({
 
   // The last navigation's scroll decision, until React commits its update.
   const pendingScrollRef = useRef<NavigationUpdate["scroll"]>(undefined);
+  // The last payload handed to React, until it commits: route state that
+  // arrived behind it waits for that commit (flushRouteState("anchor")).
+  const committingRef = useRef<typeof payload | undefined>(undefined);
 
   // Apply scroll after React commits the new content to the DOM
   useLayoutEffect(() => {
+    if (payload === committingRef.current) {
+      committingRef.current = undefined;
+      eventController.releaseRouteState();
+    }
     const scrollAction = pendingScrollRef.current;
     if (!scrollAction) return;
     pendingScrollRef.current = undefined;
@@ -518,6 +525,7 @@ export function NavigationProvider({
       restore: scrollAction.restore,
       scroll: scrollAction.enabled,
       isStreaming: scrollAction.isStreaming,
+      committed: true,
     });
   });
 
@@ -544,7 +552,9 @@ export function NavigationProvider({
         eventController.releaseHydrationLock();
       }
 
-      setPayload({ root: update.root, metadata: update.metadata });
+      const next = { root: update.root, metadata: update.metadata };
+      committingRef.current = next;
+      setPayload(next);
       // The state of the entry this payload renders, as its commit recorded
       // it: one update, so one lane, so one React commit with the tree.
       setLocationState(eventController.getLocationState());
@@ -556,9 +566,23 @@ export function NavigationProvider({
         eventController.setParams(update.metadata.params);
       }
 
+      // tx.commit() and the metadata updates above mutate the controller
+      // synchronously, but its ordinary notifications are task-debounced. Flush
+      // them here so hook setState calls inherit this payload update's lane. In
+      // a transition that suspends, the source tree therefore keeps its source
+      // pathname/params until the destination payload commits with them.
+      // A page in a transition: route state that arrives from here waits for
+      // this payload's commit (useCommitAnchoredState). An urgent page: it is
+      // set at default priority, in the page's lane, and commits with it.
+      eventController.flushRouteState(
+        update.inTransition ? "anchor" : "release",
+      );
+
       // A page rendered from a history-cache entry (back/forward, or a link
       // to it) starts from the entry's pushes, and its response's handles
       // merge onto them: the page on screen's pushes are not its segments'.
+      // After the flush: a crumb whose content is still pending would hold
+      // the page in its transition; it waits and lands in the page's task.
       const { matched, cachedHandleData } = update.metadata;
       if (matched && cachedHandleData) {
         eventController.setHandleData(cachedHandleData, matched);
@@ -575,12 +599,6 @@ export function NavigationProvider({
           update.metadata.resolvedIds,
         );
       }
-
-      // tx.commit() and the metadata updates above mutate the controller
-      // synchronously, but its ordinary notifications are task-debounced. Flush
-      // them here so hook setState calls inherit this payload update's lane. In
-      // a transition that suspends, the source tree therefore keeps its source
-      // pathname/params until the destination payload commits with them.
       eventController.flushRouteState();
     });
 

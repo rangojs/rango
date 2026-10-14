@@ -9,8 +9,8 @@ import { isPlaceholder } from "../types/segments.js";
 import { setAppVersion } from "./app-version.js";
 import { isActionFenceActive } from "./action-fence.js";
 import { getRangoState } from "./rango-state.js";
-import * as React from "react";
 import { startTransition } from "react";
+import { flushSync } from "react-dom";
 import {
   createNavigationTransaction,
   resolveNavigationState,
@@ -29,15 +29,12 @@ import {
   ensureHistoryKey,
 } from "./scroll-restoration.js";
 
-// addTransitionType is only available in React experimental
-const addTransitionType: ((type: string) => void) | undefined =
-  "addTransitionType" in React ? (React as any).addTransitionType : undefined;
-
 import {
   setupDelegatedLinkPrefetch,
   setupLinkInterception,
 } from "./link-interceptor.js";
 import {
+  addTransitionType,
   createPartialUpdater,
   shouldStartViewTransition,
 } from "./partial-update.js";
@@ -168,6 +165,8 @@ export function createNavigationBridge(
     basename,
   } = config;
   let version = config.version;
+  // The latest back/forward: an earlier one's deferred restore yields to it.
+  let popGeneration = 0;
 
   // Create shared partial updater
   const fetchPartialUpdate = createPartialUpdater({
@@ -188,7 +187,8 @@ export function createNavigationBridge(
       handles: (metadata) => {
         if (metadata.handles) consumeHandles(metadata, eventController, store);
       },
-      flush: eventController.flushRouteState,
+      // Committed before the page is handed over (PartialUpdateConfig.fill).
+      flush: () => flushSync(eventController.flushRouteState),
     },
   });
 
@@ -628,7 +628,8 @@ export function createNavigationBridge(
      * Handle browser back/forward navigation
      * Uses cached segments when available for instant restoration
      */
-    async handlePopstate(): Promise<void> {
+    async handlePopstate(event?: PopStateEvent): Promise<void> {
+      const generation = ++popGeneration;
       // Abort any pending navigation to prevent race conditions, and the
       // fill of the page being left (prefetch: false), which its committed
       // navigation still owns.
@@ -738,18 +739,6 @@ export function createNavigationBridge(
             forceAwait: true,
             transitionGatedOff: gatedOff,
           });
-          store.rememberDisplayedEntry();
-          // The restored entry's location and params, set before onUpdate so
-          // the hooks take both in the batch that renders its tree. Not at
-          // the popstate event: the page being left is on screen until here
-          // (#1031). A restore that has to fetch gets its location from
-          // tx.commit() instead (navigation-transaction.ts).
-          eventController.setLocation(new URL(url));
-          eventController.setParams(cachedParams);
-          // The entry this handler found at the event, which the cached tree
-          // was built for: history may have moved during the render above.
-          eventController.commitLocationState(historyState);
-
           const popstateUpdate = {
             root,
             metadata: {
@@ -771,68 +760,106 @@ export function createNavigationBridge(
             !isIntercept &&
             !isLeavingIntercept &&
             shouldStartViewTransition(cachedSegments, gatedOff);
-          if (process.env.NODE_ENV !== "production") auditTreeCause("popstate");
-          if (hasTransition) {
-            startTransition(() => {
-              if (addTransitionType) {
-                addTransitionType("navigation-back");
-              }
-              onUpdate(popstateUpdate);
-            });
-          } else {
-            onUpdate(popstateUpdate);
-          }
-
-          // SWR: If stale, trigger background revalidation
-          if (isStale) {
-            debugLog("[Browser] Cache is stale, background revalidating...");
-            // Background revalidation - don't await, just fire and forget.
-            // When the entry's handles are incomplete (a deferred Meta was still
-            // pending when the user navigated away — see handlesPending), send NO
-            // segment IDs so the server returns a FULL re-render with the handle
-            // stream. A normal stale revalidation sends the cached IDs and the
-            // server returns a diff-only payload that omits unchanged segments'
-            // handles, so a deferred Meta would never re-stream and the title
-            // would stay the pre-resolution carry. handlesPending is set only for
-            // the deferred-Meta-aborted case, so action/cross-tab SWR keeps the
-            // cheap diff path.
-            const segmentIds = cached?.handlesPending
-              ? []
-              : cachedSegments.map((s) => s.id);
-
-            const tx = createNavigationTransaction(
-              store,
-              eventController,
-              url,
-              { skipLoadingState: true, replace: true },
-            );
-
-            fetchPartialUpdate(
-              url,
-              segmentIds,
-              false,
-              tx.handle.signal,
-              tx.with({
-                url,
-                replace: true,
-                scroll: false,
-                intercept: isIntercept,
-                interceptSourceUrl,
-                cacheOnly: true,
-              }),
-              { type: "stale-revalidation", interceptSourceUrl },
-            )
-              .catch((error) => {
-                if (isBackgroundSuppressible(error)) return;
-                console.error(
-                  "[Browser] Background revalidation failed:",
-                  error,
-                );
-              })
-              .finally(() => {
-                tx[Symbol.dispose]();
+          // Not when the browser animated the swipe itself, nor when it
+          // restores this entry's scroll itself ("auto": no
+          // <Html.ScrollRestoration>), which it does right after the event,
+          // on whatever page is then on screen.
+          const animate =
+            hasTransition &&
+            !event?.hasUAVisualTransition &&
+            window.history.scrollRestoration === "manual";
+          const commit = (): void => {
+            // A later back/forward, or a navigation that committed first
+            // (a shallow one from an app's popstate listener), owns the
+            // screen now.
+            if (
+              generation !== popGeneration ||
+              store.getHistoryKey() !== historyKey
+            ) {
+              return;
+            }
+            store.rememberDisplayedEntry();
+            // The restored entry's location and params, set here so the hooks
+            // take both in the batch that renders its tree. Not at the
+            // popstate event: the page being left is on screen until here
+            // (#1031, #1164). A restore that has to fetch gets its location
+            // from tx.commit() instead (navigation-transaction.ts).
+            eventController.setLocation(new URL(url));
+            eventController.setParams(cachedParams);
+            // The entry this handler found at the event, which the cached
+            // tree was built for: history may have moved during the render.
+            eventController.commitLocationState(historyState);
+            if (process.env.NODE_ENV !== "production") {
+              auditTreeCause("popstate");
+            }
+            if (!hasTransition) onUpdate(popstateUpdate);
+            else {
+              startTransition(() => {
+                if (animate) {
+                  addTransitionType?.("pop");
+                  addTransitionType?.("navigation-back");
+                }
+                onUpdate({ ...popstateUpdate, inTransition: true });
               });
-          }
+            }
+            // SWR: If stale, trigger background revalidation
+            if (isStale) {
+              debugLog("[Browser] Cache is stale, background revalidating...");
+              // Background revalidation - don't await, just fire and forget.
+              // When the entry's handles are incomplete (a deferred Meta was still
+              // pending when the user navigated away — see handlesPending), send NO
+              // segment IDs so the server returns a FULL re-render with the handle
+              // stream. A normal stale revalidation sends the cached IDs and the
+              // server returns a diff-only payload that omits unchanged segments'
+              // handles, so a deferred Meta would never re-stream and the title
+              // would stay the pre-resolution carry. handlesPending is set only for
+              // the deferred-Meta-aborted case, so action/cross-tab SWR keeps the
+              // cheap diff path.
+              const segmentIds = cached?.handlesPending
+                ? []
+                : cachedSegments.map((s) => s.id);
+
+              const tx = createNavigationTransaction(
+                store,
+                eventController,
+                url,
+                { skipLoadingState: true, replace: true },
+              );
+
+              fetchPartialUpdate(
+                url,
+                segmentIds,
+                false,
+                tx.handle.signal,
+                tx.with({
+                  url,
+                  replace: true,
+                  scroll: false,
+                  intercept: isIntercept,
+                  interceptSourceUrl,
+                  cacheOnly: true,
+                }),
+                { type: "stale-revalidation", interceptSourceUrl },
+              )
+                .catch((error) => {
+                  if (isBackgroundSuppressible(error)) return;
+                  console.error(
+                    "[Browser] Background revalidation failed:",
+                    error,
+                  );
+                })
+                .finally(() => {
+                  tx[Symbol.dispose]();
+                });
+            }
+          };
+          // React commits a transition started while window.event is the
+          // popstate event synchronously, with no view transition, and leaves
+          // its types queued for the next transition commit (react-dom
+          // shouldAttemptEagerTransition). An animated restore commits on the
+          // next task: the page being left stays on screen one task longer.
+          if (animate) setTimeout(commit, 0);
+          else commit();
           return;
         } catch (error) {
           console.warn(
@@ -898,8 +925,9 @@ export function createNavigationBridge(
         // tx.commit() never ran, so the location is still the page being
         // left. The error boundary below replaces that page, and history is
         // already on the entry that failed: the hooks report that entry, in
-        // the boundary's batch.
+        // the boundary's batch, and scroll restoration tracks it as shown.
         eventController.setLocation(new URL(url));
+        ensureHistoryKey();
 
         const networkError = toNetworkError(error, {
           url,
@@ -932,8 +960,8 @@ export function createNavigationBridge(
         this.navigate(url, options);
       });
 
-      const handlePopstate = () => {
-        this.handlePopstate();
+      const handlePopstate = (event: PopStateEvent) => {
+        this.handlePopstate(event);
       };
 
       // When the browser restores a page from bfcache (back-forward cache),

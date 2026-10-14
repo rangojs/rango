@@ -287,6 +287,60 @@ intercept("@modal", ".photo", PhotoModal, () => [loader(PhotoLoader)]),
 Work that belongs to the modal alone goes in the intercept's loader.
 `clientUrls()` intercepts never accepted `middleware()` and are unchanged.
 
+### Fixed: `useNavigation()` reaches `idle` in the commit that brings the new URL ([#1164](https://github.com/rangojs/rango/issues/1164))
+
+**Before.** On a navigation React holds on screen while the destination
+loads (a search-param change on the same route, a `transition()` route, with
+or without a view transition), `useNavigation()` reported `state: "idle"` as
+soon as the response arrived, while `useSearchParams()`, `usePathname()` and
+`useParams()` kept the page being left until React committed the
+destination. A component reading both saw "navigation finished, URL
+unchanged" for the rest of the wait, and filter chips that drop their
+pending copy on `idle` showed a removed chip again for a moment:
+
+```tsx
+const [committed] = useSearchParams();
+const idle = useNavigation((nav) => nav.state === "idle");
+// after removing "a", before the page commits:
+// idle: true, committed: "tag=a&tag=b"
+```
+
+Without a selector, `useNavigation()` also turned `idle` (and `isStreaming`
+`false`) ahead of the page when the response stream ended before React
+committed it.
+
+**Now.** For a navigation on its own, `idle` commits together with the
+destination's URL and params, read through a selector or through the full
+state, and `useNavigation().location` moves in that commit too (a component
+that first mounts during the wait still reads the destination's URL, #1046).
+`state` stays `"loading"` while React keeps the page being left on screen, so
+a spinner bound to it ends when the new page shows. An abort or a failure
+returns it to `"idle"` at once; a newer navigation keeps it `"loading"`.
+A value that moves while neither the state nor the URL does (`pendingUrl` as
+the response starts streaming, `isStreaming` as it ends) commits with the page
+when the reader also has a change React holds, and at once otherwise; it starts
+no view transition of its own. Nothing to change in your code.
+
+Not covered yet, as before: a server action, or a second navigation that is
+started and aborted, while React still holds a navigation's page brings
+`idle` to the screen with the URL being left.
+
+### Changed: `renderRoute`'s `navigate()` reports the navigation through `useNavigation()`
+
+**Before.** `router.navigate()`, and a `<Link>`, `useRouter().push` or
+`useSearchParams()` setter inside the rendered tree, never started the
+navigation lifecycle: `useNavigation().state` and `useLinkStatus().pending`
+stayed `"idle"`, and the first call warned about it.
+
+**Now.** It drives the lifecycle as a click does in the browser:
+`useNavigation()` reads `"loading"` from the call, rendered before the
+commit, and `"idle"` with the commit, which React holds for a `transition()`
+route whose loader seed is still pending. `useLinkStatus().pending` is true
+for a link to the destination until the commit is handed to React. The
+warning is gone. A test that asserted `"idle"` after `await
+router.navigate()` still passes; one that asserted `"idle"` while a held
+navigation was pending now reads `"loading"`, as the browser does.
+
 ### Fixed: a no-JS form post whose action throws renders its error boundary inside route middleware
 
 **Before.** When a server action posted by a form without JavaScript threw,
@@ -382,6 +436,136 @@ navigation re-ran the loader successfully. Now the fallback clears in the
 commit that brings the loader's new data, whether the loader is the route's
 own or a layout's that the route reads. A commit that did not re-run the
 loader keeps it, and nothing else on the page remounts.
+
+### Added: each transition commit carries its kind as a transition type: `push`, `replace`, `pop`, `action`, `revalidate` ([#1165](https://github.com/rangojs/rango/issues/1165))
+
+A `<ViewTransition>` class map can now tell a link navigation from a server
+action's revalidation. Every commit the router runs in a transition adds its
+`transition({ when })` kind as a React transition type, before the types it
+carried already (`navigation`, `navigation-back`, `action`):
+
+```tsx
+<ViewTransition update={{ push: "page", replace: "page", default: "none" }}>
+  <ProductGrid />
+</ViewTransition>
+```
+
+or on the route:
+
+```ts
+path("/*", Pages, () => [
+  transition({
+    viewTransition: "auto",
+    update: { push: "page", replace: "page", default: "none" },
+  }),
+]);
+```
+
+Navigations animate, and action revalidations (`action`) and background
+refreshes (`revalidate`) stay still.
+
+Before: a filter or sort change, a link between two pages of one catch-all
+route, and a fully prefetched click committed with no type. A server action's
+revalidation also committed with none, with or without `transition()`; only
+the refetch it runs after several actions at once carried `action`. A map
+keyed by type could not tell a filter change from an add-to-cart.
+
+| Kind         | Commits                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `push`       | A link, `router.push()`, `navigate()`: the same-route content hold, a fully prefetched click, an intercept, the commit after a `clientUrls()` optimistic swap |
+| `replace`    | `router.replace()`, `<Link replace>`                                                                                                                          |
+| `pop`        | A back/forward: one that refetches, and under `transition()` one restored from the history cache (next entries)                                               |
+| `action`     | A server action's revalidation and its error-boundary commit                                                                                                  |
+| `revalidate` | `router.refresh()`, a stale entry's background revalidation                                                                                                   |
+
+- Tagging alone animates nothing. React starts a view transition only where a
+  `<ViewTransition>` resolves a class other than `none` for the commit's
+  types, so a page with no map keyed by these names animates as before.
+- A commit outside a transition carries no type: a cold click that mounts new
+  segments, a `when` that returned `false`, and a back/forward restored from
+  the history cache on a route without `transition()`, which commits inside
+  the popstate event.
+- Under `transition()`, a stale entry's revalidation also carries `action`, as
+  before. Key `revalidate: "none"` to keep an `action` map off it.
+- The types reach the commit that brings the page. React keeps one queue of
+  transition types per root, and the first transition commit after a
+  navigation takes the whole queue. No router hook update takes them first:
+  `useHandle()` and `useSegments()` commit with the page, and a
+  `useNavigation()` value that moves while neither the state nor the URL does
+  (`pendingUrl` when the response starts streaming, `isStreaming` when it
+  ends) commits with the page while the reader has a value React holds, and
+  urgently otherwise, so it starts no view transition of its own. This also
+  fixes the existing `navigation` type, which a page often lost the same way
+  (see [#1164](https://github.com/rangojs/rango/issues/1164) and the next
+  entry). A transition your own code starts while React holds a navigation's
+  page can still take them.
+
+### Fixed: Back/Forward restored from the history cache runs a view transition under `transition()`
+
+**Before.** A back/forward the router restored from its history cache never
+animated, even on a `transition()` route with a shared `<ViewTransition>`
+(a list tile and its detail hero, say): the page swapped at once. React
+commits a transition started inside the `popstate` event synchronously, and
+starts no view transition there. The `navigation-back` type the router added
+stayed queued and went to the next transition commit, usually the next link
+click, which then carried `navigation-back` too.
+
+**Now.** Under `transition()` the restore commits on the next task, in a view
+transition whose types are `pop` and `navigation-back`, so a map such as
+`{ "navigation-back": "slide-right" }` or `{ pop: "page" }` animates Back and
+Forward. The saved scroll position is restored in that commit, before the
+view transition takes its new snapshot, so the page animates in where you
+left it. The page being left stays on screen for that one extra task, and the
+location hooks change with the restored page.
+
+- A traversal the browser animated itself, such as the iOS Safari or Chrome
+  Android back swipe (`PopStateEvent.hasUAVisualTransition`), commits at once
+  and is not animated a second time. It adds no type.
+- Without `transition()` the restore still commits inside the event, with no
+  view transition and no type.
+- So does an entry whose scroll the browser restores itself: a document
+  without `<Html.ScrollRestoration>` (Rango's default document renders it),
+  or an entry created before it mounted. The browser restores that scroll
+  right after the event, so the restored page has to be on screen by then.
+- A second Back or Forward before the first one's restore commits wins: the
+  first restore is dropped. Each entry also keeps its own scroll position
+  now; a rapid double Back used to save the page on screen under the entry it
+  skipped, so Forward restored that entry at the wrong position.
+
+### Fixed: a navigation's title, breadcrumbs and `useSegments()` commit with its page
+
+**Before.** On a navigation React holds on screen while the destination
+loads (a `transition()` route, a same-route search change, a handler that
+awaits its data), the destination's `Meta` title, its `Breadcrumbs` crumbs and
+every other `useHandle()` value committed as soon as the response brought
+them, over the page being left. On a page whose handler awaits its data after
+its pushes that lasted the whole wait (about 800 ms in the e2e fixture). A
+`useSegments()` reader of the full state showed the destination's location
+early in the same way. That early commit also took the page's transition
+types, so a `<ViewTransition>` keyed by them did not animate the page.
+
+**Now.** Handle values and `useSegments()` commit with the page they belong
+to, so nothing shows the destination over the page being left. On a page
+that commits urgently (a click that mounts new segments, as most first visits
+do), a value that arrives before React renders the page commits with it, and
+the page's effects read it: an analytics `page_view` fired from an effect
+keyed on `usePathname()` carries the new page's handle metadata and
+`document.title`. On a page React holds in a transition (a `transition()`
+route, a same-route search change, a fully prefetched click), a value that
+arrives during the wait is applied right after the page commits, in the same
+task, before the browser paints; an effect that runs on the URL change
+alone can read the previous page's value. That is by design: handle values are
+async, and `push(promise)` resolves whenever it resolves, possibly well after
+the page, with the previous value on screen until then. To tie a value to a page
+(an analytics `page_view`), put the path in the value
+(`ctx.use(PageView)({ path: ctx.pathname + ctx.url.search })` from a root
+`parallel()` slot with `revalidate(true)`, collected to the last item) and key
+the effect on the value, deduped by path; it then fires once per page for sync
+and async values alike and not for an action's revalidation. See the hooks
+skill, `useHandle`, "When handle values change (by design)". A crumb whose `content` is a promise read with `use()` inside
+`<Suspense>` never holds the page: the page changes when its response arrives
+and only the crumb's content waits, whether the crumb keeps its `<Suspense>`
+across pages or mounts a new one.
 
 ### Added: `readAction()` on `serveShellRequest()`'s result
 

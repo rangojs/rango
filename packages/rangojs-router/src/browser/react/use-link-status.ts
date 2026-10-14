@@ -100,7 +100,7 @@ export function useLinkStatus(): LinkStatus {
   // to a non-idle (loading) state. Used to decide whether to emit a release
   // update when returning to idle, so the optimistic store doesn't stay pinned
   // to `true` if a parent transition (e.g. the <Link> click / view transition
-  // commit) is still pending. Mirrors useNavigation's optimisticPinnedRef.
+  // commit) is still pending.
   const optimisticPinnedRef = useRef(false);
 
   const [pending, setOptimisticPending] = useOptimistic(basePending);

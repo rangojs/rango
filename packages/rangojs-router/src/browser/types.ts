@@ -349,6 +349,12 @@ export interface NavigationUpdate {
     /** Function to check if streaming is in progress */
     isStreaming?: () => boolean;
   };
+  /**
+   * Handed to React inside startTransition (commitInTransition, an action's
+   * commit, a cached back/forward's): NavigationProvider joins the route
+   * state that arrives while React holds it to its commit.
+   */
+  inTransition?: true;
 }
 
 /**
@@ -797,7 +803,8 @@ export interface ServerActionBridgeConfig {
 export interface NavigationBridge {
   navigate(url: string, options?: NavigateOptionsInternal): Promise<void>;
   refresh(): Promise<void>;
-  handlePopstate(): Promise<void>;
+  /** `event`: the popstate event; a traversal the browser animated itself (hasUAVisualTransition) is not animated again. */
+  handlePopstate(event?: PopStateEvent): Promise<void>;
   registerLinkInterception(): () => void;
   registerDelegatedPrefetch(): () => void;
   /** Current RSC version (live, reflects the latest updateVersion). */

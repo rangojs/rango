@@ -5,7 +5,7 @@ import {
   DemoBasketLoader,
   DemoVehicleLoader,
 } from "../handlers/shop/loaders/chrome-fixture.js";
-import { GtmBootstrap } from "../handles/gtm.js";
+import { GtmBootstrap, GtmPath } from "../handles/gtm.js";
 import { HomePage } from "../pages/home.js";
 import { AboutPage } from "../pages/about.js";
 import { PrefetchTestPage } from "../pages/prefetch-test.js";
@@ -56,7 +56,7 @@ function DemoCategoryTemplate() {
  * The include() helper adds URL prefix and optional name prefix.
  */
 export const urlpatterns = urls(
-  ({ path, include, parallel, layout, middleware, loader }) => [
+  ({ path, include, parallel, layout, middleware, loader, revalidate }) => [
     // The GTM bootstrap and the default document title are pushed by UI-less parallel
     // slots (@gtm, @meta), not a layout handler. There is NO inner layout: RootLayout
     // (the createRouter `document`) already wraps every route in <html><body>, so a
@@ -74,6 +74,11 @@ export const urlpatterns = urls(
         return null;
       },
     }),
+
+    // @gtmPath stamps each navigation's path onto the Gtm handle. revalidate(true)
+    // re-runs it on EVERY navigation (a layout-level slot is otherwise kept), so
+    // the client <GtmPageViews> can key on a handle value that carries its own path.
+    parallel({ "@gtmPath": GtmPath }, () => [revalidate(true)]),
 
     // Root routes
     path(

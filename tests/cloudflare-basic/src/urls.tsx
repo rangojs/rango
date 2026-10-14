@@ -38,6 +38,7 @@ import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
+import { NavIdleTagsLoader } from "./loaders/nav-idle.js";
 import { LoadMoreLoader } from "./loaders/location-state.js";
 import {
   DepCrumbProductLoader,
@@ -187,6 +188,7 @@ import {
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { LoaderParamsProbe } from "./components/LoaderParamsProbe.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
+import { NavIdlePage } from "./pages/nav-idle.js";
 import { FeatureDetailPage, FeaturesShell } from "./pages/features.js";
 import {
   BlogLayout,
@@ -336,6 +338,10 @@ import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
+import { transitionKindsPatterns } from "./pages/transition-kinds.js";
+import { asyncHandlesPatterns } from "./pages/async-handles.js";
+import { handlesCommitPatterns } from "./pages/handles-commit.js";
+import { vtBackPatterns } from "./pages/vt-back.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -2111,6 +2117,14 @@ export const urlpatterns = urls(
         path("/render-stability/p/:id", RenderStabilityRoute, {
           name: "renderStability",
         }),
+        // #1164: one page, with and without transition().
+        path("/nav-idle", NavIdlePage, { name: "navIdle" }, () => [
+          loader(NavIdleTagsLoader),
+        ]),
+        path("/nav-idle-vt", NavIdlePage, { name: "navIdleVt" }, () => [
+          loader(NavIdleTagsLoader),
+          transition(),
+        ]),
         path("/scripts-demo", ScriptsDemoPage, { name: "scriptsDemo" }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
 
@@ -3113,6 +3127,17 @@ export const urlpatterns = urls(
         // transition({ when }) conditional-gate coverage (mirrors the router
         // e2e app's /tx-when/:hold/:n).
         include("/", txWhenPatterns, { name: "" }),
+        // #1165: each transition commit carries its kind as a transition
+        // type (mirrors the router e2e app's /vt-kinds/*).
+        include("/", transitionKindsPatterns, { name: "" }),
+        // A navigation's title and crumbs commit with its page (mirrors the
+        // router e2e app's /handles-commit/*).
+        include("/", handlesCommitPatterns, { name: "" }),
+        // Async handle values (mirrors the router e2e app's /async-handles/*).
+        include("/", asyncHandlesPatterns, { name: "" }),
+        // A cached back/forward animates under transition() (mirrors the
+        // router e2e app's /vt-back/*).
+        include("/", vtBackPatterns, { name: "" }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {
