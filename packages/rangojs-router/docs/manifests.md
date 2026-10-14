@@ -125,6 +125,12 @@ registerRouterManifestLoader("router_abc123", () =>
   import("virtual:rsc-router/routes-manifest/router_abc123"));
 ```
 
+The RSC entry imports the eager module, and `virtual:rsc-router/loader-manifest`,
+only for their side effects, so each `load` hook returns its code with
+`moduleSideEffects: "no-treeshake"`. Without it, a build whose
+`treeshake.moduleSideEffects` is `false` dropped both, and the server failed at
+startup (`src/vite/__tests__/module-side-effects-build.test.ts`).
+
 The eager module carries only the flat route maps (for `ctx.reverse()`); the trie and
 precomputed match entries live in the lazy `virtual:rsc-router/routes-manifest/<routerId>`
 chunk, populated via `await ensureRouterManifest(routerId)` before any matching.

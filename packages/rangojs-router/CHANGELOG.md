@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fixed: a build of an app with `"sideEffects": false` keeps its clientUrls() revalidate() predicates
+
+**Before.** When the app's own `package.json` said `"sideEffects": false`,
+`vite build` dropped the module that registers the `revalidate()` predicates
+of a `clientUrls()` group, since the group reaches it only through a bare
+import. Every route of the group then answered 404, with "has no server
+registration" reported to `onError`. Dev was unaffected, so this showed only
+once the build was deployed (#1149).
+
+**Now.** The registrations are in the server build whatever the app's
+`sideEffects` field says, and the group's routes answer as in dev. An app that
+added a plugin returning `moduleSideEffects: "no-treeshake"` for
+`?rango-revalidate` ids to work around it can remove that plugin. The routes
+manifest and the loader manifest also stay in a build whose
+`treeshake.moduleSideEffects` is `false`, which dropped them before and made
+the server fail at startup.
+
 ### Fixed: a prefetch that failed is no longer answered from the browser HTTP cache on click
 
 **Before.** A prefetch whose route threw (a handler error with no `loading()`)

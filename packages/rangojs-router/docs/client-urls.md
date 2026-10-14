@@ -561,6 +561,9 @@ of a `"use client"` module into client-reference proxies, so a post transform
 appends `import "<file>?rango-revalidate"` to it: the predicates register
 (`registerClientUrlRevalidators`, `client-urls/revalidate-registry.ts`) when
 the group's module loads on the server, and a lazy `include()` stays lazy.
+The plugin's `load` serves the module with `moduleSideEffects: "no-treeshake"`:
+only a bare import reaches it, and an app whose `package.json` says
+`"sideEffects": false` would otherwise have it dropped from the build (#1149).
 Route discovery serializes the SSR copy, so the projection carries a
 per-loader key (`loaderRevalidate`); materialization
 (`client-urls/server-projection.ts`) attaches the registered predicate to
