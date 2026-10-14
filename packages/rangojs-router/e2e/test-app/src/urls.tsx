@@ -1,5 +1,6 @@
 import { urls, cookies, Meta, Breadcrumbs, notFound } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
+import { Suspense } from "react";
 import { RootLayout } from "./components/layouts/index.js";
 import { blogPatterns } from "./urls/blog.js";
 import { createFactoryHmrPatterns } from "./urls/factory-hmr.js";
@@ -225,6 +226,12 @@ function ClientUrlsSlowParent(): React.ReactNode {
   );
 }
 
+/** Streams its part 8 s after the request (prefetch-stall-adopted.test.ts). */
+async function PrefetchStallSlow(): Promise<React.ReactNode> {
+  await new Promise((resolve) => setTimeout(resolve, 8_000));
+  return <p data-testid="stall-done">stall done</p>;
+}
+
 function ClientUrlsActionParent(): React.ReactNode {
   return (
     <section>
@@ -270,6 +277,23 @@ export const urlpatterns = urls(
         }
         return <p data-testid="flaky-ok">flaky ok</p>;
       }),
+
+      // A click that adopted a still-streaming prefetch keeps its stream past
+      // the prefetch stall timeout (prefetch-stall-adopted.test.ts). Unnamed:
+      // no gen entry.
+      path("/prefetch-stall-from", () => (
+        <Link to="/prefetch-stall" prefetch="hover" data-testid="stall-link">
+          stall
+        </Link>
+      )),
+      path("/prefetch-stall", () => (
+        <>
+          <p data-testid="stall-shell">stall shell</p>
+          <Suspense fallback={<p data-testid="stall-pending">pending</p>}>
+            <PrefetchStallSlow />
+          </Suspense>
+        </>
+      )),
 
       // Index route - product list
       path(

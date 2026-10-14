@@ -657,6 +657,12 @@ async function LateSuspenseContent({ gate }: { gate: string }) {
   return <LateSuspenseReader />;
 }
 
+/** Streams its part 8 s after the request (prefetch-stall-adopted.test.ts). */
+async function PrefetchStallSlow(): Promise<ReactNode> {
+  await new Promise((resolve) => setTimeout(resolve, 8_000));
+  return <p data-testid="stall-done">stall done</p>;
+}
+
 /**
  * Main URL patterns - Django-style routing API
  */
@@ -2388,6 +2394,23 @@ export const urlpatterns = urls(
           }
           return <p data-testid="flaky-ok">flaky ok</p>;
         }),
+
+        // A click that adopted a still-streaming prefetch keeps its stream
+        // past the prefetch stall timeout (prefetch-stall-adopted.test.ts).
+        // Unnamed: no gen entry.
+        path("/prefetch-stall-from", () => (
+          <Link to="/prefetch-stall" prefetch="hover" data-testid="stall-link">
+            stall
+          </Link>
+        )),
+        path("/prefetch-stall", () => (
+          <>
+            <p data-testid="stall-shell">stall shell</p>
+            <Suspense fallback={<p data-testid="stall-pending">pending</p>}>
+              <PrefetchStallSlow />
+            </Suspense>
+          </>
+        )),
 
         // Issue #915: a 200 whose async server component threw after the
         // commit must not be stored by the document cache or the PPR shell
