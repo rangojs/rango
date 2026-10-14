@@ -138,7 +138,7 @@ async function discoverRoutersPass(
   serverMod: any,
 ): Promise<any> {
   await timed(debug, "inner: refresh recorded client URL projections", () =>
-    refreshRecordedClientUrlProjections(state, ssrEnv, serverMod),
+    refreshRecordedClientUrlProjections(state, ssrEnv, serverMod, rscEnv),
   );
 
   // Import the entry file via RSC environment.
@@ -194,7 +194,7 @@ async function discoverRoutersPass(
   }
 
   await timed(debug, "inner: discover client URL projections", () =>
-    discoverClientUrlProjections(state, ssrEnv, serverMod),
+    discoverClientUrlProjections(state, ssrEnv, serverMod, rscEnv),
   );
 
   // generateManifestFull must run in the RSC runner realm: it invokes the

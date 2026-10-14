@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { postprocessBundle } from "../discovery/bundle-postprocess.js";
-import type { DiscoveryState } from "../discovery/state.js";
+import {
+  createClientUrlRevalidateIndex,
+  type DiscoveryState,
+} from "../discovery/state.js";
 import { stageBuildAssetModule } from "../utils/prerender-utils.js";
 
 function createMinimalState(
@@ -26,6 +29,7 @@ function createMinimalState(
     perRouterTrieMap: new Map(),
     perRouterPrecomputedMap: new Map(),
     perRouterManifestDataMap: new Map(),
+    clientUrlRevalidate: createClientUrlRevalidateIndex(),
     prerenderManifestEntries: null,
     staticManifestEntries: null,
     shellCandidates: null,

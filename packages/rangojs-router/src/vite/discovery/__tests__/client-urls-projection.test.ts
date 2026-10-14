@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { clientUrls } from "../../../client-urls/client-urls.js";
-import { serializeClientUrlPatterns } from "../../../client-urls/server-projection.js";
+import {
+  serializeClientUrlPatterns,
+  type ClientUrlProjection,
+} from "../../../client-urls/server-projection.js";
 import { computeProductionHash } from "../../plugins/client-ref-hashing.js";
 import {
+  assignClientUrlRevalidateFiles,
   discoverClientUrlProjections,
   isClientUrlsComponentUseSource,
   recordClientUrlsModule,
@@ -37,6 +41,8 @@ function createServerModule() {
 
 const patterns = clientUrls(({ path }) => [path("/", HomePage)]);
 const projection = serializeClientUrlPatterns(patterns);
+/** discovery's RSC environment: the registration imports. */
+const rscEnv = { runner: { import: vi.fn(async (_id: string) => ({})) } };
 
 describe("isClientUrlsComponentUseSource", () => {
   const CLIENT = 'import { loader } from "@rangojs/router/client";\n';
@@ -141,7 +147,12 @@ describe("refreshRecordedClientUrlProjections", () => {
     };
     const serverMod = createServerModule();
 
-    await refreshRecordedClientUrlProjections(state, { runner }, serverMod);
+    await refreshRecordedClientUrlProjections(
+      state,
+      { runner },
+      serverMod,
+      rscEnv,
+    );
 
     expect(runner.import).toHaveBeenCalledOnce();
     expect(runner.import).toHaveBeenCalledWith(source);
@@ -176,7 +187,12 @@ describe("refreshRecordedClientUrlProjections", () => {
     };
     const serverMod = createServerModule();
 
-    await refreshRecordedClientUrlProjections(state, { runner }, serverMod);
+    await refreshRecordedClientUrlProjections(
+      state,
+      { runner },
+      serverMod,
+      rscEnv,
+    );
 
     expect(serverMod.calls).toEqual([`set:${okReference}`]);
     expect(state.clientUrlProjectionMap.has(brokenReference)).toBe(false);
@@ -190,6 +206,7 @@ describe("refreshRecordedClientUrlProjections", () => {
       emptyState,
       { runner: { import: vi.fn() } },
       serverMod,
+      rscEnv,
     );
 
     const recordedState = createState();
@@ -201,6 +218,7 @@ describe("refreshRecordedClientUrlProjections", () => {
       recordedState,
       undefined,
       serverMod,
+      rscEnv,
     );
 
     expect(serverMod.setClientUrlProjection).not.toHaveBeenCalled();
@@ -231,7 +249,7 @@ describe("discoverClientUrlProjections", () => {
     };
     const serverMod = createServerModule();
 
-    await discoverClientUrlProjections(state, { runner }, serverMod);
+    await discoverClientUrlProjections(state, { runner }, serverMod, rscEnv);
 
     // One import per SOURCE; the projection installs under every reference id.
     expect(importedSources).toEqual([firstSource, secondSource]);
@@ -272,7 +290,7 @@ describe("discoverClientUrlProjections", () => {
     const serverMod = createServerModule();
 
     await expect(
-      discoverClientUrlProjections(state, { runner }, serverMod),
+      discoverClientUrlProjections(state, { runner }, serverMod, rscEnv),
     ).rejects.toThrow(
       `reference "${secondReference}" from source "${secondSource}"`,
     );
@@ -304,6 +322,7 @@ describe("discoverClientUrlProjections", () => {
       state,
       { runner },
       serverMod,
+      rscEnv,
     ).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(Error);
@@ -328,7 +347,7 @@ describe("discoverClientUrlProjections", () => {
     const serverMod = createServerModule();
 
     await expect(
-      discoverClientUrlProjections(state, undefined, serverMod),
+      discoverClientUrlProjections(state, undefined, serverMod, rscEnv),
     ).rejects.toThrow(`reference "${reference}" from source "${source}"`);
     expect(state.clientUrlProjectionMap).toBe(previous);
     expect(serverMod.calls).toEqual([]);
@@ -355,6 +374,7 @@ describe("discoverClientUrlProjections", () => {
       state,
       { runner },
       serverMod,
+      rscEnv,
     ).catch((error: unknown) => error);
 
     expect(failure).toMatchObject({ cause: importFailure });
@@ -385,7 +405,7 @@ describe("discoverClientUrlProjections", () => {
     };
     const serverMod = createServerModule();
 
-    await discoverClientUrlProjections(state, { runner }, serverMod);
+    await discoverClientUrlProjections(state, { runner }, serverMod, rscEnv);
 
     // recordClientUrlsModule never un-records; deletion self-heals here.
     expect(state.clientUrlSourceByReferenceId).toEqual(
@@ -403,11 +423,194 @@ describe("discoverClientUrlProjections", () => {
     state.clientUrlProjectionMap = previous;
     const serverMod = createServerModule();
 
-    await discoverClientUrlProjections(state, undefined, serverMod);
+    await discoverClientUrlProjections(state, undefined, serverMod, rscEnv);
 
     expect(state.clientUrlProjectionMap).not.toBe(previous);
     expect(state.clientUrlProjectionMap).toEqual(new Map());
     expect(serverMod.calls).toEqual(["clear"]);
     expect(serverMod.setClientUrlProjection).not.toHaveBeenCalled();
+  });
+});
+
+describe("assignClientUrlRevalidateFiles", () => {
+  const groupA = "/app/src/a.urls.tsx";
+  const groupB = "/app/src/b.urls.tsx";
+  const groupC = "/app/src/c.urls.tsx";
+  const fileA = "/app/src/A.tsx";
+  const fileB = "/app/src/B.tsx";
+  const id = (file: string) => `${file}?rango-revalidate`;
+  const route = (
+    loaderRevalidate?: (string | boolean)[][],
+  ): ClientUrlProjection["routes"][number] => ({
+    id: "r",
+    pattern: "/",
+    name: null,
+    options: {},
+    loaderIds: [],
+    hasLoading: false,
+    ...(loaderRevalidate ? { loaderRevalidate } : {}),
+  });
+
+  function setup() {
+    const state = createDiscoveryState(undefined, undefined);
+    // Group A under its dev and production reference ids.
+    state.clientUrlSourceByReferenceId = new Map([
+      ["/src/a.urls.tsx#default", groupA],
+      ["abc123#default", groupA],
+      ["/src/b.urls.tsx#default", groupB],
+      ["/src/c.urls.tsx#default", groupC],
+    ]);
+    const a: ClientUrlProjection = {
+      version: 1,
+      routes: [route([["k1", true], ["k2"]]), route()],
+      intercepts: [
+        {
+          slotName: "@modal",
+          targetName: "item",
+          loaderIds: [],
+          hasLoading: false,
+          loaderRevalidate: [["k3"]],
+        },
+      ],
+    };
+    const b: ClientUrlProjection = {
+      version: 1,
+      routes: [route([["k2", "k-unrecorded"]])],
+    };
+    // Group C reads its own predicates only.
+    const c: ClientUrlProjection = { version: 1, routes: [route([["k4"]])] };
+    state.clientUrlProjectionMap = new Map([
+      ["/src/a.urls.tsx#default", a],
+      ["abc123#default", a],
+      ["/src/b.urls.tsx#default", b],
+      ["/src/c.urls.tsx#default", c],
+    ]);
+    state.clientUrlRevalidate.fileByKey
+      .set("k1", fileA)
+      .set("k2", fileB)
+      .set("k3", groupA)
+      .set("k4", groupC);
+    const nodes = new Map(
+      [groupA, groupB, groupC].map((group) => [id(group), { id: id(group) }]),
+    );
+    const rscEnv = {
+      runner: { import: vi.fn(async (_id: string) => ({})) },
+      moduleGraph: {
+        getModuleById: vi.fn((moduleId: string) => nodes.get(moduleId)),
+        invalidateModule: vi.fn(),
+      },
+    };
+    const assign = () =>
+      assignClientUrlRevalidateFiles(
+        state,
+        rscEnv as unknown as Parameters<
+          typeof assignClientUrlRevalidateFiles
+        >[1],
+        state.clientUrlProjectionMap!,
+      );
+    return { state, rscEnv, nodes, assign };
+  }
+
+  it("assigns each group the other files of its projection's keys and loads their registrations once", async () => {
+    const { state, rscEnv, assign } = setup();
+    await assign();
+    // k3 is group A's own: its proxy loads it. k-unrecorded has no file:
+    // materialization names it.
+    expect(state.clientUrlRevalidate.filesByGroup).toEqual(
+      new Map([
+        [groupA, [fileA, fileB]],
+        [groupB, [fileB]],
+        [groupC, []],
+      ]),
+    );
+    expect(
+      rscEnv.runner.import.mock.calls.map(([moduleId]) => moduleId),
+    ).toEqual([id(fileA), id(fileB)]);
+  });
+
+  it("invalidates a group's module when its files change, and only then", async () => {
+    const { state, rscEnv, nodes, assign } = setup();
+    const { invalidateModule } = rscEnv.moduleGraph;
+    await assign();
+    expect(invalidateModule.mock.calls).toEqual([
+      [nodes.get(id(groupA))],
+      [nodes.get(id(groupB))],
+    ]);
+
+    invalidateModule.mockClear();
+    await assign();
+    expect(invalidateModule).not.toHaveBeenCalled();
+
+    state.clientUrlRevalidate.fileByKey.set("k-unrecorded", fileA);
+    await assign();
+    expect(invalidateModule.mock.calls).toEqual([[nodes.get(id(groupB))]]);
+    expect(state.clientUrlRevalidate.filesByGroup.get(groupB)).toEqual([
+      fileA,
+      fileB,
+    ]);
+  });
+
+  it("drops a group discovery no longer projects", async () => {
+    const { state, assign } = setup();
+    await assign();
+    state.clientUrlProjectionMap!.delete("/src/b.urls.tsx#default");
+    await assign();
+    expect([...state.clientUrlRevalidate.filesByGroup.keys()]).toEqual([
+      groupA,
+      groupC,
+    ]);
+  });
+  it("installs nothing when a registration fails to load: the refresh keeps last-known state, the strict pass rejects", async () => {
+    const state = createState();
+    const reference = "/src/cart.urls.tsx#default";
+    state.clientUrlSourceByReferenceId.set(
+      reference,
+      `${PROJECT_ROOT}/src/cart.urls.tsx`,
+    );
+    const previous = new Map([[reference, projection]]);
+    state.clientUrlProjectionMap = previous;
+    state.clientUrlRevalidate.fileByKey.set(
+      "k-cart",
+      `${PROJECT_ROOT}/src/Cart.tsx`,
+    );
+    const cartLoader: LoaderDefinition<unknown> = {
+      __brand: "loader",
+      $$id: "loaders#cart",
+    };
+    const cart = clientUrls(({ path, loader, revalidate }) => [
+      path("/cart", HomePage, () => [
+        loader(cartLoader, () => [
+          revalidate({ $$rangoRevalidate: "k-cart" } as never),
+        ]),
+      ]),
+    ]);
+    const ssrEnv = {
+      runner: { import: vi.fn(async () => ({ default: cart })) },
+    };
+    const failing = {
+      runner: {
+        import: vi.fn(async () => {
+          throw new Error("registration failed to load");
+        }),
+      },
+    };
+    const serverMod = createServerModule();
+
+    await refreshRecordedClientUrlProjections(
+      state,
+      ssrEnv,
+      serverMod,
+      failing,
+    );
+    await expect(
+      discoverClientUrlProjections(state, ssrEnv, serverMod, failing),
+    ).rejects.toThrow("registration failed to load");
+
+    expect(failing.runner.import).toHaveBeenCalledWith(
+      `${PROJECT_ROOT}/src/Cart.tsx?rango-revalidate`,
+    );
+    expect(serverMod.calls).toEqual([]);
+    expect(state.clientUrlProjectionMap).toBe(previous);
+    expect(state.clientUrlRevalidate.filesByGroup).toEqual(new Map());
   });
 });

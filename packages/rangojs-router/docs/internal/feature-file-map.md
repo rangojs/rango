@@ -187,10 +187,14 @@ The client descriptor and both runtime projections are owned by:
   the build transform: moves each `revalidate()` argument (the builder's
   helper, or the one imported from `@rangojs/router/client` in any module, for
   `Component.use`) into the server-only `<file>?rango-revalidate` module,
-  leaves the marker, appends the import to each group's RSC client-reference
-  proxy, serves the shadow graph (`shadowImportTargets`: each
-  `?rango-revalidate` module imports those of the file's static imports under
-  the workspace root), and rejects what cannot run on the server. A
+  leaves the marker, records each key's file, appends the import to each
+  group's RSC client-reference proxy, and rejects what cannot run on the
+  server. A group's `?rango-revalidate` module also imports those of the files
+  discovery assigned it (`assignClientUrlRevalidateFiles` in
+  `vite/discovery/client-urls-projection.ts`, which loads them before every
+  projection install, over the `ClientUrlRevalidateIndex` in
+  `vite/discovery/state.ts` that every plugin instance of one `rango()`
+  shares). A
   `revalidate(true | false)` literal stays in place. In dev, its
   `client-urls-component-use-hmr` plugin updates a component module's
   importers in the browser when its `.use` changed.
@@ -218,8 +222,9 @@ Vite discovery and projection installation are owned by
 [`vite/discovery/client-urls-projection.ts`](../../src/vite/discovery/client-urls-projection.ts)
 (also `isClientUrlsComponentUseSource`, the dev watcher's sniff for a
 `Component.use` module, `componentUseSignature`, the hash of its `.use`
-assignments that the watcher and the client HMR plugin compare, and
-`CLIENT_IMPORT_RE`),
+assignments that the watcher and the client HMR plugin compare,
+`CLIENT_IMPORT_RE`, `hoistedRevalidateId`, and `assignClientUrlRevalidateFiles`,
+which loads a projection's `revalidate()` registrations before every install),
 [`vite/router-discovery.ts`](../../src/vite/router-discovery.ts),
 [`vite/discovery/discover-routers.ts`](../../src/vite/discovery/discover-routers.ts),
 [`vite/discovery/state.ts`](../../src/vite/discovery/state.ts),
@@ -248,7 +253,7 @@ The owning unit tests are
 [`client-urls/__tests__/client-urls.test.ts`](../../src/client-urls/__tests__/client-urls.test.ts)
 (`Component.use` merge and validation),
 [`vite/__tests__/client-urls-revalidate-hoist.test.ts`](../../src/vite/__tests__/client-urls-revalidate-hoist.test.ts)
-(the hoist and the shadow graph),
+(the hoist and the files discovery assigns a group),
 [`client-urls/__tests__/client-root.test.tsx`](../../src/client-urls/__tests__/client-root.test.tsx),
 and
 [`client-urls/__tests__/server-projection.test.tsx`](../../src/client-urls/__tests__/server-projection.test.tsx).

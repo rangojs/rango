@@ -295,12 +295,15 @@ options. A mounted component may carry its own leaf items as `Component.use`
 `loading()`, merged before the site's explicit items as `mergeHandlerUse`
 does on the server; structural items there throw. Its `revalidate()`
 predicates hoist from the component's module (the transform keys on
-`revalidate` imported from `./client` in any module), and register through a
-shadow graph: a group's `?rango-revalidate` module imports the
-`?rango-revalidate` module of each project file it imports statically, down
-through barrels (under the workspace root, outside `node_modules` and the
-router's `src/`, ending at `"use server"` and at a module the client stubs
-whole, `isClientLoaderStubFile`), so no client code loads on the server. The
+`revalidate` imported from `./client` in any module, recording each key's
+file in `ClientUrlRevalidateIndex`, `vite/discovery/state.ts`), and register
+through the group: before installing a projection, discovery assigns each
+group the files of its projection's keys (`assignClientUrlRevalidateFiles`)
+and loads them into its realm, and the group's `?rango-revalidate` module
+imports theirs, so no
+client code loads on the server, a lazy include stays lazy, and the file may
+sit anywhere outside `node_modules` (behind barrels, in another workspace
+package). The
 dev watcher treats an edit that changes such a module's `.use` assignments
 like a group edit (`componentUseSignature`), and in the browser the
 `client-urls-component-use-hmr` plugin updates the module's importers on such

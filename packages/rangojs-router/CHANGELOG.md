@@ -360,11 +360,13 @@ export default clientUrls(({ path }) => [path("/dash", Dashboard)]);
   routes and their generated types come from the builder's own items.
 - A `revalidate()` predicate in `.use` runs on the server. The build hoists
   it from the component's module, with or without `"use client"`, and
-  registers it when a group that imports the module statically (directly or
-  through barrels) loads on the server, a component in a sibling workspace
-  package included. A module the group reaches only through `import()`, or
-  outside the workspace root, has no registration, and the server names the
-  loader when it mounts the group.
+  registers it when a group whose routes use the component loads on the
+  server, wherever the module sits: behind barrels or in a sibling workspace
+  package. Route discovery finds the module from the
+  group's own projection, so the registration loads with the group and
+  nothing else of the module does, and a lazy `include()` stays lazy. A
+  predicate in `node_modules` is not hoisted, and route discovery fails
+  naming its loader.
 - In dev, editing a component's `.use` refreshes its groups, on the server
   and in the browser, without a restart. A save that leaves every `.use`
   unchanged (a markup edit) stays a Fast Refresh and re-runs no route
