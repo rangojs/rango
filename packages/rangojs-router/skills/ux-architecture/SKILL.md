@@ -449,48 +449,11 @@ ctx.reverse(".product", { slug: "b", locale: "de" }); // switch language
   below it: a parent module's layout links within its own module (`/links`,
   "Local names").
 
-Server-built links, from the RSC as a prop or from a loader as data, with
-every param filled; the loader carries the ones that follow `:projectId`:
-
-```tsx
-// urls/project.tsx (server): build the links where the names resolve
-export const ProjectNavLoader = createLoader((ctx) => ({
-  issues: ctx.reverse(".issues"), // /acme/web/issues
-  settings: ctx.reverse(".settings"), // /acme/web/settings
-  account: ctx.reverse("account.settings"), // /acme/settings, another module
-}));
-
-export const projectUrls = urls(({ layout, path, loader, revalidate }) => [
-  layout(
-    // From the RSC: fine for links that do not follow :projectId.
-    (ctx) => <ProjectShell accountHref={ctx.reverse("account.settings")} />,
-    () => [
-      // From a loader: held like the layout, re-run when the project changes.
-      loader(ProjectNavLoader, () => [
-        revalidate(({ currentParams, nextParams }) =>
-          currentParams.projectId !== nextParams.projectId ? true : undefined,
-        ),
-      ]),
-      path("/issues", Issues, { name: "issues" }),
-      path("/settings", Settings, { name: "settings" }),
-    ],
-  ),
-]);
-```
-
-```tsx
-"use client";
-export function ProjectNav() {
-  const { data: links } = useLoader(ProjectNavLoader);
-  return (
-    <nav>
-      <Link to={links.issues}>Issues</Link>
-      <Link to={links.settings}>Settings</Link>
-      <Link to={links.account}>Account</Link>
-    </nav>
-  );
-}
-```
+Build cross-module links, and links a client component cannot reach with
+its own map, on the server: `ctx.reverse` in the handler (passed as a
+prop) or in a loader (returned as data, with a `revalidate()` when they
+follow a param). The full example is in `/links`, "Client components:
+receive URLs as props".
 
 ### 2.13 Rewrite or redirect
 
