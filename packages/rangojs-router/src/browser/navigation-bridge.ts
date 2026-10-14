@@ -11,6 +11,7 @@ import { isActionFenceActive } from "./action-fence.js";
 import { getRangoState } from "./rango-state.js";
 import * as React from "react";
 import { startTransition } from "react";
+import { flushSync } from "react-dom";
 import {
   createNavigationTransaction,
   resolveNavigationState,
@@ -188,7 +189,8 @@ export function createNavigationBridge(
       handles: (metadata) => {
         if (metadata.handles) consumeHandles(metadata, eventController, store);
       },
-      flush: eventController.flushRouteState,
+      // Committed before the page is handed over (PartialUpdateConfig.fill).
+      flush: () => flushSync(eventController.flushRouteState),
     },
   });
 

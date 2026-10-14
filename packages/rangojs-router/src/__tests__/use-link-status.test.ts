@@ -165,7 +165,7 @@ describe("useLinkStatus", () => {
    * "idle", so the old code only ran setBasePending(false) and left the pinned
    * optimistic `true` in place. For view-transition routes the base `false` is
    * deferred behind the still-pending commit transition, so the spinner stayed
-   * stuck. The fix mirrors useNavigation's optimisticPinnedRef release branch.
+   * stuck.
    */
   it("releases the pinned optimistic value when navigation returns to idle", () => {
     let state = "idle";

@@ -25,6 +25,7 @@ import {
 } from "./urls/meta.js";
 import { hooksPatterns } from "./urls/hooks.js";
 import { renderStabilityPatterns } from "./urls/render-stability.js";
+import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
 import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
@@ -1202,6 +1203,7 @@ export const urlpatterns = urls(
 
       // Hook render-stability fixture (render/commit tracking)
       include("/", renderStabilityPatterns, { name: "" }),
+      include("/", navIdleLocationPatterns, { name: "" }),
 
       // Shared-refetch regression scenario
       include("/", sharedRefetchPatterns, { name: "" }),

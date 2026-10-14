@@ -35,15 +35,23 @@ on screen:
 
 | What you want to show                          | Read                                                                                |
 | ---------------------------------------------- | ----------------------------------------------------------------------------------- |
-| a request is out, nothing has arrived          | `state === "loading"`; `pendingUrl` is the URL being fetched                        |
+| a request is out, nothing has arrived          | `pendingUrl` is the URL being fetched; `null` once the response arrives             |
+| the new page is not on screen yet              | `state === "loading"`; `"idle"` commits together with the new page and its URL      |
 | the page has not fully arrived yet             | `isStreaming`: true from the start of the request until the stream ends             |
 | which page is on screen while the request runs | `location`, or `usePathname()` / `useSearchParams()` (see [`./urls.md`](./urls.md)) |
 
-`state` and `pendingUrl` cover the network wait. Once the response has
-arrived a loader may still be streaming, and React keeps the page being left
-on screen where a navigation holds its content (a same-route change, a
-`transition()` route); `isStreaming` covers that part too, so use it for a
-progress indicator that should last until the new page is complete.
+`pendingUrl` covers the network wait. Once the response has arrived a loader
+may still be streaming, and React keeps the page being left on screen where a
+navigation holds its content (a same-route change, a `transition()` route,
+with or without a view transition). `state` stays `"loading"` through that
+part: for a navigation on its own, `"idle"` commits in the same commit as the
+destination's `useSearchParams()`, `usePathname()` and `useParams()`, so a
+component that reads both does not see the navigation finished on the URL it
+is leaving. A server action, or another navigation started and aborted,
+while React holds that page can still bring `"idle"` with the URL being left.
+`isStreaming` can outlast that commit (a loader still streaming below a
+boundary that already showed), so use it for a progress indicator that should
+last until the new page is complete.
 
 On Back/Forward the address bar changes at once, before any of this: during
 the wait `window.location` is the entry being fetched, the same URL as
@@ -51,9 +59,9 @@ the wait `window.location` is the entry being fetched, the same URL as
 from the client's history cache restores its page in one commit and reports
 no pending state.
 
-`location` moves when the response arrives. Where React then holds the page
-being left, it is ahead of the screen for that last part of the wait, and so
-is a URL hook in a component that first mounts then (issue #1046).
+`location` moves in that commit too. A component that first mounts while
+React holds the page being left reads the destination's `location` and URL
+hooks (issue #1046).
 
 ### useRouter()
 

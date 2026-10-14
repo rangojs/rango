@@ -365,6 +365,8 @@ export const NamedRoutes = {
   "middlewareWrapping.single": "/middleware-wrapping/single",
   "mwChain.detail": "/mw-chain/detail/:slug",
   "mwChain.index": "/mw-chain",
+  navIdle: "/nav-idle",
+  navIdleVt: "/nav-idle-vt",
   negotiateJsonFirst: "/negotiate-test-json-first",
   negotiateJsonFirstRsc: "/negotiate-test-json-first",
   negotiateMwJson: "/negotiate-mw-test",

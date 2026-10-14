@@ -38,6 +38,7 @@ import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
+import { NavIdleTagsLoader } from "./loaders/nav-idle.js";
 import { LoadMoreLoader } from "./loaders/location-state.js";
 import {
   DepCrumbProductLoader,
@@ -187,6 +188,7 @@ import {
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { LoaderParamsProbe } from "./components/LoaderParamsProbe.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
+import { NavIdlePage } from "./pages/nav-idle.js";
 import { FeatureDetailPage, FeaturesShell } from "./pages/features.js";
 import {
   BlogLayout,
@@ -2111,6 +2113,14 @@ export const urlpatterns = urls(
         path("/render-stability/p/:id", RenderStabilityRoute, {
           name: "renderStability",
         }),
+        // #1164: one page, with and without transition().
+        path("/nav-idle", NavIdlePage, { name: "navIdle" }, () => [
+          loader(NavIdleTagsLoader),
+        ]),
+        path("/nav-idle-vt", NavIdlePage, { name: "navIdleVt" }, () => [
+          loader(NavIdleTagsLoader),
+          transition(),
+        ]),
         path("/scripts-demo", ScriptsDemoPage, { name: "scriptsDemo" }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
 

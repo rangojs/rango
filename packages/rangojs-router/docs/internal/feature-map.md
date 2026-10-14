@@ -94,10 +94,12 @@ takes the `transition()` config a node declares. When the chain carries one
 (`shouldStartViewTransition`), navigate() commits through production's
 `commitInTransition` (both exported from `browser/partial-update.ts` for this
 reuse), so a pending Promise seed pins the held reader's
-`useLoader().isLoading` exactly as a streaming navigation does. The navigation
-lifecycle (`useNavigation().state`, `useLinkStatus().pending`) still stays
-`idle`, and production's other hold lanes (same-structure, fully-prefetched,
-optimistic) are not modeled: without `transition` the commit stays urgent.
+`useLoader().isLoading` exactly as a streaming navigation does. navigate()
+also drives the navigation lifecycle (`eventController.startNavigation` at the
+call, delivered before the commit; `complete()` at the commit), so
+`useNavigation().state` reads `loading` until the commit lands, held with it.
+Production's other hold lanes (same-structure, fully-prefetched, optimistic)
+are not modeled: without `transition` the commit stays urgent.
 
 Cache search-param key filtering is exported from both `.` and `./cache` as
 `TRACKING_SEARCH_PARAMS` and `CacheSearchParams`. The global

@@ -69,6 +69,7 @@ export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-sce
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
 export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario.js";
+export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
 export type { TxIdleViewTransitionScenarioOptions } from "./tx-idle-view-transition-scenario.js";
 export {
   countViewTransitions,
@@ -1682,8 +1683,11 @@ export async function expectRequestHeldBackKeepsUrlOfPageOnScreen(
  * A return to the evicted entry of the same route, past its response: the
  * transaction has committed and React holds the entry's page behind a loader
  * that is still streaming, so the page being left (the list's last filler
- * page) is on screen. useNavigation() reports this part of the wait as
- * `isStreaming`; its `state` is back to "idle".
+ * page) is on screen. useNavigation() reports the navigation until that page
+ * commits (#1164), so it is no signal for this part of the wait. The
+ * response's first chunk carries the entry's tree and the loader's comes
+ * after LOAD_MORE_HOLD_MS: half a second after the response the transaction
+ * has committed, and the page being left still on screen proves the hold.
  */
 async function returnToEvictedEntryWithLoaderHeld(
   page: Page,
@@ -1695,10 +1699,29 @@ async function returnToEvictedEntryWithLoaderHeld(
     filler: (n) => `${url}?page=${2 + n}`,
     leavingShows,
   });
+  const target = new URL(entry);
+  const arrived = page.waitForResponse((response) => {
+    const request = new URL(response.url());
+    return (
+      request.searchParams.has("_rsc_partial") &&
+      request.pathname === target.pathname &&
+      [...target.searchParams].every(
+        ([name, value]) => request.searchParams.get(name) === value,
+      )
+    );
+  });
   await goBackToEvictedEntry(page);
   await expect(page).toHaveURL(entry);
+  await arrived;
+  await page.waitForTimeout(LOAD_MORE_HOLD_MS / 5);
+  expect(await urlScreen(page)).toMatchObject({
+    shows: leavingShows,
+    pageUrl: shownUrl(leaving),
+  });
+  // Still reporting the navigation, on the page being left.
+  const onLeaving = `loading|streaming|${shownUrl(leaving)}|`;
   await expect(byTestId(page, "ls-shared-nav")).toHaveText(
-    /^idle\|streaming\|/,
+    new RegExp(`^${onLeaving.replace(/[|?.]/g, "\\$&")}`),
   );
   return { entry, leaving, leavingShows };
 }

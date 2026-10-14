@@ -130,13 +130,15 @@ export interface PartialUpdateConfig {
     /** What the response's handlers pushed, to the handle store. */
     handles(metadata: RscMetadata): void;
     /**
-     * Deliver the navigation state to its readers now. A page built with
-     * holes commits in the task of its click, before the notification of the
-     * click has gone out (event-controller.ts makeDebouncedNotifier), and
-     * React holds that commit where a hole is read with no boundary: without
-     * this useNavigation() reads idle, on the page being left, for the whole
-     * wait. Delivered first, `loading` is on screen when the commit is
-     * handed over, and stays while React holds it, as for a plain click.
+     * Deliver the navigation state to its readers now, and commit it. A page
+     * built with holes commits in the task of its click, before the
+     * notification of the click has gone out (event-controller.ts
+     * makeDebouncedNotifier), and React holds that commit where a hole is
+     * read with no boundary: without this useNavigation() reads idle, on the
+     * page being left, for the whole wait. Committed first, `loading` is on
+     * screen when the commit is handed over, and stays while React holds it,
+     * as for a plain click. Delivered at default priority it joins the
+     * commit's urgent batch, which brings idle with the URL, and never shows.
      */
     flush(): void;
   };

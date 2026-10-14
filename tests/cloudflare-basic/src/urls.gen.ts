@@ -142,6 +142,8 @@ export const routes = {
   "mixedClient.index": "/mixed-client-routes",
   "mixedClientAsync.detail": "/mixed-client-async/:slug",
   "mixedClientAsync.index": "/mixed-client-async",
+  navIdle: "/nav-idle",
+  navIdleVt: "/nav-idle-vt",
   nestedCondition: "/nested-condition",
   nestedKey: "/nested-key",
   nestedKeyComposed: "/nested-key-composed",

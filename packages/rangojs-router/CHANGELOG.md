@@ -287,6 +287,60 @@ intercept("@modal", ".photo", PhotoModal, () => [loader(PhotoLoader)]),
 Work that belongs to the modal alone goes in the intercept's loader.
 `clientUrls()` intercepts never accepted `middleware()` and are unchanged.
 
+### Fixed: `useNavigation()` reaches `idle` in the commit that brings the new URL ([#1164](https://github.com/rangojs/rango/issues/1164))
+
+**Before.** On a navigation React holds on screen while the destination
+loads (a search-param change on the same route, a `transition()` route, with
+or without a view transition), `useNavigation()` reported `state: "idle"` as
+soon as the response arrived, while `useSearchParams()`, `usePathname()` and
+`useParams()` kept the page being left until React committed the
+destination. A component reading both saw "navigation finished, URL
+unchanged" for the rest of the wait, and filter chips that drop their
+pending copy on `idle` showed a removed chip again for a moment:
+
+```tsx
+const [committed] = useSearchParams();
+const idle = useNavigation((nav) => nav.state === "idle");
+// after removing "a", before the page commits:
+// idle: true, committed: "tag=a&tag=b"
+```
+
+Without a selector, `useNavigation()` also turned `idle` (and `isStreaming`
+`false`) ahead of the page when the response stream ended before React
+committed it.
+
+**Now.** For a navigation on its own, `idle` commits together with the
+destination's URL and params, read through a selector or through the full
+state, and `useNavigation().location` moves in that commit too (a component
+that first mounts during the wait still reads the destination's URL, #1046).
+`state` stays `"loading"` while React keeps the page being left on screen, so
+a spinner bound to it ends when the new page shows. An abort or a failure
+returns it to `"idle"` at once; a newer navigation keeps it `"loading"`.
+A value that moves while neither the state nor the URL does (`pendingUrl` as
+the response starts streaming, `isStreaming` as it ends) commits with the page
+when the reader also has a change React holds, and at once otherwise; it starts
+no view transition of its own. Nothing to change in your code.
+
+Not covered yet, as before: a server action, or a second navigation that is
+started and aborted, while React still holds a navigation's page brings
+`idle` to the screen with the URL being left.
+
+### Changed: `renderRoute`'s `navigate()` reports the navigation through `useNavigation()`
+
+**Before.** `router.navigate()`, and a `<Link>`, `useRouter().push` or
+`useSearchParams()` setter inside the rendered tree, never started the
+navigation lifecycle: `useNavigation().state` and `useLinkStatus().pending`
+stayed `"idle"`, and the first call warned about it.
+
+**Now.** It drives the lifecycle as a click does in the browser:
+`useNavigation()` reads `"loading"` from the call, rendered before the
+commit, and `"idle"` with the commit, which React holds for a `transition()`
+route whose loader seed is still pending. `useLinkStatus().pending` is true
+for a link to the destination until the commit is handed to React. The
+warning is gone. A test that asserted `"idle"` after `await
+router.navigate()` still passes; one that asserted `"idle"` while a held
+navigation was pending now reads `"loading"`, as the browser does.
+
 ### Fixed: a no-JS form post whose action throws renders its error boundary inside route middleware
 
 **Before.** When a server action posted by a form without JavaScript threw,
