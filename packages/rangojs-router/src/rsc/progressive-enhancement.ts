@@ -21,6 +21,7 @@ import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import type { MatchResult } from "../types.js";
 import {
+  actionRenderRequest,
   createResponseWithMergedHeaders,
   finalizeResponse,
   buildRouteMiddlewareEntries,
@@ -359,7 +360,7 @@ async function rerenderAfterFormAction<TEnv>(
     return finalizeResponse(
       await executeMiddleware(
         buildRouteMiddlewareEntries(routeMwInfo.routeMiddleware),
-        request,
+        actionRenderRequest(request),
         env,
         routeMwInfo.variables,
         render,

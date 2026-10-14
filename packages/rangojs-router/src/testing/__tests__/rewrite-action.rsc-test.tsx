@@ -6,7 +6,9 @@
  * The POST goes to the visitor's URL, so it matches the rewriting route. Route
  * middleware wraps only the re-render after the action, so its rewrite fires
  * after the action ran: the re-render runs as the target (its global and route
- * middleware, its render), and the action is not run again.
+ * middleware, its render), and the action is not run again. Route middleware
+ * sees that re-render as the page's GET, so a rewrite it skips for mutations
+ * fires too.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -43,6 +45,8 @@ let actionRuns = 0;
 let targetGlobalRuns = 0;
 let itemLoaderFails = false;
 const errors: OnErrorContext[] = [];
+/** The request the item's global and route middleware see. */
+const seen: string[] = [];
 
 const ItemLoader = createLoader(async (ctx) => {
   if (itemLoaderFails) throw new Error("item service unavailable");
@@ -98,8 +102,19 @@ const router = createRouter({
     }
     return next();
   })
+  .use(async (ctx, next) => {
+    // A routing rewrite in global middleware: every method, or GET only.
+    const every = /^\/global-(\d+)$/.exec(ctx.pathname);
+    if (every) throw rewrite(`/item/${every[1]}`);
+    const getOnly = /^\/global-get-(\d+)$/.exec(ctx.pathname);
+    if (getOnly && ctx.request.method === "GET") {
+      throw rewrite(`/item/${getOnly[1]}`);
+    }
+    return next();
+  })
   .use("/item/*", async (ctx, next) => {
     targetGlobalRuns++;
+    seen.push(`global:${ctx.request.method}`);
     if (ctx.request.headers.get("x-deny") === "1") {
       return new Response("Denied", { status: 403 });
     }
@@ -138,6 +153,9 @@ const router = createRouter({
         { name: "item" },
         () => [
           middleware(async (ctx, next) => {
+            seen.push(
+              `route:${ctx.request.method}:${ctx.request.body ? "body" : "no-body"}`,
+            );
             ctx.set(Guard, "target");
             await next();
             ctx.header("x-item-route-mw", "ran");
@@ -158,6 +176,11 @@ const router = createRouter({
                 `/item/${ctx.pathname.slice("/public-".length)}${ctx.url.search}`,
               );
             }
+            // The same rewrite, skipping mutations.
+            if (ctx.pathname.startsWith("/skip-")) {
+              if (ctx.request.method !== "GET") return next();
+              throw rewrite(`/item/${ctx.pathname.slice("/skip-".length)}`);
+            }
             return next();
           }),
           errorBoundary(() => <p>fallback boundary</p>),
@@ -168,7 +191,12 @@ const router = createRouter({
 
 const CSRF = { csrf: "ok" };
 
-type Metadata = { routeName: string; matched: string[]; pathname: string };
+type Metadata = {
+  routeName: string;
+  matched: string[];
+  pathname: string;
+  rewriteTarget?: string;
+};
 
 function metadata(flight: string | undefined): Metadata {
   const row = flight?.split("\n").find((line) => line.startsWith("0:"));
@@ -195,6 +223,7 @@ beforeEach(() => {
   targetGlobalRuns = 0;
   itemLoaderFails = false;
   errors.length = 0;
+  seen.length = 0;
 });
 
 describe("a JS action from a page route middleware rewrote", () => {
@@ -442,4 +471,99 @@ describe("a no-JS form post from a page route middleware rewrote", () => {
     ).rejects.toThrow("Return a Response for mutations instead");
     expect(actionRuns).toBe(0);
   });
+});
+
+/** A JS action from the page at `url`, sent as the browser sends it. */
+async function actionFrom(
+  url: string,
+  id: string,
+): Promise<{
+  shown: Metadata;
+  result: Awaited<ReturnType<typeof serveShellRequest>>;
+}> {
+  const cacheStore = new MemorySegmentCacheStore();
+  const shown = await showPage(url, cacheStore);
+  targetGlobalRuns = 0;
+  seen.length = 0;
+  const result = await serveShellRequest(router, url, {
+    cacheStore,
+    action: {
+      ref: save,
+      id,
+      segments: shown.matched,
+      rewriteTarget: shown.rewriteTarget,
+    },
+  });
+  return { shown, result };
+}
+
+function postForm(url: string, id: string) {
+  return serveShellRequest(router, url, {
+    cacheStore: new MemorySegmentCacheStore(),
+    form: createActionForm(saveForm, { id, fields: CSRF }),
+  });
+}
+
+describe("an action from a page whose route middleware rewrites only GETs", () => {
+  it("a JS action re-renders the page it shows and runs once", async () => {
+    const { shown, result } = await actionFrom("/skip-1", "actions.ts#skip");
+    expect(actionRuns).toBe(1);
+    expect(result.response.status).toBe(200);
+    expect(result.response.headers.get("x-rango-rewrite")).toBe("/item/1");
+    const revalidated = metadata(result.flight);
+    expect(revalidated.routeName).toBe("item");
+    expect(revalidated.matched).toEqual(shown.matched);
+    expect(revalidated.pathname).toBe("/skip-1");
+    expect(result.flight).toContain("item 1 guard=target runs=1");
+    expect(result.flight).not.toContain("fallback");
+    expect(targetGlobalRuns).toBe(1);
+    expect(errors).toEqual([]);
+  });
+
+  it("a no-JS form post re-renders the page it shows and runs once", async () => {
+    const result = await postForm("/skip-2", "actions.ts#skipForm");
+    expect(actionRuns).toBe(1);
+    expect(result.response.status).toBe(200);
+    expect(result.response.headers.get("x-rango-rewrite")).toBe("/item/2");
+    expect(result.body).toContain("item 2 guard=target runs=1");
+    expect(result.body).not.toContain("fallback");
+    expect(metadata(result.flight).pathname).toBe("/skip-2");
+    expect(result.formState).toBeDefined();
+    expect(errors).toEqual([]);
+  });
+});
+
+describe("route middleware around the render after an action", () => {
+  it("sees the page's GET in JS and no-JS, while global middleware sees the POST", async () => {
+    await actionFrom("/item/1", "actions.ts#seenJs");
+    expect(seen).toEqual(["global:POST", "route:GET:no-body"]);
+
+    seen.length = 0;
+    await postForm("/item/2", "actions.ts#seenForm");
+    expect(seen).toEqual(["global:POST", "route:GET:no-body"]);
+  });
+});
+
+// A page a global rewrite reached (#1145 remainder): its rewrite of the POST
+// is refused before the action (RW3), or, skipped for mutations, the render
+// after the action is the visitor's route. Open on dc-t75.
+describe("an action from a page a global rewrite reached", () => {
+  it.fails.each(["/global-1", "/global-get-1"])(
+    "a JS action from %s re-renders the page it shows",
+    async (url) => {
+      const { shown, result } = await actionFrom(url, `actions.ts#save${url}`);
+      expect(actionRuns).toBe(1);
+      expect(metadata(result.flight).routeName).toBe("item");
+      expect(metadata(result.flight).matched).toEqual(shown.matched);
+    },
+  );
+
+  it.fails.each(["/global-2", "/global-get-2"])(
+    "a no-JS form post from %s re-renders the page it shows",
+    async (url) => {
+      const result = await postForm(url, `actions.ts#saveForm${url}`);
+      expect(actionRuns).toBe(1);
+      expect(result.body).toContain("item 2 guard=target runs=1");
+    },
+  );
 });

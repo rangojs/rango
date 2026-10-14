@@ -1507,6 +1507,51 @@ const matrixRows: SemanticMatrixRow[] = [
       await expect(testId(page, "rw-item-loads")).toHaveText("1");
     },
   },
+  // /rw/get-only/:id rewrites to /rw/items/:id for GETs only (#1145).
+  {
+    id: "RW11",
+    contract:
+      "route middleware sees the render after an action as the page's GET: a rewrite it makes only for GETs re-renders the target, the action runs once, in JS and no-JS",
+    transport: "request",
+    execution: "action-followup",
+    scope: "n/a",
+    assert: async ({ baseUrl, page, request }) => {
+      const key = crypto.randomUUID();
+      await page
+        .context()
+        .addCookies([{ name: "rw-key", value: key, url: baseUrl("/") }]);
+      await page.goto(baseUrl("/rw/get-only/14"));
+      await waitForHydration(page);
+      const post = page.waitForResponse(
+        (r) =>
+          r.request().method() === "POST" &&
+          r.url().includes("/rw/get-only/14"),
+      );
+      await testId(page, "rw-item-save").click();
+      const jsAction = await post;
+      expect(jsAction.status()).toBe(200);
+      expect(jsAction.headers()["x-rango-rewrite"]).toBe("/rw/items/14");
+      await expect(testId(page, "rw-item-saves")).toHaveText("1");
+      await expect(testId(page, "rw-item-guard")).toHaveText("target");
+
+      const html = await (
+        await request.get(baseUrl("/rw/get-only/14"), {
+          headers: { cookie: `rw-key=${key}` },
+        })
+      ).text();
+      const actionField = /name="(\$ACTION_ID_[^"]+)"/.exec(html)?.[1];
+      expect(actionField).toBeDefined();
+      const form = await request.post(baseUrl("/rw/get-only/14"), {
+        headers: { cookie: `rw-key=${key}` },
+        multipart: { [actionField!]: "" },
+      });
+      expect(form.status()).toBe(200);
+      expect(form.headers()["x-rango-rewrite"]).toBe("/rw/items/14");
+      const rerendered = await form.text();
+      expect(rerendered).toContain('data-testid="rw-item-saves">2<');
+      expect(rerendered).toContain('data-testid="rw-item-guard">target<');
+    },
+  },
 ];
 
 function registerSemanticMatrixSuite(build: BuildAxis): void {

@@ -206,6 +206,13 @@ See "Rewrite" below for what moves and what stays.
   - PE full rerenders
   - a thrown action's error-boundary render, JS and PE (`[A3]`)
 - Route middleware does not wrap action execution itself.
+- Around the render after an action (the JS revalidation, the PE rerender,
+  the thrown action's error-boundary render), route middleware's
+  `ctx.request` is the page's GET: method `GET`, no body, the POST's headers
+  without `content-type` and body framing (`actionRenderRequest` in
+  `rsc/helpers.ts`). It decides as for a GET of the page. Global middleware,
+  which wraps the action, sees the POST. The render itself keeps the POST.
+  `[RW11]`
 - Handler-first ordering is guaranteed within a full render pass:
   route handler runs before its child/orphan layouts and parallel children.
 - `ctx.set()` values flow downward through structural scope boundaries only.
@@ -1005,6 +1012,9 @@ Guarantees, each pinned by a semantic matrix row:
 - A route-middleware rewrite of a mutation moves the re-render to the target
   after the action ran: the action runs once, the target's global and route
   middleware run, and the target renders, in JS and no-JS. `[RW5]`
+- Route middleware sees that re-render as the page's GET, so a rewrite it
+  makes only for GETs (`if (ctx.request.method !== "GET") return next()`)
+  moves the re-render too, in JS and no-JS. `[RW11]`
 - More than 5 hops, or a rewrite to the URL the pass is on (pathname and
   search), is a `RewriteLoopError`: `onError` (phase `"routing"`) and a 508.
   `[RW4]`
@@ -1068,6 +1078,26 @@ the action and PE branches render from the outcome, so the target must be a
 page route: a response route, a redirect or no match on pass 2 is an error
 (`coreRequestHandler`), not a fresh POST that a response route's handler
 would serve as a second mutation.
+
+What does route middleware see around that re-render? The page's GET
+(`[RW11]`). Each route middleware decides once per pass, and with the action
+done it is deciding about the render. While it saw the POST, a routing
+rewrite written for GETs (`if (ctx.request.method !== "GET") return next()`)
+let the re-render through as the rewriting route, and the client replaced
+the page on screen with it (#1145). A guard of that shape never guarded
+anything: the action had already run. So `executeRenderWithMiddleware`
+(`rsc/handler.ts`) and `rerenderAfterFormAction`
+(`rsc/progressive-enhancement.ts`) hand route middleware
+`actionRenderRequest(request)`, and its rewrite moves the re-render as above.
+Only route middleware's `ctx.request` changes. The render keeps the POST it
+always had, so `revalidateAfterAction`, the caches and the shell paths
+behave as before. `getRequestContext().request` stays the POST. Global
+middleware keeps it too, since it wraps the action. The GET is a copy, so a
+header route middleware writes onto `ctx.request` no longer reaches the
+render (`ctx.set()` is the channel for that). A route middleware that reads
+the form body after a no-JS post now gets none. A response header set in its
+GET branch now lands on the action's response, so a header that must stay
+off mutation responses belongs in global middleware.
 
 ### Leaving a rewritten page
 
@@ -1137,11 +1167,12 @@ What this does not cover yet:
 - Entering a rewritten page from its own target URL (`/item/1` to
   `/public-1`) holds the route, as before #1144, though `ctx.rewrittenFrom`
   changed: `_visitorMoved` is set only when leaving a rewritten page.
-- A route middleware that skips a mutation (`if (method !== "GET") return
-next()`) still re-renders the rewriting route after the action, and a page
-  a global rewrite reached cannot call an action. The client now names the
-  page it shows, but only to find the page being left: re-rendering the
-  target from it would let a request choose what renders.
+- A page a global rewrite reached cannot call an action. A global rewrite
+  of the POST is refused before the action (`[RW3]`). With a rewrite
+  written for GETs only, the action runs on the visitor's route, if one
+  matches, and nothing after the action runs global middleware again. The
+  client names the page it shows, but only to find the page being left:
+  re-rendering the target from it would let a request choose what renders.
 
 Where the old and the new URL show:
 

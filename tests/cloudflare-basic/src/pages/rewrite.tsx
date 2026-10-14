@@ -283,6 +283,19 @@ export const rewritePatterns = urls(
           errorBoundary(() => <p data-testid="rw-public-boundary">visitor</p>),
         ],
       ),
+      // The same rewrite for GETs only: route middleware sees the render
+      // after an action as the page's GET, so it rewrites that render too.
+      path(
+        "/get-only/:id",
+        () => <h1>never rendered</h1>,
+        {},
+        () => [
+          middleware((ctx, next) => {
+            if (ctx.request.method !== "GET") return next();
+            throw rewrite(`/rw/items/${ctx.params.id}`);
+          }),
+        ],
+      ),
       path("/maintenance", RwMaintenance, { name: "maintenance" }, () => [
         // The target sets its own status.
         middleware(async (ctx, next) => {
