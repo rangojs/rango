@@ -2369,6 +2369,20 @@ export const urlpatterns = urls(
         path("/document-cache-theme", DocumentCacheThemePage),
         path("/document-cache-theme/live", DocumentCacheThemeLivePage),
 
+        // A prefetch that fails must not be answered from the HTTP cache on the
+        // click (prefetch-cache-control-status.test.ts). Unnamed: no gen entry.
+        path("/prefetch-flaky-from", () => (
+          <Link to="/prefetch-flaky" prefetch="hover" data-testid="flaky-link">
+            flaky
+          </Link>
+        )),
+        path("/prefetch-flaky", () => {
+          if (cookies().get("flaky-ok")?.value !== "1") {
+            throw new Error("flaky route down");
+          }
+          return <p data-testid="flaky-ok">flaky ok</p>;
+        }),
+
         // Issue #915: a 200 whose async server component threw after the
         // commit must not be stored by the document cache or the PPR shell
         // capture (pages/capture-render-error.tsx). Unnamed: the e2e navigates

@@ -51,8 +51,9 @@ tissue that still applies):
   Prefetch responses carry `Cache-Control: private,
 max-age={prefetchCacheTTL}` (default 300 seconds). Only prefetch responses:
   the header is gated on the `X-Rango-Prefetch` request header plus partial
-  plus non-intercept — an ordinary navigation partial carries no
-  `Cache-Control` at all;
+  plus non-intercept plus a 2xx status (a failed prefetch is dropped by the
+  client, so a cached 500/404 would answer the click) — an ordinary
+  navigation partial carries no `Cache-Control` at all;
 - the **history segment cache** (`historyCache` in
   `src/browser/navigation-store.ts`), which holds back/forward payloads.
   This one is **not** state-keyed — rotating the state value does nothing to

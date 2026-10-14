@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed: a prefetch that failed is no longer answered from the browser HTTP cache on click
+
+**Before.** A prefetch whose route threw (a handler error with no `loading()`)
+or was not found came back as a 500 or 404 carrying
+`Cache-Control: private, max-age=300`. The router dropped the failed prefetch
+from its own cache, but the click fetched the same URL and the browser
+answered it from its HTTP cache with the stored error for up to 300 seconds,
+even after the route recovered.
+
+**Now.** The prefetch `Cache-Control` is set only on a 2xx response. A failed
+prefetch is not stored by the browser, so the click asks the server and
+renders the route as it is. A successful prefetch keeps exactly the header it
+had. An error that happens after the response has started (a loader that
+throws, a handler under `loading()`) still arrives with a 200 and is not
+covered by this change.
+
 ### Breaking: a loader that throws while it re-runs after a server action throws at its read, and the action resolves
 
 Migration: code that caught the rejection of `await action()` to learn that
