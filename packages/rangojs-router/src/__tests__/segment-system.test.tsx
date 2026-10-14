@@ -474,17 +474,18 @@ describe("segment-system", () => {
         expect(collectByType(tree, MockLoaderBoundary)).toHaveLength(0);
       });
 
-      it("awaits and decodes loader data on forceAwait lanes (no loading)", async () => {
+      it("hands settled per-loader streams on forceAwait lanes (no loading)", async () => {
         // popstate / stale-revalidation / fully-prefetched commits must stay
-        // whole: the awaited lane still provides DECODED loaderData and no
-        // stream channel, so nothing suspends at the read site.
+        // whole: the awaited lane hands each SETTLED entry to its read, so
+        // nothing suspends there and a loader error throws in place (dc-t65).
+        const entry = { __loaderResult: true, ok: true, data: { value: 42 } };
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),
           seg({
             id: "R0D0.data",
             type: "loader",
             loaderId: "my-loader",
-            loaderData: { value: 42 },
+            loaderData: Promise.resolve(entry),
           }),
         ];
 
@@ -492,10 +493,8 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
         expect(outlets).toHaveLength(1);
-        expect(outlets[0].props.loaderStreams).toBeUndefined();
-        expect(outlets[0].props.loaderData).toEqual({
-          "my-loader": { value: 42 },
-        });
+        expect(outlets[0].props.loaderData).toBeUndefined();
+        expect(outlets[0].props.loaderStreams).toEqual({ "my-loader": entry });
       });
     });
 
@@ -899,8 +898,9 @@ describe("segment-system", () => {
     });
 
     describe("forceAwait behavior", () => {
-      it("pre-resolves loader promises when forceAwait is true", async () => {
+      it("hands settled per-loader streams to the loading() boundary when forceAwait is true", async () => {
         const loadingSkeleton = createElement("div", null, "Loading...");
+        const entry = { __loaderResult: true, ok: true, data: { count: 5 } };
 
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route", loading: loadingSkeleton }),
@@ -908,7 +908,7 @@ describe("segment-system", () => {
             id: "R0D0.data",
             type: "loader",
             loaderId: "test",
-            loaderData: Promise.resolve({ count: 5 }),
+            loaderData: Promise.resolve(entry),
           }),
         ];
 
@@ -917,7 +917,7 @@ describe("segment-system", () => {
         const boundaries = collectByType(tree, MockLoaderBoundary);
 
         expect(boundaries).toHaveLength(1);
-        expect(Array.isArray(boundaries[0].props.loaderDataPromise)).toBe(true);
+        expect(boundaries[0].props.loaderStreams).toEqual({ test: entry });
       });
     });
 
@@ -2185,10 +2185,16 @@ describe("segment-system", () => {
           .loaderStreams.price;
         expect(() => decodeLoaderEntry(price)).toThrow("boom");
 
-        // The aggregate lane: with no deferred loader in the set.
-        await expect(
-          renderSegments(segments.slice(0, 2), { forceAwait: true }),
-        ).rejects.toThrow("boom");
+        // With no deferred loader in the set: still built, thrown at the read.
+        const whole = toTreeNode(
+          await renderSegments(segments.slice(0, 2), { forceAwait: true }),
+        );
+        expect(() =>
+          decodeLoaderEntry(
+            collectByType(whole, MockOutletProvider)[0].props.loaderStreams
+              .price,
+          ),
+        ).toThrow("boom");
       });
 
       it.each([{ forceAwait: true }, { isAction: true }, {}])(

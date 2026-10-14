@@ -2995,7 +2995,7 @@ describe("an action refetch whose loader throws on its rerun", () => {
 
   async function refetch(
     entry: unknown,
-    mode: { type: "action" | "navigate" },
+    mode: { type: "action" | "navigate" | "stale-revalidation" },
   ) {
     const held = loader({ __loaderResult: true, ok: true, data: "stock:1" });
     const rerun = loader(entry);
@@ -3072,6 +3072,94 @@ describe("an action refetch whose loader throws on its rerun", () => {
       type: "action",
     });
     expect(result).toMatchObject({ message: "stock service unavailable" });
+  });
+
+  // The background refresh after Back onto a stale entry keeps the page on
+  // screen: it rejects before it commits anything, and navigation-bridge
+  // logs "Background revalidation failed" (dc-t65).
+  it("a stale revalidation whose loader throws rejects with the error and commits nothing", async () => {
+    let caught: unknown;
+    const store = createMockStore({ cachedSegments: [seg("R0")] });
+    const renderSegments = vi.fn(async () => "tree");
+    const onUpdate = vi.fn();
+    const tx = createMockTx();
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: true,
+        segments: [
+          seg("R0", { component: "updated" }),
+          loader({
+            __loaderResult: true,
+            ok: false,
+            error: { message: "stock service unavailable" },
+            fallback: null,
+          }),
+        ],
+        matched: ["R0", "R0D0.stock"],
+        diff: ["R0", "R0D0.stock"],
+      },
+    });
+    await createPartialUpdater({
+      getVersion: () => undefined,
+      store: store as any,
+      client: client as any,
+      onUpdate,
+      renderSegments,
+    })("http://localhost/", ["R0"], false, undefined, tx as any, {
+      type: "stale-revalidation",
+    }).catch((error: unknown) => {
+      caught = error;
+    });
+    expect(caught).toMatchObject({ message: "stock service unavailable" });
+    expect(tx.commit).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it("a stale revalidation aborted while it reads its loaders commits nothing", async () => {
+    const controller = new AbortController();
+    // Read only by the error check: the abort lands inside its await.
+    const loaderData = {
+      then(resolve: (entry: unknown) => void) {
+        controller.abort();
+        resolve({ __loaderResult: true, ok: true, data: "stock:2" });
+      },
+    };
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: true,
+        segments: [
+          seg("R0", { component: "updated" }),
+          seg("R0D0.stock", {
+            type: "loader",
+            loaderId: "stock",
+            loaderData,
+          } as Partial<ResolvedSegment>),
+        ],
+        matched: ["R0", "R0D0.stock"],
+        diff: ["R0", "R0D0.stock"],
+      },
+    });
+    const onUpdate = vi.fn();
+    const tx = createMockTx();
+    await createPartialUpdater({
+      getVersion: () => undefined,
+      store: createMockStore({ cachedSegments: [seg("R0")] }) as any,
+      client: client as any,
+      onUpdate,
+      renderSegments: vi.fn(async () => "tree"),
+    })("http://localhost/", ["R0"], false, controller.signal, tx as any, {
+      type: "stale-revalidation",
+    });
+    expect(tx.commit).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it("a stale revalidation whose rerun succeeds commits it", async () => {
+    const t = await refetch(
+      { __loaderResult: true, ok: true, data: "stock:2" },
+      { type: "stale-revalidation" },
+    );
+    expect(t.onUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("resolves with nothing for a rerun that succeeds, or on a navigation", async () => {

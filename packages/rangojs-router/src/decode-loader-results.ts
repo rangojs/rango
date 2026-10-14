@@ -20,13 +20,13 @@ import { LoaderRedirect } from "./loader-redirect.js";
  * Only decodeLoaderEntry (the read-site path — client components, so the
  * throw lands in the router-owned boundary; during document SSR, Fizz emits
  * the Suspense fallback and replays the throw at hydration) throws these.
- * decodeLoaderResults runs during the SERVER tree build on forceAwait/action
- * lanes, where a throw would collapse the whole payload — it routes signals
- * through the errorFallback slot instead (same visual: the slot replaces the
- * children under OutletProvider). The document lane's `{ ssr: false }`
- * results take the same non-throwing route (segment-system
- * buildLoaderStreams): they are settled before the tree is built, and the
- * read-site throw would land in the Fizz shell with no boundary to absorb it.
+ * decodeLoaderResults runs during the tree build on settled results, where a
+ * throw would collapse the whole payload — it routes signals through the
+ * errorFallback slot instead (same visual: the slot replaces the children
+ * under OutletProvider). The document lane's `{ ssr: false }` results take
+ * this route (segment-system buildLoaderStreams): they are settled before the
+ * tree is built, and the read-site throw would land in the Fizz shell with no
+ * boundary to absorb it.
  */
 export const LOADER_NOT_FOUND_FALLBACK: unique symbol = Symbol(
   "rango.loaderNotFound",
@@ -102,7 +102,8 @@ export function isLoaderError(
  * The error of the first loader that threw while it re-ran in an action's
  * revalidation, for useAction()'s `revalidationError`. The loader itself
  * throws at its read (segment-system buildLoaderStreams), and the action
- * resolves. A notFound()/redirect() is a signal, not an error.
+ * resolves. A stale revalidation rejects with it instead and commits nothing
+ * (partial-update.ts). A notFound()/redirect() is a signal, not an error.
  */
 export async function revalidationErrorOf(
   segments: ResolvedSegment[] = [],
@@ -140,10 +141,9 @@ export function decodeLoaderResults(
     }
 
     // Authority signals take the errorFallback slot (this decode runs during
-    // the server tree build on forceAwait/action lanes — throwing here would
-    // collapse the payload). A signal outranks a plain error fallback and
-    // stops the scan: notFound renders the server-rendered 404 UI, redirect
-    // mounts LoaderRedirect which navigates.
+    // the tree build — throwing here would collapse the payload). A signal
+    // outranks a plain error fallback and stops the scan: notFound renders the
+    // server-rendered 404 UI, redirect mounts LoaderRedirect which navigates.
     const signal = signalFallback(result);
     if (signal !== undefined) {
       return { loaderData, errorFallback: signal };

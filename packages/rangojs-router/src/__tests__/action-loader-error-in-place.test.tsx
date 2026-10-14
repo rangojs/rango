@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 // A loader that throws while it re-runs in a server action's revalidation
-// throws in place at its useLoader read, as on a navigation: the nearest
-// boundary to the read catches it, state outside that boundary survives, and
-// a later rerun that succeeds brings the reader back (dc-t28). Real React
-// over renderSegments' action lane.
-import { afterEach, describe, expect, it, vi } from "vitest";
+// (dc-t28), or whose settled entry a fully-prefetched click, a back/forward
+// restore or a cached re-render commits (forceAwait, dc-t65), throws in place
+// at its useLoader read, as on a navigation: the nearest boundary to the read
+// catches it, state outside that boundary survives, and a later rerun that
+// succeeds brings the reader back. Real React over renderSegments' settled
+// client lanes.
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import {
   Component,
@@ -87,7 +89,9 @@ function segments(opts: {
   loading?: boolean;
   clientGroup?: string;
   appBoundary?: boolean;
+  routeId?: string;
 }): ResolvedSegment[] {
+  const routeId = opts.routeId ?? "L0R0";
   return [
     {
       id: "L0",
@@ -101,7 +105,7 @@ function segments(opts: {
       ),
     } as ResolvedSegment,
     {
-      id: "L0R0",
+      id: routeId,
       type: "route",
       namespace: "",
       index: 0,
@@ -114,7 +118,7 @@ function segments(opts: {
       ...(opts.clientGroup ? { clientGroup: opts.clientGroup } : {}),
     } as ResolvedSegment,
     {
-      id: "L0R0D0.stock",
+      id: `${routeId}D0.stock`,
       type: "loader",
       namespace: "",
       index: 0,
@@ -140,8 +144,15 @@ async function mount(segs: ResolvedSegment[]) {
   return result;
 }
 
+// Every client lane that settles loader data before its commit.
+const LANES = [
+  ["action", { isAction: true }],
+  ["forceAwait", { forceAwait: true }],
+] as const;
+let laneOptions: { isAction?: boolean; forceAwait?: boolean } = {};
+
 async function action(segs: ResolvedSegment[]) {
-  const tree = await renderSegments(segs, { isAction: true });
+  const tree = await renderSegments(segs, laneOptions);
   await act(async () => setTree(tree));
 }
 
@@ -159,98 +170,126 @@ afterEach(() => {
   routeMounts = 0;
 });
 
-describe("action lane: a loader that throws on its rerun throws at its read", () => {
-  for (const [lane, opts] of [
-    ["urls() route without loading()", {}],
-    ["urls() route with loading()", { loading: true }],
-    ["clientUrls() group route", { clientGroup: "g" }],
-  ] as const) {
-    it(`the app's boundary at the read catches it; the route keeps its state (${lane})`, async () => {
-      vi.spyOn(console, "error").mockImplementation(() => {});
-      const result = await mount(segments({ entry: ok(1), ...opts }));
-      expect(result.getByTestId("reader").textContent).toBe("stock:1");
-      await type(result, "typed");
-      const field = result.getByTestId("field");
+describe.each(LANES)(
+  "%s lane: a loader that throws throws at its read",
+  (_, options) => {
+    beforeEach(() => {
+      laneOptions = options;
+    });
 
-      await action(segments({ entry: failed(), ...opts }));
+    for (const [lane, opts] of [
+      ["urls() route without loading()", {}],
+      ["urls() route with loading()", { loading: true }],
+      ["clientUrls() group route", { clientGroup: "g" }],
+    ] as const) {
+      it(`the app's boundary at the read catches it; the route keeps its state (${lane})`, async () => {
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        const result = await mount(segments({ entry: ok(1), ...opts }));
+        expect(result.getByTestId("reader").textContent).toBe("stock:1");
+        await type(result, "typed");
+        const field = result.getByTestId("field");
+
+        await action(segments({ entry: failed(), ...opts }));
+        expect(result.getByTestId("app-boundary").textContent).toBe(
+          "stock service unavailable",
+        );
+        expect(result.getByTestId("field")).toBe(field);
+        expect((field as HTMLInputElement).value).toBe("typed");
+        expect(result.getByTestId("layout")).toBeTruthy();
+        expect(routeMounts).toBe(1);
+      });
+    }
+
+    it("the app's boundary nearer the read wins over an errorBoundary() fallback, as on a navigation", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await mount(segments({ entry: ok(1) }));
+      await action(segments({ entry: failed(dslFallback) }));
+      expect(result.getByTestId("app-boundary")).toBeTruthy();
+      expect(result.queryByTestId("dsl-fallback")).toBeNull();
+    });
+
+    it("with no app boundary, the errorBoundary() fallback replaces the segment, and the layout stays", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await mount(
+        segments({ entry: ok(1), appBoundary: false }),
+      );
+      const layout = result.getByTestId("layout");
+      await action(
+        segments({ entry: failed(dslFallback), appBoundary: false }),
+      );
+      expect(result.getByTestId("dsl-fallback")).toBeTruthy();
+      expect(result.queryByTestId("reader")).toBeNull();
+      expect(result.getByTestId("layout")).toBe(layout);
+    });
+
+    it("a later action whose rerun succeeds clears the errorBoundary() fallback", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await mount(
+        segments({ entry: ok(1), appBoundary: false }),
+      );
+      await action(
+        segments({ entry: failed(dslFallback), appBoundary: false }),
+      );
+      expect(result.getByTestId("dsl-fallback")).toBeTruthy();
+
+      await action(segments({ entry: ok(2), appBoundary: false }));
+      expect(result.queryByTestId("dsl-fallback")).toBeNull();
+      expect(result.getByTestId("reader").textContent).toBe("stock:2");
+    });
+
+    it("an errorBoundary() fallback a navigation showed clears after an action whose rerun succeeds", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await mount(
+        segments({ entry: failed(dslFallback), appBoundary: false }),
+      );
+      expect(result.getByTestId("dsl-fallback")).toBeTruthy();
+
+      await action(segments({ entry: ok(3), appBoundary: false }));
+      expect(result.queryByTestId("dsl-fallback")).toBeNull();
+      expect(result.getByTestId("reader").textContent).toBe("stock:3");
+    });
+
+    it("a tree that did not re-run the failed loader keeps its fallback", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const segs = segments({ entry: failed(dslFallback), appBoundary: false });
+      const result = await mount(segs);
+      // Same loader segment (held): its data is the failure it showed.
+      await action([segs[0]!, { ...segs[1]! }, segs[2]!]);
+      expect(result.getByTestId("dsl-fallback")).toBeTruthy();
+    });
+
+    it("with no boundary at all, the router's root boundary catches it, and the next good action recovers", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await mount(
+        segments({ entry: ok(1), appBoundary: false }),
+      );
+      await action(segments({ entry: failed(), appBoundary: false }));
+      expect(result.queryByTestId("reader")).toBeNull();
+      await action(segments({ entry: ok(4), appBoundary: false }));
+      expect(result.getByTestId("reader").textContent).toBe("stock:4");
+    });
+
+    it("a commit onto another route whose entry failed: the app's boundary at the read catches it, and the layout keeps its instance", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await mount(segments({ entry: ok(1) }));
+      const layout = result.getByTestId("layout");
+      await action(segments({ entry: failed(), routeId: "L0R1" }));
       expect(result.getByTestId("app-boundary").textContent).toBe(
         "stock service unavailable",
       );
+      expect(result.getByTestId("layout")).toBe(layout);
+    });
+
+    it("a successful action does not remount the route", async () => {
+      const result = await mount(segments({ entry: ok(1) }));
+      const field = result.getByTestId("field");
+      await action(segments({ entry: ok(5) }));
+      expect(result.getByTestId("reader").textContent).toBe("stock:5");
       expect(result.getByTestId("field")).toBe(field);
-      expect((field as HTMLInputElement).value).toBe("typed");
-      expect(result.getByTestId("layout")).toBeTruthy();
       expect(routeMounts).toBe(1);
     });
-  }
-
-  it("the app's boundary nearer the read wins over an errorBoundary() fallback, as on a navigation", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const result = await mount(segments({ entry: ok(1) }));
-    await action(segments({ entry: failed(dslFallback) }));
-    expect(result.getByTestId("app-boundary")).toBeTruthy();
-    expect(result.queryByTestId("dsl-fallback")).toBeNull();
-  });
-
-  it("with no app boundary, the errorBoundary() fallback replaces the segment, and the layout stays", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const result = await mount(segments({ entry: ok(1), appBoundary: false }));
-    const layout = result.getByTestId("layout");
-    await action(segments({ entry: failed(dslFallback), appBoundary: false }));
-    expect(result.getByTestId("dsl-fallback")).toBeTruthy();
-    expect(result.queryByTestId("reader")).toBeNull();
-    expect(result.getByTestId("layout")).toBe(layout);
-  });
-
-  it("a later action whose rerun succeeds clears the errorBoundary() fallback", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const result = await mount(segments({ entry: ok(1), appBoundary: false }));
-    await action(segments({ entry: failed(dslFallback), appBoundary: false }));
-    expect(result.getByTestId("dsl-fallback")).toBeTruthy();
-
-    await action(segments({ entry: ok(2), appBoundary: false }));
-    expect(result.queryByTestId("dsl-fallback")).toBeNull();
-    expect(result.getByTestId("reader").textContent).toBe("stock:2");
-  });
-
-  it("an errorBoundary() fallback a navigation showed clears after an action whose rerun succeeds", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const result = await mount(
-      segments({ entry: failed(dslFallback), appBoundary: false }),
-    );
-    expect(result.getByTestId("dsl-fallback")).toBeTruthy();
-
-    await action(segments({ entry: ok(3), appBoundary: false }));
-    expect(result.queryByTestId("dsl-fallback")).toBeNull();
-    expect(result.getByTestId("reader").textContent).toBe("stock:3");
-  });
-
-  it("a tree that did not re-run the failed loader keeps its fallback", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const segs = segments({ entry: failed(dslFallback), appBoundary: false });
-    const result = await mount(segs);
-    // Same loader segment (held): its data is the failure it showed.
-    await action([segs[0]!, { ...segs[1]! }, segs[2]!]);
-    expect(result.getByTestId("dsl-fallback")).toBeTruthy();
-  });
-
-  it("with no boundary at all, the router's root boundary catches it, and the next good action recovers", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const result = await mount(segments({ entry: ok(1), appBoundary: false }));
-    await action(segments({ entry: failed(), appBoundary: false }));
-    expect(result.queryByTestId("reader")).toBeNull();
-    await action(segments({ entry: ok(4), appBoundary: false }));
-    expect(result.getByTestId("reader").textContent).toBe("stock:4");
-  });
-
-  it("a successful action does not remount the route", async () => {
-    const result = await mount(segments({ entry: ok(1) }));
-    const field = result.getByTestId("field");
-    await action(segments({ entry: ok(5) }));
-    expect(result.getByTestId("reader").textContent).toBe("stock:5");
-    expect(result.getByTestId("field")).toBe(field);
-    expect(routeMounts).toBe(1);
-  });
-});
+  },
+);
 
 // A layout with its own loader above a route that reads it: the read
 // catches the layout loader's errorBoundary() marker at the route's
@@ -334,7 +373,10 @@ function chain(opts: {
   return out;
 }
 
-describe("action lane: layouts and ancestor loaders", () => {
+describe.each(LANES)("%s lane: layouts and ancestor loaders", (_, options) => {
+  beforeEach(() => {
+    laneOptions = options;
+  });
   afterEach(() => {
     layoutMounts = 0;
   });

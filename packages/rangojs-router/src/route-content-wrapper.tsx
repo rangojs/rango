@@ -313,7 +313,7 @@ function AuditedLoaderResolver({
  * Without streams, the pre-spike behavior is preserved: a pending aggregate
  * resolves ABOVE via use() (parallel/intercept slots still take this path —
  * ResolvedSegment carries only the aggregate for slots), and a resolved
- * array decodes synchronously (forceAwait/action lanes commit whole).
+ * array decodes synchronously (a slot on the forceAwait/action lanes).
  */
 function LoaderResolver({
   loaderDataPromise,
