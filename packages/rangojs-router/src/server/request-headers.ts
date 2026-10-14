@@ -58,6 +58,23 @@ export function bodylessHeaders(request: Request): Headers {
 }
 
 /**
+ * A bodyless mirror of `request` at `url`: `method`, the headers without the
+ * body-framing ones, the signal and workerd's `cf`.
+ */
+export function bodylessRequest(
+  url: string | URL,
+  request: Request,
+  method: string,
+): Request {
+  return new Request(url, {
+    method,
+    headers: bodylessHeaders(request),
+    signal: request.signal,
+    cf: (request as { cf?: unknown }).cf,
+  } as RequestInit);
+}
+
+/**
  * Shadow `request.headers` with an own, non-enumerable getter that calls
  * `beforeRead` and returns the request's own Headers (stable per request, so
  * a header set through it stays visible to every reader). Idempotent. Leaves

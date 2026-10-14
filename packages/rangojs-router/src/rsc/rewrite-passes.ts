@@ -21,7 +21,7 @@ import {
   rebaseRequestContext,
   type RequestContext,
 } from "../server/request-context.js";
-import { bodylessHeaders } from "../server/request-headers.js";
+import { bodylessRequest } from "../server/request-headers.js";
 import {
   recordRewriteHop,
   recordRewriteShell,
@@ -97,21 +97,6 @@ export interface RewritePass {
 }
 
 /**
- * The next pass's request when a JS action consumed the body
- * (`new Request(url, used)` throws): the same method, headers and workerd
- * `cf`, no body. A no-JS form post keeps its body, since the PE handler
- * reads a clone, so a form-field check reads it on every pass.
- */
-function bodylessPassRequest(url: URL, passRequest: Request): Request {
-  return new Request(url, {
-    method: passRequest.method,
-    headers: bodylessHeaders(passRequest),
-    signal: passRequest.signal,
-    cf: (passRequest as { cf?: unknown }).cf,
-  } as RequestInit);
-}
-
-/**
  * Move the request context to `rewrite`'s target for the next pass: check
  * that this request can be rewritten, resolve the target, count the hop,
  * then rebase the context. Throws the site error for a mutation or a loader
@@ -146,8 +131,11 @@ export function applyRewrite(
   const hops = recordRewriteHop(reqCtx, reqCtx.url, target);
   recordRewriteShell(reqCtx, rewrite.shellAudience);
   const url = rewriteTransportUrl(target, reqCtx.originalUrl);
+  // A JS action consumed the body (`new Request(url, used)` throws): the same
+  // request without it. A no-JS form post keeps its body, since the PE handler
+  // reads a clone, so a form-field check reads it on every pass.
   const request = passRequest.bodyUsed
-    ? bodylessPassRequest(url, passRequest)
+    ? bodylessRequest(url, passRequest, passRequest.method)
     : new Request(url, passRequest);
   rebaseRequestContext(reqCtx, request, url);
   return { request, url, target, hops };

@@ -638,9 +638,11 @@ middleware reached through `throw rewrite()` can call actions. The action
 middleware sees it:
 
 - A rewrite in **route middleware** runs after the action, around the
-  re-render. The action runs once, then the re-render runs as the target: its
-  global and route middleware, its handlers and loaders. The page on screen
-  is revalidated in place, as at the target's own URL.
+  re-render, which route middleware sees as the page's GET, so a rewrite
+  written for GETs only fires too. The action runs once, then the re-render
+  runs as the target: its global and route middleware, its handlers and
+  loaders. The page on screen is revalidated in place, as at the target's
+  own URL.
 - A rewrite in **global middleware** runs before the action and is refused
   for a mutation: the action does not run, and the request fails with the
   rule. A lock returns a `Response` for mutations instead. See `/middleware`

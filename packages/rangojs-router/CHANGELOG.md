@@ -19,6 +19,40 @@ manifest and the loader manifest also stay in a build whose
 `treeshake.moduleSideEffects` is `false`, which dropped them before and made
 the server fail at startup.
 
+### Fixed: a server action from a page whose route middleware rewrites only GETs re-renders that page
+
+**Before.** Route middleware wraps only the render after a server action or a
+no-JS form post, but its `ctx.request` was still the POST. A routing rewrite
+written for page requests only:
+
+```tsx
+middleware((ctx, next) => {
+  if (ctx.request.method !== "GET") return next();
+  throw rewrite(`/items/${ctx.params.slug}`);
+});
+```
+
+let the render after the action through as the rewriting route. The action
+ran once, then the client replaced the page on screen with the rewriting
+route's markup (JS), or the server answered the form post with that page
+(no-JS).
+
+**Now.** Around the render after an action, route middleware sees the page's
+GET: `ctx.request.method` is `"GET"`, with no body and no `content-type`. The
+rewrite above fires, and the render moves to the target, as it already did
+for a rewrite of every method: the target's global and route middleware run,
+the action is not run again, and the page keeps its layout and state.
+Global middleware still sees the POST, since it wraps the action.
+
+**Migration.** A route middleware that branches on `ctx.request.method` or
+reads the form body takes its GET branch around the render after an action,
+and reads no body. That code ran after the action had committed, so it never
+guarded the action: guard actions in global middleware or inside the action.
+A response header that branch sets (a public `Cache-Control`, for example)
+now lands on the action's response too. If a header must stay off mutation
+responses, set it from global middleware, which still sees the POST.
+`getRequestContext().request` is still the POST.
+
 ### Fixed: a prefetch that failed is no longer answered from the browser HTTP cache on click
 
 **Before.** A prefetch whose route threw (a handler error with no `loading()`)
