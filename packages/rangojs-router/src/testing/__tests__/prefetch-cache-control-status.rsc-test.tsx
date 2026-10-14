@@ -1,8 +1,8 @@
 /**
- * A prefetch response carries the browser HTTP cache header only when it
- * succeeded. The client drops a failed prefetch from its own cache, but the
- * click's fetch of the same URL would be answered from the HTTP cache with the
- * error for the header's max-age.
+ * A prefetch response carries no Cache-Control, whatever its status (#1170):
+ * the browser HTTP cache would keep a prefetch whose render failed after its
+ * 200 went out, and answer a click or a later document's prefetch with it.
+ * The in-memory prefetch cache (prefetchCacheTTL) is the only one.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -52,10 +52,10 @@ async function prefetch(url: string, isPrefetch = true) {
 beforeEach(() => resetShellTestState());
 
 describe("a prefetch response's Cache-Control", () => {
-  it("is set on a successful prefetch", async () => {
+  it("is absent on a successful prefetch", async () => {
     const response = await prefetch("/ok");
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toMatch(/^private, max-age=/);
+    expect(response.headers.get("cache-control")).toBeNull();
   });
 
   it("is absent when the handler throws (500)", async () => {

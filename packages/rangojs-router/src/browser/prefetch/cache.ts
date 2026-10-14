@@ -78,14 +78,6 @@ export interface DecodedPrefetch {
    */
   complete: boolean;
   /**
-   * Set instead of `complete` when the stream ended cleanly but a loader in
-   * it threw (the server still answered 200). Navigation never serves it and
-   * fetches with `no-store`, because the HTTP cache holds the same 200. It
-   * keeps its slot until that click, so `hasPrefetch` stops hover and
-   * viewport prefetches from reading those bytes back.
-   */
-  failed?: boolean;
-  /**
    * Re-create this entry from its buffered raw Flight bytes. Attached (by
    * `executePrefetchFetch`) only after the stream ended cleanly AND the eager
    * decode succeeded — a truncated or failed prefetch must stay one-shot.

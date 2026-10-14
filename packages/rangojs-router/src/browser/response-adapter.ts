@@ -1,4 +1,5 @@
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
+import { PREFETCH_FAILED_ROW } from "../prefetch-markers.js";
 
 type HeaderResult = { url: string } | "blocked" | null;
 
@@ -105,9 +106,11 @@ export function handleReloadHeader(
  * end-of-stream, calling onComplete when done.
  *
  * `onComplete` receives `endedCleanly`: true only on a normal EOF drain, false
- * on a read error or an abort (the signal cancelled the reader). Callers that
- * gate a "fully complete" fast path (e.g. prefetch's `entry.complete`) must
- * treat a non-clean end as incomplete — a broken stream is not complete data.
+ * on a read error, an abort (the signal cancelled the reader), or a body that
+ * ends with PREFETCH_FAILED_ROW (a prefetch whose render reported an error,
+ * rsc/prefetch-render-error.ts). Callers that gate a "fully complete" fast
+ * path (e.g. prefetch's `entry.complete`) must treat a non-clean end as
+ * incomplete — a broken stream is not complete data.
  *
  * If the response has no body, onComplete fires synchronously with `true`
  * (an empty body is a clean, complete stream).
@@ -156,13 +159,16 @@ export function teeWithCompletion(
     // loop breaks here normally, NOT in the .catch — re-check the signal to
     // catch that case).
     let cleanEof = false;
+    // The last five bytes read, across chunk boundaries.
+    let tail = "";
     try {
       while (true) {
-        const { done } = await reader.read();
+        const { done, value } = await reader.read();
         if (done) {
-          cleanEof = true;
+          cleanEof = tail !== PREFETCH_FAILED_ROW;
           break;
         }
+        tail = (tail + String.fromCharCode(...value.slice(-5))).slice(-5);
       }
     } finally {
       if (onAbort) signal!.removeEventListener("abort", onAbort);

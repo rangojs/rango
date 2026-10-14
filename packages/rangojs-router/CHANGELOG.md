@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+### Changed: prefetch responses no longer carry `Cache-Control`; `prefetchCacheTTL` sets only the in-memory TTL
+
+**Before.** A successful prefetch answered with
+`Cache-Control: private, max-age=<prefetchCacheTTL>` (300 seconds by
+default), so the browser's HTTP cache kept a second copy next to the router's
+in-memory prefetch cache. A click whose in-memory prefetch was gone, and a
+prefetch of the same URL from a new document, could be answered from it
+without a request.
+
+**Now.** No prefetch response carries `Cache-Control`. `prefetchCacheTTL`
+bounds only the in-memory prefetch cache, which serves clicks as before. A
+prefetch from a new document, and a click after the in-memory entry expired or
+was evicted, ask the server. The browser could keep a prefetch whose render
+failed after its 200 had gone out, and answer later requests with it (see the
+next entry). Nothing to change in your code.
+
+### Fixed: a prefetch whose render failed is never kept
+
+**Before.** A `<Link>` prefetch whose page failed was kept and served:
+
+- A handler that threw before the response started answered 500, and a
+  not-found 404, both with the prefetch `Cache-Control`. The router dropped
+  them, but the click's fetch of the same URL was answered from the browser's
+  HTTP cache with the error for up to 300 seconds, even after the route
+  recovered.
+- An error after the response started (a loader that threw, a handler under
+  `loading()` recovered into its `errorBoundary()`, an async server component
+  that threw under `<Suspense>`) arrived inside a 200. The router kept that
+  prefetch as finished and served the error to every click on the link for
+  `prefetchCacheTTL` without a request, and the HTTP cache answered a later
+  document's prefetch of the URL with the same bytes (#1170).
+
+**Now.** A prefetch whose render reported an error is not kept anywhere. The
+server ends it cleanly with one more Flight row that React skips, and the
+router drops it: never served, never reused. The click sends its own request
+and shows the page as it is now: the recovered content, or the error at its
+boundary if it fails again. A click that took the prefetch over while it was
+still streaming renders it as it arrives, with the error at its boundary, as a
+plain click would. A loader's `redirect()` or `notFound()` is not an error.
+Nothing to change in your code.
+
+### Fixed: the document cache no longer stores a page whose loader threw
+
+**Before.** `createDocumentCacheMiddleware()` refused a response whose render
+reported an error, but a loader that threw was not one: its error renders in
+place as a value, inside a 200. A navigation (`?_rsc_partial`) whose loader
+failed was stored with the error and served to every later navigation on that
+key until the entry expired, and a failing stale refresh replaced a healthy
+entry with it. A document did the same when the failing loader was
+`ssr: false` with an `errorBoundary()`, and `router.prerender()` reported that
+document as warmed.
+
+**Now.** A loader error counts as a render error. The document cache stores
+nothing, the next request renders again, and a stale entry keeps serving
+until a refresh succeeds. `router.prerender()` answers `render-failed` for it.
+`notFound()` and `redirect()` thrown from a loader are not errors and change
+nothing.
+
 ### Fixed: a click on a link whose prefetch is still streaming 30 seconds later keeps its pending parts
 
 **Before.** The router aborts a prefetch that is still streaming 30 seconds
@@ -139,40 +197,6 @@ A response header that branch sets (a public `Cache-Control`, for example)
 now lands on the action's response too. If a header must stay off mutation
 responses, set it from global middleware, which still sees the POST.
 `getRequestContext().request` is still the POST.
-
-### Fixed: a prefetch that failed is no longer answered from the browser HTTP cache on click
-
-**Before.** A prefetch whose route threw (a handler error with no `loading()`)
-or was not found came back as a 500 or 404 carrying
-`Cache-Control: private, max-age=300`. The router dropped the failed prefetch
-from its own cache, but the click fetched the same URL and the browser
-answered it from its HTTP cache with the stored error for up to 300 seconds,
-even after the route recovered.
-
-**Now.** The prefetch `Cache-Control` is set only on a 2xx response. A failed
-prefetch is not stored by the browser, so the click asks the server and
-renders the route as it is. A successful prefetch keeps exactly the header it
-had. An error that happens after the response has started (a loader that
-throws, a handler under `loading()`) still arrives with a 200 and is not
-covered by this change.
-
-### Fixed: a click whose prefetch hit a loader error asks the server again
-
-**Before.** When a loader threw while a `<Link>` prefetched its page, the
-server still answered 200 with the error inside, and the router kept that
-prefetch as finished. Every click on the link for up to `prefetchCacheTTL`
-(300 s by default) showed the same error without sending a request, even
-after the loader had recovered.
-
-**Now.** A prefetch that finished with a loader error is never served to a
-click. The click sends its own request, past the browser's HTTP cache, and
-shows what the loader answers now: its data, or its error thrown at the
-`useLoader` read, as on a plain click. A loader `redirect()` or `notFound()`
-is not an error, and such a prefetch is used as before. A click while the
-prefetch is still streaming adopts it as before. Not covered: a handler
-that throws under `loading()` and an async server component that throws;
-their errors still reach the click from the prefetch. Nothing to change in
-your code.
 
 ### Breaking: a loader that throws while it re-runs after a server action throws at its read, and the action resolves
 

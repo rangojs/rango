@@ -47,15 +47,15 @@ tissue that still applies):
 - the **in-memory prefetch map** (`src/browser/prefetch/cache.ts`), whose
   wildcard and source-scoped keys both embed the state value —
   `rangoState\0/target` and `rangoState\0sourceHref\0/target`;
-- the **browser's private HTTP cache**, via the `Vary` mechanism above.
-  Prefetch responses carry `Cache-Control: private,
-max-age={prefetchCacheTTL}` (default 300 seconds). Only prefetch responses:
-  the header is gated on the `X-Rango-Prefetch` request header plus partial
-  plus non-intercept plus a 2xx status (a failed prefetch is dropped by the
-  client, so a cached 500/404 would answer the click) — an ordinary
-  navigation partial carries no `Cache-Control` at all. A 200 whose loader
-  threw is cached like any other, so the click that skips that prefetch
-  fetches with `cache: "no-store"` (`DecodedPrefetch.failed`);
+- the **browser's private HTTP cache**, via the `Vary` mechanism above. The
+  router itself puts nothing in it any more: prefetch responses carried
+  `Cache-Control: private, max-age={prefetchCacheTTL}` until #1170, and the
+  browser kept a prefetch whose render failed after its 200 went out (a
+  loader that threw, a `loading()` handler recovered into its boundary),
+  answering a later document's prefetch with it for the TTL. No router
+  response carries `Cache-Control` now, so `prefetchCacheTTL` bounds only the
+  in-memory map. A response a route sends with its own `Cache-Control` can
+  still land here, and the `Vary` key keeps it per state value;
 - the **history segment cache** (`historyCache` in
   `src/browser/navigation-store.ts`), which holds back/forward payloads.
   This one is **not** state-keyed — rotating the state value does nothing to
@@ -604,8 +604,9 @@ point, so the two cookie writers can't drift.
 The reasoning behind the rows people will want to relitigate:
 
 **Session lifetime.** The state keys two cacheable surfaces with a horizon: the
-in-memory prefetch map (dies with the page) and HTTP cache entries with a
-default 5-minute `max-age`. A persistent cookie would preserve cross-restart
+in-memory prefetch map (dies with the page) and HTTP cache entries (prefetch
+responses with a default 5-minute `max-age` when this was decided; since #1170
+only responses a route caches with its own `Cache-Control`). A persistent cookie would preserve cross-restart
 cache hits only inside that window — essentially worthless. Losing the state
 early is always safe: a fresh mint differs from any value still keying a live
 cache entry, so everything misses cleanly. The only correctness requirement is
@@ -899,10 +900,11 @@ by `prefetchCacheTTL`. Browsers also block site data wholesale, not cookies à
 la carte, so any configuration that breaks the cookie was already breaking
 localStorage; this design inherits the blast radius, it doesn't widen it.
 
-When `prefetchCacheTTL` is `false`/`0`, the HTTP-cache surface disappears
-entirely (`router.ts:219-222` sets no `Cache-Control`, though `Vary` is still
-emitted and inert). The state then keys only the in-memory map and the history
-cache, and every TTL-bounded window above collapses to the page lifetime.
+The router no longer writes the HTTP-cache surface at all (#1170: no prefetch
+response carries `Cache-Control`; `Vary` is still emitted and keys responses a
+route caches itself). When `prefetchCacheTTL` is `false`/`0` the state keys only
+the history cache, and every TTL-bounded window above collapses to the page
+lifetime.
 
 Deliberately rejected: a silent cookie → localStorage → memory fallback chain.
 It resurrects a dual-backend test matrix for users whose browsers almost
@@ -1092,7 +1094,8 @@ review while leaving a hole.
   **and a navigation to a previously-prefetched URL during the action's flight
   fetches fresh from the server, not the stale HTTP-cache prefetch** (the fence
   HTTP-cache-bypass guard — catches the false "exactly the misses the eager
-  clear gives them today" equivalence); a popstate during the flight serves
+  clear gives them today" equivalence; since #1170 no prefetch is HTTP-cached,
+  and the bypass still covers a response a route caches itself); a popstate during the flight serves
   cache and revalidates, and after a directive response drops the fence a
   popstate serves cache _without_ revalidating (proving no stale flag leaked);
   an action calling both `keepClientCache()` and `invalidateClientCache()`

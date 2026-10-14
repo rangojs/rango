@@ -229,6 +229,16 @@ whenever it emits a theme other than the default, and `shouldCacheResponse`
 refuses to store a response carrying the mark. A late opt-in therefore stores
 only a default-theme render; it fills more slowly, but never leaks a theme.
 
+The same tier refuses a render that reported an error (#915): after draining
+its copy it reads `RequestContext._renderErrors` and stores nothing when the
+list is not empty. Flight and Fizz fill it from `onError`, and a streamed
+handler recovered into its boundary pushes to it. A loader that throws pushes
+too (`wrapLoaderWithErrorHandling` in `src/router/loader-resolution.ts`): its
+error is an `ok: false` value rendered in place, which neither renderer
+reports, so a navigation's Flight response, or a document whose `ssr: false`
+loader planted its `errorBoundary()` fallback, used to be stored, and a failing
+stale refresh replaced a healthy entry with it.
+
 ### Layer 2: Shell Cache + Fresh Streaming
 
 Cache synchronous shell, stream fresh data through Suspense boundaries.

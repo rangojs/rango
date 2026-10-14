@@ -757,9 +757,9 @@ It does no harm, for two reasons you can rely on separately:
   below), and the fill is sent `cache: "no-store"`. A prefetch answered from
   the browser's copy is adopted exactly like one answered by the server.
 
-main has the same exposure for complete bodies (a prefetch stored with
-`private, max-age=300` answers during a back/forward reload too); nothing
-here widens it.
+A complete prefetch body had the same exposure while prefetches were sent
+with `private, max-age=300`; since #1170 no prefetch carries `Cache-Control`,
+so only a route's own header can store one. Nothing here widens it.
 
 ### The document cache
 
@@ -1833,10 +1833,10 @@ A prefetch entry respawns on every adoption (`makeRespawn` in
 `prefetch/fetch.ts`), so each adoption decodes its own payload, arms its own
 defers and sends its own fill.
 
-A prefetch whose stream ended with a loader error in it is marked `failed`
-and never adopted: the click sends its own request with `no-store`, as a
-plain click would (dc-t72). Deferred loaders never ran in the prefetch, so
-their placeholders are not checked.
+A prefetch whose render reported an error (a loader that threw among them)
+ends with `PREFETCH_FAILED_ROW` and is evicted when its stream ends, never
+adopted after that (#1170): the click sends its own request, as a plain click
+would. Deferred loaders never ran in the prefetch, so they report nothing.
 
 An entry that defers lives under its source page's key, which includes the
 segments that page held (`buildSourceKey` in `prefetch/cache.ts`). Coming

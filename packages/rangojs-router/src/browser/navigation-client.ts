@@ -267,12 +267,8 @@ export function createNavigationClient(
             // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass
             // it so a genuine mid-action navigation fetches fresh instead of being
             // served the stale prefetched bytes. Fragment recovery also bypasses
-            // HTTP caches so it reaches the server's decode-and-evict path, and
-            // a failed prefetch, whose 200 the HTTP cache holds.
-            ...((isActionFenceActive() ||
-              fragmentRecovery ||
-              fill ||
-              cachedEntry?.failed) && {
+            // HTTP caches so it reaches the server's decode-and-evict path.
+            ...((isActionFenceActive() || fragmentRecovery || fill) && {
               cache: "no-store" as RequestCache,
             }),
             headers: {
@@ -327,9 +323,8 @@ export function createNavigationClient(
       // so only a fully-warmed prefetch commits in a transition (no fallback flash).
       let fullyPrefetched = false;
 
-      // The prefetch entry this navigation serves. A failed prefetch is never
-      // served (DecodedPrefetch.failed).
-      let adopted = cachedEntry?.failed ? null : cachedEntry;
+      // The prefetch entry this navigation serves.
+      let adopted = cachedEntry;
       if (adopted) {
         if (tx) {
           browserDebugLog(tx, "prefetch cache hit (warm)", {

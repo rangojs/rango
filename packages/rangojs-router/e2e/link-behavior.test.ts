@@ -83,12 +83,12 @@ test.describe("link-behavior", () => {
     expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("1");
   });
 
-  test("prefetch hover then navigate serves response from browser cache", async ({
+  test("prefetch hover then navigate serves the click from the in-memory prefetch; a new document's prefetch reaches the server", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
-    // Use CDP to track cache status on network responses
+    // Use CDP to see each response and whether the HTTP cache answered it
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Network.enable");
 
@@ -99,8 +99,7 @@ test.describe("link-behavior", () => {
 
     // Match the /blog INDEX partial only (the hover target). The blog index's
     // own bare post links viewport-prefetch /blog/post-N after the navigation
-    // commits — live network responses that would fail the from-cache
-    // assertion below but have nothing to do with the hover-prefetched /blog.
+    // commits; those have nothing to do with the hover-prefetched /blog.
     const isBlogIndexPartial = (url: string): boolean => {
       const parsed = new URL(url);
       return (
@@ -119,35 +118,33 @@ test.describe("link-behavior", () => {
       }
     });
 
-    await page.goto(f.url("/link-behavior"));
-    await waitForHydration(page);
+    async function hoverPrefetch(): Promise<void> {
+      await page.goto(f.url("/link-behavior"));
+      await waitForHydration(page);
+      const prefetchDone = page.waitForResponse((res) =>
+        isBlogIndexPartial(res.url()),
+      );
+      await page.locator('[data-testid="link-prefetch-hover"]').hover();
+      await (await prefetchDone).finished();
+    }
 
-    // Wait for the hover prefetch of /blog itself to complete (post-N
-    // prefetches from other links on the page must not satisfy this).
-    const prefetchDone = page.waitForResponse((res) =>
-      isBlogIndexPartial(res.url()),
-    );
-
-    await page.locator('[data-testid="link-prefetch-hover"]').hover();
-    await prefetchDone;
-
-    // Small delay to ensure cache entry is written
-    await page.waitForTimeout(200);
-
+    await hoverPrefetch();
     // Clear tracked responses so we only see the navigation request
     blogResponses.length = 0;
 
-    // Click to navigate — should use cached prefetch response
+    // The click is served from the in-memory prefetch: no request at all.
     await page.locator('[data-testid="link-prefetch-hover"]').click();
     await expect(page).toHaveURL(/\/blog/);
-
-    // Wait for any pending network events
     await page.waitForTimeout(500);
+    expect(blogResponses).toEqual([]);
 
-    // Either no network request was made (memory cache, blogResponses empty)
-    // or the request was served from disk cache (fromCache: true)
+    // A new document has no in-memory prefetch, and prefetch responses carry
+    // no Cache-Control (#1170): its prefetch is answered by the server.
+    blogResponses.length = 0;
+    await hoverPrefetch();
+    expect(blogResponses.length).toBeGreaterThan(0);
     for (const resp of blogResponses) {
-      expect(resp.fromCache).toBe(true);
+      expect(resp.fromCache).toBe(false);
     }
 
     await cdp.detach();
@@ -322,11 +319,12 @@ test.describe("link-behavior (production)", () => {
     expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("1");
   });
 
-  test("prefetch hover then navigate serves response from browser cache", async ({
+  test("prefetch hover then navigate serves the click from the in-memory prefetch; a new document's prefetch reaches the server", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
+    // Use CDP to see each response and whether the HTTP cache answered it
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Network.enable");
 
@@ -337,8 +335,7 @@ test.describe("link-behavior (production)", () => {
 
     // Match the /blog INDEX partial only (the hover target). The blog index's
     // own bare post links viewport-prefetch /blog/post-N after the navigation
-    // commits — live network responses that would fail the from-cache
-    // assertion below but have nothing to do with the hover-prefetched /blog.
+    // commits; those have nothing to do with the hover-prefetched /blog.
     const isBlogIndexPartial = (url: string): boolean => {
       const parsed = new URL(url);
       return (
@@ -357,27 +354,33 @@ test.describe("link-behavior (production)", () => {
       }
     });
 
-    await page.goto(f.url("/link-behavior"));
-    await waitForHydration(page);
+    async function hoverPrefetch(): Promise<void> {
+      await page.goto(f.url("/link-behavior"));
+      await waitForHydration(page);
+      const prefetchDone = page.waitForResponse((res) =>
+        isBlogIndexPartial(res.url()),
+      );
+      await page.locator('[data-testid="link-prefetch-hover"]').hover();
+      await (await prefetchDone).finished();
+    }
 
-    const prefetchDone = page.waitForResponse((res) =>
-      isBlogIndexPartial(res.url()),
-    );
-
-    await page.locator('[data-testid="link-prefetch-hover"]').hover();
-    await prefetchDone;
-
-    await page.waitForTimeout(200);
-
+    await hoverPrefetch();
+    // Clear tracked responses so we only see the navigation request
     blogResponses.length = 0;
 
+    // The click is served from the in-memory prefetch: no request at all.
     await page.locator('[data-testid="link-prefetch-hover"]').click();
     await expect(page).toHaveURL(/\/blog/);
-
     await page.waitForTimeout(500);
+    expect(blogResponses).toEqual([]);
 
+    // A new document has no in-memory prefetch, and prefetch responses carry
+    // no Cache-Control (#1170): its prefetch is answered by the server.
+    blogResponses.length = 0;
+    await hoverPrefetch();
+    expect(blogResponses.length).toBeGreaterThan(0);
     for (const resp of blogResponses) {
-      expect(resp.fromCache).toBe(true);
+      expect(resp.fromCache).toBe(false);
     }
 
     await cdp.detach();

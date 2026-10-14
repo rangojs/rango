@@ -49,7 +49,7 @@ route was pre-rendered.
   out of service by a "removed" marker in the overlay (`prerender.remove()`,
   or a refresh whose handler calls `notFound()`), which also hides the
   build-time entry below it. A refresh cannot
-  reach connected clients until their prefetch/HTTP caches expire — see the
+  reach connected clients until their prefetch caches expire — see the
   staleness call-outs in `docs/design/ondemand-prerender.md`.
 
 ---

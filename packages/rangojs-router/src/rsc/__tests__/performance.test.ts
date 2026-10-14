@@ -44,7 +44,6 @@ function createHandlerContext(matchResult = createMatchResult()) {
       matchPartial: vi.fn(async () => matchResult),
       rootLayout: null,
       themeConfig: null,
-      prefetchCacheControl: "private, max-age=300",
       prefetchCacheTTL: 300_000,
     },
     version: "test-version",

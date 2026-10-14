@@ -349,7 +349,7 @@ const matrixRows: SemanticMatrixRow[] = [
       };
 
       // A prefetch that finished with the loader's error is never served:
-      // the click sends its own request (dc-t72).
+      // the click sends its own request (#1170).
       const prefetched = page.waitForResponse(
         (response) =>
           isPrefetchRequest(response.request()) &&

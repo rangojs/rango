@@ -383,13 +383,6 @@ export interface RangoInternal<
   >;
 
   /**
-   * Cache-Control header value for prefetch responses.
-   * False means no caching of prefetch responses.
-   * Derived from prefetchCacheTTL.
-   */
-  readonly prefetchCacheControl: string | false;
-
-  /**
    * TTL in milliseconds for the client-side in-memory prefetch cache.
    * 0 means caching is disabled.
    */

@@ -162,6 +162,7 @@ import clientUrlsLocalePatterns from "./urls/client-urls-locale.js";
 import clientUrlsCompetePatterns from "./urls/client-urls-compete.js";
 import { CompeteServerPage } from "./urls/client-urls-compete.server.js";
 import { settledLaneErrorsPatterns } from "./urls/settled-lane-errors.js";
+import { prefetchRenderErrorsPatterns } from "./urls/prefetch-render-errors.js";
 import { getClientUrlsActionCount } from "./urls/client-urls-action.store.js";
 import { ClientUrlsItemLoader } from "./urls/client-urls.loader.js";
 import { Modal } from "./components/Modal.js";
@@ -1044,6 +1045,11 @@ export const urlpatterns = urls(
           // click or a back/forward restore (settled-lane-errors.test.ts).
           include("/settled-lane-errors", settledLaneErrorsPatterns, {
             name: "settledLaneErrors",
+          }),
+          // A prefetch whose render reported an error is never kept
+          // (prefetch-render-errors.test.ts).
+          include("/prefetch-render-errors", prefetchRenderErrorsPatterns, {
+            name: "prefetchRenderErrors",
           }),
         ],
       ),
