@@ -36,6 +36,11 @@ export type HandleData = Record<string, Record<string, unknown[]>>;
  */
 export interface RscMetadata {
   pathname: string;
+  /**
+   * Path and search of the URL the route rendered, when middleware rewrote
+   * the request there. Kept per history entry and sent back as `_rsc_rt`.
+   */
+  rewriteTarget?: string;
   segments: ResolvedSegment[];
   /** Router instance ID — the current app's identity. A mismatch with the
    *  client's id (sent as _rsc_rid) is detected server-side and answered with
@@ -300,12 +305,23 @@ export interface SegmentState {
 }
 
 /**
- * What the router remembers about one history entry for transition({ when })
- * (NavigationStore.rememberDisplayedEntry).
+ * What a committed payload says about the page it shows, remembered per
+ * history entry (NavigationStore.rememberDisplayedEntry).
  *
  * @internal This type is an implementation detail and may change without notice.
  */
-export interface HistoryEntryMemory {
+export interface ShownEntry {
+  readonly routeName?: string;
+  readonly rewriteTarget?: string;
+}
+
+/**
+ * What the router remembers about one history entry for transition({ when })
+ * and the requests made from it (NavigationStore.rememberDisplayedEntry).
+ *
+ * @internal This type is an implementation detail and may change without notice.
+ */
+export interface HistoryEntryMemory extends ShownEntry {
   readonly routeName: string | undefined;
   /** The entry's `history.state` as last recorded. */
   readonly state: unknown;
@@ -594,12 +610,12 @@ export interface NavigationStore {
   /**
    * Per-history-entry memory for transition({ when }) sources: record the
    * entry on screen (keyed by its `history.state.key`) with its current
-   * `history.state` and, when given, its route name (kept from the last
-   * record otherwise; every push/replace creates a new key, so a stale name
-   * never carries to another entry). Called after every commit, restore and
-   * state merge.
+   * `history.state` and, when `shown` is given, its route name and rewrite
+   * target (both kept from the last record otherwise; every push/replace
+   * creates a new key, so a stale record never carries to another entry).
+   * Called after every commit, restore and state merge.
    */
-  rememberDisplayedEntry(routeName?: string): void;
+  rememberDisplayedEntry(shown?: ShownEntry): void;
   /**
    * The memory of the entry on screen, or of `entryKey`. At popstate
    * history.state already belongs to the destination, so back/forward reads
@@ -690,6 +706,8 @@ export interface FetchPartialOptions {
   targetUrl: string;
   segmentIds: string[];
   previousUrl: string;
+  /** The page's RscMetadata.rewriteTarget, sent as `_rsc_rt`. */
+  rewriteTarget?: string;
   signal?: AbortSignal;
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;

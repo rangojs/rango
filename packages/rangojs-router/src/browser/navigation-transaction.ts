@@ -2,6 +2,7 @@ import type {
   NavigateOptionsInternal,
   NavigationStore,
   ResolvedSegment,
+  ShownEntry,
   StreamingToken,
 } from "./types.js";
 import {
@@ -53,8 +54,8 @@ interface CommitOptions {
    * merged in. The page left was saved by handleTraversalStart.
    */
   traversal?: boolean;
-  /** The committed route's name (payload metadata), remembered per history entry. */
-  routeName?: string;
+  /** The payload's metadata: its route name and rewrite target, remembered per history entry. */
+  metadata?: ShownEntry;
   /**
    * transition({ when }) decision already made at this navigation's first
    * presentation (the optimistic clientUrls() swap). Not a commit input: the
@@ -86,8 +87,8 @@ interface BoundCommitOverrides {
   cacheOnly?: boolean;
   /** Server-set location state to merge into history.pushState */
   serverState?: Record<string, unknown>;
-  /** The committed route's name (payload metadata), remembered per history entry. */
-  routeName?: string;
+  /** The payload's metadata: its route name and rewrite target, remembered per history entry. */
+  metadata?: ShownEntry;
   /** No payload follows this commit (CommitOptions.treeless). */
   treeless?: boolean;
 }
@@ -210,7 +211,7 @@ export function createNavigationTransaction(
     if (storeOnly) {
       // Same entry (an action refetch): refresh its state, keep its name
       // unless the payload names it.
-      store.rememberDisplayedEntry(opts.routeName);
+      store.rememberDisplayedEntry(opts.metadata);
       debugLog("[Browser] Store updated (action)");
       handle.complete(parsedUrl);
       return {};
@@ -222,7 +223,7 @@ export function createNavigationTransaction(
         serverState && Object.keys(serverState).length > 0
           ? mergeLocationState(serverState)
           : window.history.state;
-      store.rememberDisplayedEntry(opts.routeName);
+      store.rememberDisplayedEntry(opts.metadata);
       eventController.commitLocationState(entryState, opts.treeless);
       handle.complete(parsedUrl);
       debugLog("[Browser] Traversal committed, historyKey:", historyKey);
@@ -237,7 +238,7 @@ export function createNavigationTransaction(
 
     pushHistoryWithIdx(historyState, url, replace ?? false);
     ensureHistoryKey();
-    store.rememberDisplayedEntry(opts.routeName);
+    store.rememberDisplayedEntry(opts.metadata);
     eventController.commitLocationState(historyState, opts.treeless);
 
     handle.complete(parsedUrl);
@@ -296,7 +297,7 @@ export function createNavigationTransaction(
             interceptSourceUrl,
             cacheOnly,
             serverState,
-            routeName: overrides?.routeName ?? opts.routeName,
+            metadata: overrides?.metadata ?? opts.metadata,
             treeless: overrides?.treeless,
           });
         },

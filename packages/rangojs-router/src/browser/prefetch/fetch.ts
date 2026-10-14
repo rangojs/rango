@@ -37,6 +37,7 @@ import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../../segment-fragments.js";
 import { PREFETCH_HEADER } from "../../prefetch-markers.js";
 import type { RscPayload } from "../types.js";
+import { getRegisteredStore } from "../navigation-store-handle.js";
 
 /**
  * Decoder injected at app startup (see setPrefetchDecoder). This is
@@ -161,6 +162,13 @@ function buildPrefetchUrl(
   }
   if (routerId) {
     targetUrl.searchParams.set("_rsc_rid", routerId);
+  }
+  // The page's rewrite target, so the server diffs against the route that
+  // rendered it, as for the navigation.
+  const rewriteTarget =
+    getRegisteredStore()?.getHistoryEntryMemory()?.rewriteTarget;
+  if (rewriteTarget) {
+    targetUrl.searchParams.set("_rsc_rt", rewriteTarget);
   }
   return targetUrl;
 }

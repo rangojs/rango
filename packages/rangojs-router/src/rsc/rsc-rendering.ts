@@ -51,7 +51,7 @@ import {
 import type { HandlerContext } from "./handler-context.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
 import { publicRouteName } from "../route-name.js";
-import { buildFullPayload, renderedLocation } from "./full-payload.js";
+import { buildFullPayload, payloadLocation } from "./full-payload.js";
 import {
   capShellWindow,
   lastStoredCaptureSeq,
@@ -897,7 +897,7 @@ function* preparePayloadPlan<TEnv>(
       kind: "payload",
       payload: {
         metadata: {
-          pathname: renderedLocation(reqCtx, url).pathname,
+          ...payloadLocation(reqCtx, url),
           // routerId is serialized on every payload (including within-session
           // ones) so the frontend can read the current app/router identity. It
           // always equals the current app's id: a cross-app navigation is

@@ -365,7 +365,7 @@ describe("navigation-store", () => {
       const store = createTestStore();
       expect(store.getHistoryEntryMemory()).toBeUndefined();
 
-      store.rememberDisplayedEntry("list");
+      store.rememberDisplayedEntry({ routeName: "list" });
       expect(store.getHistoryEntryMemory()).toEqual({
         routeName: "list",
         state: { key: "k1", __rsc_ls_x: 1 },
@@ -373,7 +373,7 @@ describe("navigation-store", () => {
 
       // Next entry: the previous one stays readable by key (back/forward).
       history.state = { key: "k2" };
-      store.rememberDisplayedEntry("detail");
+      store.rememberDisplayedEntry({ routeName: "detail" });
       expect(store.getHistoryEntryMemory()?.routeName).toBe("detail");
       expect(store.getHistoryEntryMemory("k1")?.routeName).toBe("list");
 
@@ -386,10 +386,37 @@ describe("navigation-store", () => {
       });
     });
 
+    it("remembers the entry's rewrite target, kept until a payload names another", () => {
+      const history = stubHistory({ key: "k1" });
+      const store = createTestStore();
+
+      store.rememberDisplayedEntry({
+        routeName: "item",
+        rewriteTarget: "/item/1",
+      });
+      expect(store.getHistoryEntryMemory()?.rewriteTarget).toBe("/item/1");
+
+      // A state refresh (no payload) keeps it.
+      history.state = { key: "k1", __rsc_ls_y: 2 };
+      store.rememberDisplayedEntry();
+      expect(store.getHistoryEntryMemory()?.rewriteTarget).toBe("/item/1");
+
+      // A payload with none (the rewrite lifted) clears it.
+      store.rememberDisplayedEntry({ routeName: "item" });
+      expect(store.getHistoryEntryMemory()?.rewriteTarget).toBeUndefined();
+
+      // Another entry has its own.
+      store.rememberDisplayedEntry({ rewriteTarget: "/item/2" });
+      history.state = { key: "k2" };
+      store.rememberDisplayedEntry({ routeName: "home" });
+      expect(store.getHistoryEntryMemory("k1")?.rewriteTarget).toBe("/item/2");
+      expect(store.getHistoryEntryMemory()?.rewriteTarget).toBeUndefined();
+    });
+
     it("mints an entry key when history.state has none", () => {
       const history = stubHistory(null);
       const store = createTestStore();
-      store.rememberDisplayedEntry("home");
+      store.rememberDisplayedEntry({ routeName: "home" });
       const key = (history.state as { key?: string } | null)?.key;
       expect(typeof key).toBe("string");
       expect(store.getHistoryEntryMemory(key)?.routeName).toBe("home");

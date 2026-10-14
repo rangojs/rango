@@ -250,7 +250,7 @@ export async function initBrowserApp(
 
   // The document's entry: the transition({ when }) source of the first
   // navigation, and of a later back/forward that leaves it.
-  store.rememberDisplayedEntry(initialPayload.metadata?.routeName);
+  store.rememberDisplayedEntry(initialPayload.metadata);
 
   // Register the active store on the module-level handle and wire the
   // jar-divergence observer before any getRangoState() read can detect a

@@ -30,7 +30,8 @@ const REWRITE_TRAIL = createVar<readonly string[]>();
 
 type TrailContext = Pick<RequestContext<any>, "_variables">;
 
-function pathKey(url: URL): string {
+/** A URL's path and search: what a rewrite hop, a target and a visitor's move compare. */
+export function pathKey(url: URL): string {
   return url.pathname + url.search;
 }
 

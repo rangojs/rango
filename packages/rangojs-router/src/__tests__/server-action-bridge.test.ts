@@ -14,6 +14,7 @@ function createMockStore() {
     })),
     markCacheAsStaleAndBroadcast: vi.fn(),
     getInterceptSourceUrl: vi.fn(() => null),
+    getHistoryEntryMemory: vi.fn(() => undefined),
   };
 }
 
@@ -32,8 +33,11 @@ function stubWindow() {
   });
 }
 
-function setupBridge(payload: unknown, onNavigate = vi.fn(async () => {})) {
-  const store = createMockStore();
+function setupBridge(
+  payload: unknown,
+  onNavigate = vi.fn(async () => {}),
+  store = createMockStore(),
+) {
   const eventController = createEventController();
   const setServerCallback = vi.fn();
 
@@ -123,6 +127,27 @@ describe("server-action-bridge partial invariant", () => {
     await expect(callback("hash#save", [])).rejects.not.toThrow(
       /Action response missing isPartial/,
     );
+  });
+});
+
+describe("server-action-bridge rewrite target", () => {
+  it("names the page's rewrite target (_rsc_rt) on the action request", async () => {
+    stubWindow();
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = createMockStore();
+    store.getHistoryEntryMemory.mockReturnValue({
+      routeName: "item",
+      rewriteTarget: "/item/1?sort=a",
+      state: null,
+    } as any);
+
+    const { callback } = setupBridge({ metadata: {} }, undefined, store);
+    await callback("hash#save", []).catch(() => {});
+
+    const url = new URL(String((fetchMock.mock.calls[0] as unknown[])[0]));
+    expect(url.searchParams.get("_rsc_rt")).toBe("/item/1?sort=a");
   });
 });
 

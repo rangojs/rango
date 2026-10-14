@@ -79,6 +79,7 @@ export function createNavigationClient(
         targetUrl,
         segmentIds,
         previousUrl,
+        rewriteTarget,
         signal,
         staleRevalidation,
         interceptSourceUrl,
@@ -114,6 +115,11 @@ export function createNavigationClient(
       }
       if (routerId) {
         fetchUrl.searchParams.set("_rsc_rid", routerId);
+      }
+      // The page left's rewrite target (#1144), in both prefetch keys like
+      // the params above: buildPrefetchUrl sets it in the same place.
+      if (rewriteTarget) {
+        fetchUrl.searchParams.set("_rsc_rt", rewriteTarget);
       }
       // A param, not a header: the document cache decides from the raw URL
       // (cache/document-cache.ts), and it keeps the fill out of every

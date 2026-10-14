@@ -15,6 +15,7 @@ import type { RequestContext } from "../server/request-context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
 import {
+  pathKey,
   rendersForSharedAudience,
   rewriteTrail,
   visitorUrl,
@@ -42,7 +43,7 @@ export function buildFullPayload(
 ): RscPayload {
   return {
     metadata: {
-      pathname: renderedLocation(reqCtx, url).pathname,
+      ...payloadLocation(reqCtx, url),
       routerId: ctx.router.id,
       basename: ctx.router.basename,
       segments: attachTransitionWhen(m.segments, reqCtx),
@@ -119,6 +120,24 @@ export function renderedLocation(
   }
   reqCtx._payloadVisitorLocation = true;
   return visitorUrl(reqCtx, url);
+}
+
+/**
+ * A payload's `pathname` (renderedLocation) and, when middleware rewrote the
+ * request, `rewriteTarget`: the path and search the route rendered (the
+ * trail's last URL). The browser keeps it per history entry and sends it
+ * back as `_rsc_rt`, so the next request from the page diffs against the
+ * route that rendered it (navigation-snapshot.ts resolveNavigation, #1144).
+ */
+export function payloadLocation(
+  reqCtx: Parameters<typeof renderedLocation>[0],
+  url: URL,
+): { pathname: string; rewriteTarget?: string } {
+  const pathname = renderedLocation(reqCtx, url).pathname;
+  const trail = rewriteTrail(reqCtx);
+  return trail
+    ? { pathname, rewriteTarget: pathKey(new URL(trail[trail.length - 1]!)) }
+    : { pathname };
 }
 
 /**

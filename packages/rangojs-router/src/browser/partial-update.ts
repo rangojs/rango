@@ -32,7 +32,12 @@ import {
   IS_BROWSER_DEBUG,
 } from "./logging.js";
 import { validatePayloadRedirect } from "./validate-redirect-origin.js";
-import type { HandleData, NavigationUpdate, RscMetadata } from "./types.js";
+import type {
+  HandleData,
+  NavigationUpdate,
+  RscMetadata,
+  ShownEntry,
+} from "./types.js";
 import { OPTIMISTIC_COMMIT_TRANSITION_TYPE } from "./optimistic-commit.js";
 import type { LoaderStore } from "../loader-store.js";
 import { setActiveInterceptTargets } from "../client-urls/navigation.js";
@@ -186,8 +191,8 @@ export interface CommitOverrides {
   interceptSourceUrl?: string;
   /** Server-set location state to merge into history.pushState */
   serverState?: Record<string, unknown>;
-  /** The committed route's name (payload metadata), remembered per history entry. */
-  routeName?: string;
+  /** The payload's metadata: its route name and rewrite target, remembered per history entry. */
+  metadata?: ShownEntry;
 }
 
 /**
@@ -669,6 +674,11 @@ export function createPartialUpdater(
       targetUrl: url,
       segmentIds: segments,
       previousUrl,
+      // The entry being left (a popstate has not moved it yet), unless
+      // previousUrl names an intercept's source.
+      rewriteTarget: interceptSourceUrl
+        ? undefined
+        : store.getHistoryEntryMemory()?.rewriteTarget,
       staleRevalidation:
         mode.type === "stale-revalidation" || segments.length === 0,
       version: getVersion(),
@@ -758,7 +768,7 @@ export function createPartialUpdater(
           const { scroll: commitScroll } = tx.commit(
             matchedIds,
             existingSegments,
-            { routeName: payload.metadata.routeName },
+            { metadata: payload.metadata },
           );
           if (cachedHandleData) {
             store.updateCacheHandleData(
@@ -807,7 +817,7 @@ export function createPartialUpdater(
           const { scroll: leaveScroll } = tx.commit(
             matchedIds,
             existingSegments,
-            { routeName: payload.metadata.routeName },
+            { metadata: payload.metadata },
           );
 
           if (process.env.NODE_ENV !== "production") {
@@ -827,7 +837,7 @@ export function createPartialUpdater(
           "[Browser] No changes - all revalidations returned false, keeping existing UI",
         );
         tx.commit(matchedIds, existingSegments, {
-          routeName: payload.metadata.routeName,
+          metadata: payload.metadata,
           treeless: true,
         });
         debugLog("[Browser] Navigation complete (no re-render)");
@@ -938,6 +948,8 @@ export function createPartialUpdater(
             ...(isInterceptResponse && {
               interceptSourceUrl: effectiveInterceptSource,
             }),
+            // The server ignores it beside an intercept source.
+            rewriteTarget: payload.metadata?.rewriteTarget,
             fill: true,
             signal,
             version: getVersion(),
@@ -1074,7 +1086,7 @@ export function createPartialUpdater(
 
       const serverLocationState = payload.metadata?.locationState;
       const overrides: CommitOverrides = {
-        routeName: payload.metadata?.routeName,
+        metadata: payload.metadata,
         ...(isInterceptResponse && {
           scroll: false,
           intercept: true,
@@ -1252,7 +1264,7 @@ export function createPartialUpdater(
 
       const fullUpdateServerState = payload.metadata?.locationState;
       const { scroll: fullScroll } = tx.commit(segmentIds, segments, {
-        routeName: payload.metadata?.routeName,
+        metadata: payload.metadata,
         ...(fullUpdateServerState && { serverState: fullUpdateServerState }),
       });
 

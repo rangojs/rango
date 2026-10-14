@@ -803,6 +803,13 @@ export interface RequestContext<
   _prevRouteKey?: string;
 
   /**
+   * @internal Leaving a rewritten page, the visitor's URL moved
+   * (router/match-api.ts): the default revalidation counts it as a search
+   * change, since the render may read `ctx.rewrittenFrom`.
+   */
+  _visitorMoved?: boolean;
+
+  /**
    * @internal True while the post-action revalidation render is running (set by
    * revalidateAfterAction). The "use cache" runtime reads this to prefer
    * freshness over a fast stale response during an action: a stale entry
@@ -1077,6 +1084,7 @@ export type PublicRequestContext<
   | "_locationState"
   | "_routeName"
   | "_prevRouteKey"
+  | "_visitorMoved"
   | "_inActionRevalidation"
   | "_actionRan"
   | "_reportedErrors"

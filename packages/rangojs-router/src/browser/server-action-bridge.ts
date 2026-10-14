@@ -304,6 +304,11 @@ export function createServerActionBridge(
       if (rid) {
         url.searchParams.set("_rsc_rid", rid);
       }
+      // The page's rewrite target: the server diffs the re-render against it.
+      const rewriteTarget = store.getHistoryEntryMemory()?.rewriteTarget;
+      if (rewriteTarget) {
+        url.searchParams.set("_rsc_rt", rewriteTarget);
+      }
 
       // Encode arguments
       const encodedBody = await deps.encodeReply(args, { temporaryReferences });
@@ -899,7 +904,7 @@ export function createServerActionBridge(
             fullSegments,
             currentHandleData,
           );
-          store.rememberDisplayedEntry(metadata?.routeName);
+          store.rememberDisplayedEntry(metadata);
 
           const actionUpdate = { root: newTree, metadata: metadata! };
           if (process.env.NODE_ENV !== "production") auditTreeCause("action");

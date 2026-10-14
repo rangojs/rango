@@ -18,7 +18,7 @@ import {
   captureRequestEntryContext,
 } from "../server/request-context.js";
 import { REWRITE_HEADER, runRewritePasses } from "./rewrite-passes.js";
-import { renderedLocation } from "./full-payload.js";
+import { payloadLocation } from "./full-payload.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc/server";
 import type {
   RscPayload,
@@ -1451,7 +1451,7 @@ export function createRSCHandler<
 
           const payload: RscPayload = {
             metadata: {
-              pathname: renderedLocation(getRequestContext(), url).pathname,
+              ...payloadLocation(getRequestContext(), url),
               routerId: router.id,
               basename: router.basename,
               segments: [notFoundSegment],

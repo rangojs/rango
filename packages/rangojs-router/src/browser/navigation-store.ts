@@ -7,6 +7,7 @@ import type {
   UpdateSubscriber,
   ResolvedSegment,
   HandleData,
+  ShownEntry,
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
 import { clearPrefetchCache } from "./prefetch/cache.js";
@@ -466,13 +467,14 @@ export function createNavigationStore(
       currentHistoryKey = key;
     },
 
-    rememberDisplayedEntry(routeName?: string): void {
+    rememberDisplayedEntry(shown?: ShownEntry): void {
       if (typeof window === "undefined") return;
       const key = getHistoryStateKey();
       const previous = entryMemory.get(key);
       entryMemory.delete(key);
       entryMemory.set(key, {
-        routeName: routeName ?? previous?.routeName,
+        routeName: shown?.routeName ?? previous?.routeName,
+        rewriteTarget: (shown ?? previous)?.rewriteTarget,
         state: window.history.state,
       });
       if (entryMemory.size > HISTORY_ENTRY_MEMORY_SIZE) {

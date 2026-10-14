@@ -102,12 +102,15 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * ones, as `segments`, and the same URL as `from`. `interceptSource` sends
    * the intercept source (`X-RSC-Router-Intercept-Source`) the browser sends
    * from an open modal and with the fill of an intercept, whose `from` is
-   * that source.
+   * that source. `rewriteTarget` sends the `metadata.rewriteTarget` the page at
+   * `from` carried when middleware rewrote it (`_rsc_rt`), as the browser
+   * does: the server then diffs against the route that rendered that page.
    */
   partial?:
     | true
     | {
         from?: string;
+        rewriteTarget?: string;
         segments?: readonly string[];
         prefetch?: boolean;
         fill?: boolean;
@@ -145,6 +148,8 @@ export interface ServeShellRequestAction {
   args?: readonly unknown[];
   /** The segment ids the page holds (`_rsc_segments`). */
   segments?: readonly string[];
+  /** The page's payload `metadata.rewriteTarget`, as for `partial`. */
+  rewriteTarget?: string;
 }
 
 /** A response's handle data, as the browser consumes it. */
@@ -575,6 +580,9 @@ async function buildActionRequest(
   const target = new URL(url);
   target.searchParams.set("_rsc_action", action.id);
   target.searchParams.set("_rsc_segments", (action.segments ?? []).join(","));
+  if (action.rewriteTarget) {
+    target.searchParams.set("_rsc_rt", action.rewriteTarget);
+  }
   headers.set("rsc-action", action.id);
   if (!headers.has("X-RSC-Router-Client-Path")) {
     headers.set("X-RSC-Router-Client-Path", url.href);
@@ -618,6 +626,7 @@ async function buildRequest(
   }
   const {
     from = "/",
+    rewriteTarget,
     segments = [],
     prefetch = false,
     fill = false,
@@ -626,6 +635,7 @@ async function buildRequest(
   const target = new URL(url);
   target.searchParams.set("_rsc_partial", "true");
   target.searchParams.set("_rsc_segments", segments.join(","));
+  if (rewriteTarget) target.searchParams.set("_rsc_rt", rewriteTarget);
   // As the browser sends them: browser/navigation-client.ts (fill) and
   // browser/prefetch/fetch.ts (prefetch).
   if (fill) target.searchParams.set(FILL_PARAM, "1");

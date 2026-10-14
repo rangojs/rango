@@ -135,6 +135,37 @@ describe("navigation-client", () => {
     ).toBe("1");
 
     await expect(result.streamComplete).resolves.toBeUndefined();
+    expect(String(fetchUrl)).not.toContain("_rsc_rt");
+  });
+
+  it("names the page's rewrite target in the URL, so in both prefetch keys", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const createFromFetch = vi.fn(
+      async (responsePromise: Promise<Response>) => {
+        await responsePromise;
+        return { metadata: { matched: [], diff: [], isPartial: true } };
+      },
+    );
+    const client = createNavigationClient({ createFromFetch } as any);
+
+    await client.fetchPartial({
+      targetUrl: "/public-1?sort=b",
+      previousUrl: "http://localhost/public-1?sort=a",
+      rewriteTarget: "/item/1?sort=a",
+      segmentIds: ["root"],
+    });
+
+    const fetchUrl = new URL(String(fetchMock.mock.calls[0]![0]));
+    expect(fetchUrl.searchParams.get("_rsc_rt")).toBe("/item/1?sort=a");
+    expect(buildSourceKeyMock).toHaveBeenCalledWith(
+      "v1:abc",
+      "http://localhost/public-1?sort=a",
+      fetchUrl,
+    );
   });
 
   // The signal cancels the request until its response arrives, for every
