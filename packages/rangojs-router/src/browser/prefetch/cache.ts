@@ -100,6 +100,14 @@ export interface DecodedPrefetch {
    */
   respawn?: () => DecodedPrefetch;
   /**
+   * The prefetch's stall timer (executePrefetchFetch). Navigation clears it on
+   * the entry it serves: from then on the click owns the stream, which runs to
+   * its end (a Flight response that arrived is never aborted mid-stream). A
+   * prefetch nobody adopted keeps it, so a stalled one is still aborted.
+   * Absent on a respawned entry, which has no timer.
+   */
+  stallTimer?: ReturnType<typeof setTimeout>;
+  /**
    * Release the buffered reserve bytes. Called when the entry is evicted
    * without being consumed (expiry, FIFO, sweep, cache clear) so the tee
    * buffer is dropped promptly instead of waiting for GC.

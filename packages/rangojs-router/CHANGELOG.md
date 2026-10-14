@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed: a click on a link whose prefetch is still streaming 30 seconds later keeps its pending parts
+
+**Before.** The router aborts a prefetch that is still streaming 30 seconds
+after it started, so that a stalled server cannot hold the link's prefetch
+forever. It did so even when a click had already taken that prefetch over.
+A page reached by such a click (for example one with a slow loader under
+`loading()`) lost its pending parts to the abort: they showed an error
+instead of arriving.
+
+**Now.** Once a click takes over a prefetch, the click's stream runs to its
+end, however long it takes. A prefetch nobody clicked is still aborted after
+30 seconds and can be prefetched again. A prefetch whose response has not
+started 30 seconds in is also still aborted, and the click then sends its own
+request. Nothing to change in your code.
+
 ### Fixed: a build of an app with `"sideEffects": false` keeps its clientUrls() revalidate() predicates
 
 **Before.** When the app's own `package.json` said `"sideEffects": false`,

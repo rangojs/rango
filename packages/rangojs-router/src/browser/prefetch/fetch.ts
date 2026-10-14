@@ -227,8 +227,9 @@ function executePrefetchFetch(
   // hover/direct path (no caller signal) and the queue-driven path (whose caller
   // signal only aborts on navigation, never on a stall). On fire it aborts the
   // fetch/stream and evicts the published entry if one exists; it is NOT cleared
-  // when headers arrive (see below) — it is cleared when the stream completes, or
-  // in `.finally()` for paths that publish no streaming entry.
+  // when headers arrive (see below) — it is cleared when the stream completes,
+  // when a navigation serves the entry (DecodedPrefetch.stallTimer), or in
+  // `.finally()` for paths that publish no streaming entry.
   let publishedKey: string | undefined;
   let publishedEntry: DecodedPrefetch | undefined;
   const timeoutController = new AbortController();
@@ -350,6 +351,7 @@ function executePrefetchFetch(
         streamComplete,
         scope,
         complete: false,
+        stallTimer: timeoutId,
         ...(reserve && {
           dispose: () => {
             reserve.cancel().catch(() => {});

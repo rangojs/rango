@@ -327,19 +327,16 @@ export function createNavigationClient(
       // so only a fully-warmed prefetch commits in a transition (no fallback flash).
       let fullyPrefetched = false;
 
-      // A failed prefetch is never served (DecodedPrefetch.failed).
-      if (cachedEntry && !cachedEntry.failed) {
+      // The prefetch entry this navigation serves. A failed prefetch is never
+      // served (DecodedPrefetch.failed).
+      let adopted = cachedEntry?.failed ? null : cachedEntry;
+      if (adopted) {
         if (tx) {
           browserDebugLog(tx, "prefetch cache hit (warm)", {
             key: hitKey,
             wildcard: hitKey === wildcardKey,
           });
         }
-        payloadPromise = cachedEntry.payload;
-        streamCompletePromise = cachedEntry.streamComplete;
-        // Only a hit whose stream already fully drained is "fully prefetched";
-        // a still-streaming hit must keep streaming its fallbacks like a cold load.
-        fullyPrefetched = cachedEntry.complete;
       } else if (inflightEntryPromise) {
         if (tx) {
           browserDebugLog(tx, "reusing inflight prefetch", {
@@ -353,8 +350,6 @@ export function createNavigationClient(
           if (tx) {
             browserDebugLog(tx, "inflight prefetch unavailable, refetching");
           }
-          ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
-            freshResult());
         } else if (adoptedViaWildcard && entry.scope === "source") {
           // A wildcard-adopted inflight that turned out source-scoped was
           // built for a different source page. Discard and refetch.
@@ -364,15 +359,19 @@ export function createNavigationClient(
               "wildcard inflight turned out source-scoped, refetching",
             );
           }
-          ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
-            freshResult());
         } else {
-          payloadPromise = entry.payload;
-          streamCompletePromise = entry.streamComplete;
-          // Adopted inflight is normally still streaming (false), but read the
-          // flag in case it completed between publish and adoption.
-          fullyPrefetched = entry.complete;
+          adopted = entry;
         }
+      }
+      if (adopted) {
+        // The click owns the stream from here on (DecodedPrefetch.stallTimer).
+        clearTimeout(adopted.stallTimer);
+        payloadPromise = adopted.payload;
+        streamCompletePromise = adopted.streamComplete;
+        // Only an entry whose stream already fully drained is "fully
+        // prefetched"; a still-streaming one keeps streaming its fallbacks like
+        // a cold load.
+        fullyPrefetched = adopted.complete;
       } else {
         ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
           freshResult());
