@@ -68,7 +68,7 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
       const timeout = setTimeout(() => {
         reject(
           new Error(
-            `Timed out waiting for server to start after ${timeoutMs}ms. Stdout: ${stdout}`,
+            `Timed out waiting for server to start after ${timeoutMs}ms.\nStdout (tail):\n${tailOutput(stdout)}\nStderr (tail):\n${tailOutput(stderr)}`,
           ),
         );
       }, timeoutMs);
@@ -86,7 +86,9 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
         clearTimeout(timeout);
         if (code !== 0) {
           reject(
-            new Error(`Server exited with code ${code}. Stdout: ${stdout}`),
+            new Error(
+              `Server exited with code ${code}.\nStdout (tail):\n${tailOutput(stdout)}\nStderr (tail):\n${tailOutput(stderr)}`,
+            ),
           );
         }
       });
