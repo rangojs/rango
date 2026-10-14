@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { expectConsole } from "./console-guard.js";
 
@@ -10,15 +10,17 @@ import { expectConsole } from "./console-guard.js";
  * holding the links, `/fail` and `/fail-loading` (a loader that always
  * throws, read inside the app's own error boundary, without and with
  * `loading()`), `/gone` (a loader that throws redirect() to `/ok`), `/flaky`
- * (a loader that throws once the layout's break action switched its run),
- * behind the 400 ms server middleware. Both apps call this from a dev and a
- * (production) describe.
+ * (a loader that throws once the layout's break action switched its run, or,
+ * with `?once`, on its run's first call only), behind the 400 ms server
+ * middleware. Both apps call this from a dev and a (production) describe.
  *
  * The contract, as on a plain navigation: the loader throws in place at its
  * useLoader read, the app's boundary there catches it, and the layout keeps
- * its instance; a redirect() replaces only the route's content. The one
- * exception is the background refresh after Back onto a stale entry: a
- * loader that throws there leaves the stale page on screen and is logged.
+ * its instance; a redirect() replaces only the route's content. A prefetch
+ * that finished with a loader error is never served to a click: the click
+ * sends its own request, past the HTTP cache (dc-t72). The one exception is
+ * the background refresh after Back onto a stale entry: a loader that throws
+ * there leaves the stale page on screen and is logged.
  */
 export interface SettledLaneErrorsScenarioOptions {
   url: (pathname: string) => string;
@@ -44,6 +46,14 @@ function isRscRequestFor(url: string, pathname: string): boolean {
   return u.pathname === pathname && u.searchParams.has("_rsc_partial");
 }
 
+/** A navigation's own request: an RSC request that is not a `<Link>` prefetch. */
+function isClickRequestFor(request: Request, pathname: string): boolean {
+  return (
+    isRscRequestFor(request.url(), pathname) &&
+    request.headers()["x-rango-prefetch"] !== "1"
+  );
+}
+
 export function runSettledLaneErrorTests(
   options: SettledLaneErrorsScenarioOptions,
 ): void {
@@ -51,8 +61,8 @@ export function runSettledLaneErrorTests(
     ? "An error occurred"
     : "stock service unavailable";
 
-  async function openHome(page: Page): Promise<void> {
-    await page.goto(options.url(`${options.path}/`));
+  async function openHome(page: Page, search = ""): Promise<void> {
+    await page.goto(options.url(`${options.path}/${search}`));
     await expect(page.getByTestId("sle-home")).toBeVisible();
     await page.waitForFunction(() =>
       document.documentElement.hasAttribute("data-hydrated"),
@@ -61,11 +71,15 @@ export function runSettledLaneErrorTests(
   }
 
   /** Hovers a prefetch link and waits until its prefetch has drained. */
-  async function prefetch(page: Page, target: string): Promise<void> {
+  async function prefetch(
+    page: Page,
+    link: string,
+    target: string = link,
+  ): Promise<void> {
     const response = page.waitForResponse((resp) =>
       isRscRequestFor(resp.url(), `${options.path}/${target}`),
     );
-    await page.getByTestId(`sle-prefetch-${target}`).hover();
+    await page.getByTestId(`sle-prefetch-${link}`).hover();
     await (await response).finished();
   }
 
@@ -83,13 +97,17 @@ export function runSettledLaneErrorTests(
     { name: "route without loading()", target: "fail" },
     { name: "route with loading()", target: "fail-loading" },
   ]) {
-    test(`${variant.name}: a fully-prefetched click to a page whose loader fails throws at the read, where the app's boundary catches it; the layout keeps its instance`, async ({
+    test(`${variant.name}: a click whose prefetch finished with the loader's error sends its own request; the loader fails again and throws at the read, where the app's boundary catches it; the layout keeps its instance`, async ({
       page,
     }) => {
       await openHome(page);
       await prefetch(page, variant.target);
 
+      const clicked = page.waitForRequest((req) =>
+        isClickRequestFor(req, `${options.path}/${variant.target}`),
+      );
       await page.getByTestId(`sle-prefetch-${variant.target}`).click();
+      await clicked;
       await expect(page).toHaveURL(
         new RegExp(`${options.path}/${variant.target}$`),
       );
@@ -201,15 +219,39 @@ export function runSettledLaneErrorTests(
     expect(body).toContain('"isPartial":false');
   });
 
-  test("a loader redirect() on a fully-prefetched click replaces only the route's content; the layout keeps its instance", async ({
+  test("a click whose prefetch's loader failed and then answers shows the data the loader answers its own request with; the layout keeps its instance", async ({
+    page,
+  }) => {
+    await openHome(page, `?run=${randomUUID()}`);
+    // The run's first call, the prefetch, throws; the next one answers.
+    await prefetch(page, "flaky-once", "flaky");
+
+    const clicked = page.waitForRequest((req) =>
+      isClickRequestFor(req, `${options.path}/flaky`),
+    );
+    await page.getByTestId("sle-prefetch-flaky-once").click();
+    await clicked;
+    await expect(page.getByTestId("sle-flaky-value")).toHaveText("stock:2");
+    await expect(page.getByTestId("sle-app-boundary")).toHaveCount(0);
+    await expectKept(page, "sle-layout");
+  });
+
+  test("a loader redirect() on a fully-prefetched click replaces only the route's content; the click is served from the prefetch; the layout keeps its instance", async ({
     page,
   }) => {
     await openHome(page);
     await prefetch(page, "gone");
 
+    const clicked: string[] = [];
+    page.on("request", (req) => {
+      if (isClickRequestFor(req, `${options.path}/gone`)) {
+        clicked.push(req.url());
+      }
+    });
     await page.getByTestId("sle-prefetch-gone").click();
     await expect(page).toHaveURL(new RegExp(`${options.path}/ok$`));
     await expect(page.getByTestId("sle-ok")).toBeVisible();
     await expectKept(page, "sle-layout");
+    expect(clicked, "a redirect() is not a failed prefetch").toEqual([]);
   });
 }

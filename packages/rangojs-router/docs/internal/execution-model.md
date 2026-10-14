@@ -1699,7 +1699,12 @@ should not be treated as equivalent.
   that renders cached segments and leaving an intercept all await every
   loader before the commit (`forceAwait`), so nothing suspends, and hand
   each settled entry to its read: a loader error throws there, the nearest
-  boundary to the read catches it, and the layouts keep their instance. The
+  boundary to the read catches it, and the layouts keep their instance. A
+  prefetch that finished with a loader error never reaches this lane: it is
+  marked `failed` when its stream ends (`revalidationErrorOf` in
+  `browser/prefetch/fetch.ts`), and the click sends its own `no-store`
+  request (`navigation-client.ts`), so a loader that recovered shows its data
+  and one that fails again throws at its read as on a plain click (dc-t72). The
   one exception is the background refresh after back/forward onto a stale
   entry (`stale-revalidation`): nobody asked for it and the page on screen
   works, so a loader it re-ran that threw makes `partial-update.ts` reject

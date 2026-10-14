@@ -280,7 +280,9 @@ prefetch renders"). A click that adopts a complete prefetch commits with no
 request. Entries live 300 s by default (`prefetchCacheTTL`) and an action
 drops them unless it calls `keepClientCache()`. Only a successful (2xx)
 prefetch response carries the browser `Cache-Control`, so a prefetch answered
-with a 500 or 404 is never served to the click from the HTTP cache.
+with a 500 or 404 is never served to the click from the HTTP cache. A
+prefetch in which a loader threw (a 200 with the error inside) is never used
+either: the click sends its own request, like a plain click.
 
 The rule: **prefetch broadly, and flag what is expensive.**
 

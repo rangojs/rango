@@ -18,6 +18,24 @@ had. An error that happens after the response has started (a loader that
 throws, a handler under `loading()`) still arrives with a 200 and is not
 covered by this change.
 
+### Fixed: a click whose prefetch hit a loader error asks the server again
+
+**Before.** When a loader threw while a `<Link>` prefetched its page, the
+server still answered 200 with the error inside, and the router kept that
+prefetch as finished. Every click on the link for up to `prefetchCacheTTL`
+(300 s by default) showed the same error without sending a request, even
+after the loader had recovered.
+
+**Now.** A prefetch that finished with a loader error is never served to a
+click. The click sends its own request, past the browser's HTTP cache, and
+shows what the loader answers now: its data, or its error thrown at the
+`useLoader` read, as on a plain click. A loader `redirect()` or `notFound()`
+is not an error, and such a prefetch is used as before. A click while the
+prefetch is still streaming adopts it as before. Not covered: a handler
+that throws under `loading()` and an async server component that throws;
+their errors still reach the click from the prefetch. Nothing to change in
+your code.
+
 ### Breaking: a loader that throws while it re-runs after a server action throws at its read, and the action resolves
 
 Migration: code that caught the rejection of `await action()` to learn that
