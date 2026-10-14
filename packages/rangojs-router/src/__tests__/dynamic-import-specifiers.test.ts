@@ -88,5 +88,6 @@ describe("dynamic import specifiers in router source", () => {
       ),
     );
     expect(offenders).toEqual([]);
-  });
+    // Parses every router source file with the TS compiler: 5-8 s under load.
+  }, 60_000);
 });

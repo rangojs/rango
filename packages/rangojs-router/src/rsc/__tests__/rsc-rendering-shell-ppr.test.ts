@@ -1734,9 +1734,12 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
       await cf.store.putShell(KEY, shellEntry(), 300, 30, ["home"]);
       await cf.drain();
       const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      // Freeze only Date: the memo ages by Date.now(), real timers keep the
+      // store's async paths running. Time moves only by setSystemTime.
+      vi.useFakeTimers({ toFake: ["Date"] });
       try {
         await hitRows(cf.store);
-        await new Promise((resolve) => setTimeout(resolve, 60));
+        vi.setSystemTime(Date.now() + 60);
         const stale = await hitRows(cf.store);
         expect(stale.get("ppr:shell-read")).toBe("hit memo");
         expect(stale.get("ppr:shell-marker")).toMatch(/ memo=stale\b/);
@@ -1744,6 +1747,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
         const fresh = await hitRows(cf.store);
         expect(fresh.get("ppr:shell-marker")).toMatch(/ memo=fresh\b/);
       } finally {
+        vi.useRealTimers();
         log.mockRestore();
       }
     });

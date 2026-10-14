@@ -482,8 +482,10 @@ describe("VercelCacheStore", () => {
       expect(hit).not.toBeNull();
       const roundTripped = new Uint8Array(await hit!.response.arrayBuffer());
       expect(roundTripped.length).toBe(size);
-      expect(roundTripped).toEqual(bytes);
-    });
+      expect(Buffer.from(roundTripped).equals(Buffer.from(bytes))).toBe(true);
+      // The 200 KB body cannot shrink (it must span >25 encoder chunks); the
+      // encode/decode is slow past the 5 s default under load.
+    }, 30_000);
 
     it("strips per-client signal headers (Set-Cookie)", async () => {
       const { cache } = makeFakeCache();

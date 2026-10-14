@@ -47,21 +47,30 @@ describe("applyStreamIdleTimeout", () => {
   });
 
   it("forwards chunks (re-arming each time) and never trips on a stream that keeps flowing", async () => {
-    const { stream, controller } = makeSource();
-    const { response, trips } = wrap(stream, 60);
-    const reader = response.body!.getReader();
+    // Virtual time: the 40ms gaps are exact, so machine load cannot push a gap
+    // past the 60ms budget.
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "performance"],
+    });
+    try {
+      const { stream, controller } = makeSource();
+      const { response, trips } = wrap(stream, 60);
+      const reader = response.body!.getReader();
 
-    controller().enqueue(enc("a"));
-    expect(new TextDecoder().decode((await reader.read()).value)).toBe("a");
-    await sleep(40); // inside the budget
-    controller().enqueue(enc("b"));
-    expect(new TextDecoder().decode((await reader.read()).value)).toBe("b");
-    await sleep(40); // re-armed by "b" — still inside
-    controller().enqueue(enc("c"));
-    expect(new TextDecoder().decode((await reader.read()).value)).toBe("c");
-    controller().close();
-    expect((await reader.read()).done).toBe(true);
-    expect(trips).toHaveLength(0);
+      controller().enqueue(enc("a"));
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe("a");
+      await vi.advanceTimersByTimeAsync(40); // inside the budget
+      controller().enqueue(enc("b"));
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe("b");
+      await vi.advanceTimersByTimeAsync(40); // re-armed by "b" — still inside
+      controller().enqueue(enc("c"));
+      expect(new TextDecoder().decode((await reader.read()).value)).toBe("c");
+      controller().close();
+      expect((await reader.read()).done).toBe(true);
+      expect(trips).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("trips on idle: errors the client stream, cancels the source, reports once", async () => {

@@ -431,22 +431,32 @@ describe("telemetry sink", () => {
 
     it("safeEmit with no-op sink performs no work", () => {
       const noop = resolveSink(undefined);
-      // If safeEmit wraps the call in try/catch, the noop still runs
-      // but does nothing meaningful. The key test is it doesn't throw.
-      const start = performance.now();
-      for (let i = 0; i < 10000; i++) {
-        safeEmit(noop, {
-          type: "request.start",
-          timestamp: 0,
-          method: "GET",
-          pathname: "/",
-          transaction: "match",
-          isPartial: false,
-        });
+      // Op-count, not wall time: the sink is entered once per call, returns
+      // nothing, and nothing is reported.
+      const emit = vi.spyOn(noop, "emit");
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      try {
+        for (let i = 0; i < 10000; i++) {
+          safeEmit(noop, {
+            type: "request.start",
+            timestamp: 0,
+            method: "GET",
+            pathname: "/",
+            transaction: "match",
+            isPartial: false,
+          });
+        }
+        expect(emit).toHaveBeenCalledTimes(10000);
+        expect(emit.mock.results.every((r) => r.value === undefined)).toBe(
+          true,
+        );
+        expect(consoleError).not.toHaveBeenCalled();
+      } finally {
+        emit.mockRestore();
+        consoleError.mockRestore();
       }
-      const elapsed = performance.now() - start;
-      // 10k calls should be negligible (well under 50ms)
-      expect(elapsed).toBeLessThan(50);
     });
   });
 });
