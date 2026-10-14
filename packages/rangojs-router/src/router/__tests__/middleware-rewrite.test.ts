@@ -1,11 +1,10 @@
 /**
  * A thrown rewrite() in the middleware runners: control flow that unwinds
- * the chain (span settles as success), a returned one is an error, and
- * intercept middleware cannot rewrite. ctx.isRewrite and ctx.rewrittenFrom.
+ * the chain (span settles as success), and a returned one is an error.
+ * ctx.isRewrite and ctx.rewrittenFrom.
  */
 import { describe, expect, it } from "vitest";
 import {
-  executeInterceptMiddleware,
   executeMiddleware,
   type MiddlewareEntry,
   type MiddlewareFn,
@@ -290,47 +289,6 @@ describe("executeMiddleware: a rewrite after next()", () => {
     ).rejects.toThrow(
       'Middleware "errorPage" threw rewrite() after calling next().',
     );
-  });
-});
-
-describe("executeInterceptMiddleware: rewrite is not supported", () => {
-  it("turns a thrown rewrite into the intercept error", async () => {
-    const ctx = contextFor("http://localhost/photos/1");
-    const thrower: MiddlewareFn<unknown> = () => {
-      throw rewrite("/maintenance");
-    };
-    await expect(
-      runWithRequestContext(ctx, () =>
-        executeInterceptMiddleware(
-          [thrower],
-          ctx.request,
-          {},
-          {},
-          ctx._variables,
-          ctx.res,
-        ),
-      ),
-    ).rejects.toThrow(
-      'rewrite("/maintenance") is not supported here: intercept middleware threw it.',
-    );
-  });
-
-  it("rejects a returned rewrite", async () => {
-    const ctx = contextFor("http://localhost/photos/1");
-    const returns = (() =>
-      rewrite("/maintenance")) as unknown as MiddlewareFn<unknown>;
-    await expect(
-      runWithRequestContext(ctx, () =>
-        executeInterceptMiddleware(
-          [returns],
-          ctx.request,
-          {},
-          {},
-          ctx._variables,
-          ctx.res,
-        ),
-      ),
-    ).rejects.toThrow("don't return it");
   });
 });
 

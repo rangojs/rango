@@ -46,7 +46,6 @@ export interface InterceptInfo {
   hasWhen: boolean;
   whenCount: number;
   hasLoader: boolean;
-  hasMiddleware: boolean;
 }
 
 // ============================================================================
@@ -342,7 +341,6 @@ export class RouteTree {
       hasWhen: i.when.length > 0,
       whenCount: i.when.length,
       hasLoader: i.loader.length > 0,
-      hasMiddleware: i.middleware.length > 0,
     }));
   }
 

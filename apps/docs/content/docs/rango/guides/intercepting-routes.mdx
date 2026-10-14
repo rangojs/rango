@@ -129,26 +129,30 @@ intercept(
 
 ## Middleware and data
 
-Intercepts support their own middleware chain. For an intercept request the full order is:
+An intercept has no middleware of its own. The target route's middleware runs for the modal on every request that renders it, a `cache()` hit and a prerendered target included. For an intercept request the full order is:
 
 ```
-global mw (router.use) -> route mw (urls middleware()) -> intercept mw -> intercept loaders + handler
+global mw (router.use) -> route mw (the target route's middleware()) -> intercept loaders + handler
 ```
 
-The intercept's loaders start before its handler is called, so they run in parallel with it. If intercept middleware returns a `Response` (a redirect, for example), the intercept stops there.
+The intercept's loaders start before its handler is called, so they run in parallel with it. If route middleware returns a `Response` (a redirect, for example), the request stops there, the modal with it.
 
 ```tsx
-intercept("@modal", "product", <ProductModal />, () => [
+path("/product/:id", ProductPage, { name: "product" }, () => [
   middleware(async (ctx, next) => {
-    // Runs only for this intercept, after global and route middleware
-    ctx.set("interceptSource", "modal");
+    // Runs for the full page and for the modal
+    ctx.set(Viewer, await getViewer(ctx.request));
     await next();
   }),
-  loader(ProductLoader),
-]);
+]),
+intercept("@modal", "product", <ProductModal />, () => [
+  loader(ProductLoader), // ctx.get(Viewer) is set here
+]),
 ```
 
-The intercept handler reads context variables set by all upstream middleware layers (global, route, intercept-specific). You can register multiple loaders, each with its own config:
+`middleware()` in an intercept's `use()`, or in its handler's `.use`, throws when the routes are defined. Move it to the route's `middleware()`, or do the work in the intercept's loader.
+
+The intercept handler reads the context variables global and route middleware set. You can register multiple loaders, each with its own config:
 
 ```tsx
 intercept("@modal", "product", <ProductModal />, () => [
@@ -208,15 +212,14 @@ Compose multiple contracts if the intercept depends on multiple upstream domains
 An intercept's `use()` (and its handler's `.use`) accepts:
 
 - `loader()`, with its own `revalidate()` and `cache()` inside it
-- `middleware()`
 - `loading()`
 - `layout(Chrome)`: the modal chrome, without `use()` items of its own
 - `route`, the item type a `path()` call produces
 - `transition()`
 
 Everything else throws at definition time with a pointer to where it goes:
-`revalidate()` onto the loader, `errorBoundary()` / `notFoundBoundary()` onto
-the enclosing layout (see [Errors in an intercept](#errors-in-an-intercept)), and `cache()` onto the target route.
+`middleware()` onto the target route, `revalidate()` onto the loader,
+`errorBoundary()` / `notFoundBoundary()` onto the enclosing layout (see [Errors in an intercept](#errors-in-an-intercept)), and `cache()` onto the target route.
 
 ### Caching an intercept
 
@@ -266,7 +269,7 @@ layout(<ShopLayout />, () => [
 
 ## Self-contained modals with handler.use
 
-An intercept handler can carry its own middleware, loaders, loading state, and modal layout via `.use`, so the modal travels with its own data and chrome:
+An intercept handler can carry its own loaders, loading state, and modal layout via `.use`, so the modal travels with its own data and chrome:
 
 ```tsx
 import { layout, loader, loading, type Handler } from "@rangojs/router";

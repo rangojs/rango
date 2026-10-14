@@ -34,7 +34,7 @@ const HandlerData = createVar<string>();
  *     orphan layout ctx.get. The orphan wraps the handler in the render tree
  *     but executes after it, proving data set by the handler is available to
  *     its wrapping orphan layout.
- *   - Intercept chain: global mw -> route mw -> intercept mw -> intercept handler -> intercept loader
+ *   - Intercept chain: global mw -> route mw -> intercept handler -> intercept loader
  *
  * Each layer sets context variables, response headers, and cookies.
  * The test verifies all values propagate correctly through the chain,
@@ -290,9 +290,6 @@ export const mwChainPatterns = urls(
           async (ctx) => {
             const globalVar = ctx.get("chainGlobal") as string | undefined;
             const routeVar = ctx.get(ChainRoute);
-            const interceptVar = ctx.get("chainIntercept") as
-              | string
-              | undefined;
 
             return (
               <div data-testid="mw-chain-modal">
@@ -301,9 +298,6 @@ export const mwChainPatterns = urls(
                 </span>
                 <span data-testid="intercept-route-var">
                   {routeVar ?? "none"}
-                </span>
-                <span data-testid="intercept-mw-var">
-                  {interceptVar ?? "none"}
                 </span>
                 <MwChainActionButton testId="modal-action-btn" />
                 <form action={mwChainFormAction} data-testid="modal-pe-form">
@@ -318,18 +312,7 @@ export const mwChainPatterns = urls(
             );
           },
           { when: ({ from }) => from.url.pathname.startsWith("/mw-chain") },
-          () => [
-            loader(MwChainInterceptLoader),
-            middleware(async (ctx, next) => {
-              ctx.set("chainIntercept", "from-intercept-mw");
-              ctx.header("X-Chain-Intercept", "applied");
-              cookies().set("chain-intercept", "iv", {
-                path: "/",
-                maxAge: 86400,
-              });
-              await next();
-            }),
-          ],
+          () => [loader(MwChainInterceptLoader)],
         ),
       ],
     ),

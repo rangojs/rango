@@ -251,7 +251,7 @@ test.describe("handler.use (dev)", () => {
     expect(afterCount).toBeGreaterThan(initialCount);
   });
 
-  test("intercept handler.use middleware fires when intercept matches", async ({
+  test("intercept handler.use loader runs when intercept matches", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -262,7 +262,7 @@ test.describe("handler.use (dev)", () => {
     await page.getByTestId("link-intercept-target").click();
 
     await expect(page.getByTestId("intercepted-modal-value")).toHaveText(
-      "intercept-mw-ran",
+      "intercept-loader-ran",
     );
   });
 });
@@ -504,7 +504,7 @@ test.describe("handler.use (production)", () => {
     expect(afterCount).toBeGreaterThan(initialCount);
   });
 
-  test("intercept handler.use middleware fires when intercept matches", async ({
+  test("intercept handler.use loader runs when intercept matches", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -515,7 +515,7 @@ test.describe("handler.use (production)", () => {
     await page.getByTestId("link-intercept-target").click();
 
     await expect(page.getByTestId("intercepted-modal-value")).toHaveText(
-      "intercept-mw-ran",
+      "intercept-loader-ran",
     );
   });
 });

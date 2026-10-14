@@ -93,14 +93,7 @@ const MOUNT_SITE_ALLOWED_TYPES: Record<string, Set<string>> = {
   ]),
   // intercept() checks its whole merged use() (explicit and handler.use)
   // against this set via validateInterceptUseItems below.
-  intercept: new Set([
-    "middleware",
-    "loader",
-    "loading",
-    "layout",
-    "route",
-    "transition",
-  ]),
+  intercept: new Set(["loader", "loading", "layout", "route", "transition"]),
   // LoaderUseItem — only revalidate + cache can attach to a loader entry
   loader: new Set(["revalidate", "cache"]),
 };
@@ -113,6 +106,8 @@ const INTERCEPT_BOUNDARY_HINT =
  * hold them is documented at intercept() in dsl-helpers.ts.
  */
 const INTERCEPT_REJECTION_HINTS: Record<string, string> = {
+  middleware:
+    "move it to the route's middleware() (it runs for the modal too) or into the loaders",
   revalidate:
     "attach it to the intercept's loader: loader(YourLoader, () => [revalidate(...)])",
   errorBoundary: INTERCEPT_BOUNDARY_HINT,
@@ -134,7 +129,7 @@ function rejectInterceptItem(
 
 /**
  * Validate every item an intercept's merged use() returned (explicit use()
- * and handler.use) against MOUNT_SITE_ALLOWED_TYPES.intercept, plus two
+ * and handler.use) against MOUNT_SITE_ALLOWED_TYPES.intercept, plus three
  * structural rules:
  * - a nested layout() is only the modal chrome (intercept() keeps its
  *   handler), so it may not carry use() items of its own;
@@ -142,13 +137,20 @@ function rejectInterceptItem(
  *   it was not returned; its orphan form re-parents the following siblings
  *   onto that entry, so it is rejected the same way. Inside a path, cache()
  *   writes `sinks.cache` instead (dsl-helpers.ts cache()).
+ * - middleware on a `capturedLayouts` entry is rejected like `sinks.middleware`:
+ *   it is an unreturned middleware(fn, () => [...]) or one called inside the
+ *   chrome layout's use(), and nothing would run it.
  */
 export function validateInterceptUseItems(
   items: AllUseItems[],
-  capturedLayouts: readonly { type: string }[],
+  capturedLayouts: readonly {
+    type: string;
+    middleware?: readonly unknown[];
+  }[],
   slotName: string,
   routeName: string,
   sinks: {
+    readonly middleware: readonly unknown[];
     readonly revalidate: readonly unknown[];
     readonly errorBoundary: readonly unknown[];
     readonly notFoundBoundary: readonly unknown[];
@@ -202,6 +204,17 @@ export function validateInterceptUseItems(
     rejectInterceptItem(
       "parallel()",
       `allowed items are ${[...allowed].join(", ")}`,
+      slotName,
+      routeName,
+    );
+  }
+  if (
+    sinks.middleware.length > 0 ||
+    capturedLayouts.some((l) => l.middleware?.length)
+  ) {
+    rejectInterceptItem(
+      "middleware()",
+      INTERCEPT_REJECTION_HINTS.middleware!,
       slotName,
       routeName,
     );

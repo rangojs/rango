@@ -97,7 +97,7 @@ export interface SegmentWrappers<TEnv = any> {
     context: HandlerContext<any, TEnv>,
     belongsToRoute?: boolean,
     revalidationContext?: any,
-    options?: { skipMiddleware?: boolean },
+    options?: { background?: boolean },
   ) => Promise<ResolvedSegment[]>;
   resolveInterceptLoadersOnly: (
     interceptEntry: InterceptEntry,
@@ -247,7 +247,7 @@ export function createSegmentWrappers<TEnv = any>(
     context: HandlerContext<any, TEnv>,
     belongsToRoute: boolean = true,
     revalidationContext?: any,
-    options?: { skipMiddleware?: boolean },
+    options?: { background?: boolean },
   ): ReturnType<typeof _resolveInterceptEntry> {
     return _resolveInterceptEntry(
       interceptEntry,

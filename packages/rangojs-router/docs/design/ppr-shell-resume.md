@@ -2071,7 +2071,7 @@ Mechanics (the invariants the code comments point at):
   requests; `withInterceptResolution` skips intercepts on full matches), but a
   partial nav can render an intercept over a ppr-declared target in its own
   store scope — `resolveInterceptEntry`/`resolveInterceptLoadersOnly` latch
-  off the target route's manifest entry, after intercept middleware runs.
+  off the target route's manifest entry.
 
 Six-framework survey (2026-07, issue #713): the ecosystem splits by SURFACE.
 Response-object endpoints (Next route handlers, Nitro, vinext handlers) replay

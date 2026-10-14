@@ -341,9 +341,11 @@ const LoaderHandlerUsePage: Handler<"/handler-use/loader-use"> = async (
   );
 };
 
-// -- Intercept handler.use: middleware attached via .use fires on intercept --
+// -- Intercept handler.use: a loader attached via .use runs on intercept --
 
-const InterceptMwVar = createVar<string>();
+export const InterceptUseLoader = createLoader(async () => ({
+  value: "intercept-loader-ran",
+}));
 
 const InterceptModalLayout: Handler = () => (
   <div data-testid="intercept-modal-layout">
@@ -370,22 +372,17 @@ const InterceptTargetPage: Handler<"/handler-use/intercept-target"> = () => (
   </div>
 );
 
-// Intercept handler with .use — middleware sets a context var the handler reads.
-// If intercept() honors handler.use, the rendered value reflects the mw write.
-const InterceptedModal: Handler = (ctx) => {
-  const value = ctx.get(InterceptMwVar);
+// Intercept handler with .use — it attaches the loader the handler reads.
+// If intercept() honors handler.use, the rendered value is the loader's.
+const InterceptedModal: Handler = async (ctx) => {
+  const { value } = await ctx.use(InterceptUseLoader);
   return (
     <div data-testid="intercepted-modal">
-      <span data-testid="intercepted-modal-value">{value ?? "NO-VALUE"}</span>
+      <span data-testid="intercepted-modal-value">{value}</span>
     </div>
   );
 };
-InterceptedModal.use = () => [
-  middleware(async (ctx, next) => {
-    ctx.set(InterceptMwVar, "intercept-mw-ran");
-    await next();
-  }),
-];
+InterceptedModal.use = () => [loader(InterceptUseLoader)];
 
 // ---------------------------------------------------------------------------
 // Route patterns
@@ -503,10 +500,9 @@ export const handlerUsePatterns = urls(({ path, layout, parallel }) => [
       loader(StableLoader),
     ]),
 
-    // Intercept handler.use: middleware attached on the intercept handler must
+    // Intercept handler.use: a loader attached on the intercept handler must
     // flow through to the intercept entry so it runs when the intercept fires.
-    // The handler reads the mw-set ctx var; if handler.use is ignored, the
-    // rendered value is "NO-VALUE" instead of "intercept-mw-ran".
+    // If handler.use is ignored, ctx.use() of the unregistered loader fails.
     layout(InterceptModalLayout, () => [
       path("/intercept-source", InterceptSourcePage, {
         name: "interceptSource",

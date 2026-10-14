@@ -29,7 +29,7 @@
  *         v
  *   +----------------------+    +----------------------------+
  *   | Fresh intercept?     |yes>| resolveInterceptEntry()    |
- *   | (!cacheHit or        |    | - middleware, loaders, UI  |
+ *   | (!cacheHit or        |    | - loaders, UI              |
  *   |  no intercept segs)  |    +----------------------------+
  *   +----------------------+              |
  *         | no                            v
@@ -59,7 +59,7 @@
  *
  * 1. Fresh intercept (no cache):
  *    - Full resolution of intercept entry
- *    - Resolves middleware, loaders, and component
+ *    - Resolves loaders and component
  *    - Yields all intercept segments
  *
  * 2. Cache hit with intercept:

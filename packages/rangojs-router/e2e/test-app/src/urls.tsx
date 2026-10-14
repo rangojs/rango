@@ -548,7 +548,15 @@ export const urlpatterns = urls(
           );
         },
         { name: "slowProduct.detail" },
-        () => [loader(SlowProductDetailLoader)],
+        () => [
+          loader(SlowProductDetailLoader),
+          // Route middleware runs for the intercepted modal too.
+          middleware(async (ctx, next) => {
+            await next();
+            ctx.header("X-Slow-Product-Middleware", "applied");
+            cookies().set("slow-product-visited", "true", { path: "/" });
+          }),
+        ],
       ),
 
       // Same-route stale-while-revalidate test route. Has a :param, a
@@ -893,15 +901,7 @@ export const urlpatterns = urls(
             </Modal>
           );
         },
-        () => [
-          loader(SlowProductDetailLoader),
-          loading(<SlowModalSkeleton />),
-          middleware(async (ctx, next) => {
-            await next();
-            ctx.header("X-Intercept-Middleware", "applied");
-            cookies().set("intercept-visited", "true", { path: "/" });
-          }),
-        ],
+        () => [loader(SlowProductDetailLoader), loading(<SlowModalSkeleton />)],
       ),
 
       // === INCLUDED PATTERNS (no intercepts needed) ===

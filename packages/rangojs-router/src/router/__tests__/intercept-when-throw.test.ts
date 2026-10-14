@@ -15,7 +15,6 @@ function entry(when: InterceptEntry["when"]): InterceptEntry {
     slotName: "@modal",
     routeName: "item",
     handler: null,
-    middleware: [],
     loader: [],
     when,
   };

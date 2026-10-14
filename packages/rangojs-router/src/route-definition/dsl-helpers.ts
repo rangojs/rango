@@ -787,12 +787,11 @@ const intercept = (
   const prefixedRouteName =
     isLocal && namePrefix ? `${namePrefix}.${bareRouteName}` : bareRouteName;
 
-  // Create intercept entry with its own loaders/middleware/when
+  // Create intercept entry with its own loaders/when
   const entry: InterceptEntry = {
     slotName: slotName as `@${string}`,
     routeName: prefixedRouteName,
     handler,
-    middleware: [],
     loader: [],
     when: [], // Selector conditions for conditional interception
   };
@@ -810,12 +809,12 @@ const intercept = (
   const handlerUseFn = resolveHandlerUse(handler);
   const mergedUse = mergeHandlerUse(handlerUseFn, useFn, null);
 
-  // Run merged use callback to collect loaders, middleware, etc.
+  // Run merged use callback to collect loaders, loading, layout, etc.
   if (mergedUse) {
     // Capture layout() calls into a temporary array
     const capturedLayouts: EntryData[] = [];
 
-    // Temporary parent so middleware/loader attach to the intercept entry;
+    // Temporary parent so loader() attaches to the intercept entry;
     // the loading get/set accessor mirrors writes onto `entry`. It is a
     // shallow spread of the enclosing entry, so every field a rejected helper
     // writes to points at a throwaway here: a helper called but not returned
@@ -824,6 +823,10 @@ const intercept = (
     // is a route.
     //
     // Why an intercept rejects these (validateInterceptUseItems):
+    // - middleware(): only the live render resolved the intercept's own
+    //   middleware; a cache() hit or a Prerender() target skipped it, so a
+    //   guard in it was bypassed. The target route's middleware runs on every
+    //   pass, the modal's included.
     // - revalidate(): an intercept only evaluates its loaders' revalidate()
     //   (loader segments of its slot, router/intercept-resolution.ts).
     // - errorBoundary()/notFoundBoundary(): error lookup walks EntryData
@@ -834,7 +837,7 @@ const intercept = (
     //   cache() scope, with its own "intercept:" key (cache/cache-scope.ts).
     const tempParent = {
       ...ctx.parent,
-      middleware: entry.middleware,
+      middleware: [],
       loader: entry.loader,
       layout: capturedLayouts,
       revalidate: [],

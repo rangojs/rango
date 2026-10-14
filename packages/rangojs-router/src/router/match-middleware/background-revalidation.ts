@@ -230,10 +230,8 @@ export async function rerenderAndCacheRoute<TEnv>(
             handlerContext,
             true, // belongsToRoute
             undefined, // no revalidationContext: render fresh
-            // Skip intercept middleware: the foreground already ran it.
-            // Re-running it here would double its side effects, and a
-            // short-circuit Response would abort the write.
-            { skipMiddleware: true },
+            // A handler error rejects, so the failure is never cached.
+            { background: true },
           ),
         )),
       );

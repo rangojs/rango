@@ -379,7 +379,6 @@ describe("route tree inspection", () => {
       hasWhen: i.when.length > 0,
       whenCount: i.when.length,
       hasLoader: i.loader.length > 0,
-      hasMiddleware: i.middleware.length > 0,
     }));
     expect(layoutIntercepts).toHaveLength(1);
     expect(layoutIntercepts[0].slotName).toBe("@modal");
@@ -1192,6 +1191,34 @@ describe("route tree inspection", () => {
 
   // Why intercept() rejects these items: see intercept() in
   // route-definition/dsl-helpers.ts.
+  it("middleware directly inside intercept throws and points to route middleware", () => {
+    const mw = async (_ctx: any, next: () => Promise<Response>) => next();
+    const patterns = urls(({ path, intercept, middleware }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      // @ts-expect-error middleware is not a valid intercept use item
+      intercept("@modal", ".detail", ProductModal, () => [middleware(mw)]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      `middleware() is not valid inside intercept("@modal", ".detail") use() (including the handler's .use): move it to the route's middleware() (it runs for the modal too) or into the loaders.`,
+    );
+  });
+
+  it("the wrapping middleware(fn, () => [...]) form inside intercept throws", () => {
+    const mw = async (_ctx: any, next: () => Promise<Response>) => next();
+    const patterns = urls(({ path, intercept, middleware, loader }) => [
+      path("/detail", AboutPage, { name: "detail" }),
+      // @ts-expect-error middleware is not a valid intercept use item
+      intercept("@modal", ".detail", ProductModal, () => [
+        middleware(mw, () => [loader(PostLoader)]),
+      ]),
+    ]);
+
+    expect(() => buildRouteTree(patterns)).toThrow(
+      /middleware\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\).*move it to the route's middleware\(\)/,
+    );
+  });
+
   it("errorBoundary directly inside intercept throws", () => {
     const F = ErrorFallback;
     const patterns = urls(({ path, intercept, errorBoundary }) => [
@@ -1248,6 +1275,7 @@ describe("route tree inspection", () => {
   // tempParent is a shallow spread of the enclosing entry: a rejected helper
   // called without being returned lands in a throwaway field and still throws.
   it.each([
+    ["middleware()", (h: any) => h.middleware(async (_c: any, n: any) => n())],
     ["revalidate()", (h: any) => h.revalidate(() => false)],
     ["errorBoundary()", (h: any) => h.errorBoundary(ErrorFallback)],
     ["notFoundBoundary()", (h: any) => h.notFoundBoundary(NotFoundFallback)],
@@ -1272,6 +1300,38 @@ describe("route tree inspection", () => {
       ),
     ).toThrow(
       `${name} is not valid inside intercept("@modal", ".product.detail") use()`,
+    );
+  });
+
+  // Neither writes the temporary parent's middleware: the wrapping form
+  // pushes an orphan layout, the chrome's use() writes the chrome entry. Both
+  // land in the captured layouts, where nothing would run the middleware.
+  it.each([
+    [
+      "the wrapping middleware(fn, () => [...]) form",
+      (h: any) => h.middleware(authMiddleware, () => []),
+    ],
+    [
+      "middleware() inside the chrome layout's use()",
+      (h: any) =>
+        h.layout(BlogLayout, () => {
+          h.middleware(authMiddleware);
+          return [];
+        }),
+    ],
+  ])("%s called but not returned from intercept use() throws", (_, call) => {
+    expect(() =>
+      buildRouteTree(
+        urls((h) => [
+          h.path("/detail", AboutPage, { name: "detail" }),
+          h.intercept("@modal", ".detail", ProductModal, () => {
+            call(h);
+            return [h.loader(PostLoader)];
+          }),
+        ]),
+      ),
+    ).toThrow(
+      /middleware\(\) is not valid inside intercept\("@modal", "\.detail"\) use\(\).*move it to the route's middleware\(\)/,
     );
   });
 

@@ -235,7 +235,6 @@ describe("rewriteNotSupported", () => {
   it.each([
     ["mutation", "Return a Response for mutations"],
     ["loader-fetch", "during a loader fetch"],
-    ["intercept", "intercept middleware threw it"],
   ] as const)("names the %s site", (site, text) => {
     const original = rewrite("/m");
     const error = rewriteNotSupported(original, site);

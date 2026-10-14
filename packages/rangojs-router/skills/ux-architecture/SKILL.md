@@ -881,9 +881,10 @@ function GalleryLayout() {
   says so (`CommentsLoader`; `byId` holds the photo on actions), and the modal
   keeps its React state.
 - A document load of a photo URL renders `PhotoPage`, a shareable full page.
-- Put an authorization guard in route `middleware()` on an enclosing layout or
-  in the loaders, not in the intercept's own `middleware()`: that one does not
-  run when the modal is served from `cache()` or a `Prerender()` (see "Known gaps").
+- Put an authorization guard in route `middleware()` on the target route or an
+  enclosing layout, or in the loaders. Route middleware runs for the modal on
+  every pass, a `cache()` hit and a `Prerender()` target included; `intercept()`
+  takes no `middleware()` of its own.
 - Inside a `clientUrls()` group the same shape is
   `intercept("@modal", ".photo", PhotoModal, () => [loader(PhotoLoader), loading(<ModalSkeleton />)])`,
   with a named target in the same definition; only navigations from inside
@@ -959,12 +960,6 @@ Each entry: what the user sees, why, the fix.
 
 These are open. Each says what you see and what to do meanwhile.
 
-- **An `intercept()`'s own `middleware()` does not run when the modal
-  is served from a `cache()` hit or a `Prerender()` target.** Only the live
-  path calls it (`src/router/intercept-resolution.ts`); the cache-hit path
-  resolves the intercept's loaders only. A guard there is skipped for cached
-  or prerendered modals. Put the guard in route middleware or in the loaders,
-  which run on both paths.
 - **React's fallback throttle.** React commits a Suspense retry no sooner than
   300 ms after any boundary on the page last showed or hid its fallback. A
   skeleton that appeared stays at least that long, and a read that resolves

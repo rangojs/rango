@@ -221,7 +221,6 @@ export type ParallelUseItem =
   | NotFoundBoundaryItem
   | TransitionItem;
 export type InterceptUseItem =
-  | MiddlewareItem
   | LoaderItem
   | LoadingItem
   | LayoutItem

@@ -637,18 +637,15 @@ test.describe("app-middleware (dev)", () => {
     });
   });
 
-  test.describe("intercept-middleware", () => {
-    test("intercept middleware should set header on modal navigation", async ({
+  test.describe("route middleware on an intercepted modal", () => {
+    test("the target route's middleware sets a header on the modal navigation", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
 
-      // First go to index
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
-      // Click on a slow product to trigger intercept
-      // The intercept middleware runs after the loader completes
       const responsePromise = page.waitForResponse(
         (response) =>
           response.url().includes("/slow-product/") &&
@@ -658,41 +655,38 @@ test.describe("app-middleware (dev)", () => {
       await page.click('[data-testid="slow-product-link"]');
       const response = await responsePromise;
 
-      // Intercept middleware should set this header
-      expect(response.headers()["x-intercept-middleware"]).toBe("applied");
+      expect(response.headers()["x-slow-product-middleware"]).toBe("applied");
 
-      // Wait for modal content to fully load (not just skeleton)
+      // The modal, not the full page: the navigation was intercepted.
       await expect(
         page.locator('[data-testid="slow-modal-product-name"]'),
       ).toBeVisible({ timeout: 10000 });
+      await expect(
+        page.locator('[data-testid="slow-product-detail-page"]'),
+      ).toHaveCount(0);
     });
 
-    test("intercept middleware should set cookie", async ({
+    test("the target route's middleware sets a cookie on the modal navigation", async ({
       page,
       context,
     }) => {
       using _ = expectNoPageError(page);
 
-      // First go to index
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
-      // Click on a slow product to trigger intercept
       await page.click('[data-testid="slow-product-link"]');
 
-      // Wait for the full modal content to load (after the 2s loader delay)
-      // The cookie is set when the middleware runs during the full render
       await expect(
         page.locator('[data-testid="slow-modal-product-name"]'),
       ).toBeVisible({ timeout: 10000 });
 
-      // Check that cookie was set by intercept middleware
       const cookies = await context.cookies();
-      const interceptCookie = cookies.find(
-        (c) => c.name === "intercept-visited",
+      const routeCookie = cookies.find(
+        (c) => c.name === "slow-product-visited",
       );
-      expect(interceptCookie).toBeDefined();
-      expect(interceptCookie?.value).toBe("true");
+      expect(routeCookie).toBeDefined();
+      expect(routeCookie?.value).toBe("true");
     });
   });
 
@@ -1013,8 +1007,8 @@ test.describe("app-middleware (production)", () => {
     );
   });
 
-  test.describe("intercept-middleware", () => {
-    test("intercept middleware should set header on modal navigation", async ({
+  test.describe("route middleware on an intercepted modal", () => {
+    test("the target route's middleware sets a header on the modal navigation", async ({
       page,
     }) => {
       using _ = expectNoPageError(page);
@@ -1031,14 +1025,18 @@ test.describe("app-middleware (production)", () => {
       await page.click('[data-testid="slow-product-link"]');
       const response = await responsePromise;
 
-      expect(response.headers()["x-intercept-middleware"]).toBe("applied");
+      expect(response.headers()["x-slow-product-middleware"]).toBe("applied");
 
+      // The modal, not the full page: the navigation was intercepted.
       await expect(
         page.locator('[data-testid="slow-modal-product-name"]'),
       ).toBeVisible({ timeout: 10000 });
+      await expect(
+        page.locator('[data-testid="slow-product-detail-page"]'),
+      ).toHaveCount(0);
     });
 
-    test("intercept middleware should set cookie", async ({
+    test("the target route's middleware sets a cookie on the modal navigation", async ({
       page,
       context,
     }) => {
@@ -1054,11 +1052,11 @@ test.describe("app-middleware (production)", () => {
       ).toBeVisible({ timeout: 10000 });
 
       const cookies = await context.cookies();
-      const interceptCookie = cookies.find(
-        (c) => c.name === "intercept-visited",
+      const routeCookie = cookies.find(
+        (c) => c.name === "slow-product-visited",
       );
-      expect(interceptCookie).toBeDefined();
-      expect(interceptCookie?.value).toBe("true");
+      expect(routeCookie).toBeDefined();
+      expect(routeCookie?.value).toBe("true");
     });
   });
 

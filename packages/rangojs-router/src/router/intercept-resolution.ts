@@ -16,10 +16,6 @@ import type {
   InternalHandlerContext,
   ResolvedSegment,
 } from "../types";
-import { getRequestContext } from "../server/request-context.js";
-import { executeInterceptMiddleware } from "./middleware.js";
-import { createReverseFunction } from "./handler-context.js";
-import { getGlobalRouteMap } from "../route-map-builder.js";
 import {
   handleHandlerResult,
   warnOnStreamedResponse,
@@ -53,7 +49,6 @@ import {
  * intercept over a ppr-declared target route, in its own store scope where
  * the main funnel's latch does not apply. Latch by declaration, off the
  * target route's manifest entry (same leaf input as the segment funnels).
- * Called AFTER intercept middleware runs — middleware stays the live lane.
  */
 function latchPprHeaderScopeForInterceptTarget(
   interceptEntry: InterceptEntry,
@@ -177,7 +172,7 @@ export function findInterceptForRoute(
  * An intercept handler's throw or notFound() renders the declaring entry's
  * boundary as the slot component (catchSegmentError, as for route handlers on
  * partial navigations: 500/404 status, onError "handler"). Responses and every
- * error on the background re-render (skipMiddleware) rethrow, so a failed
+ * error on the background re-render (`background`) rethrow, so a failed
  * re-render aborts its cache write instead of storing the fallback.
  */
 function renderInterceptHandlerError<TEnv>(
@@ -186,9 +181,9 @@ function renderInterceptHandlerError<TEnv>(
   params: Record<string, string>,
   context: HandlerContext<any, TEnv>,
   deps: SegmentResolutionDeps<TEnv>,
-  skipMiddleware: boolean | undefined,
+  background: boolean | undefined,
 ): ReactNode {
-  if (error instanceof Response || skipMiddleware) throw error;
+  if (error instanceof Response || background) throw error;
   return catchSegmentError(
     error,
     parentEntry,
@@ -296,39 +291,15 @@ export async function resolveInterceptEntry<TEnv>(
   },
   options?: {
     /**
-     * Skip the intercept's middleware execution. Set ONLY by the post-response
-     * background re-render paths (proactive caching, stale background
+     * Set ONLY by the post-response background re-render (stale background
      * revalidation), whose sole purpose is to re-render the segment tree to
-     * populate the cache. The foreground request already ran the intercept
-     * middleware before the response was sent — it validated auth, set cookies,
-     * and wrote context vars into the request context's shared `_variables`,
-     * which the background render reuses. Re-running middleware here would fire
-     * its side effects a SECOND time, and a middleware that short-circuits with
-     * a Response would `throw` and silently abort the cache write. Never set on
-     * the foreground path.
+     * populate the cache: a handler error rejects instead of rendering the
+     * error boundary, so a failure is never cached. Never set on the
+     * foreground path.
      */
-    skipMiddleware?: boolean;
+    background?: boolean;
   },
 ): Promise<ResolvedSegment[]> {
-  if (!options?.skipMiddleware && interceptEntry.middleware.length > 0) {
-    const requestCtx = getRequestContext();
-    if (!requestCtx?.res) {
-      throw new Error(
-        "Request context with stubResponse is required for intercept middleware",
-      );
-    }
-    const middlewareResponse = await executeInterceptMiddleware(
-      interceptEntry.middleware,
-      context.request,
-      context.env,
-      params,
-      (context as InternalHandlerContext<any, TEnv>)._variables,
-      requestCtx.res,
-      createReverseFunction(getGlobalRouteMap()),
-    );
-    if (middlewareResponse) throw middlewareResponse;
-  }
-
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
   const slotSegmentId = interceptSlotId(parentEntry, interceptEntry);
@@ -389,7 +360,7 @@ export async function resolveInterceptEntry<TEnv>(
       params,
       context,
       deps,
-      options?.skipMiddleware,
+      options?.background,
     );
   }
   // Consumed only after the layout and loader awaits below; a rejection in that
@@ -418,8 +389,8 @@ export async function resolveInterceptEntry<TEnv>(
   let component: ReactNode;
   // A streamed (loading()) handler resolves after the 200 has started: tracked
   // like route handlers (onError report, handle-store completion) and
-  // recovered into the declared boundary, except on the skipMiddleware
-  // background re-render, which must reject so a failure is never cached.
+  // recovered into the declared boundary, except on the background
+  // re-render, which must reject so a failure is never cached.
   const streamedComponent = (promise: Promise<unknown>): ReactNode =>
     trackStreamedHandler(deps, promise, {
       boundaryEntry: parentEntry,
@@ -428,7 +399,7 @@ export async function resolveInterceptEntry<TEnv>(
       context,
       routeKey: interceptEntry.routeName,
       params,
-      recover: !options?.skipMiddleware,
+      recover: !options?.background,
     });
 
   if (interceptEntry.loading && loaderSegments.length > 0) {
@@ -457,7 +428,7 @@ export async function resolveInterceptEntry<TEnv>(
           params,
           context,
           deps,
-          options?.skipMiddleware,
+          options?.background,
         );
       }
     }

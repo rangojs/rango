@@ -92,35 +92,39 @@ Only the first `layout()` in an intercept's `use()` is applied. It is modal
 chrome only: a `layout(Chrome, () => [...])` with its own `use()` items throws.
 Attach loaders and the rest to the intercept itself.
 
-## Intercept Middleware
+## Middleware and an Intercept
 
-Intercepts support their own middleware chain via the use callback. The full chain for an intercept request is:
+An intercept has no middleware of its own. The target route's middleware runs
+for the modal on every request that renders it, a `cache()` hit and a
+`Prerender()` target included. The chain for an intercept request is:
 
 ```
-global mw (router.use) -> route mw (urls middleware()) -> intercept mw -> intercept loaders + handler
+global mw (router.use) -> route mw (the target route's middleware()) -> intercept loaders + handler
 ```
 
 The intercept's loaders are started before its handler is called, so they run
-in parallel with it. If intercept middleware returns a `Response` (e.g. a
-redirect), the intercept stops there.
+in parallel with it. If route middleware returns a `Response` (e.g. a
+redirect), the request stops there, the modal with it.
 
 ```typescript
-intercept(
-  "@modal",
-  "product",
-  <ProductModal />,
-  () => [
-    middleware(async (ctx, next) => {
-      // Runs only for this intercept, after global and route middleware
-      ctx.set("interceptSource", "modal");
-      await next();
-    }),
-    loader(ProductLoader),
-  ]
-)
+path("/product/:id", ProductPage, { name: "product" }, () => [
+  middleware(async (ctx, next) => {
+    // Runs for the full page and for the modal
+    ctx.set(Viewer, await getViewer(ctx.request));
+    await next();
+  }),
+]),
+intercept("@modal", "product", <ProductModal />, () => [
+  loader(ProductLoader), // ctx.get(Viewer) is set here
+]),
 ```
 
-The intercept handler can read context variables set by all upstream middleware layers (global, route, and intercept-specific).
+`middleware()` in an intercept's `use()`, or in its handler's `.use`, throws
+when the routes are defined: move it to the route's `middleware()`, or do the
+work in the intercept's loader.
+
+The intercept handler and its loaders read the context variables global and
+route middleware set.
 
 Handler/layout `ctx.set()` data follows the same rule as elsewhere:
 intercepts see data produced in the current render pass, but partial
@@ -322,15 +326,15 @@ intercept(
 An intercept's `use()` (and its handler's `.use`) accepts:
 
 - `loader()`, with its own `revalidate()` and `cache()` inside it
-- `middleware()`
 - `loading()`
 - `layout(Chrome)`: the modal chrome, without `use()` items of its own
 - `route`, the item type a `path()` call produces
 - `transition()`
 
 Everything else throws at definition time with a pointer to where it goes:
-`revalidate()` onto the loader, `errorBoundary()` / `notFoundBoundary()` onto
-the enclosing layout (see below), and `cache()` onto the target route.
+`middleware()` onto the target route, `revalidate()` onto the loader,
+`errorBoundary()` / `notFoundBoundary()` onto the enclosing layout (see
+below), and `cache()` onto the target route.
 
 ## Caching an Intercept
 
@@ -553,7 +557,7 @@ export const shopPatterns = urls(({
 
 ## Handler-attached `.use`
 
-Intercept handlers can carry their own middleware, loaders, loading state, and even nested `layout`/`route` defaults via `.use` — useful for self-contained modal components that travel with their own data and chrome. (Conditional activation is set via the `when` config on the mount-site `intercept()` call, not inside `.use`; boundaries go on the enclosing layout, see [Errors in an Intercept](#errors-in-an-intercept).)
+Intercept handlers can carry their own loaders, loading state, and even nested `layout`/`route` defaults via `.use` — useful for self-contained modal components that travel with their own data and chrome. (Conditional activation is set via the `when` config on the mount-site `intercept()` call, not inside `.use`; boundaries go on the enclosing layout, see [Errors in an Intercept](#errors-in-an-intercept).)
 
 ```typescript
 import { layout, loader, loading, type Handler } from "@rangojs/router";

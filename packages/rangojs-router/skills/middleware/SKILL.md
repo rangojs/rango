@@ -572,7 +572,7 @@ middleware sees it:
 **Throw it, don't return it.** A returned rewrite is an error. Where a
 rewrite cannot be honored it is an error that names the rule: a route
 handler or a loader (see above), a server action (use `redirect()`),
-intercept middleware, a loader fetch (`useFetchLoader`, `load()`: it
+a loader fetch (`useFetchLoader`, `load()`: it
 rejects with the rule) or its middleware, and global middleware handling a
 non-GET request (a JS action or a no-JS form post: return a `Response`).
 
