@@ -47,14 +47,34 @@ export function requestHeaders(request: Request): Headers {
 
 /**
  * A copy of `request`'s headers for a bodyless mirror of it (the PE
- * re-render, a rewrite pass after an action), without the body-framing ones.
+ * re-render, route middleware around it, a rewrite pass after an action),
+ * without the body-framing ones and `content-type`, so a body check gated on
+ * the content-type passes over a request that has no body.
  */
 export function bodylessHeaders(request: Request): Headers {
   const headers = new Headers(requestHeaders(request));
   headers.delete("content-length");
   headers.delete("content-encoding");
   headers.delete("transfer-encoding");
+  headers.delete("content-type");
   return headers;
+}
+
+/**
+ * A bodyless mirror of `request` at `url`: `method`, its
+ * {@link bodylessHeaders}, the signal and workerd's `cf`.
+ */
+export function bodylessRequest(
+  url: string | URL,
+  request: Request,
+  method: string,
+): Request {
+  return new Request(url, {
+    method,
+    headers: bodylessHeaders(request),
+    signal: request.signal,
+    cf: (request as { cf?: unknown }).cf,
+  } as RequestInit);
 }
 
 /**

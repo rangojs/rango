@@ -27,6 +27,7 @@ import type {
   SSRModule,
 } from "./types.js";
 import {
+  actionRenderRequest,
   createReloadResponse,
   createResponseWithMergedHeaders,
   finalizeResponse,
@@ -1555,7 +1556,7 @@ export function createRSCHandler<
       if (routeMiddleware.length > 0) {
         const mwResponse = await executeMiddleware(
           buildRouteMiddlewareEntries<TEnv>(routeMiddleware),
-          request,
+          actionContinuation ? actionRenderRequest(request) : request,
           env,
           variables,
           renderHandler,

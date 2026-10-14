@@ -61,6 +61,8 @@ their latency overlaps rendering rather than blocking it. See `/loader` →
 
 The contract is: **route middleware wraps rendering regardless of transport** (JS-enabled RSC stream or no-JS HTML). During PE re-render, route middleware observes action-set state (cookies, context variables) the same way it does during JS-enabled post-action revalidation. When the action throws, the `errorBoundary()` render is wrapped too, in both transports: the boundary reads the middleware's `ctx.set()` values and the response carries its headers.
 
+Around the render after an action, route middleware's `ctx.request` is the page's GET: `method` is `"GET"`, with no body, and the headers are the POST's without `content-type` and `content-length`. It decides as it would for a GET of the page. Global middleware, which wraps the action, sees the POST, and so does `getRequestContext().request`. So a method check in route middleware never sees the mutation: it cannot block or answer one, since the action already ran. A header its GET branch sets also lands on the action's response. If a header must stay off mutation responses (a public `Cache-Control`), set it from global middleware.
+
 Revalidation is still partial. Route middleware wraps the render pass that
 does happen, but it does not force unrelated outer segments to recompute.
 If a child segment depends on data established by an outer handler/layout,
@@ -550,21 +552,18 @@ middleware sees it:
 - **Global middleware** on the visitor's URL runs before the action. A
   rewrite there is refused for a non-GET request, before the action runs:
   return a `Response` for mutations, as the lock above does.
-- **Route middleware** runs after the action, around the re-render. A
-  routing rewrite there (A/B, URL override, the `discontinued` example
-  above) rewrites every method, as written: the action runs once, then the
-  re-render runs as the target (its global and route middleware, its
-  render, or its error boundary when the action threw), and the page keeps
-  its layout and state. Don't skip mutations
-  with `if (ctx.request.method !== "GET") return next()` in route
-  middleware: the re-render would then show the rewriting route instead of
-  the page on screen. A `Response` returned from route middleware for a
-  mutation also comes after the action ran: it is not a lock.
-- The target's pass is still the POST, with its headers. A no-JS form post
-  keeps its body, so a form-field check (a CSRF token read from
-  `ctx.request.clone().formData()`) passes on every pass. A JS action's
-  body is gone (the action read it): middleware that reads it on the
-  target's pass gets an empty body, so read it only when
+- **Route middleware** runs after the action, around the re-render, and
+  sees it as the page's GET. A routing rewrite there (A/B, URL override,
+  the `discontinued` example above) fires as on a GET, including one
+  written for GETs only (`if (ctx.request.method !== "GET") return next()`).
+  The action runs once, then the re-render runs as the target (its global
+  and route middleware, its render, or its error boundary when the action
+  threw), and the page keeps its layout and state.
+- Global middleware on the target's pass sees the POST, with its headers.
+  A no-JS form post keeps its body, so a form-field check (a CSRF token
+  read from `ctx.request.clone().formData()`) passes on every pass. A JS
+  action's body is gone (the action read it): global middleware that
+  reads it on the target's pass gets an empty body, so read it only when
   `ctx.rewrittenFrom` is unset. Global middleware runs once per pass, as
   for any rewrite. The target must be a page route: a rewrite of a
   mutation to a response route (`path.json()`) is an error.

@@ -25,6 +25,8 @@ import type { MiddlewareEntry, MiddlewareFn } from "../router/middleware.js";
 import { formatCacheSignalHeader } from "../router/telemetry.js";
 import type { RscPayload } from "./types.js";
 import { rewriteTrail, visitorUrl } from "../server/rewrite-trail.js";
+import { guardRequestHeaders } from "../server/cookie-store.js";
+import { bodylessRequest } from "../server/request-headers.js";
 import type { HandlerContext } from "./handler-context.js";
 
 /**
@@ -378,6 +380,17 @@ export function buildRouteMiddlewareEntries<TEnv>(
     } as MiddlewareEntry<TEnv>,
     params: mw.params,
   }));
+}
+
+/**
+ * The request route middleware sees around the render after a server action
+ * or a no-JS form post: the page's GET (URL, headers without body framing or
+ * content-type, signal, workerd `cf`; no body). Route middleware never wraps the action,
+ * only that render, so it decides as for a GET of the page: a rewrite it
+ * skips for mutations still moves the render to its target (#1145).
+ */
+export function actionRenderRequest(request: Request): Request {
+  return guardRequestHeaders(bodylessRequest(request.url, request, "GET"));
 }
 
 /**

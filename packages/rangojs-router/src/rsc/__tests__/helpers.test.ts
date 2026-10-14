@@ -7,6 +7,7 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 import {
+  actionRenderRequest,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
   finalizeResponse,
@@ -1272,6 +1273,47 @@ describe("carryOverRedirectHeaders", () => {
 
     expect(target.headers.get("content-type")).toBe("text/x-component");
     expect(target.headers.get("X-Source")).toBe("original");
+  });
+});
+
+describe("actionRenderRequest", () => {
+  it("is the page's GET: URL, headers and signal kept, no body or body framing", async () => {
+    const controller = new AbortController();
+    const post = new Request(
+      "https://example.com/item/1?_rsc_action=a.ts%23save",
+      {
+        method: "POST",
+        body: "[]",
+        headers: {
+          "content-type": "text/plain;charset=UTF-8",
+          "content-length": "2",
+          "rsc-action": "a.ts#save",
+          cookie: "session=1",
+        },
+        signal: controller.signal,
+      },
+    );
+    const page = actionRenderRequest(post);
+    expect(page.method).toBe("GET");
+    expect(page.url).toBe(post.url);
+    expect(page.body).toBeNull();
+    expect(page.headers.get("content-type")).toBeNull();
+    expect(page.headers.get("content-length")).toBeNull();
+    expect(page.headers.get("rsc-action")).toBe("a.ts#save");
+    expect(page.headers.get("cookie")).toBe("session=1");
+    controller.abort();
+    expect(page.signal.aborted).toBe(true);
+    // The action's own request keeps its body.
+    expect(await post.text()).toBe("[]");
+  });
+
+  it("guards its headers like every request user code sees", () => {
+    const page = actionRenderRequest(
+      new Request("https://example.com/item/1", { method: "POST", body: "x" }),
+    );
+    expect(Object.getOwnPropertyDescriptor(page, "headers")?.get).toBeTypeOf(
+      "function",
+    );
   });
 });
 

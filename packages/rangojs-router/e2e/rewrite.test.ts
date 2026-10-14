@@ -383,6 +383,35 @@ function rewriteTests(f: Fixture) {
     await expectIdentityKept(page);
   });
 
+  test("a JS action from a page whose route middleware rewrites only GETs re-renders that page and runs once", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await useSaveKey(page, f);
+    await page.goto(f.url("/rw/get-only/12"));
+    await waitForHydration(page);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 12");
+    await using _reload = await expectNoReload(page);
+    await markIdentity(page);
+
+    const post = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/get-only/12"),
+    );
+    await testId(page, "rw-item-save").click();
+    const response = await post;
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-rango-rewrite"]).toBe("/rw/items/12");
+
+    await expect(testId(page, "rw-item-saves")).toHaveText("1");
+    await expect(testId(page, "rw-item-guard")).toHaveText("target");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 12");
+    await expect(testId(page, "rw-client-location")).toHaveText(
+      "/rw/get-only/12",
+    );
+    await expectIdentityKept(page);
+  });
+
   test("a navigation from a page route middleware rewrote holds its route and a param-scoped loader", async ({
     page,
   }) => {
@@ -539,6 +568,28 @@ function noJsRewriteTests(f: Fixture) {
     await expect(testId(page, "rw-item-guard")).toHaveText("target");
     await expect(testId(page, "rw-runs")).toHaveText("2");
     expect(new URL(page.url()).pathname).toBe("/rw/public/8");
+  });
+
+  test("a no-JS form post from a page whose route middleware rewrites only GETs re-renders that page and runs once", async ({
+    page,
+  }) => {
+    await useSaveKey(page, f);
+    await page.goto(f.url("/rw/get-only/13"));
+    await expect(testId(page, "rw-item-saves")).toHaveText("0");
+
+    const post = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/get-only/13"),
+    );
+    await testId(page, "rw-item-save").click();
+    const response = await post;
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-rango-rewrite"]).toBe("/rw/items/13");
+
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 13");
+    await expect(testId(page, "rw-item-saves")).toHaveText("1");
+    await expect(testId(page, "rw-item-guard")).toHaveText("target");
+    expect(new URL(page.url()).pathname).toBe("/rw/get-only/13");
   });
 
   test("a no-JS form post whose action throws on a page route middleware rewrote renders the target's error boundary inside its route middleware", async ({
