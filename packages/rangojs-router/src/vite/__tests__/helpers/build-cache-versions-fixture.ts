@@ -62,6 +62,8 @@ export interface FixtureScenario {
   encryptionKey?: string | null;
   /** Extra rango() options, as source text spread into the call. */
   rangoOptions?: string;
+  /** Extra top-level Vite config entries, as source text. */
+  viteConfig?: string;
   /**
    * Run `vite build <root>` from the directory above the root, the way a
    * monorepo script does, instead of `vite build` in the root.
@@ -214,6 +216,7 @@ export async function buildFixture(
       `export default {`,
       `  logLevel: "warn",`,
       `  define: { "process.env.NODE_ENV": JSON.stringify("production") },`,
+      scenario.viteConfig ? `  ${scenario.viteConfig},` : "",
       `  plugins: [rango({`,
       `    preset: "node",`,
       `    hostRouter: "./src/host.rsc.tsx",`,

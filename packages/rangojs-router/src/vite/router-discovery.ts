@@ -2513,7 +2513,9 @@ export function createRouterDiscoveryPlugin(
           () => generateRoutesManifestModule(s),
         );
         debugRoutes?.("manifest module emitted (%d bytes)", code?.length ?? 0);
-        return code;
+        // Only ever a bare import (the RSC entry's), so a build whose
+        // treeshake.moduleSideEffects is false would drop it; load outranks it.
+        return { code, moduleSideEffects: "no-treeshake" };
       }
       // Per-router virtual modules: pure data exports (no side effects).
       // ensureRouterManifest() imports the module and stores the data.

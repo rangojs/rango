@@ -713,13 +713,20 @@ describe("clientUrlsRevalidateHoistPlugin", () => {
   ) {
     const [pre, post] = clientUrlsRevalidateHoistPlugin(index);
     (pre!.configResolved as Hook).call({}, { root });
+    const loadHook = pre!.load as unknown as ObjectHook;
     return {
       post: post!,
       transformHook: pre!.transform as unknown as ObjectHook,
-      loadHook: pre!.load as unknown as ObjectHook,
+      loadHook,
       registerHook: post!.transform as unknown as ObjectHook,
       transform: (pre!.transform as unknown as ObjectHook).handler,
-      load: (pre!.load as unknown as ObjectHook).handler,
+      /** The code `load` serves, or undefined for an id it does not serve. */
+      async load(this: unknown, id: string): Promise<string | undefined> {
+        const out = (await loadHook.handler.call(this, id)) as
+          | { code: string }
+          | undefined;
+        return out?.code;
+      },
       register: (post!.transform as unknown as ObjectHook).handler,
       buildStart: pre!.buildStart as Hook,
       watchChange: pre!.watchChange as Hook,
@@ -1109,6 +1116,24 @@ Dashboard.use = () => [
         `  ${JSON.stringify(revalidateKey("own.urls.tsx", "() => true"))}: () => true,\n});\n`,
       );
       expect(out.endsWith(`});\n${imported("dash/Dashboard.tsx")}`)).toBe(true);
+    });
+
+    it("every module it serves keeps its side effects, whatever the app's sideEffects field says: the build reaches it only through bare imports", async () => {
+      const index = createClientUrlRevalidateIndex();
+      const { loadHook } = hooks(app, index);
+      index.filesByGroup.set(`${app}/app.urls.tsx`, [
+        `${app}/dash/Dashboard.tsx`,
+      ]);
+      // Registrations, a group's imports of its assigned files, nothing.
+      for (const name of ["dash/Dashboard.tsx", "app.urls.tsx", "Shell.tsx"]) {
+        expect(
+          await loadHook.handler.call(rsc, `${app}/${name}?rango-revalidate`),
+          name,
+        ).toEqual({
+          code: expect.any(String),
+          moduleSideEffects: "no-treeshake",
+        });
+      }
     });
 
     it("a module no group was assigned serves its own registrations, not those of its imports", async () => {

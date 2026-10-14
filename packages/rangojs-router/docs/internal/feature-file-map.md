@@ -194,7 +194,10 @@ The client descriptor and both runtime projections are owned by:
   `vite/discovery/client-urls-projection.ts`, which loads them before every
   projection install, over the `ClientUrlRevalidateIndex` in
   `vite/discovery/state.ts` that every plugin instance of one `rango()`
-  shares). A
+  shares). Its `load` serves every `?rango-revalidate` module with
+  `moduleSideEffects: "no-treeshake"`: a build reaches them only through bare
+  imports, and their ids name app files, which the app's `"sideEffects": false`
+  would otherwise let it drop (#1149). A
   `revalidate(true | false)` literal stays in place. In dev, its
   `client-urls-component-use-hmr` plugin updates a component module's
   importers in the browser when its `.use` changed.
@@ -254,6 +257,9 @@ The owning unit tests are
 (`Component.use` merge and validation),
 [`vite/__tests__/client-urls-revalidate-hoist.test.ts`](../../src/vite/__tests__/client-urls-revalidate-hoist.test.ts)
 (the hoist and the files discovery assigns a group),
+[`vite/__tests__/module-side-effects-build.test.ts`](../../src/vite/__tests__/module-side-effects-build.test.ts)
+(real builds: the registrations, and the routes and loader manifests, survive
+an app's `"sideEffects": false` and `treeshake.moduleSideEffects: false`),
 [`client-urls/__tests__/client-root.test.tsx`](../../src/client-urls/__tests__/client-root.test.tsx),
 and
 [`client-urls/__tests__/server-projection.test.tsx`](../../src/client-urls/__tests__/server-projection.test.tsx).

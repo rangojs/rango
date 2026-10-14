@@ -133,8 +133,8 @@ function startPlugin(dev: DevServer, preset?: "cloudflare") {
   closeServer = () => dev.server.httpServer.emit("close");
   return {
     /** The routes-manifest module; awaits the discovery gate like a request. */
-    loadManifestModule: (): Promise<string> =>
-      plugin.load.call({}, MANIFEST_MODULE_ID),
+    loadManifestModule: async (): Promise<string> =>
+      (await plugin.load.call({}, MANIFEST_MODULE_ID)).code,
   };
 }
 

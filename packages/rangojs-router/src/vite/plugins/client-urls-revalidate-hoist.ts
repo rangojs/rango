@@ -575,16 +575,20 @@ export function clientUrlsRevalidateHoistPlugin(
               )?.module,
           );
           const assigned = index.filesByGroup.get(file) ?? [];
-          if (registrations === undefined && assigned.length === 0) {
-            return "export {};\n";
-          }
-          return [
-            registrations ?? "",
-            ...assigned.map(
-              (target) =>
-                `import ${JSON.stringify(hoistedRevalidateId(target))};\n`,
-            ),
-          ].join("");
+          const code =
+            registrations === undefined && assigned.length === 0
+              ? "export {};\n"
+              : [
+                  registrations ?? "",
+                  ...assigned.map(
+                    (target) =>
+                      `import ${JSON.stringify(hoistedRevalidateId(target))};\n`,
+                  ),
+                ].join("");
+          // Reached only through bare imports, and the id names an app file,
+          // so the app's package.json `"sideEffects": false` would let the
+          // build drop the registrations (#1149). load outranks that field.
+          return { code, moduleSideEffects: "no-treeshake" };
         },
       },
 

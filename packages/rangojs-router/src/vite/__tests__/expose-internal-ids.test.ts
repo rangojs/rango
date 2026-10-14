@@ -1667,10 +1667,11 @@ export const ${name} = createLoader(async () => ({ ok: true }));
         `${ROOT}/src/${name}.ts`,
       );
     }
-    return plugin.load.call(
-      rscCtx(),
-      "\0virtual:rsc-router/loader-manifest",
-    ) as string;
+    return (
+      plugin.load.call(rscCtx(), "\0virtual:rsc-router/loader-manifest") as {
+        code: string;
+      }
+    ).code;
   };
 
   it("lists the same loaders in the same order, whatever order they registered in", () => {
@@ -1717,10 +1718,11 @@ export const dataLoader = createLoader(async () => ({ ok: true }));
       };
       plugin.configResolved({ command: "build", root });
       await plugin.buildStart.call(rscCtx());
-      const manifest = plugin.load.call(
-        rscCtx(),
-        "\0virtual:rsc-router/loader-manifest",
-      ) as string;
+      const manifest = (
+        plugin.load.call(rscCtx(), "\0virtual:rsc-router/loader-manifest") as {
+          code: string;
+        }
+      ).code;
       const scanned = [...manifest.matchAll(/import\("\/([^"]+)"\)/g)]
         .map((match) => match[1])
         .sort();

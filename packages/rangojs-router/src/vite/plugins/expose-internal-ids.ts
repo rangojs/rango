@@ -187,6 +187,49 @@ export function exposeInternalIds(options?: { forceBuild?: boolean }): Plugin {
 
   const counter = createCounter(debug, "expose-internal-ids");
 
+  /** The virtual:rsc-router/loader-manifest module. */
+  function loaderManifestCode(): string {
+    if (!isBuild) {
+      return `import { setLoaderImports } from "@rangojs/router/server";
+
+// Dev mode: empty map, loaders are resolved dynamically via path parsing
+setLoaderImports({});
+`;
+    }
+
+    // Build mode: generate lazy import map. Sorted by id: the registry fills
+    // in directory-scan order (the pre-scan below) and transform order, both
+    // of which vary between machines and runs, and this module's bytes feed
+    // the cache version of every router bundled with it
+    // (discovery/build-versions.ts).
+    const lazyImports: string[] = [];
+    const sortedLoaders = [...loaderRegistry].sort(([a], [b]) =>
+      compareStrings(a, b),
+    );
+
+    for (const [hashedId, { filePath, exportName }] of sortedLoaders) {
+      lazyImports.push(
+        `  "${hashedId}": () => import("/${filePath}").then(m => m.${exportName})`,
+      );
+    }
+
+    if (lazyImports.length === 0) {
+      return `import { setLoaderImports } from "@rangojs/router/server";
+
+// No fetchable loaders discovered during build
+setLoaderImports({});
+`;
+    }
+
+    return `import { setLoaderImports } from "@rangojs/router/server";
+
+// Lazy import map - loaders are loaded on-demand when first requested
+setLoaderImports({
+${lazyImports.join(",\n")}
+});
+`;
+  }
+
   return {
     name: "@rangojs/router:expose-internal-ids",
     enforce: "post",
@@ -239,46 +282,9 @@ export function exposeInternalIds(options?: { forceBuild?: boolean }): Plugin {
       }
 
       if (id !== RESOLVED_VIRTUAL_LOADER_MANIFEST) return;
-
-      if (!isBuild) {
-        return `import { setLoaderImports } from "@rangojs/router/server";
-
-// Dev mode: empty map, loaders are resolved dynamically via path parsing
-setLoaderImports({});
-`;
-      }
-
-      // Build mode: generate lazy import map. Sorted by id: the registry fills
-      // in directory-scan order (the pre-scan below) and transform order, both
-      // of which vary between machines and runs, and this module's bytes feed
-      // the cache version of every router bundled with it
-      // (discovery/build-versions.ts).
-      const lazyImports: string[] = [];
-      const sortedLoaders = [...loaderRegistry].sort(([a], [b]) =>
-        compareStrings(a, b),
-      );
-
-      for (const [hashedId, { filePath, exportName }] of sortedLoaders) {
-        lazyImports.push(
-          `  "${hashedId}": () => import("/${filePath}").then(m => m.${exportName})`,
-        );
-      }
-
-      if (lazyImports.length === 0) {
-        return `import { setLoaderImports } from "@rangojs/router/server";
-
-// No fetchable loaders discovered during build
-setLoaderImports({});
-`;
-      }
-
-      return `import { setLoaderImports } from "@rangojs/router/server";
-
-// Lazy import map - loaders are loaded on-demand when first requested
-setLoaderImports({
-${lazyImports.join(",\n")}
-});
-`;
+      // Only ever a bare import (the RSC entry's), so a build whose
+      // treeshake.moduleSideEffects is false would drop it; load outranks it.
+      return { code: loaderManifestCode(), moduleSideEffects: "no-treeshake" };
     },
 
     // --------------- Loader pre-scan (build mode) ---------------
