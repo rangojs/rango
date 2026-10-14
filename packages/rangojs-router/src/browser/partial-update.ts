@@ -1265,6 +1265,12 @@ export function createPartialUpdater(
         transitionGatedOff: fullGatedOff,
       });
 
+      // A background refresh keeps the page, as in the partial branch: its
+      // loaders streamed, so this waits for them before anything commits.
+      if (mode.type === "stale-revalidation") {
+        const failed = await revalidationErrorOf(segments);
+        if (failed) throw failed;
+      }
       if (signal?.aborted) {
         debugLog("[Browser] Ignoring stale navigation (aborted before commit)");
         return;

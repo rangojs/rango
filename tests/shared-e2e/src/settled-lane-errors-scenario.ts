@@ -121,9 +121,16 @@ export function runSettledLaneErrorTests(
     });
   }
 
-  test("Back onto a stale entry whose loader throws in the background refresh keeps the page on screen and logs the failure; the layout keeps its instance", async ({
-    page,
-  }) => {
+  /**
+   * Opens /flaky, leaves it, breaks its loader with the action (which marks
+   * every history entry stale) and goes Back: the background refresh's loader
+   * throws. The page stays on screen and the failure is logged. Returns the
+   * refresh's response body.
+   */
+  async function expectStaleRefreshKeepsPage(
+    page: Page,
+    beforeBack?: () => Promise<void>,
+  ): Promise<string> {
     expectConsole(page, { allow: [/Background revalidation failed/] });
     const logged: string[] = [];
     page.on("console", (message) => {
@@ -143,13 +150,14 @@ export function runSettledLaneErrorTests(
     // entry stale.
     await page.getByTestId("sle-break").click();
     await expect(page.getByTestId("sle-break-outcome")).toHaveText("broken");
+    await beforeBack?.();
 
     const refreshed = page.waitForResponse((resp) =>
       isRscRequestFor(resp.url(), `${options.path}/flaky`),
     );
     await page.goBack();
     await expect(page.getByTestId("sle-flaky-value")).toHaveText("stock:1");
-    await (await refreshed).finished();
+    const body = await (await refreshed).text();
     await expect
       .poll(() =>
         logged.some((text) => text.includes("Background revalidation failed")),
@@ -161,6 +169,36 @@ export function runSettledLaneErrorTests(
     await expect(
       page.getByRole("heading", { name: "Internal Server Error" }),
     ).toHaveCount(0);
+    return body;
+  }
+
+  test("Back onto a stale entry whose loader throws in the background refresh keeps the page on screen and logs the failure; the layout keeps its instance", async ({
+    page,
+  }) => {
+    await expectStaleRefreshKeepsPage(page);
+  });
+
+  // A refresh that reaches the server without the page it was sent from (a
+  // proxy that drops X-RSC-Router-Client-Path and Referer) cannot be matched
+  // partially, so the server answers it with the full page (dc-t68).
+  test("Back onto a stale entry whose background refresh is answered with a full page keeps the page on screen when its loader throws", async ({
+    page,
+  }) => {
+    const body = await expectStaleRefreshKeepsPage(page, async () => {
+      await page.route(
+        (url) =>
+          url.pathname === `${options.path}/flaky` &&
+          url.searchParams.get("_rsc_stale") === "true",
+        async (route) => {
+          // Sent from Playwright, not the page: the browser adds a Referer.
+          const headers = { ...route.request().headers() };
+          delete headers["x-rsc-router-client-path"];
+          delete headers["referer"];
+          await route.fulfill({ response: await route.fetch({ headers }) });
+        },
+      );
+    });
+    expect(body).toContain('"isPartial":false');
   });
 
   test("a loader redirect() on a fully-prefetched click replaces only the route's content; the layout keeps its instance", async ({
