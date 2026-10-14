@@ -107,6 +107,7 @@ describe("NavigationProvider: a navigation committed during the hydration window
             cachedHandleData: { [Notes.$$id]: { R1: ["next"] } },
           },
         },
+        "push",
         ["navigation"],
       );
     });

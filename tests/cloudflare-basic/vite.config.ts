@@ -65,6 +65,13 @@ export default defineConfig(({ isPreview }) => ({
     port: 5001,
     // Bind to all interfaces for CI compatibility (fixes IPv6/IPv4 issues in Docker/Linux)
     host: process.env.CI ? "0.0.0.0" : undefined,
+    hmr: {
+      // As in the router e2e app: routes that throw on purpose (the
+      // handles-after-await LateHandlePushError cases) broadcast Vite's dev
+      // overlay to every connected page, where it blocks the clicks of
+      // tests running in parallel against the shared dev server.
+      overlay: process.env.RANGO_E2E_HMR_OVERLAY === "1",
+    },
   },
   resolve: {
     // Vite 8 native tsconfig paths resolution. The "@native/*" mapping in

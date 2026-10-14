@@ -338,6 +338,7 @@ import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
+import { transitionKindsPatterns } from "./pages/transition-kinds.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -3123,6 +3124,9 @@ export const urlpatterns = urls(
         // transition({ when }) conditional-gate coverage (mirrors the router
         // e2e app's /tx-when/:hold/:n).
         include("/", txWhenPatterns, { name: "" }),
+        // #1165: each transition commit carries its kind as a transition
+        // type (mirrors the router e2e app's /vt-kinds/*).
+        include("/", transitionKindsPatterns, { name: "" }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {

@@ -437,6 +437,63 @@ commit that brings the loader's new data, whether the loader is the route's
 own or a layout's that the route reads. A commit that did not re-run the
 loader keeps it, and nothing else on the page remounts.
 
+### Added: each transition commit carries its kind as a transition type: `push`, `replace`, `pop`, `action`, `revalidate` ([#1165](https://github.com/rangojs/rango/issues/1165))
+
+A `<ViewTransition>` class map can now tell a link navigation from a server
+action's revalidation. Every commit the router runs in a transition adds its
+`transition({ when })` kind as a React transition type, before the types it
+carried already (`navigation`, `navigation-back`, `action`):
+
+```tsx
+<ViewTransition update={{ push: "page", replace: "page", default: "none" }}>
+  <ProductGrid />
+</ViewTransition>
+```
+
+or on the route:
+
+```ts
+path("/*", Pages, () => [
+  transition({
+    viewTransition: "auto",
+    update: { push: "page", replace: "page", default: "none" },
+  }),
+]);
+```
+
+Navigations animate, and action revalidations (`action`) and background
+refreshes (`revalidate`) stay still.
+
+Before: a filter or sort change, a link between two pages of one catch-all
+route, and a fully prefetched click committed with no type. A server action's
+revalidation also committed with none, with or without `transition()`; only
+the refetch it runs after several actions at once carried `action`. A map
+keyed by type could not tell a filter change from an add-to-cart.
+
+| Kind         | Commits                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `push`       | A link, `router.push()`, `navigate()`: the same-route content hold, a fully prefetched click, an intercept, the commit after a `clientUrls()` optimistic swap |
+| `replace`    | `router.replace()`, `<Link replace>`                                                                                                                          |
+| `pop`        | A back/forward that refetches                                                                                                                                 |
+| `action`     | A server action's revalidation and its error-boundary commit                                                                                                  |
+| `revalidate` | `router.refresh()`, a stale entry's background revalidation                                                                                                   |
+
+- Tagging alone animates nothing. React starts a view transition only where a
+  `<ViewTransition>` resolves a class other than `none` for the commit's
+  types, so a page with no map keyed by these names animates as before.
+- A commit outside a transition carries no type: a cold click that mounts new
+  segments, and a `when` that returned `false`. A back/forward restored from
+  the history cache gets no kind either: React commits it synchronously inside
+  the popstate event, not as a transition. It keeps its `navigation-back`.
+- Under `transition()`, a stale entry's revalidation also carries `action`, as
+  before. Key `revalidate: "none"` to keep an `action` map off it.
+- React keeps one queue of transition types per root, and the first
+  transition commit after a navigation takes the whole queue. When another
+  transition commit lands first, such as the router's navigation-state update
+  at the end of a streamed response, it takes the page's types and the page
+  commits with none. The existing `navigation` type is affected the same way
+  (see [#1164](https://github.com/rangojs/rango/issues/1164)).
+
 ### Added: `readAction()` on `serveShellRequest()`'s result
 
 For an `action` request, `result.readAction()` reads the call's answer as

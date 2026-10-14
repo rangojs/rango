@@ -13,6 +13,7 @@ import { peFormStatePatterns } from "./urls/pe-form-state.js";
 import { suspenseCasesPatterns } from "./urls/suspense-cases.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
+import { transitionKindsPatterns } from "./urls/transition-kinds.js";
 
 import { errorsPatterns } from "./urls/errors.js";
 import {
@@ -1164,6 +1165,8 @@ export const urlpatterns = urls(
       // Raw <Suspense> (no loading() DSL) streaming route
       include("/", suspenseStreamPatterns, { name: "" }),
       include("/", conditionalTransitionPatterns, { name: "" }),
+      // #1165: each transition commit carries its kind as a transition type.
+      include("/", transitionKindsPatterns, { name: "" }),
 
       // #622 follow-up (HIGH): shared layout + client-mount-suspense children
       include("/", clientSuspensePatterns, { name: "" }),

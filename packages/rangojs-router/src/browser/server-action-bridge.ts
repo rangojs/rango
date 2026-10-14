@@ -3,8 +3,10 @@ import type {
   ServerActionBridgeConfig,
   RscPayload,
   ResolvedSegment,
+  NavigationUpdate,
+  UpdateSubscriber,
 } from "./types.js";
-import { createPartialUpdater } from "./partial-update.js";
+import { addTransitionType, createPartialUpdater } from "./partial-update.js";
 import { enterActionFence, exitActionFence } from "./action-fence.js";
 import { KEEP_CACHE_HEADER } from "./cookie-name.js";
 import { createNavigationTransaction } from "./navigation-transaction.js";
@@ -98,6 +100,23 @@ function applyActionLocationState(
     eventController.commitLocationState(shown, true);
     eventController.flushRouteState();
   }
+}
+
+/**
+ * An action's commit: urgent when transition({ when }) gated it off, like
+ * every gated-off commit, else a transition tagged `action` (#1165).
+ */
+function commitAction(
+  onUpdate: UpdateSubscriber,
+  update: NavigationUpdate,
+  gatedOff: boolean,
+): void {
+  if (gatedOff) onUpdate(update);
+  else
+    startTransition(() => {
+      addTransitionType?.("action");
+      onUpdate(update);
+    });
 }
 
 /**
@@ -625,12 +644,13 @@ export function createServerActionBridge(
         );
         store.rememberDisplayedEntry();
 
-        // Update UI with error boundary: urgent when transition({ when })
-        // gated it off, like every gated-off commit.
-        const errorUpdate = { root: errorTree, metadata: metadata! };
+        // Update UI with error boundary.
         if (process.env.NODE_ENV !== "production") auditTreeCause("action");
-        if (errorGatedOff) onUpdate(errorUpdate);
-        else startTransition(() => onUpdate(errorUpdate));
+        commitAction(
+          onUpdate,
+          { root: errorTree, metadata: metadata! },
+          errorGatedOff,
+        );
 
         // Throw the error so the action promise rejects
         if (returnValue && !returnValue.ok) {
@@ -906,10 +926,12 @@ export function createServerActionBridge(
           );
           store.rememberDisplayedEntry(metadata);
 
-          const actionUpdate = { root: newTree, metadata: metadata! };
           if (process.env.NODE_ENV !== "production") auditTreeCause("action");
-          if (gatedOff) onUpdate(actionUpdate);
-          else startTransition(() => onUpdate(actionUpdate));
+          commitAction(
+            onUpdate,
+            { root: newTree, metadata: metadata! },
+            gatedOff,
+          );
           // Invalidation deferred to finalizeAction() (runs after this caches
           // the fresh segments), suppressed when the action called
           // keepClientCache().

@@ -906,9 +906,14 @@ export async function renderRoute(
       // same-structure / fully-prefetched / optimistic hold lanes are not
       // modeled: without transition() the commit stays urgent.
       if (shouldStartViewTransition(segments, gatedOff)) {
-        commitInTransition(store.loaders, emit, segments, { root, metadata }, [
-          "navigation",
-        ]);
+        commitInTransition(
+          store.loaders,
+          emit,
+          segments,
+          { root, metadata },
+          kind,
+          ["navigation"],
+        );
       } else {
         emit({ root, metadata });
       }

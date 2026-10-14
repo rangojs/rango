@@ -660,7 +660,8 @@ describe("a clientUrls() click that presented its destination", () => {
     );
     const { navigation } = await run.adopt();
 
-    expect(order).toEqual(["transition:rango-optimistic-commit", "clear"]);
+    // Its kind first (#1165), then the optimistic-commit type.
+    expect(order).toEqual(["transition:push,rango-optimistic-commit", "clear"]);
     expect(run.onUpdate).toHaveBeenCalledTimes(1);
     expect(presentation.clear).toHaveBeenCalledTimes(1);
     const deferredRead = holeOf(adoption.reviews);

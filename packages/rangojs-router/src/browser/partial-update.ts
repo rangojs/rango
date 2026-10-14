@@ -8,8 +8,9 @@ import type { ReactNode } from "react";
 import * as React from "react";
 import { startTransition } from "react";
 
-// addTransitionType is only available in React experimental
-const addTransitionType: ((type: string) => void) | undefined =
+// React 19.3+ and experimental builds. Call it only inside startTransition:
+// outside one, React starts a transition of its own.
+export const addTransitionType: ((type: string) => void) | undefined =
   "addTransitionType" in React ? (React as any).addTransitionType : undefined;
 
 import type { RenderSegmentsOptions } from "../segment-system.js";
@@ -85,17 +86,21 @@ function treeCause(mode: UpdateMode, traversal?: boolean): TreeUpdateCause {
  * settled/cached segments make it a no-op. Urgent commits call onUpdate
  * directly: nothing is held there, a reader of a pending stream suspends to
  * its fallback. Also used by renderRoute's navigate() (testing/render-route.tsx).
+ * Every commit is tagged with its transition({ when }) `kind` (#1165), then
+ * `transitionTypes`.
  */
 export function commitInTransition(
   loaders: LoaderStore,
   onUpdate: UpdateSubscriber,
   segments: readonly ResolvedSegment[],
   update: NavigationUpdate,
+  kind: TransitionWhenKind,
   transitionTypes: readonly string[],
 ): void {
   startTransition(() => {
     loaders.announcePendingStreams(segments);
     if (addTransitionType) {
+      addTransitionType(kind);
       for (const type of transitionTypes) addTransitionType(type);
     }
     onUpdate(update);
@@ -796,6 +801,7 @@ export function createPartialUpdater(
               onUpdate,
               existingSegments,
               cachedUpdate,
+              whenKind,
               ["navigation"],
             );
           } else {
@@ -1179,6 +1185,7 @@ export function createPartialUpdater(
           onUpdate,
           reconciled.mainSegments,
           update,
+          whenKind,
           hasTransition ? ["action"] : [],
         );
       } else if (hasTransition) {
@@ -1187,6 +1194,7 @@ export function createPartialUpdater(
           onUpdate,
           reconciled.mainSegments,
           update,
+          whenKind,
           optimisticPresented
             ? ["navigation", OPTIMISTIC_COMMIT_TRANSITION_TYPE]
             : ["navigation"],
@@ -1212,7 +1220,7 @@ export function createPartialUpdater(
         // flash). Inside a transition React holds the current UI until the
         // suspended data lands, the action treatment; nothing new mounts (by
         // the isSameStructureNav definition), so no fallback is being withheld
-        // from a first paint. No addTransitionType: this is the React
+        // from a first paint. Its kind is its only type (#1165): a React
         // content-hold, not a view transition. Deliberate trade-off (#622
         // introduced, #624 reverted, then reinstated): a client component that
         // suspends during its FIRST render (use() of a promise created at
@@ -1230,6 +1238,7 @@ export function createPartialUpdater(
           onUpdate,
           reconciled.mainSegments,
           update,
+          whenKind,
           optimisticPresented ? [OPTIMISTIC_COMMIT_TRANSITION_TYPE] : [],
         );
       } else {
@@ -1321,6 +1330,7 @@ export function createPartialUpdater(
             onUpdate,
             segments,
             fullUpdate,
+            whenKind,
             fullHasTransition ? ["action"] : [],
           );
         }
@@ -1330,12 +1340,18 @@ export function createPartialUpdater(
           onUpdate,
           segments,
           fullUpdate,
+          whenKind,
           fullHasTransition ? ["action"] : [],
         );
       } else if (fullHasTransition) {
-        commitInTransition(store.loaders, onUpdate, segments, fullUpdate, [
-          "navigation",
-        ]);
+        commitInTransition(
+          store.loaders,
+          onUpdate,
+          segments,
+          fullUpdate,
+          whenKind,
+          ["navigation"],
+        );
       } else {
         onUpdate(fullUpdate);
       }

@@ -154,6 +154,7 @@ async function commit(
         onUpdate,
         [],
         update,
+        "push",
         vt ? ["navigation"] : [],
       );
     }

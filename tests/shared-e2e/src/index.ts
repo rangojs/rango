@@ -71,9 +71,12 @@ export { runPeFormStateTests } from "./pe-form-state-scenario.js";
 export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario.js";
 export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
 export type { TxIdleViewTransitionScenarioOptions } from "./tx-idle-view-transition-scenario.js";
+export { runTransitionKindsTests } from "./transition-kinds-scenario.js";
+export type { TransitionKindsScenarioOptions } from "./transition-kinds-scenario.js";
 export {
   countViewTransitions,
   viewTransitions,
+  viewTransitionTypes,
 } from "./view-transition-probe.js";
 export type { PeFormStateScenarioOptions } from "./pe-form-state-scenario.js";
 export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";

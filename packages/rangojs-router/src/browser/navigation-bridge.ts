@@ -9,7 +9,6 @@ import { isPlaceholder } from "../types/segments.js";
 import { setAppVersion } from "./app-version.js";
 import { isActionFenceActive } from "./action-fence.js";
 import { getRangoState } from "./rango-state.js";
-import * as React from "react";
 import { startTransition } from "react";
 import { flushSync } from "react-dom";
 import {
@@ -30,15 +29,12 @@ import {
   ensureHistoryKey,
 } from "./scroll-restoration.js";
 
-// addTransitionType is only available in React experimental
-const addTransitionType: ((type: string) => void) | undefined =
-  "addTransitionType" in React ? (React as any).addTransitionType : undefined;
-
 import {
   setupDelegatedLinkPrefetch,
   setupLinkInterception,
 } from "./link-interceptor.js";
 import {
+  addTransitionType,
   createPartialUpdater,
   shouldStartViewTransition,
 } from "./partial-update.js";
@@ -774,6 +770,11 @@ export function createNavigationBridge(
             !isLeavingIntercept &&
             shouldStartViewTransition(cachedSegments, gatedOff);
           if (process.env.NODE_ENV !== "production") auditTreeCause("popstate");
+          // No "pop" kind (#1165): React flushes a transition started in the
+          // popstate event synchronously (react-dom
+          // shouldAttemptEagerTransition), and this commit lands with
+          // non-transition lanes. It starts no view transition and leaves its
+          // types queued on the root for the next transition commit.
           if (hasTransition) {
             startTransition(() => {
               if (addTransitionType) {

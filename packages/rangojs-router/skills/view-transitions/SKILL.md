@@ -101,7 +101,7 @@ Navigating between `/`, `/about`, and `/contact` cross-fades the `<Outlet />` co
 
 ## Direction-aware transitions
 
-`ViewTransitionClass` accepts an object form keyed by transition type. Rango tags forward navigations as `"navigation"` and back/forward navigations restored from the client cache as `"navigation-back"` (a back/forward that has to refetch from the server is tagged `"navigation"`):
+`ViewTransitionClass` accepts an object form keyed by transition type. Every commit the router runs in a transition carries its kind (`"push"`, `"replace"`, `"pop"`, `"action"`, `"revalidate"`, see [Transition kinds](#transition-kinds)). Under `transition()`, Rango also tags forward navigations as `"navigation"` and back/forward navigations restored from the client cache as `"navigation-back"` (a back/forward that has to refetch from the server is tagged `"navigation"`):
 
 ```tsx
 layout(<ShopShell />, () => [
@@ -132,7 +132,29 @@ layout(<ShopShell />, () => [
 /* @keyframes slide-out-to-left, slide-in-from-right, ... defined as usual */
 ```
 
-> Note: `"action"` is only tagged on partial-update action/refetch paths today; ordinary `server-action-bridge` commits (`useAction` / `useActionState` revalidations) are not currently tagged. Don't rely on an `action`-keyed class to fire on every form action.
+### Transition kinds
+
+Every commit the router runs in a transition adds its `transition({ when })` kind as a transition type, first, before the types above. A map keyed by kind tells a link navigation from a server action's revalidation, with or without `transition()` on the route:
+
+| Kind           | Commits                                                                                                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `"push"`       | A link, `router.push()`, `navigate()`: the same-route content hold (search or catch-all change), a fully prefetched click, an intercept, the commit after a `clientUrls()` optimistic swap |
+| `"replace"`    | `router.replace()`, `<Link replace>`                                                                                                                                                       |
+| `"pop"`        | A back/forward that refetches                                                                                                                                                              |
+| `"action"`     | A server action's revalidation and its error-boundary commit                                                                                                                               |
+| `"revalidate"` | `router.refresh()`, a stale entry's background revalidation                                                                                                                                |
+
+```tsx
+// Animate navigations; keep action revalidations and background refreshes still.
+<ViewTransition update={{ push: "page", replace: "page", default: "none" }}>
+  <ProductGrid />
+</ViewTransition>
+```
+
+- Tagging alone animates nothing: React starts a view transition only where a `<ViewTransition>` resolves a class other than `"none"` for the commit's types.
+- A commit outside a transition carries no type: a cold click that mounts new segments, a gated-off commit (`when` returned `false`), and a back/forward restored from the history cache. React commits that restore synchronously inside the popstate event, not as a transition, so it gets no kind and keeps its `"navigation-back"`.
+- Under `transition()`, a stale entry's revalidation carries `"revalidate"` and `"action"`. An `action`-keyed map that must skip it also keys `revalidate: "none"` (`"none"` wins over any other match).
+- Delivery is best-effort. React keeps one queue of transition types per root, and the first transition commit takes the whole queue. If another transition commit lands before the page, such as the router's navigation-state update at the end of a streamed response, it takes the page's types and the page commits with none. The `"navigation"` type is affected the same way. Use a kind map to choose an animation, never for correctness.
 
 ## Wrapper form: applying transition to a group of routes
 
@@ -234,7 +256,7 @@ interface TransitionConfig {
 ```
 
 - `default` is the catch-all if a phase-specific prop is unset.
-- The object form keys are React transition types tagged by rango: `"navigation"` (forward navigations), `"navigation-back"` (popstate cache restores), and `"action"` (partial-update action/refetch paths only — see the caveat in "Direction-aware transitions").
+- The object form keys are React transition types tagged by rango: the commit's kind (`"push"`, `"replace"`, `"pop"`, `"action"`, `"revalidate"`, see [Transition kinds](#transition-kinds)) and, under `transition()`, `"navigation"` (forward navigations), `"navigation-back"` (popstate cache restores) and `"action"` (action and stale revalidations).
 - `name` lets you participate in cross-page morphs by name (advanced; you usually don't need this on a layout/route-level wrap).
 - `viewTransition` toggles whether rango places its own `<ViewTransition>` boundary. `"auto"` (default) wraps as described above; `false` opts out — see the next section.
 
@@ -380,13 +402,13 @@ interface TransitionWhenContext {
 - In a `clientUrls()` group, `false` also opts a same-route navigation out of
   the group's default hold.
 
-`kind` lines up with the class keys in "Direction-aware transitions": a
-`"pop"` restored from the history cache animates with `"navigation-back"`
-(a pop that refetches uses `"navigation"`); `"push"`, `"replace"` and a
-`router.refresh()` (`"revalidate"`) use `"navigation"`; a stale entry's
-revalidation (`"revalidate"`) and an action's refetch (`"action"`) use
-`"action"`. An action's own commit (`useActionState`, a form action) carries
-no transition type (see the note under "Direction-aware transitions").
+`kind` is also the transition type the commit carries (see "Transition
+kinds"): `{ push: "page", default: "none" }` animates the commits `when` sees
+as `"push"`. Under `transition()` the older keys stay: a `"pop"` restored from
+the history cache carries `"navigation-back"` alone (a pop that refetches adds
+`"navigation"`); `"push"`, `"replace"` and a `router.refresh()`
+(`"revalidate"`) add `"navigation"`; a stale entry's revalidation adds
+`"action"`.
 
 ### Opting out per navigation
 
