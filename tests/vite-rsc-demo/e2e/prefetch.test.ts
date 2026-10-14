@@ -266,20 +266,19 @@ test.describe("prefetch-on-hover (router mode)", () => {
     expect(vary).toContain("X-RSC-Router-Client-Path");
   });
 
-  test("should include Cache-Control only on prefetch partial responses", async ({
+  test("should not include Cache-Control on prefetch partial responses", async ({
     devServerURL,
   }) => {
     const url = new URL("/shop", devServerURL);
     url.searchParams.set("_rsc_partial", "true");
 
-    // Prefetch request (with X-Rango-Prefetch) should get Cache-Control
+    // A prefetch carries no Cache-Control (#1170): a failed render must never
+    // be kept by the browser, and prefetchCacheTTL is the in-memory TTL only.
     const prefetchRes = await fetch(url, {
       headers: { "X-Rango-State": "test:1", "X-Rango-Prefetch": "1" },
     });
     expect(prefetchRes.status).toBe(200);
-    const cc = prefetchRes.headers.get("cache-control");
-    expect(cc).toContain("private");
-    expect(cc).toContain("max-age=300");
+    expect(prefetchRes.headers.get("cache-control")).toBeNull();
 
     // Navigation request (without X-Rango-Prefetch) should NOT get Cache-Control
     const navRes = await fetch(url, {
@@ -620,19 +619,18 @@ base.describe("prefetch-on-hover (router mode) (production)", () => {
   );
 
   base(
-    "should include Cache-Control only on prefetch partial responses",
+    "should not include Cache-Control on prefetch partial responses",
     async () => {
       const url = new URL("/shop", f.url("/"));
       url.searchParams.set("_rsc_partial", "true");
 
-      // Prefetch request (with X-Rango-Prefetch) should get Cache-Control
+      // A prefetch carries no Cache-Control (#1170): a failed render must never
+      // be kept by the browser, and prefetchCacheTTL is the in-memory TTL only.
       const prefetchRes = await fetch(url, {
         headers: { "X-Rango-State": "test:1", "X-Rango-Prefetch": "1" },
       });
       baseExpect(prefetchRes.status).toBe(200);
-      const cc = prefetchRes.headers.get("cache-control");
-      baseExpect(cc).toContain("private");
-      baseExpect(cc).toContain("max-age=300");
+      baseExpect(prefetchRes.headers.get("cache-control")).toBeNull();
 
       // Navigation request (without X-Rango-Prefetch) should NOT get Cache-Control
       const navRes = await fetch(url, {
