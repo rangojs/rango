@@ -329,7 +329,7 @@ const matrixRows: SemanticMatrixRow[] = [
   {
     id: "R4",
     contract:
-      "a loader that throws on a fully-prefetched click, or on Back onto an entry restored from the history cache, throws at its read, where the nearest boundary catches it; the layout keeps its instance",
+      "a loader that throws on a click whose prefetch failed with it (the click sends its own request), or on Back onto an entry restored from the history cache, throws at its read, where the nearest boundary catches it; the layout keeps its instance",
     transport: "js",
     execution: "partial-render",
     scope: "in-scope-child",
@@ -348,7 +348,8 @@ const matrixRows: SemanticMatrixRow[] = [
         );
       };
 
-      // A click whose prefetch has drained commits on the forceAwait lane.
+      // A prefetch that finished with the loader's error is never served:
+      // the click sends its own request (dc-t72).
       const prefetched = page.waitForResponse(
         (response) =>
           isPrefetchRequest(response.request()) &&
@@ -356,7 +357,13 @@ const matrixRows: SemanticMatrixRow[] = [
       );
       await testId(page, "sle-prefetch-fail").hover();
       await (await prefetched).finished();
+      const clicked = page.waitForRequest(
+        (request) =>
+          !isPrefetchRequest(request) &&
+          new URL(request.url()).pathname === "/settled-lane-errors/fail",
+      );
       await testId(page, "sle-prefetch-fail").click();
+      await clicked;
       await expectInPlace();
 
       // Back onto it restores the entry from the history cache.

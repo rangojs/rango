@@ -1833,6 +1833,11 @@ A prefetch entry respawns on every adoption (`makeRespawn` in
 `prefetch/fetch.ts`), so each adoption decodes its own payload, arms its own
 defers and sends its own fill.
 
+A prefetch whose stream ended with a loader error in it is marked `failed`
+and never adopted: the click sends its own request with `no-store`, as a
+plain click would (dc-t72). Deferred loaders never ran in the prefetch, so
+their placeholders are not checked.
+
 An entry that defers lives under its source page's key, which includes the
 segments that page held (`buildSourceKey` in `prefetch/cache.ts`). Coming
 back to a page the client still has in its history cache is a different

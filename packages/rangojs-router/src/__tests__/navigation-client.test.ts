@@ -912,6 +912,107 @@ describe("navigation-client", () => {
       expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
+
+    describe("a prefetch that finished with a loader error", () => {
+      /** Navigate once; returns the fetch calls and the result. */
+      async function click(): Promise<{
+        fetchMock: ReturnType<typeof vi.fn>;
+        createFromFetch: ReturnType<typeof vi.fn>;
+        fullyPrefetched: boolean | undefined;
+        body: unknown;
+      }> {
+        const fetchMock = vi.fn(
+          async (_url: string | URL, _init?: RequestInit) =>
+            new Response("fresh", { status: 200 }),
+        );
+        vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+        const createFromFetch = vi.fn(
+          async (responsePromise: Promise<Response>) => {
+            const response = await responsePromise;
+            return { metadata: { body: await response.clone().text() } };
+          },
+        );
+        const client = createNavigationClient({ createFromFetch } as any);
+        const result = await client.fetchPartial({
+          targetUrl: "/products",
+          previousUrl: "/current",
+          segmentIds: ["root"],
+        });
+        return {
+          fetchMock,
+          createFromFetch,
+          fullyPrefetched: result.fullyPrefetched,
+          body: (result.payload.metadata as { body?: unknown }).body,
+        };
+      }
+
+      function failedEntry(): DecodedPrefetch {
+        return {
+          ...makeEntry({ metadata: { body: "prefetched-error" } }),
+          failed: true,
+        };
+      }
+
+      it.each([
+        ["source", 0],
+        ["wildcard", 1],
+      ])(
+        "is never served from the %s slot: the click fetches fresh with no-store",
+        async (_, hitCall) => {
+          let call = 0;
+          consumePrefetchMock.mockImplementation(() =>
+            call++ === hitCall ? failedEntry() : null,
+          );
+
+          const { fetchMock, createFromFetch, fullyPrefetched, body } =
+            await click();
+
+          expect(fetchMock).toHaveBeenCalledTimes(1);
+          expect((fetchMock.mock.calls[0]![1] as RequestInit).cache).toBe(
+            "no-store",
+          );
+          expect(createFromFetch).toHaveBeenCalledTimes(1);
+          expect(body).toBe("fresh");
+          expect(fullyPrefetched).toBe(false);
+        },
+      );
+
+      it("leaves a healthy entry served with no request and the default cache mode", async () => {
+        consumePrefetchMock.mockReturnValue(
+          makeEntry({ metadata: { body: "prefetched" } }, "wildcard", true),
+        );
+
+        const { fetchMock, createFromFetch, fullyPrefetched, body } =
+          await click();
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(createFromFetch).not.toHaveBeenCalled();
+        expect(body).toBe("prefetched");
+        expect(fullyPrefetched).toBe(true);
+      });
+
+      it("leaves in-flight adoption unchanged: a click before the stream ends adopts it", async () => {
+        const entry = makeEntry({ metadata: { body: "streaming" } });
+        consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(entry));
+
+        const { fetchMock, body, fullyPrefetched } = await click();
+        // The stream ends with a loader error after the click adopted it.
+        entry.failed = true;
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(body).toBe("streaming");
+        expect(fullyPrefetched).toBe(false);
+      });
+
+      it("a fresh fetch with no failed entry keeps the default cache mode", async () => {
+        const { fetchMock } = await click();
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(
+          (fetchMock.mock.calls[0]![1] as RequestInit).cache,
+        ).toBeUndefined();
+      });
+    });
   });
 
   describe("fetch options (credentials + action fence)", () => {

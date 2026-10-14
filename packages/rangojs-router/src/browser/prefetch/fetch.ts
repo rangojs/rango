@@ -38,6 +38,7 @@ import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../../segment-fragments.js";
 import { PREFETCH_HEADER } from "../../prefetch-markers.js";
 import type { RscPayload } from "../types.js";
 import { getRegisteredStore } from "../navigation-store-handle.js";
+import { revalidationErrorOf } from "../../decode-loader-results.js";
 
 /**
  * Decoder injected at app startup (see setPrefetchDecoder). This is
@@ -376,8 +377,14 @@ function executePrefetchFetch(
       // clean EOF) — and only then arm respawn: a truncated or failed stream's
       // reserve would replay broken bytes, so it stays one-shot (and its
       // buffered reserve is released via the removePrefetch dispose above).
-      Promise.allSettled([payload, streamComplete]).then(([decode]) => {
+      Promise.allSettled([payload, streamComplete]).then(async ([decode]) => {
+        clearTimeout(timeoutId);
         if (decode.status === "fulfilled" && endedCleanly) {
+          // A loader's error rides a 200: see DecodedPrefetch.failed.
+          if (await revalidationErrorOf(decode.value.metadata?.segments)) {
+            entry.failed = true;
+            return;
+          }
           entry.complete = true;
           if (reserve) {
             entry.respawn = makeRespawn(storageKey, reserve, scope);
@@ -396,7 +403,6 @@ function executePrefetchFetch(
             }
           }
         }
-        clearTimeout(timeoutId);
       });
       return entry;
     })

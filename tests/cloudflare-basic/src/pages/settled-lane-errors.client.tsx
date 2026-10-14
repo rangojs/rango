@@ -74,7 +74,8 @@ const BASE = "/settled-lane-errors";
  * `sle-prefetch-*` links prefetch on hover (the test waits for the prefetch to
  * drain, then clicks: a fully-prefetched click); `sle-link-*` never prefetch.
  * The page's `run` search param rides on the ok and flaky links, and the
- * break button switches that run's flaky loader to throw.
+ * break button switches that run's flaky loader to throw. The `?once` flaky
+ * link's loader throws on the run's first call only.
  */
 export function SettledLaneNav(): ReactNode {
   const [search] = useSearchParams();
@@ -131,6 +132,13 @@ export function SettledLaneNav(): ReactNode {
         data-testid="sle-prefetch-gone"
       >
         Gone (prefetched)
+      </Link>
+      <Link
+        to={`${BASE}/flaky?run=${run ?? "none"}&once=1`}
+        prefetch="hover"
+        data-testid="sle-prefetch-flaky-once"
+      >
+        Flaky once (prefetched)
       </Link>
     </nav>
   );
