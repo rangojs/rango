@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed: the document cache no longer stores a page whose loader threw
+
+**Before.** `createDocumentCacheMiddleware()` refused a response whose render
+reported an error, but a loader that threw was not one: its error renders in
+place as a value, inside a 200. A navigation (`?_rsc_partial`) whose loader
+failed was stored with the error and served to every later navigation on that
+key until the entry expired, and a failing stale refresh replaced a healthy
+entry with it. A document did the same when the failing loader was
+`ssr: false` with an `errorBoundary()`, and `router.prerender()` reported that
+document as warmed.
+
+**Now.** A loader error counts as a render error. The document cache stores
+nothing, the next request renders again, and a stale entry keeps serving
+until a refresh succeeds. `router.prerender()` answers `render-failed` for it.
+`notFound()` and `redirect()` thrown from a loader are not errors and change
+nothing.
 ### Fixed: a click on a link whose prefetch is still streaming 30 seconds later keeps its pending parts
 
 **Before.** The router aborts a prefetch that is still streaming 30 seconds

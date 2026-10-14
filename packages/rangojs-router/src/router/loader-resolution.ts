@@ -182,6 +182,8 @@ export function wrapLoaderWithErrorHandling<T>(
   // The token is the loader's $$id (hash#export in prod, pathfrag#export in dev),
   // not a clean display name.
   const loaderName = segmentId.split(".").pop() || "unknown";
+  // Captured now: the rejection can settle outside the request's ALS frame.
+  const renderErrors = _getRequestContext()?._renderErrors;
 
   return Promise.resolve(promise)
     .then(
@@ -277,6 +279,11 @@ export function wrapLoaderWithErrorHandling<T>(
           fallback: null,
         };
       }
+
+      // The error renders in place inside a 200 as a value, which neither
+      // Flight nor Fizz reports: record it like their errors, so a writer
+      // that reads _renderErrors (the document cache) does not store it.
+      renderErrors?.push(error);
 
       // Find nearest error boundary
       const fallback = findNearestErrorBoundary(entry);

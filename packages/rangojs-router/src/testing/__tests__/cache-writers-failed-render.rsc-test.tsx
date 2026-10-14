@@ -145,11 +145,9 @@ afterEach(() => {
 });
 
 describe.each(KINDS)("recovered %s render", (kind) => {
-  // The document cache stores a render whose loader failed: the error rides in
-  // the body as a settled loader result, not as a Flight or Fizz error, so
-  // _renderErrors stays empty (cache/document-cache.ts throwIfRenderErrored).
-  // it.fails pins the gap; drop it when the writer refuses.
-  const docIt = kind === "loader" ? it.fails : it;
+  // A loader error rides the body as a settled loader result, which neither
+  // Flight nor Fizz reports: loader-resolution.ts records it in _renderErrors,
+  // which the document cache reads (throwIfRenderErrored).
 
   it("cache(): the next request is healthy", async () => {
     const cacheStore = new MemorySegmentCacheStore();
@@ -241,7 +239,7 @@ describe.each(KINDS)("recovered %s render", (kind) => {
     expect(second.flight).not.toContain("declared-error");
   });
 
-  docIt("document cache: the next request is a MISS and healthy", async () => {
+  it("document cache: the next request is a MISS and healthy", async () => {
     const cacheStore = new MemorySegmentCacheStore();
     const router = createRouter({})
       .use(createDocumentCacheMiddleware())
@@ -260,39 +258,34 @@ describe.each(KINDS)("recovered %s render", (kind) => {
     expect(second.body).not.toContain("declared-error");
   });
 
-  docIt(
-    "document cache, stale refresh: a failing refresh does not replace the stale document",
-    async () => {
-      const clock = movableClock();
-      const cacheStore = new MemorySegmentCacheStore();
-      const router = createRouter({})
-        .use(createDocumentCacheMiddleware())
-        .use("/ds", async (ctx, next) => {
-          ctx.header("Cache-Control", "s-maxage=1, stale-while-revalidate=300");
-          await next();
-        })
-        .routes(
-          urls(({ path, loader, loading, errorBoundary }) => [
-            path("/ds", HANDLERS[kind], { name: "ds" }, () =>
-              inner(kind, { loader, loading, errorBoundary } as never),
-            ),
-          ]),
-        );
-      failing = false;
-      await serveShellRequest(router, "/ds", { cacheStore });
-      await settle();
-      clock.advance(1_500);
-      failing = true;
-      const stale = await serveShellRequest(router, "/ds", { cacheStore });
-      expect(stale.response.headers.get("x-document-cache-status")).toBe(
-        "STALE",
+  it("document cache, stale refresh: a failing refresh does not replace the stale document", async () => {
+    const clock = movableClock();
+    const cacheStore = new MemorySegmentCacheStore();
+    const router = createRouter({})
+      .use(createDocumentCacheMiddleware())
+      .use("/ds", async (ctx, next) => {
+        ctx.header("Cache-Control", "s-maxage=1, stale-while-revalidate=300");
+        await next();
+      })
+      .routes(
+        urls(({ path, loader, loading, errorBoundary }) => [
+          path("/ds", HANDLERS[kind], { name: "ds" }, () =>
+            inner(kind, { loader, loading, errorBoundary } as never),
+          ),
+        ]),
       );
-      await settle();
-      failing = false;
-      const third = await serveShellRequest(router, "/ds", { cacheStore });
-      expect(third.body).not.toContain("declared-error");
-    },
-  );
+    failing = false;
+    await serveShellRequest(router, "/ds", { cacheStore });
+    await settle();
+    clock.advance(1_500);
+    failing = true;
+    const stale = await serveShellRequest(router, "/ds", { cacheStore });
+    expect(stale.response.headers.get("x-document-cache-status")).toBe("STALE");
+    await settle();
+    failing = false;
+    const third = await serveShellRequest(router, "/ds", { cacheStore });
+    expect(third.body).not.toContain("declared-error");
+  });
 });
 
 describe("recovered failure below a cache that is not a route cache()", () => {
@@ -402,8 +395,7 @@ describe.each(KINDS)(
       const next = await serveShellRequest(router, "/wc", { cacheStore });
       expect(next.flight).toContain(healthyMarker(kind));
       expect(next.flight).not.toContain("declared-error");
-      // Loader errors are not a recovered render the warm can see.
-      if (kind !== "loader") expect(result).toMatchObject({ ok: false });
+      expect(result).toMatchObject({ ok: false });
     });
 
     it("ppr: the warm does not store a failed shell", async () => {

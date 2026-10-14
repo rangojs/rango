@@ -749,6 +749,16 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   rejection settles before response construction (opportunistic `_setStatus`);
   loader redirects are always client-side navigations (document-lane 302
   authority stays with middleware).
+- Loader errors as render errors: a loader that throws (not a signal) resolves
+  to an `ok: false` envelope rendered in place inside a 200, which neither
+  Flight nor Fizz reports. `wrapLoaderWithErrorHandling` pushes the error to
+  the request's `_renderErrors`, captured when the loader is wrapped, so the
+  document cache refuses the response (a partial and an `ssr: false` loader's
+  planted fallback included; before, it stored both and a failing stale
+  refresh replaced a healthy entry) and a `router.prerender()` warm reports
+  `render-failed`. A shell capture is unaffected: live loaders do not run in
+  it, and a bake-lane loader that throws already refuses it.
+  Pinned by `testing/__tests__/cache-writers-failed-render.rsc-test.tsx`.
 
 ### Action System
 
