@@ -130,12 +130,8 @@ describe("useHandle: a hydrating render reads the document's handle state", () =
 
     await release();
 
-    // The update's optimistic pass and its transition.
-    expect(renders).toEqual([
-      ["document"],
-      ["document", "late"],
-      ["document", "late"],
-    ]);
+    // One render at release: the update has a single lane.
+    expect(renders).toEqual([["document"], ["document", "late"]]);
     expect(container.innerHTML).toBe("<ul><li>document</li><li>late</li></ul>");
   });
 
@@ -170,11 +166,7 @@ describe("useHandle: a hydrating render reads the document's handle state", () =
 
     await release();
 
-    expect(renders).toEqual([
-      ["document"],
-      ["document", "late"],
-      ["document", "late"],
-    ]);
+    expect(renders).toEqual([["document"], ["document", "late"]]);
     expect(container.innerHTML).toBe("<ul><li>document</li><li>late</li></ul>");
   });
 

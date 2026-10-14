@@ -103,6 +103,7 @@ export function commitInTransition(
       addTransitionType(kind);
       for (const type of transitionTypes) addTransitionType(type);
     }
+    update.inTransition = true;
     onUpdate(update);
   });
 }

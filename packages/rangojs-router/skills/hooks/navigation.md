@@ -187,6 +187,9 @@ const segments = useSegments();
 const part = segments.path[depth];
 ```
 
+Like `useHandle`, it commits with the page: while React holds the page being
+left, `useSegments()` keeps that page's path and segments.
+
 ### useLinkStatus()
 
 Track pending state inside a Link component. `pending` is `true` while a

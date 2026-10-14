@@ -119,9 +119,15 @@ export type StateListener = () => void;
 export type ActionStateListener = (state: TrackedActionState) => void;
 
 /**
- * Handle state listener
+ * Handle state listener. `signal`, from a payload update: "anchor" when it
+ * hands React a page in a transition (route state on screen until it
+ * commits), "release" when it hands one urgently; "release" again once the
+ * page committed (useCommitAnchoredState, react/use-handle.ts).
  */
-export type HandleListener = () => void;
+export type HandleListener = (signal?: RouteStateSignal) => void;
+
+/** See HandleListener. */
+export type RouteStateSignal = "anchor" | "release";
 
 /**
  * Internal handle state stored in controller.
@@ -262,8 +268,18 @@ export interface EventController {
    * Deliver queued location, params, navigation, and handle notifications now.
    * NavigationProvider calls this inside the payload update so React assigns
    * every route-state hook update to the same normal or transition lane.
+   * `signal`: handle readers learn how the page is handed over. After
+   * "anchor" (a page in a transition) values that arrive before
+   * releaseRouteState() wait for it (useCommitAnchoredState,
+   * react/use-handle.ts).
    */
-  flushRouteState(): void;
+  flushRouteState(signal?: RouteStateSignal): void;
+  /**
+   * The page the last flushRouteState("anchor") announced has committed:
+   * NavigationProvider calls this from its layout effect, and handle readers
+   * apply what waited, in that task.
+   */
+  releaseRouteState(): void;
 
   // Handle operations
   setHandleData(
@@ -441,20 +457,23 @@ function matchesActionId(
 
 interface DebouncedNotifier {
   schedule(): void;
-  flush(): void;
+  flush(signal?: RouteStateSignal): void;
 }
 
 // Batch rapid notifications into one task to prevent render storms. The
-// explicit flush lets a React update owner preserve its scheduling lane.
-function makeDebouncedNotifier(listeners: Set<() => void>): DebouncedNotifier {
+// explicit flush lets a React update owner preserve its scheduling lane; a
+// signal is delivered even with nothing queued.
+function makeDebouncedNotifier(
+  listeners: Set<(signal?: RouteStateSignal) => void>,
+): DebouncedNotifier {
   let timeout: ReturnType<typeof setTimeout> | null = null;
-  const flush = () => {
-    if (timeout === null) return;
-    clearTimeout(timeout);
+  const flush = (signal?: RouteStateSignal) => {
+    if (timeout === null && !signal) return;
+    clearTimeout(timeout ?? undefined);
     timeout = null;
     notifyListeners(
       [...listeners],
-      (listener) => listener(),
+      (listener) => listener(signal),
       (listener) => listeners.has(listener),
     );
   };
@@ -617,9 +636,9 @@ export function createEventController(
 
   const notifyHandles = makeDebouncedNotifier(handleListeners);
 
-  function flushRouteState(): void {
+  function flushRouteState(signal?: RouteStateSignal): void {
     notifyStateListeners.flush();
-    notifyHandles.flush();
+    notifyHandles.flush(signal);
   }
 
   function getState(): DerivedNavigationState {
@@ -1264,6 +1283,7 @@ export function createEventController(
     subscribeToAction,
     subscribeToHandles,
     flushRouteState,
+    releaseRouteState: () => notifyHandles.flush("release"),
 
     // Direct access
     getCurrentNavigation: () => currentNavigation,

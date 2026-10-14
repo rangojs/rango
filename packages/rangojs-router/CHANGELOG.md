@@ -487,12 +487,46 @@ keyed by type could not tell a filter change from an add-to-cart.
   the popstate event, not as a transition. It keeps its `navigation-back`.
 - Under `transition()`, a stale entry's revalidation also carries `action`, as
   before. Key `revalidate: "none"` to keep an `action` map off it.
-- React keeps one queue of transition types per root, and the first
-  transition commit after a navigation takes the whole queue. When another
-  transition commit lands first, such as the router's navigation-state update
-  at the end of a streamed response, it takes the page's types and the page
-  commits with none. The existing `navigation` type is affected the same way
-  (see [#1164](https://github.com/rangojs/rango/issues/1164)).
+- The types reach the commit that brings the page. React keeps one queue of
+  transition types per root, and the first transition commit after a
+  navigation takes the whole queue. No router hook update takes them first:
+  `useHandle()` and `useSegments()` commit with the page, and a
+  `useNavigation()` value that moves while neither the state nor the URL does
+  (`pendingUrl` when the response starts streaming, `isStreaming` when it
+  ends) commits with the page while the reader has a value React holds, and
+  urgently otherwise, so it starts no view transition of its own. This also
+  fixes the existing `navigation` type, which a page often lost the same way
+  (see [#1164](https://github.com/rangojs/rango/issues/1164) and the next
+  entry). A transition your own code starts while React holds a navigation's
+  page can still take them.
+
+### Fixed: a navigation's title, breadcrumbs and `useSegments()` commit with its page
+
+**Before.** On a navigation React holds on screen while the destination
+loads (a `transition()` route, a same-route search change, a handler that
+awaits its data), the destination's `Meta` title, its `Breadcrumbs` crumbs and
+every other `useHandle()` value committed as soon as the response brought
+them, over the page being left. On a page whose handler awaits its data after
+its pushes that lasted the whole wait (about 800 ms in the e2e fixture). A
+`useSegments()` reader of the full state showed the destination's location
+early in the same way. That early commit also took the page's transition
+types, so a `<ViewTransition>` keyed by them did not animate the page.
+
+**Now.** Handle values and `useSegments()` commit with the page they belong
+to, so nothing shows the destination over the page being left. On a page
+that commits urgently (a click that mounts new segments, as most first visits
+do), a value that arrives before React renders the page commits with it, and
+the page's effects read it: an analytics `page_view` fired from an effect
+keyed on `usePathname()` carries the new page's handle metadata and
+`document.title`. On a page React holds in a transition (a `transition()`
+route, a same-route search change, a fully prefetched click), a value that
+arrives during the wait is applied right after the page commits, in the same
+task, before the browser paints; an effect of the page that runs on the URL
+change alone reads the previous page's value, so key it on the handle value
+too. A crumb whose `content` is a promise read with `use()` inside
+`<Suspense>` never holds the page: the page changes when its response arrives
+and only the crumb's content waits, whether the crumb keeps its `<Suspense>`
+across pages or mounts a new one.
 
 ### Added: `readAction()` on `serveShellRequest()`'s result
 

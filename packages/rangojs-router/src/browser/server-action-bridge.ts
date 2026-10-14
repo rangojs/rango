@@ -115,6 +115,7 @@ function commitAction(
   else
     startTransition(() => {
       addTransitionType?.("action");
+      update.inTransition = true;
       onUpdate(update);
     });
 }

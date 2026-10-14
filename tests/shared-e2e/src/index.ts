@@ -70,6 +70,8 @@ export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
 export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario.js";
 export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
+export { runHandlesCommitTests } from "./handles-commit-scenario.js";
+export type { HandlesCommitScenarioOptions } from "./handles-commit-scenario.js";
 export type { TxIdleViewTransitionScenarioOptions } from "./tx-idle-view-transition-scenario.js";
 export { runTransitionKindsTests } from "./transition-kinds-scenario.js";
 export type { TransitionKindsScenarioOptions } from "./transition-kinds-scenario.js";

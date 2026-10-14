@@ -1468,6 +1468,78 @@ group refresh would write the shared loader-id bucket and leak into unrelated
 unkeyed reads of the same loader, which the fan-out table keeps local. Sharing a
 value within a group is therefore opt-in via a common `key`.
 
+## Client Route-State Commits
+
+This one is client-only too: which React commit brings the router's hook
+values to the screen. The rule is that route state commits with the page it
+describes. If React holds a navigation's page (a `transition()` route, a
+same-route search change, a fully prefetched click, a handler still awaiting
+its data), every router hook keeps showing the page being left until the
+destination commits. A reader of two hooks never sees half of each.
+
+Here is how each hook gets there:
+
+- `usePathname`, `useSearchParams`, `useParams` and `useNavigation` take the
+  destination in the lane of the tree. `NavigationProvider`'s update
+  subscriber calls `EventController.flushRouteState()` inside the payload
+  update, so the controller's notification runs in that update's lane rather
+  than on its debounce timer (#1164; see the route-state atomicity entry in
+  `feature-map.md`).
+- One `useNavigation` case is different: a value that moves while neither the
+  state nor the location does (`pendingUrl` clearing as the response starts
+  streaming, `isStreaming` clearing as it ends). There is no location to
+  commit it with. It goes in a transition only while the reader has a value
+  React has not committed yet, which React then entangles with it; otherwise
+  it is set urgently. A transition of its own would start a view transition
+  inside any `<ViewTransition>` whose class does not resolve to `none` for a
+  commit with no types (`transition({})` does), and would commit ahead of a
+  held page and take its types.
+- `useHandle` and `useSegments` learn from the same flush how the page is
+  handed over (`useCommitAnchoredState`, `browser/react/use-handle.ts`). The
+  payload's own handle data comes after it: a history-cache page's pushes
+  (`cachedHandleData`) are set right after the flush and flushed again, and
+  streamed ones arrive a little later. An urgent page gets a "release"
+  signal: a value that arrives before React renders it is set at default
+  priority, in the page's lane, and commits with it, where the page's effects
+  read it (an analytics page view keyed on the URL; the vite-rsc-demo `gtm`
+  e2e failed on a version that held these too). A page in a transition
+  (`NavigationUpdate.inTransition`, set by `commitInTransition`, an action's
+  commit and a cached back/forward's) gets an "anchor" signal: a value that
+  arrives from there on waits. `NavigationProvider`'s layout effect, in the
+  commit that brings that payload, calls `releaseRouteState()`, and the
+  readers apply what waited there, synchronously, in the task that commits
+  the page. The page's own effects have run by then and read the previous
+  values. A transition entangled with the page's would put the value in its
+  commit, but one set after React rendered the page and before its view
+  transition's mutation misses that commit and starts a view transition of
+  its own. A reader whose value did not move sets nothing and does not render
+  (the `hook-render-stability` e2e pins that: an earlier version gave every
+  reader an update in the page's lane and re-rendered all of them on a search
+  change).
+
+You might wonder why the payload's values are not simply put in the tree's
+lane, where React would commit them with the page. We tried that: a crumb whose
+`content` is a promise read with `use()` inside a `<Suspense>` that is
+already showing content re-suspends, and React holds the whole transition,
+page included, until the promise resolves (2.4 s instead of 0.4 s in the
+`handles-commit` e2e; a history-cache page whose crumb was still pending did
+the same until its pushes moved after the flush). Putting it in a lane of
+its own was the original bug:
+that commit landed ahead of the held page, put the destination's title and
+crumbs over the page being left, and took the page's transition types.
+
+Transition types follow from this. React keeps one queue of types per root,
+and the first transition commit takes all of it. Since no router hook commits
+ahead of a held page any more, the commit that brings the page is the one
+that takes its kind (`push`, `replace`, `pop`, `action`, `revalidate`, #1165).
+A transition the app starts itself while a page is held can still take them.
+Pinned by `src/__tests__/use-handle-commit-lane.test.tsx`,
+`src/__tests__/navigation-provider-cached-handles.test.tsx`,
+`src/__tests__/use-navigation-commit-lane.test.tsx` ("a quiet notification"),
+`src/testing/__tests__/render-route-handles-commit.test.tsx`, and the
+`handles-commit`, `nav-idle-location` and `transition-kinds` e2e (both apps,
+dev and production).
+
 ## Non-Guarantees
 
 - A loader cannot rewrite, by design (`ssr: false` included): `rewrite()` is

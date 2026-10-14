@@ -108,7 +108,11 @@ pending Promise to `router.navigate(url, { loaders })`; navigate() then commits
 through production's `commitInTransition`, which React holds, so a pending UI
 bound to `useNavigation()` and a stale indicator bound to
 `useLoader().isLoading` are unit-testable (skill
-`testing/client-components.md`, "Held navigation").
+`testing/client-components.md`, "Held navigation"). `navigate(url, { handles })`
+hands the destination's handle pushes over the response's handle stream, so a
+title or crumbs read with `useHandle()` keep the page being left's values while
+React holds the page. A back/forward restored from the history cache is not
+modeled: renderRoute keeps one URL and caches no entries.
 
 The rango **cache-invalidation directives** are an exception worth calling out,
 because they used to look like a trap and no longer are. A handler/action/loader

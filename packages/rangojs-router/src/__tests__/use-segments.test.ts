@@ -44,6 +44,7 @@ vi.mock("react", async () => {
       capturedEffectFn = fn;
       capturedEffectDeps = deps;
     }),
+    useLayoutEffect: vi.fn(),
   };
 });
 
@@ -162,7 +163,8 @@ describe("useSegments", () => {
     onStoreChange();
 
     expect(setState).toHaveBeenCalledOnce();
-    expect(setState).toHaveBeenCalledWith(["L0", "L0L1"]);
+    // The hook sets through an updater (useCommitAnchoredState).
+    expect(setState.mock.calls[0][0]()).toEqual(["L0", "L0L1"]);
   });
 
   it("the next store change applies a removed selector as the full state", () => {
@@ -180,7 +182,7 @@ describe("useSegments", () => {
     onStoreChange();
 
     expect(setState).toHaveBeenCalledOnce();
-    expect(setState).toHaveBeenCalledWith(
+    expect(setState.mock.calls[0][0]()).toEqual(
       expect.objectContaining({
         path: ["shop", "products"],
         segmentIds: ["L0", "L0L1"],

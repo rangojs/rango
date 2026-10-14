@@ -4,16 +4,22 @@
  * is captured a task later, then the update callback (React's mutation)
  * runs, then `ready` (React's spawned work) and `finished`. With it React
  * commits a transition through its view-transition path instead of its
- * fallback. `started()` counts the transitions React began.
+ * fallback. `started()` counts the transitions React began, `types()` lists
+ * the transition types React passed to each.
  */
 export function installViewTransitionStub(): {
   started(): number;
+  types(): string[][];
   uninstall(): void;
 } {
   const doc = document as unknown as Record<string, unknown>;
-  let started = 0;
-  doc.startViewTransition = ({ update }: { update: () => unknown }) => {
-    started++;
+  const types: string[][] = [];
+  doc.startViewTransition = (options: {
+    update: () => unknown;
+    types?: Iterable<string> | null;
+  }) => {
+    const { update } = options;
+    types.push([...(options.types ?? [])]);
     const done = new Promise<void>((resolve) => setTimeout(resolve, 0))
       .then(update)
       .then(() => undefined);
@@ -28,7 +34,8 @@ export function installViewTransitionStub(): {
   const root = document.documentElement as unknown as Record<string, unknown>;
   if (!("getAnimations" in root)) root.getAnimations = () => [];
   return {
-    started: () => started,
+    started: () => types.length,
+    types: () => types,
     uninstall: () => {
       delete doc.startViewTransition;
     },

@@ -349,6 +349,12 @@ export interface NavigationUpdate {
     /** Function to check if streaming is in progress */
     isStreaming?: () => boolean;
   };
+  /**
+   * Handed to React inside startTransition (commitInTransition, an action's
+   * commit, a cached back/forward's): NavigationProvider joins the route
+   * state that arrives while React holds it to its commit.
+   */
+  inTransition?: true;
 }
 
 /**

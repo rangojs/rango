@@ -39,6 +39,13 @@ the capture, so its pushes always apply client-side; with `ssr: false` they
 bake into the shell. See `/loader` → "Writing Handles from Loaders". `useHandle`
 re-renders on every handle update, late loader pushes included.
 
+A navigation's handle values commit with its page: while React holds the page
+being left (a `transition()` route, a same-route search change, a handler that
+awaits its data), `useHandle` keeps that page's values, and the destination's
+title and crumbs land in the task that commits the destination. A crumb whose
+`content` is a promise read with `use()` in `<Suspense>` never holds the page;
+only that boundary waits for it.
+
 A server component that pushes after an `await` throws `LateHandlePushError`:
 reserve the slot in the handler with `ctx.use(Handle).defer()` and resolve it
 from the component (`/breadcrumbs`, "Deferred content").

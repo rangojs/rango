@@ -436,10 +436,16 @@ export interface TestRouterHandle {
    * location state as a production replace does). With neither, history is
    * left alone and readers keep the state they have: `navigate(url)` and
    * `navigate(url, { replace: false })` are the same call.
+   *
+   * `options.handles` are the destination's handle pushes (`[handle,
+   * values]`, attached to its leaf route as in `renderRoute`'s own
+   * `handles`). They arrive on the response's handle stream, so `useHandle`
+   * readers take them with the page's commit: while React holds the page,
+   * readers keep the values of the page being left.
    */
   navigate(
     url: string,
-    options?: Pick<RenderRouteOptions, "loaders"> &
+    options?: Pick<RenderRouteOptions, "loaders" | "handles"> &
       Pick<NavigateOptions, "state" | "replace" | "transition">,
   ): Promise<void>;
   /**
@@ -798,7 +804,7 @@ export async function renderRoute(
     };
   }
 
-  type NavigateCall = Pick<RenderRouteOptions, "loaders"> & {
+  type NavigateCall = Pick<RenderRouteOptions, "loaders" | "handles"> & {
     history?: Pick<NavigateOptionsInternal, "state" | "replace" | "transition">;
     kind?: TransitionWhenKind;
     transition?: boolean;
@@ -854,6 +860,23 @@ export async function renderRoute(
       mount,
     );
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
+    // The destination's handle pushes arrive on the response's handle
+    // stream, as production's do, behind the page's commit.
+    const navHandles = navOptions?.handles;
+    if (navHandles) {
+      const leafId =
+        [...segments].reverse().find((s) => s.type === "route")?.id ??
+        segments[segments.length - 1]?.id;
+      const pushed: HandleDataSeed = {};
+      for (const [h, values] of navHandles) {
+        if (leafId === undefined) continue;
+        const id = (h as unknown as { $$id: string }).$$id;
+        (pushed[id] ??= {})[leafId] = values;
+      }
+      metadata.handles = (async function* () {
+        yield pushed;
+      })();
+    }
     // Production's browser-run transition({ when }) decision
     // (browser/partial-update.ts): the committed location is the source.
     const kind: TransitionWhenKind =
@@ -1043,6 +1066,7 @@ export async function renderRoute(
     navigate: (target, navOptions) =>
       navigate(target, {
         loaders: navOptions?.loaders,
+        handles: navOptions?.handles,
         transition: navOptions?.transition,
         history:
           navOptions?.state !== undefined || navOptions?.replace
