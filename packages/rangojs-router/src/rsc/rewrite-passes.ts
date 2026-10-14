@@ -99,14 +99,18 @@ export interface RewritePass {
 /**
  * Move the request context to `rewrite`'s target for the next pass: check
  * that this request can be rewritten, resolve the target, count the hop,
- * then rebase the context. Throws the site error for a mutation or a loader
- * fetch, a resolution error, and RewriteLoopError.
+ * then rebase the context. Throws the site error for a loader fetch, a
+ * refused mutation or one whose body middleware read before its action ran,
+ * a resolution error, and RewriteLoopError.
  *
- * A mutation is refused only while its action has not run (a rewrite from
- * global middleware), so a naive lock never runs it. Route middleware wraps
- * only the re-render after the action (#1145): refusing then reports an
- * error for a committed write, so the request moves to the target, whose
- * pass re-renders from `reqCtx._actionRan`.
+ * A mutation moves too (#1145). Before its action ran (a rewrite from global
+ * middleware) it moves with its body, and the target's pass runs the action
+ * after the target's global middleware, as a direct post there would. After
+ * it ran (route middleware wraps only the re-render), the target's pass
+ * re-renders from `reqCtx._actionRan`. `disallowMutations()` refuses the
+ * first, so a lock never runs a mutation; the second is already committed,
+ * and refusing it reports an error for a write that happened, so the caller
+ * retries it.
  */
 export function applyRewrite(
   rewrite: Rewrite,
@@ -120,23 +124,40 @@ export function applyRewrite(
   if (reqCtx.originalUrl.searchParams.has("_rsc_loader")) {
     throw rewriteNotSupported(rewrite, "loader-fetch");
   }
-  if (
-    passRequest.method !== "GET" &&
-    passRequest.method !== "HEAD" &&
-    !reqCtx._actionRan
-  ) {
-    throw rewriteNotSupported(rewrite, "mutation");
+  if (passRequest.method !== "GET" && passRequest.method !== "HEAD") {
+    if (!reqCtx._actionRan) {
+      if (rewrite.mutationsDisallowed) {
+        throw rewriteNotSupported(rewrite, "mutation");
+      }
+      // The target's pass hands the body to the action: one middleware read
+      // would run it with no arguments.
+      if (passRequest.bodyUsed) throw rewriteNotSupported(rewrite, "body-read");
+    } else if (
+      rewrite.mutationsDisallowed &&
+      process.env.NODE_ENV !== "production"
+    ) {
+      console.warn(
+        `[rango] ${describeRewriteTarget(rewrite.target)}.disallowMutations() came after the server action or form post ran, so it cannot refuse it: route middleware, and global middleware on a later rewritten pass, run only after the action. The render moves to the target. To refuse mutations, throw it from global middleware (router.use()) matched on the URL the form posts to.`,
+      );
+    }
   }
   const target = resolveRewriteTarget(rewrite, routeMap, reqCtx.url, basename);
   const hops = recordRewriteHop(reqCtx, reqCtx.url, target);
   recordRewriteShell(reqCtx, rewrite.shellAudience);
   const url = rewriteTransportUrl(target, reqCtx.originalUrl);
-  // A JS action consumed the body (`new Request(url, used)` throws): the same
-  // request without it. A no-JS form post keeps its body, since the PE handler
-  // reads a clone, so a form-field check reads it on every pass.
-  const request = passRequest.bodyUsed
-    ? bodylessRequest(url, passRequest, passRequest.method)
-    : new Request(url, passRequest);
+  // A mutation keeps its body: one whose action has not run yet, and a no-JS
+  // form post, since the PE handler reads a clone, so a form-field check
+  // reads it on every pass. A JS action that ran consumed it
+  // (`new Request(url, used)` throws): the same request without it or its
+  // content-type, so a body check gated on the content-type passes over this
+  // pass, which never runs the action.
+  let request: Request;
+  if (passRequest.bodyUsed) {
+    request = bodylessRequest(url, passRequest, passRequest.method);
+    request.headers.delete("content-type");
+  } else {
+    request = new Request(url, passRequest);
+  }
   rebaseRequestContext(reqCtx, request, url);
   return { request, url, target, hops };
 }

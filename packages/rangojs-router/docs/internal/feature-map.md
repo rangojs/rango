@@ -699,11 +699,17 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   (`_shellCaptureForVisitor`, `ShellCacheEntry.pathname`), `"target"` shares
   the target's shell (#1146). More than 5 hops or a
   same-URL rewrite is a `RewriteLoopError` (onError "routing", 508). A
-  route-middleware rewrite of a mutation (JS action, no-JS form post) runs
-  after the action, so it moves the re-render to the target from the action's
-  outcome (`reqCtx._actionRan`), never running the action again. Refused
-  with a site error: a rewrite after `next()`, a mutation's rewrite in global
-  middleware (before the action); a loader fetch
+  global-middleware rewrite of a mutation (JS action, no-JS form post, any
+  non-GET request) moves it to the target before the action, which runs on
+  the target's pass with the body (#1145); `Rewrite.disallowMutations()`
+  (`mutationsDisallowed`) refuses it there instead, for a lock, and chains
+  with `.shell()` either way. A route-middleware rewrite of a mutation runs
+  after the action, so it moves the re-render to the target from the
+  action's outcome (`reqCtx._actionRan`), never running the action again;
+  `.disallowMutations()` cannot refuse it there (dev warns). Refused with a
+  site error: a rewrite after `next()`, a disallowed mutation's rewrite in
+  global middleware (before the action), a mutation whose body middleware
+  read before the action; a loader fetch
   answers with the `loaderError` `load()` rejects with; a handler's, loader's or server action's throw is its own error
   (middleware only, by design: no loader rewrites).
   A rewritten payload carries `metadata.rewriteTarget` (`payloadLocation`);

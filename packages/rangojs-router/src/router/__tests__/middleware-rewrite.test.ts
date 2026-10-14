@@ -3,7 +3,7 @@
  * the chain (span settles as success), and a returned one is an error.
  * ctx.isRewrite and ctx.rewrittenFrom.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   executeMiddleware,
   type MiddlewareEntry,
@@ -397,18 +397,6 @@ describe("applyRewrite: a mutation", () => {
     return { ctx, request };
   }
 
-  it("is refused before its action ran (a rewrite from global middleware)", async () => {
-    const { ctx, request } = postContext();
-    await runWithRequestContext(ctx, async () => {
-      expect(() =>
-        applyRewrite(rewrite("/item/1"), request, ctx, {}, undefined),
-      ).toThrow(
-        'rewrite("/item/1") is not supported here: middleware threw it while handling a non-GET request',
-      );
-    });
-    expect(ctx.pathname).toBe("/public-1");
-  });
-
   const FORM_OUTCOME = {
     kind: "form",
     outcome: {
@@ -416,6 +404,96 @@ describe("applyRewrite: a mutation", () => {
       directActionId: null,
     },
   } as const;
+
+  it("moves to the target before its action ran (a rewrite from global middleware), with its body", async () => {
+    const { ctx, request } = postContext();
+    const pass = await runWithRequestContext(ctx, async () =>
+      applyRewrite(rewrite("/item/1"), request, ctx, {}, undefined),
+    );
+    expect(pass.target.href).toBe("http://localhost/item/1");
+    // The target's pass classifies and runs the action.
+    expect(pass.url.searchParams.get("_rsc_action")).toBe("a.ts#save");
+    expect(pass.request.method).toBe("POST");
+    expect(pass.request.headers.get("rsc-action")).toBe("a.ts#save");
+    expect(pass.request.headers.get("content-type")).toBe(
+      "text/plain;charset=UTF-8",
+    );
+    expect(pass.request.headers.get("x-auth")).toBe("ok");
+    expect(await pass.request.text()).toBe("[]");
+    expect(ctx.pathname).toBe("/item/1");
+    expect(ctx.rewrittenFrom?.pathname).toBe("/public-1");
+  });
+
+  it("is refused before its action ran when middleware read its body: the action would get none", async () => {
+    const { ctx, request } = postContext();
+    await request.text();
+    await runWithRequestContext(ctx, async () => {
+      expect(() =>
+        applyRewrite(rewrite("/item/1"), request, ctx, {}, undefined),
+      ).toThrow(
+        'rewrite("/item/1") is not supported here: middleware read the request body before it threw it',
+      );
+    });
+    expect(ctx.pathname).toBe("/public-1");
+    expect(rewriteTrail(ctx)).toBeUndefined();
+  });
+
+  it("with disallowMutations() is refused before its action ran", async () => {
+    const { ctx, request } = postContext();
+    await runWithRequestContext(ctx, async () => {
+      expect(() =>
+        applyRewrite(
+          rewrite("/item/1").disallowMutations(),
+          request,
+          ctx,
+          {},
+          undefined,
+        ),
+      ).toThrow(
+        'rewrite("/item/1") is not supported here: middleware threw it while handling a non-GET request',
+      );
+    });
+    expect(ctx.pathname).toBe("/public-1");
+    expect(request.bodyUsed).toBe(false);
+  });
+
+  it("with disallowMutations() moves once its action ran, and dev warns that it came too late", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { ctx, request } = postContext();
+      ctx._actionRan = FORM_OUTCOME;
+      const pass = await runWithRequestContext(ctx, async () =>
+        applyRewrite(
+          rewrite("/item/1").disallowMutations(),
+          request,
+          ctx,
+          {},
+          undefined,
+        ),
+      );
+      expect(pass.target.pathname).toBe("/item/1");
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toContain(
+        'rewrite("/item/1").disallowMutations() came after the server action or form post ran, so it cannot refuse it',
+      );
+
+      // Without the opt-out, a rewrite after the action moves silently.
+      const plain = postContext();
+      plain.ctx._actionRan = FORM_OUTCOME;
+      await runWithRequestContext(plain.ctx, async () =>
+        applyRewrite(
+          rewrite("/item/2"),
+          plain.request,
+          plain.ctx,
+          {},
+          undefined,
+        ),
+      );
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 
   it("moves to the target once its action ran, as a bodyless request of the same method and headers", async () => {
     const { ctx, request } = postContext();
@@ -431,6 +509,8 @@ describe("applyRewrite: a mutation", () => {
     expect(pass.request.body).toBeNull();
     expect(pass.request.headers.get("rsc-action")).toBe("a.ts#save");
     expect(pass.request.headers.get("x-auth")).toBe("ok");
+    // A body check gated on the content-type passes over it.
+    expect(pass.request.headers.get("content-type")).toBeNull();
     expect(ctx.pathname).toBe("/item/1");
     expect(ctx.rewrittenFrom?.pathname).toBe("/public-1");
   });

@@ -444,8 +444,9 @@ import type { Middleware } from "@rangojs/router";
 
 export const maintenance: Middleware = async (ctx, next) => {
   if (!locked || ctx.pathname === "/maintenance") return next();
-  // Global middleware runs before the action: a lock answers mutations with a
-  // Response, so the action never runs under maintenance.
+  // A rewrite moves a server action or form post to its target, where the
+  // action runs. A lock answers mutations itself, so none runs under
+  // maintenance.
   if (ctx.request.method !== "GET") {
     return new Response("Maintenance", {
       status: 503,
@@ -464,6 +465,16 @@ path("/maintenance", MaintenancePage, { name: "maintenance" }, () => [
     await next();
   }),
 ]);
+```
+
+Without the `Response` branch, `.disallowMutations()` keeps a lock from
+running mutations: a server action or form post under it is an error before
+the action runs (a 500 the client shows as an error, reported through
+`onError` with phase `"routing"`), and GET and HEAD rewrite as usual. The
+`Response` above gives the caller a proper 503 instead.
+
+```typescript
+throw rewrite("maintenance").disallowMutations();
 ```
 
 Targets, like `ctx.reverse` with a path form:
@@ -550,30 +561,50 @@ form post from a rewritten page is posted to the visitor's URL, so the same
 middleware sees it:
 
 - **Global middleware** on the visitor's URL runs before the action. A
-  rewrite there is refused for a non-GET request, before the action runs:
-  return a `Response` for mutations, as the lock above does.
+  rewrite there moves the mutation to the target first, with its body: the
+  target's global middleware, then the action, once, then the target's
+  route middleware and render, as a direct post to the target. So a
+  routing rewrite (a multi-tenant host, an A/B split, a visitor URL with no
+  route) keeps its page's forms working, in JS and no-JS. Rewrite every
+  method: a rewrite written for GETs only leaves the mutation on the
+  visitor's URL, so the action runs on the visitor's route and its render
+  replaces the page. A lock must not run the mutation: return a `Response`
+  for mutations, or throw `rewrite(...).disallowMutations()`, which refuses
+  it with an error before the action runs. It chains with `.shell()` in
+  either order.
 - **Route middleware** runs after the action, around the re-render, and
   sees it as the page's GET. A routing rewrite there (A/B, URL override,
   the `discontinued` example above) fires as on a GET, including one
   written for GETs only (`if (ctx.request.method !== "GET") return next()`).
   The action runs once, then the re-render runs as the target (its global
   and route middleware, its render, or its error boundary when the action
-  threw), and the page keeps its layout and state.
+  threw), and the page keeps its layout and state. Route middleware cannot
+  refuse the action, so `.disallowMutations()` has no effect there: the
+  render moves to the target, and dev logs a warning. Put a lock in global
+  middleware.
 - Global middleware on the target's pass sees the POST, with its headers.
   A no-JS form post keeps its body, so a form-field check (a CSRF token
-  read from `ctx.request.clone().formData()`) passes on every pass. A JS
-  action's body is gone (the action read it): global middleware that
-  reads it on the target's pass gets an empty body, so read it only when
-  `ctx.rewrittenFrom` is unset. Global middleware runs once per pass, as
-  for any rewrite. The target must be a page route: a rewrite of a
-  mutation to a response route (`path.json()`) is an error.
+  read from `ctx.request.clone().formData()`) passes on every pass, and so
+  does a mutation a global rewrite moved before its action, whose action
+  runs on the target's pass: do not skip a body check when
+  `ctx.rewrittenFrom` is set. Always read a clone; a rewrite after middleware
+  read the body itself is an error, since the action would get no
+  arguments. After a route-middleware rewrite, a JS action's body is gone
+  (the action read it), and that pass drops the `content-type` too, so a
+  body check gated on the content-type passes over it; that pass never runs
+  the action. Global middleware runs once per pass, as for any rewrite, so a
+  one-time token belongs in the action. After the action the target must be a
+  page route: a route-middleware rewrite of a mutation to a response route
+  (`path.json()`) is an error. Before it, a response route serves the moved
+  POST, as a direct post to it would.
 
 **Throw it, don't return it.** A returned rewrite is an error. Where a
 rewrite cannot be honored it is an error that names the rule: a route
 handler or a loader (see above), a server action (use `redirect()`),
 a loader fetch (`useFetchLoader`, `load()`: it
-rejects with the rule) or its middleware, and global middleware handling a
-non-GET request (a JS action or a no-JS form post: return a `Response`).
+rejects with the rule) or its middleware, and a `.disallowMutations()`
+rewrite from global middleware handling a non-GET request (a JS action or a
+no-JS form post).
 
 **try/catch around next().** A thrown rewrite passes through your
 middleware's `catch`. Rethrow it:
@@ -655,13 +686,15 @@ the same target (`/promo/a` to `/promo/b`, both rewritten to
 renders still comes from the request's URL and your middleware.
 
 **Testing.** `runMiddleware` reports a thrown rewrite as `result.rewrite`
-(`{ pathname, search, routeName? }`). `serveShellRequest` takes a rewritten
+(`{ pathname, search, routeName?, mutationsDisallowed }`). `serveShellRequest` takes a rewritten
 page request through the full production pipeline (document or `partial`
 navigation): the target's middleware, render, status and `x-rango-rewrite`.
 Pass the page's `metadata.rewriteTarget` as `partial.rewriteTarget` (or
 `action.rewriteTarget`) to send a request from it as the browser does.
 With `action` or `form` (from `createActionForm`) it posts a mutation to the
-visitor's URL, so a route-middleware rewrite's re-render is testable too.
+visitor's URL, so a global rewrite's move, a `.disallowMutations()` refusal
+(it rejects with the rule) and a route-middleware rewrite's re-render are
+testable too.
 `dispatch` re-dispatches too, for response routes only: it matches the
 visitor's URL first and throws on a component (RSC) route.
 `renderRoute(..., { request: "/shop", rewrite: "/maintenance" })` renders

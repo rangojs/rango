@@ -106,6 +106,12 @@ export interface RunMiddlewareRewrite {
   pathname: string;
   search: string;
   routeName?: string;
+  /**
+   * The rewrite was thrown with `.disallowMutations()`: production refuses it
+   * for a non-GET, non-HEAD request in global middleware, before the action
+   * runs, instead of moving the mutation to the target.
+   */
+  mutationsDisallowed: boolean;
 }
 
 /**
@@ -240,6 +246,7 @@ export async function runMiddleware<TEnv = any>(
         pathname: target.pathname,
         search: target.search,
         ...("name" in error.target && { routeName: error.target.name }),
+        mutationsDisallowed: error.mutationsDisallowed,
       };
       return new Response(null, {
         status: ctx.res.status,

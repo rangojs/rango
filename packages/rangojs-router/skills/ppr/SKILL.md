@@ -165,8 +165,9 @@ The rewrite chooses a shell for the rewritten request with `.shell()`:
 // A routing catch-all: each public URL gets a shell of its own.
 throw rewrite("item", { id }).shell("visitor");
 
-// A lock or promo page that renders nothing of the visitor's URL.
-throw rewrite("maintenance").shell("target");
+// A lock or promo page that renders nothing of the visitor's URL. A lock
+// also refuses mutations, which a rewrite otherwise moves to the target.
+throw rewrite("maintenance").shell("target").disallowMutations();
 ```
 
 - `.shell("visitor")` keys the shell by the visitor's URL and the target
