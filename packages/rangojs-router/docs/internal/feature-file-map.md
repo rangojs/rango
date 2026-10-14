@@ -190,10 +190,11 @@ The client descriptor and both runtime projections are owned by:
   leaves the marker, records each key's file, appends the import to each
   group's RSC client-reference proxy, and rejects what cannot run on the
   server. A group's `?rango-revalidate` module also imports those of the files
-  discovery assigned it (`assignClientUrlRevalidateFiles`, called from
-  `vite/discovery/discover-routers.ts` after the projection pass, over the
-  `ClientUrlRevalidateIndex` in `vite/discovery/state.ts` that every plugin
-  instance of one `rango()` shares). A
+  discovery assigned it (`assignClientUrlRevalidateFiles` in
+  `vite/discovery/client-urls-projection.ts`, which loads them before every
+  projection install, over the `ClientUrlRevalidateIndex` in
+  `vite/discovery/state.ts` that every plugin instance of one `rango()`
+  shares). A
   `revalidate(true | false)` literal stays in place. In dev, its
   `client-urls-component-use-hmr` plugin updates a component module's
   importers in the browser when its `.use` changed.
@@ -221,8 +222,9 @@ Vite discovery and projection installation are owned by
 [`vite/discovery/client-urls-projection.ts`](../../src/vite/discovery/client-urls-projection.ts)
 (also `isClientUrlsComponentUseSource`, the dev watcher's sniff for a
 `Component.use` module, `componentUseSignature`, the hash of its `.use`
-assignments that the watcher and the client HMR plugin compare, and
-`CLIENT_IMPORT_RE`),
+assignments that the watcher and the client HMR plugin compare,
+`CLIENT_IMPORT_RE`, `hoistedRevalidateId`, and `assignClientUrlRevalidateFiles`,
+which loads a projection's `revalidate()` registrations before every install),
 [`vite/router-discovery.ts`](../../src/vite/router-discovery.ts),
 [`vite/discovery/discover-routers.ts`](../../src/vite/discovery/discover-routers.ts),
 [`vite/discovery/state.ts`](../../src/vite/discovery/state.ts),

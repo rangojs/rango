@@ -768,10 +768,11 @@ the files a group's module imports**. You might wonder how discovery knows
 them: it serializes each group's SSR copy, so the projection already lists
 every key the group reads, its components' included, and the hoist transform
 records each key's file in every environment (`ClientUrlRevalidateIndex`,
-`vite/discovery/state.ts`). After the projection pass,
-`assignClientUrlRevalidateFiles` (in the plugin module) maps each group's keys
-to their files, and the group's `?rango-revalidate` module imports the
-`?rango-revalidate` module of each, after its own registrations. Only these
+`vite/discovery/state.ts`). Whenever discovery installs a projection,
+`assignClientUrlRevalidateFiles` (`vite/discovery/client-urls-projection.ts`)
+first maps each group's keys to their files, and the group's
+`?rango-revalidate` module imports the `?rango-revalidate` module of each,
+after its own registrations. Only these
 small modules load on the server, never a client module's code; a lazy
 `include()` stays lazy; and the key formula is unchanged, so a component
 module two groups read registers once. Where the file sits does not matter:
@@ -786,10 +787,20 @@ the group modules the dev server or the build serves. Discovery imports the
 RSC entry before it projects, so a static group's module has loaded once
 already, with no files on a cold start or the previous ones after an edit.
 Two things cover that. Discovery imports the assigned files' modules into
-its own realm before materialization reads the registry. And when a group's
-files change, it invalidates the group's module in its environment's module
-graph, so the next evaluation (a request realm after a reload) imports the
-current files. A realm that is not discovery's never loads a group before
+its own realm before it installs a projection that reads their keys. All
+three install sites go through one function (`installClientUrlProjections`):
+the dev watcher's pre-refresh, the pass's refresh before the entry import,
+and the strict pass after it. The order matters because node dev serves
+requests in that realm, and each request materializes the installed
+projection. Before this ordering, moving a `.use` into a module the group
+had not loaded made requests fail with "has no server registration" (a 500).
+The failures lasted about 3.5 s in the router test-app, until the pass's
+entry import ended. One install does not go through it: the routes-manifest
+module replays the last projection when the RSC runner reloads, so for about
+the watcher's 100 ms debounce after a reload a request can still read a key
+whose registration the fresh realm has not loaded. And when a group's files change, discovery invalidates
+the group's module in its environment's module graph, so the next
+evaluation (a request realm after a reload) imports the current files. A realm that is not discovery's never loads a group before
 its files are known: its entry imports the routes-manifest module first
 (`RSC_ENTRY_BOOTSTRAP_IMPORTS`), whose load waits for discovery, and Cloudflare
 dev invalidates the workerd graph wholesale after every rediscovery.

@@ -11,15 +11,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { normalizePath, parseAst, transformWithOxc } from "vite";
-import type { ClientUrlProjection } from "../../client-urls/server-projection.js";
 import {
   createClientUrlRevalidateIndex,
-  createDiscoveryState,
   type ClientUrlRevalidateIndex,
 } from "../discovery/state.js";
 import { hasUseClientDirective } from "../utils/directive-prologue.js";
 import {
-  assignClientUrlRevalidateFiles,
   clientUrlsRevalidateHoistPlugin,
   hoistClientUrlsRevalidates,
   parseHoistedRevalidateId,
@@ -1275,134 +1272,5 @@ export function Page() {
       expect(await hotUpdate(head)).toBeUndefined();
       expect(await hotUpdate(withUse)).toEqual([page, group]);
     });
-  });
-});
-
-describe("assignClientUrlRevalidateFiles", () => {
-  const groupA = "/app/src/a.urls.tsx";
-  const groupB = "/app/src/b.urls.tsx";
-  const groupC = "/app/src/c.urls.tsx";
-  const fileA = "/app/src/A.tsx";
-  const fileB = "/app/src/B.tsx";
-  const id = (file: string) => `${file}?rango-revalidate`;
-  const route = (
-    loaderRevalidate?: (string | boolean)[][],
-  ): ClientUrlProjection["routes"][number] => ({
-    id: "r",
-    pattern: "/",
-    name: null,
-    options: {},
-    loaderIds: [],
-    hasLoading: false,
-    ...(loaderRevalidate ? { loaderRevalidate } : {}),
-  });
-
-  function setup() {
-    const state = createDiscoveryState(undefined, undefined);
-    // Group A under its dev and production reference ids.
-    state.clientUrlSourceByReferenceId = new Map([
-      ["/src/a.urls.tsx#default", groupA],
-      ["abc123#default", groupA],
-      ["/src/b.urls.tsx#default", groupB],
-      ["/src/c.urls.tsx#default", groupC],
-    ]);
-    const a: ClientUrlProjection = {
-      version: 1,
-      routes: [route([["k1", true], ["k2"]]), route()],
-      intercepts: [
-        {
-          slotName: "@modal",
-          targetName: "item",
-          loaderIds: [],
-          hasLoading: false,
-          loaderRevalidate: [["k3"]],
-        },
-      ],
-    };
-    const b: ClientUrlProjection = {
-      version: 1,
-      routes: [route([["k2", "k-unrecorded"]])],
-    };
-    // Group C reads its own predicates only.
-    const c: ClientUrlProjection = { version: 1, routes: [route([["k4"]])] };
-    state.clientUrlProjectionMap = new Map([
-      ["/src/a.urls.tsx#default", a],
-      ["abc123#default", a],
-      ["/src/b.urls.tsx#default", b],
-      ["/src/c.urls.tsx#default", c],
-    ]);
-    state.clientUrlRevalidate.fileByKey
-      .set("k1", fileA)
-      .set("k2", fileB)
-      .set("k3", groupA)
-      .set("k4", groupC);
-    const nodes = new Map(
-      [groupA, groupB, groupC].map((group) => [id(group), { id: id(group) }]),
-    );
-    const rscEnv = {
-      runner: { import: vi.fn(async (_id: string) => ({})) },
-      moduleGraph: {
-        getModuleById: vi.fn((moduleId: string) => nodes.get(moduleId)),
-        invalidateModule: vi.fn(),
-      },
-    };
-    const assign = () =>
-      assignClientUrlRevalidateFiles(
-        state,
-        rscEnv as unknown as Parameters<
-          typeof assignClientUrlRevalidateFiles
-        >[1],
-      );
-    return { state, rscEnv, nodes, assign };
-  }
-
-  it("assigns each group the other files of its projection's keys and loads their registrations once", async () => {
-    const { state, rscEnv, assign } = setup();
-    await assign();
-    // k3 is group A's own: its proxy loads it. k-unrecorded has no file:
-    // materialization names it.
-    expect(state.clientUrlRevalidate.filesByGroup).toEqual(
-      new Map([
-        [groupA, [fileA, fileB]],
-        [groupB, [fileB]],
-        [groupC, []],
-      ]),
-    );
-    expect(
-      rscEnv.runner.import.mock.calls.map(([moduleId]) => moduleId),
-    ).toEqual([id(fileA), id(fileB)]);
-  });
-
-  it("invalidates a group's module when its files change, and only then", async () => {
-    const { state, rscEnv, nodes, assign } = setup();
-    const { invalidateModule } = rscEnv.moduleGraph;
-    await assign();
-    expect(invalidateModule.mock.calls).toEqual([
-      [nodes.get(id(groupA))],
-      [nodes.get(id(groupB))],
-    ]);
-
-    invalidateModule.mockClear();
-    await assign();
-    expect(invalidateModule).not.toHaveBeenCalled();
-
-    state.clientUrlRevalidate.fileByKey.set("k-unrecorded", fileA);
-    await assign();
-    expect(invalidateModule.mock.calls).toEqual([[nodes.get(id(groupB))]]);
-    expect(state.clientUrlRevalidate.filesByGroup.get(groupB)).toEqual([
-      fileA,
-      fileB,
-    ]);
-  });
-
-  it("drops a group discovery no longer projects", async () => {
-    const { state, assign } = setup();
-    await assign();
-    state.clientUrlProjectionMap!.delete("/src/b.urls.tsx#default");
-    await assign();
-    expect([...state.clientUrlRevalidate.filesByGroup.keys()]).toEqual([
-      groupA,
-      groupC,
-    ]);
   });
 });

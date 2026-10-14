@@ -1984,6 +1984,7 @@ export function createRouterDiscoveryPlugin(
                   s,
                   (server.environments as any)?.ssr,
                   serverMod,
+                  rscEnv,
                 );
                 // Force the routes-manifest virtual module to re-transform:
                 // its generated code REPLAYS projections (clear + set) on

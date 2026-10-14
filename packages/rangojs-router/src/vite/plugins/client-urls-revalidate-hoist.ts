@@ -7,12 +7,11 @@ import { hasDirective } from "@vitejs/plugin-rsc/transforms";
 import { HOISTED_REVALIDATE_KEY } from "../../client-urls/hoisted-revalidate.js";
 import {
   CLIENT_IMPORT_RE,
+  CLIENT_URLS_REVALIDATE_QUERY,
   componentUseSignature,
+  hoistedRevalidateId,
 } from "../discovery/client-urls-projection.js";
-import type {
-  ClientUrlRevalidateIndex,
-  DiscoveryState,
-} from "../discovery/state.js";
+import type { ClientUrlRevalidateIndex } from "../discovery/state.js";
 import { hasUseClientDirective } from "../utils/directive-prologue.js";
 import { offsetToLineColumn } from "./expose-ids/export-analysis.js";
 import {
@@ -72,8 +71,9 @@ import {
  * reaches. Route discovery serializes the group's SSR copy, so its projection
  * carries every key the group reads, and the transform records each key's
  * file in every environment (ClientUrlRevalidateIndex): discovery assigns
- * the group the files of its keys (assignClientUrlRevalidateFiles, below),
- * and the group's `?rango-revalidate` module imports theirs. Their registrations load with the group and nothing
+ * the group the files of its keys as it installs the projection
+ * (discovery/client-urls-projection.ts), and the group's `?rango-revalidate`
+ * module imports theirs. Their registrations load with the group and nothing
  * else of those files does, so no client code loads on the server and a lazy
  * include stays lazy, wherever the file sits: behind barrels or in another
  * workspace package. Materialization
@@ -106,13 +106,7 @@ import {
  * imported `FLAG`). Materialization rejects a value that is neither.
  */
 
-const CLIENT_URLS_REVALIDATE_QUERY = "rango-revalidate";
 const REGISTER = "__rango_registerClientUrlRevalidators";
-
-/** The id of the module registering `file`'s hoisted predicates. */
-function hoistedRevalidateId(file: string): string {
-  return `${file}?${CLIENT_URLS_REVALIDATE_QUERY}`;
-}
 
 const CLIENT_SOURCES: ReadonlySet<string> = new Set(["@rangojs/router/client"]);
 
@@ -464,72 +458,6 @@ function parseProgram(code: string, file: string): Node | null {
   } catch {
     return null;
   }
-}
-
-/** The part of discovery's RSC environment assignClientUrlRevalidateFiles uses. */
-interface RevalidateRscEnvironment {
-  readonly runner: { import(id: string): Promise<unknown> };
-  readonly moduleGraph?: {
-    getModuleById(id: string): EnvironmentModuleNode | undefined;
-    invalidateModule(mod: EnvironmentModuleNode): void;
-  };
-}
-
-/**
- * Assign each group the other files holding the predicates its projection
- * reads (each key's file, as the transform recorded it: a key with none stays
- * unregistered, and materialization names it), and load their registrations
- * into `rscEnv`, whose realm materializes the groups next. The group's own
- * registrations load with its proxy. The entry import before this already
- * loaded a static group's `?rango-revalidate` module, without files on a
- * cold start or with the previous ones after an edit: when a group's files
- * change, that module is invalidated, so a later evaluation (a reload, a
- * request realm) imports the current ones. Another realm (workerd, a
- * production bundle) loads a group only after discovery: its entry imports
- * the routes-manifest module first, whose load waits for discovery
- * (RSC_ENTRY_BOOTSTRAP_IMPORTS), and a build discovers in buildStart.
- */
-export async function assignClientUrlRevalidateFiles(
-  state: Pick<
-    DiscoveryState,
-    | "clientUrlRevalidate"
-    | "clientUrlProjectionMap"
-    | "clientUrlSourceByReferenceId"
-  >,
-  rscEnv: RevalidateRscEnvironment,
-): Promise<void> {
-  const { fileByKey, filesByGroup } = state.clientUrlRevalidate;
-  const next = new Map<string, readonly string[]>();
-  for (const [referenceId, projection] of state.clientUrlProjectionMap ?? []) {
-    const group = state.clientUrlSourceByReferenceId?.get(referenceId);
-    if (group === undefined || next.has(group)) continue;
-    const files = new Set<string>();
-    for (const owner of [
-      ...projection.routes,
-      ...(projection.intercepts ?? []),
-    ]) {
-      for (const key of owner.loaderRevalidate?.flat() ?? []) {
-        const file = typeof key === "string" ? fileByKey.get(key) : undefined;
-        if (file !== undefined && file !== group) files.add(file);
-      }
-    }
-    next.set(group, [...files].sort());
-  }
-  const graph = rscEnv.moduleGraph;
-  for (const [group, files] of next) {
-    if ((filesByGroup.get(group) ?? []).join("\0") === files.join("\0")) {
-      continue;
-    }
-    const mod = graph?.getModuleById(hoistedRevalidateId(group));
-    if (graph && mod) graph.invalidateModule(mod);
-  }
-  filesByGroup.clear();
-  for (const [group, files] of next) filesByGroup.set(group, files);
-  await Promise.all(
-    [...new Set([...next.values()].flat())].map((file) =>
-      rscEnv.runner.import(hoistedRevalidateId(file)),
-    ),
-  );
 }
 
 /** The file a `?rango-revalidate` id names, or null. */

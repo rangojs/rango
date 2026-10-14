@@ -297,9 +297,10 @@ does on the server; structural items there throw. Its `revalidate()`
 predicates hoist from the component's module (the transform keys on
 `revalidate` imported from `./client` in any module, recording each key's
 file in `ClientUrlRevalidateIndex`, `vite/discovery/state.ts`), and register
-through the group: after projecting, discovery assigns each group the files of
-its projection's keys (`assignClientUrlRevalidateFiles`) and loads them into
-its realm, and the group's `?rango-revalidate` module imports theirs, so no
+through the group: before installing a projection, discovery assigns each
+group the files of its projection's keys (`assignClientUrlRevalidateFiles`)
+and loads them into its realm, and the group's `?rango-revalidate` module
+imports theirs, so no
 client code loads on the server, a lazy include stays lazy, and the file may
 sit anywhere outside `node_modules` (behind barrels, in another workspace
 package). The

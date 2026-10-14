@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import { normalizePath, parseAst } from "vite";
+import { normalizePath, parseAst, type EnvironmentModuleNode } from "vite";
 import {
   projectClientUrlsModule,
   type ClientUrlProjection,
@@ -32,6 +32,22 @@ interface ClientUrlProjectionServerModule {
     referenceId: string,
     projection: ClientUrlProjection,
   ): void;
+}
+
+/** The RSC environment whose realm `ClientUrlProjectionServerModule` is. */
+interface ClientUrlRscEnvironment {
+  readonly runner: { import(id: string): Promise<unknown> };
+  readonly moduleGraph?: {
+    getModuleById(id: string): EnvironmentModuleNode | undefined;
+    invalidateModule(mod: EnvironmentModuleNode): void;
+  };
+}
+
+export const CLIENT_URLS_REVALIDATE_QUERY = "rango-revalidate";
+
+/** The id of the module registering `file`'s hoisted revalidate() predicates. */
+export function hoistedRevalidateId(file: string): string {
+  return `${file}?${CLIENT_URLS_REVALIDATE_QUERY}`;
 }
 
 function hasDefaultExport(code: string): boolean {
@@ -229,14 +245,17 @@ function projectionError(
  * import, so `.routes(reference)` materialized the previous pass's projection.
  *
  * Errors are deliberately swallowed per source (a module mid-edit keeps its
- * last-known projection); the strict discoverClientUrlProjections() pass still
- * surfaces real failures afterwards. No-ops on cold start (nothing recorded
- * yet) and when the SSR runner is unavailable.
+ * last-known projection), and all refreshed projections keep their
+ * last-known state when any registration fails to load; the strict
+ * discoverClientUrlProjections() pass still surfaces real failures afterwards.
+ * No-ops on cold start (nothing recorded yet) and when the SSR runner is
+ * unavailable.
  */
 export async function refreshRecordedClientUrlProjections(
   state: DiscoveryState,
   ssrEnv: ClientUrlSsrEnvironment | undefined,
   serverMod: ClientUrlProjectionServerModule,
+  rscEnv: ClientUrlRscEnvironment,
 ): Promise<void> {
   const sourceByReferenceId = state.clientUrlSourceByReferenceId;
   if (
@@ -256,6 +275,7 @@ export async function refreshRecordedClientUrlProjections(
     }
   }
 
+  const refreshed = new Map<string, ClientUrlProjection>();
   for (const [source, referenceIds] of referenceIdsBySource) {
     let module: Record<string, unknown>;
     try {
@@ -276,14 +296,28 @@ export async function refreshRecordedClientUrlProjections(
       projection.routes.map((route) => route.pattern).join(", "),
     );
     for (const referenceId of referenceIds) {
-      serverMod.setClientUrlProjection(referenceId, projection);
-      // The eager routes-manifest virtual module REPLAYS this state map
-      // (clearClientUrlProjections + set) whenever it re-evaluates — and the
-      // watcher's gen-file write invalidates it right before the entry import,
-      // so a stale map here would clobber the registry install above before
-      // the router materializes its mount. Keep both in sync.
-      state.clientUrlProjectionMap?.set(referenceId, projection);
+      refreshed.set(referenceId, projection);
     }
+  }
+  if (refreshed.size === 0) return;
+  // The eager routes-manifest virtual module REPLAYS the state map
+  // (clearClientUrlProjections + set) whenever it re-evaluates — and the
+  // watcher's gen-file write invalidates it right before the entry import, so
+  // a stale map would clobber the registry install before the router
+  // materializes its mount: the install keeps both in sync.
+  try {
+    await installClientUrlProjections(
+      state,
+      rscEnv,
+      serverMod,
+      refreshed,
+      false,
+    );
+  } catch (error) {
+    debug?.(
+      "pre-entry refresh: predicate registrations failed to load: %s",
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }
 
@@ -302,12 +336,18 @@ export async function discoverClientUrlProjections(
   state: DiscoveryState,
   ssrEnv: ClientUrlSsrEnvironment | undefined,
   serverMod: ClientUrlProjectionServerModule,
+  rscEnv: ClientUrlRscEnvironment,
 ): Promise<void> {
   scanForClientUrlModules(state);
   const sourceByReferenceId = state.clientUrlSourceByReferenceId;
   if (!sourceByReferenceId?.size) {
-    serverMod.clearClientUrlProjections();
-    state.clientUrlProjectionMap = new Map();
+    await installClientUrlProjections(
+      state,
+      rscEnv,
+      serverMod,
+      new Map(),
+      true,
+    );
     return;
   }
 
@@ -380,9 +420,91 @@ export async function discoverClientUrlProjections(
     }
   }
 
-  serverMod.clearClientUrlProjections();
-  for (const [id, projection] of nextProjections) {
+  await installClientUrlProjections(
+    state,
+    rscEnv,
+    serverMod,
+    nextProjections,
+    true,
+  );
+}
+
+/**
+ * Install `projections` in the realm of `serverMod` and in `state` (all of
+ * them with `replace`, else over the installed ones), once `rscEnv` has
+ * loaded the registrations of every revalidate() key they read
+ * (assignClientUrlRevalidateFiles). Node dev serves requests in that realm,
+ * and a request materializes the installed projection, so a key whose
+ * registration has not loaded must never be installed.
+ */
+async function installClientUrlProjections(
+  state: DiscoveryState,
+  rscEnv: ClientUrlRscEnvironment,
+  serverMod: ClientUrlProjectionServerModule,
+  projections: ReadonlyMap<string, ClientUrlProjection>,
+  replace: boolean,
+): Promise<void> {
+  const next = new Map(replace ? undefined : state.clientUrlProjectionMap);
+  for (const [id, projection] of projections) next.set(id, projection);
+  await assignClientUrlRevalidateFiles(state, rscEnv, next);
+  if (replace) serverMod.clearClientUrlProjections();
+  for (const [id, projection] of projections) {
     serverMod.setClientUrlProjection(id, projection);
   }
-  state.clientUrlProjectionMap = nextProjections;
+  state.clientUrlProjectionMap = next;
+}
+
+/**
+ * Assign each group of `projections` the other files holding the predicates
+ * it reads (each key's file, as the hoist transform recorded it: a key with
+ * none stays unregistered, and materialization names it), after loading their
+ * registrations into `rscEnv`. The group's own registrations load with its
+ * proxy, and its `?rango-revalidate` module imports the assigned files'
+ * (plugins/client-urls-revalidate-hoist.ts). When a group's files change, that
+ * module is invalidated, so a later evaluation (a reload, a request realm)
+ * imports the current ones. Another realm (workerd, a production bundle)
+ * loads a group only after discovery: its entry imports the routes-manifest
+ * module first, whose load waits for discovery (RSC_ENTRY_BOOTSTRAP_IMPORTS),
+ * and a build discovers in buildStart.
+ */
+export async function assignClientUrlRevalidateFiles(
+  state: Pick<
+    DiscoveryState,
+    "clientUrlRevalidate" | "clientUrlSourceByReferenceId"
+  >,
+  rscEnv: ClientUrlRscEnvironment,
+  projections: ReadonlyMap<string, ClientUrlProjection>,
+): Promise<void> {
+  const { fileByKey, filesByGroup } = state.clientUrlRevalidate;
+  const next = new Map<string, readonly string[]>();
+  for (const [referenceId, projection] of projections) {
+    const group = state.clientUrlSourceByReferenceId?.get(referenceId);
+    if (group === undefined || next.has(group)) continue;
+    const files = new Set<string>();
+    for (const owner of [
+      ...projection.routes,
+      ...(projection.intercepts ?? []),
+    ]) {
+      for (const key of owner.loaderRevalidate?.flat() ?? []) {
+        const file = typeof key === "string" ? fileByKey.get(key) : undefined;
+        if (file !== undefined && file !== group) files.add(file);
+      }
+    }
+    next.set(group, [...files].sort());
+  }
+  await Promise.all(
+    [...new Set([...next.values()].flat())].map((file) =>
+      rscEnv.runner.import(hoistedRevalidateId(file)),
+    ),
+  );
+  const graph = rscEnv.moduleGraph;
+  for (const [group, files] of next) {
+    if ((filesByGroup.get(group) ?? []).join("\0") === files.join("\0")) {
+      continue;
+    }
+    const mod = graph?.getModuleById(hoistedRevalidateId(group));
+    if (graph && mod) graph.invalidateModule(mod);
+  }
+  filesByGroup.clear();
+  for (const [group, files] of next) filesByGroup.set(group, files);
 }
