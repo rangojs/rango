@@ -97,6 +97,42 @@ describe("rewrite()", () => {
     );
   });
 
+  it(".disallowMutations() returns a copy that refuses mutations; it chains with .shell() either way", () => {
+    const value = rewrite("product", { slug: "a" });
+    expect(value.mutationsDisallowed).toBe(false);
+    const locked = value.disallowMutations();
+    expect(isRewrite(locked)).toBe(true);
+    expect(locked).not.toBe(value);
+    expect(locked.target).toBe(value.target);
+    expect(locked.mutationsDisallowed).toBe(true);
+    expect(locked.shellAudience).toBeUndefined();
+    // The original keeps its own choice (a rewrite kept in a constant).
+    expect(value.mutationsDisallowed).toBe(false);
+
+    for (const both of [
+      value.shell("target").disallowMutations(),
+      value.disallowMutations().shell("target"),
+    ]) {
+      expect(both.shellAudience).toBe("target");
+      expect(both.mutationsDisallowed).toBe(true);
+      expect(both.target).toBe(value.target);
+    }
+    expect(locked.shell("visitor").mutationsDisallowed).toBe(true);
+    expect(value.shell("visitor").mutationsDisallowed).toBe(false);
+  });
+
+  it(".disallowMutations() takes no arguments", () => {
+    // A JS caller passing a flag would expect `false` to allow mutations.
+    const value = rewrite("/a") as unknown as {
+      disallowMutations(flag: unknown): unknown;
+    };
+    for (const flag of [false, true, undefined]) {
+      expect(() => value.disallowMutations(flag)).toThrow(
+        'rewrite("/a").disallowMutations() takes no arguments.',
+      );
+    }
+  });
+
   it("isRewrite recognizes a rewrite and nothing else", () => {
     expect(isRewrite(rewrite("/a"))).toBe(true);
     expect(isRewrite(new Error("x"))).toBe(false);
@@ -233,15 +269,26 @@ describe("the rewrite hop trail", () => {
 
 describe("rewriteNotSupported", () => {
   it.each([
-    ["mutation", "Return a Response for mutations"],
+    ["body-read", "ctx.request.clone().formData()"],
     ["loader-fetch", "during a loader fetch"],
-  ] as const)("names the %s site", (site, text) => {
+  ] as const)("names the %s site as unsupported", (site, text) => {
     const original = rewrite("/m");
     const error = rewriteNotSupported(original, site);
     expect(error.message).toContain('rewrite("/m") is not supported here');
     expect(error.message).toContain(text);
     expect(error.cause).toBe(original);
     expect(isRewrite(error)).toBe(false);
+  });
+
+  it("names a disallowMutations() refusal as the choice it is, not a misuse", () => {
+    const original = rewrite("/maintenance").disallowMutations();
+    const error = rewriteNotSupported(original, "mutation");
+    expect(error.message).toMatch(
+      /^rewrite\("\/maintenance"\) refused a mutation: \.disallowMutations\(\) was set/,
+    );
+    expect(error.message).not.toContain("not supported");
+    expect(error.message).toContain("return a Response for mutations");
+    expect(error.cause).toBe(original);
   });
 });
 
@@ -440,24 +487,35 @@ describe("applyRewrite", () => {
     });
   });
 
-  it("refuses a mutation and a loader fetch before moving anything", async () => {
-    const post = contextFor("https://shop.test/cart", { method: "POST" });
-    expect(() =>
-      applyRewrite(
-        rewrite("/m"),
-        post.ctx.request,
-        post.ctx,
-        ROUTES,
-        undefined,
-      ),
-    ).toThrow("while handling a non-GET request");
-    expect(post.ctx.pathname).toBe("/cart");
+  it("refuses a disallowed mutation and a loader fetch before moving anything", async () => {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      const post = contextFor("https://shop.test/cart", { method });
+      expect(() =>
+        applyRewrite(
+          rewrite("/m").disallowMutations(),
+          post.ctx.request,
+          post.ctx,
+          ROUTES,
+          undefined,
+        ),
+      ).toThrow("refused a mutation: .disallowMutations() was set");
+      expect(post.ctx.pathname).toBe("/cart");
+      expect(rewriteTrail(post.ctx)).toBeUndefined();
+    }
 
-    const head = contextFor("https://shop.test/cart", { method: "HEAD" });
-    expect(
-      applyRewrite(rewrite("/m"), head.ctx.request, head.ctx, ROUTES, undefined)
-        .target.pathname,
-    ).toBe("/m");
+    // GET and HEAD rewrite as usual under disallowMutations().
+    for (const method of ["GET", "HEAD"]) {
+      const read = contextFor("https://shop.test/cart", { method });
+      expect(
+        applyRewrite(
+          rewrite("/m").disallowMutations(),
+          read.ctx.request,
+          read.ctx,
+          ROUTES,
+          undefined,
+        ).target.pathname,
+      ).toBe("/m");
+    }
 
     const loader = contextFor("https://shop.test/cart?_rsc_loader=L");
     expect(() =>
@@ -471,19 +529,22 @@ describe("applyRewrite", () => {
     ).toThrow("during a loader fetch");
     expect(loader.ctx.pathname).toBe("/cart");
 
-    // load() with a body is a POST: still the loader fetch's refusal.
-    const loaderPost = contextFor("https://shop.test/cart?_rsc_loader=L", {
-      method: "POST",
-    });
-    expect(() =>
-      applyRewrite(
-        rewrite("/m"),
-        loaderPost.ctx.request,
-        loaderPost.ctx,
-        ROUTES,
-        undefined,
-      ),
-    ).toThrow("during a loader fetch");
+    // load() with a body is a POST: still the loader fetch's refusal, with
+    // or without disallowMutations().
+    for (const value of [rewrite("/m"), rewrite("/m").disallowMutations()]) {
+      const loaderPost = contextFor("https://shop.test/cart?_rsc_loader=L", {
+        method: "POST",
+      });
+      expect(() =>
+        applyRewrite(
+          value,
+          loaderPost.ctx.request,
+          loaderPost.ctx,
+          ROUTES,
+          undefined,
+        ),
+      ).toThrow("during a loader fetch");
+    }
   });
 
   it("resolves names with no param auto-fill from the current route", async () => {

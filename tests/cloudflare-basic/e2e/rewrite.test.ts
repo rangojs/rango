@@ -33,7 +33,7 @@ async function goForward(page: Page) {
 async function lock(
   page: Page,
   f: Fixture,
-  mode: "on" | "naive" | "client-urls",
+  mode: "on" | "strict" | "client-urls",
 ) {
   await page
     .context()
@@ -77,12 +77,25 @@ async function waitForOnError(
 }
 
 /** A cookie keying the item saves to this test (src/pages/rewrite-saves.ts). */
-async function useSaveKey(page: Page, f: Fixture): Promise<void> {
+async function useSaveKey(page: Page, f: Fixture): Promise<string> {
+  const key = crypto.randomUUID();
   await page
     .context()
-    .addCookies([
-      { name: "rw-key", value: crypto.randomUUID(), url: f.url("/") },
-    ]);
+    .addCookies([{ name: "rw-key", value: key, url: f.url("/") }]);
+  return key;
+}
+
+/** The item's save count for `key`, read from a fresh document of `path`. */
+async function savesAt(
+  request: APIRequestContext,
+  f: Fixture,
+  path: string,
+  key: string,
+): Promise<string | undefined> {
+  const html = await (
+    await request.get(f.url(path), { headers: { cookie: `rw-key=${key}` } })
+  ).text();
+  return /data-testid="rw-item-saves">(\d+)</.exec(html)?.[1];
 }
 
 /** Mark the layout's and the page's DOM nodes before an action. */
@@ -330,21 +343,24 @@ function rewriteTests(f: Fixture) {
     );
   });
 
-  test("middleware that rewrites a JS action fails with the rule", async ({
+  test("a rewrite that disallows mutations refuses a JS action before it runs", async ({
     page,
     request,
   }) => {
     expectConsole(page, {
       allow: [/Unhandled error caught: Error: Connection closed/],
     });
-    await page.goto(f.url("/rw/shop"));
+    const key = await useSaveKey(page, f);
+    await page.goto(f.url("/rw/global/16"));
     await waitForHydration(page);
-    await lock(page, f, "naive");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 16");
+    await lock(page, f, "strict");
 
     const post = page.waitForResponse(
-      (r) => r.request().method() === "POST" && r.url().includes("/rw/shop"),
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/global/16"),
     );
-    await testId(page, "rw-save").click();
+    await testId(page, "rw-item-save").click();
     expect((await post).status()).toBe(500);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(
       /Internal Server Error|Connection Error/,
@@ -352,9 +368,10 @@ function rewriteTests(f: Fixture) {
     const reported = await waitForOnError(
       request,
       f,
-      "middleware threw it while handling a non-GET request",
+      "refused a mutation: .disallowMutations() was set",
     );
     expect(reported.phase).toBe("routing");
+    expect(await savesAt(request, f, "/rw/global/16", key)).toBe("0");
   });
 
   test("a JS action from a page route middleware rewrote re-renders that page and runs once", async ({
@@ -386,6 +403,71 @@ function rewriteTests(f: Fixture) {
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 7");
     await expect(testId(page, "rw-client-location")).toHaveText("/rw/public/7");
     expect(new URL(page.url()).pathname).toBe("/rw/public/7");
+    await expectIdentityKept(page);
+  });
+
+  test("a JS action from a page whose route middleware rewrites only GETs re-renders that page and runs once", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await useSaveKey(page, f);
+    await page.goto(f.url("/rw/get-only/12"));
+    await waitForHydration(page);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 12");
+    await using _reload = await expectNoReload(page);
+    await markIdentity(page);
+
+    const post = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/get-only/12"),
+    );
+    await testId(page, "rw-item-save").click();
+    const response = await post;
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-rango-rewrite"]).toBe("/rw/items/12");
+
+    await expect(testId(page, "rw-item-saves")).toHaveText("1");
+    await expect(testId(page, "rw-item-guard")).toHaveText("target");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 12");
+    await expect(testId(page, "rw-client-location")).toHaveText(
+      "/rw/get-only/12",
+    );
+    await expectIdentityKept(page);
+  });
+
+  test("a JS action from a page a global rewrite reached moves to that page before it runs, once", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await useSaveKey(page, f);
+    // /rw/global/:id matches no route: global middleware rewrites every
+    // method to /rw/items/:id.
+    await page.goto(f.url("/rw/global/18"));
+    await waitForHydration(page);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 18");
+    await expect(testId(page, "rw-item-saves")).toHaveText("0");
+    await using _reload = await expectNoReload(page);
+    await markIdentity(page);
+
+    const post = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/global/18"),
+    );
+    await testId(page, "rw-item-save").click();
+    const response = await post;
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-rango-rewrite"]).toBe("/rw/items/18");
+
+    await expect(testId(page, "rw-item-saves")).toHaveText("1");
+    // The item's global middleware ran before the action (one run per
+    // pass), its route middleware around the render after it.
+    await expect(testId(page, "rw-runs")).toHaveText("2");
+    await expect(testId(page, "rw-item-guard")).toHaveText("target");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 18");
+    await expect(testId(page, "rw-client-location")).toHaveText(
+      "/rw/global/18",
+    );
+    expect(new URL(page.url()).pathname).toBe("/rw/global/18");
     await expectIdentityKept(page);
   });
 
@@ -542,6 +624,51 @@ function noJsRewriteTests(f: Fixture) {
     expect(new URL(page.url()).pathname).toBe("/rw/public/8");
   });
 
+  test("a no-JS form post from a page whose route middleware rewrites only GETs re-renders that page and runs once", async ({
+    page,
+  }) => {
+    await useSaveKey(page, f);
+    await page.goto(f.url("/rw/get-only/13"));
+    await expect(testId(page, "rw-item-saves")).toHaveText("0");
+
+    const post = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/get-only/13"),
+    );
+    await testId(page, "rw-item-save").click();
+    const response = await post;
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-rango-rewrite"]).toBe("/rw/items/13");
+
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 13");
+    await expect(testId(page, "rw-item-saves")).toHaveText("1");
+    await expect(testId(page, "rw-item-guard")).toHaveText("target");
+    expect(new URL(page.url()).pathname).toBe("/rw/get-only/13");
+  });
+
+  test("a no-JS form post from a page a global rewrite reached moves to that page before it runs, once", async ({
+    page,
+  }) => {
+    await useSaveKey(page, f);
+    await page.goto(f.url("/rw/global/19"));
+    await expect(testId(page, "rw-item-saves")).toHaveText("0");
+
+    const post = page.waitForResponse(
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/global/19"),
+    );
+    await testId(page, "rw-item-save").click();
+    const response = await post;
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-rango-rewrite"]).toBe("/rw/items/19");
+
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Item 19");
+    await expect(testId(page, "rw-item-saves")).toHaveText("1");
+    await expect(testId(page, "rw-runs")).toHaveText("2");
+    await expect(testId(page, "rw-item-guard")).toHaveText("target");
+    expect(new URL(page.url()).pathname).toBe("/rw/global/19");
+  });
+
   test("a no-JS form post whose action throws on a page route middleware rewrote renders the target's error boundary inside its route middleware", async ({
     page,
   }) => {
@@ -579,24 +706,27 @@ function noJsRewriteTests(f: Fixture) {
     await expect(testId(page, "rw-item-boundary-guard")).toHaveText("target");
   });
 
-  test("middleware that rewrites a no-JS form post fails with the rule", async ({
+  test("a rewrite that disallows mutations refuses a no-JS form post before it runs", async ({
     page,
     request,
   }) => {
-    await page.goto(f.url("/rw/shop"));
-    await expect(testId(page, "rw-shop")).toBeVisible();
-    await lock(page, f, "naive");
+    const key = await useSaveKey(page, f);
+    await page.goto(f.url("/rw/global/17"));
+    await expect(testId(page, "rw-item-save")).toBeVisible();
+    await lock(page, f, "strict");
 
     const post = page.waitForResponse(
-      (r) => r.request().method() === "POST" && r.url().includes("/rw/shop"),
+      (r) =>
+        r.request().method() === "POST" && r.url().includes("/rw/global/17"),
     );
-    await testId(page, "rw-save").click();
+    await testId(page, "rw-item-save").click();
     expect((await post).status()).toBe(500);
     await waitForOnError(
       request,
       f,
-      "middleware threw it while handling a non-GET request",
+      "refused a mutation: .disallowMutations() was set",
     );
+    expect(await savesAt(request, f, "/rw/global/17", key)).toBe("0");
   });
 }
 

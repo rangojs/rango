@@ -176,8 +176,9 @@ import { flags } from "../lib/flags";
 
 export const maintenance: Middleware = async (ctx, next) => {
   if (!flags.maintenance || ctx.pathname === "/maintenance") return next();
-  // A rewrite cannot answer a server action or a form post.
-  if (ctx.request.method !== "GET") {
+  // A rewrite moves a server action or form post to its target, where the
+  // action runs: a lock answers mutations itself (HEAD rewrites like GET).
+  if (ctx.request.method !== "GET" && ctx.request.method !== "HEAD") {
     return new Response("Maintenance", { status: 503 });
   }
   throw rewrite("maintenance"); // renders /maintenance at the visitor's URL

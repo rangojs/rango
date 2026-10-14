@@ -106,9 +106,10 @@ here for the rules they share.
      anything but static paths. `useHref()` and a relative `router.push()`
      fill the mount's params but take unchecked paths: prefer `useReverse`.
 8. **Rewrite is middleware only.** A maintenance page, a flag or an alias
-   URL is a `router.use()` middleware that does `throw rewrite("name")` for
-   GET and answers mutations with a `Response`; the
-   address bar keeps the visitor's URL. A loader, handler or server action
+   URL is a `router.use()` middleware that does `throw rewrite("name")`; a
+   lock answers mutations with a `Response` or adds `.disallowMutations()`,
+   since a rewrite moves a server action to the target. The address bar
+   keeps the visitor's URL. A loader, handler or server action
    cannot rewrite, and a loop answers 508. Redirect when the new URL should
    show (`/middleware`, "Rewrite").
 

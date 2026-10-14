@@ -21,6 +21,7 @@ import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import type { MatchResult } from "../types.js";
 import {
+  actionRenderRequest,
   createResponseWithMergedHeaders,
   finalizeResponse,
   buildRouteMiddlewareEntries,
@@ -318,7 +319,6 @@ async function rerenderAfterFormAction<TEnv>(
     // identically under PE and the JS action path. Drop body-framing headers
     // from the bodyless GET and force the HTML accept.
     const headers = bodylessHeaders(request);
-    headers.delete("content-type");
     headers.set("accept", "text/html");
     const renderRequest = new Request(url.toString(), {
       method: "GET",
@@ -359,7 +359,7 @@ async function rerenderAfterFormAction<TEnv>(
     return finalizeResponse(
       await executeMiddleware(
         buildRouteMiddlewareEntries(routeMwInfo.routeMiddleware),
-        request,
+        actionRenderRequest(request),
         env,
         routeMwInfo.variables,
         render,

@@ -181,7 +181,20 @@ pass 2 (the target's URL, same request context)
 ```
 
 A mutation (flows 2 and 3) runs its action between global and route
-middleware, so a route-middleware rewrite of it fires after the action ran:
+middleware. A global-middleware rewrite of it fires before the action, so
+the mutation moves to the target and the action runs there:
+
+```text
+pass 1 (the visitor's URL)
+  global middleware: throw rewrite()
+pass 2 (the target's URL, same request context, the POST and its body)
+  global middleware matched on the target path
+    -> action executes
+      -> the target's route middleware
+        -> the target's revalidation render (JS) or full rerender (PE)
+```
+
+A route-middleware rewrite of it fires after the action ran:
 
 ```text
 pass 1 (the visitor's URL)
@@ -206,6 +219,13 @@ See "Rewrite" below for what moves and what stays.
   - PE full rerenders
   - a thrown action's error-boundary render, JS and PE (`[A3]`)
 - Route middleware does not wrap action execution itself.
+- Around the render after an action (the JS revalidation, the PE rerender,
+  the thrown action's error-boundary render), route middleware's
+  `ctx.request` is the page's GET: method `GET`, no body, the POST's headers
+  without `content-type` and body framing (`actionRenderRequest` in
+  `rsc/helpers.ts`). It decides as for a GET of the page. Global middleware,
+  which wraps the action, sees the POST. The render itself keeps the POST.
+  `[RW11]`
 - Handler-first ordering is guaranteed within a full render pass:
   route handler runs before its child/orphan layouts and parallel children.
 - `ctx.set()` values flow downward through structural scope boundaries only.
@@ -999,12 +1019,20 @@ Guarantees, each pinned by a semantic matrix row:
   The `rango.middleware` span treats the throw as control flow (success),
   like a thrown `Response`.
 - A global-middleware rewrite of a mutation (a JS action, a no-JS form post:
-  any non-GET, non-HEAD request) is an error reported through `onError`
-  (phase `"routing"`), before the action runs. A lock returns a `Response`
-  for mutations instead, and that path works in JS and no-JS. `[RW3]`
+  any non-GET, non-HEAD request) moves it to the target before the action
+  runs: the target's global middleware sees the POST with its body, then the
+  action runs once, then the target's route middleware and render, in JS
+  and no-JS. With `rewrite(...).disallowMutations()` it is an error reported
+  through `onError` (phase `"routing"`) before the action runs, worded as the
+  refusal it asked for (`refused a mutation: .disallowMutations() was set`).
+  A lock that returns a `Response` for mutations works in JS and no-JS.
+  `[RW3]`
 - A route-middleware rewrite of a mutation moves the re-render to the target
   after the action ran: the action runs once, the target's global and route
   middleware run, and the target renders, in JS and no-JS. `[RW5]`
+- Route middleware sees that re-render as the page's GET, so a rewrite it
+  makes only for GETs (`if (ctx.request.method !== "GET") return next()`)
+  moves the re-render too, in JS and no-JS. `[RW11]`
 - More than 5 hops, or a rewrite to the URL the pass is on (pathname and
   search), is a `RewriteLoopError`: `onError` (phase `"routing"`) and a 508.
   `[RW4]`
@@ -1038,36 +1066,91 @@ mismatched on hydration and no app code could fix it. The capture also
 inherits the first pass's variables (`Object.create(reqCtx)`), so a value a
 rewriting middleware set reached every direct visitor of the target.
 
-Why does a mutation get two answers? Because of where each middleware sits
-around the action. Global middleware runs before the action, so refusing its
-rewrite there costs nothing, and a naive lock that rewrites every method must
-not run the mutation under maintenance. Route middleware wraps only the
-re-render after the action (flows 2 and 3), so its rewrite always arrives
-with the mutation committed. Refusing it then (as #1121 shipped) reported an
-error for a write that had already happened: the caller sees the error UI,
-retries, and the mutation runs twice (#1145). So `applyRewrite` refuses a
-mutation only while `reqCtx._actionRan` is unset. The handler sets it as soon
-as the action has run, to the JS continuation or the PE outcome (form state,
-the failure and its boundary, action id), and the target's pass re-renders from it
-instead of running the action again. Once it is set, any later rewrite of
-the request moves too, a global one on the target's pass included: the
-refusal exists to keep the action from running, and it already has. The
-pass-2 request is built as a GET pass's is (`new Request(url, request)`:
-method, headers, body, workerd's `cf`), so a no-JS form post keeps its body
-(the PE handler reads a clone) and a form-field CSRF check passes on both
-passes. A JS action consumed its body, and `new Request(url, used)` throws,
-so that pass 2 is the same request without a body; middleware reading the
-body there gets an empty one. A failed action's error boundary is matched
+Why does a mutation move at two different points? Because of where each
+middleware sits around the action. Global middleware runs before the
+action, so its rewrite arrives with nothing committed, and the mutation
+moves to the target whole: pass 2 is a direct post to the target (the
+target's global middleware, the action, the target's route middleware and
+render), so the page a routing rewrite showed (a multi-tenant host, an A/B
+split, a visitor URL no route matches) can call its actions. It used to be
+refused, so that a naive lock that rewrites every method never ran a
+mutation under maintenance; but that made every page a global rewrite
+reached unable to post, and the action could only run on the visitor's
+route, which the page on screen is not (#1145). A lock now says so on the
+value: `rewrite(...).disallowMutations()` sets `mutationsDisallowed`, and
+`applyRewrite` refuses that rewrite of a non-GET, non-HEAD request while
+`reqCtx._actionRan` is unset, before anything runs. Can a request use the
+move to get around a guard? No: the middleware picks the target, nothing the
+client sends does, and the action runs after the target's global middleware,
+which is what a direct post of the same action to the target's URL gets.
+Server actions are not bound to routes, so authorization lives in the action
+or in global middleware either way.
+
+Route middleware wraps only the re-render after the action (flows 2 and 3),
+so its rewrite always arrives with the mutation committed. Refusing it then
+(as #1121 shipped) reported an error for a write that had already happened:
+the caller sees the error UI, retries, and the mutation runs twice (#1145).
+So once `reqCtx._actionRan` is set, every rewrite moves, `.disallowMutations()`
+included, a global one on the target's pass too. That lock never refused
+anything, so it is not silent: dev warns on every throw, and production logs
+one `console.error` per isolate (`reportLateLock` in `rsc/rewrite-passes.ts`).
+The handler sets it as soon as the action has run, to the JS
+continuation or the PE outcome (form state, the failure and its boundary,
+action id), and the target's pass re-renders from it instead of running the
+action again. The pass-2 request is built as a GET pass's is
+(`new Request(url, request)`: method, headers, body, workerd's `cf`), so a
+mutation that moves before its action keeps its body for the action, a no-JS
+form post keeps its body either way (the PE handler reads a clone), and a
+form-field CSRF check passes on both passes. A JS action that ran consumed
+its body, and `new Request(url, used)` throws, so that pass 2 is the same
+request without a body and without its `content-type` (`bodylessRequest` in
+`server/request-headers.ts`): a body check gated on the content-type passes
+over the one pass that never runs the action. The
+reverse is an error: a mutation whose body middleware read before its action
+ran is refused (`rewriteNotSupported(..., "body-read")`), since its action
+would run with no arguments. A moved action's `actionUrl` is the URL it ran
+on, the target's; after a route-middleware rewrite it is the visitor's.
+A failed action's error boundary is matched
 on the target, not the visitor's URL, and renders inside the target's route
 middleware, in JS and no-JS (`continuationForRewritePass` in
 `rsc/server-action.ts`, `outcomeForRewritePass` in
 `rsc/progressive-enhancement.ts`; `[RW9]`). The target's
 guards run on that re-render, as on a direct visit; they never guarded the
 action itself, since route middleware never wraps action execution. Only
-the action and PE branches render from the outcome, so the target must be a
-page route: a response route, a redirect or no match on pass 2 is an error
-(`coreRequestHandler`), not a fresh POST that a response route's handler
-would serve as a second mutation.
+the action and PE branches render from the outcome, so after the action the
+target must be a page route: a response route, a redirect or no match on
+pass 2 is an error (`coreRequestHandler`), not a fresh POST that a response
+route's handler would serve as a second mutation. Before the action no
+outcome exists, so pass 2 is classified as any request: a response route
+target serves a plain POST with its body, as a direct post to it would. A JS
+action (`_rsc_action`) a global rewrite moved is the exception: only the
+action branch runs it, so a response route, a redirect or no match on its
+pass 2 is the same error, before the action runs. Served, it dropped the
+action with no report, and a redirect told the client the target's URL. A
+no-JS form post carries its action id in the body, which the router parses
+only on a page route, so one moved to a response route still reaches that
+handler with its body. Telling them apart would parse every rewritten form
+or upload an API route receives, so that gap stays.
+
+What does route middleware see around that re-render? The page's GET
+(`[RW11]`). Each route middleware decides once per pass, and with the action
+done it is deciding about the render. While it saw the POST, a routing
+rewrite written for GETs (`if (ctx.request.method !== "GET") return next()`)
+let the re-render through as the rewriting route, and the client replaced
+the page on screen with it (#1145). A guard of that shape never guarded
+anything: the action had already run. So `executeRenderWithMiddleware`
+(`rsc/handler.ts`) and `rerenderAfterFormAction`
+(`rsc/progressive-enhancement.ts`) hand route middleware
+`actionRenderRequest(request)`, and its rewrite moves the re-render as above.
+Only route middleware's `ctx.request` changes. The render keeps the POST it
+always had, so `revalidateAfterAction`, the caches and the shell paths
+behave as before. `getRequestContext().request` stays the POST. Global
+middleware keeps it too, since it wraps the action. The GET is a copy, so a
+header route middleware writes onto `ctx.request` no longer reaches the
+render (`ctx.set()` is the channel for that). A route middleware that reads
+the form body after a no-JS post now gets none. A response header set in its
+GET branch now lands on the action's response, so a header that must stay
+off mutation responses belongs in global middleware.
 
 ### Leaving a rewritten page
 
@@ -1137,11 +1220,13 @@ What this does not cover yet:
 - Entering a rewritten page from its own target URL (`/item/1` to
   `/public-1`) holds the route, as before #1144, though `ctx.rewrittenFrom`
   changed: `_visitorMoved` is set only when leaving a rewritten page.
-- A route middleware that skips a mutation (`if (method !== "GET") return
-next()`) still re-renders the rewriting route after the action, and a page
-  a global rewrite reached cannot call an action. The client now names the
-  page it shows, but only to find the page being left: re-rendering the
-  target from it would let a request choose what renders.
+- A global rewrite written for GETs only leaves a mutation on the visitor's
+  URL: the action runs on the visitor's route, if one matches, and its
+  render replaces the page on screen. Global middleware wraps the action and
+  decides once per pass, and nothing after the action runs it again. A
+  routing rewrite of every method moves the mutation instead (`[RW3]`). The
+  client names the page it shows, but only to find the page being left:
+  re-rendering the target from it would let a request choose what renders.
 
 Where the old and the new URL show:
 
@@ -1175,15 +1260,16 @@ Where the old and the new URL show:
 
 Where a rewrite is not honored, and what it becomes:
 
-| Thrown from                                 | Result                                                                                                                         |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| middleware after its `next()` ran the route | an error: "throw rewrite() before await next()"                                                                                |
-| global middleware during a mutation         | an error before the action runs, onError `"routing"`                                                                           |
-| global middleware during a loader fetch     | the `loaderError` response `load()` rejects with (500, the rule in the message), onError `"routing"`                           |
-| a fetchable loader or its loader middleware | the loader's error response, onError `"loader"`                                                                                |
-| a server action                             | the action's error (onError `"action"`); the Rewrite's message says "use redirect()"                                           |
-| a route handler or a loader                 | the error boundary / loader error UI; the message says to throw `rewrite()` from route middleware (middleware only, by design) |
-| a returned (not thrown) `Rewrite`           | an error: "throw it, don't return it"                                                                                          |
+| Thrown from                                                      | Result                                                                                                                         |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| middleware after its `next()` ran the route                      | an error: "throw rewrite() before await next()"                                                                                |
+| global middleware during a mutation, with `.disallowMutations()` | an error before the action runs, onError `"routing"`                                                                           |
+| middleware that read a mutation's body, before the action        | an error before the action runs (read `ctx.request.clone()`), onError `"routing"`                                              |
+| global middleware during a loader fetch                          | the `loaderError` response `load()` rejects with (500, the rule in the message), onError `"routing"`                           |
+| a fetchable loader or its loader middleware                      | the loader's error response, onError `"loader"`                                                                                |
+| a server action                                                  | the action's error (onError `"action"`); the Rewrite's message says "use redirect()"                                           |
+| a route handler or a loader                                      | the error boundary / loader error UI; the message says to throw `rewrite()` from route middleware (middleware only, by design) |
+| a returned (not thrown) `Rewrite`                                | an error: "throw it, don't return it"                                                                                          |
 
 Caches: the document cache keys pass 2 by the target's URL, as a direct
 visit; it lets a `Rewrite` through its `catch` (`isRewrite`), and a stale

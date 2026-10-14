@@ -27,11 +27,10 @@ export type RewriteTarget =
 
 const REWRITE_RULE =
   "rewrite() is for middleware: throw it from router.use() or route " +
-  "middleware (middleware() in urls()), before await next(), while it " +
-  "handles a GET or HEAD page request. Loaders and route handlers can't " +
-  "rewrite: throw rewrite() from the route's middleware instead. Middleware " +
-  "in loader fetches can't either. In a server action use " +
-  "redirect(); for a mutation return a Response from middleware.";
+  "middleware (middleware() in urls()), before await next(). Loaders and " +
+  "route handlers can't rewrite: throw rewrite() from the route's " +
+  "middleware instead. Middleware in loader fetches can't either. In a " +
+  "server action use redirect().";
 
 export function describeRewriteTarget(target: RewriteTarget): string {
   return "path" in target
@@ -59,12 +58,19 @@ export class Rewrite extends Error {
   readonly target: RewriteTarget;
   /** The `shell()` choice; undefined: no shell. */
   readonly shellAudience: RewriteShell | undefined;
+  /** `disallowMutations()`: a mutation is refused, not moved, before its action runs. */
+  readonly mutationsDisallowed: boolean;
 
-  constructor(target: RewriteTarget, shellAudience?: RewriteShell) {
+  constructor(
+    target: RewriteTarget,
+    shellAudience?: RewriteShell,
+    mutationsDisallowed = false,
+  ) {
     super(`${describeRewriteTarget(target)}: ${REWRITE_RULE}`);
     Object.setPrototypeOf(this, Rewrite.prototype);
     this.target = target;
     this.shellAudience = shellAudience;
+    this.mutationsDisallowed = mutationsDisallowed;
   }
 
   /**
@@ -81,7 +87,29 @@ export class Rewrite extends Error {
         `${describeRewriteTarget(this.target)}.shell() takes "visitor" or "target", not ${JSON.stringify(audience)}.`,
       );
     }
-    return new Rewrite(this.target, audience);
+    return new Rewrite(this.target, audience, this.mutationsDisallowed);
+  }
+
+  /**
+   * A copy for a lock: global middleware's rewrite of a mutation (a server
+   * action, a form post, any non-GET request) is an error before the action
+   * runs, instead of moving the mutation to the target. GET and HEAD rewrite
+   * as usual.
+   *
+   * ```ts
+   * throw rewrite("maintenance").disallowMutations();
+   * ```
+   *
+   * Route middleware runs after the action, so there it cannot refuse it: the
+   * render moves to the target, dev warns, and production logs one error.
+   */
+  disallowMutations(): Rewrite {
+    if (arguments.length > 0) {
+      throw new TypeError(
+        `${describeRewriteTarget(this.target)}.disallowMutations() takes no arguments.`,
+      );
+    }
+    return new Rewrite(this.target, this.shellAudience, true);
   }
 }
 Object.defineProperty(Rewrite.prototype, REWRITE_BRAND, { value: true });
@@ -138,29 +166,39 @@ function createRewrite(
  * ```ts
  * router.use(async (ctx, next) => {
  *   if (!locked || ctx.pathname === "/maintenance") return next();
- *   throw rewrite("maintenance");
+ *   throw rewrite("maintenance").disallowMutations();
  * });
  * ```
  *
  * The request runs again as the target (global middleware, route
  * middleware, render) with the same request context: values set before the
  * throw stay readable. `ctx.url` is the target; `ctx.rewrittenFrom` is the
- * visitor's URL. A `ppr` target gets no shell unless `.shell()` picks one
- * ({@link RewriteShell}). See the `/middleware` skill.
+ * visitor's URL. A mutation that global middleware rewrites moves to the
+ * target before its action runs, so the page's forms keep working; a lock
+ * refuses it with `.disallowMutations()`. A `ppr` target gets no shell unless
+ * `.shell()` picks one ({@link RewriteShell}). See the `/middleware` skill.
  */
 export const rewrite: RewriteFunction = createRewrite as RewriteFunction;
 
-/** A dispatch site that cannot honor a rewrite. */
-export type RewriteSite = "mutation" | "loader-fetch";
+/**
+ * A dispatch site that cannot honor a rewrite. "mutation" is the refusal
+ * `.disallowMutations()` asked for, not a misuse.
+ */
+export type RewriteSite = "mutation" | "body-read" | "loader-fetch";
 
 const SITE_MESSAGE: Record<RewriteSite, string> = {
   mutation:
-    "middleware threw it while handling a non-GET request (a server action " +
-    "or a form post). Return a Response for mutations instead, e.g. " +
-    'new Response("Maintenance", { status: 503 }).',
+    "refused a mutation: .disallowMutations() was set, so a server action " +
+    "or form post (any request but GET and HEAD) fails before its action " +
+    "runs. To answer it instead, return a Response for mutations from " +
+    'middleware, e.g. new Response("Maintenance", { status: 503 }).',
+  "body-read":
+    "is not supported here: middleware read the request body before it " +
+    "threw it, and the request moves to the target with its body for the " +
+    "action to read. Read a copy instead: ctx.request.clone().formData().",
   "loader-fetch":
-    "middleware threw it during a loader fetch (useFetchLoader, load(), " +
-    "useRefreshLoaders). Return a Response there.",
+    "is not supported here: middleware threw it during a loader fetch " +
+    "(useFetchLoader, load(), useRefreshLoaders). Return a Response there.",
 };
 
 /** The error a rewrite becomes at a site that cannot honor it. */
@@ -169,7 +207,7 @@ export function rewriteNotSupported(
   site: RewriteSite,
 ): Error {
   return new Error(
-    `${describeRewriteTarget(rewrite.target)} is not supported here: ${SITE_MESSAGE[site]}`,
+    `${describeRewriteTarget(rewrite.target)} ${SITE_MESSAGE[site]}`,
     { cause: rewrite },
   );
 }

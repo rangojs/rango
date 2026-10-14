@@ -62,7 +62,10 @@ const RewritingLoader = createLoader(async () => {
   throw rewrite("/maintenance");
 });
 
+let cartSaves = 0;
+
 async function saveCart(): Promise<string> {
+  cartSaves++;
   return "saved";
 }
 
@@ -120,6 +123,7 @@ const router = createRouter({
       throw rewrite("maintenance");
     }
     if (lock === "naive") throw rewrite("maintenance");
+    if (lock === "strict") throw rewrite("maintenance").disallowMutations();
     if (lock === "shell") throw rewrite("shell-target");
     if (ctx.pathname === "/gone") throw rewrite("/nowhere");
     return next();
@@ -186,6 +190,7 @@ beforeEach(() => {
   errors.length = 0;
   spans.length = 0;
   selfRuns = 0;
+  cartSaves = 0;
 });
 
 describe("throw rewrite() through the request handler", () => {
@@ -300,22 +305,42 @@ describe("where a rewrite is not supported", () => {
     expect(form.body).toBe("Maintenance");
   });
 
-  it("middleware that rewrites a JS action or a form post fails with the rule", async () => {
+  it("a lock that disallows mutations refuses a JS action or a form post with the rule", async () => {
     await expect(
-      serveShellRequest(router, "/shop?lock=naive", {
+      serveShellRequest(router, "/shop?lock=strict", {
         cacheStore: new MemorySegmentCacheStore(),
-        action: { ref: saveCart, id: "cart.ts#saveCartNaive" },
+        action: { ref: saveCart, id: "cart.ts#saveCartStrict" },
       }),
     ).rejects.toThrow(
-      'rewrite("maintenance") is not supported here: middleware threw it while handling a non-GET request',
+      'rewrite("maintenance") refused a mutation: .disallowMutations() was set',
     );
     await expect(
-      serveShellRequest(router, "/shop?lock=naive", {
+      serveShellRequest(router, "/shop?lock=strict", {
         cacheStore: new MemorySegmentCacheStore(),
-        form: createActionForm(saveCart, { id: "cart.ts#saveCartNaiveForm" }),
+        form: createActionForm(saveCart, { id: "cart.ts#saveCartStrictForm" }),
       }),
-    ).rejects.toThrow("Return a Response for mutations instead");
+    ).rejects.toThrow("refused a mutation: .disallowMutations() was set");
     expect(errors.map((e) => e.phase)).toEqual(["routing", "routing"]);
+    expect(cartSaves).toBe(0);
+  });
+
+  it("a lock that rewrites every method moves a JS action and a form post to its target, where the action runs", async () => {
+    // The default since #1145: a rewrite is routing, so a lock must answer
+    // mutations with a Response or throw rewrite(...).disallowMutations().
+    const js = await serveShellRequest(router, "/shop?lock=naive", {
+      cacheStore: new MemorySegmentCacheStore(),
+      action: { ref: saveCart, id: "cart.ts#saveCartNaive" },
+    });
+    expect(js.response.status).toBe(503);
+    expect(js.response.headers.get("x-rango-rewrite")).toBe("/maintenance");
+    const form = await serveShellRequest(router, "/shop?lock=naive", {
+      cacheStore: new MemorySegmentCacheStore(),
+      form: createActionForm(saveCart, { id: "cart.ts#saveCartNaiveForm" }),
+    });
+    expect(form.response.status).toBe(503);
+    expect(form.body).toContain("maintenance reason=undefined at=/maintenance");
+    expect(cartSaves).toBe(2);
+    expect(errors).toEqual([]);
   });
 
   it("a server action that throws rewrite() fails with the action error", async () => {

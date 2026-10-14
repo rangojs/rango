@@ -1213,10 +1213,12 @@ const matrixRows: SemanticMatrixRow[] = [
       expect(late.headers()["x-rango-rewrite"]).toBeUndefined();
     },
   },
+  // /rw/global/:id matches no route: global middleware rewrites every method
+  // to /rw/items/:id.
   {
     id: "RW3",
     contract:
-      "a global-middleware rewrite of a mutation is an error before the action runs; the middleware's Response path for mutations works in JS and no-JS",
+      "a global-middleware rewrite of a mutation moves it to the target before the action runs: the target's global middleware, the action once, the target's route middleware and render, in JS and no-JS; rewrite().disallowMutations() makes it an error before the action runs, and a lock's Response for mutations works in JS and no-JS",
     transport: "request",
     execution: "action-followup",
     scope: "n/a",
@@ -1224,6 +1226,56 @@ const matrixRows: SemanticMatrixRow[] = [
       expectConsole(page, {
         allow: [/Unhandled error caught: Error: Connection closed/],
       });
+      const key = crypto.randomUUID();
+      await page
+        .context()
+        .addCookies([{ name: "rw-key", value: key, url: baseUrl("/") }]);
+      await page.goto(baseUrl("/rw/global/20"));
+      await waitForHydration(page);
+      await expect(testId(page, "rw-item-saves")).toHaveText("0");
+      const moved = page.waitForResponse(
+        (r) =>
+          r.request().method() === "POST" && r.url().includes("/rw/global/20"),
+      );
+      await testId(page, "rw-item-save").click();
+      const jsMoved = await moved;
+      expect(jsMoved.status()).toBe(200);
+      expect(jsMoved.headers()["x-rango-rewrite"]).toBe("/rw/items/20");
+      await expect(testId(page, "rw-item-saves")).toHaveText("1");
+      await expect(testId(page, "rw-item-guard")).toHaveText("target");
+      await expect(testId(page, "rw-runs")).toHaveText("2");
+
+      const itemHtml = await (
+        await request.get(baseUrl("/rw/global/20"), {
+          headers: { cookie: `rw-key=${key}` },
+        })
+      ).text();
+      const actionField = /name="(\$ACTION_ID_[^"]+)"/.exec(itemHtml)?.[1];
+      expect(actionField).toBeDefined();
+      const formMoved = await request.post(baseUrl("/rw/global/20"), {
+        headers: { cookie: `rw-key=${key}` },
+        multipart: { [actionField!]: "" },
+      });
+      expect(formMoved.status()).toBe(200);
+      expect(formMoved.headers()["x-rango-rewrite"]).toBe("/rw/items/20");
+      const rerendered = await formMoved.text();
+      expect(rerendered).toContain('data-testid="rw-item-saves">2<');
+      expect(rerendered).toContain('data-testid="rw-item-guard">target<');
+      expect(rerendered).toContain('data-testid="rw-runs">2<');
+
+      // The same rewrite with disallowMutations(): refused, the action never runs.
+      const formRefused = await request.post(baseUrl("/rw/global/20"), {
+        headers: { cookie: `rw-key=${key}; rw-lock=strict` },
+        multipart: { [actionField!]: "" },
+      });
+      expect(formRefused.status()).toBe(500);
+      const after = await (
+        await request.get(baseUrl("/rw/global/20"), {
+          headers: { cookie: `rw-key=${key}` },
+        })
+      ).text();
+      expect(after).toContain('data-testid="rw-item-saves">2<');
+
       await page.goto(baseUrl("/rw/shop"));
       await waitForHydration(page);
       await page
@@ -1248,17 +1300,17 @@ const matrixRows: SemanticMatrixRow[] = [
       expect(form.status()).toBe(503);
       expect(await form.text()).toBe("Maintenance");
 
-      // Middleware that rewrites the mutation instead: an error.
+      // A lock that rewrites with disallowMutations(): an error.
       const jsRejected = await request.post(
         baseUrl("/rw/shop?_rsc_action=rw%23save"),
         {
-          headers: { cookie: "rw-lock=naive", "rsc-action": "rw#save" },
+          headers: { cookie: "rw-lock=strict", "rsc-action": "rw#save" },
           data: "[]",
         },
       );
       expect(jsRejected.status()).toBe(500);
       const formRejected = await request.post(baseUrl("/rw/shop"), {
-        headers: { cookie: "rw-lock=naive" },
+        headers: { cookie: "rw-lock=strict" },
         form: { note: "x" },
       });
       expect(formRejected.status()).toBe(500);
@@ -1271,7 +1323,7 @@ const matrixRows: SemanticMatrixRow[] = [
             (entry) =>
               entry.phase === "routing" &&
               entry.message.includes(
-                "middleware threw it while handling a non-GET request",
+                "refused a mutation: .disallowMutations() was set",
               ),
           ).length;
         })
@@ -1512,6 +1564,51 @@ const matrixRows: SemanticMatrixRow[] = [
       );
       await expect(testId(page, "rw-item-saves")).toHaveText("1");
       await expect(testId(page, "rw-item-loads")).toHaveText("1");
+    },
+  },
+  // /rw/get-only/:id rewrites to /rw/items/:id for GETs only (#1145).
+  {
+    id: "RW11",
+    contract:
+      "route middleware sees the render after an action as the page's GET: a rewrite it makes only for GETs re-renders the target, the action runs once, in JS and no-JS",
+    transport: "request",
+    execution: "action-followup",
+    scope: "n/a",
+    assert: async ({ baseUrl, page, request }) => {
+      const key = crypto.randomUUID();
+      await page
+        .context()
+        .addCookies([{ name: "rw-key", value: key, url: baseUrl("/") }]);
+      await page.goto(baseUrl("/rw/get-only/14"));
+      await waitForHydration(page);
+      const post = page.waitForResponse(
+        (r) =>
+          r.request().method() === "POST" &&
+          r.url().includes("/rw/get-only/14"),
+      );
+      await testId(page, "rw-item-save").click();
+      const jsAction = await post;
+      expect(jsAction.status()).toBe(200);
+      expect(jsAction.headers()["x-rango-rewrite"]).toBe("/rw/items/14");
+      await expect(testId(page, "rw-item-saves")).toHaveText("1");
+      await expect(testId(page, "rw-item-guard")).toHaveText("target");
+
+      const html = await (
+        await request.get(baseUrl("/rw/get-only/14"), {
+          headers: { cookie: `rw-key=${key}` },
+        })
+      ).text();
+      const actionField = /name="(\$ACTION_ID_[^"]+)"/.exec(html)?.[1];
+      expect(actionField).toBeDefined();
+      const form = await request.post(baseUrl("/rw/get-only/14"), {
+        headers: { cookie: `rw-key=${key}` },
+        multipart: { [actionField!]: "" },
+      });
+      expect(form.status()).toBe(200);
+      expect(form.headers()["x-rango-rewrite"]).toBe("/rw/items/14");
+      const rerendered = await form.text();
+      expect(rerendered).toContain('data-testid="rw-item-saves">2<');
+      expect(rerendered).toContain('data-testid="rw-item-guard">target<');
     },
   },
 ];
