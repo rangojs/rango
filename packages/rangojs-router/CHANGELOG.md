@@ -1,6 +1,166 @@
 # Changelog
 
-## Unreleased
+## 0.25.0 (2026-10-14)
+
+### Breaking: a global-middleware rewrite of a server action or form post moves it to the target; `rewrite(...).disallowMutations()` keeps the old refusal
+
+Migration: a lock that throws `rewrite()` for every method must refuse
+mutations itself. Add `.disallowMutations()`, or return a `Response` for
+requests other than GET and HEAD:
+
+```ts
+router.use(async (ctx, next) => {
+  if (!locked || ctx.pathname === "/maintenance") return next();
+  throw rewrite("maintenance").disallowMutations();
+});
+```
+
+**Before.** A page that global middleware reached through `throw rewrite()`
+could not call a server action or post a no-JS form. Its POST went to the
+visitor's URL, the same middleware rewrote it, and the router refused that
+rewrite before the action ran: the request failed with `rewrite("…") is not
+supported here: middleware threw it while handling a non-GET request`. A
+routing rewrite (a multi-tenant host, an A/B split, a URL with no route of
+its own) had to move into route middleware, or skip mutations and leave the
+action on the visitor's route. A plain `fetch` POST to an API route a global
+rewrite renamed failed the same way.
+
+```ts
+router.use((ctx) => {
+  throw rewrite(`/tenants/${tenantOf(ctx)}${ctx.pathname}`);
+});
+// The tenant page renders; its <form action={save}> fails with the error.
+```
+
+**Now.** A global-middleware rewrite of a mutation moves the request to the
+target before the action runs. The target's global middleware runs with the
+POST and its body, then the action runs once, then the target's route
+middleware and render, as for a direct post to the target. This works in JS
+and no-JS, and the page keeps its layout and state. The same rewrite of a
+non-action POST, PUT, PATCH or DELETE reaches the target's response route
+with its body. A JS server action moved to a response route or to a path
+that redirects is an error before it runs, naming the rule (`A rewrite of a
+server action or form post must target a page route`), as one after the
+action already was; served, it dropped the action with no report.
+
+`rewrite(...).disallowMutations()` returns a copy that keeps the refusal: a
+non-GET request is an error before the action runs, reported through
+`onError` with phase `"routing"`. Its message reads `rewrite("…") refused a
+mutation: .disallowMutations() was set`, so an alert or test that matched
+the old `is not supported here` text must match the new one. GET and HEAD
+rewrite as usual. It chains with `.shell()` in either order. Thrown from
+route middleware it cannot refuse anything, because route middleware runs
+after the action: the render moves to the target, dev logs a warning on
+each throw, and production logs one `console.error`.
+
+| Global middleware throws, for a mutation | Before                       | Now                                                 |
+| ---------------------------------------- | ---------------------------- | --------------------------------------------------- |
+| `rewrite(target)`                        | error before the action runs | moves to `target`; the action runs there            |
+| `rewrite(target).disallowMutations()`    | (did not exist)              | error before the action runs                        |
+| a `Response` for non-GET requests        | the `Response`               | the `Response` (unchanged)                          |
+| `rewrite(target)` only for GET requests  | the action runs at the URL   | the action runs at the URL (unchanged; rewrite all) |
+
+Loader fetches still refuse every rewrite, and route-middleware rewrites
+behave as before.
+
+Global middleware that reads a mutation's body itself (`await
+ctx.request.text()`) and then throws `rewrite()` gets an error before the
+action runs, since the moved action would get no arguments: read
+`ctx.request.clone()` instead. Global middleware runs once per pass, so on
+the target's pass it sees the moved POST again, with `ctx.rewrittenFrom`
+set: a body check must not skip that pass. `runMiddleware` reports the
+choice as `result.rewrite.mutationsDisallowed: true`; a plain rewrite's
+`result.rewrite` has no such field, so a `toEqual({ pathname, search })` on
+it still passes.
+
+### Breaking: a loader that throws while it re-runs after a server action throws at its read, and the action resolves
+
+Migration: code that caught the rejection of `await action()` to learn that
+the page could not refresh reads `useAction(action).revalidationError`, or
+catches the error where the data is read, with an error boundary.
+
+Before: the action ran and returned, but where the loader's error landed
+depended on the route. On a `clientUrls()` route, or a `urls()` route without
+`loading()`, `await action()` rejected with the loader's error, and a
+`<form action>`, `useActionState` or `useTransition` call handed that
+rejection to the nearest React error boundary above the form (the router's
+root one if the app had none), which replaced the page. On a `urls()` route
+with `loading()` the call resolved and the router's root boundary replaced
+the page, skipping any boundary inside the route. Under an `errorBoundary()`
+its fallback replaced the route, skipping a boundary of yours nearer the
+read.
+
+```tsx
+const result = await saveStock(sku); // rejected: "stock service unavailable"
+```
+
+Now it behaves as a navigation does, on every route and from every call
+site. The call resolves with the action's return value. The loader throws at
+its `useLoader` read, and the nearest boundary to the read catches it: your
+React error boundary around the read, else the `errorBoundary()` that covers
+the route, else the router's root one. Everything outside that boundary keeps
+its React state, and loaders that re-ran without error commit in the same
+commit. The error is reported to `onError` on the server, as before, and in
+the browser as the new `revalidationError` field of `useAction()`, with
+`error` left `null`:
+
+```tsx
+<StockBoundary>
+  <StockList /> {/* useLoader(StockLoader) throws here */}
+</StockBoundary>;
+const result = await saveStock(sku); // { saved: true }
+const { error, revalidationError } = useAction(saveStock);
+// error: null, revalidationError: Error("stock service unavailable")
+```
+
+Every refetch the router runs for an action (after several actions at once,
+after a navigation during it, after an HMR update) follows the same rule and
+reports to the `revalidationError` of the action that ran it; with several
+actions at once, that is the one whose refetch covers them all. A loader that
+throws `notFound()` or `redirect()` keeps its path: a `redirect()` (a deleted
+record's page) replaces the route's content and navigates, and the layouts
+above keep their instance. A no-JS form post is unchanged. Not covered yet:
+an `intercept()`'s loaders and a parallel slot's loaders under its own
+`loading()`, which are decoded above the slot's content.
+
+### Breaking: `intercept()` no longer takes `middleware()`; the target route's middleware runs for the modal
+
+Migration: move the intercept's middleware into the target route's
+`middleware()`, which runs for the modal too, or into its loaders. A value the
+intercept's loaders read with `ctx.get()` is set by the route's middleware.
+
+Before: an intercept's own middleware ran only when the modal rendered live.
+A runtime `cache()` hit or a `Prerender()` target served the modal without
+it, so a guard in it was skipped there and a loader reading its `ctx.set()`
+got nothing.
+
+```tsx
+path("/photos/:id", PhotoPage, { name: "photo" }),
+intercept("@modal", ".photo", PhotoModal, () => [
+  middleware(requireViewer), // skipped on a cache() hit
+  loader(PhotoLoader),
+]),
+```
+
+Now `intercept()` throws when the routes are defined, for `middleware()` in
+its use() or in its handler's `.use`:
+
+```text
+middleware() is not valid inside intercept("@modal", ".photo") use() (including the handler's .use): move it to the route's middleware() (it runs for the modal too) or into the loaders.
+```
+
+The target route's middleware runs on every request that renders the modal,
+cache hits and prerendered targets included:
+
+```tsx
+path("/photos/:id", PhotoPage, { name: "photo" }, () => [
+  middleware(requireViewer), // runs for the page and the modal
+]),
+intercept("@modal", ".photo", PhotoModal, () => [loader(PhotoLoader)]),
+```
+
+Work that belongs to the modal alone goes in the intercept's loader.
+`clientUrls()` intercepts never accepted `middleware()` and are unchanged.
 
 ### Changed: prefetch responses no longer carry `Cache-Control`; `prefetchCacheTTL` sets only the in-memory TTL
 
@@ -92,77 +252,6 @@ manifest and the loader manifest also stay in a build whose
 `treeshake.moduleSideEffects` is `false`, which dropped them before and made
 the server fail at startup.
 
-### Breaking: a global-middleware rewrite of a server action or form post moves it to the target; `rewrite(...).disallowMutations()` keeps the old refusal
-
-Migration: a lock that throws `rewrite()` for every method must refuse
-mutations itself. Add `.disallowMutations()`, or return a `Response` for
-requests other than GET and HEAD:
-
-```ts
-router.use(async (ctx, next) => {
-  if (!locked || ctx.pathname === "/maintenance") return next();
-  throw rewrite("maintenance").disallowMutations();
-});
-```
-
-**Before.** A page that global middleware reached through `throw rewrite()`
-could not call a server action or post a no-JS form. Its POST went to the
-visitor's URL, the same middleware rewrote it, and the router refused that
-rewrite before the action ran: the request failed with `rewrite("…") is not
-supported here: middleware threw it while handling a non-GET request`. A
-routing rewrite (a multi-tenant host, an A/B split, a URL with no route of
-its own) had to move into route middleware, or skip mutations and leave the
-action on the visitor's route. A plain `fetch` POST to an API route a global
-rewrite renamed failed the same way.
-
-```ts
-router.use((ctx) => {
-  throw rewrite(`/tenants/${tenantOf(ctx)}${ctx.pathname}`);
-});
-// The tenant page renders; its <form action={save}> fails with the error.
-```
-
-**Now.** A global-middleware rewrite of a mutation moves the request to the
-target before the action runs. The target's global middleware runs with the
-POST and its body, then the action runs once, then the target's route
-middleware and render, as for a direct post to the target. This works in JS
-and no-JS, and the page keeps its layout and state. The same rewrite of a
-non-action POST, PUT, PATCH or DELETE reaches the target's response route
-with its body. A JS server action moved to a response route or to a path
-that redirects is an error before it runs, naming the rule (`A rewrite of a
-server action or form post must target a page route`), as one after the
-action already was; served, it dropped the action with no report.
-
-`rewrite(...).disallowMutations()` returns a copy that keeps the refusal: a
-non-GET request is an error before the action runs, reported through
-`onError` with phase `"routing"`. Its message reads `rewrite("…") refused a
-mutation: .disallowMutations() was set`, so an alert or test that matched
-the old `is not supported here` text must match the new one. GET and HEAD
-rewrite as usual. It chains with `.shell()` in either order. Thrown from
-route middleware it cannot refuse anything, because route middleware runs
-after the action: the render moves to the target, dev logs a warning on
-each throw, and production logs one `console.error`.
-
-| Global middleware throws, for a mutation | Before                       | Now                                                 |
-| ---------------------------------------- | ---------------------------- | --------------------------------------------------- |
-| `rewrite(target)`                        | error before the action runs | moves to `target`; the action runs there            |
-| `rewrite(target).disallowMutations()`    | (did not exist)              | error before the action runs                        |
-| a `Response` for non-GET requests        | the `Response`               | the `Response` (unchanged)                          |
-| `rewrite(target)` only for GET requests  | the action runs at the URL   | the action runs at the URL (unchanged; rewrite all) |
-
-Loader fetches still refuse every rewrite, and route-middleware rewrites
-behave as before.
-
-Global middleware that reads a mutation's body itself (`await
-ctx.request.text()`) and then throws `rewrite()` gets an error before the
-action runs, since the moved action would get no arguments: read
-`ctx.request.clone()` instead. Global middleware runs once per pass, so on
-the target's pass it sees the moved POST again, with `ctx.rewrittenFrom`
-set: a body check must not skip that pass. `runMiddleware` reports the
-choice as `result.rewrite.mutationsDisallowed: true`; a plain rewrite's
-`result.rewrite` has no such field, so a `toEqual({ pathname, search })` on
-it still passes.
-
 ### Fixed: a server action from a page whose route middleware rewrites only GETs re-renders that page
 
 **Before.** Route middleware wraps only the render after a server action or a
@@ -197,95 +286,6 @@ A response header that branch sets (a public `Cache-Control`, for example)
 now lands on the action's response too. If a header must stay off mutation
 responses, set it from global middleware, which still sees the POST.
 `getRequestContext().request` is still the POST.
-
-### Breaking: a loader that throws while it re-runs after a server action throws at its read, and the action resolves
-
-Migration: code that caught the rejection of `await action()` to learn that
-the page could not refresh reads `useAction(action).revalidationError`, or
-catches the error where the data is read, with an error boundary.
-
-Before: the action ran and returned, but where the loader's error landed
-depended on the route. On a `clientUrls()` route, or a `urls()` route without
-`loading()`, `await action()` rejected with the loader's error, and a
-`<form action>`, `useActionState` or `useTransition` call handed that
-rejection to the nearest React error boundary above the form (the router's
-root one if the app had none), which replaced the page. On a `urls()` route
-with `loading()` the call resolved and the router's root boundary replaced
-the page, skipping any boundary inside the route. Under an `errorBoundary()`
-its fallback replaced the route, skipping a boundary of yours nearer the
-read.
-
-```tsx
-const result = await saveStock(sku); // rejected: "stock service unavailable"
-```
-
-Now it behaves as a navigation does, on every route and from every call
-site. The call resolves with the action's return value. The loader throws at
-its `useLoader` read, and the nearest boundary to the read catches it: your
-React error boundary around the read, else the `errorBoundary()` that covers
-the route, else the router's root one. Everything outside that boundary keeps
-its React state, and loaders that re-ran without error commit in the same
-commit. The error is reported to `onError` on the server, as before, and in
-the browser as the new `revalidationError` field of `useAction()`, with
-`error` left `null`:
-
-```tsx
-<StockBoundary>
-  <StockList /> {/* useLoader(StockLoader) throws here */}
-</StockBoundary>;
-const result = await saveStock(sku); // { saved: true }
-const { error, revalidationError } = useAction(saveStock);
-// error: null, revalidationError: Error("stock service unavailable")
-```
-
-Every refetch the router runs for an action (after several actions at once,
-after a navigation during it, after an HMR update) follows the same rule and
-reports to the `revalidationError` of the action that ran it; with several
-actions at once, that is the one whose refetch covers them all. A loader that
-throws `notFound()` or `redirect()` keeps its path: a `redirect()` (a deleted
-record's page) replaces the route's content and navigates, and the layouts
-above keep their instance. A no-JS form post is unchanged. Not covered yet:
-an `intercept()`'s loaders and a parallel slot's loaders under its own
-`loading()`, which are decoded above the slot's content.
-
-### Breaking: `intercept()` no longer takes `middleware()`; the target route's middleware runs for the modal
-
-Migration: move the intercept's middleware into the target route's
-`middleware()`, which runs for the modal too, or into its loaders. A value the
-intercept's loaders read with `ctx.get()` is set by the route's middleware.
-
-Before: an intercept's own middleware ran only when the modal rendered live.
-A runtime `cache()` hit or a `Prerender()` target served the modal without
-it, so a guard in it was skipped there and a loader reading its `ctx.set()`
-got nothing.
-
-```tsx
-path("/photos/:id", PhotoPage, { name: "photo" }),
-intercept("@modal", ".photo", PhotoModal, () => [
-  middleware(requireViewer), // skipped on a cache() hit
-  loader(PhotoLoader),
-]),
-```
-
-Now `intercept()` throws when the routes are defined, for `middleware()` in
-its use() or in its handler's `.use`:
-
-```text
-middleware() is not valid inside intercept("@modal", ".photo") use() (including the handler's .use): move it to the route's middleware() (it runs for the modal too) or into the loaders.
-```
-
-The target route's middleware runs on every request that renders the modal,
-cache hits and prerendered targets included:
-
-```tsx
-path("/photos/:id", PhotoPage, { name: "photo" }, () => [
-  middleware(requireViewer), // runs for the page and the modal
-]),
-intercept("@modal", ".photo", PhotoModal, () => [loader(PhotoLoader)]),
-```
-
-Work that belongs to the modal alone goes in the intercept's loader.
-`clientUrls()` intercepts never accepted `middleware()` and are unchanged.
 
 ### Fixed: `useNavigation()` reaches `idle` in the commit that brings the new URL ([#1164](https://github.com/rangojs/rango/issues/1164))
 
