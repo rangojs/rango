@@ -27,6 +27,7 @@ import {
 import { hooksPatterns } from "./urls/hooks.js";
 import { renderStabilityPatterns } from "./urls/render-stability.js";
 import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
+import { asyncHandlesPatterns } from "./urls/async-handles.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
 import { vtBackPatterns } from "./urls/vt-back.js";
 import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
@@ -1211,6 +1212,8 @@ export const urlpatterns = urls(
       include("/", navIdleLocationPatterns, { name: "" }),
       // A navigation's title and crumbs commit with its page.
       include("/", handlesCommitPatterns, { name: "" }),
+      // Async handle values: awaited in SSR, held then swapped on navs.
+      include("/", asyncHandlesPatterns, { name: "" }),
       // A cached back/forward animates under transition().
       include("/", vtBackPatterns, { name: "" }),
 

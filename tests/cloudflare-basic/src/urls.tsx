@@ -339,6 +339,7 @@ import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { transitionKindsPatterns } from "./pages/transition-kinds.js";
+import { asyncHandlesPatterns } from "./pages/async-handles.js";
 import { handlesCommitPatterns } from "./pages/handles-commit.js";
 import { vtBackPatterns } from "./pages/vt-back.js";
 import {
@@ -3132,6 +3133,8 @@ export const urlpatterns = urls(
         // A navigation's title and crumbs commit with its page (mirrors the
         // router e2e app's /handles-commit/*).
         include("/", handlesCommitPatterns, { name: "" }),
+        // Async handle values (mirrors the router e2e app's /async-handles/*).
+        include("/", asyncHandlesPatterns, { name: "" }),
         // A cached back/forward animates under transition() (mirrors the
         // router e2e app's /vt-back/*).
         include("/", vtBackPatterns, { name: "" }),
