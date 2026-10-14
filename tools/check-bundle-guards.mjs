@@ -190,9 +190,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // (no helper, no navigateTo wrapper, href() reused for the join). One 128B
 // step: main sat 11B under the old limit.
 //
-// Raised 49KB -> 49.25KB on 2026-10-14 for the #1164/#1165 stack, measured on
-// cloudflare-basic from main e9d3fcd75 50166B -> 50427B (+261B gzip). Two
-// 128B steps, the owner's call (dc-q41) after trimming. Handle values and
+// Raised 49KB -> 49.375KB on 2026-10-14 for the #1164/#1165 stack, measured on
+// cloudflare-basic from main 5c9d4ddf0 50164B -> 50437B (+273B gzip; the same
+// change measured +261B on e9d3fcd75, the rest is gzip interplay with #1173).
+// Three 128B steps, the owner's call (dc-q41, then one more step) after
+// trimming. Handle values and
 // useSegments() commit with the page (useCommitAnchoredState in
 // browser/react/use-handle.ts; its "use no memo" opt-out saved 107B), a
 // `prefetch: false` adoption commits `loading` in flushSync, and a
@@ -201,7 +203,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // behind a generation and history-key guard, and scroll-restoration.ts
 // restores in that commit. None of it can load lazily: it runs in every
 // navigation's commit and every popstate.
-const ROUTER_CHUNK_GZIP_MAX = 49.25 * 1024;
+const ROUTER_CHUNK_GZIP_MAX = 49.375 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
