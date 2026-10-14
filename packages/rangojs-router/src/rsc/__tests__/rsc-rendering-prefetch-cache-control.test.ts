@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 
-// A prefetch's browser Cache-Control is set only for a 2xx response: a thrown
-// handler (500) or a not-found (404) must not be answered from the HTTP cache
-// on the click. Same serializer mock as
+// A prefetch carries no Cache-Control, whatever its status (#1170): the HTTP
+// cache would answer the click, or a later document's prefetch, with a
+// prefetch that failed. Same serializer mock as
 // rsc-rendering-default-prefetch-primitive.test.ts.
 function pluginRscMock() {
   return {
@@ -69,10 +69,10 @@ function prefetch(path: string): Promise<Response> {
 }
 
 describe("prefetch Cache-Control by status", () => {
-  it("keeps the header on a successful prefetch", async () => {
+  it("omits it on a successful prefetch", async () => {
     const res = await prefetch("/ok");
     expect(res.status).toBe(200);
-    expect(res.headers.get("cache-control")).toMatch(/^private, max-age=/);
+    expect(res.headers.get("cache-control")).toBeNull();
   });
 
   it("omits it when the handler throws", async () => {

@@ -1020,8 +1020,7 @@ in dev. A removed page is the exception: its marker answers 404 in dev too.
   that only a refresh produced.
 - **Connected clients can lag.** A refresh has no response to reach open tabs:
   a client that prefetched the page keeps its copy for `prefetchCacheTTL`
-  (default 300s) and the browser HTTP cache (`prefetchCacheControl`). Lower
-  them if the window matters.
+  (default 300s, in memory only). Lower it if the window matters.
 - **Entries are per deploy.** Keys carry the router's data version, so a deploy
   that changes server code starts from the build entries again; a client-only
   deploy keeps refreshed pages.

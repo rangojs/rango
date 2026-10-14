@@ -277,12 +277,13 @@ boundary (`/hooks`, `data.md`).
 A prefetch is a navigation sent early: the server renders the destination's
 handlers and loaders for it, from the page you are on (`/links`, "What a
 prefetch renders"). A click that adopts a complete prefetch commits with no
-request. Entries live 300 s by default (`prefetchCacheTTL`) and an action
-drops them unless it calls `keepClientCache()`. Only a successful (2xx)
-prefetch response carries the browser `Cache-Control`, so a prefetch answered
-with a 500 or 404 is never served to the click from the HTTP cache. A
-prefetch in which a loader threw (a 200 with the error inside) is never used
-either: the click sends its own request, like a plain click.
+request. Entries live 300 s by default (`prefetchCacheTTL`) in the router's
+memory only (prefetch responses carry no `Cache-Control`), and an action
+drops them unless it calls `keepClientCache()`. A prefetch whose page failed
+is never used: a 500 or 404, and a 200 whose render reported an error (a
+loader that threw, a `loading()` handler that fell back to its
+`errorBoundary()`, an async component that threw). The click sends its own
+request, like a plain click.
 
 The rule: **prefetch broadly, and flag what is expensive.**
 

@@ -18,7 +18,8 @@ import { expectConsole } from "./console-guard.js";
  * useLoader read, the app's boundary there catches it, and the layout keeps
  * its instance; a redirect() replaces only the route's content. A prefetch
  * that finished with a loader error is never served to a click: the click
- * sends its own request, past the HTTP cache (dc-t72). The one exception is
+ * sends its own request, which no HTTP cache answers (#1170). The one
+ * exception is
  * the background refresh after Back onto a stale entry: a loader that throws
  * there leaves the stale page on screen and is logged.
  */

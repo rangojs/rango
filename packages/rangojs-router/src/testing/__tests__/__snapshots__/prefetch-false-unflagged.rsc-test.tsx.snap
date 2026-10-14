@@ -2,7 +2,7 @@
 
 exports[`a prefetch of a route with no prefetch: false > is byte-identical to the response before the option existed 1`] = `
 {
-  "cacheControl": "private, max-age=300",
+  "cacheControl": null,
   "flight": "1:"<package>/src/client.tsx"
 2:I["$1",[],"Outlet",1]
 5:x
@@ -12,7 +12,6 @@ exports[`a prefetch of a route with no prefetch: false > is byte-identical to th
 5:C
 ",
   "headers": [
-    "cache-control",
     "content-type",
     "server-timing",
     "vary",

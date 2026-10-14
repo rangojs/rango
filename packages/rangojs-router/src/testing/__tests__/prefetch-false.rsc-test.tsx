@@ -1188,8 +1188,6 @@ describe('"use cache" in deferred work', () => {
 });
 
 describe("R7: deferral is never stored, and modes never answer each other", () => {
-  // What a route answers with when the feature is not in play.
-  const PREFETCH_CACHE_CONTROL = "private, max-age=300";
   // What a response nothing may reuse answers with (rsc-rendering.ts).
   const NOT_REUSED = "private, no-cache";
   const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
@@ -1203,7 +1201,7 @@ describe("R7: deferral is never stored, and modes never answer each other", () =
     const { prefetch, serve } = setup();
     expect(headersOf(await prefetch("/elsewhere"))).toEqual({
       vary: VARY,
-      cacheControl: PREFETCH_CACHE_CONTROL,
+      cacheControl: null,
       scope: null,
     });
     expect(
@@ -1244,7 +1242,7 @@ describe("R7: deferral is never stored, and modes never answer each other", () =
     expect(payloadOf(result).deferred).toEqual([]);
     expect(headersOf(result)).toEqual({
       vary: VARY,
-      cacheControl: PREFETCH_CACHE_CONTROL,
+      cacheControl: null,
       scope: null,
     });
   });

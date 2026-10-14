@@ -4,8 +4,8 @@
  * `x-rsc-prefetch-scope: source` whether or not the intercept applied from
  * this source, so the browser never stores the full page a non-matching
  * source got in the slot every source reuses. A route no intercept targets
- * carries no scope header (the shared slot) and keeps its prefetch
- * `cache-control`.
+ * carries no scope header (the shared slot). No prefetch carries
+ * `cache-control` (#1170).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -106,7 +106,7 @@ describe("x-rsc-prefetch-scope on a client navigation", () => {
     for (const from of ["/", "/elsewhere"]) {
       const result = await prefetch("/plain/1", from);
       expect(result.scope).toBeNull();
-      expect(result.cacheControl).toMatch(/max-age=/);
+      expect(result.cacheControl).toBeNull();
     }
   });
 });

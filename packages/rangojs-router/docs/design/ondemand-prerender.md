@@ -57,12 +57,11 @@ definition (`path-helper.ts`); pick one of the two per route.
 clients: it is requestless, so there is no response to rotate the state cookie
 on (`invalidateClientCache` is asserted unreachable inside the producer). A
 client that viewport-prefetched an on-demand route (default-on in production
-since #698) keeps serving the pre-refresh payload from its prefetch cache
-(default TTL 300s) and the browser HTTP cache (`prefetchCacheControl`, default
-max-age 300) until those expire or its own server action invalidates them.
-This matches ISR semantics elsewhere (Next.js's client router cache behaves
-the same); size `prefetchCacheTTL`/`prefetchCacheControl` down if a tighter
-window matters.
+since #698) keeps serving the pre-refresh payload from its in-memory prefetch
+cache (default TTL 300s; prefetch responses carry no `Cache-Control` since
+#1170) until it expires or its own server action invalidates it. This matches
+ISR semantics elsewhere (Next.js's client router cache behaves the same); size
+`prefetchCacheTTL` down if a tighter window matters.
 
 **Serve-path read cost (KV store).** Every production request for an
 on-demand route pays one uncached KV `get` plus one KV read per tag stamped on

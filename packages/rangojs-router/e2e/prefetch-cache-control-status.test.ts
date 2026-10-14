@@ -3,11 +3,11 @@ import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, testId } from "./helper";
 
 /**
- * A failed prefetch must not carry the prefetch Cache-Control header. The
- * client drops the failed prefetch from its own cache, but the click's fetch
- * of the same URL uses the default cache mode, so a cached 500 would be
- * answered from the browser HTTP cache for the header's max-age even after the
- * route recovers. /prefetch-flaky throws until the flaky-ok cookie is set.
+ * A failed prefetch carries no Cache-Control (no prefetch does, #1170). The
+ * client drops the failed prefetch from its own cache, and the click's fetch
+ * of the same URL uses the default cache mode, so a cached 500 would answer it
+ * from the browser HTTP cache even after the route recovers. /prefetch-flaky
+ * throws until the flaky-ok cookie is set.
  */
 function runSpec(f: Fixture): void {
   test("a failed prefetch has no cache-control and the click renders the recovered route", async ({

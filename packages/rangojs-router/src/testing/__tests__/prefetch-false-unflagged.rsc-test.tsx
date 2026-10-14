@@ -80,13 +80,13 @@ describe("a prefetch of a route with no prefetch: false", () => {
     expect(result).toMatchSnapshot();
   });
 
-  it("differs from a navigation of the same route only by its cache-control", async () => {
+  it("is identical to a navigation of the same route, with no cache-control", async () => {
     const prefetched = await partial(true);
     const navigated = await partial(false);
     expect(prefetched.flight).toBe(navigated.flight);
     expect(prefetched.vary).toBe(navigated.vary);
     expect(navigated.cacheControl).toBeNull();
-    expect(prefetched.cacheControl).toMatch(/^private, max-age=/);
+    expect(prefetched.cacheControl).toBeNull();
   });
 });
 

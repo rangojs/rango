@@ -40,6 +40,7 @@ import {
   renderRscFlightStage,
   renderRscResponse,
 } from "./render-pipeline.js";
+import { markPrefetchOnRenderError } from "./prefetch-render-error.js";
 import {
   createRoutineTrace,
   handoff,
@@ -1261,17 +1262,6 @@ function renderPreparedRscResponse<TEnv>(
   if (sourceScoped) {
     rscHeaders["x-rsc-prefetch-scope"] = "source";
   }
-  // Enable browser HTTP caching for prefetch responses only.
-  // Requires a prefetch request (X-Rango-Prefetch, sent by Link prefetch
-  // fetch), a source-agnostic response (see sourceScoped above), and a
-  // configured cache-control value (false disables caching). Never on an
-  // error status: the click's fetch would be answered with the cached error.
-  if (reqCtx._requestKind === "prefetch" && isPartial && !sourceScoped) {
-    const cc = ctx.router.prefetchCacheControl;
-    if (cc && reqCtx.res.status >= 200 && reqCtx.res.status < 300) {
-      rscHeaders["cache-control"] = cc;
-    }
-  }
   // prefetch: false (docs/design/prefetch-false.md, R7). A response that
   // carries deferred units answers one page's prefetch, and a fill is the
   // second half of one adoption: neither is reused by a shared cache or the
@@ -1301,7 +1291,7 @@ function renderPreparedRscResponse<TEnv>(
       reqCtx._activeRoutine &&
       createRenderStageTraceBridge(reqCtx._activeRoutine),
   };
-  return renderRscResponse(
+  const rendered = renderRscResponse(
     {
       ctx,
       request,
@@ -1324,6 +1314,11 @@ function renderPreparedRscResponse<TEnv>(
             init: { headers: { "content-type": "text/html;charset=utf-8" } },
           }),
         },
+  );
+  // A prefetch whose render reported an error is not kept (#1170).
+  if (reqCtx._requestKind !== "prefetch" || !isPartial) return rendered;
+  return rendered.then((response) =>
+    markPrefetchOnRenderError(response, reqCtx._renderErrors ?? []),
   );
 }
 

@@ -276,14 +276,8 @@ export function createRouter<TEnv = any>(
   );
 
   // Resolve prefetch cache TTL (default: 300 seconds / 5 minutes). Clamps to a
-  // non-negative integer and guards non-finite (NaN/Infinity) inputs so a
-  // malformed `Cache-Control: max-age=NaN` can never reach the wire.
-  const resolvedPrefetchCacheTTL = resolvePrefetchCacheTTL(
-    prefetchCacheTTLOption,
-  );
-  const prefetchCacheTTL = resolvedPrefetchCacheTTL.ms;
-  const prefetchCacheControl: string | false =
-    resolvedPrefetchCacheTTL.cacheControl;
+  // non-negative integer and guards non-finite (NaN/Infinity) inputs.
+  const prefetchCacheTTL = resolvePrefetchCacheTTL(prefetchCacheTTLOption).ms;
 
   // Resolve client-side prefetch limits (in-memory cache size and queue
   // concurrency). Both are positive-integer counts; sub-1/non-finite inputs
@@ -1153,7 +1147,6 @@ export function createRouter<TEnv = any>(
     cacheProfiles: resolvedCacheProfiles,
 
     // Expose prefetch cache settings
-    prefetchCacheControl,
     prefetchCacheTTL,
     prefetchCacheSize,
     prefetchConcurrency,

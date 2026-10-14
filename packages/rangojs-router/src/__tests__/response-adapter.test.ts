@@ -196,6 +196,38 @@ describe("teeWithCompletion", () => {
     expect(onComplete).toHaveBeenCalledWith(true);
   });
 
+  it.each([
+    { where: "in its own chunk", chunks: ["0:{}\n", ":H_0\n"], clean: false },
+    { where: "at the end of a chunk", chunks: ["0:{}\n:H_0\n"], clean: false },
+    {
+      where: "split across chunks",
+      chunks: ["0:{}\n:H", "_", "0\n"],
+      clean: false,
+    },
+    { where: "before the last row", chunks: [":H_0\n", "0:{}\n"], clean: true },
+    { where: "absent, the body shorter", chunks: ["0\n"], clean: true },
+  ])(
+    "PREFETCH_FAILED_ROW $where: endedCleanly is $clean",
+    async ({ chunks, clean }) => {
+      const onComplete = vi.fn();
+      const encoder = new TextEncoder();
+      const res = new Response(
+        new ReadableStream({
+          start(controller) {
+            for (const chunk of chunks)
+              controller.enqueue(encoder.encode(chunk));
+            controller.close();
+          },
+        }),
+      );
+
+      await teeWithCompletion(res, onComplete).arrayBuffer();
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(onComplete).toHaveBeenCalledWith(clean);
+    },
+  );
+
   it("preserves response status, statusText, and headers", () => {
     const onComplete = vi.fn();
     const stream = new ReadableStream({
