@@ -19,6 +19,77 @@ manifest and the loader manifest also stay in a build whose
 `treeshake.moduleSideEffects` is `false`, which dropped them before and made
 the server fail at startup.
 
+### Breaking: a global-middleware rewrite of a server action or form post moves it to the target; `rewrite(...).disallowMutations()` keeps the old refusal
+
+Migration: a lock that throws `rewrite()` for every method must refuse
+mutations itself. Add `.disallowMutations()`, or return a `Response` for
+requests other than GET and HEAD:
+
+```ts
+router.use(async (ctx, next) => {
+  if (!locked || ctx.pathname === "/maintenance") return next();
+  throw rewrite("maintenance").disallowMutations();
+});
+```
+
+**Before.** A page that global middleware reached through `throw rewrite()`
+could not call a server action or post a no-JS form. Its POST went to the
+visitor's URL, the same middleware rewrote it, and the router refused that
+rewrite before the action ran: the request failed with `rewrite("…") is not
+supported here: middleware threw it while handling a non-GET request`. A
+routing rewrite (a multi-tenant host, an A/B split, a URL with no route of
+its own) had to move into route middleware, or skip mutations and leave the
+action on the visitor's route. A plain `fetch` POST to an API route a global
+rewrite renamed failed the same way.
+
+```ts
+router.use((ctx) => {
+  throw rewrite(`/tenants/${tenantOf(ctx)}${ctx.pathname}`);
+});
+// The tenant page renders; its <form action={save}> fails with the error.
+```
+
+**Now.** A global-middleware rewrite of a mutation moves the request to the
+target before the action runs. The target's global middleware runs with the
+POST and its body, then the action runs once, then the target's route
+middleware and render, as for a direct post to the target. This works in JS
+and no-JS, and the page keeps its layout and state. The same rewrite of a
+non-action POST, PUT, PATCH or DELETE reaches the target's response route
+with its body. A JS server action moved to a response route or to a path
+that redirects is an error before it runs, naming the rule (`A rewrite of a
+server action or form post must target a page route`), as one after the
+action already was; served, it dropped the action with no report.
+
+`rewrite(...).disallowMutations()` returns a copy that keeps the refusal: a
+non-GET request is an error before the action runs, reported through
+`onError` with phase `"routing"`. Its message reads `rewrite("…") refused a
+mutation: .disallowMutations() was set`, so an alert or test that matched
+the old `is not supported here` text must match the new one. GET and HEAD
+rewrite as usual. It chains with `.shell()` in either order. Thrown from
+route middleware it cannot refuse anything, because route middleware runs
+after the action: the render moves to the target, dev logs a warning on
+each throw, and production logs one `console.error`.
+
+| Global middleware throws, for a mutation | Before                       | Now                                                 |
+| ---------------------------------------- | ---------------------------- | --------------------------------------------------- |
+| `rewrite(target)`                        | error before the action runs | moves to `target`; the action runs there            |
+| `rewrite(target).disallowMutations()`    | (did not exist)              | error before the action runs                        |
+| a `Response` for non-GET requests        | the `Response`               | the `Response` (unchanged)                          |
+| `rewrite(target)` only for GET requests  | the action runs at the URL   | the action runs at the URL (unchanged; rewrite all) |
+
+Loader fetches still refuse every rewrite, and route-middleware rewrites
+behave as before.
+
+Global middleware that reads a mutation's body itself (`await
+ctx.request.text()`) and then throws `rewrite()` gets an error before the
+action runs, since the moved action would get no arguments: read
+`ctx.request.clone()` instead. Global middleware runs once per pass, so on
+the target's pass it sees the moved POST again, with `ctx.rewrittenFrom`
+set: a body check must not skip that pass. `runMiddleware` reports the
+choice as `result.rewrite.mutationsDisallowed: true`; a plain rewrite's
+`result.rewrite` has no such field, so a `toEqual({ pathname, search })` on
+it still passes.
+
 ### Fixed: a server action from a page whose route middleware rewrites only GETs re-renders that page
 
 **Before.** Route middleware wraps only the render after a server action or a
@@ -44,10 +115,11 @@ for a rewrite of every method: the target's global and route middleware run,
 the action is not run again, and the page keeps its layout and state.
 Global middleware still sees the POST, since it wraps the action.
 
-**Migration.** A route middleware that branches on `ctx.request.method` or
+**Side effects.** A route middleware that branches on `ctx.request.method` or
 reads the form body takes its GET branch around the render after an action,
 and reads no body. That code ran after the action had committed, so it never
-guarded the action: guard actions in global middleware or inside the action.
+guarded the action: guard mutations in global middleware (a returned
+`Response`, or `rewrite(...).disallowMutations()`) or inside the action.
 A response header that branch sets (a public `Cache-Control`, for example)
 now lands on the action's response too. If a header must stay off mutation
 responses, set it from global middleware, which still sees the POST.

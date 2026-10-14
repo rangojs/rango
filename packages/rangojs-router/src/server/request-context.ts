@@ -823,9 +823,10 @@ export interface RequestContext<
    * @internal The outcome of the action this request ran (a JS server
    * action's continuation, a no-JS form post's form state), set before route
    * middleware wraps the re-render. While it is unset, applyRewrite
-   * (rsc/rewrite-passes.ts) refuses a mutation's rewrite; once set, the
-   * request moves to the target, whose pass re-renders from it instead of
-   * running the action again (#1145).
+   * (rsc/rewrite-passes.ts) moves a mutation with its body, so the action
+   * runs on the target's pass, or refuses it (`disallowMutations()`, or a
+   * body middleware read); once set, the request moves to the target, whose
+   * pass re-renders from it instead of running the action again (#1145).
    */
   _actionRan?:
     | { kind: "action"; continuation: ActionContinuation }

@@ -19,8 +19,9 @@ import {
 
 // throw rewrite() fixtures (e2e/rewrite.test.ts). The `rw-lock` cookie turns
 // the lock on per test: "on" is the maintenance recipe (pages rewrite to
-// /rw/maintenance, mutations get a 503 Response), "naive" rewrites every
-// method, so a server action under it is the rewrite-on-mutation error.
+// /rw/maintenance, mutations get a 503 Response), "strict" rewrites every
+// method with disallowMutations(), so a server action under it is refused
+// before it runs.
 
 const RwLock = createVar<{ reason: string }>();
 /** Global middleware runs on /rw/*: one per pass of the request. */
@@ -45,6 +46,7 @@ export const rwCountMiddleware: Middleware = async (ctx, next) => {
 
 /** The lock, loops and an inline path guard (mounted on /rw/* in router.tsx). */
 export const rwLockMiddleware: Middleware = async (ctx, next) => {
+  const mode = cookies().get("rw-lock")?.value;
   if (ctx.pathname === "/rw/loop-a") throw rewrite("/rw/loop-b");
   if (ctx.pathname === "/rw/loop-b") throw rewrite("/rw/loop-a");
   if (ctx.pathname === "/rw/gone") throw rewrite("/rw/nowhere");
@@ -62,6 +64,14 @@ export const rwLockMiddleware: Middleware = async (ctx, next) => {
   }
   // A global rewrite into a pattern-guarded path.
   if (ctx.pathname === "/rw/global-to-guarded") throw rewrite("rw.guarded");
+  // A routing rewrite of every method from a URL no route matches (a
+  // multi-tenant host, an A/B split): the item page's forms post here, and
+  // their actions run on the item's pass (#1145). rw-lock=strict opts out.
+  const global = /^\/rw\/global\/(\d+)$/.exec(ctx.pathname);
+  if (global) {
+    const target = rewrite("rw.item", { id: global[1]! });
+    throw mode === "strict" ? target.disallowMutations() : target;
+  }
   // A rewrite after next() ran the route: an error.
   if (ctx.pathname === "/rw/after") {
     await next();
@@ -75,7 +85,6 @@ export const rwLockMiddleware: Middleware = async (ctx, next) => {
     return new Response("Forbidden", { status: 403 });
   }
 
-  const mode = cookies().get("rw-lock")?.value;
   const locked =
     ctx.pathname === "/rw/shop" || ctx.pathname.startsWith("/rw/products/");
   if (!mode || !locked) return next();
@@ -87,7 +96,8 @@ export const rwLockMiddleware: Middleware = async (ctx, next) => {
   }
   ctx.set(RwLock, { reason: "deploy" });
   cookies().set("rw-pass-one", "kept", { path: "/" });
-  throw rewrite("rw.maintenance");
+  const maintenance = rewrite("rw.maintenance");
+  throw mode === "strict" ? maintenance.disallowMutations() : maintenance;
 };
 
 /**
@@ -179,8 +189,8 @@ export const RwItemLoader = createLoader(async () => ({
 }));
 
 /**
- * The target of /rw/public/:id. Its save button posts to the visitor's URL,
- * whose route middleware rewrites every method (#1145).
+ * The target of /rw/public/:id and /rw/global/:id. Its save button posts to
+ * the visitor's URL, whose middleware rewrites every method (#1145).
  */
 function RwItem(ctx: HandlerContext<{ id: string }>) {
   return (

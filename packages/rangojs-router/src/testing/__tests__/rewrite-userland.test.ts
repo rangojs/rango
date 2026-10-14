@@ -80,6 +80,20 @@ describe("runMiddleware reports a thrown rewrite", () => {
     });
   });
 
+  it("reports a lock's disallowMutations() choice", async () => {
+    const lock: MiddlewareFn = () => {
+      throw rewrite("/maintenance").shell("target").disallowMutations();
+    };
+    const result = await runMiddleware(lock, {
+      request: new Request("http://localhost/cart", { method: "POST" }),
+    });
+    expect(result.rewrite).toEqual({
+      pathname: "/maintenance",
+      search: "",
+      mutationsDisallowed: true,
+    });
+  });
+
   it("leaves rewrite undefined when the chain does not rewrite", async () => {
     const result = await runMiddleware(lockMiddleware, {
       request: "/api/orders",
@@ -206,28 +220,48 @@ describe("dispatch re-dispatches a rewritten request", () => {
     ]);
   });
 
-  it("refuses a rewrite of a mutation with a clear error", async () => {
+  it("moves a mutation to the target, whose handler serves it with its body; disallowMutations() refuses it", async () => {
     errors.length = 0;
-    const thrower = createRouter({
+    const mover = createRouter({
       onError: (context) => {
         errors.push(context);
       },
     })
-      .use(() => {
-        throw rewrite("/api/maintenance");
+      .use((ctx, next) => {
+        if (ctx.pathname !== "/api/orders") return next();
+        const target = rewrite("/api/v2/orders");
+        throw ctx.request.headers.get("x-lock") === "strict"
+          ? target.disallowMutations()
+          : target;
       })
       .routes(
         urls(({ path }) => [
-          path.json("/api/maintenance", () => ({})),
-          path.json("/api/orders", () => ({})),
+          path.json("/api/v2/orders", async (ctx) => ({
+            method: ctx.request.method,
+            body: await ctx.request.text(),
+          })),
+          path.json("/api/orders", () => ({ version: 1 })),
         ]),
       );
-    await expect(
-      dispatch(thrower, {
-        request: new Request("http://localhost/api/orders", { method: "POST" }),
-      }),
-    ).rejects.toThrow("Return a Response for mutations instead");
-    expect(errors[0]?.phase).toBe("routing");
+    const post = (headers: Record<string, string> = {}) =>
+      dispatch(mover, {
+        request: new Request("http://localhost/api/orders", {
+          method: "POST",
+          headers,
+          body: "order",
+        }),
+      });
+
+    const moved = await post();
+    expect(moved.status).toBe(200);
+    expect(moved.headers.get("x-rango-rewrite")).toBe("/api/v2/orders");
+    expect(await moved.json()).toEqual({ method: "POST", body: "order" });
+    expect(errors).toEqual([]);
+
+    await expect(post({ "x-lock": "strict" })).rejects.toThrow(
+      "refused a mutation: .disallowMutations() was set",
+    );
+    expect(errors.map((e) => e.phase)).toEqual(["routing"]);
   });
 
   it("a cached response route that rewrites keeps the pre-handler onResponse callbacks", async () => {

@@ -18,6 +18,7 @@ import {
   captureRequestEntryContext,
 } from "../server/request-context.js";
 import { REWRITE_HEADER, runRewritePasses } from "./rewrite-passes.js";
+import { rewriteTrail } from "../server/rewrite-trail.js";
 import { payloadLocation } from "./full-payload.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc/server";
 import type {
@@ -975,17 +976,29 @@ export function createRSCHandler<
     // "middleware-short-circuit").
     getRequestContext()._requestMode = plan.mode;
 
-    // A rewrite pass after the action ran: only the branch that ran it
-    // re-renders from its outcome; any other plan would serve the POST as a
-    // fresh request.
-    const actionRan = getRequestContext()._actionRan;
+    // A rewritten pass of an action must reach the branch that runs it: the
+    // one that ran it re-renders from its outcome, and a JS action a global
+    // rewrite moved before it ran runs only on the action branch. Any other
+    // plan would serve the POST as a fresh request or drop the action; a
+    // reload (version mismatch, app switch) does neither.
+    const passCtx = getRequestContext();
+    const actionRan = passCtx._actionRan;
+    const actionMode = actionRan
+      ? actionRan.kind === "action"
+        ? "action"
+        : "pe-render"
+      : url.searchParams.has("_rsc_action") && rewriteTrail(passCtx)
+        ? "action"
+        : undefined;
     if (
-      actionRan &&
-      plan.mode !== (actionRan.kind === "action" ? "action" : "pe-render")
+      actionMode &&
+      plan.mode !== actionMode &&
+      plan.mode !== "version-mismatch" &&
+      plan.mode !== "app-switch"
     ) {
       throw new Error(
-        `A rewrite after a server action or form post must target a page ` +
-          `route; ${url.pathname} ${plan.mode === "response" ? "is a response route" : "is not one"}.`,
+        `A rewrite of a server action or form post must target a page ` +
+          `route; ${url.pathname} ${plan.mode === "response" ? "is a response route" : plan.mode === "redirect" ? "redirects" : "is not one"}.`,
       );
     }
 

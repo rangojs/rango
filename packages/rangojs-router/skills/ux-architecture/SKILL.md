@@ -473,15 +473,17 @@ the visitor should see.
 - Rewrite fits a maintenance page, a flag or A/B variant, a legacy or alias
   URL served by the canonical route, a geo split. Redirect fits a login gate
   or a moved page, where the new address should show and be bookmarked.
-- Middleware only: a loader or handler cannot rewrite, and a rewrite during a
-  server action or form post is an error. Answer mutations with a `Response`
-  (a 503 for maintenance) as in `/middleware`, "Rewrite".
+- Middleware only: a loader or handler cannot rewrite. A global rewrite moves
+  a server action or form post to the target, where the action runs, so a
+  maintenance lock answers mutations with a `Response` (a 503) or throws
+  `rewrite("maintenance").disallowMutations()`, as in `/middleware`,
+  "Rewrite".
 - The target can be a path or a route name (`rewrite("maintenance")`,
   `rewrite("product", { slug })`). Global middleware and the target's own
   route middleware run again for the target, so guards still apply.
 - A loop answers 508 with `RewriteLoopError`: past the hop limit, or a rewrite
-  to the URL the request is already on (semantic-matrix rows RW3 and RW4 pin
-  this and the mutation error).
+  to the URL the request is already on (semantic-matrix row RW4; RW3 pins the
+  mutation's move and the `.disallowMutations()` error).
 
 ## 3. Recipes
 
