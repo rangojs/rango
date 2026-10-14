@@ -28,6 +28,7 @@ import { hooksPatterns } from "./urls/hooks.js";
 import { renderStabilityPatterns } from "./urls/render-stability.js";
 import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
+import { vtBackPatterns } from "./urls/vt-back.js";
 import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
 import { middlewarePatterns } from "./urls/middleware.js";
@@ -1210,6 +1211,8 @@ export const urlpatterns = urls(
       include("/", navIdleLocationPatterns, { name: "" }),
       // A navigation's title and crumbs commit with its page.
       include("/", handlesCommitPatterns, { name: "" }),
+      // A cached back/forward animates under transition().
+      include("/", vtBackPatterns, { name: "" }),
 
       // Shared-refetch regression scenario
       include("/", sharedRefetchPatterns, { name: "" }),

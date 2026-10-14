@@ -9,6 +9,7 @@ import {
   type EventController,
 } from "../browser/event-controller.js";
 import { createNavigationStore } from "../browser/navigation-store.js";
+import { createNavigationBridge } from "../browser/navigation-bridge.js";
 import { NavigationProvider } from "../browser/react/NavigationProvider.js";
 import { useHandle } from "../browser/react/use-handle.js";
 import { commitInTransition } from "../browser/partial-update.js";
@@ -16,6 +17,7 @@ import type {
   NavigationBridge,
   NavigationStore,
   NavigationUpdate,
+  ResolvedSegment,
 } from "../browser/types.js";
 
 vi.mock("../browser/scroll-restoration.js", async (importOriginal) => ({
@@ -33,7 +35,8 @@ vi.mock("../browser/scroll-restoration.js", async (importOriginal) => ({
  * so a crumb whose `content` is still pending never rides the page's lane: there
  * it re-suspends the crumb's revealed <Suspense> and React holds the whole
  * page until the promise resolves. Behind the anchor it lands in the task
- * that commits the page. Through the real provider.
+ * that commits the page. Through the real provider, for a link to a cached
+ * page and for a cached Back under transition() (navigation-bridge.ts).
  */
 
 interface Crumb {
@@ -206,5 +209,39 @@ describe("NavigationProvider: a history-cache page's handle pushes", () => {
       await stock.promise;
     });
     await waitFor(() => expect(text("content")).toBe("stock 2"));
+  });
+
+  it("a cached Back under transition(): a crumb whose content is still pending does not hold the page", async () => {
+    const stock = deferred<string>();
+    const cached = {
+      id: "R0",
+      namespace: "",
+      index: 0,
+      type: "route",
+      component: null,
+      transition: {},
+    } as unknown as ResolvedSegment;
+    store.cacheSegmentsForHistory("/b", [cached], crumbs("b", stock.promise));
+    const bridge = createNavigationBridge({
+      store,
+      client: {} as never,
+      eventController: controller,
+      onUpdate: (update) => store.emitUpdate(update),
+      renderSegments: (async () => <Page id="b" />) as never,
+    });
+    await mount(bridge);
+    window.history.scrollRestoration = "manual";
+
+    await act(async () => {
+      window.history.replaceState({ key: "/b" }, "", "/b");
+      await bridge.handlePopstate(
+        new PopStateEvent("popstate", { state: window.history.state }),
+      );
+    });
+
+    await waitFor(() => expect(text("page")).toBe("b"));
+    expect(text("crumb")).toBe("b");
+    expect(log.map((entry) => entry.shown)).not.toContain("b|1");
+    window.history.scrollRestoration = "auto";
   });
 });

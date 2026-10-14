@@ -803,7 +803,8 @@ export interface ServerActionBridgeConfig {
 export interface NavigationBridge {
   navigate(url: string, options?: NavigateOptionsInternal): Promise<void>;
   refresh(): Promise<void>;
-  handlePopstate(): Promise<void>;
+  /** `event`: the popstate event; a traversal the browser animated itself (hasUAVisualTransition) is not animated again. */
+  handlePopstate(event?: PopStateEvent): Promise<void>;
   registerLinkInterception(): () => void;
   registerDelegatedPrefetch(): () => void;
   /** Current RSC version (live, reflects the latest updateVersion). */

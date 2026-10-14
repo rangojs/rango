@@ -75,6 +75,7 @@ describe("the pending scroll action", () => {
       restore: undefined,
       scroll: true,
       isStreaming: undefined,
+      committed: true,
     });
   });
 
@@ -187,6 +188,7 @@ describe("the pending scroll action", () => {
       restore: true,
       scroll: undefined,
       isStreaming,
+      committed: true,
     });
 
     handleNavigationEnd.mockClear();

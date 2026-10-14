@@ -1540,6 +1540,50 @@ Pinned by `src/__tests__/use-handle-commit-lane.test.tsx`,
 `handles-commit`, `nav-idle-location` and `transition-kinds` e2e (both apps,
 dev and production).
 
+### Back and Forward from the history cache
+
+A back/forward the client restores from its history cache
+(`handlePopstate` in `browser/navigation-bridge.ts`) has one more wrinkle.
+React commits a transition started while `window.event` is the `popstate`
+event synchronously (react-dom `shouldAttemptEagerTransition`), so the
+browser's own scroll and form restoration see the new DOM. That commit runs
+with a sync lane, starts no view transition, and leaves its types queued for
+the next transition commit: the next link click used to carry
+`navigation-back`.
+
+So under `transition()` the restore's `commit()` runs on the next task
+(`setTimeout(0)`), outside the event: it sets the entry's location, params
+and location state there, so the hooks change with the restored tree and not
+a task earlier (#1031, #1164), and commits in a transition tagged `pop` and
+`navigation-back`. The page being left is on screen for that task. Four
+cases stay synchronous and add no type: a route without `transition()`, an
+intercept restore, a traversal the browser animated itself
+(`PopStateEvent.hasUAVisualTransition`, so a swipe is not animated twice),
+and an entry whose scroll the browser restores itself
+(`history.scrollRestoration` is not `"manual"`: no `<Html.ScrollRestoration>`,
+or an entry that predates it). That last one is the reason React flushes
+popstate transitions synchronously in the first place: the browser restores
+scroll right after the event, and deferring the commit had it scroll the page
+being left (measured in cloudflare-basic, whose document renders no
+`<Html.ScrollRestoration>`). A
+generation counter in the bridge drops a restore that a later back/forward
+overtook before it committed, along with its stale revalidation, and so does
+a navigation that committed first (the store's history key moved: a shallow
+push or replace from an app's own popstate listener).
+
+Scroll follows the commit. `NavigationProvider`'s layout effect restores the
+saved position synchronously (`handleNavigationEnd({ committed: true })`), so
+a view transition's new snapshot is taken at that position, also while the
+page still streams (then the poll scrolls again once the stream ends), and
+once more on the next frame for layout that settles late; the refetch path, which restores
+after its fetch rather than after the commit, keeps the frame only.
+`handleTraversalStart` saves the page on screen at the event, but the entry
+it tracks as displayed moves only when the restore commits: a second
+traversal before that saves the page still on screen, never the entry it
+skipped. Pinned by `src/__tests__/popstate-cached-restore.test.tsx`,
+`src/__tests__/scroll-restoration.test.ts` and the `vt-back` e2e (both apps,
+dev and production).
+
 ## Non-Guarantees
 
 - A loader cannot rewrite, by design (`ssr: false` included): `rewrite()` is

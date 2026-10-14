@@ -262,10 +262,28 @@ describe("scroll-restoration traversal", () => {
     expect(getSavedScrollPosition("A")).toBe(700);
     expect(getSavedScrollPosition("B")).toBeUndefined();
 
+    // B's restore commits (NavigationProvider's layout effect).
+    handleNavigationEnd({ restore: true, committed: true });
     setScrollY(120);
     currentKey = "A";
     handleTraversalStart();
     expect(getSavedScrollPosition("B")).toBe(120);
+  });
+
+  it("a second traversal before the first one's restore commits saves the page still on screen", () => {
+    currentKey = "C";
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+    setScrollY(4000);
+
+    // Back from C to B, then Back to A before B's restore commits: C is
+    // still on screen at both events.
+    currentKey = "B";
+    handleTraversalStart();
+    currentKey = "A";
+    handleTraversalStart();
+
+    expect(getSavedScrollPosition("C")).toBe(4000);
+    expect(getSavedScrollPosition("B")).toBeUndefined();
   });
 
   it("tracks the entry a router push lands on", () => {
@@ -356,6 +374,60 @@ describe("scroll-restoration handleNavigationEnd", () => {
     await nextFrame();
 
     expect(scrollTo).toHaveBeenCalledWith(0, 640);
+  });
+
+  it("a restore React committed scrolls synchronously, before a view transition's new snapshot, and again on the next frame", async () => {
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+    setScrollY(640);
+    saveCurrentScrollPosition();
+    const scrollTo = spyScrollTo();
+
+    handleNavigationEnd({ restore: true, committed: true });
+    expect(scrollTo.mock.calls).toEqual([[0, 640]]);
+    await nextFrame();
+    expect(scrollTo.mock.calls).toEqual([
+      [0, 640],
+      [0, 640],
+    ]);
+  });
+
+  it("a restore React committed while the page streams scrolls synchronously, and again once the stream ends", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      cleanup = initScrollRestoration({ getKey: () => currentKey });
+      setScrollY(640);
+      saveCurrentScrollPosition();
+      const scrollTo = spyScrollTo();
+      let streaming = true;
+
+      handleNavigationEnd({
+        restore: true,
+        committed: true,
+        isStreaming: () => streaming,
+      });
+      expect(scrollTo.mock.calls).toEqual([[0, 640]]);
+
+      streaming = false;
+      vi.advanceTimersByTime(60);
+      expect(scrollTo.mock.calls).toEqual([
+        [0, 640],
+        [0, 640],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a restore before React committed (the popstate fetch path) scrolls on the next frame only", async () => {
+    cleanup = initScrollRestoration({ getKey: () => currentKey });
+    setScrollY(640);
+    saveCurrentScrollPosition();
+    const scrollTo = spyScrollTo();
+
+    handleNavigationEnd({ restore: true });
+    expect(scrollTo).not.toHaveBeenCalled();
+    await nextFrame();
+    expect(scrollTo.mock.calls).toEqual([[0, 640]]);
   });
 });
 

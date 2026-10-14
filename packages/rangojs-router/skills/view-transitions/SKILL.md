@@ -101,7 +101,7 @@ Navigating between `/`, `/about`, and `/contact` cross-fades the `<Outlet />` co
 
 ## Direction-aware transitions
 
-`ViewTransitionClass` accepts an object form keyed by transition type. Every commit the router runs in a transition carries its kind (`"push"`, `"replace"`, `"pop"`, `"action"`, `"revalidate"`, see [Transition kinds](#transition-kinds)). Under `transition()`, Rango also tags forward navigations as `"navigation"` and back/forward navigations restored from the client cache as `"navigation-back"` (a back/forward that has to refetch from the server is tagged `"navigation"`):
+`ViewTransitionClass` accepts an object form keyed by transition type. Every commit the router runs in a transition carries its kind (`"push"`, `"replace"`, `"pop"`, `"action"`, `"revalidate"`, see [Transition kinds](#transition-kinds)). Under `transition()`, Rango also tags forward navigations as `"navigation"` and back/forward navigations restored from the client cache as `"navigation-back"` (a back/forward that has to refetch from the server is tagged `"navigation"`). The restore runs a view transition: it commits on the next task after the `popstate` event, with its saved scroll applied before the new snapshot is taken (see [Back and Forward](#back-and-forward)):
 
 ```tsx
 layout(<ShopShell />, () => [
@@ -140,7 +140,7 @@ Every commit the router runs in a transition adds its `transition({ when })` kin
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `"push"`       | A link, `router.push()`, `navigate()`: the same-route content hold (search or catch-all change), a fully prefetched click, an intercept, the commit after a `clientUrls()` optimistic swap |
 | `"replace"`    | `router.replace()`, `<Link replace>`                                                                                                                                                       |
-| `"pop"`        | A back/forward that refetches                                                                                                                                                              |
+| `"pop"`        | A back/forward: one that refetches, and under `transition()` one restored from the history cache                                                                                           |
 | `"action"`     | A server action's revalidation and its error-boundary commit                                                                                                                               |
 | `"revalidate"` | `router.refresh()`, a stale entry's background revalidation                                                                                                                                |
 
@@ -152,9 +152,20 @@ Every commit the router runs in a transition adds its `transition({ when })` kin
 ```
 
 - Tagging alone animates nothing: React starts a view transition only where a `<ViewTransition>` resolves a class other than `"none"` for the commit's types.
-- A commit outside a transition carries no type: a cold click that mounts new segments, a gated-off commit (`when` returned `false`), and a back/forward restored from the history cache. React commits that restore synchronously inside the popstate event, not as a transition, so it gets no kind and keeps its `"navigation-back"`.
+- A commit outside a transition carries no type: a cold click that mounts new segments, a gated-off commit (`when` returned `false`), and a back/forward restored from the history cache on a route without `transition()` (it commits inside the `popstate` event). Under `transition()` that restore carries `"pop"` and `"navigation-back"`.
 - Under `transition()`, a stale entry's revalidation carries `"revalidate"` and `"action"`. An `action`-keyed map that must skip it also keys `revalidate: "none"` (`"none"` wins over any other match).
 - The types reach the commit that brings the page. React keeps one queue of transition types per root, and the first transition commit takes the whole queue. No router hook update takes them first: `useHandle()` and `useSegments()` commit with the page, and a `useNavigation()` value that moves while neither the state nor the URL does (`pendingUrl` as the response starts streaming, `isStreaming` as it ends) commits with the page while the reader has a held value, urgently otherwise, so it starts no view transition of its own. A transition your own code starts while React holds a navigation's page can still take them. Use a kind map to choose an animation, never for correctness.
+
+### Back and Forward
+
+A back/forward the router restores from its history cache animates like a link under `transition()`:
+
+- It commits on the next task after the `popstate` event, in a view transition whose types are `"pop"` and `"navigation-back"`. React commits a transition started inside the event synchronously, with no view transition, so the router waits that one task; the page being left stays on screen until then, and the location hooks change with the restored page.
+- The saved scroll position is applied in the commit's layout effect, before the view transition takes its new snapshot, so the restored page animates in at the position it was left.
+- A traversal the browser animated itself (`PopStateEvent.hasUAVisualTransition`: the iOS Safari and Chrome Android back swipe) commits at once and is not animated again.
+- A second Back or Forward before the first one's restore commits wins; the first restore is dropped.
+- Without `transition()` the restore commits inside the event, with no view transition and no type.
+- So does an entry whose scroll the browser restores itself (`history.scrollRestoration` is `"auto"`: the document renders no `<Html.ScrollRestoration>`, which Rango's default document does, or the entry predates it). The browser restores that scroll right after the event, on whatever page is then on screen.
 
 ## Wrapper form: applying transition to a group of routes
 
@@ -405,7 +416,7 @@ interface TransitionWhenContext {
 `kind` is also the transition type the commit carries (see "Transition
 kinds"): `{ push: "page", default: "none" }` animates the commits `when` sees
 as `"push"`. Under `transition()` the older keys stay: a `"pop"` restored from
-the history cache carries `"navigation-back"` alone (a pop that refetches adds
+the history cache adds `"navigation-back"` (a pop that refetches adds
 `"navigation"`); `"push"`, `"replace"` and a `router.refresh()`
 (`"revalidate"`) add `"navigation"`; a stale entry's revalidation adds
 `"action"`.

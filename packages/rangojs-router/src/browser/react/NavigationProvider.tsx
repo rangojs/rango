@@ -525,6 +525,7 @@ export function NavigationProvider({
       restore: scrollAction.restore,
       scroll: scrollAction.enabled,
       isStreaming: scrollAction.isStreaming,
+      committed: true,
     });
   });
 

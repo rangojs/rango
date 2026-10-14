@@ -340,6 +340,7 @@ import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { transitionKindsPatterns } from "./pages/transition-kinds.js";
 import { handlesCommitPatterns } from "./pages/handles-commit.js";
+import { vtBackPatterns } from "./pages/vt-back.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -3131,6 +3132,9 @@ export const urlpatterns = urls(
         // A navigation's title and crumbs commit with its page (mirrors the
         // router e2e app's /handles-commit/*).
         include("/", handlesCommitPatterns, { name: "" }),
+        // A cached back/forward animates under transition() (mirrors the
+        // router e2e app's /vt-back/*).
+        include("/", vtBackPatterns, { name: "" }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {

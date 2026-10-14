@@ -76,6 +76,17 @@ afterEach(() => {
   clearClientUrlNavigationRegistry();
 });
 
+/** The store's history key, as a real store keeps it. */
+function historyKeyStore(initial: string) {
+  let key = initial;
+  return {
+    getHistoryKey: vi.fn(() => key),
+    setHistoryKey: vi.fn((next: string) => {
+      key = next;
+    }),
+  };
+}
+
 describe("navigation-bridge transition({ when })", () => {
   it("decides a history-cache restore with kind pop against the entry being left", async () => {
     vi.stubGlobal("window", {
@@ -94,8 +105,8 @@ describe("navigation-bridge transition({ when })", () => {
       ["displayed", { routeName: "detail", state: { mark: "left" } }],
     ]);
     const store = {
-      getHistoryKey: vi.fn(() => "/b"),
-      setHistoryKey: vi.fn(),
+      // A real store: getHistoryKey reads what setHistoryKey wrote.
+      ...historyKeyStore("/b"),
       setSegmentIds: vi.fn(),
       setCurrentUrl: vi.fn(),
       setPath: vi.fn(),
@@ -192,8 +203,8 @@ describe("navigation-bridge transition({ when })", () => {
       ["displayed", { routeName: "detail", state: { mark: "left" } }],
     ]);
     const store = {
-      getHistoryKey: vi.fn(() => "/b"),
-      setHistoryKey: vi.fn(),
+      // A real store: getHistoryKey reads what setHistoryKey wrote.
+      ...historyKeyStore("/b"),
       setSegmentIds: vi.fn(),
       setCurrentUrl: vi.fn(),
       setPath: vi.fn(),

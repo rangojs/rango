@@ -9,7 +9,7 @@ import type { ResolvedSegment } from "../browser/types";
  * transition and carry none. Pins browser/partial-update.ts
  * (commitInTransition and its callers), browser/server-action-bridge.ts (the
  * action commit and its error-boundary commit), and the history-cache restore
- * in browser/navigation-bridge.ts, which adds no kind.
+ * in browser/navigation-bridge.ts (pop).
  */
 
 // Each startTransition opens a type list; addTransitionType dedupes into it
@@ -87,6 +87,17 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+/** The store's history key, as a real store keeps it. */
+function historyKeyStore(initial: string) {
+  let key = initial;
+  return {
+    getHistoryKey: vi.fn(() => key),
+    setHistoryKey: vi.fn((next: string) => {
+      key = next;
+    }),
+  };
+}
 
 describe("partial-update commits carry their kind", () => {
   function store(onScreen: ResolvedSegment[]) {
@@ -313,22 +324,28 @@ describe("partial-update commits carry their kind", () => {
 
 // React flushes a transition started in the popstate event synchronously,
 // with non-transition lanes: no view transition starts and its types would
-// stay queued for the next transition commit. It keeps navigation-back alone.
+// stay queued for the next transition commit. Under transition() the restore
+// commits on the next task, tagged pop then navigation-back; without it, it
+// commits urgently in the event. (Real React: popstate-cached-restore.test.tsx.)
 describe("navigation-bridge: a back/forward restored from the history cache", () => {
   it.each([
-    ["with transition() adds no kind", withTransition, ["navigation-back"]],
+    [
+      "with transition() is pop, on the next task",
+      withTransition,
+      ["pop", "navigation-back"],
+    ],
     ["without transition() commits urgently", seg, "urgent"],
   ])("%s", async (_label, make, commit) => {
     vi.stubGlobal("window", {
       location: { href: "http://localhost/a", origin: "http://localhost" },
-      history: { state: { key: "entry-a" } },
+      history: { state: { key: "entry-a" }, scrollRestoration: "manual" },
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
     });
     const { commits, onUpdate } = recorder();
     const store = {
-      getHistoryKey: vi.fn(() => "/b"),
-      setHistoryKey: vi.fn(),
+      // A real store: getHistoryKey reads what setHistoryKey wrote.
+      ...historyKeyStore("/b"),
       setSegmentIds: vi.fn(),
       setCurrentUrl: vi.fn(),
       setPath: vi.fn(),
@@ -362,6 +379,7 @@ describe("navigation-bridge: a back/forward restored from the history cache", ()
     });
 
     await bridge.handlePopstate();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(commits).toEqual([commit]);
   });

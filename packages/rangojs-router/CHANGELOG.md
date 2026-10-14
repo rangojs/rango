@@ -474,7 +474,7 @@ keyed by type could not tell a filter change from an add-to-cart.
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `push`       | A link, `router.push()`, `navigate()`: the same-route content hold, a fully prefetched click, an intercept, the commit after a `clientUrls()` optimistic swap |
 | `replace`    | `router.replace()`, `<Link replace>`                                                                                                                          |
-| `pop`        | A back/forward that refetches                                                                                                                                 |
+| `pop`        | A back/forward: one that refetches, and under `transition()` one restored from the history cache (next entries)                                               |
 | `action`     | A server action's revalidation and its error-boundary commit                                                                                                  |
 | `revalidate` | `router.refresh()`, a stale entry's background revalidation                                                                                                   |
 
@@ -482,9 +482,9 @@ keyed by type could not tell a filter change from an add-to-cart.
   `<ViewTransition>` resolves a class other than `none` for the commit's
   types, so a page with no map keyed by these names animates as before.
 - A commit outside a transition carries no type: a cold click that mounts new
-  segments, and a `when` that returned `false`. A back/forward restored from
-  the history cache gets no kind either: React commits it synchronously inside
-  the popstate event, not as a transition. It keeps its `navigation-back`.
+  segments, a `when` that returned `false`, and a back/forward restored from
+  the history cache on a route without `transition()`, which commits inside
+  the popstate event.
 - Under `transition()`, a stale entry's revalidation also carries `action`, as
   before. Key `revalidate: "none"` to keep an `action` map off it.
 - The types reach the commit that brings the page. React keeps one queue of
@@ -499,6 +499,38 @@ keyed by type could not tell a filter change from an add-to-cart.
   (see [#1164](https://github.com/rangojs/rango/issues/1164) and the next
   entry). A transition your own code starts while React holds a navigation's
   page can still take them.
+
+### Fixed: Back/Forward restored from the history cache runs a view transition under `transition()`
+
+**Before.** A back/forward the router restored from its history cache never
+animated, even on a `transition()` route with a shared `<ViewTransition>`
+(a list tile and its detail hero, say): the page swapped at once. React
+commits a transition started inside the `popstate` event synchronously, and
+starts no view transition there. The `navigation-back` type the router added
+stayed queued and went to the next transition commit, usually the next link
+click, which then carried `navigation-back` too.
+
+**Now.** Under `transition()` the restore commits on the next task, in a view
+transition whose types are `pop` and `navigation-back`, so a map such as
+`{ "navigation-back": "slide-right" }` or `{ pop: "page" }` animates Back and
+Forward. The saved scroll position is restored in that commit, before the
+view transition takes its new snapshot, so the page animates in where you
+left it. The page being left stays on screen for that one extra task, and the
+location hooks change with the restored page.
+
+- A traversal the browser animated itself, such as the iOS Safari or Chrome
+  Android back swipe (`PopStateEvent.hasUAVisualTransition`), commits at once
+  and is not animated a second time. It adds no type.
+- Without `transition()` the restore still commits inside the event, with no
+  view transition and no type.
+- So does an entry whose scroll the browser restores itself: a document
+  without `<Html.ScrollRestoration>` (Rango's default document renders it),
+  or an entry created before it mounted. The browser restores that scroll
+  right after the event, so the restored page has to be on screen by then.
+- A second Back or Forward before the first one's restore commits wins: the
+  first restore is dropped. Each entry also keeps its own scroll position
+  now; a rapid double Back used to save the page on screen under the entry it
+  skipped, so Forward restored that entry at the wrong position.
 
 ### Fixed: a navigation's title, breadcrumbs and `useSegments()` commit with its page
 

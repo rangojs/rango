@@ -189,7 +189,19 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // during render or in the click handler. Trimmed from +183B before raising
 // (no helper, no navigateTo wrapper, href() reused for the join). One 128B
 // step: main sat 11B under the old limit.
-const ROUTER_CHUNK_GZIP_MAX = 49 * 1024;
+//
+// Raised 49KB -> 49.25KB on 2026-10-14 for the #1164/#1165 stack, measured on
+// cloudflare-basic from main e9d3fcd75 50166B -> 50427B (+261B gzip). Two
+// 128B steps, the owner's call (dc-q41) after trimming. Handle values and
+// useSegments() commit with the page (useCommitAnchoredState in
+// browser/react/use-handle.ts; its "use no memo" opt-out saved 107B), a
+// `prefetch: false` adoption commits `loading` in flushSync, and a
+// back/forward restored from the history cache animates under transition():
+// handlePopstate (browser/navigation-bridge.ts) commits it on the next task
+// behind a generation and history-key guard, and scroll-restoration.ts
+// restores in that commit. None of it can load lazily: it runs in every
+// navigation's commit and every popstate.
+const ROUTER_CHUNK_GZIP_MAX = 49.25 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
