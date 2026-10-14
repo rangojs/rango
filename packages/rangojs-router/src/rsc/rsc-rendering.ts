@@ -1264,10 +1264,11 @@ function renderPreparedRscResponse<TEnv>(
   // Enable browser HTTP caching for prefetch responses only.
   // Requires a prefetch request (X-Rango-Prefetch, sent by Link prefetch
   // fetch), a source-agnostic response (see sourceScoped above), and a
-  // configured cache-control value (false disables caching).
+  // configured cache-control value (false disables caching). Never on an
+  // error status: the click's fetch would be answered with the cached error.
   if (reqCtx._requestKind === "prefetch" && isPartial && !sourceScoped) {
     const cc = ctx.router.prefetchCacheControl;
-    if (cc) {
+    if (cc && reqCtx.res.status >= 200 && reqCtx.res.status < 300) {
       rscHeaders["cache-control"] = cc;
     }
   }

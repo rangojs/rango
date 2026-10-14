@@ -278,7 +278,9 @@ A prefetch is a navigation sent early: the server renders the destination's
 handlers and loaders for it, from the page you are on (`/links`, "What a
 prefetch renders"). A click that adopts a complete prefetch commits with no
 request. Entries live 300 s by default (`prefetchCacheTTL`) and an action
-drops them unless it calls `keepClientCache()`.
+drops them unless it calls `keepClientCache()`. Only a successful (2xx)
+prefetch response carries the browser `Cache-Control`, so a prefetch answered
+with a 500 or 404 is never served to the click from the HTTP cache.
 
 The rule: **prefetch broadly, and flag what is expensive.**
 

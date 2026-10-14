@@ -257,6 +257,20 @@ export const urlpatterns = urls(
     layout(RootLayout, () => [
       // === CORE ROUTES (inline for intercept support) ===
 
+      // A prefetch that fails must not be answered from the HTTP cache on the
+      // click (prefetch-cache-control-status.test.ts). Unnamed: no gen entry.
+      path("/prefetch-flaky-from", () => (
+        <Link to="/prefetch-flaky" prefetch="hover" data-testid="flaky-link">
+          flaky
+        </Link>
+      )),
+      path("/prefetch-flaky", () => {
+        if (cookies().get("flaky-ok")?.value !== "1") {
+          throw new Error("flaky route down");
+        }
+        return <p data-testid="flaky-ok">flaky ok</p>;
+      }),
+
       // Index route - product list
       path(
         "/",
