@@ -2805,6 +2805,104 @@ export async function expectPinlessHitKeepsRunPushWithRunData(
   ]);
 }
 
+/** The nodes {@link expectPinlessHitHydratesClean} marks before hydration. */
+const PINLESS_SERVER_NODES = {
+  value: '[data-testid="push-value"]',
+  page: 'main:has([data-testid="push-value"])',
+  document: "body > :not(script):not(style):not(template)",
+};
+
+/**
+ * Remember the first node the HTML parser inserts for each selector, before
+ * hydration runs. A hydration mismatch makes React render the nearest
+ * Suspense boundary above it again, or the whole root without one, replacing
+ * the server's nodes.
+ */
+async function markServerNodes(
+  page: Page,
+  selectors: Record<string, string>,
+): Promise<void> {
+  await page.addInitScript((targets) => {
+    const marks: Record<string, Element | undefined> = {};
+    (window as { __rangoServerNodes?: typeof marks }).__rangoServerNodes =
+      marks;
+    const observer = new MutationObserver(() => {
+      for (const [name, selector] of Object.entries(targets)) {
+        marks[name] ??= document.querySelector(selector) ?? undefined;
+      }
+      if (Object.keys(targets).every((name) => marks[name])) {
+        observer.disconnect();
+      }
+    });
+    observer.observe(document, { childList: true, subtree: true });
+  }, selectors);
+}
+
+/** For each selector of {@link markServerNodes}: whether its server node is still on screen. */
+async function serverNodesKept(
+  page: Page,
+  selectors: Record<string, string>,
+): Promise<Record<string, boolean>> {
+  return page.evaluate((targets) => {
+    const marks =
+      (window as { __rangoServerNodes?: Record<string, Element | undefined> })
+        .__rangoServerNodes ?? {};
+    return Object.fromEntries(
+      Object.entries(targets).map(([name, selector]) => [
+        name,
+        marks[name] !== undefined &&
+          document.querySelector(selector) === marks[name],
+      ]),
+    );
+  }, selectors);
+}
+
+/**
+ * dc-t89: a document HIT of a shell entry that kept no loader pin
+ * (`ppr.maxSnapshotBytes`) hydrates clean. The HIT's HTML is the capture's
+ * prelude, so the hydration data must hold the loader data that prelude was
+ * rendered from: no hydration error, React keeps the server's nodes, and the
+ * value on screen and its push come from one run.
+ *
+ * Which run (the capture's or the HIT's) is the owner's decision, so this
+ * asserts only that they agree. On 0.26.0 it fails: the prelude has
+ * `pinned@g1`, the HIT's own run sends `pinned@g2` as the hydration data, and
+ * React reports the text mismatch ("Hydration failed" in dev, error #418 in
+ * production) and renders the tree on the client.
+ * {@link expectPinlessHitKeepsRunPushWithRunData} allows that error.
+ */
+export async function expectPinlessHitHydratesClean(
+  page: Page,
+  fixture: PushOwnershipFixture,
+): Promise<void> {
+  const guard = guardHydrationErrors(page);
+  const probe = pushProbe("capped-clean");
+  const url = `${fixture.cappedUrl}?probe=${probe}`;
+  await warmShellToHit(page, url);
+  await bumpPushGeneration(page, fixture, probe);
+  await markServerNodes(page, PINLESS_SERVER_NODES);
+
+  await gotoShellHit(page, url);
+  // One run: the push on screen describes the value on screen, once every
+  // late push has arrived.
+  const value = (await byTestId(page, "push-value").textContent()) ?? "";
+  const generation = value.split("@g")[1];
+  await expect(byTestId(page, "push-note")).toHaveText([
+    `pinned-note@g${generation}`,
+  ]);
+
+  const kept = await serverNodesKept(page, PINLESS_SERVER_NODES);
+  try {
+    guard[Symbol.dispose]();
+  } catch (error) {
+    throw new Error(
+      `${(error as Error).message}\nvalue on screen: ${value}; ` +
+        `server nodes kept: ${JSON.stringify(kept)}`,
+    );
+  }
+  expect(kept).toEqual({ value: true, page: true, document: true });
+}
+
 /**
  * #1035: a `useHandle` reader hydrates with the handle data its HTML was
  * rendered from, whenever its boundary hydrates. `liveUrl`'s view sits

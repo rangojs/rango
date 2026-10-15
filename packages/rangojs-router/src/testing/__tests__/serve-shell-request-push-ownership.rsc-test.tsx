@@ -251,6 +251,20 @@ function NotedPage(ctx: HandlerContext): React.ReactNode {
   return <p>noted</p>;
 }
 
+/**
+ * A promise-carrying `ssr: false` loader that throws once the capture is
+ * done: its pin has a hole, so it runs on every HIT (dc-t89).
+ */
+const HoleyThrowsLater = createLoader(async () => {
+  if (source.generation > 1) {
+    throw new Error(`holey-throws-error@g${source.generation}`);
+  }
+  return {
+    holeyThrows: `holey-throws@g${source.generation}`,
+    later: Promise.resolve("holey-throws-later"),
+  };
+});
+
 /** The pins are over the cap: the entry keeps its doc record only. */
 const NO_PINS = { maxSnapshotBytes: 1 };
 
@@ -275,6 +289,12 @@ function makeRouter() {
         () => <p>dep capped</p>,
         { name: "depCapped", ppr: NO_PINS },
         () => [loader(BakeAwaitsDep, { ssr: false })],
+      ),
+      path(
+        "/holey-throws",
+        () => <p>holey throws</p>,
+        { name: "holeyThrows", ppr: true },
+        () => [loader(HoleyThrowsLater, { ssr: false })],
       ),
       path(
         "/two-bake",
@@ -1413,6 +1433,126 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
         afterHydration: undefined,
       });
     });
+  });
+});
+
+// dc-t89. A shell HIT's HTML is the capture's prelude, so the payload React
+// hydrates it with must carry the loader data that prelude was rendered
+// from. A loader served from its pin does. A loader the HIT runs because the
+// entry has no pin for it sends that run's value instead; the browser then
+// reports a hydration mismatch ("Hydration failed" in dev, React error #418
+// in production) and renders the page again on the client
+// (expectPinlessHitHydratesClean in tests/shared-e2e). Which value the fix
+// sends is the owner's decision: each test asserts only that the shell and
+// the hydration payload agree.
+describe("dc-t89: a HIT hydrates with the loader data its shell was rendered from", () => {
+  /** The loader values matching `pattern` in the shell a HIT served and in the payload it hydrates with. */
+  function loaderValues(
+    hit: ServeShellRequestResult,
+    pattern: RegExp,
+  ): { shell: string[]; hydration: string[] } {
+    expect(hit.shellStatus).toBe("HIT");
+    return {
+      shell: distinct(hit.prelude, pattern),
+      hydration: distinct(hit.flight, pattern),
+    };
+  }
+
+  /** The two sides agree, and the shell has the value at all. */
+  function expectAgree(values: { shell: string[]; hydration: string[] }): void {
+    expect(values.shell).toHaveLength(1);
+    expect(values.hydration).toEqual(values.shell);
+  }
+
+  it("control: a pinned loader hydrates with its pin", async () => {
+    const { serve } = setup();
+    expect((await serve("/eb")).shellStatus).toBe("MISS");
+    source.generation = 2;
+
+    expectAgree(loaderValues(await serve("/eb"), /"eb":"eb@g\d"/g));
+  });
+
+  it("an entry whose pins maxSnapshotBytes dropped hydrates with the data its shell was rendered from", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { serve } = setup();
+    expect((await serve("/eb-capped")).shellStatus).toBe("MISS");
+    source.generation = 2;
+
+    expectAgree(loaderValues(await serve("/eb-capped"), /"eb":"eb@g\d"/g));
+  });
+
+  it("control: without pins, a loader whose cache() entry is the one the capture read agrees", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { serve } = setup();
+    expect((await serve("/owned-capped")).shellStatus).toBe("MISS");
+    source.generation = 2;
+
+    expectAgree(
+      loaderValues(await serve("/owned-capped"), /"owned":"owned@g\d"/g),
+    );
+  });
+
+  it("without pins, a loader whose cache() entry is gone hydrates with the data its shell was rendered from", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { serve, withLoaderMiss } = setup();
+    expect((await serve("/owned-capped")).shellStatus).toBe("MISS");
+    source.generation = 2;
+
+    const hit = await withLoaderMiss(() => serve("/owned-capped"));
+
+    expectAgree(loaderValues(hit, /"owned":"owned@g\d"/g));
+  });
+
+  it("an entry that lost one pin of two hydrates with the data its shell was rendered from", async () => {
+    const { serve, cacheStore } = setup();
+    const miss = await serve("/two-bake");
+    expect(miss.shellStatus).toBe("MISS");
+    const entry = (await miss.readEntry())!;
+    const pins = entry.snapshot.filter((record) => record.family === "loader");
+    expect(pins).toHaveLength(2);
+    // The second loader's pin (PlainBake, `D1.`), as a pin that failed to
+    // encode at capture or to decode on the HIT leaves the entry.
+    await cacheStore.putShell!(
+      miss.key,
+      {
+        ...entry,
+        snapshot: entry.snapshot.filter(
+          (record) => !(record.family === "loader" && /D1\./.test(record.key)),
+        ),
+      },
+      300,
+    );
+    source.generation = 2;
+
+    const hit = await serve("/two-bake");
+
+    expect({
+      kept: loaderValues(hit, /"holey":"holey-dep@g\d"/g),
+      lost: loaderValues(hit, /"plain":"plain@g\d"/g),
+    }).toEqual({
+      kept: {
+        shell: ['"holey":"holey-dep@g1"'],
+        hydration: ['"holey":"holey-dep@g1"'],
+      },
+      lost: {
+        shell: ['"plain":"plain@g1"'],
+        hydration: ['"plain":"plain@g1"'],
+      },
+    });
+  });
+
+  it("a hole-carrying pin whose HIT run rejects hydrates with the data its shell was rendered from", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { serve } = setup();
+    expect((await serve("/holey-throws")).shellStatus).toBe("MISS");
+    source.generation = 2;
+
+    expectAgree(
+      loaderValues(
+        await serve("/holey-throws"),
+        /"holeyThrows":"holey-throws@g\d"/g,
+      ),
+    );
   });
 });
 

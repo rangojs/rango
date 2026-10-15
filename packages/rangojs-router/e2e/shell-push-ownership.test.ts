@@ -8,6 +8,7 @@ import {
   expectLateBoundaryHandleReaderHydratesClean,
   expectLoaderAwaitedTitleInShellHtml,
   expectLoaderPromiseTitleInShellHtml,
+  expectPinlessHitHydratesClean,
   expectPinlessHitKeepsRunPushWithRunData,
   expectPrerenderShellHitKeepsPromisePush,
   expectReplayDeliversDeferredPush,
@@ -62,6 +63,12 @@ function runPushOwnershipSpec(f: Fixture) {
     page,
   }) => {
     await expectPinlessHitKeepsRunPushWithRunData(page, fixture());
+  });
+
+  test("dc-t89: a document HIT of an entry without loader pins hydrates clean with the data its HTML was rendered from", async ({
+    page,
+  }) => {
+    await expectPinlessHitHydratesClean(page, fixture());
   });
 
   test("a document HIT hydrates clean from the shell's record, a deferred push included, and nothing changes after hydration (#1035, #1182)", async ({
