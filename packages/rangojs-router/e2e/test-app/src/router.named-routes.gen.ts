@@ -621,6 +621,8 @@ export const NamedRoutes = {
   shellPushCapped: "/shell-push/capped",
   shellPushDeferred: "/shell-push/deferred",
   shellPushLive: "/shell-push/live",
+  shellPushMetaAwaited: "/shell-push/meta-awaited",
+  shellPushMetaPromise: "/shell-push/meta-promise",
   shellPushPinned: "/shell-push/pinned",
   shellPushPprSettled: "/shell-push/ppr-settled",
   shellPushPreDeferred: "/shell-push/pre-deferred",

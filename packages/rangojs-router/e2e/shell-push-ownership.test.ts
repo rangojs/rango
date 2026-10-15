@@ -3,6 +3,9 @@ import { useFixture, type Fixture } from "./fixture";
 import {
   expectBuildShellHitKeepsSettledLoaderPush,
   expectLateBoundaryHandleReaderHydratesClean,
+  expectLoaderAwaitedTitleInShellHtml,
+  expectLoaderPromiseTitleAfterHydration,
+  expectLoaderPromiseTitleInShellHtml,
   expectPinlessHitKeepsRunPushWithRunData,
   expectPrerenderShellHitDeliversPromisePush,
   expectReplayDeliversDeferredPush,
@@ -10,6 +13,7 @@ import {
   expectShellHitHydratesFromRecord,
   expectShellHitKeepsSettledLoaderPush,
   expectSlowDeferredPushDoesNotBlockCapture,
+  type LoaderTitleFixture,
   type PrerenderPushFixture,
   type PushOwnershipFixture,
 } from "@shared/e2e";
@@ -112,6 +116,30 @@ function runPushOwnershipSpec(f: Fixture) {
       fixture,
       fixture.pprSettledUrl,
     );
+  });
+
+  const titleFixture = (): LoaderTitleFixture => ({
+    metaPromiseUrl: f.url("/shell-push/meta-promise"),
+    metaAwaitedUrl: f.url("/shell-push/meta-awaited"),
+  });
+
+  test("#1182 as built: a shell HIT sets the title an ssr false loader pushed as a promise after hydration", async ({
+    page,
+  }) => {
+    await expectLoaderPromiseTitleAfterHydration(page, titleFixture());
+  });
+
+  test("#1182 control: a shell HIT's HTML has the title an ssr false loader awaited before the push", async ({
+    page,
+  }) => {
+    await expectLoaderAwaitedTitleInShellHtml(page, titleFixture());
+  });
+
+  // Red until #1182 is decided.
+  test("#1182 expectation: a shell HIT's HTML has the title an ssr false loader pushed as a promise", async ({
+    page,
+  }) => {
+    await expectLoaderPromiseTitleInShellHtml(page, titleFixture());
   });
 }
 

@@ -1,4 +1,4 @@
-import { createHandle, createLoader } from "@rangojs/router";
+import { createHandle, createLoader, Meta } from "@rangojs/router";
 
 // Push-ownership fixture (issues #1001, #1003): `ssr: false` loaders whose
 // data and handle pushes carry the generation of the run that produced them.
@@ -99,5 +99,28 @@ export const ShellPushSlowLoader = createLoader(
       ),
     );
     return { value: `slow@g${generation}` };
+  },
+);
+
+/**
+ * #1182: an `ssr: false` loader that pushes its page title to Meta as a
+ * promise. A document MISS renders the title; the shell does not keep it.
+ */
+export const ShellPushMetaPromiseLoader = createLoader(
+  async (ctx): Promise<ShellPushData> => {
+    const generation = generationOf(ctx.searchParams.get("probe") ?? "");
+    ctx.use(Meta)(Promise.resolve({ title: `meta-title@g${generation}` }));
+    return { value: `meta-promise@g${generation}` };
+  },
+);
+
+/** The control: the same title, awaited before the push. */
+export const ShellPushMetaAwaitedLoader = createLoader(
+  async (ctx): Promise<ShellPushData> => {
+    const generation = generationOf(ctx.searchParams.get("probe") ?? "");
+    ctx.use(Meta)(
+      await Promise.resolve({ title: `meta-title@g${generation}` }),
+    );
+    return { value: `meta-awaited@g${generation}` };
   },
 );

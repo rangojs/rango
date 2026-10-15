@@ -3,6 +3,8 @@ import { PprPushView } from "../components/PprPushView.js";
 import {
   PprPushDeferredLoader,
   PprPushLiveLoader,
+  PprPushMetaAwaitedLoader,
+  PprPushMetaPromiseLoader,
   PprPushPinnedLoader,
   PprPushSettledLoader,
   PprPushSlowLoader,
@@ -65,6 +67,23 @@ export function PprPushPprSettledPage() {
   return (
     <main data-testid="ppr-push-ppr-settled-page">
       <PprPushView loader={PprPushSettledLoader} />
+    </main>
+  );
+}
+
+// #1182: the loader pushes the page title to Meta as a promise, or awaited.
+export function PprPushMetaPromisePage() {
+  return (
+    <main data-testid="ppr-push-meta-promise-page">
+      <PprPushView loader={PprPushMetaPromiseLoader} />
+    </main>
+  );
+}
+
+export function PprPushMetaAwaitedPage() {
+  return (
+    <main data-testid="ppr-push-meta-awaited-page">
+      <PprPushView loader={PprPushMetaAwaitedLoader} />
     </main>
   );
 }

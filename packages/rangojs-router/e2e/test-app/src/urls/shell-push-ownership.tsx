@@ -2,6 +2,8 @@ import { Prerender, urls } from "@rangojs/router";
 import {
   ShellPushDeferredLoader,
   ShellPushLiveLoader,
+  ShellPushMetaAwaitedLoader,
+  ShellPushMetaPromiseLoader,
   SHELL_PUSH_SLOW_CAPTURE_TIMEOUT_MS,
   ShellPushPinnedLoader,
   ShellPushSettledLoader,
@@ -45,6 +47,23 @@ function ShellPushLivePage() {
   return (
     <main data-testid="shell-push-live-page">
       <ShellPushView loader={ShellPushLiveLoader} />
+    </main>
+  );
+}
+
+// #1182: the loader pushes the page title to Meta as a promise, or awaited.
+function ShellPushMetaPromisePage() {
+  return (
+    <main data-testid="shell-push-meta-promise-page">
+      <ShellPushView loader={ShellPushMetaPromiseLoader} />
+    </main>
+  );
+}
+
+function ShellPushMetaAwaitedPage() {
+  return (
+    <main data-testid="shell-push-meta-awaited-page">
+      <ShellPushView loader={ShellPushMetaAwaitedLoader} />
     </main>
   );
 }
@@ -152,6 +171,20 @@ export const shellPushOwnershipPatterns = urls(
       ShellPushPreDeferredPage,
       { name: "shellPushPreDeferred", ppr: { ttl: 300, swr: 120 } },
       () => [loader(ShellPushDeferredLoader, { ssr: false })],
+    ),
+    // #1182: an ssr: false loader's title, pushed to Meta as a promise and
+    // awaited (the control).
+    path(
+      "/shell-push/meta-promise",
+      ShellPushMetaPromisePage,
+      { name: "shellPushMetaPromise", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellPushMetaPromiseLoader, { ssr: false })],
+    ),
+    path(
+      "/shell-push/meta-awaited",
+      ShellPushMetaAwaitedPage,
+      { name: "shellPushMetaAwaited", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellPushMetaAwaitedLoader, { ssr: false })],
     ),
     // Test-only: moves the fixture's generation for one ?probe= on.
     path.json(

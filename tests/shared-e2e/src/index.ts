@@ -2540,6 +2540,94 @@ export async function expectSlowDeferredPushDoesNotBlockCapture(
   ]);
 }
 
+/** The #1182 routes: an `ssr: false` loader that pushes the page title. */
+export interface LoaderTitleFixture {
+  /** The loader pushes its title to Meta as a promise. */
+  metaPromiseUrl: string;
+  /** The same title, awaited before the push (the control). */
+  metaAwaitedUrl: string;
+}
+
+/** The text of the `<title>` in a document's HTML, before any script runs. */
+function titleInHtml(html: string): string | undefined {
+  return /<title[^>]*>([^<]*)<\/title>/.exec(html)?.[1];
+}
+
+/** The `<title>` in the HTML of `url`'s first response (a MISS) and of a HIT. */
+async function titlesMissThenHit(
+  page: Page,
+  url: string,
+): Promise<{ miss: string | undefined; hit: string | undefined }> {
+  const miss = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+  expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+  const missTitle = titleInHtml(await miss.text());
+  await warmShellToHit(page, url);
+  const hit = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+  expect(hit.headers()["x-rango-shell"]).toBe("HIT");
+  return { miss: missTitle, hit: titleInHtml(await hit.text()) };
+}
+
+/**
+ * #1182, the expectation the issue reports: the title an `ssr: false`
+ * loader pushes to Meta as a promise is in the HTML of the document MISS
+ * and of every shell HIT after it. Red: the HIT's HTML has the layout's
+ * title, not the loader's (the #1054 rule: a promise a loader pushes is
+ * never in a shell).
+ */
+export async function expectLoaderPromiseTitleInShellHtml(
+  page: Page,
+  fixture: LoaderTitleFixture,
+): Promise<void> {
+  const probe = pushProbe("meta-promise");
+  const url = `${fixture.metaPromiseUrl}?probe=${probe}`;
+
+  expect(await titlesMissThenHit(page, url)).toEqual({
+    miss: "meta-title@g1",
+    hit: "meta-title@g1",
+  });
+}
+
+/**
+ * #1182 as built (#1054): the HIT's HTML does not have the title an
+ * `ssr: false` loader pushed as a promise; the page hydrates clean and the
+ * client sets the title after hydration.
+ */
+export async function expectLoaderPromiseTitleAfterHydration(
+  page: Page,
+  fixture: LoaderTitleFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("meta-late");
+  const url = `${fixture.metaPromiseUrl}?probe=${probe}`;
+
+  const titles = await titlesMissThenHit(page, url);
+  expect(titles.miss).toBe("meta-title@g1");
+  expect(titles.hit).not.toBe("meta-title@g1");
+
+  await gotoShellHit(page, url);
+  await expect(page).toHaveTitle("meta-title@g1");
+}
+
+/**
+ * #1182's control: the same title, awaited before the push, bakes into the
+ * shell, so every HIT's HTML has it.
+ */
+export async function expectLoaderAwaitedTitleInShellHtml(
+  page: Page,
+  fixture: LoaderTitleFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("meta-awaited");
+  const url = `${fixture.metaAwaitedUrl}?probe=${probe}`;
+
+  expect(await titlesMissThenHit(page, url)).toEqual({
+    miss: "meta-title@g1",
+    hit: "meta-title@g1",
+  });
+  await gotoShellHit(page, url);
+  await expect(page).toHaveTitle("meta-title@g1");
+}
+
 /** The `push-note` rows on screen, and whether the root had hydrated. */
 interface PushNoteSample {
   hydrated: boolean;

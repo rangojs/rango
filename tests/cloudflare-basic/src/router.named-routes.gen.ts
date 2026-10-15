@@ -185,6 +185,8 @@ export const NamedRoutes = {
   pprPushCapped: "/ppr-push/capped",
   pprPushDeferred: "/ppr-push/deferred",
   pprPushLive: "/ppr-push/live",
+  pprPushMetaAwaited: "/ppr-push/meta-awaited",
+  pprPushMetaPromise: "/ppr-push/meta-promise",
   pprPushPinned: "/ppr-push/pinned",
   pprPushPprSettled: "/ppr-push/ppr-settled",
   pprPushPreDeferred: "/ppr-push/pre-deferred",
