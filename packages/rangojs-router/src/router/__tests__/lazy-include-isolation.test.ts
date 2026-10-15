@@ -9,6 +9,7 @@ import { evaluateLazyEntry } from "../lazy-includes.js";
 import { loadManifest, clearManifestCache } from "../manifest.js";
 import type { MiddlewareFn } from "../middleware.js";
 import { isRouteRootScoped } from "../../route-map-builder.js";
+import { makeSyntheticRoot } from "../../__tests__/helpers/synthetic-root.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -26,24 +27,6 @@ const ShopLoader = (createLoader as Function)(
 );
 
 const shopMiddleware: MiddlewareFn = async (_ctx, next) => next();
-
-function makeSyntheticRoot(mountIndex = 0): EntryData {
-  return {
-    type: "layout",
-    id: `#synthetic-maproot-M${mountIndex}`,
-    shortCode: `M${mountIndex}L0`,
-    parent: null,
-    handler: Div,
-    middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
-    layout: [],
-    parallel: {},
-    intercept: [],
-    loader: [],
-  };
-}
 
 function makeLazyEvalDeps(routesEntries: RouteEntry[] = []) {
   let nextMount = 100;

@@ -146,6 +146,12 @@ import {
 } from "./loaders/ppr-shell.js";
 import { PprJsxPage } from "./pages/ppr-jsx.js";
 import {
+  PprIncludeBakeLayout,
+  PprIncludeBakePage,
+  pprIncludeSectionPatterns,
+} from "./pages/ppr-include-bake.js";
+import { PprIncludeChromeLoader } from "./loaders/ppr-include-bake.js";
+import {
   PprPushDeferredPage,
   PprPushLivePage,
   PprPushPinnedPage,
@@ -1361,6 +1367,19 @@ export const urlpatterns = urls(
         // loading() awaits its loader at tree-build and can never produce a
         // shell — the /ppr-shell/no-hole negative below. See
         // pages/ppr-shell.tsx.
+        // Issue #1179 (e2e/ppr-include-bake.test.ts): a store layout whose
+        // client chrome reads its ssr: false loader outside Suspense, over the
+        // same ppr page declared directly and mounted through include().
+        layout(PprIncludeBakeLayout, () => [
+          loader(PprIncludeChromeLoader, { ssr: false }),
+          path("/ppr-include/direct", PprIncludeBakePage, {
+            name: "pprIncludeDirect",
+            ppr: { ttl: 300, swr: 120 },
+          }),
+          include("/ppr-include/section", pprIncludeSectionPatterns, {
+            name: "pprIncludeSection",
+          }),
+        ]),
         layout(PprShellLayout, () => [
           path(
             "/ppr-shell",

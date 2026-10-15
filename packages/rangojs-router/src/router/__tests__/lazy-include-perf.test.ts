@@ -8,6 +8,7 @@ import { evaluateLazyEntry } from "../lazy-includes.js";
 import { loadManifest, clearManifestCache } from "../manifest.js";
 import { buildRouterTrieFromUrlpatterns } from "../../rsc/manifest-init.js";
 import { getRouterPrecomputedEntries } from "../../route-map-builder.js";
+import { makeSyntheticRoot } from "../../__tests__/helpers/synthetic-root.js";
 
 // Empirical confirmation that include() is REALLY lazy, plus a measurement of
 // how many times an included module's handler actually runs across the request
@@ -20,24 +21,6 @@ import { getRouterPrecomputedEntries } from "../../route-map-builder.js";
 // behavior lives entirely in the functions exercised below.)
 
 const Page = createElement("div");
-
-function makeSyntheticRoot(mountIndex = 0): EntryData {
-  return {
-    type: "layout",
-    id: `#synthetic-maproot-M${mountIndex}`,
-    shortCode: `M${mountIndex}L0`,
-    parent: null,
-    handler: Page,
-    middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
-    layout: [],
-    parallel: {},
-    intercept: [],
-    loader: [],
-  } as unknown as EntryData;
-}
 
 // A lazy placeholder entry whose included urls() handler increments a counter
 // every time it runs, so we can observe exactly when evaluation happens.

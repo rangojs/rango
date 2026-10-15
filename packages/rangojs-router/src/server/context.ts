@@ -130,6 +130,11 @@ export type EntryPropRender = {
    * on both DSL evaluations, whatever `ssr` did to `loading`.
    */
   loadingPrefetch?: false;
+  /**
+   * loading(fallback, { ssr: false }), on both DSL evaluations; a document
+   * then sets `loading` to false (applyDocumentModeLoading).
+   */
+  loadingSsr?: false;
   transition?: TransitionConfig;
 };
 
@@ -151,7 +156,8 @@ export type LoaderEntry = {
    * Resolved at DSL-evaluation time from ctx.isSSR — entries are cached
    * per-isSSR (router/manifest.ts cache key), so the flag is already
    * request-mode-correct when resolveLoaders (fresh.ts) reads it and never
-   * appears on navigation-lane entries.
+   * appears on navigation-lane entries. Set by documentModeLoader, which
+   * getDocumentModeEntry also applies to a lazy include's captured ancestors.
    */
   awaitBeforeFlush?: true;
   /**
@@ -388,7 +394,8 @@ interface HelperContext extends IncludeScopePosition {
    *  different routers don't clobber each other (route-map-builder.ts). */
   routerId?: string;
   metrics?: MetricsStore;
-  /** True when rendering for SSR (document requests) */
+  /** True when rendering for SSR (document requests). DSL decisions on it
+   *  go through the document-mode helpers (documentModeLoader). */
   isSSR?: boolean;
   /** URL patterns map for path() routes (route name -> pattern) */
   patterns?: Map<string, string>;
@@ -891,6 +898,61 @@ export function getIsolatedLazyParent(
     parallel: { ...captured.parallel },
     intercept: [...captured.intercept],
   };
+}
+
+/*
+ * The DSL's document-only decisions. A document (isSSR) evaluation applies
+ * them in dsl-helpers.ts; getDocumentModeEntry applies the same ones to a
+ * chain built without isSSR. A new ctx.isSSR decision gets a helper here,
+ * called from both.
+ */
+
+/** loader(Def, { ssr: false }): a document awaits it before the first flush. */
+export function documentModeLoader(entry: LoaderEntry): LoaderEntry {
+  return entry.bake ? { ...entry, awaitBeforeFlush: true } : entry;
+}
+
+/** loading(fallback, { ssr: false }): a document renders no fallback. */
+export function applyDocumentModeLoading(entry: EntryPropRender): void {
+  if (entry.loadingSsr === false) entry.loading = false;
+}
+
+const documentModeEntries = new WeakMap<EntryData, EntryData>();
+
+/**
+ * `entry`, its ancestors, orphan layouts and parallels as a document (isSSR)
+ * DSL evaluation builds them, from an evaluation without isSSR.
+ *
+ * include() captures its parent chain on router.ts routes() or
+ * lazy-includes.ts runExpansion, neither of which has isSSR, and loadManifest
+ * reuses it for every request. Handed to a document as is, every ancestor
+ * outside the include kept its navigation-mode decisions (#1179). Intercepts
+ * stay as they are: a document never resolves one.
+ *
+ * Memoized per entry, so an ancestor several includes share maps to one copy.
+ */
+export function getDocumentModeEntry(entry: EntryData): EntryData {
+  const known = documentModeEntries.get(entry);
+  if (known) return known;
+  const copy = { ...entry };
+  documentModeEntries.set(entry, copy);
+  documentModeEntries.set(copy, copy);
+  copy.loader = entry.loader.map(documentModeLoader);
+  applyDocumentModeLoading(copy);
+  copy.layout = entry.layout.map(getDocumentModeEntry);
+  const parallel: ParallelEntries = {};
+  for (const slot of Object.keys(entry.parallel) as `@${string}`[]) {
+    const slotEntry = entry.parallel[slot];
+    if (slotEntry) {
+      parallel[slot] = getDocumentModeEntry(slotEntry) as ParallelEntryData;
+    }
+  }
+  copy.parallel = parallel;
+  if (entry.parent) copy.parent = getDocumentModeEntry(entry.parent);
+  if (entry.orphanOwner) {
+    copy.orphanOwner = getDocumentModeEntry(entry.orphanOwner);
+  }
+  return copy;
 }
 
 export function getParallelEntries(
