@@ -1372,7 +1372,7 @@ shell in the background, and the HIT that serves it and fills the holes.
 `renderHandler` runs one handler, and `dispatch` never renders, so neither
 reaches that. `serveShellRequest(router, url, options?)` serves one GET through
 your router's production request handler — built as `router.fetch` builds it,
-with your `nonce`, `version`, `cache` config and middleware — and settles every
+with your `nonce`, `cache` config and middleware — and settles every
 background task the request scheduled before it resolves. The first call is a
 MISS whose capture has already stored its shell; the next call with the same
 store is a HIT from it.

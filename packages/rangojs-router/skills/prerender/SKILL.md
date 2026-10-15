@@ -1329,9 +1329,9 @@ write that started before an invalidation of one of its tags is refused.
 ### Limits worth knowing
 
 - **Only the router's own handler.** A warm goes through `router.fetch`, the
-  handler `createRouter`'s `cache`, `nonce` and `version` configure. An app
-  entry that builds its own `createRSCHandler({ cache, version })` is not what
-  a warm runs: put those options on `createRouter`.
+  handler `createRouter`'s `cache` and `nonce` configure. An app
+  entry that builds its own `createRSCHandler({ cache })` is not what a warm
+  runs: put the option on `createRouter`.
 - **Document records only.** Navigation (`partial:`) and intercept records
   fill on the first navigation.
 - **One location at a time.** A warm does not reach a copy another location

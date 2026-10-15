@@ -330,7 +330,7 @@ export interface VercelCacheStoreOptions<TEnv = unknown> {
    *
    * Vercel does not reconcile entries between deployments; the store does it
    * through its keys, which carry the serving router's cache versions (see
-   * `version`). So a deploy that changes a router's code stops reading that
+   * `getCacheVersions`). So a deploy that changes a router's code stops reading that
    * router's old entries, and a deploy that does not keeps them. A namespace
    * that changes per deployment (`getCache({ namespace: VERCEL_DEPLOYMENT_ID })`)
    * still works and clears the cache on every deploy, which is what you want
@@ -362,19 +362,6 @@ export interface VercelCacheStoreOptions<TEnv = unknown> {
     ctx: RequestContext<TEnv>,
     defaultKey: string,
   ) => string | Promise<string>;
-
-  /**
-   * Version override, folded into every versioned key as `v/{version}/...`.
-   * When set, this exact value is used for cached data and stored HTML alike;
-   * changing it makes everything this store wrote before unreachable.
-   *
-   * Leave it unset for the default: the store keys with the versions of the
-   * router serving the request, as CFCacheStore does. Segments and `"use
-   * cache"` items use the router's data version; responses and PPR shells use
-   * its document version (see `createRouter({ version })`). Tag markers are
-   * never versioned, so an invalidation applies to every version.
-   */
-  version?: string;
 
   /**
    * Max serialized entry size in bytes before a write is skipped. Defaults to
@@ -537,8 +524,6 @@ export class VercelCacheStore<
 
   private readonly cache: VercelRuntimeCache;
   private readonly waitUntil?: (promise: Promise<unknown>) => void;
-  /** The `version` option: used for every versioned family when set. */
-  private readonly explicitVersion?: string;
   private readonly maxItemBytes: number;
   private readonly memo: ResolvedShellMemoOptions;
   private readonly handleMemos: VercelHandleMemos;
@@ -563,7 +548,6 @@ export class VercelCacheStore<
     this.waitUntil = options.waitUntil;
     this.defaults = options.defaults;
     this.keyGenerator = options.keyGenerator;
-    this.explicitVersion = options.version;
     this.maxItemBytes = options.maxItemBytes ?? VERCEL_MAX_ITEM_BYTES;
     this.maxShellEntryBytes = Math.floor((this.maxItemBytes * 3) / 4);
     this.memo = resolveShellMemoOptions(options.memo, {
@@ -1516,7 +1500,7 @@ export class VercelCacheStore<
   // cross-family one reads as corrupt. See the class doc for passing a wider
   // hash (sha256) when many keys are live.
   private toStoreKey(key: string, family: CacheFamily): string {
-    return `${versionKeyPrefix(this.explicitVersion, FAMILY_VERSION[family])}rg:${family}:${key}`;
+    return `${versionKeyPrefix(FAMILY_VERSION[family])}rg:${family}:${key}`;
   }
 
   private async write(

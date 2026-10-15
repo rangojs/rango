@@ -35,9 +35,6 @@ export interface BuildVersions extends RouterVersions {
  * Install the cache versions of a simulated build, or remove them with no
  * argument (routers serve unversioned again, the default in tests).
  *
- * A router that sets `createRouter({ version })` keeps that value for both
- * versions, exactly as in production.
- *
  * @example A deploy that changes the client only keeps cached data
  * ```ts
  * setBuildVersions({ data: "d1", document: "h1" });

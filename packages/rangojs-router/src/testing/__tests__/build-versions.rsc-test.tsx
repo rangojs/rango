@@ -7,8 +7,7 @@
  *
  * The rules (docs/design/per-app-cache-version.md):
  * - cached data follows the data version, stored HTML the document version;
- * - the browser's `_rsc_v` is compared with the document version;
- * - a consumer-set `version` is used for both and nothing overrides it.
+ * - the browser's `_rsc_v` is compared with the document version.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -51,7 +50,7 @@ function makeRuntimeCache(): VercelRuntimeCache {
 /** Handler runs, to tell a segment-cache hit (no run) from a render. */
 const runs = { cached: 0, product: 0 };
 
-function makeRouter(options: { version?: string; id?: string } = {}) {
+function makeRouter(options: { id?: string } = {}) {
   return createRouter(options).routes(
     urls(({ path, cache }) => [
       path(
@@ -267,34 +266,6 @@ describe("per-router cache versions through the testing primitives", () => {
       expect(await version()).toBe("h1");
       setBuildVersions({ data: "d1", document: "h2" });
       expect(await version()).toBe("h2");
-    });
-  });
-
-  describe("a consumer-set version", () => {
-    it("is used for both versions, whatever the build computed", async () => {
-      const router = makeRouter({ version: "release-7" });
-      setBuildVersions({ data: "d1", document: "h1" });
-      expect(
-        metadataVersion(
-          (await serve(router, "/plain", { partial: true })).flight,
-        ),
-      ).toBe("release-7");
-      expect((await serve(router, "/product")).shellStatus).toBe("MISS");
-      await serve(router, "/cached");
-
-      // A deploy that changes every build version changes nothing here.
-      setBuildVersions({ data: "d2", document: "h2" });
-      await resetShellTestState();
-      expect((await serve(router, "/product")).shellStatus).toBe("HIT");
-      expect((await serve(router, "/cached")).body).toContain("cached-run-1");
-    });
-
-    it("clears the cache when the consumer changes it", async () => {
-      setBuildVersions({ data: "d1", document: "h1" });
-      await serve(makeRouter({ version: "release-7" }), "/cached");
-      expect(
-        (await serve(makeRouter({ version: "release-8" }), "/cached")).body,
-      ).toContain("cached-run-2");
     });
   });
 });

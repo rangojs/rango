@@ -266,8 +266,6 @@ Notes:
   a cleared cache) on every build; the build prints one note when that applies.
   A router that renders no such action keeps its cache without one (`/use-cache`,
   `/cache-guide`).
-- `createRouter({ version })` takes effect on every preset, including `node`
-  and `vercel`. It replaces both computed cache versions with that exact value.
 - `@rangojs/router/vite` also exports `poke()`, a dev-server plugin: type `e`
   then Enter (or Ctrl+R where the terminal passes it through) to full-reload
   the browser.

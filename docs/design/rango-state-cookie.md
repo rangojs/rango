@@ -858,7 +858,8 @@ too short and rested on an unverified platform claim:
 - **Read side: anything found on read is contamination.** Because every write
   both refuses (`shouldCacheResponse`) and strips, no _legitimate_ stored entry
   carries a per-client signal — so any a read encounters came from a pre-fix
-  build or a consumer-pinned `version` namespace that outlived the write fix.
+  build (or a consumer-pinned `version` namespace, since removed) that outlived
+  the write fix.
   Two CF read chokepoints strip defensively so such an entry can never replay
   one client's `Set-Cookie` to another: `toClientResponse` (the L1 serve path)
   and the `kvGetResponse` `hd` filter (which also cleans the array

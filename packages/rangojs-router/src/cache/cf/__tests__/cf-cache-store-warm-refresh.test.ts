@@ -242,7 +242,6 @@ function createColo(
       } as any,
       kv: kv as any,
       baseUrl: "https://shop.example/",
-      version: "v1",
       memo: { shellMs: 0, markerFreshMs: 0 },
       kvFallThrough: true,
       ...storeOptions,

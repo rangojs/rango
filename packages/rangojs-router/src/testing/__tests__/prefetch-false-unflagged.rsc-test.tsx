@@ -29,7 +29,7 @@ import { MemorySegmentCacheStore } from "../../cache/index.js";
 const PriceLoader = createLoader(async () => ({ price: 12 }));
 const StockLoader = createLoader(async () => ({ stock: 3 }));
 
-const router = createRouter({ id: "unflagged", version: "v1" }).routes(
+const router = createRouter({ id: "unflagged" }).routes(
   urls(({ path, layout, loader, loading, parallel }) => [
     layout(
       () => <main>shell</main>,

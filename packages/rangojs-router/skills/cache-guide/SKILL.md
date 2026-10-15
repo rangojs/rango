@@ -211,17 +211,13 @@ Tag invalidation markers are stored without a version, so `updateTag()` and
 `revalidateTag()` apply to entries of every version, including a version that
 comes back in a rollback.
 
-- **Force a clear:** change `version` (`createRouter({ version })`,
-  `createRSCHandler({ version })`, `new CFCacheStore({ version })` or
-  `new VercelCacheStore({ version })` all use that exact value for both
-  versions), or invalidate tags.
-- **Keep the old "every deploy clears the cache" behavior:** set `version` to a
-  per-deploy value (a build id), or on Vercel keep a deployment-scoped
+- **Force a clear:** invalidate tags, or change the router's server code. There
+  is no `version` setting; the build versions are the only ones.
+- **Clear on every deploy:** on Vercel, keep a deployment-scoped
   `getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })`.
 - **Separate environments:** two deployments built from the same code have the
   same versions. If they share a store (the same KV namespace), they share
-  entries. Give each environment its own KV namespace or cache namespace, or its
-  own `version`.
+  entries. Give each environment its own KV namespace or cache namespace.
 
 Two things give a router a new version on every build, and with it a cold
 cache on every deploy:

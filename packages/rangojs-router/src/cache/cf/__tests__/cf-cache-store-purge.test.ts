@@ -142,7 +142,6 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       ctx: ctx as any,
       kv: kv as any,
       baseUrl: "https://test.internal/",
-      version: "v1",
       ...overrides,
     });
   }
@@ -155,7 +154,7 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       await ctx.flush();
 
       const dataPut = put.mock.calls.find(([req]) =>
-        (req as Request).url.endsWith("/v/v1/k"),
+        (req as Request).url.endsWith("/k"),
       );
       expect(dataPut).toBeDefined();
       expect((dataPut![1] as Response).headers.get("Cache-Tag")).toBe(
@@ -210,7 +209,7 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       await ctx.flush();
 
       const dataPut = put.mock.calls.find(([req]) =>
-        (req as Request).url.endsWith("/v/v1/k"),
+        (req as Request).url.endsWith("/k"),
       );
       const header = (dataPut![1] as Response).headers.get("Cache-Tag")!;
       const match =
@@ -237,7 +236,7 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       await ctx.flush();
 
       const dataPut = put.mock.calls.find(([req]) =>
-        (req as Request).url.endsWith("/v/v1/k"),
+        (req as Request).url.endsWith("/k"),
       );
       // Header omitted (the entry still caches), warning surfaced once.
       expect((dataPut![1] as Response).headers.get("Cache-Tag")).toBeNull();
@@ -270,7 +269,6 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       const store = new CFCacheStore({
         ctx: ctx as any,
         baseUrl: "https://test.internal/",
-        version: "v1",
         tagPurge: vi.fn(async () => {}),
       });
 
@@ -291,7 +289,6 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       const markerStore = new CFCacheStore({
         ctx: ctx as any,
         baseUrl: "https://test.internal/",
-        version: "v1",
       });
       await markerStore.set("k2", createTestData(manyTags), 300);
       await ctx.flush();
@@ -305,7 +302,7 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       await ctx.flush();
 
       const dataPut = put.mock.calls.find(([req]) =>
-        (req as Request).url.endsWith("/v/v1/k"),
+        (req as Request).url.endsWith("/k"),
       );
       expect((dataPut![1] as Response).headers.get("Cache-Tag")).toBeNull();
     });
@@ -538,7 +535,6 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       return new CFCacheStore({
         ctx: ctx as any,
         baseUrl: "https://test.internal/",
-        version: "v1",
         tagPurge,
       });
     }
@@ -610,7 +606,6 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       const store = new CFCacheStore({
         ctx: ctx as any,
         baseUrl: "https://test.internal/",
-        version: "v1",
         tagPurge: () => purge.held,
       });
       await store.set("k", createTestData(["products"]), 300);
@@ -634,7 +629,6 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
         const store = new CFCacheStore({
           ctx: ctx as any,
           baseUrl: "https://test.internal/",
-          version: "v1",
           tagPurge: vi.fn(async () => {}),
         });
         await store.set("k", createTestData(["products"]), 300);

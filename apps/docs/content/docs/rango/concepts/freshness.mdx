@@ -109,7 +109,7 @@ Same code builds to the same versions, so a rebuild or redeploy of unchanged cod
 
 Tag invalidation markers are stored without a version, so `updateTag()` and `revalidateTag()` apply to entries of every version, including a version that comes back in a rollback. `MemorySegmentCacheStore` has no version; it is per-process and starts cold on every restart.
 
-To force a clear, change `version` (`createRouter({ version })`, or the store's `version` option; either value is used for both versions) or invalidate tags. To keep the old "every deploy clears the cache" behavior, set `version` to a per-deploy value such as a build id. Two deployments built from the same code have the same versions, so if they share a store (the same KV namespace) they share entries: give each environment its own KV or cache namespace, or its own `version`.
+To force a clear, invalidate tags with `updateTag()` / `revalidateTag()`, or change the router's server code. There is no version setting: the build versions are the only ones. Two deployments built from the same code have the same versions, so if they share a store (the same KV namespace) they share entries: give each environment its own KV or cache namespace.
 
 ## Coming from Next.js or Remix (false friends)
 

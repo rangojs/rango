@@ -69,32 +69,18 @@ describe("two routers on one host and path, one cache store", () => {
   const served = async (router: TestRouter) =>
     shellServed(await serveShellRequest(router, SHARED_URL));
 
-  it.each([
-    {
-      versions: "one build version (the whole-build pair)",
-      arrange: (): string | undefined => {
-        setBuildVersions({ data: "d1", document: "h1" });
-        return undefined;
-      },
-    },
-    {
-      versions: "the same createRouter({ version }) on both",
-      arrange: (): string | undefined => "release-1",
-    },
-  ])(
-    "$versions: a router never serves the other's shell",
-    async ({ arrange }) => {
-      const { a, b } = makeRouters(sharedStore(), { version: arrange() });
+  it("one build version: a router never serves the other's shell", async () => {
+    setBuildVersions({ data: "d1", document: "h1" });
+    const { a, b } = makeRouters(sharedStore());
 
-      expect(await served(a)).toEqual(ownMiss("a"));
+    expect(await served(a)).toEqual(ownMiss("a"));
 
-      expect(await served(b)).toEqual(ownMiss("b"));
-      expect(runs.b).toBeGreaterThan(0);
+    expect(await served(b)).toEqual(ownMiss("b"));
+    expect(runs.b).toBeGreaterThan(0);
 
-      expect(await served(a)).toEqual(ownHit("a"));
-      expect(await served(b)).toEqual(ownHit("b"));
-    },
-  );
+    expect(await served(a)).toEqual(ownHit("a"));
+    expect(await served(b)).toEqual(ownHit("b"));
+  });
 
   it("per-router versions: neither router's capture evicts the other's shell", async () => {
     setPerRouterVersions();

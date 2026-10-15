@@ -115,7 +115,6 @@ describe("KV key normalization (512-byte limit)", () => {
       ctx: ctx as any,
       kv: kv as any,
       baseUrl: "https://test.internal/",
-      version: "v1",
     });
   }
 
@@ -138,7 +137,7 @@ describe("KV key normalization (512-byte limit)", () => {
     const normalized = kvKeys.find((k) => k.includes("use-cache:getEntries:"));
     expect(normalized).toBeDefined();
     expect(kvKeyByteLength(normalized!)).toBeLessThanOrEqual(KV_MAX_KEY_BYTES);
-    expect(normalized!.startsWith("v/v1/fn:use-cache:getEntries:")).toBe(true);
+    expect(normalized!.startsWith("fn:use-cache:getEntries:")).toBe(true);
     expect(normalized!).toMatch(/~[0-9a-f]{32}$/);
   });
 
@@ -177,7 +176,7 @@ describe("KV key normalization (512-byte limit)", () => {
     await ctx.flush();
 
     const kvKeys = [...kv.store.keys()];
-    expect(kvKeys).toContain("v/v1/fn:short-key");
+    expect(kvKeys).toContain("fn:short-key");
   });
 
   it("truncateToBytes never splits a multibyte sequence into a mismatched key part", () => {

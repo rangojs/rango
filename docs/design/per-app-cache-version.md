@@ -30,7 +30,9 @@ deployment finds the entries the previous one wrote.
    deploying a change to one app does not clear the others.
 3. Any change to an app's server code clears that app's cached data, all of
    it. We do not try to judge whether a change is compatible.
-4. `version` still overrides everything, in both directions.
+
+There is no consumer-set version: the build versions are the only ones. To
+clear an app's cache on demand, invalidate its tags or change its server code.
 
 Rule 3 is deliberately blunt. An earlier draft fingerprinted each cache
 boundary separately; it was dropped because nobody could predict from a diff
@@ -437,10 +439,9 @@ once each:
 
 ### 4. At run time
 
-`resolveRouterVersions(routerId, override)`
-(`src/server/build-version-table.ts`) answers in this order: a consumer-set
-`version`, the router's entry in the build table, the whole-build entry, and in
-dev the stamp. There is no hashing at run time; a version is a string in a
+`resolveRouterVersions(routerId)`
+(`src/server/build-version-table.ts`) answers in this order: the router's entry
+in the build table, the whole-build entry, and in dev the stamp. There is no hashing at run time; a version is a string in a
 table.
 
 `createRSCHandler` resolves its router's pair once. The handler's own
@@ -526,11 +527,8 @@ family:
   `versionPath(family)` supplying `v/{version}/`.
 - `VercelCacheStore`: `toStoreKey(key, family)`.
 
-A store-level `version` is used for every versioned family, as before.
-
-`VercelCacheStore` adopts the per-router versions by default, like
-`CFCacheStore`. It had no default version, so its keys were unversioned unless
-the consumer passed one, and the documented wiring put the deployment id in the
+`VercelCacheStore` adopts the per-router versions, like `CFCacheStore`. It had
+no default version, so its keys were unversioned, and the documented wiring put the deployment id in the
 `getCache({ namespace })` handle, which clears the cache on every deploy.
 "Same code, same cache" should not depend on which store you use, and an
 unversioned persistent store serves an old build's entries to changed code.
@@ -548,7 +546,7 @@ have the same versions and read each other's entries. For segment entries that
 is usually what you want, and their keys carry the host anyway. A
 `"use cache"` item key carries no host, so if a preview reads a different
 backend than production, it must not share production's store: give each
-environment its own KV namespace or `namespace`, or its own `version`.
+environment its own KV namespace or `namespace`.
 
 ### The encryption key is a plugin option
 
@@ -638,8 +636,8 @@ Five rows deserve a second look.
 
 **The host entry.** A change to host-level code (host middleware, a new mount)
 does not change a lazily mounted app's version. If the host changes what an
-app receives, and the app renders from it inside a cache boundary, bump the
-app's `version` or invalidate its tags. An app the entry imports statically
+app receives, and the app renders from it inside a cache boundary, invalidate
+the app's tags. An app the entry imports statically
 does cover the entry, and so does an app whose router the entry creates.
 
 **Stylesheets.** A stylesheet that server code links is part of that app's
@@ -657,8 +655,13 @@ cached payload.
 **Dependencies left external.** What is hashed for one is `name@version` of
 the package and of its dependencies, as installed when the build ran. A
 package whose files change while its version stays (a patched package, a git
-dependency reinstalled from a moved ref) is not seen. Change `version` when
-you deploy one. And what is installed can differ by machine: a package with
+dependency reinstalled from a moved ref) is not seen: its cache survives the
+deploy, so `updateTag()` the affected tags or change the router's own server
+code when you deploy one. Hashing them by resolved content would mean reading
+the lockfile (pnpm's `patchedDependencies` hashes and a git dependency's
+resolved ref, plus the npm, yarn and bun lockfile shapes), which is a YAML
+parse, a workspace-root lookup and a name-to-key match per package manager,
+about 120 to 150 lines with tests; it is not done. And what is installed can differ by machine: a package with
 platform-specific optional dependencies (a native binding per OS and CPU)
 describes differently on macOS and on Linux, so a router that leaves such a
 package external gets one version per build platform. Build your deploys on
@@ -761,10 +764,10 @@ the implementation contradicted it.
   argument that the build version is constant in a process. It is per router
   now, and the manifest key is the pathname alone, so the memo is keyed by the
   asking router's version too.
-- **`createRouter({ version })` on the node preset.** The generated entry
-  passed `version: VERSION` to `createRSCHandler`, which overrode the router's
-  own option. The handler now reads `options.version ?? router.version`, and
-  neither the generated entry nor the Cloudflare entry injector passes one.
+- **The handler's version on the node preset.** The generated entry passed
+  `version: VERSION` to `createRSCHandler`, which overrode the router's own
+  pair. The handler now reads only the build versions, and neither the
+  generated entry nor the Cloudflare entry injector passes one.
 - **Cost.** The projection was under 5 ms. The measured step is larger; see
   "Measuring it".
 - **Phasing.** The proposal split data version and document version into two
@@ -859,7 +862,7 @@ One machine: Apple M4, 10 cores, macOS 26.6, Node 24.12, Vite 8.0.16, rolldown
 ### Retention
 
 `tests/cloudflare-stress-demo`: `/app/cached/hot` sits inside
-`cache({ ttl: 300 })` on a `CFCacheStore` with no `version`, and renders
+`cache({ ttl: 300 })` on a `CFCacheStore`, and renders
 `Date.now()` inside the boundary, so the same number back means the store
 served the entry. `wrangler dev` keeps the Cache API and KV on disk between
 server starts.
@@ -1006,9 +1009,9 @@ once more per key than before.
 
 The added cost per key, measured in isolation on Node (2 million calls, median
 of 7 rounds): building the prefix from the request's versions takes 62 ns
-(54 to 93); with a store-level `version`, which is what every key cost before,
-11 ns. A request builds a handful of keys, so this is well under a microsecond
-per request.
+(54 to 93). The store-level `version` override, since removed, cost 11 ns.
+A request builds a handful of keys, so this is well under a microsecond per
+request.
 
 The stress demo's throughput harness (`bench/run.ts --runs 3 --duration 4
 --cold-runs 3`) was run on the base commit and on this branch in one session

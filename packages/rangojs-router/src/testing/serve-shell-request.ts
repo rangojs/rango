@@ -2,7 +2,7 @@
  * serveShellRequest — one request through the production PPR serve path.
  *
  * Builds the router's request handler as `router.fetch` does
- * (`createRSCHandler` with the router's `nonce`, `version` and `cache`
+ * (`createRSCHandler` with the router's `nonce` and `cache`
  * config) and serves one GET through it, so middleware, the shell serve path
  * and a MISS's background capture all run production code, on real Flight
  * (the vendored react-server-dom serializer). The call settles every
@@ -537,10 +537,7 @@ async function getHandler(
   const { resolveRouterVersions } =
     await import("../server/build-version-table.js");
   // What createRSCHandler would resolve for this router now.
-  const { document: versions } = resolveRouterVersions(
-    internal.id,
-    internal.version,
-  );
+  const { document: versions } = resolveRouterVersions(internal.id);
   const cached = byStore.get(cacheStore ?? router);
   if (cached?.versions === versions) return cached.handler;
 

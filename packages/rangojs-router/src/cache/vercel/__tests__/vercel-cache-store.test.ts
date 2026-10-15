@@ -556,15 +556,6 @@ describe("VercelCacheStore", () => {
   });
 
   describe("keyspace isolation", () => {
-    it("namespaces by version so a deploy bump misses prior entries", async () => {
-      const { cache } = makeFakeCache();
-      const a = new VercelCacheStore({ cache, version: "buildA" });
-      const b = new VercelCacheStore({ cache, version: "buildB" });
-      await a.set("k", segment(), 60, 300);
-      expect(await a.get("k")).not.toBeNull();
-      expect(await b.get("k")).toBeNull();
-    });
-
     it("keeps segment, item, and response families from colliding", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });

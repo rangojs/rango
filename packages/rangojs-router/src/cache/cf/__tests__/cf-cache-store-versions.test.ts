@@ -201,26 +201,6 @@ describe("CFCacheStore per-router versions", () => {
       for (const url of cache.urls()) expect(url).not.toContain("/v/");
     });
 
-    it("uses a store-level version for every versioned family", async () => {
-      const store = makeStore({ version: "pinned" });
-      await request(
-        A1,
-        async (pinned) => {
-          await pinned.set("k", segmentData(), 300);
-          await pinned.setItem("item", "value", { ttl: 300 });
-          await pinned.putResponse("/page", new Response("x"), 300);
-          await pinned.putShell("/p:shell", shellEntry(), 300);
-        },
-        store,
-      );
-      expect(kv.keys().sort()).toEqual([
-        "v/pinned/fn:item",
-        "v/pinned/h/test.internal/doc:/page",
-        "v/pinned/k",
-        "v/pinned/shell2:/p:shell",
-      ]);
-    });
-
     it("keys unversioned when the router's versions are empty (tests, the stub)", async () => {
       await request({ data: "", document: "" }, (store) =>
         store.set("k", segmentData(), 300),

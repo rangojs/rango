@@ -1,6 +1,6 @@
 /**
  * Which versions a router, and a request, resolve to at run time: the
- * consumer's `version`, the build's table, or the dev stamp, in that order.
+ * build's table or the dev stamp, in that order.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -35,11 +35,11 @@ function makeCtx(versions?: { data: string; document: string }) {
   });
 }
 
-describe("resolveVersionsFrom, without a consumer version", () => {
+describe("resolveVersionsFrom", () => {
   const lookup = (
     table: RouterVersionsTable | undefined,
     routerId: string | undefined,
-  ) => resolveVersionsFrom(table, routerId, undefined);
+  ) => resolveVersionsFrom(table, routerId);
 
   it("returns the router's own pair", () => {
     expect(lookup(TABLE, "router-a")).toEqual({
@@ -86,19 +86,6 @@ describe("resolveRouterVersions", () => {
       data: "data-b",
       document: "doc-b",
     });
-  });
-
-  it("uses a consumer-set version for both, over the build table", () => {
-    installRouterVersionsTable(TABLE);
-    expect(resolveRouterVersions("router-a", "release-7")).toEqual({
-      data: "release-7",
-      document: "release-7",
-    });
-  });
-
-  it("treats an empty consumer version as set", () => {
-    installRouterVersionsTable(TABLE);
-    expect(resolveRouterVersions("router-a", "")).toEqual(uniformVersions(""));
   });
 });
 
@@ -188,44 +175,16 @@ describe("versionKeyPrefix", () => {
     runWithRequestContext(makeCtx({ data: "d1", document: "h1" }), fn);
 
   it("prefixes a key with the serving router's version of that kind", () => {
-    expect(inRequest(() => versionKeyPrefix(undefined, "data"))).toBe("v/d1/");
-    expect(inRequest(() => versionKeyPrefix(undefined, "document"))).toBe(
-      "v/h1/",
-    );
+    expect(inRequest(() => versionKeyPrefix("data"))).toBe("v/d1/");
+    expect(inRequest(() => versionKeyPrefix("document"))).toBe("v/h1/");
   });
 
-  it("uses a store-level version for every versioned kind", () => {
-    expect(inRequest(() => versionKeyPrefix("mine", "data"))).toBe("v/mine/");
-    expect(inRequest(() => versionKeyPrefix("mine", "document"))).toBe(
-      "v/mine/",
-    );
-  });
-
-  it("gives an unversioned key no prefix, whatever the store's version", () => {
-    expect(inRequest(() => versionKeyPrefix(undefined, null))).toBe("");
-    expect(inRequest(() => versionKeyPrefix("mine", null))).toBe("");
+  it("gives an unversioned key no prefix", () => {
+    expect(inRequest(() => versionKeyPrefix(null))).toBe("");
   });
 
   it("writes no prefix for an empty version", () => {
-    expect(versionKeyPrefix(undefined, "data")).toBe("");
-    expect(inRequest(() => versionKeyPrefix("", "data"))).toBe("");
-  });
-});
-
-describe("resolveVersionsFrom", () => {
-  // The build's shell capture and the request handler both go through it, so
-  // a shell is stamped with the version the handler will check.
-  it("prefers the consumer's version, then the table", () => {
-    expect(resolveVersionsFrom(TABLE, "router-a", "release-7")).toEqual(
-      uniformVersions("release-7"),
-    );
-    expect(resolveVersionsFrom(TABLE, "router-a", undefined)).toEqual({
-      data: "data-a",
-      document: "doc-a",
-    });
-    expect(resolveVersionsFrom(undefined, "router-a", undefined)).toBe(
-      undefined,
-    );
+    expect(versionKeyPrefix("data")).toBe("");
   });
 });
 

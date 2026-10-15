@@ -48,7 +48,6 @@ async function Child(): Promise<React.ReactNode> {
 
 const router = createRouter({
   id: "prefetch-render-errors",
-  version: "v1",
 }).routes(
   urls(({ path, loader, loading, errorBoundary }) => [
     path("/", () => <p>home</p>, { name: "home" }),

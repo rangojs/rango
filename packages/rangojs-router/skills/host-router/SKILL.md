@@ -382,7 +382,7 @@ Each `createRouter()` app has its own cache version, computed by `vite build` fr
 | Client code of any app changes        | kept for every app  | cleared for every app | every app's tabs reload |
 | Server code shared by A and B changes | cleared for A and B | cleared for A and B   | A's and B's tabs reload |
 
-The host entry (the file that creates the host router and its middleware) is not part of a lazily mounted sub-app's version. If host middleware changes what an app renders from inside a cache boundary, change that app's `version` or invalidate its tags. See `/cache-guide`.
+The host entry (the file that creates the host router and its middleware) is not part of a lazily mounted sub-app's version. If host middleware changes what an app renders from inside a cache boundary, invalidate its tags. See `/cache-guide`.
 
 ## Shared cache store
 

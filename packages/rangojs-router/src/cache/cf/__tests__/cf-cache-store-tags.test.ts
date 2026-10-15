@@ -172,7 +172,6 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       ctx: ctx as any,
       kv: kv as any,
       baseUrl: "https://test.internal/",
-      version: "v1",
       ...overrides,
     });
   }
@@ -1239,7 +1238,6 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       expect(putSpy).toHaveBeenCalledTimes(1);
       const kvKey = String(putSpy.mock.calls[0]![0]);
       expect(kvKey.length).toBeLessThanOrEqual(512);
-      expect(kvKey.startsWith("v/v1/")).toBe(true);
       expect(kvKey).toMatch(/~[0-9a-f]{32}$/);
       // No cache-write error is reported; the entry persists to L2.
       expect(reported.filter((r) => r.category === "cache-write")).toHaveLength(
@@ -1317,7 +1315,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
     it("evicts and reports a CORRUPT KV envelope as cache-corrupt (self-heal)", async () => {
       const store = makeStore();
       // Malformed JSON directly at the segment KV key (version-prefixed), no L1.
-      kv.store.set("v/v1/k", "{ not valid json");
+      kv.store.set("k", "{ not valid json");
 
       const delSpy = vi.spyOn(kv, "delete");
       const { reqCtx, reported } = ctxWithReporter();
@@ -1327,7 +1325,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
 
       expect(result).toBeNull();
       expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
-      expect(delSpy).toHaveBeenCalledWith("v/v1/k"); // faulty KV entry evicted
+      expect(delSpy).toHaveBeenCalledWith("k"); // faulty KV entry evicted
     });
 
     it("reports a write error via onError and degrades to a no-op", async () => {
@@ -1683,7 +1681,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
     // by a validator that throws dereferencing null.
     it("treats a KV body that parses to a primitive ('null') as corrupt (evicts), not a transient read error", async () => {
       const store = makeStore();
-      kv.store.set("v/v1/k", "null"); // parses fine; validate(null) would throw
+      kv.store.set("k", "null"); // parses fine; validate(null) would throw
 
       const delSpy = vi.spyOn(kv, "delete");
       const { reqCtx, reported } = ctxWithReporter();
@@ -1695,7 +1693,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       expect(result).toBeNull();
       expect(reported.some((r) => r.category === "cache-corrupt")).toBe(true);
       expect(reported.some((r) => r.category === "cache-read")).toBe(false);
-      expect(delSpy).toHaveBeenCalledWith("v/v1/k");
+      expect(delSpy).toHaveBeenCalledWith("k");
     });
 
     // F6: the corrupt-entry KV eviction must be scheduled in the background
@@ -1709,7 +1707,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       { timeout: 2000 },
       async () => {
         const store = makeStore();
-        kv.store.set("v/v1/k", "{ not valid json");
+        kv.store.set("k", "{ not valid json");
 
         let deleteResolved = false;
         let releaseDelete!: () => void;
@@ -1729,7 +1727,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         // get() returned while the (still-pending) delete has not resolved: it was
         // scheduled, not awaited. An awaited evict would have parked get() here.
         expect(result).toBeNull();
-        expect(delSpy).toHaveBeenCalledWith("v/v1/k");
+        expect(delSpy).toHaveBeenCalledWith("k");
         expect(deleteResolved).toBe(false);
 
         releaseDelete();
@@ -1737,7 +1735,7 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
       },
     );
 
-    // F7: two stores in one request with different KV bindings (and versions)
+    // F7: two stores in one request with different KV bindings
     // must not cross-pollute the per-request marker memo.
     it("two stores in one request do not cross-pollute the tag-marker memo", async () => {
       const kvA = new MockKV();
@@ -1746,13 +1744,11 @@ describe("CFCacheStore tag invalidation (single-store)", () => {
         ctx: ctx as any,
         kv: kvA as any,
         baseUrl: "https://test.internal/",
-        version: "vA",
       });
       const storeB = new CFCacheStore({
         ctx: ctx as any,
         kv: kvB as any,
         baseUrl: "https://test.internal/",
-        version: "vB",
       });
 
       // A: tag then invalidate -> A's entry is invalidated (marker only in kvA).
