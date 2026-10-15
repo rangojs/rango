@@ -370,15 +370,6 @@ export interface CreateRSCHandlerOptions<
   cache?: HandlerCacheConfig | ((env: TEnv) => HandlerCacheConfig);
 
   /**
-   * Version override for this handler. Same meaning as
-   * `createRouter({ version })`, which it takes precedence over: this exact
-   * value is used for both of the router's versions.
-   *
-   * @default createRouter({ version }), else the router's build versions
-   */
-  version?: string;
-
-  /**
    * Nonce provider for Content Security Policy (CSP).
    *
    * Can be:

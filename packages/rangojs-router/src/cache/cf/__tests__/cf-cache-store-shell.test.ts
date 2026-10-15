@@ -1695,25 +1695,6 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
           new TextEncoder().encode(JSON.stringify(snapshot)).length,
       });
     });
-
-    it("is partitioned by build version", async () => {
-      const v1 = new CFCacheStore({
-        ctx: mockCtx,
-        kv: mockKV as any,
-        version: "v1",
-      });
-      await v1.putShell("k", shellEntry(), 300, 30);
-      await drain(mockCtx);
-      await (
-        await v1.readShellDocument("k")
-      )?.snapshot;
-      const v2 = new CFCacheStore({
-        ctx: mockCtx,
-        kv: mockKV as any,
-        version: "v2",
-      });
-      expect(await v2.readShellDocument("k")).toBeNull();
-    });
   });
 
   it("does not emit shell tier decisions when internal debug is disabled", async () => {

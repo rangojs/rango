@@ -56,7 +56,6 @@ interface RangoOptions<TEnv> {
     request: Request,
     env: TEnv,
   ) => string | boolean | Promise<string | boolean>;
-  version?: string; // Cache version and client/server version; replaces both computed versions
   originCheck?:
     | boolean
     | ((
@@ -330,10 +329,6 @@ Default `"rango-state"`. The prefix of the state cookie that keys the client's p
 ### nonce
 
 A CSP nonce provider: `(request, env) => string | boolean | Promise<string | boolean>`. Return `true` to generate a nonce per request (`nonce: () => true`), a string to supply your own, or `false` or `""` to skip it for one request. The nonce is applied to the router's inline scripts, and middleware reads it with `ctx.get(nonce)` (the `nonce` token from `@rangojs/router`). Client components that render their own head scripts read it during SSR with `useNonce()`.
-
-### version
-
-The version string sent to the client, which it sends back on partial requests to detect a mismatch after a deploy. It is also the cache version: `createRouter({ version })` uses that exact value for both the data version and the document version that `vite build` otherwise computes per router from its built code, on every preset. Set it to force a clear, or to a per-deploy value to keep the "every deploy clears the cache" behavior.
 
 ### originCheck
 

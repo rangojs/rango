@@ -445,7 +445,7 @@ export interface ShellCacheEntry {
   /** React.version captured at prerender time; the read-time invalidation gate. */
   reactVersion: string;
   /**
-   * Build version captured at prerender time: the RSC handler's `version`,
+   * Build version captured at prerender time: the RSC handler's version,
    * which is the router's DOCUMENT version (router-versions.ts) — a hash of
    * its server code and the client asset names by default, a stamp bumped on
    * dev RSC-module edits. The second read-time gate: a persistent shared

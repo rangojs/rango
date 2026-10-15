@@ -616,8 +616,7 @@ from that router's built code: segment entries and `fn:` items with the data
 version, `doc:` responses and `shell2:` shells with the document version. A
 deploy that changes a router's code reads under a new version; a deploy that does
 not keeps the entries. Tag invalidation markers carry no version, so `updateTag()`
-reaches entries of every version. `version` replaces both versions with one
-value. See `/cache-guide` → "Cross-deploy safety" and `/cloudflare` for bindings.
+reaches entries of every version. See `/cache-guide` → "Cross-deploy safety" and `/cloudflare` for bindings.
 
 ### With KV L2 Persistence
 
@@ -859,12 +858,11 @@ global, so they read fresh in any region.
 Writes over 2 MB (the platform limit, `maxItemBytes`) are skipped, and tags
 beyond the per-item cap are dropped with a warning. The official client swallows
 `expireTag` failures, so treat `updateTag()` on Vercel as best-effort. See
-`/vercel` for the preset and the remaining options (`version`, `name`, `debug`).
+`/vercel` for the preset and the remaining options (`name`, `debug`).
 
 `VercelCacheStore` versions its keys by default: families `s` and `i` take the
 router's data version, `r` and `h` its document version, and tag markers
-(`rg:tm:{tag}`) take none. `version` replaces both. To clear the cache on every
-deploy, set `version` to a per-deploy value or keep a deployment-scoped
+(`rg:tm:{tag}`) take none. To clear the cache on every deploy, keep a deployment-scoped
 `getCache({ namespace: process.env.VERCEL_DEPLOYMENT_ID })`.
 
 ## Cache purity & tainted objects

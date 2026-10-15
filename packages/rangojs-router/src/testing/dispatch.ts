@@ -167,8 +167,6 @@ import { applyStreamIdleTimeout } from "../rsc/stream-idle.js";
 interface DispatchableRouter<TEnv> {
   id?: string;
   routerId?: string;
-  /** createRouter({ version }), the consumer-set version. */
-  version?: string;
   routeMap: Record<string, unknown>;
   /** The routes() patterns the dev trie is rebuilt from (rsc/manifest-init.ts). */
   urlpatterns?: unknown;
@@ -448,7 +446,7 @@ export async function dispatch<TEnv = any>(
     cacheProfiles: router.cacheProfiles,
     // The store keys with the router's versions, resolved as the production
     // handler resolves them (rsc/handler.ts).
-    versions: resolveRouterVersions(routerId, router.version),
+    versions: resolveRouterVersions(routerId),
   });
   // Wire background error reporting so cache degradation (reportCacheError ->
   // _reportBackgroundError) reaches the router's onError, mirroring the production

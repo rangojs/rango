@@ -60,10 +60,6 @@ function resolveStore(): CFCacheStore {
   if (!store) {
     store = new CFCacheStore({
       namespace: "slow-marker-e2e",
-      // Its own KV key space: revalidateTag() also reaches the app-level
-      // store, whose marker for the same tag lands at once under the build
-      // version's keys and would hide the held one.
-      version: "slow-marker-e2e",
       ctx: ctx.executionContext!,
       kv: withSlowMarkerPuts(ctx.env.KV),
     });

@@ -526,11 +526,10 @@ says so (`shell-not-stored`).
   body, then settles the list until it stops growing, bounded by
   `SHELL_CAPTURE_TASK_HARD_CAP_MS` plus the capture queue's wait budget.
 - **Which handler:** `router.fetch`'s, the handler `createRouter`'s own
-  `cache`, `nonce` and `version` configure (`router.ts`, `fetch`). The trigger
-  has no handle on an app's custom entry, so an entry that passes `cache` or
-  `version` to `createRSCHandler` directly is not what the warm runs; that is
-  the same caveat #640 documents for `createRSCHandler({ version })`, and the
-  same fix: put them on `createRouter`.
+  `cache` and `nonce` configure (`router.ts`, `fetch`). The trigger has no
+  handle on an app's custom entry, so an entry that passes `cache` to
+  `createRSCHandler` directly is not what the warm runs; the fix is to put it
+  on `createRouter`.
 - **Store resolution:** the trigger resolves `createRouter({ cache })` once
   per target with `(runtime.env, collectingCtx)` to read the store's `scope`,
   and hands the resolved config to the handler through the record, so the
@@ -837,7 +836,7 @@ hold. The maintainer approved each recommendation; this is what was built.
    match: a warm target keeps its search params, an on-demand target still
    rejects them.
 5. **"The normal request handler" can only be `router.fetch`'s.** An entry
-   that configures `createRSCHandler` directly (`cache`, `version`) is not
+   that configures `createRSCHandler` directly (`cache`) is not
    seen. Documented; no code.
 6. **"It replaces the URL's `cache()` entries"** means the document (`doc:`)
    records; the `partial:` and `intercept:` records are not reached and fill

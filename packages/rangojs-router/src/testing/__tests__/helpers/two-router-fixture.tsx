@@ -68,7 +68,7 @@ export type TestRouter = Rango<any, any>;
 export function makeRouter(
   app: App,
   store: SegmentCacheStore,
-  options: { version?: string; id?: string } = {},
+  options: { id?: string } = {},
 ): TestRouter {
   const ran = (): void => {
     runs[app] += 1;
@@ -77,7 +77,6 @@ export function makeRouter(
     id: options.id ?? `app-${app}`,
     cache: { store },
     cacheProfiles: { default: { ttl: 300 } },
-    ...(options.version !== undefined && { version: options.version }),
   })
     .use(async (ctx, next) => {
       ctx.set(Brand, `brand-${app}`);
@@ -151,12 +150,12 @@ export function makeRouter(
 
 export function makeRouters(
   store: SegmentCacheStore,
-  options: { version?: string; ids?: Record<App, string> } = {},
+  options: { ids?: Record<App, string> } = {},
 ): Record<App, TestRouter> {
-  const { version, ids } = options;
+  const { ids } = options;
   return {
-    a: makeRouter("a", store, { version, id: ids?.a }),
-    b: makeRouter("b", store, { version, id: ids?.b }),
+    a: makeRouter("a", store, { id: ids?.a }),
+    b: makeRouter("b", store, { id: ids?.b }),
   };
 }
 

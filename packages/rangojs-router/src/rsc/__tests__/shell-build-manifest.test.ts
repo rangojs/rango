@@ -139,8 +139,8 @@ describe("lookupBuildShell (build-shell read-through gates)", () => {
 
   // #1065: the manifest key was the pathname alone, so a router with a `ppr`
   // route on a pathname another router prerendered was handed that router's
-  // build shell, and served it whenever the two versions matched (one
-  // createRouter({ version }), or the whole-build pair).
+  // build shell, and served it whenever the two versions matched (the
+  // whole-build pair).
   it("a router reads only the shell the build captured for it", async () => {
     installManifest({ "/pp/a": { entry: entry(), ttl: 300 } }, "app-a");
 

@@ -177,23 +177,6 @@ describe("on-demand prerender: router.prerender() then serve", () => {
   });
 
   describe("the trigger and the request handler use one key version", () => {
-    it("with createRouter({ version })", async () => {
-      setBuildVersions({ data: "d1", document: "h1" });
-      const router = makeRouter({ store }, { version: "pinned" });
-
-      const result = await router.prerender({ env: {} })("/article/v");
-
-      if (!result.ok || result.path !== "on-demand") {
-        throw new Error(`expected an on-demand render, got ${result.status}`);
-      }
-      expect(result.key).toContain(":pinned:");
-      expect(store.entries()[0]?.[1].meta.version).toBe("pinned");
-      expect((await serveShellRequest(router, "/article/v")).flight).toContain(
-        "v:stamp-1",
-      );
-      expect(counts.producer).toBe(1);
-    });
-
     it("with the router's data version from the build", async () => {
       setBuildVersions({
         data: "d-all",

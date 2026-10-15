@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Breaking: the `version` override is removed from `createRouter`, `createRSCHandler`, `CFCacheStore` and `VercelCacheStore`
+
+Before: `version` pinned a router's or a store's cache keys, and a changed value cleared them.
+
+Now: the build versions are the only versions. Each router's cache is keyed by its own built code, so a deploy that does not change a router keeps its cache, and an upgrade, this one included, starts it fresh. `router.version` and the `version` field on `CreateRSCHandlerOptions` are gone with it. To clear a cache on demand, call `updateTag()` / `revalidateTag()`, or on Vercel keep a deployment-scoped `getCache({ namespace })`. `getCacheVersions()` (for custom stores) and `setBuildVersions` in `@rangojs/router/testing` are unchanged.
+
+Migration: delete the option.
+
+```ts
+// Before
+const router = createRouter({ id: "shop", version: "release-7" });
+const store = new CFCacheStore({ ctx, kv, version: "release-7" });
+
+// Now
+const router = createRouter({ id: "shop" });
+const store = new CFCacheStore({ ctx, kv });
+```
+
+A patched dependency (pnpm `patchedDependencies`) or a git dependency whose files change while its version stays the same is still not seen by the build versions; invalidate the affected tags when you deploy one.
+
 ### Fixed: a page mounted through `include()` gets the `ssr: false` behavior of the layouts above it ([#1179](https://github.com/rangojs/rango/issues/1179))
 
 **Before.** `loader(Def, { ssr: false })` and `loading(fallback, { ssr: false })`

@@ -232,8 +232,8 @@ async function handleCacheHitIntercept<TEnv>(
   const cachedSlot = segments.filter(isInterceptSegment);
   // A record stored before 0.25.0 carries the loaders' aggregate on the slot;
   // the loader segments below replace it. Build versions hash the router's
-  // code, so only a `version` pinned across the upgrade (createRouter's or
-  // the store's) still reads one.
+  // code, so an upgrade does not read one; a custom store that ignores
+  // versions can.
   for (const slot of cachedSlot) {
     delete slot.loaderDataPromise;
     delete slot.loaderIds;

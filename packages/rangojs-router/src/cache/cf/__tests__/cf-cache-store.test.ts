@@ -2554,8 +2554,7 @@ describe("CFCacheStore", () => {
           await result.value;
         }
 
-        // Simulate an envelope written before the write-side strip shipped (or
-        // persisted under a pinned `version`): inject per-client signals into
+        // Simulate an envelope written before the write-side strip shipped: inject per-client signals into
         // the stored headers. The read path must not replay them cross-client.
         const kvEntry = mockKV.store.get(
           "h/rsc-dummy-host-1.com/doc:leaky-doc",

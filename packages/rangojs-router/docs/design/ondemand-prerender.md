@@ -650,16 +650,14 @@ refresh follow-up (#1060) adds an optional `PrerenderKey` field and a `:i`
 suffix additively; main-variant keys keep serializing exactly as above.
 
 `version` is the router's **data** version
-(`docs/design/per-app-cache-version.md`), or `createRouter({ version })` when
-the app sets one. The overlay stores `SerializedSegmentData[]`, exactly what the
+(`docs/design/per-app-cache-version.md`). The overlay stores `SerializedSegmentData[]`, exactly what the
 segment cache stores under the data version, so it follows the same rule: a
 deploy that changes the router's server code starts over, a client-only deploy
 keeps every refreshed page. The first cut keyed on the document version, which
 made a CSS tweak wipe every refreshed page — the outcome per-app versions exist
 to prevent. Both sides resolve it through one call, `resolvePrerenderVersion`
 (`server/build-version-table.ts`): the trigger per call, `rsc/handler.ts` when
-the handler is created. A `createRSCHandler({ version })` does not move it,
-because the trigger never sees that option.
+the handler is created.
 
 A store keys off `key.version` and must never call `getCacheVersions()`: the
 trigger's `set()` runs outside the producer's request context, where that
@@ -796,7 +794,8 @@ one entry that most needs a recheck.
   so a router from before the marker reads one as malformed, which is a miss,
   and serves what a miss serves. It never renders an empty page. (Keys carry
   the data version, so a rollback usually lands in another namespace anyway;
-  the case that matters is an app that pins `createRouter({ version })`.)
+  the case that matters was an app that pinned `createRouter({ version })`,
+  an option since removed.)
   `validatorBeforeTheRemovedMarker` in `memory-prerender-store.test.ts` is a
   frozen copy of that old check, so the property cannot drift. `meta` keeps
   the fields a page has, which is why neither shipped store changed and why a

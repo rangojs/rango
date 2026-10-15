@@ -1168,7 +1168,7 @@ for one more thing: whether a pin carries the `runs` bit at all.
     encode timed out is written without the marker and reads as a miss,
     instead of serving a value without its pushes as today
     (`loader-cache.ts:802-803`);
-  - no marker, and a changelog note to bump the store `version` or
+  - no marker, and a changelog note to
     `updateTag()` the affected loaders, as #972 did for the identity mark.
 
 **Semantic matrix.** `[C1]` and `[C2]` hold, and so do the PPR rows: all 53

@@ -165,12 +165,8 @@ export function createRSCHandler<
   TRoutes extends Record<string, string> = Record<string, string>,
 >(options: CreateRSCHandlerOptions<TEnv, TRoutes>) {
   const { router, nonce: nonceProvider } = options;
-  // A consumer-set version (this option, else createRouter({ version })) is
-  // used for both; otherwise the router's own pair from the build.
-  const versions = resolveRouterVersions(
-    router.id,
-    options.version ?? router.version,
-  );
+  // The router's own pair from the build.
+  const versions = resolveRouterVersions(router.id);
   // Everything the handler itself versions is tied to the HTML a tab holds:
   // payload metadata (what the browser echoes as `_rsc_v`), the reload check,
   // shell stamping and gating, the rango state value. The data version is only
@@ -548,7 +544,7 @@ export function createRSCHandler<
         resolvedPrerender = {
           config: prerenderConfig,
           routerId: router.id,
-          version: resolvePrerenderVersion(router.id, router.version),
+          version: resolvePrerenderVersion(router.id),
         };
       }
     }

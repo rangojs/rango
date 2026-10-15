@@ -103,7 +103,6 @@ describe("CFCacheStore.kvGetResponse - malformed envelope fails open to a miss",
       ctx: ctx as any,
       kv: kv as any,
       baseUrl: "https://test.internal/",
-      version: "v1",
     });
   }
 

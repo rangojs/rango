@@ -106,8 +106,7 @@ export interface BuildShellCaptureOptions {
   /** Build-time env bindings (rango plugin buildEnv), if configured. */
   buildEnv?: unknown;
   /**
-   * The versions the SHIPPED build serves this router with (the build table,
-   * or the router's consumer-set version) — NOT the temp server's own
+   * The versions the SHIPPED build serves this router with (the build table) — NOT the temp server's own
    * version-plugin stamp. The serve-side isValidShellHit gate compares
    * entry.buildVersion against the running worker's ctx.version, which is the
    * document version; stamping the temp server's would make every build entry
