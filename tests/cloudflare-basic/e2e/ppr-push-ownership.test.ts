@@ -127,6 +127,7 @@ function describePprPushOwnership(mode: "dev" | "build") {
     const titleFixture = (): LoaderTitleFixture => ({
       metaPromiseUrl: f.url("/ppr-push/meta-promise"),
       metaAwaitedUrl: f.url("/ppr-push/meta-awaited"),
+      bumpUrl: f.url("/__test/ppr-push-bump"),
     });
 
     test("#1182 as built: a shell HIT sets the title an ssr false loader pushed as a promise after hydration", async ({

@@ -121,6 +121,7 @@ function runPushOwnershipSpec(f: Fixture) {
   const titleFixture = (): LoaderTitleFixture => ({
     metaPromiseUrl: f.url("/shell-push/meta-promise"),
     metaAwaitedUrl: f.url("/shell-push/meta-awaited"),
+    bumpUrl: f.url("/shell-push/__bump"),
   });
 
   test("#1182 as built: a shell HIT sets the title an ssr false loader pushed as a promise after hydration", async ({

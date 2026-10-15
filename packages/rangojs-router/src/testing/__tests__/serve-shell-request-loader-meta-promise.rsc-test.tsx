@@ -42,10 +42,18 @@ import { shellHarness, source } from "./fixtures/shell-request-data.js";
 import {
   AwaitedGridLoader,
   ChromeLoader,
+  DeferTitleLoader,
+  DependentGridLoader,
   GridLoader,
+  HoleTitleLoader,
   metaRuns,
+  NestedSideLoader,
+  NestedTitleLoader,
   RecipeGridLoader,
   RecipeTitleLoader,
+  RejectingTitleLoader,
+  SLOW_TITLE_CAPTURE_TIMEOUT_MS,
+  SlowTitleLoader,
 } from "./fixtures/loader-meta-promise-data.js";
 import group from "./fixtures/loader-meta-promise-client-urls.js";
 
@@ -101,6 +109,35 @@ const router = createRouter({}).routes(
       ]),
       include("/section", sectionUrls, { name: "section" }),
       include("/cu", group, { name: "cu" }),
+      // The target design's cases (dc-t87).
+      path("/t/reject/:id", Page, { name: "tReject", ppr: true }, () => [
+        loader(RejectingTitleLoader, { ssr: false }),
+      ]),
+      path(
+        "/t/slow/:id",
+        Page,
+        {
+          name: "tSlow",
+          ppr: { captureTimeout: SLOW_TITLE_CAPTURE_TIMEOUT_MS },
+        },
+        () => [loader(SlowTitleLoader, { ssr: false })],
+      ),
+      path("/t/nested/:id", Page, { name: "tNested", ppr: true }, () => [
+        loader(NestedTitleLoader, { ssr: false }),
+      ]),
+      path("/t/hole/:id", Page, { name: "tHole", ppr: true }, () => [
+        loader(HoleTitleLoader, { ssr: false }),
+      ]),
+      path("/t/two/:id", Page, { name: "tTwo", ppr: true }, () => [
+        loader(GridLoader, { ssr: false }),
+        loader(NestedSideLoader, { ssr: false }),
+      ]),
+      path("/t/defer/:id", Page, { name: "tDefer", ppr: true }, () => [
+        loader(DeferTitleLoader, { ssr: false }),
+      ]),
+      path("/t/dep/:id", Page, { name: "tDep", ppr: true }, () => [
+        loader(DependentGridLoader, { ssr: false }),
+      ]),
     ]),
   ]),
 );
@@ -170,6 +207,9 @@ beforeEach(async () => {
   metaRuns.grid = 0;
   metaRuns.awaited = 0;
   metaRuns.source = 0;
+  metaRuns.hole = 0;
+  metaRuns.dep = 0;
+  metaRuns.defer = 0;
   await resetShellTestState();
   vi.restoreAllMocks();
 });
@@ -235,6 +275,31 @@ describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", ()
 
       expect(nav.flight).toContain("grid@g1");
       expect(await navigationTitles(nav)).toEqual(["grid-title@g1"]);
+    });
+
+    it("target (red): the HIT hydrates with the capture's title next to the capture's grid, nothing arrives after hydration, and no loader body runs", async () => {
+      const { hit, runsAfterCapture } = await hitAfterCapture(url);
+
+      expect(await documentTitles(hit)).toEqual({
+        shell: ["grid-title@g1"],
+        hydration: ["grid-title@g1"],
+        afterHydration: undefined,
+      });
+      expect(hit.flight).toContain("grid@g1");
+      expect(hit.flight).not.toContain("grid@g2");
+      expect(hit.flight).not.toContain("grid-title@g2");
+      expect(metaRuns.grid).toBe(runsAfterCapture.grid);
+    });
+
+    it("target (red): a navigation that replays the shell shows the capture's title next to the capture's grid, and no loader body runs", async () => {
+      const { serve } = await hitAfterCapture(url);
+      const runsBefore = metaRuns.grid;
+
+      const nav = await serve(url, { partial: { from: "/other" } });
+
+      expect(nav.flight).toContain("grid@g1");
+      expect(await navigationTitles(nav)).toEqual(["grid-title@g1"]);
+      expect(metaRuns.grid).toBe(runsBefore);
     });
 
     it("control: the awaited push bakes into the shell, and the HIT does not run the loader", async () => {
@@ -305,5 +370,109 @@ describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", ()
       hydration: ["handler-title@g1"],
       afterHydration: undefined,
     });
+  });
+});
+
+/**
+ * The target design (dc-t87): on a document request the handle values an
+ * `ssr: false` loader pushes, settled or promise, are resolved before the
+ * first flush, and a shell stores and serves exactly the resolved values its
+ * capture's document rendered. A pushed promise is judged by its settled
+ * value, as `push(await promise)` would be: one that holds a promise stays
+ * live. One that rejects, or does not settle within ppr.captureTimeout,
+ * refuses the capture, as a handler's does.
+ */
+describe("#1182 target: the shell keeps the resolved values of an ssr: false loader's promise pushes", () => {
+  it("target (red): a Prerender + ppr page's shell keeps the title in its #1057 record, and the HIT sends nothing after hydration", async () => {
+    const { hit } = await hitAfterCapture("/pre-grid");
+
+    expect(await documentTitles(hit)).toEqual({
+      shell: ["grid-title@g1"],
+      hydration: ["grid-title@g1"],
+      afterHydration: undefined,
+    });
+    expect(hit.flight).toContain("grid@g1");
+    expect(hit.flight).not.toContain("grid-title@g2");
+  });
+
+  it("target (red): a promise push that rejects refuses the capture; the MISS renders the data without the title", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { serve } = shellHarness(router);
+
+    const miss = await serve("/t/reject/1");
+
+    expect(miss.shellStatus).toBe("MISS");
+    expect(miss.flight).toContain("grid@g1");
+    expect((await documentTitles(miss)).hydration).toEqual([]);
+    expect((await serve("/t/reject/1")).shellStatus).not.toBe("HIT");
+  });
+
+  it("target (red): a promise push that settles after ppr.captureTimeout refuses the capture, as a handler's does; the MISS waits for it", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { serve } = shellHarness(router);
+
+    const miss = await serve("/t/slow/1");
+
+    expect(miss.shellStatus).toBe("MISS");
+    expect((await documentTitles(miss)).hydration).toEqual(["grid-title@g1"]);
+    expect((await serve("/t/slow/1")).shellStatus).not.toBe("HIT");
+  });
+
+  it("unchanged: a pushed promise that settles to a value holding a promise stays live, out of the shell, from the HIT's run after hydration", async () => {
+    const { hit } = await hitAfterCapture("/t/nested/1");
+
+    expect(await documentTitles(hit)).toEqual({
+      shell: [],
+      hydration: [],
+      afterHydration: ["grid-title@g2"],
+    });
+  });
+
+  it("target (red): a loader whose data holds a hole runs on every HIT; its title stays the capture's and shows once", async () => {
+    const { hit, runsAfterCapture } = await hitAfterCapture("/t/hole/1");
+
+    const { shell, hydration, afterHydration } = await documentTitles(hit);
+    expect(shell).toEqual(["grid-title@g1"]);
+    expect(hydration).toEqual(["grid-title@g1"]);
+    expect(afterHydration ?? hydration).toEqual(["grid-title@g1"]);
+    // The body ran for the hole; the grid is the pin's.
+    expect(metaRuns.hole).toBe(runsAfterCapture.hole + 1);
+    expect(hit.flight).toContain("grid@g1");
+    expect(hit.flight).toContain("reviews@g2");
+  });
+
+  it("target (red): another loader's unrecordable push makes every loader run on the HIT (runs: 1); the title stays the capture's and shows once", async () => {
+    const { hit } = await hitAfterCapture("/t/two/1");
+
+    const { shell, hydration, afterHydration } = await documentTitles(hit);
+    expect(shell).toEqual(["grid-title@g1"]);
+    expect(hydration).toEqual(["grid-title@g1"]);
+    expect(afterHydration ?? hydration).toEqual(["grid-title@g1"]);
+    expect(hit.flight).toContain("grid@g1");
+    expect(hit.flight).not.toContain("grid@g2");
+  });
+
+  it("target (red): a .defer() slot the loader resolves after it returned bakes into the shell, and the HIT runs no loader body", async () => {
+    const { hit, runsAfterCapture } = await hitAfterCapture("/t/defer/1");
+
+    expect(await documentTitles(hit)).toEqual({
+      shell: ["grid-title@g1"],
+      hydration: ["grid-title@g1"],
+      afterHydration: undefined,
+    });
+    expect(metaRuns.defer).toBe(runsAfterCapture.defer);
+  });
+
+  it("target (red): a dependency no route registers pushes the title as a promise: it bakes, and the HIT runs neither body", async () => {
+    const { hit, runsAfterCapture } = await hitAfterCapture("/t/dep/1");
+
+    expect(await documentTitles(hit)).toEqual({
+      shell: ["grid-title@g1"],
+      hydration: ["grid-title@g1"],
+      afterHydration: undefined,
+    });
+    expect(hit.flight).toContain("grid@g1");
+    expect(metaRuns.dep).toBe(runsAfterCapture.dep);
   });
 });

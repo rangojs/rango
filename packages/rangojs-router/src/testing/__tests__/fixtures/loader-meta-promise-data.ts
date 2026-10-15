@@ -2,8 +2,10 @@
 // .rsc-test.tsx (#1182). In a module of their own: the clientUrls() group in
 // loader-meta-promise-client-urls.tsx is a "use client" module.
 import {
+  createHandle,
   createLoader,
   Meta,
+  type Handle,
   type LoaderDefinition,
 } from "../../../index.rsc.js";
 import { source } from "./shell-request-data.js";
@@ -13,10 +15,16 @@ export const metaRuns: {
   grid: number;
   awaited: number;
   source: number;
+  hole: number;
+  dep: number;
+  defer: number;
 } = {
   grid: 0,
   awaited: 0,
   source: 0,
+  hole: 0,
+  dep: 0,
+  defer: 0,
 };
 
 interface GridPayload {
@@ -90,3 +98,117 @@ export const RecipeTitleLoader: LoaderDefinition<null> = createLoader(
     return null;
   },
 );
+
+// ---------------------------------------------------------------------------
+// The target design's cases (dc-t87): each loader below pushes its title to
+// Meta as a promise in one more shape.
+// ---------------------------------------------------------------------------
+
+/** The title as the issue's loader pushes it: a promise of a descriptor. */
+function titlePromise(title: string): Promise<{ title: string }> {
+  return Promise.resolve({ title });
+}
+
+/** Its pushed promise rejects (an SEO service that is down). */
+export const RejectingTitleLoader: LoaderDefinition<{ grid: string }> =
+  createLoader(async (ctx) => {
+    const payload = await loadGrid();
+    const seo: Promise<{ title: string }> = Promise.reject(
+      new Error("seo service down"),
+    );
+    seo.catch(() => {});
+    ctx.use(Meta)(seo);
+    return payload.data;
+  });
+
+/** Settles after SLOW_TITLE_MS, after the loader returned. */
+export const SLOW_TITLE_MS = 300;
+/** The ppr.captureTimeout the slow title's route sets: shorter than the push. */
+export const SLOW_TITLE_CAPTURE_TIMEOUT_MS = 50;
+
+export const SlowTitleLoader: LoaderDefinition<{ grid: string }> = createLoader(
+  async (ctx) => {
+    const payload = await loadGrid();
+    const title = payload.seo!.title;
+    ctx.use(Meta)(
+      new Promise<{ title: string }>((resolve) =>
+        setTimeout(() => resolve({ title }), SLOW_TITLE_MS),
+      ),
+    );
+    return payload.data;
+  },
+);
+
+/**
+ * Its pushed promise settles to a value that holds a promise: once settled
+ * the push is judged as a settled push would be, so it stays live.
+ */
+export const NestedTitleLoader: LoaderDefinition<{ grid: string }> =
+  createLoader(async (ctx) => {
+    const payload = await loadGrid();
+    ctx.use(Meta)(
+      Promise.resolve({
+        title: payload.seo!.title,
+        later: Promise.resolve("later"),
+      } as unknown as { title: string }),
+    );
+    return payload.data;
+  });
+
+/**
+ * Its data holds a promise (a hole, `holes: 1`), so its body runs on every
+ * HIT; its title is a promise push.
+ */
+export const HoleTitleLoader: LoaderDefinition<{
+  grid: string;
+  reviews: Promise<string>;
+}> = createLoader(async (ctx) => {
+  metaRuns.hole += 1;
+  const payload = await loadGrid();
+  ctx.use(Meta)(titlePromise(payload.seo!.title));
+  return {
+    grid: payload.data.grid,
+    reviews: Promise.resolve(`reviews@g${source.generation}`),
+  };
+});
+
+/** A handle only NestedSideLoader pushes to. */
+export const SideNotes: Handle<string> = createHandle<string>();
+
+/**
+ * Pushes a settled value that holds a promise: the record cannot keep it,
+ * so the capture asks every loader record of the page to run (`runs: 1`).
+ */
+export const NestedSideLoader: LoaderDefinition<{ side: string }> =
+  createLoader(async (ctx) => {
+    ctx.use(SideNotes)({
+      label: `side@g${source.generation}`,
+      later: Promise.resolve("side-later"),
+    } as unknown as string);
+    return { side: `side@g${source.generation}` };
+  });
+
+/** Pushes through .defer(), resolved after the loader returned. */
+export const DeferTitleLoader: LoaderDefinition<{ grid: string }> =
+  createLoader(async (ctx) => {
+    metaRuns.defer += 1;
+    const resolve = ctx.use(Meta).defer();
+    const payload = await loadGrid();
+    const title = payload.seo!.title;
+    setTimeout(() => resolve({ title }), 10);
+    return payload.data;
+  });
+
+/** A dependency no route registers: it pushes the title as a promise. */
+export const TitleDependency: LoaderDefinition<{ grid: string }> = createLoader(
+  async (ctx) => {
+    metaRuns.dep += 1;
+    const payload = await loadGrid();
+    ctx.use(Meta)(titlePromise(payload.seo!.title));
+    return payload.data;
+  },
+);
+
+/** The route's ssr: false loader: it awaits the dependency. */
+export const DependentGridLoader: LoaderDefinition<{ grid: string }> =
+  createLoader(async (ctx) => await ctx.use(TitleDependency));

@@ -2546,6 +2546,8 @@ export interface LoaderTitleFixture {
   metaPromiseUrl: string;
   /** The same title, awaited before the push (the control). */
   metaAwaitedUrl: string;
+  /** Moves the fixture's generation for one `?probe=` on. */
+  bumpUrl: string;
 }
 
 /** The text of the `<title>` in a document's HTML, before any script runs. */
@@ -2573,11 +2575,18 @@ async function titlesMissThenHit(
  * and of every shell HIT after it. Red: the HIT's HTML has the layout's
  * title, not the loader's (the #1054 rule: a promise a loader pushes is
  * never in a shell).
+ *
+ * The target design (dc-t87) also has the HIT serve the title from the
+ * shell and nothing else: once the fixture's generation moves, a HIT's HTML,
+ * its hydrated page and its title after the document has streamed are all
+ * the capture's, and it hydrates clean. Today the HIT's own loader run sets
+ * the moved generation's title after hydration, next to the capture's data.
  */
 export async function expectLoaderPromiseTitleInShellHtml(
   page: Page,
   fixture: LoaderTitleFixture,
 ): Promise<void> {
+  using _ = guardHydrationErrors(page);
   const probe = pushProbe("meta-promise");
   const url = `${fixture.metaPromiseUrl}?probe=${probe}`;
 
@@ -2585,6 +2594,15 @@ export async function expectLoaderPromiseTitleInShellHtml(
     miss: "meta-title@g1",
     hit: "meta-title@g1",
   });
+
+  expect(await bumpPushGeneration(page, fixture, probe)).toBe(2);
+  const response = await page.goto(url);
+  expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+  // The whole document, its late handle channel included, has arrived.
+  expect(titleInHtml(await response!.text())).toBe("meta-title@g1");
+  await waitForShellHydration(page);
+  await expect(byTestId(page, "push-value")).toHaveText("meta-promise@g1");
+  await expect(page).toHaveTitle("meta-title@g1");
 }
 
 /**
