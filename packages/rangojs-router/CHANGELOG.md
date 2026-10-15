@@ -2,7 +2,7 @@
 
 ## 0.26.1 (2026-10-15)
 
-### Fixed: a ppr route whose loader pins exceed `maxSnapshotBytes` no longer serves a document shell that React re-renders on the client
+### Fixed: a ppr route whose loader pins exceed `maxSnapshotBytes` no longer serves a document shell that React re-renders on the client ([#1187](https://github.com/rangojs/rango/pull/1187))
 
 **Before.** When the `ssr: false` loader data of a `ppr` route went over
 `ppr.maxSnapshotBytes` (8 MiB by default), the capture dropped the loader pins
