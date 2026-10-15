@@ -1,26 +1,30 @@
 import { test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import {
+  expectActionReplacesBakedTitle,
+  expectBackRestoresBakedTitle,
+  expectBuildShellHitKeepsPromiseLoaderPush,
   expectBuildShellHitKeepsSettledLoaderPush,
   expectLateBoundaryHandleReaderHydratesClean,
   expectLoaderAwaitedTitleInShellHtml,
-  expectLoaderPromiseTitleAfterHydration,
   expectLoaderPromiseTitleInShellHtml,
   expectPinlessHitKeepsRunPushWithRunData,
-  expectPrerenderShellHitDeliversPromisePush,
+  expectPrerenderShellHitKeepsPromisePush,
   expectReplayDeliversDeferredPush,
   expectReplayKeepsCapturedPushWithPinnedData,
   expectShellHitHydratesFromRecord,
   expectShellHitKeepsSettledLoaderPush,
-  expectSlowDeferredPushDoesNotBlockCapture,
+  expectSlowDeferredPushRefusesCapture,
+  expectSuspendedHandleReaderHydratesWithBakedPush,
   type LoaderTitleFixture,
   type PrerenderPushFixture,
   type PushOwnershipFixture,
 } from "@shared/e2e";
 
 // A loader's data and the handle values it pushed come from one run on every
-// replay of a PPR shell (issues #1001, #1003), and a Prerender + ppr shell
-// hydrates with them too (#1057), on workerd with CFCacheStore.
+// replay of a PPR shell (issues #1001, #1003), a Prerender + ppr shell
+// hydrates with them too (#1057), and an ssr: false loader's pushed promise
+// bakes into the shell (#1182), on workerd with CFCacheStore.
 // The fixture is src/loaders/ppr-push-ownership.ts and the /ppr-push routes;
 // the bodies are shared with
 // packages/rangojs-router/e2e/shell-push-ownership.test.ts.
@@ -40,6 +44,7 @@ function describePprPushOwnership(mode: "dev" | "build") {
       deferredUrl: f.url("/ppr-push/deferred"),
       slowUrl: f.url("/ppr-push/slow"),
       liveUrl: f.url("/ppr-push/live"),
+      suspendedUrl: f.url("/ppr-push/suspended"),
       bumpUrl: f.url("/__test/ppr-push-bump"),
       homeUrl: f.url("/"),
     });
@@ -62,16 +67,22 @@ function describePprPushOwnership(mode: "dev" | "build") {
       await expectPinlessHitKeepsRunPushWithRunData(page, fixture());
     });
 
-    test("a document HIT hydrates clean from the shell's record and shows a deferred push after hydration (#1035)", async ({
+    test("a document HIT hydrates clean from the shell's record, a deferred push included, and nothing changes after hydration (#1035, #1182)", async ({
       page,
     }) => {
       await expectShellHitHydratesFromRecord(page, fixture());
     });
 
-    test("a deferred push slower than ppr.captureTimeout does not block the shell capture (#1035)", async ({
+    test("a deferred push slower than ppr.captureTimeout refuses the shell capture, as a handler's does (#1182)", async ({
       page,
     }) => {
-      await expectSlowDeferredPushDoesNotBlockCapture(page, fixture());
+      await expectSlowDeferredPushRefusesCapture(page, fixture());
+    });
+
+    test("a useHandle reader inside a live loader's loading boundary hydrates clean with an ssr false loader's baked promise push (#1182)", async ({
+      page,
+    }) => {
+      await expectSuspendedHandleReaderHydratesWithBakedPush(page, fixture());
     });
 
     test("a useHandle reader inside a live loader's loading boundary hydrates clean on a document MISS and on a shell HIT (#1035)", async ({
@@ -104,13 +115,16 @@ function describePprPushOwnership(mode: "dev" | "build") {
       await expectBuildShellHitKeepsSettledLoaderPush(page, prerenderFixture());
     });
 
-    test("a Prerender + ppr shell HIT delivers a promise push after hydration, next to the settled push it hydrates with (#1057)", async ({
+    test("a Prerender + ppr shell HIT hydrates with a promise push next to the settled push, and nothing arrives after hydration (#1057, #1182)", async ({
       page,
     }) => {
-      await expectPrerenderShellHitDeliversPromisePush(
-        page,
-        prerenderFixture(),
-      );
+      await expectPrerenderShellHitKeepsPromisePush(page, prerenderFixture());
+    });
+
+    test("a Prerender + ppr build-time shell HIT has the promise push of an ssr false loader in its HTML (#1182)", async ({
+      page,
+    }) => {
+      await expectBuildShellHitKeepsPromiseLoaderPush(page, prerenderFixture());
     });
 
     test("a ppr shell HIT without Prerender hydrates with the same settled push (control)", async ({
@@ -128,12 +142,7 @@ function describePprPushOwnership(mode: "dev" | "build") {
       metaPromiseUrl: f.url("/ppr-push/meta-promise"),
       metaAwaitedUrl: f.url("/ppr-push/meta-awaited"),
       bumpUrl: f.url("/__test/ppr-push-bump"),
-    });
-
-    test("#1182 as built: a shell HIT sets the title an ssr false loader pushed as a promise after hydration", async ({
-      page,
-    }) => {
-      await expectLoaderPromiseTitleAfterHydration(page, titleFixture());
+      homeUrl: f.url("/"),
     });
 
     test("#1182 control: a shell HIT's HTML has the title an ssr false loader awaited before the push", async ({
@@ -142,11 +151,22 @@ function describePprPushOwnership(mode: "dev" | "build") {
       await expectLoaderAwaitedTitleInShellHtml(page, titleFixture());
     });
 
-    // Last: the describe is serial, and this one is red until #1182 is decided.
     test("#1182 expectation: a shell HIT's HTML has the title an ssr false loader pushed as a promise", async ({
       page,
     }) => {
       await expectLoaderPromiseTitleInShellHtml(page, titleFixture());
+    });
+
+    test("#1182: Back to a shell HIT page restores its baked title from the history cache", async ({
+      page,
+    }) => {
+      await expectBackRestoresBakedTitle(page, titleFixture());
+    });
+
+    test("#1182: an action that re-runs the loader replaces the baked title", async ({
+      page,
+    }) => {
+      await expectActionReplacesBakedTitle(page, titleFixture());
     });
   });
 }

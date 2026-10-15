@@ -854,9 +854,10 @@ Two edges worth stating out loud:
   `Date.now()`/`Math.random()`/uncached `fetch` rendered in a handler or an
   async server component bakes its capture value and every HIT shows it. A
   bake-lane loader whose body runs on a HIT keeps its pinned container paths
-  and its recorded settled pushes; what drifts is a thenable push the record
-  could not keep (it shows the run's value) and anything a pin over the size
-  cap no longer covers (see Operability). Per-request values belong in a live
+  and its recorded pushes (a pushed promise among them, resolved, #1182);
+  what drifts is a push whose settled value holds a promise, which the record
+  could not keep (it shows the run's value), and anything a pin over the
+  size cap no longer covers (see Operability). Per-request values belong in a live
   loader under a hole.
 
 Pinned by unit tests (the write barrier settles foreground + nested tasks before
@@ -1088,8 +1089,14 @@ tells them apart with `isInsideLoaderScope()`:
   HIT, so its captured pushes never enter the record's handle snapshot
   (replay would duplicate the fresh push). A nested promise is masked
   (`maskNestedContainerThenables`) and stays a hole the HIT's run fills.
-  Settled, thenable-free pushes from a bake-lane (`ssr: false`) loader are
-  the exception: they carry their loader as `owner`, the record stores them,
+  Pushes from a bake-lane (`ssr: false`) loader whose value, once settled,
+  is thenable-free are the exception. A top-level pushed promise
+  (`push(promise)`, `.defer()`) is judged by the value it settles to, as
+  `push(await promise)` would be (#1182): the capture waits for it under
+  `ppr.captureTimeout`, refuses when it rejects or misses the deadline, and
+  retags it as an unrecorded loader push when it settles to a value that
+  holds a promise. These pushes carry their loader as `owner`, the record
+  stores them,
   and a replay that serves the loader from its pin (a document HIT, or a
   client navigation that replays the shell) restores them through
   `HandleStore.pushRestored`, which makes them authoritative for that
@@ -1097,14 +1104,17 @@ tells them apart with `isInsideLoaderScope()`:
   (a promise-carrying one, one whose record asks for a run, a live loader
   awaiting it) reads the store, so its settled pushes are dropped, not
   swapped in: the HIT's handles stay byte-identical to the prelude without
-  pinning the loader's reads. Its thenable pushes (a deferred push, or one
-  holding a nested promise: what the record could not keep, `holdsThenable`)
-  are kept, placed among the restored copies in the loader's push order. The
-  same rule covers a replay of the loader's pushes: when its own `cache()`
-  entry hits on the HIT, the entry's settled pushes are dropped and its
-  deferred ones kept. Before, the doc-record restore claimed the loader, so
-  that replay was skipped and a deferred push the record could not keep never
-  reached the HIT. A push counts as the loader's when it is made anywhere
+  pinning the loader's reads. Its pushes holding a nested promise (what the
+  record could not keep, `holdsThenable`) are kept, placed among the
+  restored copies in the loader's push order. A top-level pushed promise is
+  judged once it settles, on the auxiliary lane (`judgeRestoredPromise`):
+  dropped when it settles thenable-free (the record's copy stands) or
+  rejects, kept when it holds a promise. The same rule covers a replay of
+  the loader's pushes: when its own `cache()` entry hits on the HIT, the
+  entry's settled pushes are dropped and the ones holding a promise kept.
+  Before #1001, the doc-record restore claimed the loader, so that replay
+  was skipped and a deferred push the record could not keep never reached
+  the HIT. A push counts as the loader's when it is made anywhere
   inside its body, as the capture credits it: a `"use cache"` hit inside the
   body replays a dependency's push, which the capture recorded under the
   loader whose body made the call, so on the HIT that replay is dropped too.
@@ -1931,9 +1941,10 @@ the HIT's payload carries the capture's record, the same bytes the prelude
 froze. What a HIT can recompute is the loader layer: a promise-free
 bake-lane loader is served from its pin and does not run; one that runs
 (promise-carrying, or with pushes the record could not keep) reads the store,
-but its pinned container paths and its recorded settled pushes stand, so it
-drifts only in a thenable push the record could not keep, or when its pins
-were dropped (over `maxSnapshotBytes`). The payload is
+but its pinned container paths and its recorded pushes stand (a pushed
+promise among them, resolved, #1182), so it drifts only in a push whose
+settled value holds a promise, which the record could not keep, or when its
+pins were dropped (over `maxSnapshotBytes`). The payload is
 hydration's source of truth, so React repairs such a mismatch at hydration
 (console warning + client re-render of the subtree) — degraded, not corrupt,
 and bounded by TTL/SWR. Consumer guidance: put per-request data in live

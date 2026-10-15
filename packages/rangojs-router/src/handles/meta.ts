@@ -231,6 +231,11 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
  * (resolve-by-default), so they participate in deduplication and `%s`
  * title-templating identically to synchronous descriptors. A descriptor that
  * resolves to `null`/`undefined` (or rejects) is dropped.
+ *
+ * On a ppr route, a descriptor a handler or an `ssr: false` loader pushes,
+ * promise or not, is in the shell's `<head>` on every HIT (#1182). One a
+ * loader without `ssr: false` pushes is live: on a HIT it arrives after
+ * hydration.
  */
 export const Meta: Handle<MetaDescriptor, MetaDescriptor[]> = createHandle<
   MetaDescriptor,

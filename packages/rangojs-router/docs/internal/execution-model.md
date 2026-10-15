@@ -277,7 +277,10 @@ See "Rewrite" below for what moves and what stays.
   source on every replay of a PPR shell: the entry's pin, the loader's own
   `cache()` entry, or a run in this request. The shell record holds the
   settled pushes of each loader body the capture ran (an `ssr: false`
-  loader's own and those of the loaders it awaits), and a replay restores
+  loader's own and those of the loaders it awaits), a pushed promise
+  included: the capture waits for it under `ppr.captureTimeout` and records
+  the value it settled to, unless that value holds a promise; one that
+  rejects or misses the deadline refuses the capture (#1182). A replay restores
   them by where it takes each loader's data from, which the loader seed
   answers for both (`servedPins` / `loaderPins` in `loader-cache.ts`, the
   seed keyed by loader id), not the request's type:
@@ -286,8 +289,9 @@ See "Rewrite" below for what moves and what stays.
     replay, so they are the only copy; a loader that does run (a
     hole-carrying `ssr: false` loader) reads the store, and its settled
     pushes, and those made anywhere inside its body (a `"use cache"` hit
-    replaying a dependency's push), are dropped, while its deferred ones are
-    added; its own `cache()` HIT replays the same way. The record is the
+    replaying a dependency's push), are dropped, while the ones holding a
+    promise are added; a pushed promise is judged once it settles, the same
+    way (#1182); its own `cache()` HIT replays the same way. The record is the
     whole of that loader's settled pushes, so this holds when it has no copy
     too: a push the capture's run did not make is not shown next to the
     pinned data. This holds on a
@@ -421,8 +425,8 @@ See "Rewrite" below for what moves and what stays.
     the handle store's document lane when the tail's render barrier resolves
     (`HandleStore.freezeDocumentSnapshot`): the record is replayed and no
     loader has run. Everything the request's loaders then push, replace or
-    drop (a live-lane push, a placeholder's replacement, a deferred push, a
-    `cache()` entry's replay) rides `metadata.handlesLate`, whether or not it
+    drop (a live-lane push, a placeholder's replacement, a push holding a
+    promise, a `cache()` entry's replay) rides `metadata.handlesLate`, whether or not it
     beat the handler barrier, and the client applies it after the root
     hydrates. A document MISS, a route without `ppr` and a navigation replay
     are unchanged: there the snapshot is the store at the handler barrier.

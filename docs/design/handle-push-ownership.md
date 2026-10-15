@@ -10,9 +10,13 @@ change 2 text below is kept as analysis, with a note at the top of each
 affected section. "What is built" and "What is not built" below say exactly
 where the line is.
 A later section, "What a document hydrates with on a shell HIT", covers
-#1035: not which push a page shows, but when the client gets it. The last
-one, "What the browser keeps on a partial response", covers #1103: the
-browser's side of the rule, when a response re-runs only part of a route.
+#1035: not which push a page shows, but when the client gets it. The one
+after it, "An `ssr: false` loader's pushed promise bakes into the shell",
+covers #1182, which changed what a shell holds: a promise an `ssr: false`
+loader pushes is now awaited at capture and recorded, where #1054 had kept
+it live. The last one, "What the browser keeps on a partial response",
+covers #1103: the browser's side of the rule, when a response re-runs only
+part of a route.
 
 The evidence is
 `packages/rangojs-router/src/testing/__tests__/serve-shell-request-push-ownership.rsc-test.tsx`:
@@ -155,12 +159,18 @@ A path is correct when it satisfies these. They are what the tests assert.
    on a request where the same artifact supplies the loader's value.
    Otherwise it is a placeholder: the loader's source replaces it, with
    nothing if the source pushed nothing.
-5. **A deferred push is a hole.** A thenable push is never in a shell record.
-   Wherever the pin is replayed it is delivered once, by the loader's
-   `cache()` entry when that hits, else by a run. Its value may be newer than
-   the pin: nesting is liveness, as for a promise nested in bake-lane data.
-   It is not in the shell's HTML either, and a document HIT delivers it
-   after hydration (#1035).
+5. **A pushed promise is judged by what it settles to (#1182).** A
+   top-level promise an `ssr: false` loader pushes (or a loader it awaits),
+   `push(promise)` and `.defer()` alike, is that loader's push, as
+   `push(await promise)` would be: the capture waits for it under
+   `ppr.captureTimeout` and the record keeps its settled value. One that
+   settles to a value holding a promise is a hole, like a settled push that
+   holds one: never in a shell record, delivered once wherever the pin is
+   replayed, by the loader's `cache()` entry when that hits, else by a run,
+   and after hydration on a document HIT (#1035). Nesting is liveness, as
+   for a promise nested in bake-lane data. A live-lane loader's push is
+   never in a shell: that loader does not run at capture. Before #1182 every
+   thenable push was a hole.
 6. **An entry is whole.** A loader `cache()` entry holds a value and the
    pushes of the run that produced it, or it is treated as a miss.
 7. **Same shell, same answer.** A document HIT, a navigation replay and a
@@ -610,25 +620,29 @@ whatever its own store held when the document stream was first read. Issue
 3. **The capture renders the prelude from what its record keeps.** A push
    the record leaves out renders no element at capture, and the capture does
    not wait for it either: `settleCaptureRecord` waits on
-   `recordedHandleData` (the `getDataForSegment(id, true)` cut), so a
-   deferred loader push slower than `ppr.captureTimeout`, or one that never
-   settles, does not refuse the capture. A handler's deferred push is in the
-   cut: it is baked, awaited, and still refuses the capture past the
-   deadline.
+   `recordedHandleData` (the `getDataForSegment(id, true)` cut). A handler's
+   deferred push is in the cut: it is baked, awaited, and refuses the
+   capture past the deadline. Since #1182 so is an `ssr: false` loader's:
+   a pushed promise slower than `ppr.captureTimeout`, or one that rejects,
+   refuses the capture. Before #1182 it was left out, and did not.
 4. **A reader hydrates with the document's handle data.** `useHandle` in a
    render React is hydrating reads the data its HTML was rendered from,
    whenever its boundary hydrates, and moves on to the live data in its
    mount effect. This one is not about shells: it holds on every document.
 
-For an app author the four come down to one sentence: **a promise pushed
-from a loader is live and is never in a shell; to have a value in the
-shell's HTML, push it settled (await it) from the `ssr: false` loader, or
-push it from the handler.**
+For an app author the four come down to one sentence, as #1182 left it:
+**the shell holds what its capture's document rendered: the pushes of the
+handlers and of the `ssr: false` loaders, a promise resolved; a live-lane
+loader's push, and one whose value holds a promise, arrive after
+hydration.** Before #1182 the sentence was "a promise pushed from a loader
+is live and is never in a shell; push it settled (await it) to have it in
+the shell's HTML", and a title an `ssr: false` loader pushed as a promise
+was missing from every HIT's HTML (the issue).
 
-The consequence to keep in mind: on a shell HIT a deferred push is not in
-the HTML and shows right after hydration. On a MISS, and on a route without
-`ppr`, it is in the HTML as before. A crawler that reads a HIT's HTML does
-not see it.
+The consequence to keep in mind: on a shell HIT a live-lane loader's push
+is not in the HTML and shows right after hydration. On a MISS, and on a
+route without `ppr`, it is in the HTML when it was made before the handler
+barrier, as before. A crawler that reads a HIT's HTML does not see it.
 
 ### How #1035 broke
 
@@ -675,8 +689,8 @@ await, failed on `origin/main` too and is clean now (rule 4).
 | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | Document MISS (B)                                                                                | HTML and hydration: every push made before the handler barrier, a deferred one resolved. After: pushes made later (a live loader after an await)   | same                                                                                      |
 | HIT, the loaders push settled values only (`/eb`)                                                | HTML, hydration: record. After: nothing                                                                                                            | same                                                                                      |
-| HIT, a deferred push, the loader's `cache()` entry warm at capture (B, #1035)                    | HTML: record **plus an empty element**. Hydration: record, **plus the value if the replay won the race**. After: the value. Fails either way       | HTML, hydration: record. After: record plus the value                                     |
-| HIT, a deferred push, the body ran at capture (no `cache()`, or its entry missed)                | HTML: record **plus the capture's value, baked**. Hydration: record plus this run's value (`@g2` next to `@g1`), or not                            | HTML, hydration: record. After: record plus this run's value                              |
+| HIT, a deferred push, the loader's `cache()` entry warm at capture (B, #1035)                    | HTML: record **plus an empty element**. Hydration: record, **plus the value if the replay won the race**. After: the value. Fails either way       | HTML, hydration: record, the value included (#1182). After: nothing                       |
+| HIT, a deferred push, the body ran at capture (no `cache()`, or its entry missed)                | HTML: record **plus the capture's value, baked**. Hydration: record plus this run's value (`@g2` next to `@g1`), or not                            | HTML, hydration: record, the capture's value included (#1182). After: nothing             |
 | HIT, a push that holds a promise                                                                 | HTML: the capture's value with the promise masked. Hydration: this run's value, or not                                                             | HTML, hydration: record (no element). After: this run's value                             |
 | HIT, an entry without loader pins (`ppr.maxSnapshotBytes`), the run pushes                       | HTML: the capture's push. Hydration: **the run's push** (the run is awaited). Text mismatch                                                        | HTML, hydration: the capture's push (the placeholder). After: the run's push in its place |
 | The same, the run makes no push                                                                  | HTML: the capture's push. Hydration: **none**                                                                                                      | HTML, hydration: the capture's push. After: none                                          |
@@ -685,7 +699,7 @@ await, failed on `origin/main` too and is clean now (rule 4).
 | Client navigation that replays the shell                                                         | one stream, the final state                                                                                                                        | same                                                                                      |
 | Document of a route without `ppr`                                                                | as a MISS                                                                                                                                          | same                                                                                      |
 | HIT of a `Prerender` + `ppr` route, a promise-free `ssr: false` loader's settled push (B, #1057) | HTML: the push. Hydration: **the prerender store's handles only**, so React removes the element (#418). After: nothing                             | HTML, hydration: the shell's `handles` record. After: nothing                             |
-| The same route, the loader also pushes a promise (B, #1057)                                      | HTML: the settled push. Hydration: **without it**. After: the HIT run's settled and promise pushes                                                 | HTML, hydration: the record. After: the record plus the promise                           |
+| The same route, the loader also pushes a promise (B, #1057)                                      | HTML: the settled push. Hydration: **without it**. After: the HIT run's settled and promise pushes                                                 | HTML, hydration: the record, the promise's value included (#1182). After: nothing         |
 
 A HIT of a `Prerender` route with `ppr` freezes at the same point: its tail
 replays the prerender store's handles in `yieldFromStore`, then resolves the
@@ -721,10 +735,10 @@ Three pieces, in three commits, so that any can change without the others.
   `_shellCaptureRun`, which covers both producers (the runtime capture and
   the build-time one).
 - The funnel keeps a deferred push as a promise of its value:
-  `Promise.resolve(value).then(mask)` (`rsc/shell-capture.ts:2057`). The
-  slot is out of the prelude either way now. It still matters for whatever
-  reads the capture's store next: the wait in `settleCaptureRecord` sees a
-  thenable again, not `undefined`.
+  `Promise.resolve(value).then(mask)` (`rsc/shell-capture.ts`
+  `deriveShellCaptureContext`). The wait in `settleCaptureRecord` sees a
+  thenable, not `undefined`. Since #1182 that slot is owned by its
+  `ssr: false` loader, so it is in the record and in the prelude, resolved.
 
 Which pushes a record keeps is still the funnel's decision and only its:
 the view follows the tag.
@@ -827,6 +841,9 @@ that read this branch recommended the one above, complete, and both of
 these were decided against. Do not build either without new information.
 
 **A. Bake it: the capture awaits a deferred push and records the value.**
+Built by #1182 (2026-10-15), in a strict form, on the owner's direction:
+the next section says how it answers each reason below. The text stays as
+the 2026-10-04 record.
 The capture would wait for the promise (bounded by `ppr.captureTimeout`),
 render the prelude with the settled value and record it like a settled
 push, so the value would be in a HIT's HTML as on a normal document.
@@ -859,6 +876,10 @@ included, would have to learn to read a promise, and a reader without a
 boundary would suspend the shell.
 
 ### A follow-up that is not done
+
+Closed by #1182 the other way: the capture renders an `ssr: false` loader's
+pushed promise again, so the wait below has its reason back, and refusing
+past the deadline is the rule. The paragraph is the record from before.
 
 The capture still waits for a deferred loader push it no longer renders.
 `settleCaptureRecord` (`rsc/shell-capture.ts`) awaits every top-level
@@ -950,6 +971,159 @@ through `readHandles()` instead (`shownHandles`, `final`). What each test
 asserts is the same. One assertion flipped: "a deferred push by a runs: 1
 loader reaches the HIT" asserted that the prelude contained the deferred
 value.
+
+## An `ssr: false` loader's pushed promise bakes into the shell (#1182)
+
+Status: built. The owner set the direction on 2026-10-15 ("the handles
+aren't resolved"), which reopened the 2026-10-04 decision against option A
+above. The whole-case design is in devcorner (dc-d142, dc-d141); this
+section is what shipped.
+
+### Why it changed
+
+The reporter's app did what the `ssr` JSDoc recommends for `<head>` meta: an
+`ssr: false` loader that pushed its title to `Meta`, as a promise. A document
+MISS had the title. Every shell HIT's HTML had the layout's title instead,
+and the loader's run on the HIT set the real one after hydration. A crawler
+or a link preview never saw it. That was the #1054 rule working as written
+(invariant 5 as it read then), and the hooks contract said otherwise: a
+document load ships the resolved value of `push(promise)`
+(`skills/hooks/handle-and-actions.md`, lock row HD11). The HIT also showed
+the capture's data next to a title from another run, so the page broke the
+first rule of this document on its own.
+
+### The rule
+
+On a document request, the handle values an `ssr: false` loader pushes, and
+those of the loaders it awaits, settled or promise, are resolved before the
+first flush. A shell stores and serves exactly the resolved values its
+capture's document rendered. A pushed promise is judged by its settled
+value, as `push(await promise)` would be, so a value that holds a promise
+stays live.
+
+- **One document.** A HIT's HTML and its hydration data hold the same
+  values as the document that produced the shell. A pinned loader's body
+  does not run on a HIT for them.
+- **No failure bakes.** A pushed promise that rejects, or does not settle
+  within `ppr.captureTimeout`, refuses the capture, as a handler's push does.
+  The route stays on MISS, and the warning names the loader and the handle.
+- **The live lane is untouched.** A loader without `ssr: false` never runs at
+  capture, so its pushes are never in a shell; on a HIT they arrive after
+  hydration (#1035 rule 2).
+
+How it answers the three reasons option A was decided against: timing no
+longer decides liveness, because a promise that misses the deadline refuses
+the capture instead of staying live; the shape still declares liveness, one
+level down, because a promise that settles to a value holding a promise is a
+hole like any other; and freezing a per-request value is the cost the owner
+accepted, with the migration below.
+
+### What is built
+
+Server only. No file under `src/browser/` changed, and no hook's commit
+mechanism did: only what the server puts in each channel.
+
+- **The capture funnel** (`rsc/shell-capture.ts` `deriveShellCaptureContext`).
+  A top-level thenable push credited to a bake-lane body (the innermost
+  body, or the loader a replay names, with no live-lane body around it) is
+  owned when it is pushed (`loaderPush: false`, `owner`). Its slot is
+  `Promise.resolve(value).then(judge)`: `judge` masks the settled value, and
+  when that value held a promise it retags the slot as an unrecorded loader
+  push (`HandleStore.unrecordPush`) and sets
+  `_shellCaptureUnrecordedLoaderPush`. The retag runs inside the slot's own
+  `then`, so it lands before the record-first wait resumes, before
+  `captureHandles` writes the record and before the prelude renders. A
+  thenable push credited to a live-lane body, or to no body and no replay,
+  keeps the tag as before; its slot now handles its own rejection.
+- **No new wait.** The owned slot is in `recordedHandleData`'s cut, which
+  `settleCaptureRecord` already awaits under the one capture deadline.
+- **Refusals that name the push.** The funnel keeps each owned promise
+  (`CaptureContextDerivation.loaderPromisePushes`). Past the deadline the
+  no-shell cause is "the promise the loader "X" pushed to the handle "Y" did
+  not settle within ppr.captureTimeout". A rejection refuses before the
+  record's write starts, as refusal `loader`, with "... rejected during
+  capture". A capture guard tripped in that promise names the read instead.
+  Before, a rejected push left an unhandled rejection at capture, which ends
+  a Node process with no `unhandledRejection` handler.
+- **The HIT store** (`server/handle-store.ts` `push`,
+  `judgeRestoredPromise`). A restored loader's top-level thenable push, made
+  by a pinned loader that runs anyway (a pin with a hole, or a capture-wide
+  `runs`) or replayed from its `cache()` entry inside such a run, is judged
+  by its settled value on the auxiliary lane: thenable-free, it is dropped
+  and the record's copy stands (`matchRestoredSlot`); holding a promise, it
+  is added at `restoredInsertIndex` once it settles; rejected, it is
+  dropped. Without this, those runs showed the title twice.
+
+`runs` stays capture-wide (`captureAndStoreShell`): fewer captures set it
+now, but one unrecordable push still makes every pinned body of the page run
+on every HIT. A per-loader `runs` and a document-lane deadline for a pushed
+promise that never settles are follow-ups, not part of #1182.
+
+### The path table
+
+| Path, an `ssr: false` loader on a `ppr` route             | Before                                                           | Now                                                                                                                   |
+| --------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Document MISS                                             | awaited before the first flush; HTML and hydration have it       | same                                                                                                                  |
+| Capture                                                   | tagged out of the record and the prelude; not awaited; `runs: 1` | awaited, owned, in the prelude and the record; no `runs`                                                              |
+| Shell HIT                                                 | the HIT run's value after hydration, next to the capture's data  | the capture's value in the HTML and the hydration data                                                                |
+| Navigation that replays the shell                         | the replay run's value                                           | the record's value; no body runs                                                                                      |
+| `push(promise)` settling to a value holding a promise     | live                                                             | live (judged by its settled value)                                                                                    |
+| A pushed promise that rejects                             | shell stored without it; an unhandled rejection at capture       | the capture is refused                                                                                                |
+| A pushed promise slower than `ppr.captureTimeout`         | shell stored without it                                          | the capture is refused; the MISS waits for it                                                                         |
+| `.defer()` resolved by the loader's own code              | live                                                             | baked                                                                                                                 |
+| `.defer()` resolved by a component the capture renders    | live                                                             | its `else` bakes (the handle wait runs before the record's encode renders components), as a handler's `.defer()` does |
+| A pin with a hole, or a page another loader set `runs` on | the run's promise push added after hydration                     | judged: dropped, the record's copy stands                                                                             |
+| An entry without loader pins (`ppr.maxSnapshotBytes`)     | the run's push only                                              | the capture's value in the HTML, the run's after hydration                                                            |
+| `Prerender` + `ppr` (#1057 `handles` record)              | the HIT run's value after hydration                              | the capture's value in the record                                                                                     |
+| An action or revalidation after a HIT                     | the loader re-runs; its push replaces the loader's               | same: it replaces the baked value                                                                                     |
+
+Pinned through `serveShellRequest` in
+`serve-shell-request-loader-meta-promise.rsc-test.tsx` (the issue's shape,
+declared directly, under `include()` and in a `clientUrls()` group, and
+every row above), `serve-shell-request-push-ownership.rsc-test.tsx` and
+`serve-shell-request-prerender.rsc-test.tsx`; in a browser by the
+push-ownership suites of both apps, dev and production (the issue's
+`<title>`, Back to a HIT page, an action after it, a reader inside a
+`loading()` boundary, the build-time `Prerender` shell).
+
+### Migration
+
+An app is affected when a `ppr` route's `ssr: false` loader, or a loader it
+awaits, calls `ctx.use(H)(promise)` or `.defer()`:
+
+1. The value is in every HIT's HTML and hydration data.
+2. It is the capture's value for the shell's lifetime (TTL, then SWR), and
+   leaves with the shell (TTL, tags, `updateTag()`). An app that pushed a
+   promise to keep a value per request on a HIT, as `skills/ppr/SKILL.md`
+   taught before, now sees it frozen.
+3. A pushed promise that rejects, or is slower than `ppr.captureTimeout`,
+   keeps the route on MISS, with a warning that names the loader and the
+   handle. Before, the shell was stored without the value.
+4. Fewer loader runs: a pinned loader's body no longer runs on every HIT and
+   replay because of a promise push.
+5. Shells stored before the upgrade are not served after it: the upgrade
+   changes every router's build versions, which key its stored shells
+   (#1034), so each page is captured again under the new rule. A shell from
+   before carries no copy of the promise push and asks for a run
+   (`runs: 1`), and the new HIT store drops that run's push because it
+   settles thenable-free, so its title would show nowhere: it must not be
+   served. 0.26.0 also removes the `version` override (#1183), the one way to
+   keep such shells across an upgrade. The owner chose this over a compatibility bit
+   on the pin (2026-10-15).
+
+A value that must stay per request comes from a loader without `ssr: false`,
+which nothing has to read:
+
+```ts
+const StockNote = createLoader(async (ctx) => {
+  ctx.use(Notes)(db.stockNote(ctx.params.id));
+  return null;
+});
+path("/product/:id", ProductPage, { name: "product", ppr: true }, () => [
+  loader(Product, { ssr: false }), // bakes: data and its title
+  loader(StockNote), // live lane: on a HIT, after hydration
+]);
+```
 
 ## What the browser keeps on a partial response (#1103)
 
@@ -1191,7 +1365,7 @@ not planned), the other is a corner that got worse.
 | Document HIT of an entry without pins                                                                  | the capture's push next to fresh data                           | the run's push, none if the run made none             | 1, built       |
 | Navigation replay of an entry without pins, the run makes no push                                      | the capture's push next to fresh data                           | no push                                               | 1, built       |
 | ppr route under `cache()`, the loader's entry newer than the record                                    | the record's copy                                               | the entry's push                                      | 1, built       |
-| Any replay, a pinned loader that pushes on the replay what it did not push at capture                  | that push, next to the pinned data                              | no push (a deferred push still arrives)               | 1, built       |
+| Any replay, a pinned loader that pushes on the replay what it did not push at capture                  | that push, next to the pinned data                              | no push (one holding a promise still arrives, #1182)  | 1, built       |
 | A run that replaces recorded copies, a loader that pushes around a dependency's push                   | `[own, own, dependency]` (the record's order on a document HIT) | `[own, dependency, own]`, the push order              | 1, built       |
 | The same after a `"use cache"` or loader `cache()` replay, on any route                                | `[own, own, dependency]`                                        | `[own, dependency, own]`                              | 1, built       |
 | Replay without pins, the loader's `cache()` entry stored without its pushes                            | the record's copy                                               | no push for that loader                               | 1, built       |

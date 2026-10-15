@@ -415,7 +415,9 @@ wrote during the capture (`RecordingShellStore.loaderKeys`, marked inside
 through a `SeededShellStore` overlay on its `_cacheStore`. It existed for a
 bake-lane loader whose body runs on a HIT (a promise-carrying one, or one
 whose pushes the record could not keep): re-deriving its settled handle
-pushes from the same values kept them equal to the prelude. The overlay did
+pushes from the same values kept them equal to the prelude. (Since #1182 a
+pushed promise is recorded too, resolved, unless it settles to a value that
+holds a promise, so fewer bodies run on a HIT for their pushes.) The overlay did
 not know who was reading, though. A live loader sharing the key, and a
 promise nested in the bake-lane loader's own return, read the capture's copy
 too, for the shell's whole lifetime, past the entry's ttl and past a

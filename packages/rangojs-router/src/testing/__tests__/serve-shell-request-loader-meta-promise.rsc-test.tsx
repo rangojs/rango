@@ -1,8 +1,11 @@
 /**
  * Issue #1182, through serveShellRequest: an `ssr: false` loader on a ppr
  * route pushes its title to Meta as a promise. A document MISS renders the
- * title; the stored shell does not hold it, so a HIT's HTML has none and the
- * title only arrives after hydration.
+ * title, and the shell keeps the value its capture rendered: a HIT's HTML
+ * and hydration data hold it, and no loader body runs for it. A pushed
+ * promise is judged by its settled value, as `push(await promise)` would
+ * be: one that holds a promise stays live, and one that rejects, or does
+ * not settle within ppr.captureTimeout, refuses the capture.
  *
  * serveShellRequest has no HTML step (see its JSDoc). What the shell's
  * `<head>` was rendered from is the capture's payload (`prelude`): SSR
@@ -33,27 +36,39 @@ import {
   createRouter,
   Meta,
   Prerender,
+  updateTag,
   urls,
   type HandlerContext,
 } from "../../index.rsc.js";
+import { runInRequestContext } from "../index.js";
+import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { withoutPushedBy } from "../../handles/pushed-by.js";
 import { shellHarness, source } from "./fixtures/shell-request-data.js";
 import {
   AwaitedGridLoader,
+  CachedTitleLoader,
   ChromeLoader,
+  ComponentDeferTitleLoader,
+  DEFER_ELSE_TITLE,
+  DEFER_TIMEOUT_MS,
   DeferTitleLoader,
+  deferResolver,
   DependentGridLoader,
   GridLoader,
   HoleTitleLoader,
   metaRuns,
   NestedSideLoader,
   NestedTitleLoader,
+  NullTitleLoader,
+  ProductLoader,
   RecipeGridLoader,
   RecipeTitleLoader,
   RejectingTitleLoader,
   SLOW_TITLE_CAPTURE_TIMEOUT_MS,
   SlowTitleLoader,
+  StockNoteLoader,
+  StockNotes,
 } from "./fixtures/loader-meta-promise-data.js";
 import group from "./fixtures/loader-meta-promise-client-urls.js";
 
@@ -63,6 +78,34 @@ function StoreLayout(): React.ReactNode {
 
 function Page(): React.ReactNode {
   return <p>category</p>;
+}
+
+function DeferResolvingPage(): React.ReactNode {
+  return <ResolveLoaderDefer />;
+}
+
+/** Resolves the slot ComponentDeferTitleLoader reserved, as it renders (N3). */
+function ResolveLoaderDefer(): React.ReactNode {
+  deferResolver()?.({ title: `component-title@g${source.generation}` });
+  return <p>defer</p>;
+}
+
+/** The handler lane's N3 counterpart: a component resolves its slot. */
+function HandlerDeferPage(ctx: HandlerContext): React.ReactNode {
+  const resolve = ctx.use(Meta).defer({
+    timeoutMs: DEFER_TIMEOUT_MS,
+    else: { title: DEFER_ELSE_TITLE },
+  });
+  return <DeferResolver resolve={resolve} />;
+}
+
+function DeferResolver({
+  resolve,
+}: {
+  resolve: (value: { title: string }) => void;
+}): React.ReactNode {
+  resolve({ title: `component-title@g${source.generation}` });
+  return <p>handler defer</p>;
 }
 
 /** A handler that pushes its title as a promise (control: baked). */
@@ -138,7 +181,59 @@ const router = createRouter({}).routes(
       path("/t/dep/:id", Page, { name: "tDep", ppr: true }, () => [
         loader(DependentGridLoader, { ssr: false }),
       ]),
+      // N-tests (dc-d141).
+      path("/t/null/:id", Page, { name: "tNull", ppr: true }, () => [
+        loader(NullTitleLoader, { ssr: false }),
+      ]),
+      path(
+        "/t/component-defer/:id",
+        DeferResolvingPage,
+        { name: "tComponentDefer", ppr: true },
+        () => [loader(ComponentDeferTitleLoader, { ssr: false })],
+      ),
+      path("/t/handler-defer", HandlerDeferPage, {
+        name: "tHandlerDefer",
+        ppr: true,
+      }),
+      path(
+        "/t/no-pins/:id",
+        Page,
+        { name: "tNoPins", ppr: { maxSnapshotBytes: 1 } },
+        () => [loader(GridLoader, { ssr: false })],
+      ),
+      path("/t/cached/:id", Page, { name: "tCached", ppr: true }, () => [
+        loader(CachedTitleLoader, { ssr: false }),
+      ]),
+      path("/t/fill/:id", Page, { name: "tFill", ppr: true }, () => [
+        loader(GridLoader, { ssr: false, prefetch: false }),
+      ]),
+      path("/t/recipe/:id", Page, { name: "tRecipe", ppr: true }, () => [
+        loader(ProductLoader, { ssr: false }),
+        loader(StockNoteLoader),
+      ]),
     ]),
+  ]),
+);
+
+/** A store router.prerender() can warm: one every request shares. */
+class SharedMemoryStore extends MemorySegmentCacheStore {
+  readonly scope = "global" as const;
+}
+
+/** N11: the refused routes, on a router with a store of its own. */
+const warmRouter = createRouter({
+  cache: { store: new SharedMemoryStore() },
+}).routes(
+  urls(({ loader, path }) => [
+    path("/t/reject/:id", Page, { name: "tReject", ppr: true }, () => [
+      loader(RejectingTitleLoader, { ssr: false }),
+    ]),
+    path(
+      "/t/slow/:id",
+      Page,
+      { name: "tSlow", ppr: { captureTimeout: SLOW_TITLE_CAPTURE_TIMEOUT_MS } },
+      () => [loader(SlowTitleLoader, { ssr: false })],
+    ),
   ]),
 );
 
@@ -192,14 +287,14 @@ async function navigationTitles(result: ServeShellRequestResult) {
 /** Capture `url` at generation 1, then serve its HIT at generation 2. */
 async function hitAfterCapture(url: string) {
   vi.spyOn(console, "warn").mockImplementation(() => {});
-  const { serve } = shellHarness(router);
+  const { serve, cacheStore } = shellHarness(router);
   const miss = await serve(url);
   expect(miss.shellStatus).toBe("MISS");
   const runsAfterCapture = { ...metaRuns };
   source.generation = 2;
   const hit = await serve(url);
   expect(hit.shellStatus).toBe("HIT");
-  return { serve, miss, hit, runsAfterCapture };
+  return { serve, cacheStore, miss, hit, runsAfterCapture };
 }
 
 beforeEach(async () => {
@@ -210,6 +305,8 @@ beforeEach(async () => {
   metaRuns.hole = 0;
   metaRuns.dep = 0;
   metaRuns.defer = 0;
+  metaRuns.nullTitle = 0;
+  metaRuns.product = 0;
   await resetShellTestState();
   vi.restoreAllMocks();
 });
@@ -233,39 +330,13 @@ describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", ()
       expect((await documentTitles(miss)).hydration).toEqual(["grid-title@g1"]);
     });
 
-    it("the issue's expectation (red): the shell keeps the title the MISS rendered, and the HIT hydrates with it", async () => {
+    it("the issue's expectation: the shell keeps the title the MISS rendered, and the HIT hydrates with it", async () => {
       const { hit } = await hitAfterCapture(url);
 
       const { shell, hydration } = await documentTitles(hit);
 
       expect(shell).toEqual(["grid-title@g1"]);
       expect(hydration).toEqual(["grid-title@g1"]);
-    });
-
-    it("today: the shell has no title; the HIT's own run delivers its title after hydration, next to the grid data the capture pinned", async () => {
-      const { hit, runsAfterCapture } = await hitAfterCapture(url);
-
-      expect(await documentTitles(hit)).toEqual({
-        shell: [],
-        hydration: [],
-        afterHydration: ["grid-title@g2"],
-      });
-      // The data is the capture's pin; the body ran again for the push.
-      expect(hit.flight).toContain("grid@g1");
-      expect(hit.flight).not.toContain("grid@g2");
-      expect(metaRuns.grid).toBe(runsAfterCapture.grid + 1);
-    });
-
-    it("today: a navigation that replays the shell shows the capture's grid data with the run's title", async () => {
-      const { serve } = await hitAfterCapture(url);
-      const runsBefore = metaRuns.grid;
-
-      const nav = await serve(url, { partial: { from: "/other" } });
-
-      expect(nav.flight).toContain("grid@g1");
-      expect(nav.flight).not.toContain("grid@g2");
-      expect(await navigationTitles(nav)).toEqual(["grid-title@g2"]);
-      expect(metaRuns.grid).toBe(runsBefore + 1);
     });
 
     it("a client navigation with no shell runs the loader and streams its title", async () => {
@@ -277,7 +348,7 @@ describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", ()
       expect(await navigationTitles(nav)).toEqual(["grid-title@g1"]);
     });
 
-    it("target (red): the HIT hydrates with the capture's title next to the capture's grid, nothing arrives after hydration, and no loader body runs", async () => {
+    it("the HIT hydrates with the capture's title next to the capture's grid, nothing arrives after hydration, and no loader body runs", async () => {
       const { hit, runsAfterCapture } = await hitAfterCapture(url);
 
       expect(await documentTitles(hit)).toEqual({
@@ -291,7 +362,7 @@ describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", ()
       expect(metaRuns.grid).toBe(runsAfterCapture.grid);
     });
 
-    it("target (red): a navigation that replays the shell shows the capture's title next to the capture's grid, and no loader body runs", async () => {
+    it("a navigation that replays the shell shows the capture's title next to the capture's grid, and no loader body runs", async () => {
       const { serve } = await hitAfterCapture(url);
       const runsBefore = metaRuns.grid;
 
@@ -315,19 +386,7 @@ describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", ()
     });
   });
 
-  it("a Prerender + ppr page: the shell has no title, the HIT's run delivers it after hydration (#1057 record)", async () => {
-    const { hit } = await hitAfterCapture("/pre-grid");
-
-    expect(await documentTitles(hit)).toEqual({
-      shell: [],
-      hydration: [],
-      afterHydration: ["grid-title@g2"],
-    });
-    expect(hit.flight).toContain("grid@g1");
-    expect(hit.flight).not.toContain("grid@g2");
-  });
-
-  describe("the recipe without a router change: the title from its own ssr: false loader, pushed settled", () => {
+  describe("the pre-#1182 recipe keeps working: the title from its own ssr: false loader, pushed settled", () => {
     it("the shell keeps the title, the HIT hydrates with it, and no loader body runs on the HIT", async () => {
       const { hit, runsAfterCapture } = await hitAfterCapture("/recipe/c/1");
 
@@ -374,16 +433,16 @@ describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", ()
 });
 
 /**
- * The target design (dc-t87): on a document request the handle values an
- * `ssr: false` loader pushes, settled or promise, are resolved before the
- * first flush, and a shell stores and serves exactly the resolved values its
- * capture's document rendered. A pushed promise is judged by its settled
- * value, as `push(await promise)` would be: one that holds a promise stays
- * live. One that rejects, or does not settle within ppr.captureTimeout,
- * refuses the capture, as a handler's does.
+ * On a document request the handle values an `ssr: false` loader pushes,
+ * settled or promise, are resolved before the first flush, and a shell
+ * stores and serves exactly the resolved values its capture's document
+ * rendered. A pushed promise is judged by its settled value, as
+ * `push(await promise)` would be: one that holds a promise stays live. One
+ * that rejects, or does not settle within ppr.captureTimeout, refuses the
+ * capture, as a handler's does.
  */
-describe("#1182 target: the shell keeps the resolved values of an ssr: false loader's promise pushes", () => {
-  it("target (red): a Prerender + ppr page's shell keeps the title in its #1057 record, and the HIT sends nothing after hydration", async () => {
+describe("#1182: the shell keeps the resolved values of an ssr: false loader's promise pushes", () => {
+  it("a Prerender + ppr page's shell keeps the title in its #1057 record, and the HIT sends nothing after hydration", async () => {
     const { hit } = await hitAfterCapture("/pre-grid");
 
     expect(await documentTitles(hit)).toEqual({
@@ -395,7 +454,7 @@ describe("#1182 target: the shell keeps the resolved values of an ssr: false loa
     expect(hit.flight).not.toContain("grid-title@g2");
   });
 
-  it("target (red): a promise push that rejects refuses the capture; the MISS renders the data without the title", async () => {
+  it("a promise push that rejects refuses the capture; the MISS renders the data without the title", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
     const { serve } = shellHarness(router);
@@ -408,7 +467,7 @@ describe("#1182 target: the shell keeps the resolved values of an ssr: false loa
     expect((await serve("/t/reject/1")).shellStatus).not.toBe("HIT");
   });
 
-  it("target (red): a promise push that settles after ppr.captureTimeout refuses the capture, as a handler's does; the MISS waits for it", async () => {
+  it("a promise push that settles after ppr.captureTimeout refuses the capture, as a handler's does; the MISS waits for it", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const { serve } = shellHarness(router);
 
@@ -429,7 +488,7 @@ describe("#1182 target: the shell keeps the resolved values of an ssr: false loa
     });
   });
 
-  it("target (red): a loader whose data holds a hole runs on every HIT; its title stays the capture's and shows once", async () => {
+  it("a loader whose data holds a hole runs on every HIT; its title stays the capture's and shows once", async () => {
     const { hit, runsAfterCapture } = await hitAfterCapture("/t/hole/1");
 
     const { shell, hydration, afterHydration } = await documentTitles(hit);
@@ -442,7 +501,7 @@ describe("#1182 target: the shell keeps the resolved values of an ssr: false loa
     expect(hit.flight).toContain("reviews@g2");
   });
 
-  it("target (red): another loader's unrecordable push makes every loader run on the HIT (runs: 1); the title stays the capture's and shows once", async () => {
+  it("another loader's unrecordable push makes every loader run on the HIT (runs: 1); the title stays the capture's and shows once", async () => {
     const { hit } = await hitAfterCapture("/t/two/1");
 
     const { shell, hydration, afterHydration } = await documentTitles(hit);
@@ -453,7 +512,7 @@ describe("#1182 target: the shell keeps the resolved values of an ssr: false loa
     expect(hit.flight).not.toContain("grid@g2");
   });
 
-  it("target (red): a .defer() slot the loader resolves after it returned bakes into the shell, and the HIT runs no loader body", async () => {
+  it("a .defer() slot the loader resolves after it returned bakes into the shell, and the HIT runs no loader body", async () => {
     const { hit, runsAfterCapture } = await hitAfterCapture("/t/defer/1");
 
     expect(await documentTitles(hit)).toEqual({
@@ -464,7 +523,7 @@ describe("#1182 target: the shell keeps the resolved values of an ssr: false loa
     expect(metaRuns.defer).toBe(runsAfterCapture.defer);
   });
 
-  it("target (red): a dependency no route registers pushes the title as a promise: it bakes, and the HIT runs neither body", async () => {
+  it("a dependency no route registers pushes the title as a promise: it bakes, and the HIT runs neither body", async () => {
     const { hit, runsAfterCapture } = await hitAfterCapture("/t/dep/1");
 
     expect(await documentTitles(hit)).toEqual({
@@ -474,5 +533,134 @@ describe("#1182 target: the shell keeps the resolved values of an ssr: false loa
     });
     expect(hit.flight).toContain("grid@g1");
     expect(metaRuns.dep).toBe(runsAfterCapture.dep);
+  });
+
+  it("N1: a pushed promise that settles to null leaves no slot, in the shell or the HIT's hydration data, and the HIT runs no loader body", async () => {
+    const { hit, runsAfterCapture } = await hitAfterCapture("/t/null/1");
+
+    const handles = (await hit.readHandles())!;
+    const metaValues = (data: ShellRequestHandles["hydration"] | undefined) =>
+      Object.values(data?.[Meta.$$id] ?? {}).flat();
+    expect(metaValues(await shellHandles(hit))).toEqual([]);
+    expect(metaValues(handles.hydration)).toEqual([]);
+    expect(handles.late).toEqual([]);
+    expect(metaRuns.nullTitle).toBe(runsAfterCapture.nullTitle);
+  });
+
+  it("N3: a .defer() slot a component resolves bakes its else value, as a handler's does: the capture waits on handles before it renders components", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const url of ["/t/component-defer/1", "/t/handler-defer"]) {
+      const { serve } = shellHarness(router);
+      const miss = await serve(url);
+      expect(miss.shellStatus).toBe("MISS");
+      expect((await documentTitles(miss)).hydration).toEqual([
+        "component-title@g1",
+      ]);
+
+      const hit = await serve(url);
+
+      expect(hit.shellStatus).toBe("HIT");
+      expect(await documentTitles(hit)).toEqual({
+        shell: [DEFER_ELSE_TITLE],
+        hydration: [DEFER_ELSE_TITLE],
+        afterHydration: undefined,
+      });
+      await resetShellTestState();
+    }
+  });
+
+  it("N4: an entry without loader pins (maxSnapshotBytes): the HIT hydrates with the capture's title, and the run's takes its place after hydration", async () => {
+    const { hit } = await hitAfterCapture("/t/no-pins/1");
+
+    expect(await documentTitles(hit)).toEqual({
+      shell: ["grid-title@g1"],
+      hydration: ["grid-title@g1"],
+      afterHydration: ["grid-title@g2"],
+    });
+    expect(hit.flight).toContain("grid@g2");
+  });
+
+  it('N6: a pushed promise of a tagged "use cache" function tags the shell: updateTag() evicts it, and the recapture bakes the newer title', async () => {
+    const { serve, cacheStore, hit } = await hitAfterCapture("/t/cached/1");
+    expect((await documentTitles(hit)).shell).toEqual(["seo-title-1@g1"]);
+
+    await runInRequestContext(() => updateTag("seo:1"), { cacheStore });
+    const recapture = await serve("/t/cached/1");
+    const next = await serve("/t/cached/1");
+
+    expect(recapture.shellStatus).toBe("MISS");
+    expect(next.shellStatus).toBe("HIT");
+    expect(await documentTitles(next)).toEqual({
+      shell: ["seo-title-1@g2"],
+      hydration: ["seo-title-1@g2"],
+      afterHydration: undefined,
+    });
+  });
+
+  it("N7: prefetch: false on an ssr: false loader is ignored under ppr: a prefetch defers nothing and replays the title and the data of one capture", async () => {
+    const { serve } = await hitAfterCapture("/t/fill/1");
+    const runsBefore = metaRuns.grid;
+
+    const prefetch = await serve("/t/fill/1", {
+      partial: { from: "/other", prefetch: true },
+    });
+
+    expect(prefetch.replayStatus).toMatchObject({ outcome: "HIT" });
+    expect(await prefetch.readDeferred()).toEqual([]);
+    expect(prefetch.flight).toContain("grid@g1");
+    expect(prefetch.flight).not.toContain("grid@g2");
+    expect(await navigationTitles(prefetch)).toEqual(["grid-title@g1"]);
+    expect(metaRuns.grid).toBe(runsBefore);
+  });
+
+  it("N11: a refusal names the loader and the handle, and router.prerender() reports it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const rejected = await warmRouter.prerender({ env: {} })(
+      "http://localhost/t/reject/1",
+    );
+    const slow = await warmRouter.prerender({ env: {} })(
+      "http://localhost/t/slow/1",
+    );
+
+    expect(rejected).toMatchObject({
+      ok: false,
+      status: "shell-not-stored",
+      caches: { shell: "refused", refusal: "loader" },
+    });
+    expect(slow).toMatchObject({ ok: false, status: "shell-not-stored" });
+    const warnings = warn.mock.calls.map((call) => String(call[0]));
+    const named = (loaderId: string, outcome: string) =>
+      warnings.some(
+        (text) =>
+          text.includes(
+            `the promise the loader "${loaderId}" pushed to the handle "${Meta.$$id}"`,
+          ) && text.includes(outcome),
+      );
+    expect(named(RejectingTitleLoader.$$id, "rejected during capture")).toBe(
+      true,
+    );
+    expect(
+      named(SlowTitleLoader.$$id, "did not settle within ppr.captureTimeout"),
+    ).toBe(true);
+  });
+
+  it("N12: the migration recipe: a live-lane loader nothing reads keeps a per-request push; on a HIT it arrives after hydration, next to the baked title", async () => {
+    const { hit, runsAfterCapture } = await hitAfterCapture("/t/recipe/1");
+
+    expect(await documentTitles(hit)).toEqual({
+      shell: ["product-title@g1"],
+      hydration: ["product-title@g1"],
+      afterHydration: ["product-title@g1"],
+    });
+    const handles = (await hit.readHandles())!;
+    const notes = (data: ShellRequestHandles["hydration"] | undefined) =>
+      Object.values(data?.[StockNotes.$$id] ?? {}).flat();
+    expect(notes(await shellHandles(hit))).toEqual([]);
+    expect(notes(handles.hydration)).toEqual([]);
+    expect(notes(handles.late.at(-1))).toEqual(["stock-note@g2"]);
+    expect(hit.flight).toContain("product@g1");
+    expect(metaRuns.product).toBe(runsAfterCapture.product);
   });
 });

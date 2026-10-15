@@ -161,10 +161,13 @@ import {
   PprPushPreDeferredPage,
   PprPushPreSettledPage,
   PprPushSlowPage,
+  PprPushSuspendedPage,
 } from "./pages/ppr-push-ownership.js";
 import {
+  PprPushBakedNoteLoader,
   PprPushDeferredLoader,
   PprPushLiveLoader,
+  PprPushLiveValueLoader,
   PprPushMetaAwaitedLoader,
   PprPushMetaPromiseLoader,
   PPR_PUSH_SLOW_CAPTURE_TIMEOUT_MS,
@@ -1589,8 +1592,8 @@ export const urlpatterns = urls(
             ]),
           ],
         ),
-        // The deferred push settles after ppr.captureTimeout: the record
-        // leaves it out, so the capture does not wait for it.
+        // The deferred push settles after ppr.captureTimeout: the capture
+        // waits for it under its deadline and refuses (#1182).
         path(
           "/ppr-push/slow",
           PprPushSlowPage,
@@ -1651,6 +1654,18 @@ export const urlpatterns = urls(
           PprPushMetaAwaitedPage,
           { name: "pprPushMetaAwaited", ppr: { ttl: 300, swr: 120 } },
           () => [loader(PprPushMetaAwaitedLoader, { ssr: false })],
+        ),
+        // #1182: an ssr: false loader's promise push, read inside a live
+        // loader's loading() boundary.
+        path(
+          "/ppr-push/suspended",
+          PprPushSuspendedPage,
+          { name: "pprPushSuspended", ppr: { ttl: 300, swr: 120 } },
+          () => [
+            loader(PprPushBakedNoteLoader, { ssr: false }),
+            loader(PprPushLiveValueLoader),
+            loading(<p data-testid="push-loading">Loading value...</p>),
+          ],
         ),
         // Storefront shape: ppr routes under an ancestor cache() scope (the
         // real store-app shape — an app-wide cache() wrapping the tree).

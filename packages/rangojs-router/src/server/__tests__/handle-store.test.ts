@@ -839,49 +839,72 @@ describe("HandleStore.pushRestored (a pinned loader's record copies stand)", () 
     expect(store.getDataForSegment("seg2")).toEqual({});
   });
 
-  it("keeps a thenable push, and one holding a nested thenable, in the loader's push order", () => {
+  it("keeps a push holding a nested thenable in the loader's push order, and judges a promise by its settled value (#1182)", async () => {
     const store = createHandleStore();
     store.pushRestored("crumbs", "seg1", "captured-a", "Bake");
     store.pushRestored("crumbs", "seg1", "captured-b", "Bake");
     store.push("crumbs", "seg1", "handler");
     const deferred = Promise.resolve("deferred");
     const nested = { later: Promise.resolve("nested") };
+    const holding = Promise.resolve({ later: Promise.resolve("holding") });
 
-    // The run pushes: deferred, a, nested, b, deferred-tail.
+    // The run pushes: deferred, a, nested, b, holding.
     bodyPush(store, "Bake", "seg1", deferred);
     bodyPush(store, "Bake", "seg1", "live-a");
     bodyPush(store, "Bake", "seg1", nested);
     bodyPush(store, "Bake", "seg1", "live-b");
-    const tail = Promise.resolve("tail");
-    bodyPush(store, "Bake", "seg1", tail);
-
+    bodyPush(store, "Bake", "seg1", holding);
+    // A promise is judged once it settles, on the auxiliary lane.
     expect(store.getDataForSegment("seg1").crumbs).toEqual([
-      deferred,
       "captured-a",
       nested,
       "captured-b",
-      tail,
+      "handler",
+    ]);
+    store.seal();
+    await store.fullySettled;
+
+    // `deferred` settled thenable-free: dropped, as a settled push is.
+    // `holding` settled to a value that holds a promise: kept, after the
+    // loader's slots, where it landed when it settled.
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "captured-a",
+      nested,
+      "captured-b",
+      holding,
       "handler",
     ]);
   });
 
-  it("applies the same rule to a replay of the loader's cache() entry: settled values give way, deferred ones are added", () => {
+  it("drops a promise push that rejects", async () => {
+    const store = createHandleStore();
+    store.pushRestored("crumbs", "seg1", "captured", "Bake");
+    const rejected = Promise.reject(new Error("seo down"));
+    rejected.catch(() => {});
+
+    bodyPush(store, "Bake", "seg1", rejected);
+    store.seal();
+    await store.fullySettled;
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual(["captured"]);
+  });
+
+  it("applies the same rule to a replay of the loader's cache() entry: a value that settles thenable-free gives way, one that holds a promise is added", async () => {
     const store = createHandleStore();
     store.pushRestored("crumbs", "seg1", "captured", "Bake");
     const deferred = Promise.resolve("deferred");
+    const holding = Promise.resolve({ later: Promise.resolve("holding") });
 
     store.pushReplayed("crumbs", "seg1", "entry-settled", "Bake");
     store.pushReplayed("crumbs", "seg1", deferred, "Bake");
+    store.pushReplayed("crumbs", "seg1", holding, "Bake");
+    store.seal();
+    await store.fullySettled;
 
     expect(store.getDataForSegment("seg1").crumbs).toEqual([
       "captured",
-      deferred,
+      holding,
     ]);
-    // A live run after the replay replaces the replayed deferred push.
-    const live = Promise.resolve("live-deferred");
-    bodyPush(store, "Bake", "seg1", "live-settled");
-    bodyPush(store, "Bake", "seg1", live);
-    expect(store.getDataForSegment("seg1").crumbs).toEqual(["captured", live]);
   });
 
   it("leaves other loaders and handler pushes alone", () => {
@@ -1006,20 +1029,24 @@ describe("HandleStore.setRecordAuthority", () => {
 
   // The pin says the record lists every settled push of the run that
   // produced the pinned value: one the record does not hold was not made.
-  it('a "pin" loader the record holds no copy for adds no settled push, and keeps a thenable one', () => {
+  it('a "pin" loader the record holds no copy for adds no push that settles thenable-free, and keeps one that holds a promise', async () => {
     const store = createHandleStore();
     store.setRecordAuthority((id) => (id === "Pinned" ? "pin" : "hole"));
     store.push("crumbs", "seg1", "handler");
     const deferred = Promise.resolve("deferred");
+    const holding = Promise.resolve({ later: Promise.resolve("holding") });
 
     bodyPush(store, "Pinned", "late-settled");
     bodyPush(store, "Pinned", deferred);
+    bodyPush(store, "Pinned", holding);
     // Its cache() entry's replay follows the same rule.
     store.pushReplayed("crumbs", "seg1", "entry-settled", "Pinned");
+    store.seal();
+    await store.fullySettled;
 
     expect(store.getDataForSegment("seg1").crumbs).toEqual([
       "handler",
-      deferred,
+      holding,
     ]);
   });
 

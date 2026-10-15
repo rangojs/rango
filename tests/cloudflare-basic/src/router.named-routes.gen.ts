@@ -192,6 +192,7 @@ export const NamedRoutes = {
   pprPushPreDeferred: "/ppr-push/pre-deferred",
   pprPushPreSettled: "/ppr-push/pre-settled",
   pprPushSlow: "/ppr-push/slow",
+  pprPushSuspended: "/ppr-push/suspended",
   pprRestock: "/ppr-restock",
   pprScoped: "/ppr-scoped",
   pprScopedCondition: "/ppr-scoped-condition",

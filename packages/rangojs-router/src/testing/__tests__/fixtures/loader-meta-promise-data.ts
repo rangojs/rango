@@ -2,12 +2,14 @@
 // .rsc-test.tsx (#1182). In a module of their own: the clientUrls() group in
 // loader-meta-promise-client-urls.tsx is a "use client" module.
 import {
+  cacheTag,
   createHandle,
   createLoader,
   Meta,
   type Handle,
   type LoaderDefinition,
 } from "../../../index.rsc.js";
+import { _getRequestContext } from "../../../server/request-context.js";
 import { source } from "./shell-request-data.js";
 
 /** Body runs, across requests of one test. */
@@ -18,6 +20,8 @@ export const metaRuns: {
   hole: number;
   dep: number;
   defer: number;
+  nullTitle: number;
+  product: number;
 } = {
   grid: 0,
   awaited: 0,
@@ -25,6 +29,8 @@ export const metaRuns: {
   hole: 0,
   dep: 0,
   defer: 0,
+  nullTitle: 0,
+  product: 0,
 };
 
 interface GridPayload {
@@ -212,3 +218,88 @@ export const TitleDependency: LoaderDefinition<{ grid: string }> = createLoader(
 /** The route's ssr: false loader: it awaits the dependency. */
 export const DependentGridLoader: LoaderDefinition<{ grid: string }> =
   createLoader(async (ctx) => await ctx.use(TitleDependency));
+
+/** Its pushed promise settles to `null`: a skipped slot (N1). */
+export const NullTitleLoader: LoaderDefinition<{ grid: string }> = createLoader(
+  async (ctx) => {
+    metaRuns.nullTitle += 1;
+    const payload = await loadGrid();
+    ctx.use(Meta)(
+      Promise.resolve(null) as unknown as Promise<{ title: string }>,
+    );
+    return payload.data;
+  },
+);
+
+/**
+ * The `.defer()` resolver a page component calls while it renders (N3), per
+ * request context: a capture runs beside the request that scheduled it.
+ */
+const deferResolvers = new WeakMap<
+  object,
+  (value: { title: string }) => void
+>();
+
+/** The resolver ComponentDeferTitleLoader reserved on this request. */
+export function deferResolver():
+  | ((value: { title: string }) => void)
+  | undefined {
+  const reqCtx = _getRequestContext();
+  return reqCtx ? deferResolvers.get(reqCtx) : undefined;
+}
+
+/** The fallback a `.defer()` slot resolves to when nothing resolves it. */
+export const DEFER_ELSE_TITLE = "defer-else";
+/** The slot's `timeoutMs`: shorter than the capture's deadline. */
+export const DEFER_TIMEOUT_MS = 30;
+
+/** Reserves a slot that the page component resolves (N3). */
+export const ComponentDeferTitleLoader: LoaderDefinition<{ grid: string }> =
+  createLoader(async (ctx) => {
+    const resolve = ctx.use(Meta).defer({
+      timeoutMs: DEFER_TIMEOUT_MS,
+      else: { title: DEFER_ELSE_TITLE },
+    });
+    const reqCtx = _getRequestContext();
+    if (reqCtx) deferResolvers.set(reqCtx, resolve);
+    return (await loadGrid()).data;
+  });
+
+/** A "use cache" title, tagged with its product (N6). */
+export async function getSeoTitle(id: string): Promise<{ title: string }> {
+  "use cache";
+  cacheTag(`seo:${id}`);
+  return { title: `seo-title-${id}@g${source.generation}` };
+}
+
+/** Pushes the cached title as a promise (N6). */
+export const CachedTitleLoader: LoaderDefinition<{ grid: string }> =
+  createLoader(async (ctx) => {
+    ctx.use(Meta)(getSeoTitle(ctx.params.id!));
+    return (await loadGrid()).data;
+  });
+
+/** A handle only StockNoteLoader pushes to (N12). */
+export const StockNotes: Handle<string> = createHandle<string>();
+
+/**
+ * The migration recipe (N12): the page's ssr: false loader pushes its title
+ * as a promise, which bakes with its data.
+ */
+export const ProductLoader: LoaderDefinition<{ product: string }> =
+  createLoader(async (ctx) => {
+    metaRuns.product += 1;
+    ctx.use(Meta)(titlePromise(`product-title@g${source.generation}`));
+    return { product: `product@g${source.generation}` };
+  });
+
+/**
+ * The migration recipe (N12): a live-lane loader that nothing reads pushes
+ * the per-request value, so it stays live on a HIT.
+ */
+export const StockNoteLoader: LoaderDefinition<null> = createLoader(
+  async (ctx) => {
+    ctx.use(StockNotes)(Promise.resolve(`stock-note@g${source.generation}`));
+    return null;
+  },
+);

@@ -11,5 +11,6 @@ export const routes = {
   shellPushPreDeferred: "/shell-push/pre-deferred",
   shellPushPreSettled: "/shell-push/pre-settled",
   shellPushSlow: "/shell-push/slow",
+  shellPushSuspended: "/shell-push/suspended",
 } as const;
 export type routes = typeof routes;
