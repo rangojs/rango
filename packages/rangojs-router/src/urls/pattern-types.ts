@@ -66,12 +66,13 @@ export interface PartialPrerenderProps {
   /**
    * Upper bound (serialized UTF-8 bytes) on the loader pins in the capture
    * data snapshot: the bake-lane loader records. The doc record (the handler
-   * layer every HIT replays) is exempt. Over the cap the pins are dropped: the
-   * shell is still stored and every HIT still replays the handler layer, but the
-   * pinned loaders read the live store, so drifted cached content can
-   * hydration-mismatch and be repaired client-side. Reported once per key.
-   * Defaults to 8 MiB. The whole entry is bounded separately by the store's
-   * value limit (Cloudflare KV: 25 MiB); an entry over it is refused.
+   * layer every HIT replays) is exempt. A document HIT is served only from an
+   * entry that holds a pin for every `ssr: false` loader its HTML baked, so
+   * over the cap no document shell is stored: documents render in full
+   * (MISS), and client navigations still replay the handler layer and run
+   * those loaders fresh. Reported once per key. Defaults to 8 MiB. The whole
+   * entry is bounded separately by the store's value limit (Cloudflare KV:
+   * 25 MiB); an entry over it is refused.
    */
   maxSnapshotBytes?: number;
   /**

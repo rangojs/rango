@@ -427,8 +427,8 @@ loader's settled pushes as authoritative (`HandleStore.pushRestored`) and
 drops the settled pushes a run of the loader makes there, so nothing needs
 the item records. The rule follows the pin, not the request: a document HIT
 and a navigation replay of an entry that kept its pins restore the same way,
-and an entry that lost them (the `maxSnapshotBytes` case below, a
-navigation-only entry) restores the pushes as placeholders the fresh run
+and a navigation-only entry (which the `maxSnapshotBytes` case below also
+stores) restores the pushes as placeholders the fresh run
 replaces (`docs/design/handle-push-ownership.md`).
 
 A capture without a doc record keeps its loader pins alone. Only a
@@ -513,10 +513,12 @@ records nothing else to drop, so its tail prints `records=` alone (it printed
 `maxSnapshotBytes` (the route's `ppr` option, default 8 MiB,
 `DEFAULT_PPR_MAX_SNAPSHOT_BYTES`) bounds only the pins: the loader-family
 records. The doc record is exempt,
-because without it a HIT cannot serve at all. Over the cap the pins are dropped
-and the entry keeps its doc record: HITs still replay the handler layer, and
-the bake-lane loaders run on the HIT instead (drift that hydration repairs
-client-side), with a once-per-key warning.
+because without it a HIT cannot serve at all. Over the cap the entry keeps
+the navigation half only, the doc record without the pins, and serves no
+document (dc-t89): a document HIT without a loader's pin would hydrate that
+loader's run over HTML rendered from the capture's value. Documents MISS,
+navigations replay the doc record, the key backs off, and the capture warns
+once per key.
 
 The whole entry has its own guard: prelude + postponed state + snapshot bytes
 against the store's value limit, `SegmentCacheStore.maxShellEntryBytes`

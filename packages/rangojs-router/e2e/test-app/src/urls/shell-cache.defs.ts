@@ -129,13 +129,10 @@ export const ShellHoleyDepLoader = createLoader(async (ctx) => {
 });
 
 // Snapshot SIZE-CAP fixture (issue #651): a default-profile cached value baked
-// into the shell above loading(). The route caps ppr.maxSnapshotBytes far below
-// any real snapshot, so EVERY capture skips the snapshot (over cap, once-per-key
-// warning) yet still stores the shell. A HIT's tail then re-reads this value
-// LIVE from the real store — the default profile's ttl outlasts the test, so
-// the un-pinned read returns the capture-time value and the page hydrates
-// without mismatch. (Drift after expiry is the documented trade, exercised
-// conceptually by the drift fixture above — not asserted here.)
+// into the shell above loading(), on a route with a tiny ppr.maxSnapshotBytes.
+// The cap bounds ssr: false loader pins only, and the route has none, so it
+// stores and serves its shell; the value is part of the handler layer the doc
+// record replays.
 let capStampExecutions = 0;
 
 export async function getCapStamp(ctx: HandlerContext): Promise<string> {

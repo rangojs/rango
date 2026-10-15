@@ -300,7 +300,7 @@ See "Rewrite" below for what moves and what stays.
     #1003).
   - Any other loader is a hole: one the route runs on the live lane, or an
     `ssr: false` loader the entry has no pin for (a navigation-only entry,
-    pins dropped by `maxSnapshotBytes`). Its pushes are restored through
+    which a capture over `maxSnapshotBytes` also stores). Its pushes are restored through
     `pushPlaceholder`, unclaimed. Its run replaces them in place
     (#936), even when a running pinned loader awaits it (a hole's body ends
     the search for an enclosing restored loader); a run that settles without
@@ -434,6 +434,20 @@ See "Rewrite" below for what moves and what stays.
     `serve-shell-request-push-ownership.rsc-test.tsx`,
     `handle-store.test.ts`, and `expectShellHitHydratesFromRecord` in both
     apps (#1035).
+  - **A document HIT holds a pin for every `ssr: false` loader its prelude
+    baked.** Loader data has no record copy: without its pin a loader runs on
+    the HIT and its value hydrates over HTML rendered from the capture's, and
+    React renders the document again on the client. So a capture whose pins
+    exceed `ppr.maxSnapshotBytes` stores the navigation half only (documents
+    MISS, the key backs off, navigations replay the doc record), a pin the
+    codec cannot encode fails the capture, and a pin that fails to decode on
+    a HIT retires the entry once that response is closed (backoff, then a
+    tombstone; no reload). A prerender-served capture over the cap stores the
+    tombstone, which also shadows a build shell. The one residual: a
+    hole-carrying pin whose HIT run rejects (dc-t91). Pinned by the "dc-t89"
+    group of `serve-shell-request-push-ownership.rsc-test.tsx`,
+    `shell-capture.test.ts` and `expectPinlessEntryServesDocumentMiss` in
+    both apps.
   - **A `useHandle` reader hydrates with the document's handle data, on
     every document.** "After hydration" above is after the ROOT hydrates.
     A reader in a boundary that hydrates later (a live loader's `loading()`,

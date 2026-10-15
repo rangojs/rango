@@ -40,6 +40,64 @@ function parityAliasPlugin(): Plugin {
   };
 }
 
+const RSC_RELOAD_EVENT = "rango-e2e:rsc-reload";
+const RSC_RELOAD_HOLD_MS = 2_000;
+
+/**
+ * e2e/dev-rsc-reload.test.ts (#1186), behind RANGO_E2E_RSC_RELOAD_PROBE=1.
+ * Serves src/rsc-reload-probe.ts so the first request after listening asks
+ * for the dep optimizer's reload (invalidateAll + full-reload) and resumes
+ * after the clear; the re-import's copy holds RSC_RELOAD_HOLD_MS, a slow
+ * re-created router.
+ */
+function rscReloadProbe(): Plugin | false {
+  if (process.env.RANGO_E2E_RSC_RELOAD_PROBE !== "1") return false;
+  const probe = path.resolve(__dirname, "src/rsc-reload-probe.ts");
+  const reloadCode = [
+    "if (import.meta.hot) {",
+    "  await new Promise((resolve) => {",
+    // The runner clears its modules right after these listeners return.
+    '    import.meta.hot.on("vite:beforeFullReload", () => setTimeout(resolve, 0));',
+    `    import.meta.hot.send(${JSON.stringify(RSC_RELOAD_EVENT)});`,
+    "  });",
+    "}",
+    "export {};",
+    "",
+  ].join("\n");
+  const holdCode = `await new Promise((resolve) => setTimeout(resolve, ${RSC_RELOAD_HOLD_MS}));\nexport {};\n`;
+  let armed = false;
+  let fired = false;
+  return {
+    name: "test-rsc-reload-probe",
+    apply: "serve",
+    configureServer(server) {
+      const rsc = server.environments.rsc;
+      // Before listening the hot channel drops the event, and the startup
+      // isolate is replaced before the first request.
+      server.httpServer?.once("listening", () => {
+        armed = true;
+        const mod = rsc.moduleGraph.getModuleById(probe);
+        if (mod) rsc.moduleGraph.invalidateModule(mod);
+      });
+      rsc.hot.on(RSC_RELOAD_EVENT, () => {
+        if (fired) return;
+        fired = true;
+        server.config.logger.info(
+          "[rango-e2e] rsc-reload-probe: full reload sent",
+        );
+        rsc.moduleGraph.invalidateAll();
+        rsc.hot.send({ type: "full-reload", path: "*" });
+      });
+    },
+    transform(_code, id) {
+      if (this.environment.name !== "rsc") return;
+      if (path.resolve(id.split("?", 1)[0]!) !== probe) return;
+      const code = fired ? holdCode : armed ? reloadCode : "export {};\n";
+      return { code, map: null };
+    },
+  };
+}
+
 export default defineConfig(({ isPreview }) => ({
   cacheDir: process.env.RANGO_E2E_VITE_CACHE_DIR ?? "node_modules/.vite",
   // Inline the render-timeout e2e flag at build/transform time. The worker runs
@@ -82,6 +140,7 @@ export default defineConfig(({ isPreview }) => ({
   },
   plugins: [
     parityAliasPlugin(),
+    rscReloadProbe(),
     // React Compiler via plugin-react's native option; compiles client components only.
     react({ compiler: true }),
     rango({

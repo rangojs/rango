@@ -222,8 +222,8 @@ produces is baked" below):
    running on the replay awaits it.
    A loader the route runs on the live lane is always a hole. An `ssr: false`
    loader is one exactly when the entry has no pin for it: a navigation-only
-   entry, an entry whose pins `maxSnapshotBytes` dropped, a pin that failed
-   to decode. A dependency the route registers on neither lane is credited
+   entry (since dc-t89 also what a capture over `maxSnapshotBytes` stores), a
+   pin that failed to decode (since dc-t89 that HIT retires the entry). A dependency the route registers on neither lane is credited
    at capture to the first registered loader around it: under a live-lane
    loader its pushes are that hole's and stay live; run only under a
    bake-lane loader, they are recorded under its own id, and stand while

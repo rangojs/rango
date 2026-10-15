@@ -373,6 +373,8 @@ import {
   WarmTrigger,
   bumpWarmGeneration,
 } from "./pages/prerender-warm.js";
+// Before the clientUrls() groups: see rsc-reload-probe.ts.
+import "./rsc-reload-probe.js";
 import mixedClientUrls from "./mixed-client/urls.js";
 import pureClientUrls from "./client-urls/urls.js";
 import { rewritePatterns } from "./pages/rewrite.js";
@@ -1569,8 +1571,9 @@ export const urlpatterns = urls(
           { name: "pprPushPinned", ppr: { ttl: 300, swr: 120 } },
           () => [loader(PprPushPinnedLoader, { ssr: false })],
         ),
-        // The same loader on an entry whose pins maxSnapshotBytes drops: the
-        // loader runs fresh on a HIT, so its run's push replaces the record's.
+        // The same loader over maxSnapshotBytes: the capture stores the
+        // navigation half only, so documents MISS and a navigation replays the
+        // handler layer with the loader run fresh (dc-t89).
         path(
           "/ppr-push/capped",
           PprPushPinnedPage,

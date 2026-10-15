@@ -899,9 +899,11 @@ missing).
 The first row is a document HIT, a navigation replay, a prefetch replay and
 the seeded fallback after an explicit route `cache()` miss, all alike. The
 second is every live-lane loader, and every loader of a record without
-pins: a shell entry that lost them (a navigation-only entry,
-`ppr.maxSnapshotBytes`), a route `cache()` record a capture wrote, and any
-record restored during a capture. Only a ppr route gets a delivery at all
+pins: a navigation-only shell entry (one a navigation captured, or one a
+capture over `ppr.maxSnapshotBytes` stored: dc-t89 serves documents no shell
+without every pin its HTML baked, so such an entry serves navigations only),
+a route `cache()` record a capture wrote, and any record restored during a
+capture. Only a ppr route gets a delivery at all
 (`isPprEntry`, in `withCacheLookup`): no other route's records hold a loader
 push, so they restore as a plain replay. Until #1001 and #1003 the request's type
 decided instead (`docTail` restored, a navigation replayed and claimed): a

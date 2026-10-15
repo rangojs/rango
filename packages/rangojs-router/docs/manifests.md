@@ -396,6 +396,79 @@ app imports it. Pinned by `tests/cloudflare-basic/e2e/dev-cold-start.test.ts`, t
 `isFileOutsideApp` tests in `src/vite/__tests__/route-watcher-scope.test.ts`, and the
 `isInSkippedScanDir` table in `src/build/__tests__/generate-route-types.test.ts`.
 
+### A request the reload split (why a dropped router hands its requests off)
+
+Skipping directories removed one reload nobody asked for. A cold dev start has another
+that no rango setting can avoid: Vite's dep optimizer finds an RSC dependency its scan
+missed, re-optimizes, and when the optimized files changed it ends with
+`moduleGraph.invalidateAll()` and `full-reload`, logged as
+`(rsc) optimized dependencies changed. reloading` (#1186). On a cold `node_modules/.vite` it
+lands during the first request, while that request is still evaluating the entry.
+
+That request's module chain then splits. What it imported before the clear stays in the old
+copy: `@rangojs/router`, the include helper, everything `urls.tsx` imported first. What it
+imports after the clear is a fresh copy: the clientUrls() groups imported later in
+`urls.tsx`, their `?rango-revalidate` modules with the `@rangojs/router/server` those import,
+the handler `router.fetch` lazy-imports on its first call, and the deps under their new
+`?v=` hash. The groups registered their hoisted `revalidate()` predicates in the fresh
+copy's registry, while the old `include()` materialized through the old one. The old copy
+never saw the key, so the page answered 500 with
+`clientUrls() revalidate() … has no server registration`. Every request after it ran on the
+fresh copy and worked.
+
+Moving the registry to `globalThis` only moves the 500 to the next error. We measured each
+step on cloudflare-basic, with the reload forced at the first request:
+
+1. With the registry moved, the request failed with
+   `getRequestContext() called outside of a request context`: the old copy's middleware
+   read the old `AsyncLocalStorage` while the fresh copy's handler ran in the new one.
+2. With that store moved too, it failed with
+   `Projected loader … was not found in the server loader registry`.
+3. With the loader store moved as well, `/` answered 200 but rendered the catch-all page:
+   the old matcher read a trie that the fresh copy had built.
+
+No set of stores can make that request consistent. After a real re-optimization, Vite's
+optimizer keeps the old `browserHash` only when no reload is needed (`commitProcessing` in
+its `optimizer.ts`). So the modules transformed after the reload import React under a new
+`?v=` hash, and the two halves of the request run two copies of React.
+
+So the request moves instead (`src/router/dev-reload-handoff.ts`). Every copy of that module
+listens for `vite:beforeFullReload` through `import.meta.hot`; once the event fires, its copy
+counts as dropped. `router.fetch` of a router a dropped copy created imports the router's
+`$$sourceFile` through the runner, then reads the fresh `RouterRegistry`, and calls that
+router's `fetch`, so the request runs once, on one module set. If the fresh module throws,
+that error becomes the request's error. This is the request-side twin of the discovery pass
+that `runnerReloadedSince` redoes. Both branches sit behind
+`process.env.NODE_ENV !== "production"`, which a build folds, so a worker bundle carries none
+of it.
+
+The import alone does not wait for the reload. While the runner's re-import of the entry is
+still evaluating the router's module, the runner hands this importer the unfinished module:
+the router's file is in the import call stack of the dropped copy (`cachedRequest` in Vite's
+`module-runner.js`). So when the fresh registry has no router under the id yet, the hand-off
+polls it every 20 ms for up to 10 s (`DEV_RECREATED_ROUTER_WAIT_MS`; cloudflare-basic's
+entry took about 5 s to re-evaluate after `invalidateAll`). A Node runner reaches that case.
+On Cloudflare we measured that the runner worker dispatches the split request's `fetch` only
+once the re-import has finished, 1 ms after the fresh entry finished evaluating, even with
+that re-import held for 8 s. So there the router is already registered.
+
+It does not catch everything. These cases still run on the split module set:
+
+- a reload that lands after the hand-off check, while the handler is already running;
+- a re-import that has not registered the router when the wait runs out;
+- a router built in a factory, since importing its `$$sourceFile` does not create it, so the
+  wait runs out;
+- `createHostRouter()` itself (its patterns and middleware); a `router.fetch` it dispatches
+  to still hands off.
+
+The discovery-probe check stays ahead of the hand-off, so a dropped router still answers
+probes with its own epoch without rendering. Pinned by
+`src/router/__tests__/dev-reload-handoff.test.ts`, by
+`src/router/__tests__/dev-reload-handoff-runner.test.ts` on a real Vite module runner whose
+re-import is still loading the router, and by `tests/cloudflare-basic/e2e/dev-rsc-reload.test.ts`.
+That e2e sends the optimizer's reload while a cold server's first request evaluates the entry,
+and holds the re-import for 2 s (`RANGO_E2E_RSC_RELOAD_PROBE`, `src/rsc-reload-probe.ts`).
+
 ## Runtime Storage
 
 Three tiers in `route-map-builder.ts`:

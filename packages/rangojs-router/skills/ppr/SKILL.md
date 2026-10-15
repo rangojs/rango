@@ -372,7 +372,8 @@ replay its eligible snapshot. In both cases `matchPartial()`:
 - runs live DSL loaders fresh with their normal `loading()` streaming
   behavior, and serves bake-lane loaders from the pins of a shell captured by a
   document request; a snapshot captured by a navigation alone carries no pins,
-  and its replay runs them fresh (see below);
+  nor does the navigation-only entry a capture over `ppr.maxSnapshotBytes`
+  stores, and their replay runs them fresh (see below);
 - keeps the existing prefetch key, source scope, and in-flight lock unchanged.
 
 This is deliberately invisible to the browser: the response is the same
@@ -382,8 +383,9 @@ snapshot is a shell a document request captured, as on a document HIT: a
 promise-free `ssr: false` loader is served from its pin without running
 (unless the capture marked it to run: see "On a shell HIT"), and one whose
 return holds promises runs with its baked parts overlaid. A snapshot captured
-by a navigation alone carries no pins, and its replay runs them fresh. Loaders
-without `ssr: false` stay live.
+by a navigation alone carries no pins, nor does an entry over
+`ppr.maxSnapshotBytes`, and its replay runs them fresh. Loaders without
+`ssr: false` stay live.
 
 A route's own `cache()` scope — including one inherited from an ancestor, the
 common app-wide storefront shape — COMPOSES with replay instead of disabling
@@ -924,7 +926,9 @@ by a navigation alone carries no pins, and its replay runs these loaders fresh.
   fill the holes — and the recorded baked paths are overlaid onto the fresh
   result, so the payload matches the prelude while the nested promises stream
   fresh. A fresh rejection skips the overlay and goes to the loader's error
-  boundary. Give it its own cache,
+  boundary: on a document HIT the payload then carries the error where the
+  HTML has the baked value, and React renders that part again on the client
+  (one hydration mismatch, the one known residual of a HIT). Give it its own cache,
   `loader(Def, { ssr: false }, () => [cache({ ttl })])`, so that run reads
   through the loader cache.
 
@@ -985,9 +989,12 @@ loader running on the replay awaits it. On a document HIT the page hydrates
 with the shell's copy and the hole's value takes its place after hydration
 ("Handles on a shell HIT" below). An
 `ssr: false` loader is served from the shell only while the entry holds its
-pin: a snapshot captured by a navigation alone carries none, and a shell over
-`ppr.maxSnapshotBytes` drops them. There the loader runs fresh, and its
-pushes are that run's, like its data.
+pin: a snapshot captured by a navigation alone carries none, and a capture
+over `ppr.maxSnapshotBytes` stores the navigation half only, without them.
+There a navigation runs the loader fresh, and its pushes are that run's, like
+its data. A document HIT is served only from an entry that holds a pin for
+every `ssr: false` loader its HTML baked, so a document never hydrates one
+loader's run over HTML rendered from the capture's value.
 
 A `Prerender` + `ppr` page follows the same table. Its handler layer comes
 from the prerendered payload, which never holds a loader push (loaders do not
@@ -997,8 +1004,9 @@ on its own, and a HIT restores them as above (#1057).
 A dependency the route does not register, which an `ssr: false` loader
 awaited at capture outside any live loader, is on neither lane: its settled
 pushes stay as the prelude rendered them, even where a live loader also
-awaits it, while its data is fresh. (They follow the run instead once the
-entry has lost a pin, because the loader that awaits it then runs.) To keep
+awaits it, while its data is fresh. (They follow the run instead when the
+replayed entry has no pin for the loader that awaits it, because that loader
+then runs.) To keep
 its pushes live, declare it as its own `loader()` on the route. A push the
 capture cannot record (one whose value, once settled, holds a promise) marks
 every loader record of the page to run: those bodies then still run on each
@@ -1035,12 +1043,11 @@ Four things follow, in this order of scope:
    inside the `loading()` or `<Suspense>` of a loader that pushes after an
    `await` hydrates clean.
 
-| On the HIT's request                                                                       | In the HIT's HTML      | The client                                        |
-| ------------------------------------------------------------------------------------------ | ---------------------- | ------------------------------------------------- |
-| a handler's push, a pinned `ssr: false` loader's push (`push(promise)` and `.defer()` too) | yes (the shell has it) | hydrates with it                                  |
-| a push by an `ssr: false` loader whose value holds a promise                               | no                     | gets it right after hydration                     |
-| a live-lane loader's push                                                                  | no                     | gets it right after hydration                     |
-| the run of an `ssr: false` loader the shell has no pin for                                 | the capture's push     | hydrates with the capture's, then shows the run's |
+| On the HIT's request                                                                       | In the HIT's HTML      | The client                    |
+| ------------------------------------------------------------------------------------------ | ---------------------- | ----------------------------- |
+| a handler's push, a pinned `ssr: false` loader's push (`push(promise)` and `.defer()` too) | yes (the shell has it) | hydrates with it              |
+| a push by an `ssr: false` loader whose value holds a promise                               | no                     | gets it right after hydration |
+| a live-lane loader's push                                                                  | no                     | gets it right after hydration |
 
 So a title an `ssr: false` loader pushes to `Meta`, promise or not, is in
 every HIT's `<head>`: a crawler and a link preview see it. It bakes with the
@@ -1408,13 +1415,13 @@ path(
 );
 ```
 
-| Field              | Default | Notes                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ttl`              | `300`   | shell freshness window in seconds (`ppr: true` uses the default)                                                                                                                                                                                                                                                                                                                                            |
-| `swr`              | —       | stale window: serve the stale shell + background recapture                                                                                                                                                                                                                                                                                                                                                  |
-| `tags`             | —       | operational tags UNIONED with the tags the capture collects — see "Invalidation" below                                                                                                                                                                                                                                                                                                                      |
-| `maxSnapshotBytes` | 8 MiB   | cap on the loader pins in the entry's snapshot (the bake-lane loader records). The recorded handler layer is exempt. Over the cap the pins are dropped and the shell is stored with its handler layer (warned once per key); bake-lane loaders then run on every replay and read the live store, their handle pushes come from that run like their data, and drift from the prelude is repaired client-side |
-| `captureTimeout`   | 15000ms | ONE capture deadline: the handler layer settling (promises it passes or pushes, async server components, loaders it awaits), bake-lane loaders, and the prerender; a capture that misses it stores nothing rather than a partial shell                                                                                                                                                                      |
+| Field              | Default | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ttl`              | `300`   | shell freshness window in seconds (`ppr: true` uses the default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `swr`              | —       | stale window: serve the stale shell + background recapture                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `tags`             | —       | operational tags UNIONED with the tags the capture collects — see "Invalidation" below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `maxSnapshotBytes` | 8 MiB   | cap on the loader pins in the entry's snapshot (the bake-lane loader records). The recorded handler layer is exempt. A document HIT is served only from an entry that holds a pin for every `ssr: false` loader its HTML baked, so over the cap no document shell is stored: the entry keeps the handler layer only, documents are a MISS (full SSR, no hydration error, no remount), client navigations still replay the handler layer and run the bake-lane loaders fresh, and the URL backs off like a refused capture. Warned once per key: "the document shell was not stored; raise maxSnapshotBytes or shrink the ssr: false data" |
+| `captureTimeout`   | 15000ms | ONE capture deadline: the handler layer settling (promises it passes or pushes, async server components, loaders it awaits), bake-lane loaders, and the prerender; a capture that misses it stores nothing rather than a partial shell                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 A shell never outlives the route `cache()` entry it was captured from: under
 a route `cache()`, the shell is fresh no longer than that entry is (at most

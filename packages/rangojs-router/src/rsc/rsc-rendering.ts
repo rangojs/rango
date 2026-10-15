@@ -56,6 +56,7 @@ import { buildFullPayload, payloadLocation } from "./full-payload.js";
 import {
   capShellWindow,
   lastStoredCaptureSeq,
+  markCaptureBackoff,
   scheduleShellCapture,
   resolveShellCaptureDebugSink,
   takeCaptureDebugEventForTiming,
@@ -1804,13 +1805,14 @@ async function isSettled(value: unknown): Promise<boolean> {
 }
 
 /**
- * Evict a shell whose doc record cannot be replayed. The store has no shell
- * delete, so the entry is overwritten with a tombstone: a navigationOnly
- * entry with no document half and no snapshot, which document serving
- * treats as a MISS (shellServePlan, the build shell included) and partial
- * replay as `no-segment-snapshot`. The recapture overwrites it with a sound
- * entry. Only for a broken entry: a snapshot read that was merely slow
- * (`snapshotFailure: "unavailable"`) leaves the entry alone.
+ * Evict a shell whose doc record cannot be replayed, or one with a loader pin
+ * that failed to decode. The store has no shell delete, so the entry is
+ * overwritten with a tombstone: a navigationOnly entry with no document half
+ * and no snapshot, which document serving treats as a MISS (shellServePlan,
+ * the build shell included) and partial replay as `no-segment-snapshot`. The
+ * recapture overwrites it with a sound entry. Only for a broken entry: a
+ * snapshot read that was merely slow (`snapshotFailure: "unavailable"`)
+ * leaves the entry alone.
  */
 async function degradeUnreplayableShell(
   descriptor: ShellCaptureDescriptor,
@@ -1878,6 +1880,21 @@ function serveShellHit(
   const tailT0 = tailTiming ? performance.now() : 0;
   const scheduleRecapture = (): void =>
     scheduleShellCapture(ctx, request, env, url, reqCtx, ssrModule, descriptor);
+  /** Report a broken entry, then tombstone and recapture it. Never throws. */
+  const retireEntry = async (reason: string): Promise<void> => {
+    reportCacheError(
+      new Error(`shell entry for "${descriptor.key}": ${reason}`),
+      "cache-read",
+      "[ShellServe] retire",
+    );
+    try {
+      await degradeUnreplayableShell(descriptor, entry, scheduleRecapture);
+    } catch (error) {
+      reportCacheError(error, "cache-write", "[ShellServe] retire");
+    }
+  };
+  /** The first loader pin of the entry that failed to decode (dc-t89). */
+  let undecodablePin: string | undefined;
 
   const createTailContext = (): RequestContext<any> => {
     const tailCtx: RequestContext<any> = Object.create(reqCtx);
@@ -2016,7 +2033,11 @@ function serveShellHit(
     const seedStart =
       INTERNAL_RANGO_DEBUG || tailTiming ? performance.now() : 0;
     const loaderSeed =
-      records.length > 0 ? await buildShellLoaderSeed(records) : undefined;
+      records.length > 0
+        ? await buildShellLoaderSeed(records, (key) => {
+            undecodablePin ??= key;
+          })
+        : undefined;
     if (tailTiming) {
       const seededAt = performance.now();
       tailTiming.seedMs = Math.round(seededAt - tailT0);
@@ -2179,10 +2200,8 @@ function serveShellHit(
           // snapshot read was only slow stays, and the next request reads it
           // again.
           if ((await document.snapshotFailure) !== "unavailable") {
-            await degradeUnreplayableShell(
-              descriptor,
-              entry,
-              scheduleRecapture,
+            await retireEntry(
+              "the doc record could not supply the handler layer",
             );
           }
           controller.enqueue(new TextEncoder().encode(shellReloadScript()));
@@ -2207,6 +2226,19 @@ function serveShellHit(
         }
         publishTailTiming(tailTiming, metricsStore, request, url);
         controller.error(error);
+        return;
+      }
+      // A pin that failed to decode left its loader to this request's run:
+      // this response hydrated once over a prelude rendered from the
+      // capture's value (dc-t89). Retire the entry once the response is
+      // closed, and back the key off so a pin that keeps failing costs one
+      // mismatch per window. No reload: that would cost a second page load.
+      if (undecodablePin !== undefined) {
+        const pin = undecodablePin;
+        markCaptureBackoff(descriptor.key);
+        reqCtx.waitUntil(() =>
+          retireEntry(`the loader pin "${pin}" failed to decode`),
+        );
       }
     },
   });
