@@ -426,7 +426,11 @@ server projection.
   data, `ctx.use(Handle)` pushes, and a thrown `notFound()`'s 404 status are
   deterministically in the SSR'd document instead of racing Response
   construction; unflagged siblings in the same segment keep streaming behind
-  `loading()`. Client navigations still stream (the flag never lands on
+  `loading()`. A thrown error with no `errorBoundary()` (and no
+  `defaultErrorBoundary`) renders the router's default error boundary
+  (`DefaultErrorFallback`) with a 500, as a handler error does, because the
+  document decodes the flagged loader while it builds the tree (dc-t92).
+  Client navigations still stream (the flag never lands on
   navigation-lane entries). A flagged loader calling `ctx.rendered()` (or the
   `ctx.get(handle)` read it gates) fails fast — that wait is a barrier cycle by
   construction. Shell-capture renders await flagged loaders too (the bake

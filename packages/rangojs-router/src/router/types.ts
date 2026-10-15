@@ -49,6 +49,8 @@ export interface SegmentResolutionDeps<TEnv = any> {
       isPartial?: boolean;
       requestStartTime?: number;
     },
+    /** An `ssr: false` loader on a document or capture render. */
+    useDefaultErrorBoundary?: boolean,
   ) => Promise<LoaderDataResult<T>>;
   trackHandler: <T>(
     promise: Promise<T>,

@@ -366,6 +366,7 @@ import { redirectLoopPatterns } from "./pages/redirect-loop.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { prefetchFalsePatterns } from "./pages/prefetch-false.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
+import { holeyThrowsPatterns } from "./pages/holey-throws.js";
 import {
   WarmCachedPage,
   WarmPersonalPage,
@@ -705,6 +706,8 @@ export const urlpatterns = urls(
   }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
+    // An ssr: false loader that throws with no errorBoundary() (dc-t92).
+    include("/", holeyThrowsPatterns, { name: "" }),
 
     // Test utils: read the onError log (non-destructive). Imports from
     // error-log.js (not router.js) so the read uses a static import and avoids

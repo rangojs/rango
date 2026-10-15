@@ -995,6 +995,15 @@ runs, so a `useLoader` in a layout above every Suspense boundary is safe. On a
 during the shell capture refuses the capture (warned once per key): that URL
 gets no shell, and its renders deliver the signal as above.
 
+A flagged loader that throws (anything but `notFound()` or `redirect()`) is
+resolved the same way: its route's `errorBoundary()` renders at the owning
+segment, else `createRouter({ defaultErrorBoundary })`, else the router's
+default error boundary (the "Internal Server Error" page) with a 500, as a
+handler that throws does; a declared `errorBoundary()` or
+`defaultErrorBoundary` answers 200 here. Layouts above it stay. On a `ppr` shell HIT whose
+run throws, the baked content shows first and the boundary replaces it at
+hydration, after React reports a hydration mismatch.
+
 Session/auth gates belong in middleware (they are request-shaped, not
 data-shaped, and middleware CAN emit a real pre-stream 302). Data-dependent
 "this slug moved / does not exist" belongs in the loader.

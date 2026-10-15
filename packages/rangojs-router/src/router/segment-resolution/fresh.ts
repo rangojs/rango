@@ -184,6 +184,7 @@ export async function resolveLoaders<TEnv>(
           segmentId,
           ctx.pathname,
           errorContext,
+          loaderEntry.awaitBeforeFlush,
         ),
         belongsToRoute,
       };
@@ -235,6 +236,7 @@ export async function resolveLoaders<TEnv>(
       segmentId,
       ctx.pathname,
       errorContext,
+      loaderEntry.awaitBeforeFlush,
     );
     return { wrapped, segmentId };
   });
