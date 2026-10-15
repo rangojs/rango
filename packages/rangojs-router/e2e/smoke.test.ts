@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { x } from "tinyexec";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
@@ -26,11 +29,56 @@ import { waitForHydration, expectNoPageError } from "./helper";
 
 const E2E_BASIC_ROOT = "./e2e/e2e-basic";
 
-// Build once for the entire file — both dev and production reuse it.
-// Dev mode doesn't need a build, but production does.
-test.beforeAll(async () => {
+/**
+ * The file-level beforeAll runs once PER WORKER, and the smoke project is
+ * fullyParallel with retries, so several workers (and every retry's fresh
+ * worker) reach it. Unguarded, each ran `vite build` in this directory, whose
+ * emptyOutDir wiped dist/ under another worker's `vite preview`: a preview
+ * starting mid-build exited with code 1 (dc-t81), and a running one lost its
+ * assets (waitForHydration timeout). One build per Playwright run: workers
+ * share the runner as parent, so process.ppid keys the lock and marker.
+ */
+async function buildOnce() {
   const cwd = path.resolve(E2E_BASIC_ROOT);
-  await x("pnpm", ["build"], { nodeOptions: { cwd } });
+  const key = createHash("sha1").update(`${cwd}:${process.ppid}`).digest("hex");
+  const lockDir = path.join(tmpdir(), `rango-smoke-build-${key}.lock`);
+  const doneFile = path.join(tmpdir(), `rango-smoke-build-${key}.done`);
+  const deadline = Date.now() + 300_000;
+
+  while (Date.now() < deadline) {
+    if (existsSync(doneFile)) {
+      const result = readFileSync(doneFile, "utf8");
+      if (result !== "ok") {
+        throw new Error(`Shared e2e-basic build failed:\n${result}`);
+      }
+      return;
+    }
+    try {
+      mkdirSync(lockDir);
+    } catch {
+      await new Promise((r) => setTimeout(r, 250));
+      continue;
+    }
+    let result = "ok";
+    try {
+      const out = await x("pnpm", ["build"], { nodeOptions: { cwd } });
+      if (out.exitCode !== 0) {
+        result = `exit ${out.exitCode}\n${out.stdout}\n${out.stderr}`.slice(
+          -4000,
+        );
+      }
+    } catch (error) {
+      result = String(error);
+    }
+    writeFileSync(doneFile, result);
+    if (result !== "ok") throw new Error(`e2e-basic build failed:\n${result}`);
+    return;
+  }
+  throw new Error("Timed out waiting for the shared e2e-basic build");
+}
+
+test.beforeAll(async () => {
+  await buildOnce();
 });
 
 // ============================================================================
