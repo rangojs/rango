@@ -1,5 +1,138 @@
 # Changelog
 
+## 0.26.0 (2026-10-15)
+
+### Breaking: an `ssr: false` loader's `push(promise)` and `.defer()` bake into the PPR shell ([#1182](https://github.com/rangojs/rango/issues/1182))
+
+Migration: a value that must stay per request on a `ppr` route comes from a
+loader without `ssr: false`. Nothing has to read it, so it needs no
+`loading()`:
+
+```ts
+// Before: per request on a HIT (after hydration).
+const Product = createLoader(async (ctx) => {
+  const product = await db.product(ctx.params.id);
+  ctx.use(Notes)(db.stockNote(product.id));
+  return { product };
+});
+
+// Now that push bakes with the shell. Keep it live from the live lane:
+const StockNote = createLoader(async (ctx) => {
+  ctx.use(Notes)(db.stockNote(ctx.params.id));
+  return null;
+});
+path("/product/:id", ProductPage, { name: "product", ppr: true }, () => [
+  loader(Product, { ssr: false }), // bakes: data and its title
+  loader(StockNote), // live lane: runs every request; on a HIT, after hydration
+]);
+```
+
+**Before.** A promise an `ssr: false` loader pushed to a handle on a `ppr`
+route was never in the shell. A document MISS had the value, but every shell
+HIT's HTML did not: a title pushed to `Meta` as a promise was missing for
+crawlers and link previews, and the HIT's own run of the loader set it after
+hydration, next to the data the shell had pinned from another run.
+
+```ts
+const Grid = createLoader(async (ctx) => {
+  const payload = await loadGrid();
+  ctx.use(Meta)(payload.seo.then((seo) => ({ title: seo.title })));
+  return payload.data;
+});
+// HIT HTML: <title>My Store</title> (the layout's), then the loader's after hydration.
+```
+
+**Now.** On a document request the values an `ssr: false` loader pushes, and
+those of the loaders it awaits, settled or promise, are resolved before the
+first flush, and a shell stores and serves exactly the values its capture's
+document rendered. A pushed promise is judged by the value it settles to, as
+`push(await promise)` would be: one that settles to a value holding a promise
+stays live. What an affected app sees:
+
+1. The value is in every HIT's HTML and hydration data: the `<title>` and
+   meta of the example above are in the shell.
+2. It is the capture's value for the shell's lifetime (TTL, then SWR), and
+   leaves with the shell (TTL, tags, `updateTag()`). An app that pushed a
+   promise to keep a value per request on a HIT, as the `/ppr` skill taught,
+   now sees it frozen; see the migration above.
+3. A pushed promise that rejects, or settles after `ppr.captureTimeout`,
+   refuses the capture and keeps the route on MISS, with a warning that names
+   the loader and the handle (`the promise the loader "…" pushed to the
+handle "…" rejected during capture`, or `… did not settle within
+ppr.captureTimeout`). Before, the shell was stored without the value. A
+   rejected push also no longer leaves an unhandled rejection at capture,
+   which ended a Node process that had no `unhandledRejection` handler.
+4. Fewer loader runs: a pinned loader's body no longer runs on every HIT and
+   on every navigation that replays the shell because of a promise push.
+5. Shells stored before the upgrade are not served after it. The upgrade
+   changes every router's build versions, which key its stored shells
+   ([#1034](https://github.com/rangojs/rango/issues/1034)), so each page is
+   captured again under the new rule. This release also removes the
+   `version` override, the one way to keep old shells across an upgrade
+   ([#1183](https://github.com/rangojs/rango/pull/1183)).
+
+| A ppr route's loader pushes                         | Shell HIT before                    | Shell HIT now                     |
+| --------------------------------------------------- | ----------------------------------- | --------------------------------- |
+| `ssr: false`, `push(promise)` or `.defer()`         | after hydration, from the HIT's run | in the HTML, the capture's value  |
+| `ssr: false`, a settled value                       | in the HTML                         | in the HTML (unchanged)           |
+| `ssr: false`, a value holding a promise             | after hydration                     | after hydration (unchanged)       |
+| `ssr: false`, a promise that rejects or is too slow | shell stored without it             | no shell: the route stays on MISS |
+| no `ssr: false` (the live lane), anything           | after hydration                     | after hydration (unchanged)       |
+| a handler, anything                                 | in the HTML                         | in the HTML (unchanged)           |
+
+Document MISSes, client navigations without a shell, routes without `ppr`
+and actions are unchanged: an action that re-runs the loader still replaces
+the baked value.
+
+### Breaking: the `version` override is removed from `createRouter`, `createRSCHandler`, `CFCacheStore` and `VercelCacheStore` ([#1183](https://github.com/rangojs/rango/pull/1183))
+
+Before: `version` pinned a router's or a store's cache keys, and a changed value cleared them.
+
+Now: the build versions are the only versions. Each router's cache is keyed by its own built code, so a deploy that does not change a router keeps its cache, and an upgrade, this one included, starts it fresh. `router.version` and the `version` field on `CreateRSCHandlerOptions` are gone with it. To clear a cache on demand, call `updateTag()` / `revalidateTag()`, or on Vercel keep a deployment-scoped `getCache({ namespace })`. `getCacheVersions()` (for custom stores) and `setBuildVersions` in `@rangojs/router/testing` are unchanged.
+
+Migration: delete the option.
+
+```ts
+// Before
+const router = createRouter({ id: "shop", version: "release-7" });
+const store = new CFCacheStore({ ctx, kv, version: "release-7" });
+
+// Now
+const router = createRouter({ id: "shop" });
+const store = new CFCacheStore({ ctx, kv });
+```
+
+A patched dependency (pnpm `patchedDependencies`) or a git dependency whose files change while its version stays the same is still not seen by the build versions; invalidate the affected tags when you deploy one.
+
+### Fixed: a page mounted through `include()` gets the `ssr: false` behavior of the layouts above it ([#1179](https://github.com/rangojs/rango/issues/1179))
+
+**Before.** `loader(Def, { ssr: false })` and `loading(fallback, { ssr: false })`
+on a layout lost their document-request behavior for a page that `include()`
+mounted under that layout. The same page declared directly under the layout
+was fine. With `ppr` on the included page, its shell was never stored when the
+layout's `ssr: false` loader was read outside `<Suspense>` (a store chrome
+calling `useLoader()`): every capture logged `produced no usable shell` and
+the page stayed on `x-rango-shell: MISS`. Without `ppr`, the document streamed
+the layout's `ssr: false` loader instead of awaiting it before the first flush,
+and rendered the layout's `ssr: false` fallback.
+
+```tsx
+urls(({ layout, loader, path, include }) => [
+  layout(StoreLayout, () => [
+    loader(ChromeLoader, { ssr: false }),
+    path("/direct", Page, { name: "direct", ppr: true }), // MISS, then HIT
+    include("/section", sectionUrls, { name: "section" }), // its ppr page: MISS on every request
+  ]),
+]);
+```
+
+**Now.** A page under `include()` gets what the same page declared directly
+under the layout gets: the layout's `ssr: false` loaders are awaited before the
+first flush and bake into a `ppr` shell, and its `ssr: false` fallback is left
+out of the document. A `clientUrls()` group, which only mounts through
+`include()`, gets the same. Client navigations are unchanged. Nothing to change
+in your code.
+
 ## 0.25.0 (2026-10-14)
 
 ### Breaking: a global-middleware rewrite of a server action or form post moves it to the target; `rewrite(...).disallowMutations()` keeps the old refusal

@@ -1,8 +1,12 @@
 import { Prerender } from "@rangojs/router";
 import { PprPushView } from "../components/PprPushView.js";
+import { PprPushActionButton } from "../components/PprPushActionButton.js";
 import {
   PprPushDeferredLoader,
   PprPushLiveLoader,
+  PprPushLiveValueLoader,
+  PprPushMetaAwaitedLoader,
+  PprPushMetaPromiseLoader,
   PprPushPinnedLoader,
   PprPushSettledLoader,
   PprPushSlowLoader,
@@ -65,6 +69,34 @@ export function PprPushPprSettledPage() {
   return (
     <main data-testid="ppr-push-ppr-settled-page">
       <PprPushView loader={PprPushSettledLoader} />
+    </main>
+  );
+}
+
+// #1182: the loader pushes the page title to Meta as a promise, or awaited.
+export function PprPushMetaPromisePage() {
+  return (
+    <main data-testid="ppr-push-meta-promise-page">
+      <PprPushView loader={PprPushMetaPromiseLoader} />
+      <PprPushActionButton />
+    </main>
+  );
+}
+
+export function PprPushMetaAwaitedPage() {
+  return (
+    <main data-testid="ppr-push-meta-awaited-page">
+      <PprPushView loader={PprPushMetaAwaitedLoader} />
+    </main>
+  );
+}
+
+// #1182: the view reads the live loader, so the handle reader renders inside
+// the route's loading() boundary; the note comes from the ssr: false loader.
+export function PprPushSuspendedPage() {
+  return (
+    <main data-testid="ppr-push-suspended-page">
+      <PprPushView loader={PprPushLiveValueLoader} />
     </main>
   );
 }

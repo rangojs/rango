@@ -532,27 +532,6 @@ export interface RangoOptions<TEnv = any> {
   nonce?: NonceProvider<TEnv>;
 
   /**
-   * Version override. When set, this exact value is used for both of the
-   * router's versions: it keys the router's cached data (segments, `"use
-   * cache"` values, loader data) and its stored HTML (PPR shells,
-   * document-cache responses), is sent in payload metadata, and is what the
-   * browser's `_rsc_v` is compared with (a mismatch reloads the tab).
-   *
-   * Leave it unset for the default: rango computes two versions per router at
-   * build time, a data version from the router's server code and a document
-   * version that also covers the client assets. The same code builds to the
-   * same versions, so a deploy that does not change this router keeps its
-   * cache. In dev both are a stamp bumped on every RSC module edit.
-   *
-   * Set it to clear this router's cache on demand (change the value), or to
-   * tie the cache to your own release id (a per-deploy value clears the cache
-   * on every deploy).
-   *
-   * @default the router's build versions
-   */
-  version?: string;
-
-  /**
    * TTL (in seconds) for the client-side in-memory prefetch cache.
    *
    * Controls how long prefetch responses are kept in the client-side

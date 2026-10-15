@@ -20,7 +20,7 @@ import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import { createRouter, notFound, urls } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 
-const router = createRouter({ id: "prefetch-cc-status", version: "v1" }).routes(
+const router = createRouter({ id: "prefetch-cc-status" }).routes(
   urls(({ path }) => [
     path("/", () => <p>home</p>, { name: "home" }),
     path("/ok", () => <p>ok</p>, { name: "ok" }),

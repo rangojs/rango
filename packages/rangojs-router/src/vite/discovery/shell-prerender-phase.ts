@@ -231,11 +231,7 @@ export async function runShellPrerenderPhase(
       for (const [routerId, routerInstance] of registry) {
         if (typeof routerInstance.match !== "function") continue;
         // The build's table always holds the whole-build pair.
-        const versions = resolveVersionsFrom(
-          versionsTable,
-          routerId,
-          routerInstance.version,
-        )!;
+        const versions = resolveVersionsFrom(versionsTable, routerId)!;
         try {
           const res = await captureMod.captureShellForBuild({
             router: routerInstance,

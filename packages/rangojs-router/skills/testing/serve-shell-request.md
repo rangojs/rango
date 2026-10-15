@@ -249,7 +249,7 @@ Vitest runs no Vite id transform, so give each router an explicit `id` when a te
 | `hydration` | What the document hydrates with (`metadata.handles`, read to its end before hydration starts). For a `partial` request, the last state it streamed. |
 | `late`      | The states that arrived on the late channel (`metadata.handlesLate`), in order. Each replaces the client's handle data after hydration. Often `[]`. |
 
-On a HIT the client hydrates with exactly what the shell was rendered from, so `hydration` is also what the shell's HTML holds, and whatever this request's loaders push, replace or drop is in `late` (see `/ppr`, "Handles on a shell HIT"):
+On a HIT the client hydrates with exactly what the shell was rendered from, so `hydration` is also what the shell's HTML holds (the handlers' pushes and the `ssr: false` loaders', a pushed promise resolved), and whatever this request's loaders push, replace or drop is in `late` (see `/ppr`, "Handles on a shell HIT"):
 
 ```ts
 // The handler pushed ctx.use(Notes)("from-handler"); a live loader pushes

@@ -189,7 +189,12 @@ export type LoaderFn<
  * deterministically precedes Response construction, where the streamed
  * default only wins that race opportunistically). Under ppr it is also the
  * BAKE lane: the loader executes at shell capture and its settled return is
- * shell material (nested promises stay live holes) — see the ppr docs.
+ * shell material (nested promises stay live holes), and so are its handle
+ * pushes, a pushed promise or `.defer()` included: the capture awaits it and
+ * every HIT serves the value it settled to (#1182). A pushed promise that
+ * rejects, or misses `ppr.captureTimeout`, keeps the route on MISS. A value
+ * that must stay per request belongs to a loader without `ssr: false` — see
+ * the ppr docs.
  *
  * Scoped per LOADER, not per segment: an `ssr: false` loader alongside a
  * deliberately streaming sibling awaits only itself, and the sibling keeps

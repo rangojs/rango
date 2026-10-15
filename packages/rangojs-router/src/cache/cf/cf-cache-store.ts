@@ -500,8 +500,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly namespace?: string;
   private readonly explicitBaseUrl?: string;
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
-  /** The `version` option: used for every versioned family when set. */
-  private readonly explicitVersion?: string;
   private readonly edgeLookupTimeoutMs: number;
   private readonly edgeReadTimeoutMs: number;
   private readonly kvReadTimeoutMs: number;
@@ -554,7 +552,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // the internal host. Only the explicit override can be captured eagerly.
     this.explicitBaseUrl = options.baseUrl;
     this.defaults = options.defaults;
-    this.explicitVersion = options.version;
     // Coalesce only finite numbers to the override; a non-finite value (NaN from
     // `Number(env.UNSET)`, or Infinity) would otherwise sail past `?? DEFAULT`
     // (which only replaces null/undefined) into setTimeout, where NaN/Infinity
@@ -1628,8 +1625,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // stamp). Carried on doc L1 entries for the herd guard; never serve them.
     headers.delete(CACHE_EXPIRES_AT_HEADER);
     headers.delete(CACHE_REVALIDATING_AT_HEADER);
-    // Finding #3 (read side): strip per-client signals a pre-fix or
-    // pinned-version L1 entry may carry. See the read-side note in the design doc.
+    // Finding #3 (read side): strip per-client signals a pre-fix L1 entry
+    // may carry. See the read-side note in the design doc.
     stripPerClientSignals(headers);
     return new Response(response.body, {
       status: response.status,
@@ -2952,7 +2949,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private keyToRequest(key: string, family: KeyVersion): Request {
     const encodedKey = encodeURIComponent(key);
     return new Request(
-      `${this.resolveBaseUrl()}${versionKeyPrefix(this.explicitVersion, family)}${encodedKey}`,
+      `${this.resolveBaseUrl()}${versionKeyPrefix(family)}${encodedKey}`,
       { method: "GET" },
     );
   }
@@ -2976,7 +2973,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * @internal
    */
   private async toKVKey(key: string, family: KeyVersion): Promise<string> {
-    const composed = `${versionKeyPrefix(this.explicitVersion, family)}${key}`;
+    const composed = `${versionKeyPrefix(family)}${key}`;
     if (kvKeyByteLength(composed) <= KV_MAX_KEY_BYTES) return composed;
     const prefix = truncateToBytes(composed, KV_KEY_PRESERVED_PREFIX_BYTES);
     return `${prefix}~${await kvKeyDigest(composed)}`;

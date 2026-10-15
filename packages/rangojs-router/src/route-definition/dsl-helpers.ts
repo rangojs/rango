@@ -9,6 +9,8 @@ import type {
   TransitionConfig,
 } from "../types.js";
 import {
+  applyDocumentModeLoading,
+  documentModeLoader,
   getContext,
   getNamePrefix,
   getReverseScope,
@@ -928,17 +930,14 @@ const loader: RouteHelpers<any, any>["loader"] = (
 
   const name = `${ctx.namespace}.$${store.getNextIndex("loader")}`;
 
-  // Create loader entry with empty revalidate array. awaitBeforeFlush is
-  // resolved here, at DSL-evaluation time, for the same reason
-  // loading({ ssr: false }) is (below) — per-isSSR entry caching makes the
-  // flag request-mode-correct with no isSSR threading; see LoaderEntry.
-  // `bake` is the lane, the same on both evaluations.
+  // Create loader entry with empty revalidate array. `bake` is the lane, the
+  // same on both evaluations; a document evaluation adds awaitBeforeFlush at
+  // the push (documentModeLoader) — per-isSSR entry caching makes the flag
+  // request-mode-correct with no isSSR threading; see LoaderEntry.
   const loaderEntry: LoaderEntry = {
     loader: loaderDef,
     revalidate: [] as ShouldRevalidateFn<any, any>[],
     ...(optionsGiven?.ssr === false && { bake: true as const }),
-    ...(optionsGiven?.ssr === false &&
-      ctx.isSSR && { awaitBeforeFlush: true as const }),
     ...(optionsGiven?.prefetch === false && { prefetch: false as const }),
     // The declaring layout's / parallel's / cache()'s scope. A route's (and
     // an intercept's) loaders have none: they resolve from the route's name,
@@ -978,7 +977,9 @@ const loader: RouteHelpers<any, any>["loader"] = (
     validateUseItems(result, name, "loader", "use");
   }
 
-  ctx.parent.loader.push(loaderEntry);
+  ctx.parent.loader.push(
+    ctx.isSSR ? documentModeLoader(loaderEntry) : loaderEntry,
+  );
   return { name, type: "loader" } as LoaderItem;
 };
 
@@ -1006,12 +1007,11 @@ const loading: RouteHelpers<any, any>["loading"] = (component, options) => {
   const resolved =
     typeof component === "function" ? (component as () => any)() : component;
 
-  // If ssr: false and we're in SSR, set loading to false
-  if (options?.ssr === false && ctx.isSSR) {
-    parent.loading = false;
-  } else {
-    parent.loading = resolved;
-  }
+  // `loadingSsr` records ssr: false on both evaluations; a document drops
+  // the fallback (applyDocumentModeLoading).
+  parent.loading = resolved;
+  parent.loadingSsr = options?.ssr === false ? false : undefined;
+  if (ctx.isSSR) applyDocumentModeLoading(parent);
 
   // The flag means "what this fallback covers": without a fallback to show
   // there is nothing to defer behind. Recorded from `resolved`, not

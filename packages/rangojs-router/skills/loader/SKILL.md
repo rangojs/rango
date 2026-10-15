@@ -668,12 +668,13 @@ rejects) skips the whole entry, as above. Entries written
 before handles were recorded replay none until they are rewritten (expiry or
 SWR revalidation).
 
-On a `ppr` route the shell keeps a copy of an `ssr: false` loader's settled
-pushes too. The two never disagree on the page: where a replay of the shell
-serves the loader's data from the shell, the shell's copy is the one shown
-and the entry only adds the deferred push the shell could not keep; where it
-does not (the loader runs or reads its entry), the entry's pushes take the
-shell copy's place, none if the entry recorded none. See `/ppr` → "On a shell
+On a `ppr` route the shell keeps a copy of an `ssr: false` loader's pushes
+too, a pushed promise resolved (#1182). The two never disagree on the page:
+where a replay of the shell serves the loader's data from the shell, the
+shell's copy is the one shown and the entry only adds a push whose value
+holds a promise, which the shell could not keep; where it does not (the
+loader runs or reads its entry), the entry's pushes take the shell copy's
+place, none if the entry recorded none. See `/ppr` → "Handles on a shell
 HIT".
 
 ### Cache Key
@@ -1040,9 +1041,9 @@ handler reserved with `.defer()` instead (`/breadcrumbs`, "Deferred content").
 
 Under `cache()`, loader pushes are not stored with the cached segments: the
 loader re-runs on every hit and its live push is the only copy. (`ppr` keeps
-the settled pushes of an `ssr: false` loader, and of the loaders it awaits, in
-the shell, and a promise-free `ssr: false` loader does not run on a shell HIT —
-see `/ppr`.)
+the pushes of an `ssr: false` loader, and of the loaders it awaits, in the
+shell, a pushed promise resolved, and a promise-free `ssr: false` loader does
+not run on a shell HIT — see `/ppr`.)
 
 Reads are the other direction and gated: `ctx.get(handle)` throws unless the
 loader first does `await ctx.rendered()` (DSL-registered loaders only —

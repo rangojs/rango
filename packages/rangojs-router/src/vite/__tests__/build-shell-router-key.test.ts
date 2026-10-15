@@ -11,8 +11,8 @@
  *   router is `router_0` in build discovery and in the built server.
  * - app B's createRouter() takes a literal and gets the injected `$$id`.
  *
- * Both routers run the same `version`, so only the manifest key keeps app A's
- * `/shelled` shell away from app B's own `/shelled` route.
+ * The manifest key keeps app A's `/shelled` shell away from app B's own
+ * `/shelled` route.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -45,7 +45,7 @@ const scenario: FixtureScenario = {
       `import { store } from "../../shared/store.js";`,
       `import { urlpatterns } from "./urls.js";`,
       ``,
-      `const options = { version: "one", cache: { store } };`,
+      `const options = { cache: { store } };`,
       `export const router = createRouter(options).routes(urlpatterns);`,
       ``,
     ].join("\n"),
@@ -68,7 +68,6 @@ const scenario: FixtureScenario = {
       `import { urlpatterns } from "./urls.js";`,
       ``,
       `export const router = createRouter({`,
-      `  version: "one",`,
       `  cache: { store },`,
       `}).routes(urlpatterns);`,
       ``,

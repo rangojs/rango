@@ -170,7 +170,6 @@ export function createRouter<TEnv = any>(
     $$routeNames: staticRouteNames,
     $$sourceFile: injectedSourceFile,
     nonce,
-    version,
     prefetchCacheTTL: prefetchCacheTTLOption,
     prefetchCacheSize: prefetchCacheSizeOption,
     prefetchConcurrency: prefetchConcurrencyOption,
@@ -771,7 +770,7 @@ export function createRouter<TEnv = any>(
   // handler's overlay read makes (resolvePrerenderVersion), so the keys agree.
   const prerenderTrigger = createPrerenderTrigger<TEnv, {}>({
     routerId,
-    resolveVersion: () => resolvePrerenderVersion(routerId, version),
+    resolveVersion: () => resolvePrerenderVersion(routerId),
     isDev: isDevEnvironment,
     isViteDevServer,
     ensureManifest: () => ensureRouterManifest(routerId),
@@ -803,7 +802,7 @@ export function createRouter<TEnv = any>(
         {},
         {
           ...prerenderDeps,
-          versions: resolveRouterVersions(routerId, version),
+          versions: resolveRouterVersions(routerId),
         },
         undefined,
         isPassthrough,
@@ -812,7 +811,7 @@ export function createRouter<TEnv = any>(
         true,
       ),
     // A warm goes through router.fetch's handler: the one createRouter's own
-    // cache, nonce and version configure. An entry that passes them to
+    // cache and nonce configure. An entry that passes them to
     // createRSCHandler itself is not what a warm runs.
     resolveCacheConfig: (env, ctx) =>
       typeof cache === "function" ? cache(env, ctx) : cache,
@@ -1222,9 +1221,6 @@ export function createRouter<TEnv = any>(
     // Expose nonce provider for fetch
     nonce,
 
-    // Expose version for fetch
-    version,
-
     // Expose urlpatterns for runtime manifest generation
     get urlpatterns() {
       return storedUrlPatterns ?? undefined;
@@ -1292,7 +1288,6 @@ export function createRouter<TEnv = any>(
             router: router as any,
             cache,
             nonce,
-            version,
           }) as (
             request: Request,
             input: RouterRequestInput<TEnv>,

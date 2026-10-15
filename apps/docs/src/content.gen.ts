@@ -2828,11 +2828,6 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 3,
-        "id": "version",
-        "text": "version"
-      },
-      {
-        "depth": 3,
         "id": "origincheck",
         "text": "originCheck"
       },

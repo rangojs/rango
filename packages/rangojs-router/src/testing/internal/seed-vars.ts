@@ -23,10 +23,10 @@ export interface StateCookieSeed {
    */
   routerId?: string;
   /**
-   * The app's version, as `createRouter({ version })` would set it: the
-   * rotated value's prefix (`{version}:{timestamp}`) and the version a cache
-   * store keys with. Defaults to `"0"` for the prefix (resolved inside
-   * createRequestContext) and to the build versions for the store.
+   * The app's version: the rotated value's prefix (`{version}:{timestamp}`)
+   * and the request's cache versions, which a store keys with. Defaults to
+   * `"0"` for the prefix (resolved inside createRequestContext) and to the
+   * build versions for the store.
    */
   version?: string;
 }

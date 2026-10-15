@@ -356,7 +356,7 @@ code, and stored HTML (PPR shells, document-cache responses) by the document
 version. A build whose router code changed cannot replay Flight containing an old
 component shape or dead client-chunk reference, and a rebuild of unchanged code
 keeps its cache. Tag invalidation markers carry no version, so `updateTag()`
-reaches entries of every version. The `version` option replaces both versions.
+reaches entries of every version.
 The browser's Rango state also includes the document version, rotating HTTP and
 in-memory prefetch cache identity on boot.
 

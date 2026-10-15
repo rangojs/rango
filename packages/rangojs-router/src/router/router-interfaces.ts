@@ -480,12 +480,6 @@ export interface RangoInternal<
   readonly nonce?: NonceProvider<TEnv>;
 
   /**
-   * The consumer-set version (createRouter({ version })), used for both of the
-   * router's versions. Undefined when the router uses its build versions.
-   */
-  readonly version?: string;
-
-  /**
    * URL patterns reference for build-time manifest generation
    */
   readonly urlpatterns?: UrlPatterns<TEnv, any>;

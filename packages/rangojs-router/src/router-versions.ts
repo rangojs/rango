@@ -33,24 +33,24 @@ export type RouterVersionsTable = Readonly<
 /** Table key of the whole-build versions. Not a legal `$$id` (8 hex chars). */
 export const DEFAULT_ROUTER_VERSIONS_KEY = "*";
 
-/** One value for both versions: a consumer-set `version`, or the dev stamp. */
+/**
+ * One value for both versions: the dev stamp, the version a build-time shell
+ * capture is asked for, or a test's seed.
+ */
 export function uniformVersions(version: string): RouterVersions {
   return { data: version, document: version };
 }
 
 /**
- * The versions a router serves with under `table`: a consumer-set `version`
- * for both; else the router's own entry; else the whole-build pair, for a
- * router the table does not list. `undefined` when there is no table (dev,
- * tests) or it has neither entry. One function for the request handler and
+ * The versions a router serves with under `table`: the router's own entry,
+ * else the whole-build pair, for a router the table does not list.
+ * `undefined` when there is no table (dev, tests) or it has neither entry. One function for the request handler and
  * the build's shell capture, which must stamp what the handler will check.
  */
 export function resolveVersionsFrom(
   table: RouterVersionsTable | undefined,
   routerId: string | undefined,
-  override: string | undefined,
 ): RouterVersions | undefined {
-  if (override !== undefined) return uniformVersions(override);
   if (!table) return undefined;
   const pair =
     (routerId !== undefined && Object.hasOwn(table, routerId)

@@ -1,7 +1,11 @@
 import { Prerender, urls } from "@rangojs/router";
 import {
+  ShellPushBakedNoteLoader,
   ShellPushDeferredLoader,
   ShellPushLiveLoader,
+  ShellPushLiveValueLoader,
+  ShellPushMetaAwaitedLoader,
+  ShellPushMetaPromiseLoader,
   SHELL_PUSH_SLOW_CAPTURE_TIMEOUT_MS,
   ShellPushPinnedLoader,
   ShellPushSettledLoader,
@@ -9,6 +13,7 @@ import {
   bumpShellPushGeneration,
 } from "./shell-push-ownership.defs.js";
 import { ShellPushView } from "../components/ShellPushView.js";
+import { ShellPushActionButton } from "../components/ShellPushActionButton.js";
 
 // Push-ownership fixture (e2e/shell-push-ownership.test.ts): a loader's data
 // and the handle values it pushed come from one run on every replay of a
@@ -45,6 +50,34 @@ function ShellPushLivePage() {
   return (
     <main data-testid="shell-push-live-page">
       <ShellPushView loader={ShellPushLiveLoader} />
+    </main>
+  );
+}
+
+// #1182: the loader pushes the page title to Meta as a promise, or awaited.
+function ShellPushMetaPromisePage() {
+  return (
+    <main data-testid="shell-push-meta-promise-page">
+      <ShellPushView loader={ShellPushMetaPromiseLoader} />
+      <ShellPushActionButton />
+    </main>
+  );
+}
+
+// #1182: the view reads the live loader, so the handle reader renders inside
+// the route's loading() boundary; the note comes from the ssr: false loader.
+function ShellPushSuspendedPage() {
+  return (
+    <main data-testid="shell-push-suspended-page">
+      <ShellPushView loader={ShellPushLiveValueLoader} />
+    </main>
+  );
+}
+
+function ShellPushMetaAwaitedPage() {
+  return (
+    <main data-testid="shell-push-meta-awaited-page">
+      <ShellPushView loader={ShellPushMetaAwaitedLoader} />
     </main>
   );
 }
@@ -105,8 +138,8 @@ export const shellPushOwnershipPatterns = urls(
         ]),
       ],
     ),
-    // The deferred push settles after ppr.captureTimeout: the record leaves
-    // it out, so the capture does not wait for it.
+    // The deferred push settles after ppr.captureTimeout: the capture waits
+    // for it under its deadline and refuses (#1182).
     path(
       "/shell-push/slow",
       ShellPushSlowPage,
@@ -152,6 +185,32 @@ export const shellPushOwnershipPatterns = urls(
       ShellPushPreDeferredPage,
       { name: "shellPushPreDeferred", ppr: { ttl: 300, swr: 120 } },
       () => [loader(ShellPushDeferredLoader, { ssr: false })],
+    ),
+    // #1182: an ssr: false loader's title, pushed to Meta as a promise and
+    // awaited (the control).
+    path(
+      "/shell-push/meta-promise",
+      ShellPushMetaPromisePage,
+      { name: "shellPushMetaPromise", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellPushMetaPromiseLoader, { ssr: false })],
+    ),
+    path(
+      "/shell-push/meta-awaited",
+      ShellPushMetaAwaitedPage,
+      { name: "shellPushMetaAwaited", ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellPushMetaAwaitedLoader, { ssr: false })],
+    ),
+    // #1182: an ssr: false loader's promise push, read inside a live
+    // loader's loading() boundary.
+    path(
+      "/shell-push/suspended",
+      ShellPushSuspendedPage,
+      { name: "shellPushSuspended", ppr: { ttl: 300, swr: 120 } },
+      () => [
+        loader(ShellPushBakedNoteLoader, { ssr: false }),
+        loader(ShellPushLiveValueLoader),
+        loading(<p data-testid="push-loading">Loading value...</p>),
+      ],
     ),
     // Test-only: moves the fixture's generation for one ?probe= on.
     path.json(

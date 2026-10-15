@@ -1405,11 +1405,11 @@ describe("serveShellRequest: a hole never reads the shell snapshot", () => {
     expect(hit.flight).not.toContain("stamp@g1");
   });
 
-  it("a deferred push by a runs: 1 loader reaches the HIT when the loader's own cache() entry hits", async () => {
+  it("a deferred push by a loader whose cache() misses at capture bakes into the shell: its pin asks for no run, and the HIT delivers each push once", async () => {
     const cacheStore = new MemorySegmentCacheStore();
     const { serve } = setup({ cacheStore });
     // The loader's own cache() misses at capture, so its body runs there
-    // and its deferred push stays out of the record.
+    // and the record keeps its deferred push, resolved (#1182).
     const getItem = cacheStore.getItem.bind(cacheStore);
     const loaderMiss = vi
       .spyOn(cacheStore, "getItem")
@@ -1422,15 +1422,13 @@ describe("serveShellRequest: a hole never reads the shell snapshot", () => {
     const captured = deferredOwnedRuns.body;
     const entry = await miss.readEntry();
     const pin = entry?.snapshot?.find((r) => r.family === "loader");
-    expect(pin?.value).toMatchObject({ holes: 0, runs: 1 });
+    expect(pin?.value).toMatchObject({ holes: 0, runs: 0 });
 
     const hit = await serve("/deferred-owned");
 
     expect(hit.shellStatus).toBe("HIT");
     expect(hit.prelude).toContain(`settled-note-${captured}`);
-    // The shell is rendered from what its record keeps (#1035).
-    expect(hit.prelude).not.toContain(`deferred-note-${captured}`);
-    // The loader's cache() entry hit on the HIT: its body did not run.
+    expect(hit.prelude).toContain(`deferred-note-${captured}`);
     expect(deferredOwnedRuns.body).toBe(captured);
     expect((await shownHandles(hit)).match(/settled-note-\d+/g)).toEqual([
       `settled-note-${captured}`,

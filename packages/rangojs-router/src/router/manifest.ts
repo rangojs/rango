@@ -3,6 +3,7 @@ import { createRouteHelpers } from "../route-definition";
 import {
   getContext,
   runWithPrefixes,
+  getDocumentModeEntry,
   getIsolatedLazyParent,
   type EntryData,
   type MetricsStore,
@@ -120,12 +121,18 @@ export async function loadManifest(
       mountIndex !== undefined ? `#router.M${mountIndex}` : "#router";
 
     // For lazy entries, use the captured parent from include() context
-    // This ensures routes are registered under the correct layout hierarchy
+    // This ensures routes are registered under the correct layout hierarchy.
+    // The captured chain comes from an evaluation without isSSR: a document
+    // request takes its document-mode copy (getDocumentModeEntry, #1179).
     const lazyContext =
       entry.lazy && entry.lazyPatterns ? entry.lazyContext : null;
+    const capturedParent =
+      (lazyContext?.parent as EntryData | null | undefined) ?? Store.parent;
     const parentForContext = lazyContext
       ? getIsolatedLazyParent(
-          (lazyContext.parent as EntryData | null) ?? Store.parent,
+          isSSR && capturedParent
+            ? getDocumentModeEntry(capturedParent)
+            : capturedParent,
         )
       : Store.parent;
 

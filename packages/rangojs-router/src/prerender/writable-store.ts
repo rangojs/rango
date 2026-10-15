@@ -22,9 +22,8 @@ import { paramsEqual } from "../router/params-util.js";
 export interface PrerenderKey {
   routerId: string;
   /**
-   * The owning router's cache version (its data version, or
-   * `createRouter({ version })`). Opaque: never set or read by app code; a
-   * store keys off it as given.
+   * The owning router's cache version (its data version). Opaque: never set
+   * or read by app code; a store keys off it as given.
    */
   version: string;
   routeName: string;

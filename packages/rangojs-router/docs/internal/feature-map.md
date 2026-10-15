@@ -374,7 +374,7 @@ Public API (`Rango` interface):
   Per-Link `prefetch` wins over the router default unless an ancestor scope
   disables the entire subtree.
 - Named cache profiles via `cacheProfiles`, nonce provider, version tracking
-- Per-router cache versions: `vite build` computes a data version and a document version per `createRouter()` from its built code, so a deploy that does not change a router keeps its cache (`createRouter({ version })` overrides both; `rango({ encryptionKey })` keeps routers with inline-action bound arguments stable). See `docs/design/per-app-cache-version.md`.
+- Per-router cache versions: `vite build` computes a data version and a document version per `createRouter()` from its built code, so a deploy that does not change a router keeps its cache (there is no consumer override; `rango({ encryptionKey })` keeps routers with inline-action bound arguments stable). See `docs/design/per-app-cache-version.md`.
 - Request timeouts via `timeout`/`timeouts`/`onTimeout` options
 - `basename` for sub-path deployments — auto-prefixes all routes, `reverse()`, `Link`, `redirect()`, `router.use()` patterns, and `useRouter()` navigation. `href()` is intentionally not basename-aware (raw path helper).
 

@@ -125,7 +125,6 @@ describe.each(FAMILIES)(
         ctx: ctx as any,
         kv: new MockKV() as any,
         baseUrl: "https://test.internal/",
-        version: "v1",
       });
     }
 

@@ -25,33 +25,24 @@ let table: RouterVersionsTable | undefined = ROUTER_VERSIONS;
 /**
  * The versions a router serves with, in order:
  *
- * 1. `override`, a consumer-set `version` (createRouter or createRSCHandler):
- *    that exact value for both.
- * 2. The router's entry in the build table, else the whole-build entry.
- * 3. `VERSION` for both: the dev stamp, bumped on every RSC module edit.
+ * 1. The router's entry in the build table, else the whole-build entry.
+ * 2. `VERSION` for both: the dev stamp, bumped on every RSC module edit.
  */
 export function resolveRouterVersions(
   routerId: string | undefined,
-  override?: string,
 ): RouterVersions {
-  return (
-    resolveVersionsFrom(table, routerId, override) ?? uniformVersions(VERSION)
-  );
+  return resolveVersionsFrom(table, routerId) ?? uniformVersions(VERSION);
 }
 
 /**
  * The version an on-demand prerender overlay key carries: the router's data
  * version, because the overlay stores segment data, as the segment cache does
  * (a client-only deploy keeps both). The write side (`router.prerender`,
- * router.ts) and the read side (rsc/handler.ts) both call this with
- * `createRouter({ version })`, the only override the trigger can see, so they
- * cannot disagree; a `createRSCHandler({ version })` does not move it.
+ * router.ts) and the read side (rsc/handler.ts) both call this, so they
+ * cannot disagree.
  */
-export function resolvePrerenderVersion(
-  routerId: string | undefined,
-  routerVersion: string | undefined,
-): string {
-  return resolveRouterVersions(routerId, routerVersion).data;
+export function resolvePrerenderVersion(routerId: string | undefined): string {
+  return resolveRouterVersions(routerId).data;
 }
 
 /** The table gives some router a pair of its own. */
@@ -104,16 +95,13 @@ export type KeyVersion = keyof RouterVersions | null;
 
 /**
  * The `v/{version}/` prefix of a persistent store key, or "" for an
- * unversioned one. A store-level `version` is used for every versioned kind;
- * otherwise the version is the serving router's, read per operation because
- * the cache factory builds the store before the request context exists.
+ * unversioned one. The version is the serving router's, read per operation
+ * because the cache factory builds the store before the request context
+ * exists.
  */
-export function versionKeyPrefix(
-  storeVersion: string | undefined,
-  kind: KeyVersion,
-): string {
+export function versionKeyPrefix(kind: KeyVersion): string {
   if (kind === null) return "";
-  const version = storeVersion ?? getCacheVersions()[kind];
+  const version = getCacheVersions()[kind];
   return version ? `v/${version}/` : "";
 }
 

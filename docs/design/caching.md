@@ -444,8 +444,7 @@ Either way two routers on one cache store build the same host-and-path key.
 The only thing between them used to be the version, and how that failed
 depends on the versions and on the store:
 
-- **Equal versions** (a dev server gives every router one stamp; so does one
-  `version` set on both routers or on the store). The two keys are one string
+- **Equal versions** (a dev server gives every router one stamp). The two keys are one string
   on every store. Router B's request was a HIT with router A's shell, and B
   read A's `cache()` record, document-cache response, response-route entry,
   cached loader value and `ctx`-keyed `"use cache"` value.
@@ -551,8 +550,7 @@ that request was a miss before as well.
 
 What the change costs once: the stored keys changed. An app on build-computed
 versions loses nothing extra, because a router upgrade already changes every
-cache version. An app that pins `version`, and a custom store that ignores
-versions, recapture shells and refill the keyed entries once.
+cache version. A custom store that ignores versions, recaptures shells and refill the keyed entries once.
 
 ### Versions: which build may read an entry
 
@@ -588,14 +586,13 @@ versions, and each family uses the one that describes what it holds:
 A store reads its versions per operation from the request context
 (`getCacheVersions()` in `src/server/build-version-table.ts`), not in its
 constructor: the cache factory builds the store before the request context
-exists and without knowing which router is serving. A store-level `version`
-option, or `createRouter({ version })`, replaces both with one value.
+exists and without knowing which router is serving.
 `MemorySegmentCacheStore` has no version; the process is its scope.
 
 One consequence worth knowing when you change what a stored entry looks like:
 rango's own source is part of every router's server code, so a rango upgrade
 changes every data version, and a new release never reads an entry an older
-one wrote (unless the consumer pinned `version`).
+one wrote.
 
 How the versions are computed, and what does and does not change them:
 [per-app-cache-version.md](./per-app-cache-version.md).
@@ -887,10 +884,10 @@ loader id, so both look a loader up the same way). `CacheScope` hands the
 same function to the store (`HandleStore.setRecordAuthority`), with or
 without a handles blob in the record:
 
-| The request serves the loader from                                         | Authority | Its copy in the record is                                                                                                                                                                                                              |
-| -------------------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| the pin stored with this record (a shell replay that kept its loader pins) | `"pin"`   | restored (`HandleStore.pushRestored`): it stands. A run of the loader on the replay reads the store, so its settled pushes, anywhere inside its body, are dropped, with or without a copy in the record; its thenable pushes are added |
-| anything else: a run, or the loader's own `cache()` entry                  | `"hole"`  | a placeholder (`pushPlaceholder`, unclaimed): the run's pushes replace it, a run that makes none drops it, and the loader's entry delivers its recorded pushes in its place                                                            |
+| The request serves the loader from                                         | Authority | Its copy in the record is                                                                                                                                                                                                                                                                                             |
+| -------------------------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the pin stored with this record (a shell replay that kept its loader pins) | `"pin"`   | restored (`HandleStore.pushRestored`): it stands. A run of the loader on the replay reads the store, so its pushes that settle thenable-free, anywhere inside its body, are dropped, with or without a copy in the record; a pushed promise is judged once it settles (#1182); the pushes holding a promise are added |
+| anything else: a run, or the loader's own `cache()` entry                  | `"hole"`  | a placeholder (`pushPlaceholder`, unclaimed): the run's pushes replace it, a run that makes none drops it, and the loader's entry delivers its recorded pushes in its place                                                                                                                                           |
 
 Two more answers cover what the record cannot say. `"copies"`: the copies
 stand and nothing is claimed about the loader's other pushes (a pin stored
@@ -927,7 +924,9 @@ as a plain replay (see `docs/design/shell-fast-path.md`).
 
 A bake-lane loader that runs on a HIT (a promise-carrying one, or every
 promise-free one on a page whose capture saw a loader push it could not
-record, since `runs` is capture-wide) reads the real store for its
+record, since `runs` is capture-wide: one whose value, once settled, holds a
+promise; a pushed promise that settles thenable-free is recorded, #1182)
+reads the real store for its
 `"use cache"` and `cache()` values, not the snapshot: on `CFCacheStore` that
 is a Cache API or KV read per HIT, and a stale entry can start a background
 refresh.
@@ -1145,10 +1144,10 @@ and the store only holds it, so the mark needs no change to the store
 contract. A keyed dependency that read no identity carries no mark. Entries
 written before the mark existed carry none: on a store whose keys survived
 that upgrade (at the time, `VercelCacheStore` without `version`, or a pinned
-`version`; today only a pinned `version`, see "Versions" above), an unkeyed
-loader reading such an entry on a HIT or stale hit fills without error until
-the entry is rewritten (its refresh stores the mark), so the upgrade note says
-to bump `version` or `updateTag()` the affected tags.
+`version`; the override has since been removed, see "Versions" above), an
+unkeyed loader reading such an entry on a HIT or stale hit fills without error
+until the entry is rewritten (its refresh stores the mark), so the upgrade note
+said to `updateTag()` the affected tags.
 
 On a foreground MISS with a declared key, the read also marks this loader's
 own value set, as its readers see it: when another loader made the read, the
@@ -1714,7 +1713,7 @@ scope of a document HIT tail used to pin the shell entry's `docKey` through a
 The cost was one change of stored key strings. When it shipped, `CFCacheStore`
 keyed every family under a per-build version and shells were gated on
 `buildVersion`, so that deploy was cold anyway; `MemorySegmentCacheStore` is
-cold after a restart. Only `VercelCacheStore` without `version` saw a one-time
+cold after a restart. Only `VercelCacheStore` without a version saw a one-time
 miss for existing keyed entries. (Stores now key by per-router code versions,
 and a rango upgrade changes those too: see "Versions" above.)
 

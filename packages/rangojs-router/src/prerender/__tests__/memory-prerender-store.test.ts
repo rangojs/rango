@@ -302,8 +302,7 @@ describe("createMemoryPrerenderStore", () => {
 /**
  * isStoredEntryValidFor as it was before the removed marker existed, frozen
  * here. A deploy rolled back to that router reads the markers the newer one
- * wrote when the key version did not move (an app that pins
- * `createRouter({ version })`): it must reject them, so the request is a miss
+ * wrote when the key version did not move (a rollback to a build with the same router code): it must reject them, so the request is a miss
  * and never an empty page. Do not update this copy with the validator.
  */
 function validatorBeforeTheRemovedMarker(

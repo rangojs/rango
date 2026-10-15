@@ -94,10 +94,9 @@ describe("VercelCacheStore per-router versions", () => {
     cache: VercelRuntimeCache,
     versions: RouterVersions | undefined,
     fn: (store: VercelCacheStore) => Promise<T>,
-    options: { version?: string } = {},
   ): Promise<T> {
     // A store per request, as the cache factory builds it.
-    const store = new VercelCacheStore({ cache, ...options });
+    const store = new VercelCacheStore({ cache });
     const ctx = createRequestContext({
       env: {},
       request: new Request("https://example.com/"),
@@ -150,20 +149,6 @@ describe("VercelCacheStore per-router versions", () => {
       expect(expired).toEqual([["products"]]);
       // expireTag reached the entry by its tag, whatever version keyed it.
       expect(stored.has("v/dataA/rg:s:k")).toBe(false);
-    });
-
-    it("uses a store-level version for every versioned family", async () => {
-      const { cache, keys } = makeFakeCache();
-      await request(
-        cache,
-        A1,
-        async (store) => {
-          await store.set("k", segment(), 60, 300);
-          await store.putResponse("/page", new Response("x"), 60);
-        },
-        { version: "pinned" },
-      );
-      expect(keys().sort()).toEqual(["v/pinned/rg:r:/page", "v/pinned/rg:s:k"]);
     });
 
     it("keys unversioned when the router's versions are empty (tests, the stub)", async () => {

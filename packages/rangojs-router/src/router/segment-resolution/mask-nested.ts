@@ -125,9 +125,11 @@ function someNestedThenable(
 /**
  * True when `value` is a thenable or holds one where the capture's loader
  * push funnel masks it (maskNestedContainerThenables): through plain data
- * objects, arrays and React element props. Such a push stays out of a shell's
- * record and reaches a HIT only from a run of its loader there, so a HIT
- * keeps it; a push without one is the record's (HandleStore.pushRestored).
+ * objects, arrays and React element props. A settled push that holds one
+ * stays out of a shell's record and reaches a HIT only from a run of its
+ * loader there, so a HIT keeps it; a push without one is the record's
+ * (HandleStore.pushRestored). A top-level thenable is judged by the value it
+ * settles to, on both sides (#1182).
  */
 export function holdsThenable(value: unknown): boolean {
   return someNestedThenable(value, () => true);

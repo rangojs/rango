@@ -508,6 +508,11 @@ function refuse(
   return "refused";
 }
 
+/** A bake-lane loader's promise push, as a refusal names it. */
+function describeLoaderPromisePush(push: LoaderPromisePush): string {
+  return `the promise the loader "${push.loaderId}" pushed to the handle "${push.handleName}"`;
+}
+
 /** The no-shell cause for handler output that missed the capture deadline. */
 const HANDLER_OUTPUT_TIMEOUT_REASON: string =
   "the handler output (a promise it passes or pushes, or an async server " +
@@ -1667,8 +1672,9 @@ export type CaptureRecordOutcome =
  * component showed one value in the prelude and another on every HIT.
  *
  * Order, all bounded by the one capture deadline (`ppr.captureTimeout`):
- * top-level handle promises, the handler pushes' nested promises, and the
- * bake-lane loader containers settle first (the record encodes the handles
+ * top-level handle promises (a bake-lane loader's pushed promises among
+ * them, #1182), the handler pushes' nested promises, and the bake-lane
+ * loader containers settle first (the record encodes the handles
  * a HIT restores, and its handle encode has its own 5s timeout that must
  * never be the one that fires); then the capture's onResponse callbacks fire
  * with a synthetic 200 (the implicit doc scope's cacheRoute, an explicit
@@ -1711,7 +1717,33 @@ export async function settleCaptureRecord(
   if (!settled.done) {
     if (refuseOnCaptureGuard(capture.key, derivedCtx))
       return { kind: "refused", refusal: guardRefusal(derivedCtx) };
-    return { kind: "timeout", reason: HANDLER_OUTPUT_TIMEOUT_REASON };
+    const pending = derivation.loaderPromisePushes.find(
+      (p) => p.state === "pending",
+    );
+    return {
+      kind: "timeout",
+      reason: pending
+        ? `${describeLoaderPromisePush(pending)} did not settle within ppr.captureTimeout`
+        : HANDLER_OUTPUT_TIMEOUT_REASON,
+    };
+  }
+  // A rejected value must not bake, and the record's encode would fail on
+  // it anyway: refuse before the write starts. A guard trip in that promise
+  // names the read instead.
+  const rejected = derivation.loaderPromisePushes.find(
+    (p) => p.state === "rejected",
+  );
+  if (rejected) {
+    if (refuseOnCaptureGuard(capture.key, derivedCtx))
+      return { kind: "refused", refusal: guardRefusal(derivedCtx) };
+    warnCaptureRefusedOnce(
+      capture.key,
+      `${describeLoaderPromisePush(rejected)} rejected during capture; a ` +
+        "failed value must not bake into the shared shell. Catch it and push " +
+        "a fallback, or push it from a loader without ssr: false.",
+      PPR_LANE_HINT,
+    );
+    return { kind: "refused", refusal: "loader" };
   }
 
   const callbacks = derivedCtx._onResponseCallbacks?.splice(0) ?? [];
@@ -2006,6 +2038,20 @@ export interface CaptureContextDerivation {
    * record encodes its handles, so that encode never races a pending value.
    */
   handlerPushesSettled: () => Promise<void>;
+  /**
+   * Every promise a bake-lane loader body pushed (#1182), in push order.
+   * The record-first step waits for them (they are in the recorded cut) and
+   * names the loader and the handle of one that rejects or misses the
+   * deadline.
+   */
+  loaderPromisePushes: readonly LoaderPromisePush[];
+}
+
+/** A promise a bake-lane loader pushed at capture, owned by that loader. */
+export interface LoaderPromisePush {
+  loaderId: string;
+  handleName: string;
+  state: "pending" | "fulfilled" | "rejected";
 }
 
 /**
@@ -2041,30 +2087,35 @@ export function deriveShellCaptureContext(
   //    masked), their pushes are in the captured HTML (<head> title/meta,
   //    useHandle echoes), and a HIT does not run a promise-free bake-lane
   //    loader (loader-cache.ts), so the stored record carries them: each
-  //    settled, thenable-free push from a loader body keeps that loader as
-  //    `owner` (HandleStore.push), the record stores it
+  //    push from a loader body whose value, once settled, is thenable-free
+  //    keeps that loader as `owner` (HandleStore.push), the record stores it
   //    (CachedEntryData.handleOwners), and a replay that serves the loader
-  //    from its pin restores it through pushRestored (restoreHandles). Those
-  //    copies stand: a promise-carrying bake-lane loader that runs on the
-  //    replay reads the store, so its settled pushes (and those replayed
-  //    inside its body) are dropped and only its thenable ones are added. A
-  //    loader the replay does not serve from a pin is a hole: one the route
-  //    also runs on the live lane, or one whose pin the entry lost. Its run
-  //    replaces its copies (pushPlaceholder, #936), those of the
-  //    dependencies it awaits included (they are credited to it). Nested
-  //    thenables stay masked (the promise shape is the liveness
-  //    declaration, mask-nested.ts). A deferred (thenable) push,
-  //    one with masked nested promises, or one outside a loader body (a
-  //    loader-cache replay names its loader: pushReplayed below) stays
-  //    tagged (HandleStore.push loaderPush) so the
-  //    handle encode cannot stall on a never-resolving mask. A tagged push
-  //    is out of the record (captureHandles) and out of the capture's own
-  //    render (resolvedHandleStream `recordedOnly`, issue #1035): the
-  //    prelude is rendered from what the record keeps, which is what a HIT
-  //    hydrates with. The loader records then carry `runs: 1` so a HIT runs
-  //    those bodies for them, and what they push reaches the client after
+  //    from its pin restores it through pushRestored (restoreHandles). A
+  //    pushed promise (push(promise), .defer()) is judged by its settled
+  //    value, as push(await promise) would be (#1182): the record-first step
+  //    waits for it under the capture deadline, and one that rejects or
+  //    misses the deadline refuses the capture. Those copies stand: a
+  //    promise-carrying bake-lane loader that runs on the replay reads the
+  //    store, so its pushes that settle thenable-free (and those replayed
+  //    inside its body) are dropped and only the ones holding a promise are
+  //    added. A loader the replay does not serve from a pin is a hole: one
+  //    the route also runs on the live lane, or one whose pin the entry
+  //    lost. Its run replaces its copies (pushPlaceholder, #936), those of
+  //    the dependencies it awaits included (they are credited to it). Nested
+  //    thenables stay masked (the promise shape is the liveness declaration,
+  //    mask-nested.ts). A push whose settled value holds a masked nested
+  //    promise, one credited to a live-lane body, or one no body or replay
+  //    names (a loader-cache replay names its loader: pushReplayed below)
+  //    stays tagged (HandleStore.push loaderPush) so the handle encode cannot
+  //    stall on a never-resolving mask. A tagged push is out of the record
+  //    (captureHandles) and out of the capture's own render
+  //    (resolvedHandleStream `recordedOnly`, issue #1035): the prelude is
+  //    rendered from what the record keeps, which is what a HIT hydrates
+  //    with. The loader records then carry `runs: 1` so a HIT runs those
+  //    bodies for them, and what they push reaches the client after
   //    hydration (HandleStore.freezeDocumentSnapshot).
   const handlerPushSettles: Promise<void>[] = [];
+  const loaderPromisePushes: LoaderPromisePush[] = [];
   // A replay (a loader-cache HIT, loader-cache.ts replayLoaderHandles, or a
   // route cache() record's owned values, restoreHandles) re-pushes a loader's
   // recorded values through pushReplayed or pushPlaceholder, which call
@@ -2118,39 +2169,62 @@ export function deriveShellCaptureContext(
       if (report.thenable) maskedNestedThenable = true;
       return masked;
     };
+    // The loader the push is credited to (see the funnel comment above). A
+    // push under a live-lane loader's body, at any depth, is that hole's
+    // output: its live run replaces it on a HIT and a navigation. Otherwise
+    // the first loader around the push that the route registers decides: a
+    // bake-lane one keeps the push under the innermost body, and a
+    // dependency on neither lane is walked past. A replay of a hole's push
+    // is that hole's, unless a live-lane body around it takes it first.
+    const live = liveLaneOwner();
+    const bodyLoaderId = live ?? getCurrentLoaderBodyId() ?? replayOwner;
     let masked: unknown;
-    let loaderPush = true;
     let owner: string | undefined;
-    if (isThenable(value)) {
-      // Deferred (thenable) loader pushes always keep the tag — the
-      // carve-out below is for settled values only. Promise.resolve first: a
-      // loader cache() entry replays a deferred push as the thenable Flight
-      // decoded it to, whose then() returns nothing, and the slot was
-      // `undefined` (the empty element of issue #1035).
-      masked = Promise.resolve(value).then(mask);
-    } else {
+    if (!isThenable(value)) {
       masked = mask(value);
-      if (!maskedNestedThenable) {
-        // A settled, thenable-free push from a loader body is shell
-        // material (see the funnel comment above): only bake-lane loaders
-        // and the loaders they await run at capture, and a HIT does not run
-        // a promise-free bake-lane loader (loader-cache.ts), so the record
-        // keeps the push under the loader that made it. A push under a
-        // live-lane loader's body, at any depth, is that hole's output: it
-        // is credited to the hole, whose live run replaces it on a HIT and
-        // a navigation. The first loader around the push that the route
-        // registers decides: a bake-lane one keeps the push under the
-        // innermost body, and a dependency on neither lane is walked past. A
-        // replay of a hole's push is that hole's, unless a live-lane body
-        // around it takes it first.
-        const bodyLoaderId =
-          liveLaneOwner() ?? getCurrentLoaderBodyId() ?? replayOwner;
-        loaderPush = bodyLoaderId === undefined;
-        if (!loaderPush) owner = bodyLoaderId;
-      }
+      if (!maskedNestedThenable) owner = bodyLoaderId;
+    } else if (live === undefined && bodyLoaderId !== undefined) {
+      // Owned now, judged by its settled value (funnel comment above).
+      // Promise.resolve first: a loader cache() entry replays a deferred
+      // push as the thenable Flight decoded it to, whose then() returns
+      // nothing (issue #1035). The retag runs inside the slot's own then(),
+      // so it lands before the wait on it (settleCaptureRecord) resumes and
+      // the record encodes. The state handler is attached now, which also
+      // marks a rejection as handled.
+      const slot: Promise<unknown> = Promise.resolve(value).then((settled) => {
+        const judged = mask(settled);
+        if (maskedNestedThenable) {
+          freshHandleStore.unrecordPush(handleName, segmentId, slot);
+          derivedCtx._shellCaptureUnrecordedLoaderPush = true;
+        }
+        return judged;
+      });
+      const push: LoaderPromisePush = {
+        loaderId: bodyLoaderId,
+        handleName,
+        state: "pending",
+      };
+      slot.then(
+        () => {
+          push.state = "fulfilled";
+        },
+        () => {
+          push.state = "rejected";
+        },
+      );
+      loaderPromisePushes.push(push);
+      masked = slot;
+      owner = bodyLoaderId;
+    } else {
+      // A hole's promise, or one no body or replay names: tagged. Nothing
+      // awaits the slot at capture, so its rejection is handled here.
+      const tagged = Promise.resolve(value).then(mask);
+      tagged.catch(() => {});
+      masked = tagged;
     }
     // A push the record cannot keep reaches a HIT only from a live run of
     // its loader, so the loader records ask for one (runs: 1).
+    const loaderPush = owner === undefined;
     if (loaderPush) derivedCtx._shellCaptureUnrecordedLoaderPush = true;
     rawCapturePush(handleName, segmentId, masked, loaderPush, owner);
   };
@@ -2271,6 +2345,7 @@ export function deriveShellCaptureContext(
     freshHandleStore,
     handlerPushesSettled: () =>
       Promise.all(handlerPushSettles).then(() => undefined),
+    loaderPromisePushes,
   };
 }
 
