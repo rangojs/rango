@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.25.1 (2026-10-15)
 
 ### Fixed: a page mounted through `include()` gets the `ssr: false` behavior of the layouts above it ([#1179](https://github.com/rangojs/rango/issues/1179))
 
