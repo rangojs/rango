@@ -174,6 +174,8 @@ export const NamedRoutes = {
   pprHeaderGuardDynamic: "/ppr-header-guard/dynamic",
   pprHeaderGuardHandler: "/ppr-header-guard",
   pprHeaderGuardLoader: "/ppr-header-guard/loader",
+  pprIncludeDirect: "/ppr-include/direct",
+  "pprIncludeSection.page": "/ppr-include/section/page",
   pprLarge: "/ppr-large",
   pprLargeHoles: "/ppr-large/holes",
   pprLoadMore: "/ppr-load-more",

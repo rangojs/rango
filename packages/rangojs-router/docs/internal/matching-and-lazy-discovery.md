@@ -191,6 +191,28 @@ wildcard`, with backtracking. The regex fallback matches in definition order, wh
   time. Anything with a nested `include()` _can't_ be precomputed, and there's a real
   reason: the nested handler reference only comes into existence once the parent handler
   runs, so there's nothing to serialize at build time.
+- **A document request sees an include's ancestors in document mode (#1179).** Two DSL
+  decisions depend on the request: on a document (`isSSR`) evaluation,
+  `loader(Def, { ssr: false })` gets `awaitBeforeFlush` and `loading(fallback, { ssr: false })`
+  sets `loading` to `false`. That's safe for everything a manifest build creates, because the
+  manifest cache is keyed by `isSSR`. But `include()` captures its parent chain on
+  `Rango.routes()` or a runtime expansion, which never has `isSSR`, and `loadManifest` hands
+  that chain to the include's handler for every request. So every layout _outside_ an include
+  lost both decisions for the routes inside it: a `ppr` capture took the layout's `ssr: false`
+  loader for a live one and masked it (a chrome reading it outside `<Suspense>` postponed above
+  `<body>`, so the route never stored a shell), and a document showed an `ssr: false`
+  fallback. The same page declared directly under the layout was fine, which is what made it
+  hard to see. Now a document request takes `getDocumentModeEntry` (`server/context.ts`) of the
+  captured chain: a copy of the ancestors, their orphan layouts and their parallels with both
+  decisions applied from the intent every evaluation records (`bake` on the loader entry,
+  `loadingSsr` on the entry). Each rule is one helper (`documentModeLoader`,
+  `applyDocumentModeLoading`) that the DSL calls on a document evaluation and
+  `getDocumentModeEntry` calls on the captured chain, so the two cannot disagree. The copies are
+  memoized per entry, so a shared ancestor maps to one copy. If you add a third `ctx.isSSR`
+  decision to the DSL, write it as a helper there and call it from both. Pinned by
+  `lazy-include-document-mode.test.ts` (an included route's ancestors equal a sibling route's),
+  `serve-shell-request-include-bake.rsc-test.tsx` and `e2e/ppr-include-bake.test.ts` in both
+  apps.
 - **Trailing slash is a per-path / per-include setting, not a router knob (M3).** The
   explicit modes — `path(..., { trailingSlash: "never"|"always"|"ignore" })`, same on
   `include` — are stored as `leaf.ts` and honored by the trie identically in both modes.
@@ -278,6 +300,8 @@ is the list:
 - `precomputed-prefix-collision.test.ts` — the shared-`staticPrefix` drop (C19), including
   the full findMatch→loadManifest path that used to 500.
 - `lazy-include-isolation.test.ts` — lazy parent isolation and the C5 nested-prefix join.
+- `lazy-include-document-mode.test.ts` — a document request sees an include's captured
+  ancestors in document mode (#1179).
 - `lazy-include-perf.test.ts` — the lazy-by-default guarantees and the LP1/LP3/LP4
   run-count sentinels.
 - `lazy-include-cost.bench.ts` — the LP1/LP3/LP4 timing benchmark.
