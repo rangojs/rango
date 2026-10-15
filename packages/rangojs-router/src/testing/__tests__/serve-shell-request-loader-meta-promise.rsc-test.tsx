@@ -569,15 +569,23 @@ describe("#1182: the shell keeps the resolved values of an ssr: false loader's p
     }
   });
 
-  it("N4: an entry without loader pins (maxSnapshotBytes): the HIT hydrates with the capture's title, and the run's takes its place after hydration", async () => {
-    const { hit } = await hitAfterCapture("/t/no-pins/1");
+  // dc-t89: an entry that could not keep its loader pins serves no document
+  // HIT, so its title and data come from the MISS's own run.
+  it("N4: an entry without loader pins (maxSnapshotBytes) is a document MISS: it hydrates with its run's title", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { serve } = shellHarness(router);
+    expect((await serve("/t/no-pins/1")).shellStatus).toBe("MISS");
+    source.generation = 2;
 
-    expect(await documentTitles(hit)).toEqual({
-      shell: ["grid-title@g1"],
-      hydration: ["grid-title@g1"],
-      afterHydration: ["grid-title@g2"],
+    const miss = await serve("/t/no-pins/1");
+
+    expect(miss.shellStatus).toBe("MISS");
+    expect(await documentTitles(miss)).toEqual({
+      shell: undefined,
+      hydration: ["grid-title@g2"],
+      afterHydration: undefined,
     });
-    expect(hit.flight).toContain("grid@g2");
+    expect(miss.flight).toContain("grid@g2");
   });
 
   it('N6: a pushed promise of a tagged "use cache" function tags the shell: updateTag() evicts it, and the recapture bakes the newer title', async () => {

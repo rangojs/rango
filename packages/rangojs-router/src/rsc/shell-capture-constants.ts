@@ -213,9 +213,12 @@ export const SHELL_CAPTURE_TASK_HARD_CAP_MS = 25_000;
  * `no-record` (no doc record: the route's cache() refused the write, or the
  * handler output failed), `handles` (a pushed
  * handle value did not finish encoding), `size` (over the store's value
- * limit), `record-expired` (the route cache() record the capture wrote ran
- * out first), `invalidated` (a tag of the shell was invalidated after the
- * capture started), `uncacheable` (the store cannot hold the entry).
+ * limit, or `ssr: false` loader pins over `ppr.maxSnapshotBytes`: a
+ * navigation-only entry was stored in place of the document shell),
+ * `record-expired` (the route cache() record
+ * the capture wrote ran out first), `invalidated` (a tag of the shell was
+ * invalidated after the capture started), `uncacheable` (the store cannot
+ * hold the entry).
  */
 export type ShellCaptureRefusal =
   | "identity"

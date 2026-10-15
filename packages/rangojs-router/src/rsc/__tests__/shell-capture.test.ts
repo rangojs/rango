@@ -735,11 +735,43 @@ describe("captureAndStoreShell", () => {
     expect(loaderRecords).toHaveLength(0);
   });
 
-  // Snapshot size cap (issue #651): the loader pins duplicate loader data
-  // inside the shell entry, so over the cap they are SKIPPED — the shell
-  // still stores and serves (those loaders run on the HIT, the pre-snapshot
-  // behavior) — and the skip is reported once per key.
-  it("drops over-cap loader pins, stores the shell with its doc record, and reports once per key", async () => {
+  // dc-t89 (G): a settled container the codec cannot pin would leave its
+  // loader to run on every HIT, over a prelude rendered from the capture's
+  // value. The capture fails instead, as an encode error does (#927).
+  for (const [label, fail] of [
+    ["the codec throws", () => Promise.reject(new Error("codec boom"))],
+    ["the codec returns no bytes", () => Promise.resolve(null)],
+  ] as const) {
+    it(`fails the capture when a settled bake-lane container cannot be pinned (${label})`, async () => {
+      const { serializeResult } = await import("../../cache/segment-codec.js");
+      vi.mocked(serializeResult).mockImplementationOnce(fail);
+      const putShell = makePutShell();
+      const reqCtx = makeReqCtx(putShell);
+      // The derived capture context always seeds it (attemptCapture).
+      reqCtx._renderErrors = [];
+      reqCtx._shellCaptureLoaderRecords = new Map([
+        ["M0D0.app/x#L", Promise.resolve({ price: 42 })],
+      ]);
+
+      await expect(
+        captureAndStoreShell(
+          makeShellSsrModule(),
+          emptyStream(),
+          reqCtx,
+          { key: "/bake-unpinnable:shell", buildVersion: "test-build" },
+          Date.now(),
+        ),
+      ).rejects.toThrow(/codec boom|no shell pin for "M0D0\.app\/x#L"/);
+      expect(putShell).not.toHaveBeenCalled();
+    });
+  }
+
+  // Snapshot size cap (issue #651, reversed for documents by dc-t89): a
+  // document HIT without its loaders' pins hydrates over a prelude rendered
+  // from other data. Over the cap the entry keeps the navigation half only
+  // (the doc record, no prelude, no pins), the attempt refuses so the key
+  // backs off, and the warning fires once per key.
+  it("over the cap stores the navigation half only, refuses the document shell, and reports once per key", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const putShell = makePutShell();
@@ -765,11 +797,11 @@ describe("captureAndStoreShell", () => {
         );
       };
 
-      // First capture: pins over cap → dropped, shell stored with its doc
-      // record.
-      expect(await runOnce()).toBe("stored");
-      // Recapture (TTL roll): still stores, still drops, does NOT re-warn.
-      expect(await runOnce()).toBe("stored");
+      // First capture: pins over cap → the navigation half is stored, the
+      // document shell is refused.
+      expect(await runOnce()).toBe("refused");
+      // Recapture (the next backoff window): the same, and no re-warn.
+      expect(await runOnce()).toBe("refused");
 
       expect(putShell).toHaveBeenCalledTimes(2);
       for (const call of putShell.mock.calls) {
@@ -778,13 +810,18 @@ describe("captureAndStoreShell", () => {
           `segment ${DOC_KEY}`,
         ]);
         expect(entry.docKey).toBe(DOC_KEY);
+        expect(entry.navigationOnly).toBe(true);
+        expect(entry.prelude).toBeUndefined();
+        expect(entry.postponed).toBeUndefined();
       }
       const warnings = warnSpy.mock.calls.filter(
         (c) => typeof c[0] === "string" && c[0].includes("/over-cap:shell"),
       );
       expect(warnings).toHaveLength(1);
       expect(warnings[0][0]).toContain("1024-byte cap");
-      expect(warnings[0][0]).toContain("maxSnapshotBytes");
+      expect(warnings[0][0]).toContain(
+        "the document shell was not stored; raise maxSnapshotBytes or shrink the ssr: false data",
+      );
     } finally {
       warnSpy.mockRestore();
     }
@@ -1151,6 +1188,8 @@ describe("captureAndStoreShell: snapshot pruning", () => {
       inner?: MemorySegmentCacheStore;
       descriptor?: Partial<Parameters<typeof captureAndStoreShell>[3]>;
       expectRefused?: boolean;
+      /** Over maxSnapshotBytes: the navigation half is stored, the attempt refuses. */
+      expectNavigationHalf?: boolean;
       /** The descriptor store's value limit (SegmentCacheStore.maxShellEntryBytes). */
       maxShellEntryBytes?: number;
     } = {},
@@ -1204,7 +1243,7 @@ describe("captureAndStoreShell: snapshot pruning", () => {
       expect(putShell).not.toHaveBeenCalled();
       return undefined as unknown as ShellCacheEntry;
     }
-    expect(outcome).toBe("stored");
+    expect(outcome).toBe(options.expectNavigationHalf ? "refused" : "stored");
     return putShell.mock.calls[0]![1];
   }
 
@@ -1302,7 +1341,8 @@ describe("captureAndStoreShell: snapshot pruning", () => {
     expect(entry.prunedRecords).toBe("segment:1");
   });
 
-  it("keeps the doc record over the cap and drops the loader pins", async () => {
+  // dc-t89: no document shell without every pin; navigations replay the doc record.
+  it("over the cap stores the doc record in a navigation-only entry, without the pins", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const entry = await capturePrunable(
@@ -1312,10 +1352,15 @@ describe("captureAndStoreShell: snapshot pruning", () => {
             Promise.resolve({ big: "x".repeat(4096) }),
           );
         },
-        { descriptor: { key: "/pins-over-cap:shell", maxSnapshotBytes: 2048 } },
+        {
+          descriptor: { key: "/pins-over-cap:shell", maxSnapshotBytes: 2048 },
+          expectNavigationHalf: true,
+        },
       );
       expect(records(entry)).toEqual([`segment ${DOC_KEY}`]);
       expect(entry.docKey).toBe(DOC_KEY);
+      expect(entry.navigationOnly).toBe(true);
+      expect(entry.prelude).toBeUndefined();
     } finally {
       warn.mockRestore();
     }
@@ -1386,12 +1431,21 @@ describe("captureAndStoreShell: snapshot pruning", () => {
 describe("captureAndStoreShell: a prerender-served capture's handles record", () => {
   async function capturePrerenderServed(
     descriptor: Partial<Parameters<typeof captureAndStoreShell>[3]> = {},
+    pushes?: (store: ReturnType<typeof createHandleStore>) => void,
+  ): Promise<ShellCacheEntry> {
+    const { outcome, putShell } = await runPrerenderServed(descriptor, pushes);
+    expect(outcome).toBe("stored");
+    return putShell.mock.calls[0]![1];
+  }
+
+  async function runPrerenderServed(
+    descriptor: Partial<Parameters<typeof captureAndStoreShell>[3]> = {},
     pushes: (store: ReturnType<typeof createHandleStore>) => void = (store) => {
       store.push("notes", "M0R0", "handler-note");
       store.push("notes", "M0R0", "settled-only", false, "Bake");
       store.push("crumbs", "M0R0", "handler-crumb");
     },
-  ): Promise<ShellCacheEntry> {
+  ) {
     const putShell = makePutShell();
     const handleStore = createHandleStore();
     pushes(handleStore);
@@ -1424,8 +1478,7 @@ describe("captureAndStoreShell: a prerender-served capture's handles record", ()
       },
       Date.now(),
     );
-    expect(outcome).toBe("stored");
-    return putShell.mock.calls[0]![1];
+    return { outcome, putShell };
   }
 
   const handlesRecord = (entry: ShellCacheEntry) => {
@@ -1450,18 +1503,27 @@ describe("captureAndStoreShell: a prerender-served capture's handles record", ()
     });
   });
 
-  it("keeps the record when maxSnapshotBytes drops the pins: it stands in for the doc record", async () => {
+  // dc-t89: over the cap there is no document shell, and a prerender-served
+  // capture has no navigation half (no doc record). It stores the tombstone,
+  // which the document gate reads as a MISS ahead of a build shell
+  // (rsc-rendering-shell-ppr.test.ts "a runtime tombstone over a build shell").
+  it("over maxSnapshotBytes stores the tombstone and refuses: no document shell without its pins", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const entry = await capturePrerenderServed({
+      const { outcome, putShell } = await runPrerenderServed({
         key: "/pre-capped:shell",
         maxSnapshotBytes: 1,
       });
 
-      expect(entry.snapshot.map((r) => r.family)).toEqual(["handles"]);
-      expect(handlesRecord(entry)?.handleOwners).toEqual({
-        M0R0: { notes: [null, "Bake"] },
-      });
+      expect(outcome).toBe("refused");
+      expect(putShell).toHaveBeenCalledTimes(1);
+      const tombstone = putShell.mock.calls[0]![1];
+      expect(tombstone).toMatchObject({ navigationOnly: true, snapshot: [] });
+      expect([
+        tombstone.docKey,
+        tombstone.prelude,
+        tombstone.postponed,
+      ]).toEqual([undefined, undefined, undefined]);
     } finally {
       warn.mockRestore();
     }

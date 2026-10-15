@@ -542,9 +542,8 @@ export const DEFAULT_SHELL_ENTRY_MAX_BYTES: number = 25 * 1024 * 1024;
  * while still fitting any sane pinned-ring payload. Applied ONLY in
  * captureAndStoreShell (the single defaulting site — resolvePprConfig passes
  * the option through undefaulted), so every producer and direct caller gets
- * the same policy. The doc record is exempt; over the cap the other records
- * are dropped (shell still stored and replayed; the pins' loaders read the
- * live store — see PartialPrerenderProps.maxSnapshotBytes).
+ * the same policy. The doc record is exempt; over the cap only the
+ * navigation half is stored (see PartialPrerenderProps.maxSnapshotBytes).
  */
 export const DEFAULT_PPR_MAX_SNAPSHOT_BYTES: number = 8 * 1024 * 1024;
 
@@ -553,12 +552,8 @@ const SNAPSHOT_BYTE_ENCODER = new TextEncoder();
 
 /**
  * Warn once per key that the capture's loader pins exceeded the route's
- * `maxSnapshotBytes` cap and were dropped. The shell entry is still stored
- * with its doc record and every HIT replays the handler layer; only the
- * pinned loaders lose their captured values, so their cached data can drift
- * from the frozen prelude and hydration repairs it client-side. Once per
- * key: the same page recaptures on every TTL roll and would otherwise
- * re-warn forever.
+ * `maxSnapshotBytes` cap, so no document shell was stored (dc-t89). Once per
+ * key: the route recaptures every backoff window.
  */
 function warnSnapshotOverCapOnce(
   key: string,
@@ -570,14 +565,10 @@ function warnSnapshotOverCapOnce(
     key,
     () =>
       `[rango] Shell capture for "${key}" recorded ${snapshotBytes} bytes of ` +
-      `loader pins, over the ${capBytes}-byte cap — the pins were dropped and ` +
-      "the shell was stored with its doc record only. HITs still replay the " +
-      "handler layer, but ssr: false loaders now read the live store: if " +
-      "their data drifts before the shell's TTL, hydration repairs the " +
-      "mismatch client-side. Raise the cap via the route's ppr option " +
-      "({ maxSnapshotBytes }) if the entry still fits your store's value limit " +
-      "(Cloudflare KV: 25 MiB per value), or shrink the cache()'d data the " +
-      "loaders read.",
+      `ssr: false loader pins, over the ${capBytes}-byte cap: the document ` +
+      "shell was not stored; raise maxSnapshotBytes or shrink the ssr: false " +
+      "data. Documents of this route are a MISS until then; client " +
+      "navigations still replay its handler layer.",
   );
 }
 
@@ -683,7 +674,11 @@ export interface ShellCaptureDebugEvent {
   preludeBytes?: number;
   /** Serialized snapshot size in UTF-8 bytes. Absent when nothing was recorded. */
   snapshotBytes?: number;
-  /** True when the snapshot exceeded maxSnapshotBytes and was dropped. */
+  /**
+   * True when the loader pins exceeded maxSnapshotBytes: no document shell
+   * was stored, only a navigation-only entry (the doc record, or a tombstone
+   * for a prerender-served capture). The outcome is `refused`, refusal `size`.
+   */
   snapshotSkipped?: boolean;
   /** A bake-lane loader settled into a shell that uses TTL/SWR-only invalidation. */
   untaggedBake?: true;
@@ -1053,8 +1048,8 @@ export interface ShellCaptureDescriptor {
   captureTimeout?: number;
   store?: SegmentCacheStore<any>;
   /**
-   * Cap (serialized UTF-8 bytes) on the entry's capture data snapshot; over it
-   * the snapshot is skipped and the shell stored without it (reported once per
+   * Cap (serialized UTF-8 bytes) on the entry's loader pins; over it only the
+   * navigation half is stored and the attempt refuses (reported once per
    * key). Absent = DEFAULT_PPR_MAX_SNAPSHOT_BYTES, applied in
    * captureAndStoreShell — the single defaulting site.
    */
@@ -2556,10 +2551,13 @@ async function captureAndStoreShell(
                 runs,
               },
             });
+          } else {
+            throw new Error(`[rango] no shell pin for "${segmentKey}"`);
           }
-        } catch {
-          // Codec import failed: leave it unpinned (it drifts on a HIT, the
-          // pre-snapshot behavior) rather than failing the capture.
+        } catch (error) {
+          // Unpinned, the loader would run on every HIT over this prelude
+          // (dc-t89): refuse like an encode error.
+          reqCtx._renderErrors?.push(error);
         }
       }
     }
@@ -2603,12 +2601,11 @@ async function captureAndStoreShell(
       snapshot = kept;
     }
 
-    // Snapshot size guard (issue #651): `maxSnapshotBytes` bounds the loader
-    // pins; over it they are dropped and the entry keeps its doc record, so
-    // every HIT still replays the handler layer (the pins' loaders then run
-    // on the HIT: documented drift, repaired client-side). The doc record is
-    // exempt: without it a HIT could not serve at all. The whole entry is
-    // bounded separately below, by the store's value limit.
+    // Snapshot size guard: `maxSnapshotBytes` bounds the loader pins, and a
+    // document HIT needs every pin its prelude baked (dc-t89). Over the cap
+    // the entry keeps the navigation half only (the doc record, or nothing:
+    // a tombstone that also shadows a build shell) and the attempt refuses.
+    // The whole entry is bounded separately below, by the store's limit.
     if (snapshot.length > 0) {
       const docRecord =
         docKey !== undefined
@@ -2629,9 +2626,10 @@ async function captureAndStoreShell(
         stats.snapshotSkipped = true;
       }
     }
+    const navigationOnly = capture.navigationOnly || stats.snapshotSkipped;
     // Exempt from maxSnapshotBytes: the HIT needs it for its HTML and
     // hydration data to match.
-    if (prerenderHandles) {
+    if (prerenderHandles && !navigationOnly) {
       snapshot.push({
         family: "handles",
         key: SHELL_HANDLES_RECORD_KEY,
@@ -2680,8 +2678,8 @@ async function captureAndStoreShell(
     // JSON head as an escaped string.
     const entryBytes = estimateShellEntryBytes({
       // A navigation-only entry stores no document half.
-      preludeBytes: capture.navigationOnly ? 0 : result.prelude.length,
-      postponed: capture.navigationOnly ? undefined : result.postponed,
+      preludeBytes: navigationOnly ? 0 : result.prelude.length,
+      postponed: navigationOnly ? undefined : result.postponed,
       snapshot,
       tags: shellTags,
       docKey: storedDocKey,
@@ -2717,7 +2715,7 @@ async function captureAndStoreShell(
           // consumes only snapshot/docKey), so storing it would ride every KV
           // write/read as dead weight — the prerender still ran above as the
           // completeness arbiter and sanity gate, its output is dropped here.
-          ...(capture.navigationOnly
+          ...(navigationOnly
             ? {}
             : {
                 // bytesToBase64 encodes the view's own region, so a prelude
@@ -2740,7 +2738,7 @@ async function captureAndStoreShell(
           // looks the record up by this key (serveShellHit fixedDocKey);
           // undefined only for a prerender-served entry.
           docKey: storedDocKey,
-          navigationOnly: capture.navigationOnly,
+          navigationOnly: navigationOnly || undefined,
           createdAt: captureStartedAt,
         };
         // Capped to the route record the capture used: the policy the
@@ -2828,8 +2826,9 @@ async function captureAndStoreShell(
     }
     // A shell was captured (ordinary store I/O failure is reported, not retried).
     // An acknowledged invalidation rejection returned `refused` above so the
-    // scheduler backs the key off instead of recapturing on every request.
-    return "stored";
+    // scheduler backs the key off instead of recapturing on every request, as
+    // does an over-cap entry: no document shell was stored.
+    return stats.snapshotSkipped ? refuse(stats, "size") : "stored";
   } finally {
     // Stop the hop loop for the pathological never-quiets path (quiesce never
     // fired, capture returned via maxWaitMs). On the normal path the loop already
@@ -2849,7 +2848,8 @@ export {
 };
 
 // Exported for unit tests that pin the refused-capture backoff policy directly
-// (dev cap vs production exponential growth, stored-clears, cold-start re-probe).
+// (dev cap vs production exponential growth, stored-clears, cold-start re-probe),
+// and markCaptureBackoff for serveShellHit (a pin that failed to decode, dc-t89).
 // These are the same module-level functions the schedule path uses; a test that
 // drove them through a real capture round-trip could not assert the exact window
 // arithmetic without a full cold render.

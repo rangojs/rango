@@ -949,11 +949,11 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     ]);
   });
 
-  // --- Snapshot size cap (issue #651): over-cap snapshot skipped, serving intact. ---
+  // --- Snapshot size cap (issue #651): the doc record is exempt. ---
 
   // /shell-cache/snapshot-cap declares ppr.maxSnapshotBytes: 64. The cap
-  // bounds loader pins only; the doc record is exempt (the drop + once-per-key
-  // report mechanics are pinned in shell-capture.test.ts). The contract
+  // bounds loader pins only; the doc record is exempt (the over-cap and
+  // once-per-key report mechanics are pinned in shell-capture.test.ts). The contract
   // pinned HERE: a tiny cap never costs the HIT its handler layer — the route
   // flips MISS -> HIT, the HIT replays the baked cap-stamp and hydrates with
   // zero errors, while the price hole stays live.

@@ -115,8 +115,9 @@ export const shellPushOwnershipPatterns = urls(
       { name: "shellPushPinned", ppr: { ttl: 300, swr: 120 } },
       () => [loader(ShellPushPinnedLoader, { ssr: false })],
     ),
-    // The same loader on an entry whose pins maxSnapshotBytes drops: the
-    // loader runs fresh on a HIT, so its run's push replaces the record's.
+    // The same loader over maxSnapshotBytes: the capture stores the
+    // navigation half only, so documents MISS and a navigation replays the
+    // handler layer with the loader run fresh (dc-t89).
     path(
       "/shell-push/capped",
       ShellPushPinnedPage,

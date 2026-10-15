@@ -360,9 +360,9 @@ async function ShellLargePage() {
 }
 
 // Snapshot SIZE-CAP fixture layout (issue #651): same shape as the drift
-// fixture — a cached stamp baked into the shell + the live price hole — but the
-// route's ppr.maxSnapshotBytes is far below any real snapshot, so every capture
-// skips the snapshot while still storing the shell. See getCapStamp.
+// fixture — a cached stamp baked into the shell + the live price hole — under a
+// tiny ppr.maxSnapshotBytes, which bounds ssr: false loader pins only (this
+// route has none). See getCapStamp.
 async function CapStamp({ stamp }: { stamp: Promise<string> }) {
   return <p data-testid="cap-stamp">{await stamp}</p>;
 }
@@ -848,12 +848,11 @@ export const shellCachePatterns = urls(
       { name: "shellCacheLarge", ppr: { ttl: 300, swr: 120 } },
       () => [loader(ShellPriceLoader)],
     ),
-    // Snapshot SIZE-CAP route (issue #651): maxSnapshotBytes far below any real
-    // snapshot → every capture skips the snapshot (over cap, stored WITHOUT it)
-    // but the shell must still store and the HIT lane must serve + hydrate
-    // cleanly — the cap degrades pinning, never serving. The cap-stamp's
-    // default-profile ttl outlasts the test, so the un-pinned live re-read
-    // matches the frozen prelude (drift after expiry is the documented trade).
+    // Snapshot SIZE-CAP route (issue #651): a tiny maxSnapshotBytes. The cap
+    // bounds ssr: false loader pins only and the doc record is exempt; this
+    // route has no ssr: false loader, so it stores and serves its shell, and
+    // the HIT hydrates cleanly. (A route whose pins exceed the cap stores the
+    // navigation half only and serves documents as MISS: dc-t89.)
     layout(ShellCapLayout, () => [
       path(
         "/shell-cache/snapshot-cap",
