@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a page mounted through `include()` gets the `ssr: false` behavior of the layouts above it ([#1179](https://github.com/rangojs/rango/issues/1179))
+
+**Before.** `loader(Def, { ssr: false })` and `loading(fallback, { ssr: false })`
+on a layout lost their document-request behavior for a page that `include()`
+mounted under that layout. The same page declared directly under the layout
+was fine. With `ppr` on the included page, its shell was never stored when the
+layout's `ssr: false` loader was read outside `<Suspense>` (a store chrome
+calling `useLoader()`): every capture logged `produced no usable shell` and
+the page stayed on `x-rango-shell: MISS`. Without `ppr`, the document streamed
+the layout's `ssr: false` loader instead of awaiting it before the first flush,
+and rendered the layout's `ssr: false` fallback.
+
+```tsx
+urls(({ layout, loader, path, include }) => [
+  layout(StoreLayout, () => [
+    loader(ChromeLoader, { ssr: false }),
+    path("/direct", Page, { name: "direct", ppr: true }), // MISS, then HIT
+    include("/section", sectionUrls, { name: "section" }), // its ppr page: MISS on every request
+  ]),
+]);
+```
+
+**Now.** A page under `include()` gets what the same page declared directly
+under the layout gets: the layout's `ssr: false` loaders are awaited before the
+first flush and bake into a `ppr` shell, and its `ssr: false` fallback is left
+out of the document. A `clientUrls()` group, which only mounts through
+`include()`, gets the same. Client navigations are unchanged. Nothing to change
+in your code.
+
 ## 0.25.0 (2026-10-14)
 
 ### Breaking: a global-middleware rewrite of a server action or form post moves it to the target; `rewrite(...).disallowMutations()` keeps the old refusal

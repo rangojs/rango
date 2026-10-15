@@ -421,6 +421,8 @@ export const NamedRoutes = {
   "pprHeaderGuard.loader": "/ppr-header-guard/loader",
   "pprHeaderGuard.mwLive": "/ppr-header-guard/mw-live",
   "pprHeaderGuard.mwPostNext": "/ppr-header-guard/mw-post-next",
+  pprIncludeDirect: "/ppr-include/direct",
+  "pprIncludeSection.page": "/ppr-include/section/page",
   "prefetchFalse.above": "/prefetch-false/above",
   "prefetchFalse.bare": "/prefetch-false/bare",
   "prefetchFalse.bareInner": "/prefetch-false/bare-inner",
