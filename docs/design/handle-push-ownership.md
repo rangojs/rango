@@ -14,9 +14,11 @@ A later section, "What a document hydrates with on a shell HIT", covers
 after it, "An `ssr: false` loader's pushed promise bakes into the shell",
 covers #1182, which changed what a shell holds: a promise an `ssr: false`
 loader pushes is now awaited at capture and recorded, where #1054 had kept
-it live. The last one, "What the browser keeps on a partial response",
-covers #1103: the browser's side of the rule, when a response re-runs only
-part of a route.
+it live. "A document HIT holds a pin for every loader its HTML baked"
+covers dc-t89, which carries #1182's rule from handle data to loader data:
+an entry that cannot hold its pins serves navigations only. The last one,
+"What the browser keeps on a partial response", covers #1103: the browser's
+side of the rule, when a response re-runs only part of a route.
 
 The evidence is
 `packages/rangojs-router/src/testing/__tests__/serve-shell-request-push-ownership.rsc-test.tsx`:
@@ -103,17 +105,19 @@ Four facts, each checkable against the tables above.
    document tail" and "this loader is registered `ssr: false`" correlate with
    "this loader's value comes from the pin". They are not the same fact. A
    navigation replay serves pins without being a document tail (#1003,
-   #1001). A document tail whose pins `maxSnapshotBytes` dropped is a
-   document tail without pins. PR #1018 keyed the restore on the implicit doc
+   #1001). A document tail whose pins `maxSnapshotBytes` dropped was a
+   document tail without pins (since dc-t89 such an entry serves no
+   document). PR #1018 keyed the restore on the implicit doc
    scope instead, a third stand-in, and broke the entry that has that scope
    and no pins.
 
 2. **Copies of a loader's pushes travel without its value.** The shell keeps
    pins and pushes in separate records, and three things drop the pins and
    keep the pushes: `pruneShellSnapshot` for a navigation-only entry
-   (`shell-snapshot.ts:248-262`), the `maxSnapshotBytes` guard
-   (`shell-capture.ts:2450-2455`), and a pin that fails to decode
-   (`shell-snapshot.ts:412-414`). A route `cache()` record holds a loader's
+   (`shell-snapshot.ts:248-262`), the `maxSnapshotBytes` guard (which since
+   dc-t89 stores a navigation-only entry), and a pin that fails to decode
+   (`buildShellLoaderSeed`; since dc-t89 the HIT that finds it retires the
+   entry). A route `cache()` record holds a loader's
    pushes and never its value. Another entry can hold them as a dependency
    group. Every such copy is a candidate for being shown next to a value from
    somewhere else, and `_claimLoaderPushes` settles the contest by arrival
@@ -201,8 +205,8 @@ A promise-carrying `ssr: false` loader (it runs on every replay):
 | Navigation, explicit route `cache()` misses, seeded record serves | **pin / run**                 | pin / pin      | same                         |
 | Navigation, explicit route `cache()` hits                         | run / run                     | same           | same                         |
 | Navigation replay, navigation-only entry (no pins)                | run / run (PR #1018 broke it) | same           | same                         |
-| Navigation replay, pins dropped by `maxSnapshotBytes`             | run / run (PR #1018 broke it) | same           | same                         |
-| Document HIT, pins dropped by `maxSnapshotBytes`                  | **run / record**              | run / run      | same                         |
+| Navigation replay, an entry over `maxSnapshotBytes`               | run / run (PR #1018 broke it) | same           | same                         |
+| Document, over `maxSnapshotBytes` (a MISS since dc-t89)           | **run / record**              | run / run      | same                         |
 | Any replay without pins, the run makes no push                    | **run / record**              | run / none     | same                         |
 | Pinned, the capture's run pushed nothing and the replay's pushes  | **pin / run**                 | pin / none     | same                         |
 | The same with a pin stored before the `runs` bit (v0.17)          | pin / run, by design          | same           | same                         |
@@ -231,13 +235,13 @@ Other loaders on a shell replay:
 | The same dependency, any replay without pins                                             | **run / record**                                               | run / run                                  | same                                    |
 | The same dependency, one other `ssr: false` loader lost its pin, document HIT            | pin / pin                                                      | **pin / run** (pending)                    | not designed                            |
 | The same, navigation replay                                                              | **pin / run**                                                  | **pin / run** (pending)                    | not designed                            |
-| A dependency whose push the awaiting loader's `cache()` entry did not record, no pins    | **entry / record**                                             | **entry / record** (pending)               | not designed                            |
+| A dependency the awaiting loader's `cache()` entry did not record, navigation replay     | **entry / record**                                             | **entry / record** (pending)               | not designed                            |
 | A `"use cache"` entry's copy of a dependency's push, replay without pins                 | entry / record, once                                           | entry / entry, once                        | same                                    |
 | Live-lane loader (a hole), with or without its own `cache()`                             | its run's or its entry's, both                                 | same                                       | same                                    |
 | Live-lane loader on a route with no `ssr: false` loader, a record without loader copies  | a hole, when the record holds any handle push                  | a hole, with or without a handles blob     | same                                    |
 | Dependency a pinned loader and a live loader share (`/shared-dep`)                       | captured push next to the live reader's fresh data, documented | same                                       | same (decided: leave)                   |
 | Order: a loader pushes, awaits a dependency that pushes, pushes again; its entry replays | `[own, dependency, own]`                                       | same                                       | same                                    |
-| The same loader runs over the record's copies, document HIT without pins                 | the record's order, with the **record's** values               | `[own, dependency, own]`, the run's values | same                                    |
+| The same loader's run, a document without pins (a HIT before dc-t89, a MISS since)       | the record's order, with the **record's** values               | `[own, dependency, own]`, the run's values | same                                    |
 | The same, navigation replay without pins                                                 | `[own, own, dependency]`                                       | `[own, dependency, own]`                   | same                                    |
 
 A route `cache()` record that holds a loader's push (a ppr route under
@@ -692,8 +696,8 @@ await, failed on `origin/main` too and is clean now (rule 4).
 | HIT, a deferred push, the loader's `cache()` entry warm at capture (B, #1035)                    | HTML: record **plus an empty element**. Hydration: record, **plus the value if the replay won the race**. After: the value. Fails either way       | HTML, hydration: record, the value included (#1182). After: nothing                       |
 | HIT, a deferred push, the body ran at capture (no `cache()`, or its entry missed)                | HTML: record **plus the capture's value, baked**. Hydration: record plus this run's value (`@g2` next to `@g1`), or not                            | HTML, hydration: record, the capture's value included (#1182). After: nothing             |
 | HIT, a push that holds a promise                                                                 | HTML: the capture's value with the promise masked. Hydration: this run's value, or not                                                             | HTML, hydration: record (no element). After: this run's value                             |
-| HIT, an entry without loader pins (`ppr.maxSnapshotBytes`), the run pushes                       | HTML: the capture's push. Hydration: **the run's push** (the run is awaited). Text mismatch                                                        | HTML, hydration: the capture's push (the placeholder). After: the run's push in its place |
-| The same, the run makes no push                                                                  | HTML: the capture's push. Hydration: **none**                                                                                                      | HTML, hydration: the capture's push. After: none                                          |
+| An entry without loader pins (`ppr.maxSnapshotBytes`), the run pushes                            | HTML: the capture's push. Hydration: **the run's push** (the run is awaited). Text mismatch                                                        | A document MISS since dc-t89: its HTML and hydration come from its own run, push included |
+| The same, the run makes no push                                                                  | HTML: the capture's push. Hydration: **none**                                                                                                      | A document MISS since dc-t89: no push                                                     |
 | HIT, a live-lane loader pushes, the reader is in the static part (B)                             | HTML: no element. Hydration: **the push when made before the loader's first await** (element mismatch, #418), else after                           | HTML, hydration: record. After: the push                                                  |
 | HIT, a live-lane loader pushes, the reader is inside that loader's boundary (a hole) (B, e2e)    | Push before the first await: in the hole's HTML and in the hydration data, clean. Push after an await: after hydration, **fails in that boundary** | Both after hydration, clean: the reader hydrates with the document's data (rule 4)        |
 | Client navigation that replays the shell                                                         | one stream, the final state                                                                                                                        | same                                                                                      |
@@ -945,8 +949,10 @@ both apps with two errors per run (the MISS and the HIT): "Hydration failed
 because the server rendered HTML didn't match the client" in dev, React
 error #418 (`args[]=HTML`) in production.
 
-`expectPinlessHitKeepsRunPushWithRunData` (a shell without loader pins)
-records the handle rows over time. That page does report a hydration error,
+`expectPinlessHitKeepsRunPushWithRunData` (a shell without loader pins;
+since dc-t89 the route is a document MISS and the test is
+`expectPinlessEntryServesDocumentMiss`) recorded the handle rows over
+time. That page does report a hydration error,
 and it is the loader DATA, not the handle rows: dev names the element,
 `<p data-testid="push-value">` with `+ pinned@g2` / `- pinned@g1` (the
 documented drift of an entry without pins). The rows read
@@ -1073,7 +1079,7 @@ promise that never settles are follow-ups, not part of #1182.
 | `.defer()` resolved by the loader's own code              | live                                                             | baked                                                                                                                 |
 | `.defer()` resolved by a component the capture renders    | live                                                             | its `else` bakes (the handle wait runs before the record's encode renders components), as a handler's `.defer()` does |
 | A pin with a hole, or a page another loader set `runs` on | the run's promise push added after hydration                     | judged: dropped, the record's copy stands                                                                             |
-| An entry without loader pins (`ppr.maxSnapshotBytes`)     | the run's push only                                              | the capture's value in the HTML, the run's after hydration                                                            |
+| An entry without loader pins (`ppr.maxSnapshotBytes`)     | the run's push only                                              | dc-t89: a document MISS, the run's value in the HTML and the hydration data                                           |
 | `Prerender` + `ppr` (#1057 `handles` record)              | the HIT run's value after hydration                              | the capture's value in the record                                                                                     |
 | An action or revalidation after a HIT                     | the loader re-runs; its push replaces the loader's               | same: it replaces the baked value                                                                                     |
 
@@ -1124,6 +1130,74 @@ path("/product/:id", ProductPage, { name: "product", ppr: true }, () => [
   loader(StockNote), // live lane: on a HIT, after hydration
 ]);
 ```
+
+## A document HIT holds a pin for every loader its HTML baked (dc-t89)
+
+Status: built. #1182 made a shell store and serve exactly what its capture
+rendered, for handle data. dc-t89 carries that to loader data: a document
+HIT is served only from an entry that holds a pin for every `ssr: false`
+loader its prelude baked, and an entry that cannot hold them serves
+navigations only. #1035's handle rules and the #1054 invariants stay as they
+are. The design and its case table are devcorner doc dc-d146; the owner's
+decisions are dc-q54.
+
+### Why it changed
+
+A document HIT serves the capture's prelude and hydrates it with the payload
+the HIT renders. Each loader's value in that payload comes from its pin, or,
+without one, from its `cache()` entry or a run on this request
+(`resolveLoaderData`, `loader-cache.ts`). #1035 froze the handle channel at
+the tail's render barrier, but a loader's value has no record copy: the pin
+is the only stored copy. So an entry without a pin for a loader its prelude
+baked sent that loader's run over HTML rendered from the capture's value.
+The docs called it "drift, repaired client-side". In a browser it was more:
+"Hydration failed" in dev, React error #418 in production, and React
+rendered the whole document root again on the client, on every HIT for the
+shell's lifetime (`expectPinlessHitHydratesClean` on the triage branch:
+none of the server's nodes survived, in both apps and both modes).
+
+Such an entry came from three places:
+
+- `ppr.maxSnapshotBytes` (8 MiB by default): over the cap the capture
+  dropped every pin and still stored the document shell (#651: "the cap
+  degrades pinning, never serving");
+- a codec that could not encode a pin at capture: the loader stayed
+  unpinned;
+- a pin that failed to decode on the HIT, known only after the prelude
+  flushed.
+
+### The rule
+
+| Case                                                              | Now                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pins over `maxSnapshotBytes`                                      | the capture stores the navigation half only: a `navigationOnly` entry at the document key with the doc record, no prelude, no pins. Documents MISS (the document gate already reads it as one), the attempt reports `refused` (`refusal: "size"`, `snapshotSkipped: true`) so the key backs off, and the warning reads "the document shell was not stored; raise maxSnapshotBytes or shrink the ssr: false data". A navigation replays the doc record and runs the bake-lane loaders fresh: the "navigation-only entry (no pins): run / run" row above. #651 is reversed for documents only |
+| The same, a prerender-served capture (no doc record)              | refused, and the tombstone stored (a `navigationOnly` entry with no snapshot), which the document gate reads as a MISS ahead of a build shell (`rsc-rendering.ts` shellServePlan). The build-time capture skips (`SHELL SKIP ... capture refused`)                                                                                                                                                                                                                                                                                                                                          |
+| A settled container the codec cannot encode                       | the capture fails like an encode error (#927): reported, backed off, nothing stored                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| A pin that fails to decode on a HIT                               | that response is served as before (one mismatch). Once it is closed, the key backs off and the entry is retired in the background: reported, replaced by a tombstone, the memo dropped, as `degradeUnreplayableShell` does for a doc record, without the reload. The capture after the backoff window stores it again, so a pin that keeps failing costs one mismatch per window                                                                                                                                                                                                            |
+| A hole-carrying pin (`holes: 1`) whose HIT run rejects            | unchanged, the documented residual (F2): the payload carries the error envelope where the prelude has the baked value. F1, serving the record with failed holes, is dc-t91                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| A fresh-only key a hole-carrying run returns, read outside a hole | unchanged, the documented residual (`loader-cache.ts`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+
+What a consumer sees: an over-cap `ppr` route serves documents as MISS (full
+SSR, no hydration error, no remount), and navigations still replay its
+handler layer.
+
+### What is built
+
+- `shell-capture.ts` `captureAndStoreShell`: the size guard stores the
+  navigation half (the doc record, or the tombstone) and returns `refused`
+  after the write; the codec drain collects an import failure or a `null`
+  encode with the render's errors, which refuse the capture.
+  `scheduleShellCapture` then backs the key off and skips
+  `noteCaptureStored`, so a document MISS schedules at most one capture per
+  backoff window.
+- `shell-snapshot.ts` `buildShellLoaderSeed` reports an undecodable pin
+  (`onUndecodable`); `rsc-rendering.ts` `serveShellHit` closes the response,
+  marks the key's backoff and retires the entry through `waitUntil`.
+
+Pinned by the "dc-t89" group of
+`serve-shell-request-push-ownership.rsc-test.tsx`, by `shell-capture.test.ts`,
+and in a browser by `expectPinlessEntryServesDocumentMiss` in the
+push-ownership suites of both apps, dev and production.
 
 ## What the browser keeps on a partial response (#1103)
 
@@ -1526,6 +1600,10 @@ Still expected failures (`it.fails`), with the assertion each fails on:
 | (unfiled) a dependency of a pinned loader, while another ssr: false loader lost its pin | data `holey-dep@g1`, push `dep-note@g2`, expected `dep-note@g1`. Passes on `origin/main`                                         |
 | (unfiled) a dependency whose push the awaiting loader's cache() entry did not record    | data `owned-dep-once@g2`, push `dep-once-note@g1` and `owned-once-note@g2`, expected the second only. Fails on `origin/main` too |
 
+Since dc-t89 the second unfiled test runs as a navigation replay: its route is
+over `maxSnapshotBytes`, so a document is a MISS. It fails with the same
+values.
+
 The two files share their harness and the loaders both use
 (`fixtures/shell-request-data.tsx`: `shellHarness`, `DeferredOwnedLoader`,
 `OuterDepLoader`, `OnceNotedBakeLoader`), so a route in one cannot drift from
@@ -1553,7 +1631,8 @@ tail without pins through `router.match`).
 
 In a browser, `expectReplayKeepsCapturedPushWithPinnedData` (#1003),
 `expectReplayDeliversDeferredPush` (#1001),
-`expectPinlessHitKeepsRunPushWithRunData` and, for #1035,
+`expectPinlessHitKeepsRunPushWithRunData` (since dc-t89
+`expectPinlessEntryServesDocumentMiss`) and, for #1035,
 `expectShellHitHydratesFromRecord` in `tests/shared-e2e/src/index.ts`
 run in a dev and a `(production)` describe in both apps
 (`packages/rangojs-router/e2e/shell-push-ownership.test.ts`,

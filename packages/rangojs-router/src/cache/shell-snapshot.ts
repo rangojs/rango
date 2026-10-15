@@ -405,12 +405,15 @@ const PIN_KEY_PREFIX = /^[^D.]*D\d+\./;
  * by loader. A key that does not parse pins nothing.
  *
  * Deserializations run in parallel; a record that fails to decode is skipped
- * (that loader drifts — the pre-snapshot behavior — instead of failing the
- * HIT). Returns undefined when the snapshot carries no loader records, without
- * touching the Flight codec (kept lazy for cold paths and non-RSC configs).
+ * and reported to `onUndecodable`: its loader runs instead, which a document
+ * HIT has already committed a prelude against, so serveShellHit retires the
+ * entry (dc-t89). Returns undefined when the snapshot carries no loader
+ * records, without touching the Flight codec (kept lazy for cold paths and
+ * non-RSC configs).
  */
 export async function buildShellLoaderSeed(
   snapshot: ShellSnapshotRecord[],
+  onUndecodable?: (key: string) => void,
 ): Promise<Map<string, ShellLoaderSeedEntry> | undefined> {
   const loaderRecords: ShellSnapshotRecord[] = [];
   for (const rec of snapshot) {
@@ -441,6 +444,7 @@ export async function buildShellLoaderSeed(
             },
           ];
         } catch {
+          onUndecodable?.(rec.key);
           return null;
         }
       },

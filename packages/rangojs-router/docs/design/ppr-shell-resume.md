@@ -1144,9 +1144,10 @@ tells them apart with `isInsideLoaderScope()`:
   route is pinned: its pushes are restored under its own id and stay as
   captured.
 
-  The third case is an entry without the loader's pin (its pins were dropped
-  over `maxSnapshotBytes`, or it is a navigation-only entry). The loader then
-  runs fresh on the replay, so it is a hole there too, whatever its lane:
+  The third case is an entry without the loader's pin (a navigation-only
+  entry, which is also what a capture over `maxSnapshotBytes` stores, or a pin
+  that failed to decode on a HIT, which then retires the entry). The loader
+  then runs fresh on the replay, so it is a hole there too, whatever its lane:
   the record's copies of its pushes are placeholders, its run's pushes
   replace them, and a run without a push drops them. The rule is one
   question, "does this request serve the loader from its pin", asked of the
@@ -1943,8 +1944,12 @@ bake-lane loader is served from its pin and does not run; one that runs
 (promise-carrying, or with pushes the record could not keep) reads the store,
 but its pinned container paths and its recorded pushes stand (a pushed
 promise among them, resolved, #1182), so it drifts only in a push whose
-settled value holds a promise, which the record could not keep, or when its
-pins were dropped (over `maxSnapshotBytes`). The payload is
+settled value holds a promise, which the record could not keep. An entry
+that cannot hold every pin its prelude baked serves no document (dc-t89:
+over `maxSnapshotBytes` the capture stores the navigation half only); a pin
+that fails to decode on a HIT costs that one response a mismatch, and the
+HIT retires the entry; and a hole-carrying pin whose HIT run rejects sends
+the error where the prelude has the baked value (the residual, dc-t91). The payload is
 hydration's source of truth, so React repairs such a mismatch at hydration
 (console warning + client re-render of the subtree) — degraded, not corrupt,
 and bounded by TTL/SWR. Consumer guidance: put per-request data in live
@@ -2137,13 +2142,17 @@ was invisible: `kv.put` rejects deep inside `waitUntil`.
 `PartialPrerenderProps.maxSnapshotBytes` (default 8 MiB,
 `DEFAULT_PPR_MAX_SNAPSHOT_BYTES`) bounds only the PINS: the loader-family
 records. The doc record is exempt,
-because without it a HIT could not serve at all. Over the cap
-`captureAndStoreShell` drops the pins, stores the entry with its doc record
-alone, and warns once per key. HITs still replay the handler layer; the trade
-is documented drift in the loader layer only: the bake-lane loaders run on a
-HIT, so their data that drifted between capture and HIT hydration-mismatches
-and React repairs it client-side. Both producers apply
-the cap (producer B receives it via `BuildShellCaptureOptions` / the dev
+because without it a HIT could not serve at all. A document HIT is served
+only from an entry that holds a pin for every `ssr: false` loader its
+prelude baked (dc-t89): without one, the loader's run hydrates over HTML
+rendered from the capture's value and React renders the document again on
+the client. So over the cap `captureAndStoreShell` stores the navigation
+half only (a navigation-only entry with the doc record, no prelude, no
+pins), reports the attempt `refused` (`size`) so the key backs off, and
+warns once per key: documents MISS, navigations still replay the handler
+layer. A prerender-served capture has no navigation half: it stores the
+tombstone, which also shadows a build shell. This reverses #651's "the cap
+degrades pinning, never serving" for documents. Both producers apply the cap (producer B receives it via `BuildShellCaptureOptions` / the dev
 `/__rsc_shell` `maxSnapshotBytes` param).
 
 **Whole-entry limit.** With the doc record exempt from the snapshot cap, the

@@ -39,7 +39,9 @@ import {
   createRouter,
   urls,
   type HandlerContext,
+  type ShellCaptureDebugEvent,
 } from "../../index.rsc.js";
+import type { ShellCacheEntry } from "../../cache/types.js";
 import { navigationShellKey } from "../../rsc/shell-capture-constants.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import {
@@ -268,8 +270,8 @@ const HoleyThrowsLater = createLoader(async () => {
 /** The pins are over the cap: the entry keeps its doc record only. */
 const NO_PINS = { maxSnapshotBytes: 1 };
 
-function makeRouter() {
-  return createRouter({}).routes(
+function makeRouter(options: Parameters<typeof createRouter>[0] = {}) {
+  return createRouter(options).routes(
     urls(({ path, layout, loader, loading, cache, intercept, revalidate }) => [
       path("/about", () => <p>about</p>, { name: "about" }),
       path(
@@ -666,12 +668,14 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     expect(await final(nav, /eb-after@g\d/g)).toEqual(["eb-after@g2"]);
   });
 
-  it("an entry whose pins maxSnapshotBytes dropped: a document HIT and a navigation replay keep the fresh run's data and push", async () => {
+  // dc-t89: an entry over maxSnapshotBytes holds the navigation half only.
+  it("an entry whose pins are over maxSnapshotBytes: a document MISSes, and it and a navigation replay keep the fresh run's data and push", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const { serve } = setup();
     const miss = await serve("/eb-capped");
     expect(miss.shellStatus).toBe("MISS");
     const entry = await miss.readEntry();
+    expect(entry?.navigationOnly).toBe(true);
     expect(entry?.snapshot?.map((record) => record.family)).toEqual([
       "segment",
     ]);
@@ -681,7 +685,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     source.generation = 3;
     const nav = await serve("/eb-capped", { partial: { from: "/about" } });
 
-    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.shellStatus).toBe("MISS");
     expect(distinct(hit.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g2"']);
     expect(await final(hit, /eb-after@g\d/g)).toEqual(["eb-after@g2"]);
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
@@ -698,7 +702,8 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     const hit = await serve("/dep-capped");
     const nav = await serve("/dep-capped", { partial: { from: "/about" } });
 
-    expect(hit.shellStatus).toBe("HIT");
+    // dc-t89: over maxSnapshotBytes a document is a MISS.
+    expect(hit.shellStatus).toBe("MISS");
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect({
       hit: {
@@ -857,7 +862,7 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
     const hit = await serve("/once-capped");
     const nav = await serve("/once-capped", { partial: { from: "/about" } });
 
-    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.shellStatus).toBe("MISS");
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect({
       hit: {
@@ -891,7 +896,7 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
       partial: { from: "/about" },
     });
 
-    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.shellStatus).toBe("MISS");
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     // The entry hit: no run.
     expect(runs.ownedDep).toBe(filled);
@@ -935,7 +940,7 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
     expect(runs.order).toBe(ran + 2);
 
     for (const result of [run, entryHit]) {
-      expect(result.shellStatus).toBe("HIT");
+      expect(result.shellStatus).toBe("MISS");
     }
     for (const result of [run, runNav]) {
       expect(await order(result)).toEqual(pushOrder(2));
@@ -976,7 +981,7 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
     const hit = await serve("/owned-capped");
     const nav = await serve("/owned-capped", { partial: { from: "/about" } });
 
-    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.shellStatus).toBe("MISS");
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(runs.owned).toBe(filled);
     for (const result of [hit, nav]) {
@@ -1009,7 +1014,7 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
         partial: { from: "/about" },
       });
 
-      expect(hit.shellStatus).toBe("HIT");
+      expect(hit.shellStatus).toBe("MISS");
       expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
       for (const result of [hit, nav]) {
         // The loader ran and its "use cache" read hit the g1 entry: its
@@ -1058,6 +1063,8 @@ describe("PENDING #1036: a dependency the record does not attribute to the loade
     },
   );
 
+  // A navigation replay: over maxSnapshotBytes the entry serves no document
+  // (dc-t89).
   red(
     "a dependency whose push the awaiting loader's cache() entry did not record: the record's copy does not outlive the entry's run",
     async () => {
@@ -1072,12 +1079,14 @@ describe("PENDING #1036: a dependency the record does not attribute to the loade
       );
       source.generation = 3;
 
-      const hit = await serve("/owned-dep-once-capped");
+      const nav = await serve("/owned-dep-once-capped", {
+        partial: { from: "/about" },
+      });
 
-      expect(hit.shellStatus).toBe("HIT");
+      expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
       expect({
-        data: distinct(hit.flight, /"ownedOnce":"owned-dep-once@g\d"/g),
-        push: await final(hit, /(?:owned-once|dep-once)-note@g\d/g),
+        data: distinct(nav.flight, /"ownedOnce":"owned-dep-once@g\d"/g),
+        push: await final(nav, /(?:owned-once|dep-once)-note@g\d/g),
       }).toEqual({
         data: ['"ownedOnce":"owned-dep-once@g2"'],
         push: ["owned-once-note@g2"],
@@ -1264,23 +1273,29 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
       });
     });
 
-    it("an entry without loader pins hydrates with the capture's push, and the run's push takes its place after hydration", async () => {
-      const { values } = await hitAfterCapture("/eb-capped");
+    // dc-t89: an entry that could not keep its loader pins
+    // (maxSnapshotBytes) serves no document HIT, so nothing hydrates over a
+    // shell rendered from another run: the MISS hydrates with its own run.
+    for (const [path, hydration] of [
+      ["/eb-capped", ["eb-after@g2"]],
+      ["/once-capped", []],
+    ] as const) {
+      it(`${path}: an entry without loader pins is a document MISS that hydrates with its run's pushes`, async () => {
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const { serve } = setup();
+        expect((await serve(path)).shellStatus).toBe("MISS");
+        source.generation = 2;
 
-      expect(delivered(values)).toEqual({
-        hydration: ["eb-after@g1"],
-        afterHydration: ["eb-after@g2"],
+        const miss = await serve(path);
+
+        expect(miss.shellStatus).toBe("MISS");
+        expect(await handleValues(miss)).toEqual({
+          shell: undefined,
+          hydration,
+          afterHydration: undefined,
+        });
       });
-    });
-
-    it("an entry without loader pins whose run makes no push hydrates with the capture's push and drops it after hydration", async () => {
-      const { values } = await hitAfterCapture("/once-capped");
-
-      expect(delivered(values)).toEqual({
-        hydration: ["once-note@g1"],
-        afterHydration: [],
-      });
-    });
+    }
 
     it("a live-lane loader's push arrives after hydration, whether it was made before or after an await", async () => {
       const { values } = await hitAfterCapture("/live-noted");
@@ -1296,8 +1311,6 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
       "/deferred-plain",
       "/nested-noted",
       "/eb",
-      "/eb-capped",
-      "/once-capped",
       "/live-noted",
     ]) {
       it(`${path}: the client hydrates with exactly what the shell was rendered from`, async () => {
@@ -1436,16 +1449,18 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
   });
 });
 
-// dc-t89. A shell HIT's HTML is the capture's prelude, so the payload React
+// dc-t89. A document HIT's HTML is the capture's prelude, so the payload React
 // hydrates it with must carry the loader data that prelude was rendered
-// from. A loader served from its pin does. A loader the HIT runs because the
-// entry has no pin for it sends that run's value instead; the browser then
-// reports a hydration mismatch ("Hydration failed" in dev, React error #418
-// in production) and renders the page again on the client
-// (expectPinlessHitHydratesClean in tests/shared-e2e). Which value the fix
-// sends is the owner's decision: each test asserts only that the shell and
-// the hydration payload agree.
-describe("dc-t89: a HIT hydrates with the loader data its shell was rendered from", () => {
+// from. A loader served from its pin does; a loader the HIT runs sends that
+// run's value, and the browser reports a hydration mismatch ("Hydration
+// failed" in dev, React error #418 in production) and renders the page again
+// on the client (expectPinlessHitHydratesClean in tests/shared-e2e). So a
+// document HIT is served only from an entry that holds a pin for every
+// `ssr: false` loader its prelude baked. An entry over maxSnapshotBytes holds
+// the navigation half only: documents MISS, navigations replay it. A pin that
+// fails to decode on a HIT costs that one response a mismatch, and the entry
+// is retired and recaptured.
+describe("dc-t89: a document HIT hydrates with the loader data its shell was rendered from", () => {
   /** The loader values matching `pattern` in the shell a HIT served and in the payload it hydrates with. */
   function loaderValues(
     hit: ServeShellRequestResult,
@@ -1472,63 +1487,123 @@ describe("dc-t89: a HIT hydrates with the loader data its shell was rendered fro
     expectAgree(loaderValues(await serve("/eb"), /"eb":"eb@g\d"/g));
   });
 
-  it("an entry whose pins maxSnapshotBytes dropped hydrates with the data its shell was rendered from", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { serve } = setup();
-    expect((await serve("/eb-capped")).shellStatus).toBe("MISS");
-    source.generation = 2;
-
-    expectAgree(loaderValues(await serve("/eb-capped"), /"eb":"eb@g\d"/g));
-  });
-
-  it("control: without pins, a loader whose cache() entry is the one the capture read agrees", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { serve } = setup();
-    expect((await serve("/owned-capped")).shellStatus).toBe("MISS");
-    source.generation = 2;
-
-    expectAgree(
-      loaderValues(await serve("/owned-capped"), /"owned":"owned@g\d"/g),
+  it("an entry whose pins are over maxSnapshotBytes serves documents as MISS, one capture per backoff window, and a navigation replays it with a fresh run", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const events: ShellCaptureDebugEvent[] = [];
+    const { serve } = shellHarness(
+      makeRouter({ debugShellCapture: (event) => events.push(event) }),
     );
-  });
-
-  it("without pins, a loader whose cache() entry is gone hydrates with the data its shell was rendered from", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { serve, withLoaderMiss } = setup();
-    expect((await serve("/owned-capped")).shellStatus).toBe("MISS");
+    expect((await serve("/eb-capped")).shellStatus).toBe("MISS");
+    expect(events.filter((event) => event.attempt !== undefined)).toEqual([
+      expect.objectContaining({
+        outcome: "refused",
+        refusal: "size",
+        snapshotSkipped: true,
+      }),
+    ]);
+    expect(
+      warn.mock.calls
+        .map((call) => String(call[0]))
+        .filter((text) => text.includes("/eb-capped")),
+    ).toEqual([
+      expect.stringContaining(
+        "the document shell was not stored; raise maxSnapshotBytes or shrink the ssr: false data.",
+      ),
+    ]);
     source.generation = 2;
 
-    const hit = await withLoaderMiss(() => serve("/owned-capped"));
+    const doc = await serve("/eb-capped");
 
-    expectAgree(loaderValues(hit, /"owned":"owned@g\d"/g));
+    // No shell to hydrate over: the HTML and the payload come from one run.
+    expect(doc.shellStatus).toBe("MISS");
+    expect(doc.prelude).toBeUndefined();
+    expect(distinct(doc.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g2"']);
+    expect(events.filter((event) => event.attempt !== undefined)).toHaveLength(
+      1,
+    );
+    expect(events.at(-1)?.outcome).toBe("skip-backoff");
+
+    source.generation = 3;
+    const nav = await serve("/eb-capped", { partial: { from: "/about" } });
+
+    expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
+    expect(distinct(nav.flight, /"eb":"eb@g\d"/g)).toEqual(['"eb":"eb@g3"']);
   });
 
-  it("an entry that lost one pin of two hydrates with the data its shell was rendered from", async () => {
+  for (const read of ["the one the capture read", "gone"] as const) {
+    it(`over maxSnapshotBytes a document is a MISS whether the loader's cache() entry is ${read}`, async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { serve, withLoaderMiss } = setup();
+      expect((await serve("/owned-capped")).shellStatus).toBe("MISS");
+      source.generation = 2;
+
+      const doc =
+        read === "gone"
+          ? await withLoaderMiss(() => serve("/owned-capped"))
+          : await serve("/owned-capped");
+
+      expect(doc.shellStatus).toBe("MISS");
+      expect(doc.prelude).toBeUndefined();
+      expect(distinct(doc.flight, /"owned":"owned@g\d"/g)).toEqual([
+        read === "gone" ? '"owned":"owned@g2"' : '"owned":"owned@g1"',
+      ]);
+    });
+  }
+
+  /** PlainBake's pin (`D1.`) with bytes no Flight decoder reads. */
+  function corruptPlainPin(entry: ShellCacheEntry): ShellCacheEntry {
+    return {
+      ...entry,
+      snapshot: entry.snapshot.map((record) =>
+        record.family === "loader" && /D1\./.test(record.key)
+          ? {
+              ...record,
+              value: { ...(record.value as object), value: "%not-flight%" },
+            }
+          : record,
+      ),
+    } as ShellCacheEntry;
+  }
+
+  /** What each shell write stored: a tombstone or an entry and its pins. */
+  function shellWrites(writes: {
+    mock: { calls: [string, ShellCacheEntry, ...unknown[]][] };
+  }): string[] {
+    return writes.mock.calls.map(([, written]) =>
+      written.navigationOnly
+        ? `tombstone ${written.snapshot.length}`
+        : `entry ${written.snapshot.filter((r) => r.family === "loader").length} pins`,
+    );
+  }
+
+  /** Move the clock past the first backoff window (1 s). */
+  function afterBackoffWindow(): void {
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 10_000);
+  }
+
+  const PLAIN = /"plain":"plain@g\d"/g;
+
+  it("a loader pin that fails to decode on a HIT: that response hydrates once with the run's value, then the entry is retired, and the capture after the backoff window stores it whole", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const { serve, cacheStore } = setup();
     const miss = await serve("/two-bake");
     expect(miss.shellStatus).toBe("MISS");
     const entry = (await miss.readEntry())!;
-    const pins = entry.snapshot.filter((record) => record.family === "loader");
-    expect(pins).toHaveLength(2);
-    // The second loader's pin (PlainBake, `D1.`), as a pin that failed to
-    // encode at capture or to decode on the HIT leaves the entry.
-    await cacheStore.putShell!(
-      miss.key,
-      {
-        ...entry,
-        snapshot: entry.snapshot.filter(
-          (record) => !(record.family === "loader" && /D1\./.test(record.key)),
-        ),
-      },
-      300,
-    );
+    expect(
+      entry.snapshot.filter((record) => record.family === "loader"),
+    ).toHaveLength(2);
+    // As a store that corrupted the pin's bytes hands it back.
+    await cacheStore.putShell!(miss.key, corruptPlainPin(entry), 300);
     source.generation = 2;
+    const writes = vi.spyOn(cacheStore, "putShell");
 
     const hit = await serve("/two-bake");
 
+    // The one mismatch: the undecodable pin's loader ran on this HIT.
     expect({
       kept: loaderValues(hit, /"holey":"holey-dep@g\d"/g),
-      lost: loaderValues(hit, /"plain":"plain@g\d"/g),
+      lost: loaderValues(hit, PLAIN),
     }).toEqual({
       kept: {
         shell: ['"holey":"holey-dep@g1"'],
@@ -1536,24 +1611,72 @@ describe("dc-t89: a HIT hydrates with the loader data its shell was rendered fro
       },
       lost: {
         shell: ['"plain":"plain@g1"'],
-        hydration: ['"plain":"plain@g1"'],
+        hydration: ['"plain":"plain@g2"'],
       },
     });
+    // Retired: a tombstone, and no recapture inside the backoff window.
+    expect(shellWrites(writes)).toEqual(["tombstone 0"]);
+    expect((await serve("/two-bake")).shellStatus).toBe("MISS");
+    expect(shellWrites(writes)).toEqual(["tombstone 0"]);
+
+    afterBackoffWindow();
+    source.generation = 3;
+    expect((await serve("/two-bake")).shellStatus).toBe("MISS");
+    expect(shellWrites(writes)).toEqual(["tombstone 0", "entry 2 pins"]);
+
+    expectAgree(loaderValues(await serve("/two-bake"), PLAIN));
   });
 
-  it("a hole-carrying pin whose HIT run rejects hydrates with the data its shell was rendered from", async () => {
+  it("a loader pin that keeps failing to decode is retired once per backoff window, not on every HIT", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const { serve } = setup();
-    expect((await serve("/holey-throws")).shellStatus).toBe("MISS");
+    const { serve, cacheStore } = setup();
+    const getShell = cacheStore.getShell.bind(cacheStore);
+    vi.spyOn(cacheStore, "getShell").mockImplementation(async (key) => {
+      const read = await getShell(key);
+      return read && { ...read, entry: corruptPlainPin(read.entry) };
+    });
+    expect((await serve("/two-bake")).shellStatus).toBe("MISS");
     source.generation = 2;
+    const writes = vi.spyOn(cacheStore, "putShell");
 
-    expectAgree(
-      loaderValues(
-        await serve("/holey-throws"),
-        /"holeyThrows":"holey-throws@g\d"/g,
-      ),
-    );
+    const statuses = [(await serve("/two-bake")).shellStatus];
+    statuses.push((await serve("/two-bake")).shellStatus);
+    statuses.push((await serve("/two-bake")).shellStatus);
+    expect(statuses).toEqual(["HIT", "MISS", "MISS"]);
+    expect(shellWrites(writes)).toEqual(["tombstone 0"]);
+
+    afterBackoffWindow();
+    statuses.push((await serve("/two-bake")).shellStatus);
+    statuses.push((await serve("/two-bake")).shellStatus);
+
+    expect(statuses.slice(3)).toEqual(["MISS", "HIT"]);
+    expect(shellWrites(writes)).toEqual([
+      "tombstone 0",
+      "entry 2 pins",
+      "tombstone 0",
+    ]);
   });
+
+  // The documented residual (F2, dc-q54): the run of a hole-carrying pin
+  // rejects on the HIT, and the payload carries its error where the prelude
+  // has the baked value. F1, serving the record with failed holes, is
+  // dc-t91.
+  red(
+    "a hole-carrying pin whose HIT run rejects hydrates with the data its shell was rendered from",
+    async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { serve } = setup();
+      expect((await serve("/holey-throws")).shellStatus).toBe("MISS");
+      source.generation = 2;
+
+      expectAgree(
+        loaderValues(
+          await serve("/holey-throws"),
+          /"holeyThrows":"holey-throws@g\d"/g,
+        ),
+      );
+    },
+  );
 });
 
 // By design (issue #1002, closed): a loader that reads another loader with

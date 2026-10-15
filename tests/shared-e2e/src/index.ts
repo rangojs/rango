@@ -2278,7 +2278,7 @@ export async function expectBackLeavesScrollToBrowser(
  * - `pinnedUrl`: returns a nested promise (it runs on every replay of its
  *   shell), value `pinned@g<n>`, one settled push `pinned-note@g<n>`.
  * - `cappedUrl`: the same loader under `ppr.maxSnapshotBytes: 1`, so the
- *   stored entry keeps no loader pin.
+ *   capture stores the navigation half only: documents MISS (dc-t89).
  * - `deferredUrl`: promise-free, bound with its own `cache()`, value
  *   `deferred@g<n>`, a settled push `settled-note@g<n>` and a deferred one
  *   `deferred-note@g<n>`.
@@ -2378,6 +2378,13 @@ async function bumpPushGeneration(
 async function gotoShellHit(page: Page, url: string): Promise<void> {
   const response = await page.goto(url);
   expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+  await waitForShellHydration(page);
+}
+
+/** Load `url` as a document rendered in full (a shell MISS), and wait for hydration. */
+async function gotoShellMiss(page: Page, url: string): Promise<void> {
+  const response = await page.goto(url);
+  expect(response?.headers()["x-rango-shell"]).toBe("MISS");
   await waitForShellHydration(page);
 }
 
@@ -2768,139 +2775,56 @@ async function recordPushNoteRows(
 }
 
 /**
- * A document HIT of a shell entry that kept no loader pin
- * (`ppr.maxSnapshotBytes`): the `ssr: false` loader runs on the HIT, so the
- * page shows that run's data and that run's push. Before, it showed the
- * run's data next to the push the shell recorded at capture.
- *
- * The prelude was rendered from the capture's value, so the browser repairs
- * the loader DATA on hydration (the documented drift of an entry without
- * pins), and this installs no hydration-error guard. The handle rows are
- * not part of that drift (#1035): the page hydrates with the capture's push,
- * as the HTML has it, and the run's push takes its place after hydration.
- * Before, the hydration data already held the run's push.
+ * Request `url` as a document, which schedules its capture, then navigate to
+ * it on the client until a navigation replays the stored entry. A document
+ * capture outranks a navigation's in the capture queue, so by then the
+ * document capture has run.
  */
-export async function expectPinlessHitKeepsRunPushWithRunData(
+async function warmShellToReplay(
+  page: Page,
+  fixture: PushOwnershipFixture,
+  url: string,
+): Promise<void> {
+  const res = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+  expect(res.status()).toBe(200);
+  await expect(async () => {
+    await replayShellByNavigation(page, fixture, url);
+  }).toPass({ timeout: 20_000 });
+}
+
+/**
+ * dc-t89: a capture whose `ssr: false` loader pins exceed
+ * `ppr.maxSnapshotBytes` stores the navigation half of the entry only. A
+ * document is a MISS: its HTML and hydration data come from one run, so it
+ * hydrates clean and shows the run's data next to the run's push. A client
+ * navigation replays the entry's handler layer and runs the loader fresh.
+ * Before, the document was a HIT whose prelude had the capture's value while
+ * its own run sent the newer one: "Hydration failed" in dev, React error
+ * #418 in production (both caught by the guard), and React rendered the
+ * whole document again on the client.
+ */
+export async function expectPinlessEntryServesDocumentMiss(
   page: Page,
   fixture: PushOwnershipFixture,
 ): Promise<void> {
-  // Provoked on purpose (console guard, tests/shared-e2e/src/console-guard.ts).
-  expectConsole(page, {
-    allow: [/Hydration failed because the server rendered text/],
-  });
+  using _ = guardHydrationErrors(page);
   const probe = pushProbe("capped");
   const url = `${fixture.cappedUrl}?probe=${probe}`;
-  await warmShellToHit(page, url);
+  await warmShellToReplay(page, fixture, url);
   const current = await bumpPushGeneration(page, fixture, probe);
-  const samples = await recordPushNoteRows(page);
 
-  await gotoShellHit(page, url);
+  await gotoShellMiss(page, url);
   await expect(byTestId(page, "push-value")).toHaveText(`pinned@g${current}`);
   await expect(byTestId(page, "push-note")).toHaveText([
     `pinned-note@g${current}`,
   ]);
-  // The rows on screen when the root hydrated: still the shell's.
-  expect((await samples()).find((sample) => sample.hydrated)?.rows).toEqual([
-    `pinned-note@g${current - 1}`,
-  ]);
-}
 
-/** The nodes {@link expectPinlessHitHydratesClean} marks before hydration. */
-const PINLESS_SERVER_NODES = {
-  value: '[data-testid="push-value"]',
-  page: 'main:has([data-testid="push-value"])',
-  document: "body > :not(script):not(style):not(template)",
-};
-
-/**
- * Remember the first node the HTML parser inserts for each selector, before
- * hydration runs. A hydration mismatch makes React render the nearest
- * Suspense boundary above it again, or the whole root without one, replacing
- * the server's nodes.
- */
-async function markServerNodes(
-  page: Page,
-  selectors: Record<string, string>,
-): Promise<void> {
-  await page.addInitScript((targets) => {
-    const marks: Record<string, Element | undefined> = {};
-    (window as { __rangoServerNodes?: typeof marks }).__rangoServerNodes =
-      marks;
-    const observer = new MutationObserver(() => {
-      for (const [name, selector] of Object.entries(targets)) {
-        marks[name] ??= document.querySelector(selector) ?? undefined;
-      }
-      if (Object.keys(targets).every((name) => marks[name])) {
-        observer.disconnect();
-      }
-    });
-    observer.observe(document, { childList: true, subtree: true });
-  }, selectors);
-}
-
-/** For each selector of {@link markServerNodes}: whether its server node is still on screen. */
-async function serverNodesKept(
-  page: Page,
-  selectors: Record<string, string>,
-): Promise<Record<string, boolean>> {
-  return page.evaluate((targets) => {
-    const marks =
-      (window as { __rangoServerNodes?: Record<string, Element | undefined> })
-        .__rangoServerNodes ?? {};
-    return Object.fromEntries(
-      Object.entries(targets).map(([name, selector]) => [
-        name,
-        marks[name] !== undefined &&
-          document.querySelector(selector) === marks[name],
-      ]),
-    );
-  }, selectors);
-}
-
-/**
- * dc-t89: a document HIT of a shell entry that kept no loader pin
- * (`ppr.maxSnapshotBytes`) hydrates clean. The HIT's HTML is the capture's
- * prelude, so the hydration data must hold the loader data that prelude was
- * rendered from: no hydration error, React keeps the server's nodes, and the
- * value on screen and its push come from one run.
- *
- * Which run (the capture's or the HIT's) is the owner's decision, so this
- * asserts only that they agree. On 0.26.0 it fails: the prelude has
- * `pinned@g1`, the HIT's own run sends `pinned@g2` as the hydration data, and
- * React reports the text mismatch ("Hydration failed" in dev, error #418 in
- * production) and renders the tree on the client.
- * {@link expectPinlessHitKeepsRunPushWithRunData} allows that error.
- */
-export async function expectPinlessHitHydratesClean(
-  page: Page,
-  fixture: PushOwnershipFixture,
-): Promise<void> {
-  const guard = guardHydrationErrors(page);
-  const probe = pushProbe("capped-clean");
-  const url = `${fixture.cappedUrl}?probe=${probe}`;
-  await warmShellToHit(page, url);
-  await bumpPushGeneration(page, fixture, probe);
-  await markServerNodes(page, PINLESS_SERVER_NODES);
-
-  await gotoShellHit(page, url);
-  // One run: the push on screen describes the value on screen, once every
-  // late push has arrived.
-  const value = (await byTestId(page, "push-value").textContent()) ?? "";
-  const generation = value.split("@g")[1];
+  const next = await bumpPushGeneration(page, fixture, probe);
+  await replayShellByNavigation(page, fixture, url);
+  await expect(byTestId(page, "push-value")).toHaveText(`pinned@g${next}`);
   await expect(byTestId(page, "push-note")).toHaveText([
-    `pinned-note@g${generation}`,
+    `pinned-note@g${next}`,
   ]);
-
-  const kept = await serverNodesKept(page, PINLESS_SERVER_NODES);
-  try {
-    guard[Symbol.dispose]();
-  } catch (error) {
-    throw new Error(
-      `${(error as Error).message}\nvalue on screen: ${value}; ` +
-        `server nodes kept: ${JSON.stringify(kept)}`,
-    );
-  }
-  expect(kept).toEqual({ value: true, page: true, document: true });
 }
 
 /**

@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a ppr route whose loader pins exceed `maxSnapshotBytes` no longer serves a document shell that React re-renders on the client
+
+**Before.** When the `ssr: false` loader data of a `ppr` route went over
+`ppr.maxSnapshotBytes` (8 MiB by default), the capture dropped the loader pins
+and still stored the document shell. Every document HIT then served HTML
+rendered from the capture's loader data, and hydrated it with the data its own
+run returned. React reported a hydration mismatch ("Hydration failed" in dev,
+error #418 in production) and rendered the whole page again on the client, on
+every HIT for the shell's lifetime. The docs called this drift "repaired
+client-side".
+
+```ts
+path("/catalog", CatalogPage, { name: "catalog", ppr: true }, () => [
+  // Returns more than 8 MiB of settled data: its pins do not fit.
+  loader(Catalog, { ssr: false }),
+]);
+// Before: x-rango-shell: HIT, and the document is rendered again on hydration.
+// Now: x-rango-shell: MISS (full SSR, clean hydration); navigations replay it.
+```
+
+**Now.** A document HIT is served only from an entry that holds a pin for
+every `ssr: false` loader its HTML baked. Over the cap the capture stores the
+navigation half only: documents render in full as a MISS, with no hydration
+error and no remount, and client navigations still replay the route's handler
+layer and run those loaders fresh. On a `Prerender` + `ppr` route the capture
+also stops a build-time shell from serving documents. The route backs off
+between captures like a refused capture. The capture warning, once per key,
+now reads:
+
+```
+[rango] Shell capture for "<key>" recorded <n> bytes of ssr: false loader
+pins, over the <cap>-byte cap: the document shell was not stored; raise
+maxSnapshotBytes or shrink the ssr: false data. Documents of this route are
+a MISS until then; client navigations still replay its handler layer.
+```
+
+The `debugShellCapture` event for such an attempt is `refused` with `refusal:
+"size"` and `snapshotSkipped: true`, and `router.prerender()` reports the shell
+as `refused`. The same rule covers two fault paths: a pin the Flight codec
+cannot encode fails the capture, and a pin that fails to decode on a HIT costs
+that one response a mismatch, after which the entry is replaced and the route
+backs off before it is captured again.
+One case is unchanged: a hole-carrying pin (an `ssr: false` loader that returns
+a promise) whose run on the HIT throws still sends the error where the HTML has
+the baked value.
+
 ## 0.26.0 (2026-10-15)
 
 ### Breaking: an `ssr: false` loader's `push(promise)` and `.defer()` bake into the PPR shell ([#1182](https://github.com/rangojs/rango/issues/1182))

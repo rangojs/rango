@@ -176,12 +176,30 @@ describe("a Prerender + ppr shell HIT hydrates with the loader pushes its shell 
     expect(values.afterHydration).toBeUndefined();
   });
 
-  it("an entry without loader pins (maxSnapshotBytes) hydrates with the capture's push, and the run's push takes its place after hydration", async () => {
-    const { values } = await hitAfterCapture("/pre-capped");
+  // dc-t89: a capture whose pins are over maxSnapshotBytes stores no
+  // document shell. A prerender-served one has no navigation half, so it
+  // stores the tombstone, which also shadows a build shell.
+  it("loader pins over maxSnapshotBytes store a tombstone: the document is a MISS that hydrates with its run's push", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { serve } = setup();
+    const capture = await serve("/pre-capped");
+    expect(capture.shellStatus).toBe("MISS");
+    const tombstone = await capture.readEntry();
+    expect(tombstone).toMatchObject({ navigationOnly: true, snapshot: [] });
+    expect([tombstone?.docKey, tombstone?.prelude]).toEqual([
+      undefined,
+      undefined,
+    ]);
+    source.generation = 2;
 
-    expect(values.shell).toEqual(["handler-note", "settled-only@g1"]);
-    expect(values.hydration).toEqual(values.shell);
-    expect(values.afterHydration).toEqual(["handler-note", "settled-only@g2"]);
+    const miss = await serve("/pre-capped");
+
+    expect(miss.shellStatus).toBe("MISS");
+    expect(await handleValues(miss)).toEqual({
+      shell: undefined,
+      hydration: ["handler-note", "settled-only@g2"],
+      afterHydration: undefined,
+    });
   });
 
   it("a plain ppr route keeps the same push in its doc record (control)", async () => {

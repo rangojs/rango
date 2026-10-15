@@ -196,7 +196,7 @@ describe("withCacheLookup: a Prerender + ppr shell HIT restores the entry's load
     });
   });
 
-  it("without pins (maxSnapshotBytes): every copy is a placeholder the runs replace", async () => {
+  it("without pins (a pin that failed to decode on the HIT): every copy is a placeholder the runs replace", async () => {
     const { reqCtx } = await lookup({
       tail: { handles: await shellHandles() },
     });

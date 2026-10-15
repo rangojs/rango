@@ -349,7 +349,7 @@ describe("buildShellLoaderSeed", () => {
     expect([...(seed?.keys() ?? [])]).toEqual(["x#Good"]);
   });
 
-  it("skips a record that fails to decode (that loader drifts, the pre-snapshot behavior)", async () => {
+  it("skips a record that fails to decode and reports it (serveShellHit retires the entry, dc-t89)", async () => {
     const snapshot: ShellSnapshotRecord[] = [
       {
         family: "loader",
@@ -363,7 +363,11 @@ describe("buildShellLoaderSeed", () => {
       },
     ];
 
-    const seed = await buildShellLoaderSeed(snapshot);
+    const undecodable: string[] = [];
+    const seed = await buildShellLoaderSeed(snapshot, (key) =>
+      undecodable.push(key),
+    );
+    expect(undecodable).toEqual(["R0D0.K-bad"]);
     expect(seed?.has("K-bad")).toBe(false);
     expect(seed?.get("K-good")).toEqual({
       container: 7,
