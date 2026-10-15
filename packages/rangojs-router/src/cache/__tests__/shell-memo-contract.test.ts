@@ -12,7 +12,15 @@
  * copy, with or without the fresh-reads cookie a mutating user's next
  * requests carry.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterEach,
+  vi,
+} from "vitest";
 import type { SegmentCacheStore, ShellCacheEntry } from "../types.js";
 import type { StoreMemoOptions } from "../shell-memo.js";
 
@@ -282,6 +290,15 @@ describe.each([
   readonly [string, () => Promise<Isolates>, Invalidation]
 >)("isolate memo contract: %s", (_name, isolates, invalidation) => {
   let setup: Isolates;
+
+  // The first test of each store pays the cold module import and transform
+  // (about 0.35 s alone, past the 5 s test timeout under load). Pay it in a
+  // hook with its own budget; afterEach resets modules, so tests stay isolated.
+  beforeAll(async () => {
+    await (await isolates()).make();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  }, 60_000);
 
   beforeEach(async () => {
     vi.useFakeTimers();

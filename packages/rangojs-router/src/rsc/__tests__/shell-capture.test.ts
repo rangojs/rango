@@ -260,16 +260,26 @@ describe("gateFlightForCapture", () => {
       }
     })();
 
-    const start = Date.now();
-    controller.enqueue(enc("a"));
-    controller.enqueue(enc("b"));
+    // Fake only the timers the hop loop uses: virtual time makes "far under
+    // 50ms" exact and independent of machine load.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let quiesced = false;
+      void quiesce.then(() => {
+        quiesced = true;
+      });
+      controller.enqueue(enc("a"));
+      controller.enqueue(enc("b"));
 
-    // Quiesce resolves after a couple of macrotask hops of byte silence. The
-    // hard contract: this is TASKS, not wall-clock — it must land far under
-    // 50ms, so a reintroduced 50ms debounce would fail this test.
-    expect(await settlesWithin(quiesce, 40)).toBe(true);
-    const elapsed = Date.now() - start;
-    expect(elapsed).toBeLessThan(40);
+      // Quiesce resolves after a couple of macrotask hops of byte silence. The
+      // hard contract: this is TASKS, not wall-clock — it must land within a
+      // few virtual ms, so a reintroduced 50ms debounce would fail this test.
+      expect(quiesced).toBe(false);
+      await vi.advanceTimersByTimeAsync(40);
+      expect(quiesced).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
 
     // The shell rows were forwarded intact.
     expect(chunks).toEqual(["a", "b"]);

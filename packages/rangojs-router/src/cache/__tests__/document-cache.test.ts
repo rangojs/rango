@@ -1,4 +1,12 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  vi,
+  afterEach,
+} from "vitest";
 import {
   createDocumentCacheMiddleware,
   type DocumentCacheOptions,
@@ -126,6 +134,18 @@ function createMockMiddlewareContext(
 describe("createDocumentCacheMiddleware", () => {
   let mockStore: ReturnType<typeof createMockCacheStore>;
   let mockRequestCtx: ReturnType<typeof createMockRequestContext>;
+
+  // The first dynamic import of ../document-cache.js after the request-context
+  // doMock transforms the module graph (~0.5 s alone, past the 5 s test timeout
+  // under load). Pay it in a hook with its own budget so no test carries it.
+  beforeAll(async () => {
+    vi.doMock("../../server/request-context.js", () => ({
+      getRequestContext: () => mockRequestCtx,
+      _getRequestContext: () => mockRequestCtx,
+      runWithRequestContext,
+    }));
+    await import("../document-cache.js");
+  }, 60_000);
 
   beforeEach(() => {
     vi.useFakeTimers();
