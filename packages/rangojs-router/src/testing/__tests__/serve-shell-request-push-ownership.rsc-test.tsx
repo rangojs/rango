@@ -193,8 +193,9 @@ async function SchReadingPage(ctx: HandlerContext): Promise<React.ReactNode> {
 }
 
 /**
- * A promise-free `ssr: false` loader without cache(): its body runs at
- * capture, and again on a HIT for the deferred push (#1035).
+ * A promise-free `ssr: false` loader without cache() that pushes a settled
+ * value and a promise: its body runs at capture only, and the shell keeps
+ * both pushes (#1182).
  */
 const PlainDeferred = createLoader(async (ctx) => {
   ctx.use(Notes)(`plain-settled@g${source.generation}`);
@@ -216,7 +217,10 @@ const SLOW_PUSH_BUDGET_MS = 100;
 const slowAfterBudget = (value: string): Promise<string> =>
   new Promise((resolve) => setTimeout(() => resolve(value), 400));
 
-/** An `ssr: false` loader whose deferred push settles after the budget. */
+/**
+ * An `ssr: false` loader whose deferred push settles after the budget: the
+ * capture waits for it, so it refuses, as a handler's push does (#1182).
+ */
 const SlowDeferred = createLoader(async (ctx) => {
   ctx.use(Notes)(`slow-settled@g${source.generation}`);
   ctx.use(Notes)(slowAfterBudget(`slow-deferred@g${source.generation}`));
@@ -1064,7 +1068,7 @@ describe("PENDING #1036: a dependency the record does not attribute to the loade
 
 describe("one run per loader: a deferred push reaches every replay of its pin (#1001)", () => {
   for (const variant of ["misses", "is warm"] as const) {
-    it(`a navigation replay delivers the deferred push of the loader's cache() entry (the entry ${variant} at capture)`, async () => {
+    it(`a navigation replay delivers the deferred push the capture recorded (the loader's cache() entry ${variant} at capture)`, async () => {
       const { serve, withLoaderMiss } = setup();
       if (variant === "is warm") {
         // A navigation MISS fills the loader's entry before any capture.
@@ -1083,9 +1087,9 @@ describe("one run per loader: a deferred push reaches every replay of its pin (#
         partial: { from: "/about" },
       });
 
-      // Every copy in the payload is the capture's run, the deferred one
-      // included (its value arrives on a row of its own), and the settled
-      // one shows once in the final handle state.
+      // Every copy in the payload is the capture's run: the record keeps the
+      // deferred one too (#1182; its value arrives on a row of its own), and
+      // the settled one shows once in the final handle state.
       const notes = async (result: ServeShellRequestResult) => ({
         settled: distinct(result.flight, /settled-note-\d+/g),
         deferred: distinct(result.flight, /deferred-note-\d+/g),
@@ -1168,7 +1172,7 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
 
   describe("the capture renders the shell from the handle data its record keeps", () => {
     for (const variant of ["misses", "is warm"] as const) {
-      it(`a deferred push is not in the shell (the loader's cache() entry ${variant} at capture)`, async () => {
+      it(`a deferred push is in the shell, resolved (the loader's cache() entry ${variant} at capture)`, async () => {
         const { serve, withLoaderMiss } = setup();
         const miss =
           variant === "misses"
@@ -1179,14 +1183,17 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
 
         const { shell } = await handleValues(await serve("/deferred-owned"));
 
-        expect(shell).toEqual([`settled-note-${captured}`]);
+        expect(shell).toEqual([
+          `settled-note-${captured}`,
+          `deferred-note-${captured}`,
+        ]);
       });
     }
 
-    it("a deferred push by a loader that runs at capture is not in the shell", async () => {
+    it("a deferred push by a loader that runs at capture is in the shell, resolved", async () => {
       const { values } = await hitAfterCapture("/deferred-plain");
 
-      expect(values.shell).toEqual(["plain-settled@g1"]);
+      expect(values.shell).toEqual(["plain-settled@g1", "plain-deferred@g1"]);
     });
 
     it("a push that holds a promise is not in the shell", async () => {
@@ -1198,7 +1205,7 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
 
   describe("the HIT hydrates with the record's data and delivers the rest after hydration", () => {
     for (const variant of ["misses", "is warm"] as const) {
-      it(`a deferred push arrives after hydration (the loader's cache() entry ${variant} at capture)`, async () => {
+      it(`a deferred push hydrates from the record, and nothing arrives after hydration (the loader's cache() entry ${variant} at capture)`, async () => {
         const { serve, withLoaderMiss } = setup();
         if (variant === "misses") {
           await withLoaderMiss(() => serve("/deferred-owned"));
@@ -1211,23 +1218,20 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
 
         expect(hit.shellStatus).toBe("HIT");
         expect(delivered(await handleValues(hit))).toEqual({
-          hydration: [`settled-note-${captured}`],
-          afterHydration: [
-            `settled-note-${captured}`,
-            `deferred-note-${captured}`,
-          ],
+          hydration: [`settled-note-${captured}`, `deferred-note-${captured}`],
+          afterHydration: undefined,
         });
-        // The loader's cache() entry delivered it: no body ran on the HIT.
+        // The record delivered it: no body ran on the HIT.
         expect(deferredOwnedRuns.body).toBe(captured);
       });
     }
 
-    it("a deferred push by a loader without cache() arrives after hydration, from the HIT's run", async () => {
+    it("a deferred push by a loader without cache() hydrates from the record, and the HIT runs no body for it", async () => {
       const { values } = await hitAfterCapture("/deferred-plain");
 
       expect(delivered(values)).toEqual({
-        hydration: ["plain-settled@g1"],
-        afterHydration: ["plain-settled@g1", "plain-deferred@g2"],
+        hydration: ["plain-settled@g1", "plain-deferred@g1"],
+        afterHydration: undefined,
       });
     });
 
@@ -1284,43 +1288,42 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
     }
   });
 
-  describe("the capture does not wait for a push its record leaves out", () => {
-    it("/slow-deferred: a deferred loader push slower than ppr.captureTimeout does not refuse the capture", async () => {
+  describe("the capture waits for a loader's pushed promise under its deadline (#1182)", () => {
+    it("/slow-deferred: a deferred loader push slower than ppr.captureTimeout refuses the capture, as a handler's does", async () => {
       vi.spyOn(console, "warn").mockImplementation(() => {});
       const { serve } = setup();
       expect((await serve("/slow-deferred")).shellStatus).toBe("MISS");
 
-      const hit = await serve("/slow-deferred");
-
-      expect(hit.shellStatus).toBe("HIT");
-      const values = await handleValues(hit);
-      expect(values.shell).toEqual(["slow-settled@g1"]);
-      expect(values.hydration).toEqual(["slow-settled@g1"]);
+      expect((await serve("/slow-deferred")).shellStatus).not.toBe("HIT");
     });
 
-    it("/slow-deferred: the HIT's own run delivers the deferred push after hydration", async () => {
+    it("/slow-deferred: the MISS waits for the deferred push and hydrates with it", async () => {
       vi.spyOn(console, "warn").mockImplementation(() => {});
       const { serve } = setup();
-      await serve("/slow-deferred");
-      source.generation = 2;
 
-      const hit = await serve("/slow-deferred");
+      const miss = await serve("/slow-deferred");
 
-      expect(hit.shellStatus).toBe("HIT");
-      expect(delivered(await handleValues(hit))).toEqual({
-        hydration: ["slow-settled@g1"],
-        afterHydration: ["slow-settled@g1", "slow-deferred@g2"],
+      expect(miss.shellStatus).toBe("MISS");
+      expect(delivered(await handleValues(miss))).toEqual({
+        hydration: ["slow-settled@g1", "slow-deferred@g1"],
+        afterHydration: undefined,
       });
     });
 
-    it("/slow-deferred: the loader's pin still asks for a run on the HIT", async () => {
-      vi.spyOn(console, "warn").mockImplementation(() => {});
+    it("/slow-deferred: the refusal names the loader and the handle", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const { serve } = setup();
+
       await serve("/slow-deferred");
-      const hit = await serve("/slow-deferred");
-      expect(hit.shellStatus).toBe("HIT");
-      const { late } = (await hit.readHandles())!;
-      expect(late.length).toBeGreaterThan(0);
+
+      const warnings = warn.mock.calls.map((call) => String(call[0]));
+      expect(
+        warnings.some((text) =>
+          text.includes(
+            `the promise the loader "${SlowDeferred.$$id}" pushed to the handle "${Notes.$$id}" did not settle within ppr.captureTimeout`,
+          ),
+        ),
+      ).toBe(true);
     });
 
     it("a handler's deferred push slower than ppr.captureTimeout still refuses the capture", async () => {
@@ -1376,7 +1379,7 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
 
       expect(await nav("/deferred-plain")).toEqual({
         shell: undefined,
-        hydration: ["plain-settled@g1", "plain-deferred@g2"],
+        hydration: ["plain-settled@g1", "plain-deferred@g1"],
         afterHydration: undefined,
       });
       expect(await nav("/eb-capped")).toEqual({

@@ -116,8 +116,9 @@ function keptValues(resolved: ResolvedValue[]): unknown[] {
  * so a push the record leaves out must not be in the prelude either: it
  * rendered an element no HIT's hydration data matched (issue #1035). Which
  * pushes a record keeps is the capture funnel's decision (shell-capture.ts
- * deriveShellCaptureContext: today it leaves out a deferred loader push and
- * one holding a masked promise), not this function's.
+ * deriveShellCaptureContext: it leaves out a loader push whose settled value
+ * holds a masked promise, and one a live-lane loader made), not this
+ * function's.
  */
 export async function* resolvedHandleStream(
   handleStore: HandleStore,

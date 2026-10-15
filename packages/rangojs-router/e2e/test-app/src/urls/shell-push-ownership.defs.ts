@@ -1,4 +1,4 @@
-import { createHandle, createLoader } from "@rangojs/router";
+import { createHandle, createLoader, Meta } from "@rangojs/router";
 
 // Push-ownership fixture (issues #1001, #1003): `ssr: false` loaders whose
 // data and handle pushes carry the generation of the run that produced them.
@@ -39,8 +39,9 @@ export const ShellPushPinnedLoader = createLoader(
 );
 
 /**
- * Promise-free, bound with its own cache(): it pushes a settled note the
- * shell's record keeps and a deferred one it cannot (#1001).
+ * Promise-free, bound with its own cache(): it pushes a settled note and a
+ * deferred one (#1001). The shell's record keeps both, the deferred one
+ * resolved (#1182).
  */
 export const ShellPushDeferredLoader = createLoader(
   async (ctx): Promise<ShellPushData> => {
@@ -77,14 +78,15 @@ export const ShellPushLiveLoader = createLoader(
   },
 );
 
-/** Longer than SHELL_PUSH_SLOW_CAPTURE_TIMEOUT_MS: the capture must not wait. */
+/** Longer than SHELL_PUSH_SLOW_CAPTURE_TIMEOUT_MS: the capture refuses. */
 const SLOW_PUSH_DELAY_MS = 1500;
 export const SHELL_PUSH_SLOW_CAPTURE_TIMEOUT_MS = 300;
 
 /**
  * Promise-free `ssr: false` loader with a settled push and a deferred one
- * that settles after the route's ppr.captureTimeout. The shell's record
- * leaves the deferred push out, so the capture must not wait for it.
+ * that settles after the route's ppr.captureTimeout. The capture waits for
+ * the deferred push under its deadline, so it refuses, as for a handler's
+ * push (#1182).
  */
 export const ShellPushSlowLoader = createLoader(
   async (ctx): Promise<ShellPushData> => {
@@ -99,5 +101,52 @@ export const ShellPushSlowLoader = createLoader(
       ),
     );
     return { value: `slow@g${generation}` };
+  },
+);
+
+/**
+ * #1182: an `ssr: false` loader that pushes its page title to Meta as a
+ * promise. A document MISS renders the title, and the shell keeps it.
+ */
+export const ShellPushMetaPromiseLoader = createLoader(
+  async (ctx): Promise<ShellPushData> => {
+    const generation = generationOf(ctx.searchParams.get("probe") ?? "");
+    ctx.use(Meta)(Promise.resolve({ title: `meta-title@g${generation}` }));
+    return { value: `meta-promise@g${generation}` };
+  },
+);
+
+/** The control: the same title, awaited before the push. */
+export const ShellPushMetaAwaitedLoader = createLoader(
+  async (ctx): Promise<ShellPushData> => {
+    const generation = generationOf(ctx.searchParams.get("probe") ?? "");
+    ctx.use(Meta)(
+      await Promise.resolve({ title: `meta-title@g${generation}` }),
+    );
+    return { value: `meta-awaited@g${generation}` };
+  },
+);
+
+/**
+ * #1182: an `ssr: false` loader that pushes a note as a promise and is read
+ * by nothing. The shell bakes the note.
+ */
+export const ShellPushBakedNoteLoader = createLoader(
+  async (ctx): Promise<null> => {
+    const generation = generationOf(ctx.searchParams.get("probe") ?? "");
+    ctx.use(ShellPushNotes)(Promise.resolve(`baked-note@g${generation}`));
+    return null;
+  },
+);
+
+/**
+ * A live-lane loader (no `ssr: false`) without pushes, read under loading():
+ * the handle reader next to it hydrates inside that boundary (#1182).
+ */
+export const ShellPushLiveValueLoader = createLoader(
+  async (ctx): Promise<ShellPushData> => {
+    const generation = generationOf(ctx.searchParams.get("probe") ?? "");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return { value: `live-value@g${generation}` };
   },
 );

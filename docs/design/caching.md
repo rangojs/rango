@@ -884,10 +884,10 @@ loader id, so both look a loader up the same way). `CacheScope` hands the
 same function to the store (`HandleStore.setRecordAuthority`), with or
 without a handles blob in the record:
 
-| The request serves the loader from                                         | Authority | Its copy in the record is                                                                                                                                                                                                              |
-| -------------------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| the pin stored with this record (a shell replay that kept its loader pins) | `"pin"`   | restored (`HandleStore.pushRestored`): it stands. A run of the loader on the replay reads the store, so its settled pushes, anywhere inside its body, are dropped, with or without a copy in the record; its thenable pushes are added |
-| anything else: a run, or the loader's own `cache()` entry                  | `"hole"`  | a placeholder (`pushPlaceholder`, unclaimed): the run's pushes replace it, a run that makes none drops it, and the loader's entry delivers its recorded pushes in its place                                                            |
+| The request serves the loader from                                         | Authority | Its copy in the record is                                                                                                                                                                                                                                                                                             |
+| -------------------------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the pin stored with this record (a shell replay that kept its loader pins) | `"pin"`   | restored (`HandleStore.pushRestored`): it stands. A run of the loader on the replay reads the store, so its pushes that settle thenable-free, anywhere inside its body, are dropped, with or without a copy in the record; a pushed promise is judged once it settles (#1182); the pushes holding a promise are added |
+| anything else: a run, or the loader's own `cache()` entry                  | `"hole"`  | a placeholder (`pushPlaceholder`, unclaimed): the run's pushes replace it, a run that makes none drops it, and the loader's entry delivers its recorded pushes in its place                                                                                                                                           |
 
 Two more answers cover what the record cannot say. `"copies"`: the copies
 stand and nothing is claimed about the loader's other pushes (a pin stored
@@ -924,7 +924,9 @@ as a plain replay (see `docs/design/shell-fast-path.md`).
 
 A bake-lane loader that runs on a HIT (a promise-carrying one, or every
 promise-free one on a page whose capture saw a loader push it could not
-record, since `runs` is capture-wide) reads the real store for its
+record, since `runs` is capture-wide: one whose value, once settled, holds a
+promise; a pushed promise that settles thenable-free is recorded, #1182)
+reads the real store for its
 `"use cache"` and `cache()` values, not the snapshot: on `CFCacheStore` that
 is a Cache API or KV read per HIT, and a stale entry can start a background
 refresh.

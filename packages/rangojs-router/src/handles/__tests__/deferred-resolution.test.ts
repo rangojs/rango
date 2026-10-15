@@ -238,7 +238,7 @@ describe("resolvedHandleStream (full-render drop-in for handleStore.stream())", 
   // Issue #1035: a PPR shell capture renders its prelude from the handle
   // data its record keeps, so a HIT that restores the record hydrates clean.
   // The store tags the pushes a record leaves out (HandleStore.push
-  // `loaderPush`): a capture tags a deferred loader push.
+  // `loaderPush`): a capture tags a loader push its record cannot keep.
   describe("recordedOnly (a shell capture's render)", () => {
     function captureStore() {
       const store = createHandleStore();

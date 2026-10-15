@@ -378,9 +378,10 @@ function getLoaderStore(
  * push funnel reads the pushReplayed owner, shell-capture.ts), so a replay
  * of that shell that serves this loader from its pin restores them owned
  * (HandleStore.pushRestored), on a document HIT and on a navigation alike.
- * This replay still runs there: the store drops its settled values, which
- * the record already restored, and keeps the thenable ones the record could
- * not keep (a deferred push, the reason the loader's pin carries `runs`).
+ * This replay still runs there: the store drops its values that settle
+ * thenable-free, which the record already restored, and keeps the ones
+ * holding a promise the record could not keep (the reason the loader's pin
+ * carries `runs`).
  */
 async function replayLoaderHandles(
   encoded: string | undefined,

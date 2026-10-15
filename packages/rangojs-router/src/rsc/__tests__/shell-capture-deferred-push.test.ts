@@ -19,10 +19,12 @@ import {
 import type { HandleData } from "../../server/handle-store.js";
 import { pushedByKey } from "../../handles/pushed-by.js";
 
-// Issue #1035: what a PPR shell capture does with a deferred (thenable)
-// handle push by a loader. Its record leaves the push out, so the capture's
-// own render must leave it out too: a HIT restores the record and hydrates
-// with exactly what the prelude was rendered from.
+// What a PPR shell capture does with a deferred (thenable) handle push by a
+// loader. A bake-lane body's promise is owned by its loader and judged by
+// its settled value (#1182): the record keeps it, resolved, unless it
+// settles to a value that holds a promise. The capture's own render keeps
+// exactly what the record keeps (#1035): a HIT restores the record and
+// hydrates with what the prelude was rendered from.
 
 function requestContext(): RequestContext<any> {
   const request = new Request("https://example.com/p", {
@@ -70,7 +72,7 @@ async function payloadHandles(
 }
 
 describe("shell capture: a deferred loader push", () => {
-  it("keeps the value a loader's cache() entry replays as a promise of it", async () => {
+  it("owns the value a loader's cache() entry replays as a promise of it, for the loader the replay names", async () => {
     const { freshHandleStore } = capture();
 
     // loader-cache.ts replayLoaderHandles: outside the loader's body.
@@ -85,13 +87,15 @@ describe("shell capture: a deferred loader push", () => {
 
     const [slot] = freshHandleStore.getDataForSegment("seg1").notes!;
     expect(await slot).toBe("deferred");
-    // Still out of the record: a HIT delivers it from the loader's source.
-    expect(freshHandleStore.getDataForSegment("seg1", true).notes).toBe(
-      undefined,
-    );
+    expect(freshHandleStore.getDataForSegment("seg1", true).notes).toEqual([
+      slot,
+    ]);
+    expect(freshHandleStore.getRecordOwners("seg1")).toEqual({
+      notes: ["Loader"],
+    });
   });
 
-  it("is not in the handle data the capture's payload renders from", async () => {
+  it("is in the handle data the capture's payload renders from, resolved; a push holding a promise is not", async () => {
     const { derivedCtx, freshHandleStore } = capture();
     freshHandleStore.push("notes", "seg1", "handler");
     runInsideLoaderScope(() =>
@@ -106,13 +110,77 @@ describe("shell capture: a deferred loader push", () => {
     );
 
     expect(await payloadHandles(derivedCtx, freshHandleStore)).toEqual({
-      notes: { seg1: ["handler", "settled"] },
-      [pushedByKey("notes")]: { seg1: [null, "Loader"] },
+      notes: { seg1: ["handler", "settled", "deferred"] },
+      [pushedByKey("notes")]: { seg1: [null, "Loader", "Loader"] },
     });
     // The payload renders what the record keeps, value for value.
-    expect(freshHandleStore.getDataForSegment("seg1", true)).toEqual({
-      notes: ["handler", "settled"],
-    });
+    const recorded = freshHandleStore.getDataForSegment("seg1", true).notes!;
+    expect(await Promise.all(recorded)).toEqual([
+      "handler",
+      "settled",
+      "deferred",
+    ]);
+    expect(derivedCtx._shellCaptureUnrecordedLoaderPush).toBe(true);
+  });
+
+  it("leaves out a promise that settles to a value holding one, and asks the loader records for a run", async () => {
+    const { derivedCtx, freshHandleStore, loaderPromisePushes } = capture();
+    let slot: unknown;
+    runInsideLoaderScope(() =>
+      runInsideLoaderBodyScope(() => {
+        freshHandleStore.push(
+          "notes",
+          "seg1",
+          Promise.resolve({ label: "nested", later: Promise.resolve("live") }),
+        );
+        [slot] = freshHandleStore.getDataForSegment("seg1").notes!;
+      }, "Loader"),
+    );
+    // Owned while it is pending: the record-first step waits for it.
+    expect(freshHandleStore.getDataForSegment("seg1", true).notes).toEqual([
+      slot,
+    ]);
+    expect(derivedCtx._shellCaptureUnrecordedLoaderPush).toBeFalsy();
+
+    await slot;
+
+    expect(freshHandleStore.getDataForSegment("seg1", true).notes).toBe(
+      undefined,
+    );
+    expect(freshHandleStore.getRecordOwners("seg1")).toBeUndefined();
+    expect(derivedCtx._shellCaptureUnrecordedLoaderPush).toBe(true);
+    expect(loaderPromisePushes).toEqual([
+      { loaderId: "Loader", handleName: "notes", state: "fulfilled" },
+    ]);
+  });
+
+  it("records a rejected promise for the refusal and leaves no unhandled rejection", async () => {
+    const { freshHandleStore, loaderPromisePushes } = capture();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      runInsideLoaderScope(() =>
+        runInsideLoaderBodyScope(() => {
+          const rejected = Promise.reject(new Error("seo down"));
+          rejected.catch(() => {});
+          freshHandleStore.push("notes", "seg1", rejected);
+        }, "Loader"),
+      );
+      // A tagged slot (no body or replay names it) handles its own.
+      runInsideLoaderScope(() => {
+        const rejected = Promise.reject(new Error("no owner"));
+        rejected.catch(() => {});
+        freshHandleStore.push("notes", "seg2", rejected);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(loaderPromisePushes).toEqual([
+        { loaderId: "Loader", handleName: "notes", state: "rejected" },
+      ]);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 
   it("a document render that is not a capture carries every push", async () => {

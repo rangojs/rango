@@ -177,8 +177,8 @@ export type OwnedPushDelivery = (loaderId: string) => RecordAuthority;
  * says the record supplies that loader's value too ("pin", "copies"), and is
  * a placeholder (pushPlaceholder) everywhere else: without `owned`, every
  * owner. Neither claims its loader, so the loader's own cache() HIT still
- * delivers (the thenable pushes a restored copy lets through, or its entry's
- * pushes in a placeholder's place).
+ * delivers (the pushes holding a promise a restored copy lets through, or its
+ * entry's pushes in a placeholder's place).
  */
 export function restoreHandles(
   handles: Record<string, SegmentHandleData>,

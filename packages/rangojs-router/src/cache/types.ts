@@ -686,11 +686,13 @@ export interface ShellSnapshotLoaderValue {
    */
   holes: 0 | 1;
   /**
-   * 1 when the capture saw a loader push it could not record (a deferred
-   * push, one with masked nested promises, or one made outside any loader
-   * body): a HIT then still runs the loader body in the background
-   * (pin-first) so those pushes reach the page. 0: a hole-free record is
-   * served from the pin alone and its body does not run on a HIT.
+   * 1 when the capture saw a loader push it could not record (one whose
+   * settled value holds masked nested promises, one a live-lane loader made,
+   * or one made outside any loader body): a HIT then still runs the loader
+   * body in the background (pin-first) so those pushes reach the page. A
+   * pushed promise that settles thenable-free is recorded (#1182).
+   * 0: a hole-free record is served from the pin alone and its body does not
+   * run on a HIT.
    *
    * Both bits are always written. A record stored before they existed (v0.17)
    * reads each missing bit as 1 (buildShellLoaderSeed): its snapshot lacks

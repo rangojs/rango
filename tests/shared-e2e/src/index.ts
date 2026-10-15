@@ -2285,6 +2285,10 @@ export async function expectBackLeavesScrollToBrowser(
  * - `liveUrl`: a loader WITHOUT `ssr: false` under `loading()`, value
  *   `live@g<n>`, one push `live-note@g<n>` made after an await. The view
  *   reads the loader, so it renders inside the `loading()` boundary.
+ * - `suspendedUrl`: an `ssr: false` loader that pushes a promise
+ *   `baked-note@g<n>`, and a live loader (no push) under `loading()`, value
+ *   `live-value@g<n>`. The view reads the live loader, so the handle reader
+ *   renders inside the `loading()` boundary (#1182).
  * - `bumpUrl`: GET `<bumpUrl>?probe=` moves that probe's generation on and
  *   returns `{ generation }`.
  *
@@ -2298,6 +2302,7 @@ export interface PushOwnershipFixture {
   /** A route whose deferred loader push settles after ppr.captureTimeout. */
   slowUrl: string;
   liveUrl: string;
+  suspendedUrl: string;
   bumpUrl: string;
   /** A page of the app outside the fixture, to navigate from. */
   homeUrl: string;
@@ -2440,13 +2445,13 @@ export async function expectReplayKeepsCapturedPushWithPinnedData(
 
 /**
  * #1001: a client navigation that replays a shell delivers the deferred
- * handle push of an `ssr: false` loader with its own `cache()`, from that
- * loader's cache entry, next to the settled push the shell recorded, each
- * once. Before, the navigation dropped the deferred push.
+ * handle push of an `ssr: false` loader with its own `cache()` next to the
+ * settled push, each once, at the capture's generation. Both come from the
+ * shell's record, which keeps the deferred push resolved (#1182). Before
+ * #1001, the navigation dropped the deferred push.
  *
  * The document HIT it starts from hydrates clean (#1035,
- * expectShellHitHydratesFromRecord): the shell has no row for the deferred
- * push, which arrives after hydration.
+ * expectShellHitHydratesFromRecord): the shell has both rows.
  */
 export async function expectReplayDeliversDeferredPush(
   page: Page,
@@ -2481,16 +2486,17 @@ function pushNoteRowsInHtml(html: string): string[] {
 }
 
 /**
- * #1035: a document served from a shell hydrates with the handle data the
- * shell's HTML was rendered from. The shell's record keeps the settled push
- * of `deferredUrl`'s loader and leaves its deferred one out, so the HIT's
- * HTML has one row, the page hydrates without a hydration error, and the
- * deferred row shows after hydration (the late channel).
+ * #1035 with #1182: a document served from a shell hydrates with the handle
+ * data the shell's HTML was rendered from. The shell's record keeps both
+ * pushes of `deferredUrl`'s loader, the deferred one resolved, so the HIT's
+ * HTML has both rows, the page hydrates without a hydration error, and the
+ * rows never change through hydration: nothing arrives late.
  *
- * Before, the shell had a second, empty row (the capture rendered a slot for
- * the push it did not record), and the HIT's hydration data carried the
- * deferred value or not depending on a race: React error #418 in
- * production, "Hydration failed" in dev, on every HIT.
+ * Before #1182 the record left the deferred push out and the HIT's HTML had
+ * one row, the deferred row arriving after hydration. Before #1035 the shell
+ * had a second, empty row, and the hydration data carried the deferred value
+ * or not depending on a race: React error #418 in production, "Hydration
+ * failed" in dev, on every HIT.
  */
 export async function expectShellHitHydratesFromRecord(
   page: Page,
@@ -2501,11 +2507,43 @@ export async function expectShellHitHydratesFromRecord(
   const url = `${fixture.deferredUrl}?probe=${probe}`;
   await warmShellToHit(page, url);
 
-  const hit = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
-  expect(hit.headers()["x-rango-shell"]).toBe("HIT");
-  expect(pushNoteRowsInHtml(await hit.text())).toEqual(["settled-note@g1"]);
+  await expectHitKeepsRows(
+    page,
+    url,
+    ["settled-note@g1", "deferred-note@g1"],
+    "deferred@g1",
+  );
+}
 
-  await gotoShellHit(page, url);
+/**
+ * #1182: a deferred push by an `ssr: false` loader that settles after
+ * `ppr.captureTimeout` refuses the capture, as a handler's push does: the
+ * route stays on MISS. Each MISS waits for the push, so its HTML has both
+ * rows. Before, the capture left the push out of the record and stored the
+ * shell without it; the HIT's own loader run delivered it after hydration.
+ */
+export async function expectSlowDeferredPushRefusesCapture(
+  page: Page,
+  fixture: PushOwnershipFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("slow-push");
+  const url = `${fixture.slowUrl}?probe=${probe}`;
+
+  // Every request after the first had a capture scheduled before it.
+  for (let i = 0; i < 3; i++) {
+    const res = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+    expect(res.status()).toBe(200);
+    expect(res.headers()["x-rango-shell"]).toBe("MISS");
+    expect(pushNoteRowsInHtml(await res.text())).toEqual([
+      "settled-note@g1",
+      "deferred-note@g1",
+    ]);
+  }
+
+  const miss = await page.goto(url);
+  expect(miss?.headers()["x-rango-shell"]).toBe("MISS");
+  await waitForShellHydration(page);
   await expect(byTestId(page, "push-note")).toHaveText([
     "settled-note@g1",
     "deferred-note@g1",
@@ -2513,31 +2551,180 @@ export async function expectShellHitHydratesFromRecord(
 }
 
 /**
- * A deferred push by an `ssr: false` loader that settles after
- * `ppr.captureTimeout` does not stop the capture: the shell's record leaves
- * the push out, so the shell is captured (a later document request is a HIT)
- * with the settled row only, hydrates clean, and the HIT's own loader run
- * delivers the deferred row after hydration. Before, the capture waited for
- * the push, ran out of budget and never produced a shell.
+ * #1182 next to #1035: a `useHandle` reader inside a `loading()` boundary
+ * (`suspendedUrl`) hydrates with the promise an `ssr: false` loader pushed,
+ * as the shell baked it. The boundary hydrates after the root; the row is in
+ * the HIT's HTML, on screen from the first parse on, and never changes. The
+ * live loader's value is this request's.
+ *
+ * Before, the shell had no row: the HIT's loader run delivered it after
+ * hydration, at the HIT's generation.
  */
-export async function expectSlowDeferredPushDoesNotBlockCapture(
+export async function expectSuspendedHandleReaderHydratesWithBakedPush(
   page: Page,
   fixture: PushOwnershipFixture,
 ): Promise<void> {
   using _ = guardHydrationErrors(page);
-  const probe = pushProbe("slow-push");
-  const url = `${fixture.slowUrl}?probe=${probe}`;
+  const probe = pushProbe("suspended");
+  const url = `${fixture.suspendedUrl}?probe=${probe}`;
   await warmShellToHit(page, url);
+  expect(await bumpPushGeneration(page, fixture, probe)).toBe(2);
 
+  await expectHitKeepsRows(page, url, ["baked-note@g1"], "live-value@g2");
+}
+
+/**
+ * The #1182 routes: an `ssr: false` loader that pushes the page title. The
+ * `metaPromiseUrl` page has a button (`push-meta-action`) that calls a
+ * server action doing nothing; loaders re-run after every action.
+ */
+export interface LoaderTitleFixture {
+  /** The loader pushes its title to Meta as a promise. */
+  metaPromiseUrl: string;
+  /** The same title, awaited before the push (the control). */
+  metaAwaitedUrl: string;
+  /** Moves the fixture's generation for one `?probe=` on. */
+  bumpUrl: string;
+  /** A page of the app outside the fixture, to navigate to and back from. */
+  homeUrl: string;
+}
+
+/** The text of the `<title>` in a document's HTML, before any script runs. */
+function titleInHtml(html: string): string | undefined {
+  return /<title[^>]*>([^<]*)<\/title>/.exec(html)?.[1];
+}
+
+/** The `<title>` in the HTML of `url`'s first response (a MISS) and of a HIT. */
+async function titlesMissThenHit(
+  page: Page,
+  url: string,
+): Promise<{ miss: string | undefined; hit: string | undefined }> {
+  const miss = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
+  expect(miss.headers()["x-rango-shell"]).toBe("MISS");
+  const missTitle = titleInHtml(await miss.text());
+  await warmShellToHit(page, url);
   const hit = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
   expect(hit.headers()["x-rango-shell"]).toBe("HIT");
-  expect(pushNoteRowsInHtml(await hit.text())).toEqual(["settled-note@g1"]);
+  return { miss: missTitle, hit: titleInHtml(await hit.text()) };
+}
+
+/**
+ * #1182, the expectation the issue reports: the title an `ssr: false`
+ * loader pushes to Meta as a promise is in the HTML of the document MISS
+ * and of every shell HIT after it.
+ *
+ * The HIT serves the title from the shell and nothing else: once the
+ * fixture's generation moves, a HIT's HTML, its hydrated page and its title
+ * after the document has streamed are all the capture's, and it hydrates
+ * clean. Before, the HIT's HTML had the layout's title, and the HIT's own
+ * loader run set the moved generation's title after hydration, next to the
+ * capture's data.
+ */
+export async function expectLoaderPromiseTitleInShellHtml(
+  page: Page,
+  fixture: LoaderTitleFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("meta-promise");
+  const url = `${fixture.metaPromiseUrl}?probe=${probe}`;
+
+  expect(await titlesMissThenHit(page, url)).toEqual({
+    miss: "meta-title@g1",
+    hit: "meta-title@g1",
+  });
+
+  expect(await bumpPushGeneration(page, fixture, probe)).toBe(2);
+  const response = await page.goto(url);
+  expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+  // The whole document, its late handle channel included, has arrived.
+  expect(titleInHtml(await response!.text())).toBe("meta-title@g1");
+  await waitForShellHydration(page);
+  await expect(byTestId(page, "push-value")).toHaveText("meta-promise@g1");
+  await expect(page).toHaveTitle("meta-title@g1");
+}
+
+/**
+ * #1182, Back/Forward: Back to a page served from its shell shows the title
+ * the shell baked, from the history cache, next to the capture's data.
+ * Before, the history entry held the title the HIT's own loader run pushed
+ * after hydration, at the HIT's generation.
+ */
+export async function expectBackRestoresBakedTitle(
+  page: Page,
+  fixture: LoaderTitleFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("meta-back");
+  const url = `${fixture.metaPromiseUrl}?probe=${probe}`;
+  await warmShellToHit(page, url);
+  expect(await bumpPushGeneration(page, fixture, probe)).toBe(2);
 
   await gotoShellHit(page, url);
-  await expect(byTestId(page, "push-note")).toHaveText([
-    "settled-note@g1",
-    "deferred-note@g1",
-  ]);
+  await expect(page).toHaveTitle("meta-title@g1");
+  await routerNavigate(page, fixture.homeUrl);
+  await expect(page).not.toHaveTitle("meta-title@g1");
+
+  // A refetch of the entry is refused, so what Back shows comes from the
+  // history cache, not from a shell replay.
+  const target = new URL(url, page.url());
+  const entryRefetch = (request: URL) =>
+    request.searchParams.has("_rsc_partial") &&
+    request.pathname === target.pathname;
+  await page.route(entryRefetch, (route) => route.abort());
+  try {
+    await page.goBack();
+
+    await expect(page).toHaveURL(url);
+    await expect(byTestId(page, "push-value")).toHaveText("meta-promise@g1");
+    await expect(page).toHaveTitle("meta-title@g1");
+  } finally {
+    await page.unroute(entryRefetch);
+  }
+}
+
+/**
+ * #1182, actions: the loader re-runs after a server action (the default
+ * revalidation), so its push replaces the title the shell baked: the title
+ * and the data both move to the action's run.
+ */
+export async function expectActionReplacesBakedTitle(
+  page: Page,
+  fixture: LoaderTitleFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("meta-action");
+  const url = `${fixture.metaPromiseUrl}?probe=${probe}`;
+  await warmShellToHit(page, url);
+  expect(await bumpPushGeneration(page, fixture, probe)).toBe(2);
+
+  await gotoShellHit(page, url);
+  await expect(byTestId(page, "push-value")).toHaveText("meta-promise@g1");
+  await expect(page).toHaveTitle("meta-title@g1");
+
+  await byTestId(page, "push-meta-action").click();
+
+  await expect(byTestId(page, "push-value")).toHaveText("meta-promise@g2");
+  await expect(page).toHaveTitle("meta-title@g2");
+}
+
+/**
+ * #1182's control: the same title, awaited before the push, bakes into the
+ * shell, so every HIT's HTML has it.
+ */
+export async function expectLoaderAwaitedTitleInShellHtml(
+  page: Page,
+  fixture: LoaderTitleFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const probe = pushProbe("meta-awaited");
+  const url = `${fixture.metaAwaitedUrl}?probe=${probe}`;
+
+  expect(await titlesMissThenHit(page, url)).toEqual({
+    miss: "meta-title@g1",
+    hit: "meta-title@g1",
+  });
+  await gotoShellHit(page, url);
+  await expect(page).toHaveTitle("meta-title@g1");
 }
 
 /** The `push-note` rows on screen, and whether the root had hydrated. */
@@ -2753,15 +2940,16 @@ export async function expectBuildShellHitKeepsSettledLoaderPush(
 }
 
 /**
- * #1057 next to #1054 on a `Prerender` + `ppr` route: a promise pushed from
- * the `ssr: false` loader is not in the shell and arrives after hydration;
- * the settled push the shell rendered is in its HTML and in the hydration
- * data. The loader runs on the HIT (its pin asks for a run), so the promise
- * carries the HIT's generation while the settled push stays the capture's.
+ * #1057 with #1182 on a `Prerender` + `ppr` route: a promise pushed from the
+ * `ssr: false` loader is in the shell next to the settled push, both at the
+ * capture's generation. The HIT hydrates clean with both rows, which never
+ * change: the pin asks for no run, so nothing arrives after hydration.
  *
- * Before, the HIT hydrated without the settled row: a hydration error.
+ * Before, the promise was not in the shell and arrived after hydration from
+ * the HIT's own loader run, at the HIT's generation; before #1057 the HIT
+ * hydrated without the settled row, a hydration error.
  */
-export async function expectPrerenderShellHitDeliversPromisePush(
+export async function expectPrerenderShellHitKeepsPromisePush(
   page: Page,
   fixture: PrerenderPushFixture,
 ): Promise<void> {
@@ -2771,20 +2959,32 @@ export async function expectPrerenderShellHitDeliversPromisePush(
   await warmShellToHit(page, url);
   expect(await bumpPushGeneration(page, fixture, probe)).toBe(2);
 
-  const hit = await page.request.get(url, { headers: PUSH_HTML_HEADERS });
-  expect(hit.headers()["x-rango-shell"]).toBe("HIT");
-  expect(pushNoteRowsInHtml(await hit.text())).toEqual(["settled-note@g1"]);
+  await expectHitKeepsRows(
+    page,
+    url,
+    ["settled-note@g1", "deferred-note@g1"],
+    "deferred@g1",
+  );
+}
 
-  const samples = await recordPushNoteRows(page);
-  await gotoShellHit(page, url);
-  await expect(byTestId(page, "push-value")).toHaveText("deferred@g1");
-  await expect(byTestId(page, "push-note")).toHaveText([
-    "settled-note@g1",
-    "deferred-note@g2",
-  ]);
-  expect((await samples()).find((sample) => sample.hydrated)?.rows).toEqual([
-    "settled-note@g1",
-  ]);
+/**
+ * #1182 for the shell `vite build` bakes for a `Prerender` + `ppr` route
+ * (served for a URL without a query string; in dev the same capture runs on
+ * demand): its HTML has the promise the `ssr: false` loader pushed, next to
+ * the settled push, and its HIT hydrates clean with both.
+ */
+export async function expectBuildShellHitKeepsPromiseLoaderPush(
+  page: Page,
+  fixture: PrerenderPushFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  await warmShellToHit(page, fixture.preDeferredUrl);
+  await expectHitKeepsRows(
+    page,
+    fixture.preDeferredUrl,
+    ["settled-note@g1", "deferred-note@g1"],
+    "deferred@g1",
+  );
 }
 
 // ---------------------------------------------------------------------------

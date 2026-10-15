@@ -49,7 +49,7 @@ A layout sets a template, the route pushes a value, and the collected head compo
 
 Later segments override earlier ones per key (`title`, `name`, `property`, …), an `{ unset: key }` descriptor removes an inherited tag, and a layout can set a title template that later titles fill in (`meta({ title: { template: "%s — Shop", default: "Shop" } })`). Deferred (Promise) values resolve before collection, so async metadata participates in templating like any other value. On soft navigation the previous title holds until the new one resolves — no flash of an intermediate state.
 
-Loaders can push metadata too, which keeps a data-derived title next to the fetch. Loader pushes stream, so one that settles late is applied after hydration rather than in the server HTML; register the loader with `{ ssr: false }` when the tag must be in the first response (see [Loaders](/docs/rango/features/loaders#loaders-can-write-handles)).
+Loaders can push metadata too, which keeps a data-derived title next to the fetch. Loader pushes stream, so one that settles late is applied after hydration rather than in the server HTML; register the loader with `{ ssr: false }` when the tag must be in the first response (see [Loaders](/docs/rango/features/loaders#loaders-can-write-handles)). On a [PPR](/docs/rango/guides/ppr) route that also puts it in the shell: an `ssr: false` loader's `ctx.use(Meta)(promise)` is awaited at capture, so every shell HIT's `<head>` has the title.
 
 ## Meta is not a special case
 

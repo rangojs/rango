@@ -75,16 +75,33 @@ describe("restoreHandles: a record's loader-owned values follow the loader's pin
     ]);
   });
 
-  it("a pinned loader's thenable push is added: the record could not keep it", () => {
+  it("a pinned loader's promise push that settles thenable-free is dropped: the copy stands (#1182)", async () => {
     const store = createHandleStore();
     restore(store, RECORD, OWNERS, PINNED);
-    const deferred = Promise.resolve("bake-deferred");
 
-    livePush(store, "Bake", deferred);
+    livePush(store, "Bake", Promise.resolve("bake-deferred"));
+    store.seal();
+    await store.fullySettled;
 
     expect(store.getDataForSegment("seg1").crumbs).toEqual([
       "handler",
-      deferred,
+      "bake-captured",
+      "live-captured",
+    ]);
+  });
+
+  it("a pinned loader's promise push that settles to a value holding a promise is added: the record could not keep it", async () => {
+    const store = createHandleStore();
+    restore(store, RECORD, OWNERS, PINNED);
+    const holding = Promise.resolve({ later: Promise.resolve("later") });
+
+    livePush(store, "Bake", holding);
+    store.seal();
+    await store.fullySettled;
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "handler",
+      holding,
       "bake-captured",
       "live-captured",
     ]);

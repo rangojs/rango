@@ -368,9 +368,10 @@ export interface RequestContext<
 
   /**
    * @internal Set on a capture's derived context when a loader pushed a
-   * value the record cannot keep (a deferred push, masked nested promises,
-   * or a push outside a loader body): the loader records then carry
-   * `runs: 1`, so a HIT still runs their bodies for those pushes.
+   * value the record cannot keep (masked nested promises, a pushed promise
+   * that settled to one, a live-lane loader's push, or a push outside a
+   * loader body): the loader records then carry `runs: 1`, so a HIT still
+   * runs their bodies for those pushes.
    */
   _shellCaptureUnrecordedLoaderPush?: true;
 

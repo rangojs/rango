@@ -167,17 +167,13 @@ describe("a Prerender + ppr shell HIT hydrates with the loader pushes its shell 
     expect(values.afterHydration).toBeUndefined();
   });
 
-  it("a promise push is not in the shell and arrives after hydration, next to the settled push the shell kept (#1054)", async () => {
+  it("a promise push is in the shell's handles record next to the settled push, and nothing arrives after hydration (#1182)", async () => {
     const { values } = await hitAfterCapture("/pre-deferred");
 
-    expect(values.shell).toEqual(["settled-note@g1"]);
+    expect(values.shell).toEqual(["settled-note@g1", "deferred-note@g1"]);
     expect(values.hydration).toEqual(values.shell);
-    // The pin asks for a run (`runs`): its settled push gives way to the
-    // shell's copy, its deferred one is added.
-    expect(values.afterHydration).toEqual([
-      "settled-note@g1",
-      "deferred-note@g2",
-    ]);
+    // The record keeps both pushes, so the pin asks for no run.
+    expect(values.afterHydration).toBeUndefined();
   });
 
   it("an entry without loader pins (maxSnapshotBytes) hydrates with the capture's push, and the run's push takes its place after hydration", async () => {

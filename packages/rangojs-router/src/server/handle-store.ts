@@ -4,6 +4,7 @@ import {
   isInsideLoaderScope,
 } from "./context.js";
 import { holdsThenable } from "../router/segment-resolution/mask-nested.js";
+import { isThenable } from "../handles/is-thenable.js";
 import { pushedByKey } from "../handles/pushed-by.js";
 import { defineSlot } from "./slot-accessors.js";
 
@@ -254,12 +255,14 @@ export interface HandleStore {
   ): void;
 
   /**
-   * push() a record's copy of `loaderId`'s settled push that stands
-   * (restoreHandles): the record supplies the loader's value too. From then
-   * on this request drops every settled, thenable-free push the loader makes
-   * (live, or replayed from a cache entry, anywhere inside its body), and
-   * keeps the ones holding a thenable (holdsThenable: what the record could
-   * not keep), placed among the restored copies in the loader's push order.
+   * push() a record's copy of `loaderId`'s push that stands (restoreHandles):
+   * the record supplies the loader's value too. From then on this request
+   * drops every thenable-free push the loader makes (live, or replayed from
+   * a cache entry, anywhere inside its body), and keeps the ones holding a
+   * thenable (holdsThenable: what the record could not keep), placed among
+   * the restored copies in the loader's push order. A top-level promise is
+   * judged by its settled value, as the capture judged it (#1182): dropped
+   * when it settles thenable-free or rejects, else kept once it settles.
    */
   pushRestored(
     handleName: string,
@@ -277,6 +280,16 @@ export interface HandleStore {
    * takes a push made inside a hole it awaited.
    */
   setRecordAuthority(authority: (loaderId: string) => RecordAuthority): void;
+
+  /**
+   * Capture only (shell-capture.ts deriveShellCaptureContext): the slot
+   * holding `value` becomes a DSL-loader push without an owner, so the
+   * record and the prelude leave it out (getDataForSegment's
+   * `excludeLoaderPushes`). The capture owns a bake-lane loader's promise
+   * when it is pushed, and calls this once the promise settled to a value
+   * that holds one (#1182).
+   */
+  unrecordPush(handleName: string, segmentId: string, value: unknown): void;
 
   /**
    * `loaderId`'s run in this request settled (resolved or rejected), its
@@ -666,6 +679,39 @@ export function createHandleStore(): HandleStore {
     return after;
   }
 
+  // A restored loader's top-level promise push, judged by its settled value
+  // as push(await value) would be: thenable-free, the record's copy stands
+  // (the capture recorded that value, #1182); holding a promise, it is kept
+  // where the loader's pushes go, once it settles; rejected, it is dropped.
+  // Tracked on the auxiliary lane, so the late channel stays open for it.
+  function judgeRestoredPromise(
+    store: HandleStore,
+    handleName: string,
+    segmentId: string,
+    value: unknown,
+    loaderId: string,
+    tag: SlotTag,
+  ): void {
+    const judged = Promise.resolve(value).then(
+      (settled) => {
+        if (!holdsThenable(settled)) {
+          const existing = data[handleName]?.[segmentId];
+          if (existing) matchRestoredSlot(existing, loaderId);
+          return;
+        }
+        const values = ((data[handleName] ??= {})[segmentId] ??= []);
+        insertSlot(values, restoredInsertIndex(values, loaderId), value, tag);
+        if (tag.replayOf !== undefined) {
+          addPending(pendingReplays, tag.replayOf, values);
+        }
+        version++;
+        signalEmission();
+      },
+      () => {},
+    );
+    store.trackAuxiliary(judged);
+  }
+
   function replayPush(
     store: HandleStore,
     replay: NonNullable<typeof replaying>,
@@ -860,10 +906,22 @@ export function createHandleStore(): HandleStore {
           restoredBy = restoringLoader(replayOf);
         }
       }
-      if (restoredBy !== undefined && !holdsThenable(value)) {
-        const existing = data[handleName]?.[segmentId];
-        if (existing) matchRestoredSlot(existing, restoredBy);
-        return;
+      if (restoredBy !== undefined) {
+        if (isThenable(value)) {
+          judgeRestoredPromise(this, handleName, segmentId, value, restoredBy, {
+            loader: (loaderPush ?? isInsideLoaderScope()) || undefined,
+            replayOf,
+            liveOf: replayOf === undefined ? restoredBy : undefined,
+            owner,
+            by: getHandlePushOwner() ?? replayOf ?? owner,
+          });
+          return;
+        }
+        if (!holdsThenable(value)) {
+          const existing = data[handleName]?.[segmentId];
+          if (existing) matchRestoredSlot(existing, restoredBy);
+          return;
+        }
       }
 
       if (!data[handleName]) {
@@ -975,6 +1033,15 @@ export function createHandleStore(): HandleStore {
 
     setRecordAuthority(of: (loaderId: string) => RecordAuthority): void {
       authority = of;
+    },
+
+    unrecordPush(handleName: string, segmentId: string, value: unknown): void {
+      const values = data[handleName]?.[segmentId];
+      if (!values) return;
+      const i = values.indexOf(value);
+      if (i < 0) return;
+      const tags = tagsFor(values);
+      tags[i] = { ...tags[i], loader: true, owner: undefined };
     },
 
     settleLoaderRun(loaderId: string): void {

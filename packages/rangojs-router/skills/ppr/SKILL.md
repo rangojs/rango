@@ -836,14 +836,17 @@ that settled inside the capture window pinned its capture-time value into the
 shared shell; found live as a storefront basket — with the capturing session's
 identifiers — served to anonymous visitors.)
 
-### Handles: handler pushes bake; loader pushes keep "nesting = liveness"
+### Handles: handler and bake-lane pushes bake; loader pushes keep "nesting = liveness"
 
 - `ctx.use(H)(promise)` from a handler — a TOP-LEVEL pushed promise is awaited
   at capture and BAKED into the shell (bounded by `ppr.captureTimeout`, 15s by
   default).
-- A promise pushed from a LOADER is never in the shell and the capture does not
-  wait for it: however slow it is (or if it never settles), the shell is still
-  stored, and the HIT's own loader run delivers the value after hydration.
+- `ctx.use(H)(promise)` (or `.defer()`) from an `ssr: false` LOADER, or a
+  loader it awaits — awaited at capture and BAKED the same way, judged by the
+  value it settles to, as `push(await promise)` would be (#1182). One that
+  rejects, or does not settle within `ppr.captureTimeout`, refuses the
+  capture, as a handler's does. A loader without `ssr: false` never runs at
+  capture, so its pushes are never in the shell.
 - `ctx.use(H)({ x: promise })` from a HANDLER — also baked. The capture waits
   for every promise nested in a handler's push, at any depth of plain objects,
   arrays and JSX props, before it records the handles every HIT replays. Keep
@@ -997,60 +1000,73 @@ pushes stay as the prelude rendered them, even where a live loader also
 awaits it, while its data is fresh. (They follow the run instead once the
 entry has lost a pin, because the loader that awaits it then runs.) To keep
 its pushes live, declare it as its own `loader()` on the route. A push the
-capture cannot record (a deferred push, or one holding a promise) marks every
-loader record of the page to run: those bodies then still run on each replay,
-in the background, and that push reaches the page (from the loader's own
-`cache()` entry when it hits) with the run's value, on a document HIT and on
-a client navigation alike. On a document HIT it arrives after hydration.
+capture cannot record (one whose value, once settled, holds a promise) marks
+every loader record of the page to run: those bodies then still run on each
+replay, in the background, and that push reaches the page (from the loader's
+own `cache()` entry when it hits) with the run's value, on a document HIT and
+on a client navigation alike. On a document HIT it arrives after hydration.
 
-**Handles on a shell HIT.** A promise pushed from a loader is live and is
-never in a shell. To have a value in the shell's HTML, push it settled
-(await it) from the `ssr: false` loader, or push it from the handler.
+**Handles on a shell HIT.** The shell holds what its capture's document
+rendered: the handlers' pushes and the `ssr: false` loaders' pushes, a
+promise (`push(promise)`, `.defer()`) resolved. A pushed promise is judged by
+the value it settles to, as `push(await promise)` would be (#1182). A
+live-lane loader's push is never in a shell.
 
-Three things follow, in this order of scope:
+Four things follow, in this order of scope:
 
-1. **What is in a shell's HTML** changes only for promise pushes of
-   `ssr: false` loaders and of the loaders they await: `push(promise)`, or a
-   pushed value that holds a promise. Those run at capture, and the shell
-   renders no element for such a push. A loader without `ssr: false` never
-   ran at capture, so nothing of it was ever in the shell.
-2. **On a shell HIT every loader push made during the request arrives after
+1. **What is in a shell's HTML.** The capture awaits a promise an
+   `ssr: false` loader (or a loader it awaits) pushes, under
+   `ppr.captureTimeout`, and bakes the value. One that settles to a value
+   holding a promise is live: the shell renders no element for it. A loader
+   without `ssr: false` never runs at capture, so nothing of it is ever in
+   the shell.
+2. **A pushed promise that fails refuses the capture.** One that rejects, or
+   does not settle within `ppr.captureTimeout`, keeps the route on MISS, as
+   a handler's does, and the warning names the loader and the handle. Catch
+   it and push a fallback, or push it from a live-lane loader.
+3. **On a shell HIT every loader push made during the request arrives after
    hydration**, a live-lane loader's included. The document hydrates with
    exactly the handle data the shell's HTML was rendered from (the handlers'
-   pushes and the settled pushes of the loaders that ran at capture), and
-   the request's own pushes follow as a normal `useHandle` update.
-3. **`useHandle` on every document, `ppr` or not:** a reader that React is
+   pushes and the pushes of the loaders that ran at capture), and the
+   request's own pushes follow as a normal `useHandle` update.
+4. **`useHandle` on every document, `ppr` or not:** a reader that React is
    hydrating reads the handle data its HTML was rendered from, wherever its
    boundary hydrates, and takes the newer data right after. So a reader
    inside the `loading()` or `<Suspense>` of a loader that pushes after an
    `await` hydrates clean.
 
-| On the HIT's request                                                        | In the HIT's HTML      | The client                                        |
-| --------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------- |
-| a handler's push, a pinned `ssr: false` loader's settled push               | yes (the shell has it) | hydrates with it                                  |
-| a deferred push (`push(promise)`), or a push holding a promise, by a loader | no                     | gets it right after hydration                     |
-| a live-lane loader's push                                                   | no                     | gets it right after hydration                     |
-| the run of an `ssr: false` loader the shell has no pin for                  | the capture's push     | hydrates with the capture's, then shows the run's |
+| On the HIT's request                                                                       | In the HIT's HTML      | The client                                        |
+| ------------------------------------------------------------------------------------------ | ---------------------- | ------------------------------------------------- |
+| a handler's push, a pinned `ssr: false` loader's push (`push(promise)` and `.defer()` too) | yes (the shell has it) | hydrates with it                                  |
+| a push by an `ssr: false` loader whose value holds a promise                               | no                     | gets it right after hydration                     |
+| a live-lane loader's push                                                                  | no                     | gets it right after hydration                     |
+| the run of an `ssr: false` loader the shell has no pin for                                 | the capture's push     | hydrates with the capture's, then shows the run's |
 
-A value a loader pushes as a promise is therefore in the HTML of a document
-MISS (the render awaits it) and of a route without `ppr`, and not in the
-HTML of a shell HIT. When a crawler or the first paint needs it, change one
-line:
+So a title an `ssr: false` loader pushes to `Meta`, promise or not, is in
+every HIT's `<head>`: a crawler and a link preview see it. It bakes with the
+shell and is invalidated with it (its TTL, its tags, `updateTag()`). A value
+that must stay per request comes from a loader without `ssr: false`, which
+nothing has to read:
 
 ```ts
-ctx.use(Notes)(db.stockNote(id)); // a promise: live, after hydration on a HIT
-ctx.use(Notes)(await db.stockNote(id)); // settled: baked into the shell
+const StockNote = createLoader(async (ctx) => {
+  ctx.use(Notes)(db.stockNote(ctx.params.id)); // live: after hydration on a HIT
+  return null;
+});
+path("/product/:id", ProductPage, { name: "product", ppr: true }, () => [
+  loader(Product, { ssr: false }), // bakes: its data and its pushes
+  loader(StockNote), // live lane: runs on every request
+]);
 ```
 
-The settled push bakes with the shell and is invalidated with it (its TTL,
-its tags). A promise is not baked, whenever it settles: it is the shape that
-says "per request", the same as a promise in the loader's data.
+Or nest the value in a settled push (`{ label, count: promise }`): the whole
+push then stays live, and every pinned body of the page runs on each HIT.
 
 A pinned loader's pushes are exactly the ones its capture made. If its body
-pushes a settled value only on some runs (behind a condition), a replay that
-runs it shows the capture's answer, a push or none, never a later run's next
-to the pinned data. A deferred push is the exception by design: it is
-delivered on every replay.
+pushes a value only on some runs (behind a condition), a replay that runs it
+shows the capture's answer, a push or none, never a later run's next to the
+pinned data. A push whose value holds a promise is the exception by design:
+it is delivered on every replay.
 
 One arrangement mixes sources by design. A loader that reads a
 `cache()`-bound loader with `ctx.use()` before that binding starts (a loader
