@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.26.1 (2026-10-15)
 
 ### Fixed: a ppr route whose loader pins exceed `maxSnapshotBytes` no longer serves a document shell that React re-renders on the client
 
@@ -47,6 +47,28 @@ backs off before it is captured again.
 One case is unchanged: a hole-carrying pin (an `ssr: false` loader that returns
 a promise) whose run on the HIT throws still sends the error where the HTML has
 the baked value.
+
+### Fixed: the first dev request after the RSC dependency reload renders ([#1186](https://github.com/rangojs/rango/issues/1186))
+
+**Before.** On a cold `node_modules/.vite`, `vite dev` logged
+`(rsc) optimized dependencies changed. reloading` during the first request, and
+that request answered 500. Route discovery failed with
+`clientUrls() revalidate() … has no server registration` for a `clientUrls()`
+group with a hoisted `revalidate()`. Every later request worked.
+
+The reload clears the RSC runner's modules while the request is still loading
+them. The modules the request imported after the clear were a second copy of
+the router: the groups registered their predicates in that copy, while the
+request read the old one. A fix to that registry alone would have surfaced the
+next split store (`getRequestContext() called outside of a request context`,
+the loader registry, the route trie).
+
+**Now.** In dev, a router created before a runner full reload passes each
+request to the router the reload re-created, so the request runs on one copy of
+the modules. If that router is still loading, the request waits up to 10 s for
+it to register. After that, the old router serves the request as before. This
+covers Vite's dep re-optimization and rango's worker reload after
+re-discovery. Production builds contain none of this code.
 
 ## 0.26.0 (2026-10-15)
 

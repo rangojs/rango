@@ -373,6 +373,8 @@ import {
   WarmTrigger,
   bumpWarmGeneration,
 } from "./pages/prerender-warm.js";
+// Before the clientUrls() groups: see rsc-reload-probe.ts.
+import "./rsc-reload-probe.js";
 import mixedClientUrls from "./mixed-client/urls.js";
 import pureClientUrls from "./client-urls/urls.js";
 import { rewritePatterns } from "./pages/rewrite.js";

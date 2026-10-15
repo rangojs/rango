@@ -132,6 +132,10 @@ import {
   resolvePrefetchCacheSize,
   resolvePrefetchConcurrency,
 } from "./router/prefetch-limits.js";
+import {
+  droppedByRunnerReload,
+  routerAfterRunnerReload,
+} from "./router/dev-reload-handoff.js";
 
 // Re-export public types and values from extracted modules
 export { RSC_ROUTER_BRAND, RouterRegistry } from "./router/router-registry.js";
@@ -1272,6 +1276,18 @@ export function createRouter<TEnv = any>(
               [DEV_DISCOVERY_EPOCH_HEADER]: String(devDiscoveryEpoch),
             },
           });
+        }
+
+        // Dev: a runner full reload dropped this router's module copy
+        // (router/dev-reload-handoff.ts, #1186).
+        if (process.env.NODE_ENV !== "production" && droppedByRunnerReload()) {
+          const reloaded = await routerAfterRunnerReload(
+            routerId,
+            __sourceFile,
+          );
+          if (reloaded && reloaded !== router) {
+            return reloaded.fetch(request, input);
+          }
         }
 
         // Trigger lazy import of per-router manifest data before route matching.
