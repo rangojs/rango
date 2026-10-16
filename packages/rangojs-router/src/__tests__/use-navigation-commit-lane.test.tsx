@@ -5,6 +5,7 @@ import {
   startTransition,
   Suspense,
   use,
+  useLayoutEffect,
   useState,
   ViewTransition,
   type ReactNode,
@@ -85,6 +86,8 @@ function Hold({ until }: { until: Promise<void> }): ReactNode {
 function Shell({ vt }: { vt: boolean }): ReactNode {
   const [tree, set] = useState<ReactNode>(<Reader />);
   setTree = set;
+  // NavigationProvider's layout effect: the page handed over has committed.
+  useLayoutEffect(() => controller.releaseRouteState(), [tree]);
   const content = (
     <>
       <Suspense fallback={<p data-testid="skeleton">skeleton</p>}>
@@ -119,7 +122,8 @@ async function notified(): Promise<void> {
  * The navigation's commit: the transaction's commit (handle.complete), then
  * the tree through production's commitInTransition with an update subscriber
  * that does what NavigationProvider's does (the tree, the params, the
- * flushed notification).
+ * notification flushed with "anchor" or "release"; Shell releases the anchor
+ * when the tree commits).
  */
 async function commit(
   handle: ReturnType<EventController["startNavigation"]>,
@@ -134,7 +138,7 @@ async function commit(
     const onUpdate = (update: NavigationUpdate) => {
       setTree(update.root as ReactNode);
       controller.setParams(update.metadata.params!);
-      controller.flushRouteState();
+      controller.flushRouteState(update.inTransition ? "anchor" : "release");
     };
     const update = {
       root: (
