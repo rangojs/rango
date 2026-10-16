@@ -696,7 +696,7 @@ export function createEventController(
     if (inflightActions.size === 0) return DEFAULT_ACTION_STATE;
 
     // The latest call this reader matches, or none once a later call left the
-    // map: an earlier call still running is never reported again (row A3).
+    // map: an earlier call still running is never reported again.
     const byName = !actionId.includes("#");
     let entry: ActionEntry | undefined;
     for (const a of inflightActions.values()) {
@@ -891,10 +891,12 @@ export function createEventController(
     // same action from every reader, a call of another action with the same
     // export name from readers that match by name (matchesActionId).
     const hash = actionId.lastIndexOf("#");
-    const name = hash === -1 ? null : actionId.slice(hash);
+    const name = hash === -1 ? null : actionId.slice(hash + 1);
     for (const a of inflightActions.values()) {
       if (a.actionId === actionId) a.supersededBy = "id";
-      else if (name && a.actionId.endsWith(name)) a.supersededBy ??= "name";
+      else if (name !== null && matchesActionId(name, a.actionId)) {
+        a.supersededBy ??= "name";
+      }
     }
 
     const entry: ActionEntry = {

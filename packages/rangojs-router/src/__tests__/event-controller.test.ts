@@ -737,6 +737,126 @@ describe("createEventController", () => {
       });
     });
 
+    it("an earlier call that fails before the later one settles reports no error", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      const second = ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      vi.advanceTimersByTime(0);
+      first.fail(new Error("e1"));
+      vi.advanceTimersByTime(0);
+      expect(ctrl.getActionState("addToCart")).toMatchObject({
+        state: "loading",
+        payload: ["second"],
+        error: null,
+      });
+      second.complete("r2");
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["first"]:null:null',
+        'loading:["second"]:null:null',
+        'idle:["second"]:r2:null',
+        "idle:null:null:null",
+      ]);
+    });
+
+    it("both calls failing: the later call's error, never the earlier one's", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      const second = ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      vi.advanceTimersByTime(0);
+      second.fail(new Error("e2"));
+      vi.advanceTimersByTime(0);
+      first.fail(new Error("e1"));
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["first"]:null:null',
+        'loading:["second"]:null:null',
+        'idle:["second"]:null:Error: e2',
+        "idle:null:null:null",
+      ]);
+    });
+
+    it("three calls settling out of order with mixed failures: only the third call shows", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const one = ctrl.startAction("src/cart.ts#addToCart", ["one"]);
+      vi.advanceTimersByTime(10);
+      const two = ctrl.startAction("src/cart.ts#addToCart", ["two"]);
+      vi.advanceTimersByTime(10);
+      const three = ctrl.startAction("src/cart.ts#addToCart", ["three"]);
+      vi.advanceTimersByTime(0);
+
+      two.fail(new Error("e2"));
+      vi.advanceTimersByTime(0);
+      three.complete("r3");
+      vi.advanceTimersByTime(0);
+      one.fail(new Error("e1"));
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["one"]:null:null',
+        'loading:["two"]:null:null',
+        'loading:["three"]:null:null',
+        'idle:["three"]:r3:null',
+        "idle:null:null:null",
+      ]);
+    });
+
+    it("the latest call, aborted, shows nothing", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(0);
+      first.complete("r1");
+      vi.advanceTimersByTime(0);
+      // The later call starts inside the earlier one's settle window and is
+      // aborted: the earlier call's settling entry survives abortAllActions,
+      // and the reader does not fall back to it.
+      ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      vi.advanceTimersByTime(0);
+      ctrl.abortAllActions();
+      expect(ctrl.getInflightActions().size).toBe(1);
+      expect(ctrl.getActionState("addToCart")).toEqual({
+        state: "idle",
+        actionId: null,
+        payload: null,
+        error: null,
+        result: null,
+        revalidationError: null,
+      });
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["first"]:null:null',
+        'idle:["first"]:r1:null',
+        'loading:["second"]:null:null',
+        "idle:null:null:null",
+      ]);
+    });
+
+    // server-action-bridge.ts: an error-boundary response fails its own call,
+    // then aborts every other call in flight.
+    it("the latest call, aborted by an earlier call's error-boundary response, shows nothing", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      first.fail(new Error("e1"));
+      ctrl.abortAllActions();
+      expect(ctrl.getActionState("addToCart")).toMatchObject({
+        state: "idle",
+        payload: null,
+        error: null,
+      });
+      expect(ctrl.getActionState("src/cart.ts#addToCart").error).toBeNull();
+    });
+
     it("a name reader follows the latest call across actions with that name; an exact reader keeps its own", () => {
       const ctrl = createController();
       const a = ctrl.startAction("src/a.ts#addToCart", ["a"]);

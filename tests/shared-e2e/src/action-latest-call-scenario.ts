@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Hook lock row A3: "If the same action fires several times, the hook
+ * Hook lock row A3 (dc-t84): "If the same action fires several times, the hook
  * reports the latest call" (skills/hooks/handle-and-actions.md). The same
  * action is called twice and the later call returns first.
  *

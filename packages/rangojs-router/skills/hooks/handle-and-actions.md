@@ -194,10 +194,33 @@ tracking actions called outside a `<form action={...}>` flow.
 
 Track the lifecycle of a server action, wherever on the page it was invoked.
 If the same action fires several times, the hook reports the latest call: the
-last one to start. When it returns before an earlier call, the hook shows its
-result, and the earlier call changes nothing when it settles, a result or an
-error alike (that call's own promise still resolves or rejects for its caller).
-`useNavigation()` stays `loading` while the earlier call runs.
+last one to start.
+
+- When the latest call returns before an earlier one, the hook shows its
+  result. The earlier call settling afterwards changes nothing the hook
+  reports, a result or an error alike. That call still runs to its end: its
+  promise resolves or rejects for its caller, its revalidation re-renders the
+  page, and an error-boundary response replaces it.
+- A latest call that was aborted reports nothing: `idle`, with no result or
+  error. The hook does not fall back to an earlier call. The router aborts
+  calls in flight when another call's response is an error boundary, and on
+  Back/Forward into or out of an intercept.
+- `useNavigation()` stays `loading` while any call runs.
+
+Which calls count as the same action depends on what you pass:
+
+- A function, or a full id (`"src/actions/cart.ts#addToCart"`): that action
+  only.
+- A string name (`"addToCart"`): every action with that export name, in any
+  `"use server"` file. The hook follows the latest call among all of them.
+
+The hook tracks one call at a time, not one per argument. Every
+`AddToCartButton` below reads the same `useAction(addToCart)`, so each shows
+the latest call from any button, whatever its `productId`. A reader that
+filters on `payload` (`payload?.[0] === productId`) cannot track an earlier
+call once a later one starts: from then on the hook reports the later call
+only. For per-call state, keep it with the call: `useActionState` or
+`useTransition` in the component that makes it.
 
 ```tsx
 "use client";

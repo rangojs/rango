@@ -10,10 +10,14 @@ an AddToCart button showed "Adding…" again, never showed the later call's
 result, and ended on the earlier call's result.
 
 **Now.** The hook reports the last call to start. It shows that call's result
-when it returns, and an earlier call that settles afterwards changes nothing,
-a result or an error alike. A string id (`useAction("addToCart")`) follows the
-latest call of any action with that export name; a function or a full id
-follows the latest call of that action.
+when it returns, and an earlier call that settles afterwards changes nothing
+the hook reports, a result or an error alike (its revalidation still
+re-renders the page, and an error-boundary response still replaces it). A
+latest call that was aborted reports `idle` with nothing, never an earlier
+call. A string id (`useAction("addToCart")`) follows the latest call of any
+action with that export name; a function or a full id follows the latest call
+of that action. The hook tracks one call at a time, so a reader that filters
+on `payload` cannot track an earlier call once a later one starts.
 
 ## 0.26.4 (2026-10-16)
 
