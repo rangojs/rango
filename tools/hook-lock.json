@@ -1,0 +1,43 @@
+{
+  "design": ["dc-t84", "dc-d152"],
+  "label": "hook-lock: approved",
+  "commitFiles": [
+    "packages/rangojs-router/src/browser/react/use-*.ts",
+    "packages/rangojs-router/src/browser/react/location-state.ts",
+    "packages/rangojs-router/src/browser/react/NavigationProvider.tsx",
+    "packages/rangojs-router/src/use-loader.tsx",
+    "packages/rangojs-router/src/browser/event-controller.ts",
+    "packages/rangojs-router/src/browser/partial-update.ts",
+    "packages/rangojs-router/src/browser/navigation-bridge.ts",
+    "packages/rangojs-router/src/browser/server-action-bridge.ts"
+  ],
+  "lockTests": [
+    "packages/rangojs-router/src/__tests__/use-navigation-commit-lane.test.tsx",
+    "packages/rangojs-router/src/__tests__/use-handle-commit-lane.test.tsx",
+    "packages/rangojs-router/src/__tests__/use-handle-hydration.test.tsx",
+    "packages/rangojs-router/src/__tests__/router-hooks-hydration.test.tsx",
+    "packages/rangojs-router/src/__tests__/use-navigation.test.ts",
+    "packages/rangojs-router/src/__tests__/use-pathname.test.ts",
+    "packages/rangojs-router/src/__tests__/use-params.test.ts",
+    "packages/rangojs-router/src/__tests__/use-search-params.test.ts",
+    "packages/rangojs-router/src/__tests__/use-link-status.test.ts",
+    "packages/rangojs-router/src/__tests__/use-loader-nav-pending.test.tsx",
+    "packages/rangojs-router/src/__tests__/use-loader-settled-read.test.tsx",
+    "packages/rangojs-router/src/testing/__tests__/render-route-hook-stability.test.tsx",
+    "tests/cloudflare-basic/test/render-route-hook-stability.test.tsx",
+    "packages/rangojs-router/e2e/hook-render-stability.test.ts",
+    "packages/rangojs-router/e2e/hooks.test.ts",
+    "packages/rangojs-router/e2e/navigation-hooks.test.ts",
+    "packages/rangojs-router/e2e/url-hooks.test.ts",
+    "packages/rangojs-router/e2e/use-loader-hooks.test.ts",
+    "packages/rangojs-router/e2e/use-loader-settled-read.test.ts",
+    "tests/cloudflare-basic/e2e/hook-render-stability.test.ts",
+    "tests/cloudflare-basic/e2e/use-loader-settled-read.test.ts",
+    "tests/shared-e2e/src/use-loader-settled-read-scenario.ts"
+  ],
+  "guardFiles": [
+    "tools/hook-lock.json",
+    "tools/check-hook-lock.mjs",
+    ".github/workflows/hook-lock.yml"
+  ]
+}
