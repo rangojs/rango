@@ -352,6 +352,7 @@ import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { transitionKindsPatterns } from "./pages/transition-kinds.js";
+import { optimisticSettlePatterns } from "./pages/optimistic-settle.js";
 import { asyncHandlesPatterns } from "./pages/async-handles.js";
 import { handlesCommitPatterns } from "./pages/handles-commit.js";
 import { vtBackPatterns } from "./pages/vt-back.js";
@@ -3195,6 +3196,9 @@ export const urlpatterns = urls(
         // #1165: each transition commit carries its kind as a transition
         // type (mirrors the router e2e app's /vt-kinds/*).
         include("/", transitionKindsPatterns, { name: "" }),
+        // Optimistic hook values settle in the page's commit (mirrors the
+        // router e2e app's /opt-settle/*).
+        include("/", optimisticSettlePatterns, { name: "" }),
         // A navigation's title and crumbs commit with its page (mirrors the
         // router e2e app's /handles-commit/*).
         include("/", handlesCommitPatterns, { name: "" }),

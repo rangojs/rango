@@ -218,8 +218,8 @@ left, `useSegments()` keeps that page's path and segments.
 
 ### useLinkStatus()
 
-Track pending state inside a Link component. `pending` is `true` while a
-navigation to this link's `to` is in flight:
+Track pending state inside a Link component. `pending` is `true` from the
+click until the page the navigation brings commits:
 
 ```tsx
 "use client";
@@ -236,3 +236,11 @@ function LoadingIndicator() {
   <LoadingIndicator />
 </Link>;
 ```
+
+The spinner ends in the commit that shows the destination: its `loading()`
+skeleton without `transition()`, or the page itself under `transition()`,
+where React holds the page being left until the new one is ready. Through a
+server redirect, the clicked link stays pending until the target page
+commits. A newer navigation, an abort and a failure end it at once. The value
+commits urgently from the click, so the spinner shows at once, and starts no
+transition of its own, so it never takes the page's transition types.

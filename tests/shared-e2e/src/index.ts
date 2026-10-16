@@ -88,6 +88,8 @@ export type { VtBackScenarioOptions } from "./vt-back-scenario.js";
 export type { HandlesCommitScenarioOptions } from "./handles-commit-scenario.js";
 export type { TxIdleViewTransitionScenarioOptions } from "./tx-idle-view-transition-scenario.js";
 export { runTransitionKindsTests } from "./transition-kinds-scenario.js";
+export { runOptimisticSettleTests } from "./optimistic-settle-scenario.js";
+export type { OptimisticSettleScenarioOptions } from "./optimistic-settle-scenario.js";
 export type { TransitionKindsScenarioOptions } from "./transition-kinds-scenario.js";
 export {
   countViewTransitions,

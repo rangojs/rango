@@ -1680,6 +1680,25 @@ Here is how each hook gets there:
   (the `hook-render-stability` e2e pins that: an earlier version gave every
   reader an update in the page's lane and re-rendered all of them on a search
   change).
+- `useLinkStatus` and `useAction` show work at once and settle with the
+  page, by the same rule: each sets its value in the lane of the
+  notification that carries it, and starts no transition of its own. The
+  click's notification and every action notification run in a task of their
+  own, so `pending: true` and an action's states commit urgently, also while
+  React holds a page. A link's `pending` ends when `tx.commit()` clears the
+  navigation, which the flush above delivers inside the page's update, so it
+  ends with the page. A link reads the navigation in flight
+  (`getCurrentNavigation()`): its URL, or the URL a server redirect led it
+  from (`_redirectFrom`, set in `followServerRedirect`), so the clicked link
+  stays pending through the hop. It sets its value once per navigation, so a
+  newer one ends a link whose `false` React still holds with an earlier
+  page, at the newer click. Both hooks used to pin with `useOptimistic` in a
+  `startTransition` of their own. React commits the revert of such a pin on
+  its own as a transition-only commit, which took the types queued for a
+  held page (a server action during the wait left the page with none) and
+  could start a view transition with no types; the link's release also ran
+  in the sync lane at the response's start, so the spinner ended before the
+  page showed.
 
 You might wonder why the payload's values are not simply put in the tree's
 lane, where React would commit them with the page. We tried that: a crumb whose
@@ -1700,9 +1719,10 @@ A transition the app starts itself while a page is held can still take them.
 Pinned by `src/__tests__/use-handle-commit-lane.test.tsx`,
 `src/__tests__/navigation-provider-cached-handles.test.tsx`,
 `src/__tests__/use-navigation-commit-lane.test.tsx` ("a quiet notification"),
-`src/testing/__tests__/render-route-handles-commit.test.tsx`, and the
-`handles-commit`, `nav-idle-location` and `transition-kinds` e2e (both apps,
-dev and production).
+`src/testing/__tests__/render-route-handles-commit.test.tsx`,
+`src/testing/__tests__/render-route-optimistic-settle.test.tsx`, and the
+`handles-commit`, `nav-idle-location`, `transition-kinds` and
+`optimistic-settle` e2e (both apps, dev and production).
 
 ### Back and Forward from the history cache
 

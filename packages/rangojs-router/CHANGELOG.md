@@ -19,6 +19,31 @@ action with that export name; a function or a full id follows the latest call
 of that action. The hook tracks one call at a time, so a reader that filters
 on `payload` cannot track an earlier call once a later one starts.
 
+### Changed: `useLinkStatus()` stays pending until the page shows
+
+**Before.** A link's `pending` ended when the response started streaming.
+Under `transition()`, React then held the page being left for the rest of the
+wait, with the spinner already gone. Through a server redirect, the clicked
+link's spinner ended before the redirect was read.
+
+**Now.** `pending` is `true` from the click until the commit that shows the
+destination: its `loading()` skeleton, or under `transition()` the page
+itself, which React holds until it is ready. Through a server redirect the
+clicked link stays pending until the target page commits. A newer
+navigation, an abort or a failure ends it at once. `renderRoute` does the
+same: `pending` is held with a `transition` navigate()'s commit.
+
+### Fixed: a server action during a held navigation leaves the page its transition types
+
+**Before.** With `transition()` and a view transition, a `useAction()` state
+change while React held the next page (a Save pressed during the wait)
+committed in a transition of its own and took the page's transition types,
+so a `<ViewTransition>` keyed by `push` did not animate the page.
+
+**Now.** `useAction()` and `useLinkStatus()` set their values urgently or
+with the page and start no transition of their own, so the page's commit
+carries its types.
+
 ## 0.26.4 (2026-10-16)
 
 ### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))
