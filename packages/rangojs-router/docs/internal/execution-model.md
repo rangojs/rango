@@ -1658,6 +1658,19 @@ Here is how each hook gets there:
   inside any `<ViewTransition>` whose class does not resolve to `none` for a
   commit with no types (`transition({})` does), and would commit ahead of a
   held page and take its types.
+- `idle` is the page's, so `useNavigation` never sets it ahead of a held
+  page. It listens for the same "anchor" and "release" signals as
+  `useHandle` (below). Between them, a notification that moves the state to
+  `idle` (an action that settles, a newer navigation that ends with no page:
+  an external or blocked redirect, a router reload) waits, and the release
+  re-reads the controller in the task that commits the page. Set urgently, it
+  committed over the page being left with that page's URL, and #1164's filter
+  chips showed the removed chip again until the page arrived (hook-lock rows
+  S10 and S8, the `nav-idle-overlap` e2e). Work that starts during the hold
+  (`loading`, a newer click's `pendingUrl`) is still set urgently: it is
+  shown at once, and React rebases it over the held page's update, so the
+  page commits with `loading` and the release brings `idle` right after it,
+  before the browser paints.
 - `useHandle` and `useSegments` learn from the same flush how the page is
   handed over (`useCommitAnchoredState`, `browser/react/use-handle.ts`). The
   payload's own handle data comes after it: a history-cache page's pushes

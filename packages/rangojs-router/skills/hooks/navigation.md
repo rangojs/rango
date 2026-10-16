@@ -61,11 +61,12 @@ on screen:
 may still be streaming, and React keeps the page being left on screen where a
 navigation holds its content (a same-route change, a `transition()` route,
 with or without a view transition). `state` stays `"loading"` through that
-part: for a navigation on its own, `"idle"` commits in the same commit as the
-destination's `useSearchParams()`, `usePathname()` and `useParams()`, so a
-component that reads both does not see the navigation finished on the URL it
-is leaving. A server action, or another navigation started and aborted,
-while React holds that page can still bring `"idle"` with the URL being left.
+part: `"idle"` commits with the destination's `useSearchParams()`,
+`usePathname()` and `useParams()`, so a component that reads both does not
+see the navigation finished on the URL it is leaving. That holds when a
+server action settles, or a newer navigation ends with no page (an external
+redirect), while React holds the page: `"idle"` waits for the page. Work that
+starts meanwhile shows at once (`"loading"`, the newer click's `pendingUrl`).
 `isStreaming` can outlast that commit (a loader still streaming below a
 boundary that already showed), so use it for a progress indicator that should
 last until the new page is complete.

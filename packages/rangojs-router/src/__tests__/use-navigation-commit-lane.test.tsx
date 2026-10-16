@@ -5,6 +5,7 @@ import {
   startTransition,
   Suspense,
   use,
+  useLayoutEffect,
   useState,
   ViewTransition,
   type ReactNode,
@@ -85,6 +86,8 @@ function Hold({ until }: { until: Promise<void> }): ReactNode {
 function Shell({ vt }: { vt: boolean }): ReactNode {
   const [tree, set] = useState<ReactNode>(<Reader />);
   setTree = set;
+  // NavigationProvider's layout effect: the page handed over has committed.
+  useLayoutEffect(() => controller.releaseRouteState(), [tree]);
   const content = (
     <>
       <Suspense fallback={<p data-testid="skeleton">skeleton</p>}>
@@ -119,7 +122,8 @@ async function notified(): Promise<void> {
  * The navigation's commit: the transaction's commit (handle.complete), then
  * the tree through production's commitInTransition with an update subscriber
  * that does what NavigationProvider's does (the tree, the params, the
- * flushed notification).
+ * notification flushed with "anchor" or "release"; Shell releases the anchor
+ * when the tree commits).
  */
 async function commit(
   handle: ReturnType<EventController["startNavigation"]>,
@@ -134,7 +138,7 @@ async function commit(
     const onUpdate = (update: NavigationUpdate) => {
       setTree(update.root as ReactNode);
       controller.setParams(update.metadata.params!);
-      controller.flushRouteState();
+      controller.flushRouteState(update.inTransition ? "anchor" : "release");
     };
     const update = {
       root: (
@@ -440,44 +444,6 @@ describe.each([
       expect(reader()).toBe("idle /items/1?tag=a&tag=b id=1");
 
       await release(hold, reader, "idle /items/1?tag=a&tag=b id=1");
-    });
-
-    // Overlap, not covered yet (on main either): while a navigation's commit
-    // is held, a notification that is not quiet (an action, another
-    // navigation) delivers the controller's whole state at default priority,
-    // the held idle included, ahead of the commit that brings the location.
-    it.fails("overlap: an action that starts and settles while a navigation's commit is held never shows idle with the old search", async () => {
-      const result = mount(vt);
-      const reader = () => result.getByTestId("reader").textContent;
-      const hold = deferred();
-
-      const handle = controller.startNavigation("/items/1?tag=b");
-      await notified();
-      await commit(handle, "/items/1?tag=b", { id: "1" }, hold.promise, vt);
-      const action = controller.startAction("src/actions.ts#save", []);
-      await notified();
-      action.complete(undefined);
-      await notified();
-
-      await release(hold, reader, "idle /items/1?tag=b id=1");
-      expect(sinceStart()).not.toContain("idle /items/1?tag=a&tag=b id=1");
-    });
-
-    it.fails("overlap: a second navigation started and aborted while a navigation's commit is held never shows idle with the old search", async () => {
-      const result = mount(vt);
-      const reader = () => result.getByTestId("reader").textContent;
-      const hold = deferred();
-
-      const handle = controller.startNavigation("/items/1?tag=b");
-      await notified();
-      await commit(handle, "/items/1?tag=b", { id: "1" }, hold.promise, vt);
-      const second = controller.startNavigation("/items/1?tag=c");
-      await notified();
-      second[Symbol.dispose]();
-      await notified();
-
-      await release(hold, reader, "idle /items/1?tag=b id=1");
-      expect(sinceStart()).not.toContain("idle /items/1?tag=a&tag=b id=1");
     });
   },
 );

@@ -11,7 +11,10 @@ import {
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
 import type { PublicNavigationState } from "../types.js";
-import type { DerivedNavigationState } from "../event-controller.js";
+import type {
+  DerivedNavigationState,
+  RouteStateSignal,
+} from "../event-controller.js";
 
 /**
  * Convert derived state to public version (strips inflightActions)
@@ -78,7 +81,10 @@ export function useNavigation<T>(
   // transition, and put idle on screen with the location being left (#1164).
   useEffect(() => {
     let last: DerivedNavigationState | undefined;
-    const update = () => {
+    // A page handed to React in a transition is held: from its
+    // flushRouteState("anchor") to its release (useCommitAnchoredState).
+    let pageHeld = false;
+    const update = (signal?: RouteStateSignal) => {
       const currentState = ctx.eventController.getState();
       // Neither the state nor the location moved (the stream starting or
       // ending): while a value of this hook's is held, a transition, which
@@ -89,6 +95,13 @@ export function useNavigation<T>(
       const quiet =
         currentState.state === last?.state &&
         currentState.location === last.location;
+      // idle is the page's. While one is held, idle from an action that
+      // settles or a newer navigation that ends with no page would commit
+      // urgently over the page being left, with its URL (#1164's chips come
+      // back): it waits, and the page's release brings it in the commit's
+      // task. Work that starts (loading, a newer pendingUrl) shows at once.
+      if (signal) pageHeld = signal === "anchor";
+      else if (pageHeld && !quiet && currentState.state === "idle") return;
       last = currentState;
       const publicState = toPublicState(currentState);
       const nextSelected = selectorRef.current
@@ -110,7 +123,13 @@ export function useNavigation<T>(
     // useSearchParams.
     update();
 
-    return ctx.eventController.subscribe(update);
+    const unsubscribe = ctx.eventController.subscribe(update);
+    // The anchor and release signals ride the handle channel.
+    const unsubscribeSignals = ctx.eventController.subscribeToHandles(update);
+    return () => {
+      unsubscribe();
+      unsubscribeSignals();
+    };
   }, []);
 
   return value as T | PublicNavigationState;
