@@ -45,6 +45,43 @@ export function droppedByRunnerReload(): boolean {
   return runnerReloaded;
 }
 
+type Serve = () => Promise<Response>;
+
+/**
+ * Serves a request on this router copy, or on the router a runner full reload
+ * re-created when the reload dropped this copy before the request or while it
+ * ran. What a request imports after the clear is the fresh copy, so one the
+ * reload lands inside fails or answers the wrong route: its outcome is
+ * discarded. Only GET and HEAD re-run, since a re-run repeats side effects and
+ * cannot re-read a body. A reload after the response is returned still splits
+ * its stream.
+ * @internal
+ */
+export async function serveAcrossRunnerReload(
+  request: Request,
+  serve: Serve,
+  recreated: () => Promise<Serve | undefined>,
+): Promise<Response> {
+  if (runnerReloaded) {
+    const rerun = await recreated();
+    return (rerun ?? serve)();
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") return serve();
+  const settled = await serve().then(
+    (response) => ({ response }),
+    (error: unknown) => ({ error }),
+  );
+  const rerun = runnerReloaded ? await recreated() : undefined;
+  if (rerun) {
+    if ("response" in settled) {
+      void settled.response.body?.cancel().catch(() => {});
+    }
+    return rerun();
+  }
+  if ("error" in settled) throw settled.error;
+  return settled.response;
+}
+
 /**
  * The router the reload re-created for `routerId`, or undefined when none
  * registered within DEV_RECREATED_ROUTER_WAIT_MS. Importing `sourceFile`

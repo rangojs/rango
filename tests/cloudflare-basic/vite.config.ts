@@ -43,16 +43,25 @@ function parityAliasPlugin(): Plugin {
 const RSC_RELOAD_EVENT = "rango-e2e:rsc-reload";
 const RSC_RELOAD_HOLD_MS = 2_000;
 
+/** Where the first request asks for the reload: the probe module it loads. */
+const RSC_RELOAD_PROBES: Record<string, string> = {
+  // While it loads the entry, before router.fetch (urls.tsx).
+  entry: "src/rsc-reload-probe.ts",
+  // During route discovery inside router.fetch (an async include, urls.tsx).
+  discovery: "src/rsc-reload-probe-discovery.ts",
+};
+
 /**
- * e2e/dev-rsc-reload.test.ts (#1186), behind RANGO_E2E_RSC_RELOAD_PROBE=1.
- * Serves src/rsc-reload-probe.ts so the first request after listening asks
- * for the dep optimizer's reload (invalidateAll + full-reload) and resumes
- * after the clear; the re-import's copy holds RSC_RELOAD_HOLD_MS, a slow
- * re-created router.
+ * e2e/dev-rsc-reload.test.ts (#1186), behind RANGO_E2E_RSC_RELOAD_PROBE set to
+ * a RSC_RELOAD_PROBES key. Serves that probe so the first request after
+ * listening asks for the dep optimizer's reload (invalidateAll + full-reload)
+ * and resumes after the clear; the re-import's copy holds RSC_RELOAD_HOLD_MS,
+ * a slow re-created router.
  */
 function rscReloadProbe(): Plugin | false {
-  if (process.env.RANGO_E2E_RSC_RELOAD_PROBE !== "1") return false;
-  const probe = path.resolve(__dirname, "src/rsc-reload-probe.ts");
+  const file = RSC_RELOAD_PROBES[process.env.RANGO_E2E_RSC_RELOAD_PROBE ?? ""];
+  if (!file) return false;
+  const probe = path.resolve(__dirname, file);
   const reloadCode = [
     "if (import.meta.hot) {",
     "  await new Promise((resolve) => {",

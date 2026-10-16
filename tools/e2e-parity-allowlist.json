@@ -270,6 +270,11 @@
     "reason": "Vite's RSC module runner full reload during a cold dev server's first request (#1186); a production build has no module runner and no dep optimizer to reload"
   },
   {
+    "base": "dev first request split by an RSC runner full reload",
+    "file": "tests/cloudflare-basic/e2e/dev-rsc-reload.test.ts",
+    "reason": "Vite's RSC module runner full reload landing inside a cold dev server's first router.fetch (#1186); a production build has no module runner and no dep optimizer to reload"
+  },
+  {
     "base": "hmr cold discovery recovery (cloudflare)",
     "file": "tests/cloudflare-basic/e2e/hmr-cold-discovery-recovery.test.ts",
     "reason": "Dev-server route-file watcher recovering a failed cold discovery; a production build has no watcher and no discovery temp runner"

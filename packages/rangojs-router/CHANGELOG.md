@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.26.4 (2026-10-16)
+
+### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))
+
+**Before.** The 0.26.1 fix passed a request to the re-created router only when
+the reload had landed before the request entered `router.fetch`. On a cold
+`node_modules/.vite`, an app whose worker entry does work of its own before
+`router.fetch` reached route discovery more than a second later, and the
+optimizer's reload landed in between. Discovery then imported a `clientUrls()`
+group after the runner's clear, and the request still answered 500 with
+`clientUrls() revalidate() … has no server registration`.
+
+**Now.** In dev, when the reload lands while a GET or HEAD request runs, the
+router discards what that request produced, an error or a response, and runs it
+again on the router the reload re-created. Other methods keep their outcome,
+since a re-run would repeat a server action. A reload after the response is
+returned, while its body streams, is not covered. Production builds contain
+none of this code.
+
 ## 0.26.3 (2026-10-16)
 
 ### Fixed: a server-render error outside `<Suspense>` answers a recovery document instead of the host's raw 500 ([#1192](https://github.com/rangojs/rango/pull/1192))
