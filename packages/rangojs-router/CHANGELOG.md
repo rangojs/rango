@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.26.3 (2026-10-16)
 
-### Fixed: a server-render error outside `<Suspense>` answers a recovery document instead of the host's raw 500
+### Fixed: a server-render error outside `<Suspense>` answers a recovery document instead of the host's raw 500 ([#1192](https://github.com/rangojs/rango/pull/1192))
 
 **Before.** An error thrown while the document rendered on the server, with
 no `<Suspense>` above it, took the whole response down: React's server
@@ -69,7 +69,7 @@ expect(shellError).toBeInstanceOf(ReferenceError);
 expect(getByTestId("products")).toBeTruthy();
 ```
 
-### Changed: an `ssr: false` loader error caught by a declared `errorBoundary()` answers 500 on a document
+### Changed: an `ssr: false` loader error caught by a declared `errorBoundary()` answers 500 on a document ([#1192](https://github.com/rangojs/rango/pull/1192))
 
 **Before.** On a document load, an `ssr: false` loader that threw answered 500
 when the router's default error boundary rendered it (#1190), but 200 when the
@@ -89,7 +89,7 @@ shell, and an error a loader without `ssr: false` streams after the shell
 (under `loading()` or an inline `<Suspense>`) keeps 200, since the status is
 already out. The page, the boundary and `onError` are unchanged.
 
-### Changed: a server-side failure prints its original error once, where it happened
+### Changed: a server-side failure prints its original error once, where it happened ([#1192](https://github.com/rangojs/rango/pull/1192))
 
 **Before.** What reached the server console depended on the lane. A loader
 error or a server component error printed only when the document's server
