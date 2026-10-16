@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.26.4 (2026-10-16)
 
-### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1186](https://github.com/rangojs/rango/issues/1186))
+### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))
 
 **Before.** The 0.26.1 fix passed a request to the re-created router only when
 the reload had landed before the request entered `router.fetch`. On a cold
