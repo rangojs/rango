@@ -288,7 +288,16 @@ describe("resolveLoaders: a flagged loader that throws with no errorBoundary()",
 
   it("renders the router's default error boundary, reported as handled, and the document answers 500", async () => {
     const onError = vi.fn();
-    const entry = createEntry([loaderEntry(failing("flagged#L"), true)]);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const loaderError = new Error("flagged#L failed");
+    const entry = createEntry([
+      loaderEntry(
+        createMockLoader("flagged#L", Promise.reject(loaderError)),
+        true,
+      ),
+    ]);
 
     const segments = await resolveLoaders(
       entry,
@@ -301,10 +310,18 @@ describe("resolveLoaders: a flagged loader that throws with no errorBoundary()",
     expect(fallback).not.toBeNull();
     expect(renderToStaticMarkup(fallback)).toContain("Internal Server Error");
     expect(mockRequestCtx._setStatus).toHaveBeenCalledWith(500);
+    expect(onError).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith(
-      expect.any(Error),
+      loaderError,
       expect.objectContaining({ handledByBoundary: true }),
     );
+    // Printed once, the original, where the loader ran.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[RSC\] Loader error \(L\) /),
+      loaderError,
+    );
+    consoleError.mockRestore();
   });
 
   it("does the same on the loading-disabled path", async () => {
@@ -325,7 +342,11 @@ describe("resolveLoaders: a flagged loader that throws with no errorBoundary()",
     expect(mockRequestCtx._setStatus).toHaveBeenCalledWith(500);
   });
 
-  it("keeps a declared errorBoundary()'s fallback and leaves the status alone", async () => {
+  it("keeps a declared errorBoundary()'s fallback, answers 500, and prints the original error once", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const onError = vi.fn();
     const entry = createEntry([loaderEntry(failing("flagged#L"), true)]);
     const declared = createElement("p", null, "route boundary");
 
@@ -333,14 +354,26 @@ describe("resolveLoaders: a flagged loader that throws with no errorBoundary()",
       entry,
       createMockCtx(),
       true,
-      laneDeps(declared),
+      laneDeps(declared, onError),
     );
 
     const rendered = renderToStaticMarkup(
       fallbackOf(await settledResult(segments[0]!)),
     );
     expect(rendered).toBe("<p>route boundary</p>");
-    expect(mockRequestCtx._setStatus).not.toHaveBeenCalled();
+    expect(mockRequestCtx._setStatus).toHaveBeenCalledTimes(1);
+    expect(mockRequestCtx._setStatus).toHaveBeenCalledWith(500);
+    expect(onError).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ handledByBoundary: true }),
+    );
+    // Whatever boundary renders it, the server prints the original once.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[RSC\] Loader error \(L\) /),
+      expect.objectContaining({ message: "flagged#L failed" }),
+    );
+    consoleError.mockRestore();
   });
 
   it("answers a thrown redirect() as the redirect: no fallback, no 500", async () => {
@@ -362,6 +395,7 @@ describe("resolveLoaders: a flagged loader that throws with no errorBoundary()",
       const result = await settledResult(segments[0]!);
       expect(result.ok ? undefined : result.redirect).toEqual({
         to: "https://example.com/elsewhere",
+        status: 302,
       });
       expect(fallbackOf(result)).toBeNull();
       expect(mockRequestCtx._setStatus).not.toHaveBeenCalled();

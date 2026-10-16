@@ -172,6 +172,7 @@ export const router = createRouter<AppBindings>({
       phase: ctx.phase,
       message: ctx.error.message,
       pathname: ctx.pathname,
+      handledByBoundary: ctx.handledByBoundary,
       metadata: ctx.metadata,
     });
   },

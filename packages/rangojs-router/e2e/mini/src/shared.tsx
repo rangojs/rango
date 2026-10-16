@@ -61,6 +61,11 @@ export function cartCount(): number {
 // Marked fetchable (second arg `true`) so useRefreshLoaders() can re-fetch it
 // through the GET loader endpoint.
 let clockSeq = 0;
+// dc-t93: a loader that always throws, read outside any Suspense.
+export const ShellErrorLoader = createLoader(async (): Promise<string> => {
+  throw new Error("mini-shell-loader-error");
+});
+
 export const ClockLoader = createLoader(async () => {
   clockSeq += 1;
   return { seq: clockSeq, iso: new Date().toISOString() };

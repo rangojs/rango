@@ -215,6 +215,21 @@ export interface SSRRenderOptions {
    * otherwise completed document. React's default console.error is kept.
    */
   onError?: (error: unknown) => void;
+
+  /**
+   * Called once when the render failed before any HTML was produced (a shell
+   * error), before renderHTML answers it with a recovery document or rethrows
+   * it to the host (dev). `status` and `location` are the answer's, absent on
+   * a rethrow. `originated`: the error started in this render; a copy (a
+   * loader's masked rebuild, an error Flight decoded, a payload that did not
+   * decode) was reported where it started. See ssr/shell-error-document.tsx.
+   */
+  onShellError?: (shellError: {
+    error: unknown;
+    originated: boolean;
+    status?: number;
+    location?: string;
+  }) => void;
 }
 
 /**

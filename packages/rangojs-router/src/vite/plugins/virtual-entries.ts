@@ -11,7 +11,7 @@ import {
   createTemporaryReferenceSet,
 } from "@rangojs/router/internal/deps/browser";
 import { createElement, StrictMode } from "react";
-import { hydrateRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { rscStream } from "@rangojs/router/internal/deps/html-stream-client";
 import { initBrowserApp, Rango } from "@rangojs/router/browser";
 
@@ -47,11 +47,15 @@ async function initializeApp() {
   }
 
   const app = createElement(Rango);
-  hydrateRoot(
-    document,
-    strictMode === false ? app : createElement(StrictMode, null, app),
-    formState ? { formState } : undefined
-  );
+  const root = strictMode === false ? app : createElement(StrictMode, null, app);
+  // The server render failed its shell and answered a recovery document
+  // (ssr/shell-error-document.tsx): nothing to hydrate, so render it, and the
+  // router's error boundaries run as on a client navigation.
+  if (document.documentElement.hasAttribute("data-rango-ssr-error")) {
+    createRoot(document).render(root);
+  } else {
+    hydrateRoot(document, root, formState ? { formState } : undefined);
+  }
 }
 
 initializeApp().catch(console.error);

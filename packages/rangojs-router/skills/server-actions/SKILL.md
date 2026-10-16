@@ -688,7 +688,9 @@ layout(CheckoutLayout, () => [
 
 In production `error.message` is replaced with `"An error occurred"` (and
 `stack` / `cause` are dropped), while `error.name` and `error.code` are kept —
-branch on `name` or `code`, not on the message.
+branch on `name` or `code`, not on the message. The server console prints the
+original once, message and stack, JS or no-JS, boundary or not:
+`[RSC] Action error (<action id>) <path>:`.
 
 ### Not found from an action
 

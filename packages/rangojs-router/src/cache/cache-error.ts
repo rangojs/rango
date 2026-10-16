@@ -16,6 +16,7 @@
  */
 
 import { _getRequestContext } from "../server/request-context.js";
+import { wasServerErrorPrinted } from "../server/print-server-error.js";
 
 /**
  * Minimal shape of a request context for error reporting. Passed explicitly by
@@ -29,6 +30,8 @@ export interface CacheErrorReporter {
     error: unknown,
     category: CacheErrorCategory,
   ) => void;
+  /** The errors the request printed (router/error-handling.ts printServerError). */
+  _printedErrors?: WeakSet<object>;
 }
 
 export type CacheErrorCategory =
@@ -70,9 +73,15 @@ export function reportCacheError(
   label: string,
   ctx?: CacheErrorReporter,
 ): void {
-  console.error(`${label}:`, error);
+  let target: CacheErrorReporter | undefined;
   try {
-    const target = ctx ?? _getRequestContext();
+    target = ctx ?? _getRequestContext();
+  } catch {
+    // Reporting must never itself break the cache path.
+  }
+  // A render error a writer refuses to store printed where it originated.
+  if (!wasServerErrorPrinted(error, target)) console.error(`${label}:`, error);
+  try {
     target?._reportBackgroundError?.(error, category);
   } catch {
     // Reporting must never itself break the cache path.

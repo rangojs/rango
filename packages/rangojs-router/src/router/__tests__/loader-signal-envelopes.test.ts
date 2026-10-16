@@ -148,7 +148,11 @@ describe("redirect() envelopes", () => {
     expect(result.ok).toBe(false);
     // The soft-redirect channel ships the resolved ABSOLUTE href (same
     // convention as metadata.redirect); the client navigates it same-origin.
-    expect(result.redirect).toEqual({ to: "https://shop.example/products" });
+    // `status` is what a document whose shell the read fails answers with.
+    expect(result.redirect).toEqual({
+      to: "https://shop.example/products",
+      status: 302,
+    });
     expect(result.notFound).toBeUndefined();
   });
 

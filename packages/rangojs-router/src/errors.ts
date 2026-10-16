@@ -77,6 +77,45 @@ export function isDataNotFoundError(
 }
 
 /**
+ * A loader's notFound() or redirect() rethrown at its read site
+ * (decode-loader-results.ts throwSignal): control flow answered with its own
+ * status, not an error to print or report. Name-based, so the RSC environment,
+ * whose module instances differ from the SSR one's, classifies it too.
+ */
+export function isLoaderSignalError(error: unknown): boolean {
+  return (
+    isDataNotFoundError(error) ||
+    (error instanceof Error && error.name === "LoaderRedirect")
+  );
+}
+
+/**
+ * An error React's Flight client decoded from an error row: it always sets
+ * `digest`. The Flight render printed and reported the original.
+ */
+export function isFlightDecodedError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "digest" in error;
+}
+
+/**
+ * A render's own cancellation, not a failure: the error React's Flight and
+ * Fizz report for each pending task when a stream is aborted with no reason
+ * (a client disconnect), or an AbortError while the request itself is
+ * aborted. A loader's own AbortController or fetch timeout on a live request
+ * is a failure.
+ */
+export function isAbortedRender(
+  error: unknown,
+  requestSignal?: AbortSignal,
+): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message.startsWith("The render was aborted by the server")) {
+    return true;
+  }
+  return error.name === "AbortError" && requestSignal?.aborted === true;
+}
+
+/**
  * Convenience function to throw a DataNotFoundError
  * Shorter syntax for common not-found scenarios
  *

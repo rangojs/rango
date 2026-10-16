@@ -76,6 +76,7 @@ import {
   type ScopableReverse,
 } from "../server/context.js";
 import { debugLog } from "./logging.js";
+import { printServerError } from "../server/print-server-error.js";
 
 /**
  * Internal callback signature for loader error notifications.
@@ -147,9 +148,11 @@ function pushHandleValue(
  *   presentation there.
  * - redirect() (thrown 3xx Response): the target is resolved through the
  *   soft-redirect same-origin rules NOW so unsafe targets never leave the
- *   server; the client navigates when the entry decodes. No document-lane
- *   302 — pre-stream redirect authority belongs to middleware (doctrine);
- *   a loader redirect is always a client-side navigate.
+ *   server; the client navigates when the entry decodes. A read outside
+ *   Suspense fails the document's server-render shell before anything was
+ *   sent: that document answers a real 3xx when the redirect carries no
+ *   state (ssr/shell-error-document.tsx); otherwise a loader redirect is a
+ *   client-side navigate.
  *
  * @param onError - Optional callback invoked when loader errors occur.
  *   This has a simplified signature for internal use - the caller (typically
@@ -157,7 +160,8 @@ function pushHandleValue(
  *   OnErrorCallback with complete request context (request, url, env, etc.).
  * @param useDefaultErrorBoundary - An `ssr: false` loader on a document or
  *   capture render: an error with no declared boundary gets
- *   `DefaultErrorFallback` and a 500 (it would otherwise reject the tree).
+ *   `DefaultErrorFallback` (it would otherwise reject the tree), and every
+ *   error answers 500.
  */
 export function wrapLoaderWithErrorHandling<T>(
   promise: Promise<T>,
@@ -276,7 +280,13 @@ export function wrapLoaderWithErrorHandling<T>(
         return {
           __loaderResult: true,
           ok: false,
-          redirect: { to, ...(redirectState && { state: redirectState }) },
+          // status: a document whose shell this read fails answers it as a
+          // real redirect (ssr/shell-error-document.tsx).
+          redirect: {
+            to,
+            status: error.status,
+            ...(redirectState && { state: redirectState }),
+          },
           error: createErrorInfo(
             new Error(`Loader redirected to ${to}`),
             segmentId,
@@ -290,6 +300,17 @@ export function wrapLoaderWithErrorHandling<T>(
       // Flight nor Fizz reports: record it like their errors, so a writer
       // that reads _renderErrors (the document cache) does not store it.
       renderErrors?.push(error);
+      // The original, once, here: the payload carries a masked rebuild that
+      // the SSR render must not print (decode-loader-results.ts).
+      printServerError(
+        error,
+        {
+          label: "Loader error",
+          name: loaderName.slice(loaderName.lastIndexOf("#") + 1),
+          pathname,
+        },
+        requestContext,
+      );
 
       // Find nearest error boundary
       const declared = findNearestErrorBoundary(entry);
@@ -349,8 +370,12 @@ export function wrapLoaderWithErrorHandling<T>(
         segmentId,
         message: errorInfo.message,
       });
-      // The default boundary answers 500, as in catchSegmentError.
-      if (!declared) requestContext?._setStatus(500);
+      if (useDefaultErrorBoundary) {
+        // Settled before the first flush, so the document answers
+        // 500 whichever boundary renders it, as a handler error does. On a
+        // shell HIT the status went out with the shell and the write is inert.
+        requestContext?._setStatus(500);
+      }
 
       return {
         __loaderResult: true,

@@ -910,6 +910,12 @@ export interface RequestContext<
   _reportedErrors: WeakSet<object>;
 
   /**
+   * @internal The errors this request printed to the server console, so a
+   * failure prints once where it originated (server/print-server-error.ts). A derived context shares it through the prototype.
+   */
+  _printedErrors?: WeakSet<object>;
+
+  /**
    * @internal Errors this response's Flight or Fizz render reported through
    * onError: a component that threw does not fail the stream, which completes
    * with an error row or an errored Suspense boundary. Whole-response captures
@@ -1090,6 +1096,7 @@ export type PublicRequestContext<
   | "_inActionRevalidation"
   | "_actionRan"
   | "_reportedErrors"
+  | "_printedErrors"
   | "_renderErrors"
   | "_recoveredHandlerErrors"
   | "_renderBarrier"
@@ -1828,6 +1835,7 @@ export function createRequestContext<TEnv>(
     _locationState: undefined,
 
     _reportedErrors: new WeakSet<object>(),
+    _printedErrors: new WeakSet<object>(),
     _renderErrors: [],
     _metricsStore: undefined,
     _renderForeground: undefined,

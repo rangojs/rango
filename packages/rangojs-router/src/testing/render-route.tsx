@@ -384,7 +384,12 @@ export interface RenderRouteOptions {
    * - Content that suspends in the server pass (`lazy`, a pending or untracked
    *   `use()` promise) is emitted as its fallback and client-rendered, not
    *   hydrated; React reports the boundary in `recoverableErrors`. Outside any
-   *   `<Suspense>` it rejects.
+   *   `<Suspense>` it rejects: production's server waits for it, this
+   *   synchronous pass cannot.
+   * - An error the server pass throws outside any `<Suspense>` fails the
+   *   shell. Production answers a recovery document and the browser renders
+   *   the tree with `createRoot` instead of hydrating it; so does this mode,
+   *   and the result's `shellError` holds the error.
    * - Needs @testing-library/react >= 16.2.0; throws on older versions.
    */
   hydrate?: boolean;
@@ -479,6 +484,14 @@ export type RenderRouteHydrateResult = RenderRouteResult & {
    * with `console.error` in development.
    */
   recoverableErrors: string[];
+  /**
+   * The error the server pass threw outside any `<Suspense>` (a shell error),
+   * or undefined. When set, the tree was rendered with `createRoot`, as the
+   * browser renders production's recovery document, so the router's error
+   * boundaries ran on the client: assert what they show. `serverHtml` is then
+   * empty.
+   */
+  shellError: unknown;
 };
 
 interface ResolvedMatch {
@@ -1015,6 +1028,8 @@ export async function renderRoute(
   );
 
   let serverHtml: string | undefined;
+  let shellError: unknown;
+  let shellFailed = false;
   const recoverableErrors: string[] = [];
   if (options.hydrate) {
     // RTL forwards onRecoverableError to hydrateRoot from 16.2.0. 16.0-16.1
@@ -1035,7 +1050,14 @@ export async function renderRoute(
     ) : (
       ui
     );
-    serverHtml = withoutBrowserGlobals(() => renderToString(serverUi));
+    try {
+      serverHtml = withoutBrowserGlobals(() => renderToString(serverUi));
+    } catch (error) {
+      if (isSynchronousSuspension(error)) throw error;
+      shellFailed = true;
+      shellError = error;
+      serverHtml = "";
+    }
   }
 
   // Wrap render in an awaited async act so a tree that suspends (async loaders,
@@ -1051,14 +1073,15 @@ export async function renderRoute(
     result = render(ui, {
       baseElement: document.body,
       container,
-      ...(serverHtml !== undefined && {
-        hydrate: true,
-        onRecoverableError: (error: unknown) => {
-          recoverableErrors.push(
-            error instanceof Error ? error.message : String(error),
-          );
-        },
-      }),
+      ...(serverHtml !== undefined &&
+        !shellFailed && {
+          hydrate: true,
+          onRecoverableError: (error: unknown) => {
+            recoverableErrors.push(
+              error instanceof Error ? error.message : String(error),
+            );
+          },
+        }),
     });
   });
 
@@ -1081,7 +1104,25 @@ export async function renderRoute(
   };
 
   if (serverHtml === undefined) return Object.assign(result, { router });
-  return Object.assign(result, { router, serverHtml, recoverableErrors });
+  return Object.assign(result, {
+    router,
+    serverHtml,
+    recoverableErrors,
+    shellError,
+  });
+}
+
+/**
+ * renderToString's error for a root that suspended: Fizz waits for that
+ * promise in production, so it is no shell error.
+ */
+function isSynchronousSuspension(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.startsWith(
+      "A component suspended while responding to synchronous input",
+    )
+  );
 }
 
 /**

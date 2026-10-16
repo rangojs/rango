@@ -733,8 +733,11 @@ boundary, and streamed fresh on every request. It needs a boundary —
 `loading()` or an inline `<Suspense>` above the reader — or the shell is
 refused: a masked read with no boundary above it root-postpones, the `<body>`
 sanity gate refuses the capture, and the route stays an eternal MISS (warned
-once per key). A route whose loaders are ALL `ssr: false` needs no
-`loading()`: nothing masks, and the shell captures complete.
+once per key). When that read also throws on the MISS render, the document is
+the 500 recovery document the `/loader` skill describes ("A read outside any
+`<Suspense>`"), and nothing is stored. A route whose loaders are ALL
+`ssr: false` needs no `loading()`: nothing masks, and the shell captures
+complete.
 
 ```typescript
 export const ProductLoader = createLoader(async (ctx) => {
@@ -1120,7 +1123,8 @@ Four hard edges (each e2e/unit-pinned):
 - **A rejecting bake-lane loader refuses.** Error UI never bakes. So does a
   value that fails to encode: a function, a class instance, a promise inside a
   `Map` that rejects, or a server component in the value that throws. The
-  capture stores nothing, logs the error, reports `cache-write` and backs the
+  capture stores nothing, prints the error once (a loader's as
+  `[RSC] Loader error`), reports `cache-write` and backs the
   key off, the same as a shell component that throws (below). The capture
   encodes the value a second time to pin it for HITs, so a server component
   that throws only on that run refuses it too. A build-time capture skips the
@@ -1612,14 +1616,18 @@ evicted by tag at all — move always-fresh data into a live-lane loader (no
 - **HIT status is committed at the flush**: a failing hole cannot become a
   500/redirect after the first shell byte — error UI renders inline via
   Suspense/error boundaries (the same property any streamed SSR page has after
-  its shell flushes).
+  its shell flushes). A MISS has sent nothing yet: an `ssr: false` loader that
+  throws answers 500 there with its route's `errorBoundary()` (or the default
+  one), and the capture stores nothing.
 - **A shell component that throws during capture refuses it**: an async
   server component (or a client component during SSR) inside a Suspense
   boundary that throws does not fail the capture render, so its errored
   boundary would bake into the shared prelude. The capture stores nothing
-  instead, logs `[ShellCache] capture` with the error (it goes to `onError`
-  as `cache-write` unless the router already reported that same error during
-  the render), and backs the key off like any refused capture; the next
+  instead, logs `[ShellCache] capture` with the error unless the error was
+  already printed where it happened (a server component's or a loader's
+  error prints once, as `[RSC] Rendering error` or `[RSC] Loader error`), it
+  goes to `onError` as `cache-write` unless the router already reported that
+  same error during the render, and backs the key off like any refused capture; the next
   capture after the window stores normally. The request that triggered the
   capture is served as before. Only a throw during the capture counts: a
   component that failed in the live render and succeeds when captured is

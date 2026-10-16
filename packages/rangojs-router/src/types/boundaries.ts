@@ -90,9 +90,15 @@ export type LoaderDataResult<T = unknown> =
        * resolved `redirect(url, { state })` record (`__rsc_ls_*` keys) — it
        * travels on the marker because a streaming loader settles after
        * payload metadata flushed; the redirect navigation merges it at the
-       * target entry.
+       * target entry. `status` is the redirect's own: a document whose shell
+       * the read fails answers it as a real redirect when there is no state
+       * (ssr/shell-error-document.tsx).
        */
-      redirect?: { to: string; state?: Record<string, unknown> };
+      redirect?: {
+        to: string;
+        status?: number;
+        state?: Record<string, unknown>;
+      };
     };
 
 export function isLoaderDataResult(value: unknown): value is LoaderDataResult {

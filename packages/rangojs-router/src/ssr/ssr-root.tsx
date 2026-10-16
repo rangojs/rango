@@ -221,6 +221,12 @@ export interface SsrRootOptions {
    * live fizz passes the request's origin; capture/resume pass theirs.
    */
   origin?: string;
+  /**
+   * Called when the segment tree build rejects. renderHTML answers that shell
+   * error with a static document: the browser builds the same tree from the
+   * same payload and would reject the same way (ssr/shell-error-document.tsx).
+   */
+  onTreeError?: (error: unknown) => void;
 }
 
 /**
@@ -248,6 +254,7 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
     onPayloadSettled,
     search,
     origin,
+    onTreeError,
   } = opts;
 
   // onPayloadSettled fires AFTER fragment expansion (inside
@@ -308,11 +315,14 @@ export function createSsrRootComponent(opts: SsrRootOptions): React.FC {
     // Memoize like payload/handles above: renderSegments is async, so
     // React.use() on a fresh promise suspends and replays SsrRoot, which
     // would re-run the entire segment-tree build on every initial render.
-    rootPromise ??= Promise.resolve(
-      renderSegments(resolved.metadata?.segments ?? [], {
-        rootLayout: resolved.metadata?.rootLayout,
-      }),
-    );
+    if (!rootPromise) {
+      rootPromise = Promise.resolve(
+        renderSegments(resolved.metadata?.segments ?? [], {
+          rootLayout: resolved.metadata?.rootLayout,
+        }),
+      );
+      if (onTreeError) rootPromise.catch(onTreeError);
+    }
     let content: React.ReactNode = React.use(rootPromise);
 
     // Wrap content with ThemeProvider if theme is enabled

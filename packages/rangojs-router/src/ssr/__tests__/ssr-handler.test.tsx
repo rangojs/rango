@@ -60,7 +60,9 @@ describe("createSSRHandler", () => {
     });
 
   describe("onError callback", () => {
-    it("should call onError when rendering fails", async () => {
+    // dc-t93: a failed shell is rethrown to the host in dev only; production
+    // answers a document (shell-error-document.test.tsx has the documents).
+    it("dev: calls onError once and rethrows the same error instance when rendering fails", async () => {
       const onError = vi.fn();
       const renderError = new Error("Rendering failed");
 
@@ -71,12 +73,39 @@ describe("createSSRHandler", () => {
 
       const renderHTML = createSSRHandler(deps);
 
-      await expect(renderHTML(createMockRscStream())).rejects.toThrow(
-        "Rendering failed",
-      );
+      await expect(renderHTML(createMockRscStream())).rejects.toBe(renderError);
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError).toHaveBeenCalledWith(renderError, { phase: "rendering" });
+    });
+
+    it("production: calls onError once and answers a document when rendering fails", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const onError = vi.fn();
+        const renderError = new Error("Rendering failed");
+
+        const deps = createMockDeps({
+          renderToReadableStream: vi.fn().mockRejectedValue(renderError),
+          onError,
+        });
+
+        const renderHTML = createSSRHandler(deps);
+
+        const html = await new Response(
+          await renderHTML(createMockRscStream()),
+        ).text();
+
+        expect(html).toContain("<h1>Internal Server Error</h1>");
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onError).toHaveBeenCalledWith(renderError, {
+          phase: "rendering",
+        });
+      } finally {
+        vi.unstubAllEnvs();
+        vi.mocked(console.error).mockRestore();
+      }
     });
 
     it("should call onError with phase: rendering", async () => {
