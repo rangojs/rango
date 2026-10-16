@@ -1650,27 +1650,47 @@ Here is how each hook gets there:
   than on its debounce timer (#1164; see the route-state atomicity entry in
   `feature-map.md`).
 - One `useNavigation` case is different: a value that moves while neither the
-  state nor the location does (`pendingUrl` clearing as the response starts
-  streaming, `isStreaming` clearing as it ends). There is no location to
-  commit it with. It goes in a transition only while the reader has a value
-  React has not committed yet, which React then entangles with it; otherwise
-  it is set urgently. A transition of its own would start a view transition
-  inside any `<ViewTransition>` whose class does not resolve to `none` for a
-  commit with no types (`transition({})` does), and would commit ahead of a
-  held page and take its types.
+  state nor the location does, and no request starts (`pendingUrl` clearing
+  as the response starts streaming, `isStreaming` clearing as it ends). There
+  is no location to commit it with. It goes in a transition only while the
+  reader has a value React has not committed yet, which React then entangles
+  with it; otherwise it is set urgently. A transition of its own would start a
+  view transition inside any `<ViewTransition>` whose class does not resolve
+  to `none` for a commit with no types (`transition({})` does), and would
+  commit ahead of a held page and take its types. A newer click's
+  `pendingUrl` is not quiet, even while `state` already reads `"loading"` (an
+  action in flight): it is work starting, and entangled with the held page it
+  would wait for that page.
 - `idle` is the page's, so `useNavigation` never sets it ahead of a held
   page. It listens for the same "anchor" and "release" signals as
-  `useHandle` (below). Between them, a notification that moves the state to
-  `idle` (an action that settles, a newer navigation that ends with no page:
-  an external or blocked redirect, a router reload) waits, and the release
-  re-reads the controller in the task that commits the page. Set urgently, it
-  committed over the page being left with that page's URL, and #1164's filter
-  chips showed the removed chip again until the page arrived (hook-lock rows
-  S10 and S8, the `nav-idle-overlap` e2e). Work that starts during the hold
-  (`loading`, a newer click's `pendingUrl`) is still set urgently: it is
-  shown at once, and React rebases it over the held page's update, so the
-  page commits with `loading` and the release brings `idle` right after it,
-  before the browser paints.
+  `useHandle` (below). Between them, a notification from the controller's
+  timer that moves the state to `idle` waits, and the release re-reads the
+  controller in the task that commits the page. The cases: an action that
+  settles, and a newer navigation that ends with no page (an external
+  redirect, a redirect payload the client blocks, a router reload, a failure
+  whose error tree is handed over in a transition and anchors like any other
+  tree, `network-error-handler.ts`). Set urgently, that idle committed over
+  the page being left with that page's URL, and #1164's filter chips showed
+  the removed chip again until the page arrived (hook-lock rows S10 and S8,
+  the `nav-idle-overlap` e2e). An action's own commit anchors too, so the idle
+  that ends an action arrives with the action's revalidated tree (S9), at
+  most a commit later than before.
+- Work that starts during the hold (`loading`, a newer click's `pendingUrl`)
+  and reaches the hook from the timer is still set urgently: it is shown at
+  once, and React rebases it over the held page's update, so the page commits
+  with `loading` and the release brings `idle` right after it. Without a view
+  transition that is the same task, before the browser paints. In a view
+  transition the release runs in React's layout phase inside the
+  transition's update callback, and React renders it when the transition's
+  `ready` resolves. The DOM holds `loading` over the new page from the update
+  callback to `ready`, so the browser captures the new state with it. The
+  `nav-idle-overlap` e2e samples every animation frame and has seen none with
+  it; the new image is live, and sampling cannot tell whether the animation's
+  first painted frame shows it. A notification flushed inside a commit commits
+  with that commit, whichever flow it belongs to: a navigation whose start is
+  flushed inside another flow's held commit shows `loading` when that commit
+  lands, even if it was aborted meanwhile, and the release then brings
+  `idle`. That is the same rule `useLinkStatus` follows.
 - `useHandle` and `useSegments` learn from the same flush how the page is
   handed over (`useCommitAnchoredState`, `browser/react/use-handle.ts`). The
   payload's own handle data comes after it: a history-cache page's pushes

@@ -126,8 +126,9 @@ describe.each([
 );
 
 // Hook-lock row S8: a newer navigation that ends with no page while React
-// holds a page. In production the server answers it with a blocked or
-// external redirect, or a router reload (the e2e nav-idle-overlap suite);
+// holds a page. In production the server answers it with an external
+// redirect, a redirect payload the client blocks, or a router reload (the
+// e2e nav-idle-overlap suite covers the external redirect);
 // through renderRoute the reachable form is a push whose state the dev check
 // refuses, which throws before it commits. idle stays off screen until the
 // held page commits with its search.
@@ -195,5 +196,175 @@ describe.each([
         "idle tag=b [b]",
       ]);
     });
+  },
+);
+
+// Hook-lock row S10: a server action that settles while React holds a page.
+// renderRoute has no action primitive; the router's server-action bridge
+// drives the controller this way (startAction, complete, then dispose in its
+// finally). In the browser an action that also starts during the hold
+// settles only after the held content (its commit awaits it), so the e2e
+// pins the action already in flight at the click; here both orders are
+// pinned on the hook.
+const SAVE = "src/actions.ts#save";
+
+/** The full state's pendingUrl, as its search. */
+function FullFilters(): ReactNode {
+  const nav = useNavigation();
+  const [search] = useSearchParams();
+  const { data } = useLoader(TagsLoader);
+  const pending = nav.pendingUrl ? new URL(nav.pendingUrl).search : "-";
+  const entry = `${nav.state} pu=${pending} ${search} [${data.join(",")}]`;
+  log.push(entry);
+  return <p data-testid="filters">{entry}</p>;
+}
+
+/** A task, then the action's 100 ms settle window, inside an awaited act. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 150));
+  });
+}
+
+function deferredTags(): {
+  promise: Promise<string[]>;
+  resolve: (tags: string[]) => void;
+} {
+  let resolve!: (tags: string[]) => void;
+  const promise = new Promise<string[]>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+describe.each([
+  { variant: "view transitions supported", vt: true },
+  { variant: "view transitions unsupported", vt: false },
+])(
+  "renderRoute: a server action while a transition() page is held ($variant)",
+  ({ vt }) => {
+    async function mount(Component: () => ReactNode) {
+      if (vt) stub = installViewTransitionStub();
+      return renderRoute(
+        [
+          { path: "/products", Component: Shell },
+          { path: "/products", Component, transition: {} },
+        ],
+        {
+          request: "/products?tag=a&tag=b",
+          loaders: [[TagsLoader, ["a", "b"]]],
+        },
+      );
+    }
+
+    function sinceLoading(): string[] {
+      return log
+        .slice(log.findIndex((e) => e.startsWith("loading")))
+        .filter((v, i, all) => all[i - 1] !== v);
+    }
+
+    it("an action in flight at the click that settles during the hold never shows idle with the old search", async () => {
+      const { getByTestId, router } = await mount(Filters);
+      const action = router.eventController.startAction(SAVE, []);
+      await settle();
+
+      const next = deferredTags();
+      await act(async () => {
+        await router.navigate("/products?tag=b", {
+          loaders: [[TagsLoader, next.promise]],
+        });
+      });
+      action.complete(undefined);
+      action[Symbol.dispose]();
+      await settle();
+      expect(getByTestId("filters").textContent).toBe(
+        "loading tag=a&tag=b [a,b]",
+      );
+
+      await act(async () => {
+        next.resolve(["b"]);
+        await next.promise;
+      });
+      await waitFor(() =>
+        expect(getByTestId("filters").textContent).toBe("idle tag=b [b]"),
+      );
+      expect(sinceLoading()).not.toContain("idle tag=a&tag=b [a,b]");
+    });
+
+    it("an action that starts and settles during the hold never shows idle with the old search", async () => {
+      const { getByTestId, router } = await mount(Filters);
+      const next = deferredTags();
+      await router.navigate("/products?tag=b", {
+        loaders: [[TagsLoader, next.promise]],
+      });
+
+      const action = router.eventController.startAction(SAVE, []);
+      await settle();
+      action.complete(undefined);
+      action[Symbol.dispose]();
+      await settle();
+      expect(getByTestId("filters").textContent).toBe(
+        "loading tag=a&tag=b [a,b]",
+      );
+
+      await act(async () => {
+        next.resolve(["b"]);
+        await next.promise;
+      });
+      await waitFor(() =>
+        expect(getByTestId("filters").textContent).toBe("idle tag=b [b]"),
+      );
+      expect(sinceLoading()).not.toContain("idle tag=a&tag=b [a,b]");
+    });
+
+    it.each([
+      { when: "after the action settled", settled: true },
+      { when: "while the action still runs", settled: false },
+    ])(
+      "$when, a newer click's pendingUrl shows at once over the held page",
+      async ({ settled }) => {
+        const { getByTestId, router } = await mount(FullFilters);
+        const action = router.eventController.startAction(SAVE, []);
+        await settle();
+
+        const next = deferredTags();
+        await act(async () => {
+          await router.navigate("/products?tag=b", {
+            loaders: [[TagsLoader, next.promise]],
+          });
+        });
+        if (settled) {
+          action.complete(undefined);
+          action[Symbol.dispose]();
+          await settle();
+        }
+
+        const newer = deferredTags();
+        await act(async () => {
+          await router.navigate("/products?tag=c", {
+            loaders: [[TagsLoader, newer.promise]],
+          });
+        });
+        // The click's own notification, delivered at once over the old page.
+        expect(log).toContain("loading pu=?tag=c tag=a&tag=b [a,b]");
+
+        if (!settled) {
+          action.complete(undefined);
+          action[Symbol.dispose]();
+          await settle();
+        }
+        await act(async () => {
+          next.resolve(["b"]);
+          newer.resolve(["c"]);
+          await Promise.all([next.promise, newer.promise]);
+        });
+        await waitFor(() =>
+          expect(getByTestId("filters").textContent).toBe(
+            "idle pu=- tag=c [c]",
+          ),
+        );
+        expect(sinceLoading().filter((e) => e.startsWith("idle"))).toEqual([
+          "idle pu=- tag=c [c]",
+        ]);
+      },
+    );
   },
 );
