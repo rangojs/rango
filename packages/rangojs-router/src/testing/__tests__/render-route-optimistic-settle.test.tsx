@@ -1,11 +1,24 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Suspense, ViewTransition, type ReactNode } from "react";
+import {
+  Suspense,
+  useLayoutEffect,
+  ViewTransition,
+  type ReactNode,
+} from "react";
 import { act, cleanup, waitFor } from "@testing-library/react";
-import { Link, Outlet, useAction, useLinkStatus } from "../../client.js";
+import {
+  Link,
+  Outlet,
+  useAction,
+  useLinkStatus,
+  useNavigation,
+  usePathname,
+} from "../../client.js";
 import { useParams } from "../../browser/react/use-params.js";
 import { useLoader } from "../../use-loader.js";
-import type { LoaderDefinition } from "../../types.js";
+import { emitNavigationError } from "../../browser/network-error-handler.js";
+import type { LoaderDefinition, TransitionConfig } from "../../types.js";
 import { renderRoute } from "../dom.entry.js";
 import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 
@@ -19,10 +32,17 @@ import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 // - A server action that changes state while a page is held: the page still
 //   commits with its types, and no view transition starts without them (p6,
 //   row A2).
+// The "frames" cases log every commit of a reader in link 2 (useLinkStatus,
+// useNavigation and usePathname together) and of a full-state useAction
+// reader, each with the page on screen.
 
 const ItemLoader = { __brand: "loader" } as unknown as LoaderDefinition<string>;
 
 let spinnerLog: string[];
+/** Every commit of link 2's reader: "<pending> <state> <pathname> <page>". */
+let chrome: string[];
+/** Every commit of the full-state useAction reader: "<state> <page>". */
+let actions: string[];
 let stub: ReturnType<typeof installViewTransitionStub> | undefined;
 /** The types each commit of the push-keyed <ViewTransition> resolved with. */
 let pushAnimated: string[][];
@@ -38,6 +58,33 @@ function ActionStatus(): ReactNode {
   return <span data-testid="action">{state}</span>;
 }
 
+function onScreen(): string {
+  if (document.querySelector('[data-testid="skeleton"]')) return "skeleton";
+  return document.querySelector('[data-testid="page"]')?.textContent ?? "-";
+}
+
+/** Reads three hooks in one component, inside link 2. */
+function Chrome(): ReactNode {
+  const { pending } = useLinkStatus();
+  const { state } = useNavigation();
+  const pathname = usePathname();
+  useLayoutEffect(() => {
+    chrome.push(
+      `${pending ? "pending" : "idle"} ${state} ${pathname} ${onScreen()}`,
+    );
+  });
+  return null;
+}
+
+/** A full-state useAction reader. */
+function ActionLog(): ReactNode {
+  const action = useAction("save");
+  useLayoutEffect(() => {
+    actions.push(`${action.state} ${onScreen()}`);
+  });
+  return null;
+}
+
 function Shell(): ReactNode {
   return (
     <div>
@@ -46,10 +93,12 @@ function Shell(): ReactNode {
           <Link key={id} to={`/items/${id}`}>
             {id}
             {id !== "4" && <Spinner id={id} />}
+            {id === "2" && <Chrome />}
           </Link>
         ))}
       </nav>
       <ActionStatus />
+      <ActionLog />
       <Suspense fallback={<p data-testid="skeleton">skeleton</p>}>
         <Outlet />
       </Suspense>
@@ -85,21 +134,29 @@ function deferred(): {
   return { promise, resolve };
 }
 
-async function render(transition: boolean) {
+async function render(transition: boolean | TransitionConfig) {
   return renderRoute(
     [
       { path: "/items", Component: Shell },
       {
         path: "/items/:id",
         Component: Item,
-        ...(transition && { transition: {} }),
+        ...(transition && {
+          transition: transition === true ? {} : transition,
+        }),
       },
     ],
     { request: "/items/1", loaders: [[ItemLoader, "one"]] },
   );
 }
 
+function dedupe(list: string[]): string[] {
+  return list.filter((v, i) => i === 0 || list[i - 1] !== v);
+}
+
 beforeEach(() => {
+  chrome = [];
+  actions = [];
   spinnerLog = [];
   pushAnimated = [];
   stub = installViewTransitionStub();
@@ -224,5 +281,148 @@ describe("renderRoute: optimistic hook values settle in the page's commit", () =
     expect(pushAnimated).toEqual([["push", "navigation"]]);
     expect(stub!.types()).toEqual([["push", "navigation"]]);
     action[Symbol.dispose]();
+  });
+});
+
+describe("renderRoute: optimistic hook values settle in the page's commit (frames)", () => {
+  it("a component that reads useLinkStatus, useNavigation and usePathname: pending and loading commit together at the call, and idle, idle and the pathname with the page", async () => {
+    const { router } = await render(true);
+    const item = deferred();
+
+    await router.navigate("/items/2", {
+      loaders: [[ItemLoader, item.promise]],
+    });
+    await settle();
+    await act(async () => {
+      item.resolve("two");
+      await item.promise;
+    });
+    await waitFor(() => expect(onScreen()).toBe("2:two"));
+
+    expect(dedupe(chrome)).toEqual([
+      "idle idle /items/1 1:one",
+      "pending loading /items/1 1:one",
+      "idle idle /items/2 2:two",
+    ]);
+  });
+
+  it("transition: false on a transition() route: the commit is urgent, the link is pending until the skeleton commits, and the push map animates nothing", async () => {
+    const { router } = await render(true);
+    const item = deferred();
+
+    await router.navigate("/items/2", {
+      transition: false,
+      loaders: [[ItemLoader, item.promise]],
+    });
+    await settle();
+    await act(async () => {
+      item.resolve("two");
+      await item.promise;
+    });
+    await waitFor(() => expect(onScreen()).toBe("2:two"));
+
+    // The skeleton's commit brings all three; the reveal changes none.
+    expect(dedupe(chrome)).toEqual([
+      "idle idle /items/1 1:one",
+      "pending loading /items/1 1:one",
+      "idle idle /items/2 skeleton",
+    ]);
+    // Urgent: no commit carries the push. The view transitions React starts
+    // for the skeleton's reveal carry no types (Suspense retries, #1078; the
+    // same on the base).
+    expect(pushAnimated).toEqual([]);
+    expect(stub!.types().flat()).toEqual([]);
+  });
+
+  it("transition({ viewTransition: false }): React holds the page, the link is pending until it commits, and an action during the wait leaves the page its types", async () => {
+    const { router } = await render({ viewTransition: false });
+    const item = deferred();
+
+    await router.navigate("/items/2", {
+      loaders: [[ItemLoader, item.promise]],
+    });
+    await settle();
+    const action = router.eventController.startAction("x#save", []);
+    await settle();
+    action.startStreaming();
+    await settle();
+    await act(async () => {
+      item.resolve("two");
+      await item.promise;
+    });
+    await waitFor(() => expect(onScreen()).toBe("2:two"));
+    await settle();
+
+    expect(dedupe(chrome)).toEqual([
+      "idle idle /items/1 1:one",
+      "pending loading /items/1 1:one",
+      "idle loading /items/2 2:two",
+    ]);
+    // The page's own <ViewTransition> animates the push.
+    expect(pushAnimated).toEqual([["push", "navigation"]]);
+    expect(stub!.types()).toEqual([["push", "navigation"]]);
+    action[Symbol.dispose]();
+  });
+
+  it("a full-state useAction reader: each action state commits at once while React holds a page, and the page keeps its types", async () => {
+    const { router } = await render(true);
+    const item = deferred();
+
+    await router.navigate("/items/2", {
+      loaders: [[ItemLoader, item.promise]],
+    });
+    await settle();
+    const action = router.eventController.startAction("x#save", []);
+    await settle();
+    const stream = action.startStreaming();
+    await settle();
+    action.complete("saved");
+    stream.end();
+    await settle();
+    await act(async () => {
+      item.resolve("two");
+      await item.promise;
+    });
+    await waitFor(() => expect(onScreen()).toBe("2:two"));
+    await settle();
+
+    expect(dedupe(actions)).toEqual([
+      "idle 1:one",
+      "loading 1:one",
+      "streaming 1:one",
+      "idle 1:one",
+      "idle 2:two",
+    ]);
+    expect(pushAnimated).toEqual([["push", "navigation"]]);
+    expect(stub!.types()).toEqual([["push", "navigation"]]);
+  });
+
+  it("a navigation the router fails (a network error, a response it cannot read): the root error screen replaces the page and its link in one commit", async () => {
+    const { router, queryByText } = await render(true);
+
+    const handle = router.eventController.startNavigation(
+      "http://localhost/items/2",
+    );
+    await settle();
+    // navigation-bridge.ts navigate(): the error goes to the boundary, then
+    // the transaction is disposed.
+    await act(async () => {
+      emitNavigationError(
+        (update) => router.store.emitUpdate(update),
+        new Error("unreadable response"),
+        "/items/2",
+      );
+      handle[Symbol.dispose]();
+    });
+    await settle();
+
+    expect(queryByText("Internal Server Error")).not.toBeNull();
+    // The link's last commit is the page it was pending on: no frame shows
+    // it beside the error screen.
+    expect(dedupe(chrome)).toEqual([
+      "idle idle /items/1 1:one",
+      "pending loading /items/1 1:one",
+    ]);
+    expect(document.querySelector('[data-testid="spinner-2"]')).toBeNull();
   });
 });

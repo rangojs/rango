@@ -38,7 +38,12 @@
     "packages/rangojs-router/src/testing/__tests__/render-route-action-latest-call.test.tsx",
     "packages/rangojs-router/e2e/action-latest-call.test.ts",
     "tests/cloudflare-basic/e2e/action-latest-call.test.ts",
-    "tests/shared-e2e/src/action-latest-call-scenario.ts"
+    "tests/shared-e2e/src/action-latest-call-scenario.ts",
+    "packages/rangojs-router/src/__tests__/use-link-status-commit-lane.test.tsx",
+    "packages/rangojs-router/src/testing/__tests__/render-route-optimistic-settle.test.tsx",
+    "packages/rangojs-router/e2e/optimistic-settle.test.ts",
+    "tests/cloudflare-basic/e2e/optimistic-settle.test.ts",
+    "tests/shared-e2e/src/optimistic-settle-scenario.ts"
   ],
   "guardFiles": [
     "tools/hook-lock.json",
