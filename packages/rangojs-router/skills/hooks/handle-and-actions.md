@@ -258,6 +258,10 @@ const isLoading = useAction(addToCart, (s) => s.state === "loading");
 const isAdding = useAction("addToCart", (s) => s.state === "loading");
 ```
 
+Each state change commits urgently, so it shows at once, also while React
+holds a navigation's page. It starts no transition of its own, so it never
+takes that page's transition types.
+
 Pass an action imported directly into the client component, or its export
 name as a string. An action received as a prop from a server component has
 lost the metadata `useAction` needs and throws; use the string form there.

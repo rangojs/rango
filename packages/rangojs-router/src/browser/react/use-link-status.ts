@@ -5,12 +5,10 @@ import {
   useContext,
   useState,
   useEffect,
-  useRef,
-  useOptimistic,
-  startTransition,
   type Context,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
+import type { EventController, NavigationEntry } from "../event-controller.js";
 
 /**
  * Context for Link component to provide its destination URL
@@ -43,24 +41,44 @@ function normalizeUrl(url: string, origin: string): string {
 }
 
 /**
- * Check if this link's destination matches the pending navigation URL
+ * The navigation in flight a link can be pending for. One that shows no
+ * loading state (a background revalidation, an action's refetch) is none: it
+ * goes to no link and ends none whose page React still holds.
+ */
+function visibleNavigation(ec: EventController): NavigationEntry | null {
+  const navigation = ec.getCurrentNavigation();
+  return navigation && !navigation.options?.skipLoadingState
+    ? navigation
+    : null;
+}
+
+/**
+ * Whether `navigation` goes to `linkTo`: its URL or, after a server redirect,
+ * the URL its chain started from.
  */
 function isPendingFor(
   linkTo: string | null,
-  pendingUrl: string | null,
+  navigation: NavigationEntry | null,
   origin: string,
 ): boolean {
-  if (linkTo === null || pendingUrl === null) {
+  if (linkTo === null || !navigation) {
     return false;
   }
-  return normalizeUrl(pendingUrl, origin) === normalizeUrl(linkTo, origin);
+  const to = normalizeUrl(linkTo, origin);
+  const from = navigation.options?._redirectFrom;
+  return (
+    normalizeUrl(navigation.url, origin) === to ||
+    (from !== undefined && normalizeUrl(from, origin) === to)
+  );
 }
 
 /**
  * Hook to track the pending state of a Link component
  *
- * Must be used inside a Link component. Returns `{ pending: true }`
- * when navigation to this link's destination is in progress.
+ * Must be used inside a Link component. Returns `{ pending: true }` from the
+ * click until the page the navigation brings commits: under transition()
+ * while React holds that page, and through a server redirect until the
+ * target page commits. A newer navigation ends it at once.
  *
  * Useful for showing inline loading indicators on individual links.
  *
@@ -84,63 +102,38 @@ export function useLinkStatus(): LinkStatus {
 
   const origin = ctx?.origin ?? "http://localhost";
 
-  const [basePending, setBasePending] = useState<boolean>(() => {
-    if (!ctx || linkTo === null) {
-      return false;
-    }
-    const state =
-      ctx.eventController.getHydrationSnapshot()?.state ??
-      ctx.eventController.getState();
-    return isPendingFor(linkTo, state.pendingUrl, origin);
-  });
+  // The document renders no navigation in flight.
+  const [pending, setPending] = useState<boolean>(
+    () =>
+      !!ctx &&
+      !ctx.eventController.getHydrationSnapshot() &&
+      isPendingFor(linkTo, visibleNavigation(ctx.eventController), origin),
+  );
 
-  const prevPending = useRef(basePending);
-
-  // Tracks whether the most recent setOptimisticPending call pinned the value
-  // to a non-idle (loading) state. Used to decide whether to emit a release
-  // update when returning to idle, so the optimistic store doesn't stay pinned
-  // to `true` if a parent transition (e.g. the <Link> click / view transition
-  // commit) is still pending.
-  const optimisticPinnedRef = useRef(false);
-
-  const [pending, setOptimisticPending] = useOptimistic(basePending);
-
+  // The value commits in the lane of the notification that carries it, as
+  // useNavigation's does: urgent from the click's notification (a task of its
+  // own), so it shows at once; in the page's lane when the commit clears the
+  // navigation (NavigationProvider flushes it inside the page's update), so
+  // it settles with the page, which React may hold. A transition of its own
+  // would commit on its own, take the transition types queued for a held
+  // page, and could start a view transition with none.
+  //
+  // Set once per navigation: a newer one re-derives every reader at its
+  // call, so a link whose settle React holds with an earlier page ends there
+  // instead of spinning beside the newer link. A reader whose value did not
+  // move bails out in React. A background navigation is not a newer one: an
+  // action's refetch while a page is held leaves its link pending.
   useEffect(() => {
     if (!ctx || linkTo === null) {
       return;
     }
 
+    let last: NavigationEntry | null | undefined;
     const update = () => {
-      const state = ctx.eventController.getState();
-      const isPending = isPendingFor(linkTo, state.pendingUrl, origin);
-
-      if (isPending !== prevPending.current) {
-        prevPending.current = isPending;
-
-        const shouldPin = isPending && state.state !== "idle";
-
-        if (shouldPin) {
-          // Pin the optimistic value so the spinner shows immediately even if
-          // a parent transition (e.g. <Link> click) defers the urgent
-          // setBasePending commit.
-          startTransition(() => {
-            setOptimisticPending(isPending);
-          });
-          optimisticPinnedRef.current = true;
-        } else if (optimisticPinnedRef.current) {
-          // Release a previously-pinned optimistic value. Without this,
-          // useOptimistic keeps returning the stale `true` while any parent
-          // transition is still pending, even after basePending flipped to
-          // false at navigation completion — leaving the link spinner stuck.
-          startTransition(() => {
-            setOptimisticPending(isPending);
-          });
-          optimisticPinnedRef.current = false;
-        }
-
-        // Always update base state
-        setBasePending(isPending);
-      }
+      const navigation = visibleNavigation(ctx.eventController);
+      if (navigation === last) return;
+      last = navigation;
+      setPending(isPendingFor(linkTo, navigation, origin));
     };
 
     // Catch-up: re-read state synchronously on mount before subscribing, so a

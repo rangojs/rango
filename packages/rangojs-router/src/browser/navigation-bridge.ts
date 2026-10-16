@@ -207,7 +207,10 @@ export function createNavigationBridge(
     error: ServerRedirect,
     url: string,
     hops: number,
-    options: { replace?: boolean; transition?: boolean },
+    options: Pick<
+      NavigateOptionsInternal,
+      "replace" | "transition" | "_redirectFrom"
+    >,
   ): Promise<void> {
     const redirectUrl = validateRedirectOrigin(
       error.url,
@@ -229,6 +232,7 @@ export function createNavigationBridge(
       ...options,
       _skipCache: true,
       _redirectHops: hops + 1,
+      _redirectFrom: options._redirectFrom ?? url,
     });
   }
 
@@ -542,7 +546,11 @@ export function createNavigationBridge(
             error,
             url,
             options?._redirectHops ?? 0,
-            { replace: options?.replace, transition: options?.transition },
+            {
+              replace: options?.replace,
+              transition: options?.transition,
+              _redirectFrom: options?._redirectFrom,
+            },
           );
         }
 

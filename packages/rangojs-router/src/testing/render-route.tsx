@@ -26,7 +26,7 @@
  *   - navigate() drives the navigation lifecycle as a click does:
  *     useNavigation() reads loading from the call and idle with the commit,
  *     and useLinkStatus().pending is true for a link to the destination until
- *     the commit is handed to React. A `transition` spec plus a pending
+ *     the commit, which React holds with it. A `transition` spec plus a pending
  *     Promise seeded via navigate(url, { loaders }) commits through
  *     production's commitInTransition (browser/partial-update.ts), which React
  *     holds: useNavigation() stays loading and the held reader's
