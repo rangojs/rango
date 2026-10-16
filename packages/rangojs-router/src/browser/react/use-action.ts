@@ -83,14 +83,19 @@ export type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
  * Features:
  * - Tracks action lifecycle: idle → loading → streaming → idle
  * - Captures result/error locally (React handles cleanup)
- * - If multiple actions fire, tracks only the last one
+ * - If the same action fires several times, reports the latest call to
+ *   start. An earlier call that settles later changes nothing it reports;
+ *   a latest call that was aborted reports idle with nothing. One call at a
+ *   time, not one per argument: a reader filtering on `payload` cannot track
+ *   an earlier call once a later one starts.
  * - Supports selector pattern like useNavigation
  *
  * Matching behavior:
  * - **Function reference**: Uses full $$id for exact matching. This is precise
  *   and distinguishes between actions with the same name in different files.
  * - **String**: Matches by suffix (action name after #). This is convenient
- *   but may be ambiguous if multiple files export the same action name.
+ *   but may be ambiguous if multiple files export the same action name: it
+ *   follows the latest call of any action with that export name.
  *
  * @param action - Either a server action function or a string action name.
  *   - **Function**: Must be directly imported in the client component.

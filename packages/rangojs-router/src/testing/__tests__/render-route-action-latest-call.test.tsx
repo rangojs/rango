@@ -5,11 +5,11 @@ import { useLayoutEffect, type ReactNode } from "react";
 import { useAction } from "../../browser/react/use-action.js";
 import { renderRoute } from "../render-route.js";
 
-// Hook lock row A3: "If the same action fires several times, the hook reports
-// the latest call" (skills/hooks/handle-and-actions.md). Two calls of one
-// action, the later one settling first: the AddToCart reader shows the later
-// call's result when it returns, and the earlier call settling afterwards
-// changes nothing on screen.
+// Hook lock row A3 (dc-t84): "If the same action fires several times, the
+// hook reports the latest call" (skills/hooks/handle-and-actions.md). Two
+// calls of one action, the later one settling first: the AddToCart reader
+// shows the later call's result when it returns, and the earlier call
+// settling afterwards changes nothing the hook reports.
 //
 // renderRoute runs no server action (its fidelity contract), so these tests
 // drive the action lifecycle through router.eventController, the controller
@@ -71,7 +71,7 @@ async function mountWithTwoCalls() {
   return { ...result, first, second };
 }
 
-describe("renderRoute: useAction() reports the latest call (A3)", () => {
+describe("renderRoute: useAction() reports the latest call", () => {
   it("the later call settling first shows its result; the earlier call never shows", async () => {
     const { getByTestId, first, second } = await mountWithTwoCalls();
 
