@@ -10,9 +10,16 @@
  * handle pushes land in the captured HTML.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createElement, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { EntryData, LoaderEntry } from "../../../server/context";
+import type { LoaderDataResult } from "../../../types";
 
-const mockRequestCtx: any = { _shellCaptureRun: undefined, params: {} };
+const mockRequestCtx: any = {
+  _shellCaptureRun: undefined,
+  params: {},
+  _setStatus: vi.fn(),
+};
 
 vi.mock("../../../server/request-context.js", () => ({
   getRequestContext: vi.fn(() => mockRequestCtx),
@@ -21,6 +28,8 @@ vi.mock("../../../server/request-context.js", () => ({
 }));
 
 import { resolveLoaders } from "../fresh";
+import { wrapLoaderWithErrorHandling } from "../../loader-resolution";
+import { redirect } from "../../../route-definition/redirect";
 
 function createMockLoader(id: string, promise?: Promise<unknown>) {
   const fn = vi.fn(() => promise ?? Promise.resolve({ data: id }));
@@ -72,6 +81,56 @@ function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
 }
 
 const deps = { wrapLoaderPromise: (p: Promise<unknown>) => p } as never;
+
+/**
+ * resolveLoaders over the router's own loader lane
+ * (wrapLoaderWithErrorHandling): `declared` is the nearest errorBoundary()
+ * (or defaultErrorBoundary option), null when the chain has none.
+ */
+function laneDeps(
+  declared: ReactNode | null = null,
+  onError?: (error: unknown, ctx: { handledByBoundary: boolean }) => void,
+): never {
+  return {
+    wrapLoaderPromise: (
+      promise: Promise<unknown>,
+      entry: EntryData,
+      segmentId: string,
+      pathname: string,
+      _errorContext: unknown,
+      useDefaultErrorBoundary?: boolean,
+    ) =>
+      wrapLoaderWithErrorHandling(
+        promise,
+        entry,
+        segmentId,
+        pathname,
+        () => declared,
+        (error, id) =>
+          ({
+            message: (error as Error).message,
+            name: (error as Error).name,
+            segmentId: id,
+            segmentType: "loader",
+          }) as never,
+        onError,
+        undefined,
+        useDefaultErrorBoundary,
+      ),
+  } as never;
+}
+
+async function settledResult(segment: {
+  loaderData?: unknown;
+}): Promise<LoaderDataResult> {
+  const result = (await segment.loaderData) as LoaderDataResult;
+  expect(result.ok).toBe(false);
+  return result;
+}
+
+function fallbackOf(result: LoaderDataResult): ReactNode {
+  return result.ok ? undefined : result.fallback;
+}
 
 describe("resolveLoaders awaitBeforeFlush", () => {
   beforeEach(() => {
@@ -209,5 +268,139 @@ describe("resolveLoaders awaitBeforeFlush", () => {
     expect([...mockRequestCtx._awaitBeforeFlushLoaderIds]).toEqual([
       "flagged#L",
     ]);
+  });
+});
+
+/**
+ * A flagged loader's result is decoded while the document's tree is built
+ * (segment-system buildLoaderStreams); an error there with no fallback to
+ * plant rejects the whole tree (dc-t92: a blank shell HIT, a raw 500 MISS).
+ */
+describe("resolveLoaders: a flagged loader that throws with no errorBoundary()", () => {
+  const failing = (id: string) =>
+    createMockLoader(id, Promise.reject(new Error(`${id} failed`)));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequestCtx._shellCaptureRun = undefined;
+    mockRequestCtx._awaitBeforeFlushLoaderIds = undefined;
+  });
+
+  it("renders the router's default error boundary, reported as handled, and the document answers 500", async () => {
+    const onError = vi.fn();
+    const entry = createEntry([loaderEntry(failing("flagged#L"), true)]);
+
+    const segments = await resolveLoaders(
+      entry,
+      createMockCtx(),
+      true,
+      laneDeps(null, onError),
+    );
+
+    const fallback = fallbackOf(await settledResult(segments[0]!));
+    expect(fallback).not.toBeNull();
+    expect(renderToStaticMarkup(fallback)).toContain("Internal Server Error");
+    expect(mockRequestCtx._setStatus).toHaveBeenCalledWith(500);
+    expect(onError).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ handledByBoundary: true }),
+    );
+  });
+
+  it("does the same on the loading-disabled path", async () => {
+    const entry = {
+      ...createEntry([loaderEntry(failing("flagged#L"), true)]),
+      loading: false,
+    };
+
+    const segments = await resolveLoaders(
+      entry,
+      createMockCtx(),
+      true,
+      laneDeps(),
+    );
+
+    const fallback = fallbackOf(await settledResult(segments[0]!));
+    expect(renderToStaticMarkup(fallback)).toContain("Internal Server Error");
+    expect(mockRequestCtx._setStatus).toHaveBeenCalledWith(500);
+  });
+
+  it("keeps a declared errorBoundary()'s fallback and leaves the status alone", async () => {
+    const entry = createEntry([loaderEntry(failing("flagged#L"), true)]);
+    const declared = createElement("p", null, "route boundary");
+
+    const segments = await resolveLoaders(
+      entry,
+      createMockCtx(),
+      true,
+      laneDeps(declared),
+    );
+
+    const rendered = renderToStaticMarkup(
+      fallbackOf(await settledResult(segments[0]!)),
+    );
+    expect(rendered).toBe("<p>route boundary</p>");
+    expect(mockRequestCtx._setStatus).not.toHaveBeenCalled();
+  });
+
+  it("answers a thrown redirect() as the redirect: no fallback, no 500", async () => {
+    mockRequestCtx.url = new URL("https://example.com/x");
+    try {
+      const redirecting = createMockLoader(
+        "flagged#L",
+        Promise.reject(redirect("/elsewhere")),
+      );
+      const entry = createEntry([loaderEntry(redirecting, true)]);
+
+      const segments = await resolveLoaders(
+        entry,
+        createMockCtx(),
+        true,
+        laneDeps(),
+      );
+
+      const result = await settledResult(segments[0]!);
+      expect(result.ok ? undefined : result.redirect).toEqual({
+        to: "https://example.com/elsewhere",
+      });
+      expect(fallbackOf(result)).toBeNull();
+      expect(mockRequestCtx._setStatus).not.toHaveBeenCalled();
+    } finally {
+      mockRequestCtx.url = undefined;
+    }
+  });
+
+  it("leaves an unflagged loader's error to its read", async () => {
+    const entry = createEntry([loaderEntry(failing("plain#L"))]);
+
+    const segments = await resolveLoaders(
+      entry,
+      createMockCtx(),
+      true,
+      laneDeps(),
+    );
+
+    expect(fallbackOf(await settledResult(segments[0]!))).toBeNull();
+    expect(mockRequestCtx._setStatus).not.toHaveBeenCalled();
+  });
+
+  it("leaves an unflagged loader's error to its read on the loading-disabled path", async () => {
+    const entry = {
+      ...createEntry([
+        loaderEntry(createMockLoader("flagged#L"), true),
+        loaderEntry(failing("plain#L")),
+      ]),
+      loading: false,
+    };
+
+    const segments = await resolveLoaders(
+      entry,
+      createMockCtx(),
+      true,
+      laneDeps(),
+    );
+
+    expect(fallbackOf(await settledResult(segments[1]!))).toBeNull();
+    expect(mockRequestCtx._setStatus).not.toHaveBeenCalled();
   });
 });

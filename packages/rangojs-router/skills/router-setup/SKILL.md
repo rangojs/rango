@@ -130,7 +130,7 @@ interface RangoOptions<TEnv> {
   id?: string; // Router id; namespaces build output and route maps. Auto-generated.
 
   // --- Fallbacks and errors ---
-  defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler; // When no errorBoundary() matches
+  defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler; // When no errorBoundary() matches; unset: the built-in "Internal Server Error" page
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler; // When no notFoundBoundary() matches
   notFound?: ReactNode | ((props: { pathname: string }) => ReactNode); // 404 page
   onError?: OnErrorCallback<TEnv>; // Logging/reporting hook; cannot change the response

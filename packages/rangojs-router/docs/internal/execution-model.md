@@ -1950,7 +1950,17 @@ should not be treated as equivalent.
   `[R4]` semantic matrix row, `e2e/settled-lane-errors.test.ts` (both apps,
   dev + production, the stale-refresh exception included),
   `src/__tests__/action-loader-error-in-place.test.tsx` and
-  `src/__tests__/partial-update.test.ts`.
+  `src/__tests__/partial-update.test.ts`. On that document lane an error has
+  to carry a fallback, or it rejects `renderSegments`: Fizz fails the shell
+  (the host's raw 500) and a shell HIT's hydration throws in
+  `NavigationProvider`'s `use(payload.root)`, above every error boundary (a
+  blank page). So a flagged loader's error with no `errorBoundary()` (and no
+  `defaultErrorBoundary`) gets the router's default error boundary and a 500
+  on the server (`useDefaultErrorBoundary` in
+  `router/loader-resolution.ts` `wrapLoaderWithErrorHandling`, passed by
+  `segment-resolution/fresh.ts` for `awaitBeforeFlush` loaders, dc-t92),
+  pinned by `e2e/flagged-loader-default-boundary.test.ts` (both apps, dev +
+  production).
 
 - **A fill request (`prefetch: false`) is the same rule with no way out.**
   Deferred work runs in the fill, after the prefetch already rendered the
