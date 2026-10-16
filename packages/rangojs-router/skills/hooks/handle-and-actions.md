@@ -193,7 +193,11 @@ tracking actions called outside a `<form action={...}>` flow.
 ### useAction()
 
 Track the lifecycle of a server action, wherever on the page it was invoked.
-If the same action fires several times, the hook reports the latest call.
+If the same action fires several times, the hook reports the latest call: the
+last one to start. When it returns before an earlier call, the hook shows its
+result, and the earlier call changes nothing when it settles, a result or an
+error alike (that call's own promise still resolves or rejects for its caller).
+`useNavigation()` stays `loading` while the earlier call runs.
 
 ```tsx
 "use client";

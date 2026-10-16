@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `useAction()` follows the latest call when an earlier call returns after it
+
+**Before.** With the same action called twice and the later call returning
+first, `useAction()` went back to the earlier call, which was still running:
+an AddToCart button showed "Adding…" again, never showed the later call's
+result, and ended on the earlier call's result.
+
+**Now.** The hook reports the last call to start. It shows that call's result
+when it returns, and an earlier call that settles afterwards changes nothing,
+a result or an error alike. A string id (`useAction("addToCart")`) follows the
+latest call of any action with that export name; a function or a full id
+follows the latest call of that action.
+
 ## 0.26.4 (2026-10-16)
 
 ### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))
