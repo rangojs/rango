@@ -1,6 +1,7 @@
 import type { Handler } from "@rangojs/router";
 import { NavIdleTagsLoader } from "../loaders/nav-idle.js";
 import { NavIdleFilters } from "../components/NavIdleFilters.js";
+import { NavIdleStatus } from "../components/NavIdleStatus.js";
 
 /**
  * #1164: useNavigation() idle commits with the location on a same-route
@@ -14,6 +15,7 @@ export const NavIdlePage: Handler = async (ctx) => {
     <div data-testid="nav-idle-page">
       <p data-testid="nav-idle-server-tags">{tags.join(",") || "none"}</p>
       <NavIdleFilters />
+      <NavIdleStatus />
     </div>
   );
 };

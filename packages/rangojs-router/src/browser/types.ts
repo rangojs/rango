@@ -201,11 +201,25 @@ export interface InflightAction {
  * @internal This type is an implementation detail. Use PublicNavigationState instead.
  */
 export interface NavigationState {
-  /** Navigation lifecycle state (idle or loading during navigation) */
+  /**
+   * Lifecycle state: `"loading"` while a navigation is in flight and while a
+   * server action runs, `"idle"` otherwise
+   */
   state: "idle" | "loading";
 
-  /** Whether RSC data is currently streaming (initial load or navigation) */
+  /**
+   * Whether RSC data is currently streaming: a navigation's response, or a
+   * server action's response (initial load, navigation or action)
+   */
   isStreaming: boolean;
+
+  /**
+   * True while a navigation is in flight (fetching or streaming, before its
+   * commit); false during a server action, whose `state` is still `"loading"`.
+   * Drive a navigation progress bar from this and an action spinner from
+   * `state`.
+   */
+  isNavigating: boolean;
 
   /** Current location */
   location: NavigationLocation;

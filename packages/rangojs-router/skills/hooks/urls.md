@@ -125,6 +125,14 @@ click or `router.push()`.
 | `router.push(url, { revalidate: false })`         | at once: nothing is fetched and the page stays                             |
 | inside an optimistic `clientUrls()` destination   | at the click, for that branch only (see `/client-urls`)                    |
 
+**A newer click that fails while a page is held.** Click a link, and while
+React holds the page being left (a `transition()` route, or a loader still
+streaming) click another whose request fails: the root error screen replaces
+the app, and the held page never shows. Under that screen `useNavigation()`
+reads `"idle"` with the first click's `location`, and no hook reader is on
+screen to see it. The hooks are not wrong, there is simply nobody left to read
+them; the error boundary's reset brings the app back.
+
 **The hooks can disagree with the address bar.** On Back/Forward the browser
 changes the URL and `history.state` before it tells the router. When the
 entry has to be fetched (it left the client's history cache, or the cache was

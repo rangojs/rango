@@ -12,8 +12,9 @@ function NavIndicator() {
   const nav = useNavigation();
 
   // State properties
-  nav.state; // 'idle' | 'loading'
-  nav.isStreaming; // boolean — RSC data is still streaming
+  nav.state; // 'idle' | 'loading' — loading during a navigation AND a server action
+  nav.isNavigating; // boolean — a navigation is in flight (false during an action)
+  nav.isStreaming; // boolean — RSC data is still streaming (navigation or action)
   nav.location; // Current URL
   nav.pendingUrl; // Target URL during navigation (or null)
 
@@ -26,6 +27,22 @@ function IsLoading() {
   return isLoading ? <Spinner /> : null;
 }
 ```
+
+#### Navigation versus server action
+
+`state` is `"loading"` while a navigation is in flight and also while a server
+action runs. That is deliberate: something on this screen is loading, so a
+spinner or a progress bar has a signal for an action too. When a bar should
+show for navigations only, read `isNavigating`: true from the start of a
+navigation until its commit, false during an action (where `state` is still
+`"loading"`). `isStreaming` covers the action's response as well as a
+navigation's.
+
+| Event           | `state`     | `isNavigating` | `isStreaming`                |
+| --------------- | ----------- | -------------- | ---------------------------- |
+| a navigation    | `"loading"` | `true`         | true until the stream ends   |
+| a server action | `"loading"` | `false`        | true until the response ends |
+| neither         | `"idle"`    | `false`        | `false`                      |
 
 #### Pending UI, Back/Forward included
 
@@ -62,6 +79,15 @@ no pending state.
 `location` moves in that commit too. A component that first mounts while
 React holds the page being left reads the destination's `location` and URL
 hooks (issue #1046).
+
+**One exception: inside an optimistic `clientUrls()` frame.** When a
+cross-route navigation shows the destination's `loading()` frame at the click,
+`usePathname()`, `useSearchParams()` and `useParams()` report the frame's
+destination (see [`./urls.md`](./urls.md)), but `useNavigation()` reports the
+real navigation: `state` is `"loading"` and `location` is the committed URL,
+the page that is still the router's. So `location` is "which page is
+committed", not always "which page the eye sees", and a status reader should
+sit in chrome that survives the swap (see `/client-urls`).
 
 ### useRouter()
 
