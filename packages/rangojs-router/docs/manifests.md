@@ -452,9 +452,24 @@ On Cloudflare we measured that the runner worker dispatches the split request's 
 once the re-import has finished, 1 ms after the fresh entry finished evaluating, even with
 that re-import held for 8 s. So there the router is already registered.
 
+Checking at the top of `fetch` is not enough on its own. In an app whose worker entry does work
+of its own before `router.fetch`, the first request entered `fetch` while the copy was still
+current, and the reload landed 1.24 s later, during route discovery. Discovery then imported an
+async `include()`'s group after the clear, so the same 500 came back on 0.26.3 (#1186, reopened).
+A check at the entry cannot see a reload that comes after it. So `serveAcrossRunnerReload` also
+looks once the handler settles: if the reload dropped this copy while a GET or HEAD request ran,
+it throws away the outcome, whether that was an error or a response (it cancels the body), and
+runs the request again on the re-created router. It does not stop at a failure, because a split
+request can also answer 200 with the wrong route (step 3 above). An error that escaped the
+discarded run is dropped without a print, while what that run already logged or reported to
+`onError` before it settled (a loader error, say) stays. A real failure fails the re-run too, so
+you still see it.
+
 It does not catch everything. These cases still run on the split module set:
 
-- a reload that lands after the hand-off check, while the handler is already running;
+- a reload that lands after the handler returned its response, while the body streams;
+- a request with any other method that the reload lands inside: a re-run would repeat its side
+  effects (a server action, say), and the first run read its body;
 - a re-import that has not registered the router when the wait runs out;
 - a router built in a factory, since importing its `$$sourceFile` does not create it, so the
   wait runs out;
@@ -466,8 +481,11 @@ probes with its own epoch without rendering. Pinned by
 `src/router/__tests__/dev-reload-handoff.test.ts`, by
 `src/router/__tests__/dev-reload-handoff-runner.test.ts` on a real Vite module runner whose
 re-import is still loading the router, and by `tests/cloudflare-basic/e2e/dev-rsc-reload.test.ts`.
-That e2e sends the optimizer's reload while a cold server's first request evaluates the entry,
-and holds the re-import for 2 s (`RANGO_E2E_RSC_RELOAD_PROBE`, `src/rsc-reload-probe.ts`).
+That e2e sends the optimizer's reload where a cold server's first request loads a probe module,
+and holds the re-import for 2 s (`RANGO_E2E_RSC_RELOAD_PROBE`). With `entry`, the probe is
+`src/rsc-reload-probe.ts` and loads while the entry evaluates. With `discovery`, it is
+`src/rsc-reload-probe-discovery.ts`, which the async include of `/__client-urls-lazy` loads during
+route discovery, before a group nothing else imports (`src/client-urls/lazy.tsx`).
 
 ## Runtime Storage
 

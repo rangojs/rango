@@ -134,8 +134,8 @@ import {
   resolvePrefetchConcurrency,
 } from "./router/prefetch-limits.js";
 import {
-  droppedByRunnerReload,
   routerAfterRunnerReload,
+  serveAcrossRunnerReload,
 } from "./router/dev-reload-handoff.js";
 
 // Re-export public types and values from extracted modules
@@ -1293,18 +1293,30 @@ export function createRouter<TEnv = any>(
           });
         }
 
-        // Dev: a runner full reload dropped this router's module copy
-        // (router/dev-reload-handoff.ts, #1186).
-        if (process.env.NODE_ENV !== "production" && droppedByRunnerReload()) {
-          const reloaded = await routerAfterRunnerReload(
-            routerId,
-            __sourceFile,
+        // Dev: a runner full reload can drop this router's module copy before
+        // or during the request (router/dev-reload-handoff.ts, #1186).
+        if (process.env.NODE_ENV !== "production") {
+          return serveAcrossRunnerReload(
+            request,
+            () => serve(request, input),
+            async () => {
+              const reloaded = await routerAfterRunnerReload(
+                routerId,
+                __sourceFile,
+              );
+              return reloaded && reloaded !== router
+                ? () => reloaded.fetch(request, input)
+                : undefined;
+            },
           );
-          if (reloaded && reloaded !== router) {
-            return reloaded.fetch(request, input);
-          }
         }
+        return serve(request, input);
+      };
 
+      async function serve(
+        request: Request,
+        input: RouterRequestInput<TEnv>,
+      ): Promise<Response> {
         // Trigger lazy import of per-router manifest data before route matching.
         // No-op if data is already loaded or no loader is registered.
         await ensureRouterManifest(routerId);
@@ -1325,7 +1337,7 @@ export function createRouter<TEnv = any>(
           ) => Promise<Response>;
         }
         return handler!(request, input);
-      };
+      }
     })(),
 
     // Low-level route matching for request classification
