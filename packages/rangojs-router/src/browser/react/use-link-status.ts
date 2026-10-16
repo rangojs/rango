@@ -5,15 +5,10 @@ import {
   useContext,
   useState,
   useEffect,
-  useOptimistic,
   type Context,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
-import type {
-  EventController,
-  NavigationEntry,
-  RouteStateSignal,
-} from "../event-controller.js";
+import type { EventController, NavigationEntry } from "../event-controller.js";
 
 /**
  * Context for Link component to provide its destination URL
@@ -115,41 +110,34 @@ export function useLinkStatus(): LinkStatus {
       !ctx.eventController.getHydrationSnapshot() &&
       isPendingFor(linkTo, visibleNavigation(ctx.eventController), origin),
   );
-  const [shown, show] = useOptimistic(pending);
 
   // The value commits in the lane of the notification that carries it, as
   // useNavigation's does: urgent from the click's notification (a task of its
   // own), so it shows at once; in the page's lane when the commit clears the
   // navigation (NavigationProvider flushes it inside the page's update), so
-  // it settles with the page, which React may hold. A transition of its own
-  // would commit on its own, take the transition types queued for a held
-  // page, and could start a view transition with none.
+  // it settles with the page, which React may hold. A notification flushed
+  // inside another flow's commit commits with that commit, for this hook and
+  // useNavigation alike. A transition of its own would commit on its own,
+  // take the transition types queued for a held page, and could start a view
+  // transition with none.
   //
-  // Set once per navigation: a newer one re-derives every reader at its
-  // call, so a link whose settle React holds with an earlier page ends there
-  // instead of spinning beside the newer link. A reader whose value did not
-  // move bails out in React. A background navigation is not a newer one: an
-  // action's refetch while a page is held leaves its link pending.
-  //
-  // A start can reach the hook inside another flow's commit (an action's,
-  // handed to React before the click's notification went out), whose
-  // transition React may hold. There it shows through an optimistic value
-  // set in that transition, as the loader's stream pin does
-  // (loader-store.ts announcePendingStreams): urgent now, reverted with that
-  // commit, never in a commit of its own.
+  // Set once per navigation: a newer one re-derives every reader in the lane
+  // of its notification, so a link whose settle React holds with an earlier
+  // page ends there instead of spinning beside the newer link. A reader whose
+  // value did not move bails out in React. A background navigation is not a
+  // newer one: an action's refetch while a page is held leaves its link
+  // pending.
   useEffect(() => {
     if (!ctx || linkTo === null) {
       return;
     }
 
     let last: NavigationEntry | null | undefined;
-    const update = (signal?: RouteStateSignal) => {
+    const update = () => {
       const navigation = visibleNavigation(ctx.eventController);
       if (navigation === last) return;
       last = navigation;
-      const next = isPendingFor(linkTo, navigation, origin);
-      setPending(next);
-      if (next && signal === "anchor") show(true);
+      setPending(isPendingFor(linkTo, navigation, origin));
     };
 
     // Catch-up: re-read state synchronously on mount before subscribing, so a
@@ -166,5 +154,5 @@ export function useLinkStatus(): LinkStatus {
     return { pending: false };
   }
 
-  return { pending: shown };
+  return { pending };
 }

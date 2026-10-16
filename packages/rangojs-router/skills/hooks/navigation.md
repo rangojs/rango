@@ -249,17 +249,25 @@ The spinner ends in the commit that shows the destination: its `loading()`
 skeleton without `transition()`, or the page itself under `transition()`,
 where React holds the page being left until the new one is ready. Through a
 server redirect, the clicked link stays pending until the target page
-commits. A newer navigation and an abort end it at once. A failure ends it
-with the error: a route's `errorBoundary()` commits like a page, and a
+commits. A newer navigation and an abort end it at once, outside the narrow
+case below. A failure ends it with the error: a route's `errorBoundary()` commits like a page, and a
 failure the router shows at its root (a network error, a response it cannot
 read) replaces the page, links included.
 
-`pending` turns `true` when the click's notification goes out, a task after
-the click, and commits urgently, so the spinner shows at once, also while
-React holds another commit. A fully prefetched click whose page commits
-before that task shows no pending state: its page is already there. The hook
-starts no transition of its own, so it never takes the page's transition
-types.
+`pending` follows the same rule as `useNavigation()`: a change commits in the
+lane of the notification that carries it. The click's notification goes out
+a task after the click and commits urgently, so the spinner shows at once,
+and an abort or a newer click ends it the same way. The hook starts no
+transition of its own, so it never takes the page's transition types. A
+fully prefetched click whose page commits before that task shows no pending
+state: its page is already there.
+
+One narrow case is a known trade: when another flow's commit (a server
+action's) is handed to React in the same task as the click, before the
+click's notification goes out, the notification commits with that commit.
+If React holds it, the spinner, and `useNavigation()`'s `loading`, show when
+it lands; a newer click or an abort delivered that way ends an earlier
+spinner when it lands too.
 
 `pending` lasts longer than `useNavigation().pendingUrl`, which turns `null`
 when the response arrives. While the response streams, a link reads `pending`

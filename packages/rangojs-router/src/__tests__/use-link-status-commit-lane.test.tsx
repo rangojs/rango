@@ -22,6 +22,7 @@ import {
   LinkContext,
   useLinkStatus,
 } from "../browser/react/use-link-status.js";
+import { useNavigation } from "../browser/react/use-navigation.js";
 import { commitInTransition } from "../browser/partial-update.js";
 import { LoaderStore } from "../loader-store.js";
 import type { NavigationUpdate } from "../browser/types.js";
@@ -30,10 +31,16 @@ import type { NavigationUpdate } from "../browser/types.js";
  * When useLinkStatus().pending commits, against a real event controller and
  * production's commitInTransition (browser/partial-update.ts), with an
  * update subscriber that does what NavigationProvider's does: the tree, then
- * the controller's queued notification flushed inside the update, "anchor"
- * for a commit in a transition. The link sits in the chrome, outside the
- * tree each commit replaces; every one of its commits is logged with the
- * page on screen. Each case asserts the frames.
+ * the controller's queued notification flushed inside the update. Each link
+ * sits in the chrome, outside the tree each commit replaces, in a component
+ * that reads useLinkStatus() and useNavigation() together; every one of its
+ * commits is logged as "<pending|idle>:<state>:<page on screen>". Each case
+ * asserts the frames.
+ *
+ * The one rule: a notification commits in the lane that carries it. One
+ * flushed inside another flow's commit commits with that commit, for both
+ * hooks; a start flushed there shows its spinner when that commit lands (a
+ * known trade, the same for useNavigation's loading).
  */
 
 const ORIGIN = "http://localhost";
@@ -48,10 +55,11 @@ function onScreen(): string {
   return document.querySelector('[data-testid="page"]')?.textContent ?? "-";
 }
 
-function Spinner({ to }: { to: string }): ReactNode {
+function Reader({ to }: { to: string }): ReactNode {
   const { pending } = useLinkStatus();
+  const state = useNavigation((nav) => nav.state);
   useLayoutEffect(() => {
-    log.push(`${to}:${pending ? "pending" : "idle"}:${onScreen()}`);
+    log.push(`${to}:${pending ? "pending" : "idle"}:${state}:${onScreen()}`);
   });
   return null;
 }
@@ -70,9 +78,9 @@ function Shell(): ReactNode {
   setTree = set;
   return (
     <>
-      {["/items/1", "/items/2"].map((to) => (
+      {["/items/1", "/items/2", "/items/3"].map((to) => (
         <LinkContext.Provider key={to} value={to}>
-          <Spinner to={to} />
+          <Reader to={to} />
         </LinkContext.Provider>
       ))}
       <Suspense fallback={<p data-testid="skeleton">skeleton</p>}>
@@ -94,7 +102,7 @@ function mount() {
   );
 }
 
-/** NavigationProvider's update subscriber, reduced to what links read. */
+/** NavigationProvider's update subscriber, reduced to what readers read. */
 const onUpdate = (update: NavigationUpdate): void => {
   setTree(update.root as ReactNode);
   controller.flushRouteState(update.inTransition ? "anchor" : "release");
@@ -158,8 +166,8 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-describe("useLinkStatus commit lane", () => {
-  it("a click whose start is flushed inside another flow's held commit shows pending at once", async () => {
+describe("useLinkStatus commit lane: a notification flushed inside another flow's held commit commits with it", () => {
+  it("a start: the link's pending and useNavigation's loading both wait for that commit, and land in one frame", async () => {
     mount();
     const foreign = deferred();
     const page = deferred();
@@ -168,26 +176,78 @@ describe("useLinkStatus commit lane", () => {
     await act(async () => {
       handle = controller.startNavigation(`${ORIGIN}/items/2`);
       // An action's commit, handed to React before the click's notification
-      // goes out; React holds it.
+      // went out; React holds it.
       held(tree("1", foreign.promise));
     });
-    expect(frames("/items/2")).toEqual(["idle:1", "pending:1"]);
+    expect(frames("/items/2")).toEqual(["idle:idle:1"]);
 
     await release(foreign);
-    expect(frames("/items/2")).toEqual(["idle:1", "pending:1"]);
+    expect(frames("/items/2")).toEqual(["idle:idle:1", "pending:loading:1"]);
 
     await act(async () => {
       handle.complete(new URL("/items/2", ORIGIN));
       held(tree("2", page.promise));
     });
-    expect(frames("/items/2")).toEqual(["idle:1", "pending:1"]);
+    expect(frames("/items/2")).toEqual(["idle:idle:1", "pending:loading:1"]);
     await release(page);
     await waitFor(() =>
-      expect(frames("/items/2")).toEqual(["idle:1", "pending:1", "idle:2"]),
+      expect(frames("/items/2")).toEqual([
+        "idle:idle:1",
+        "pending:loading:1",
+        "idle:idle:2",
+      ]),
     );
   });
 
-  it("a navigation aborted while another flow's commit is held ends its pending at once", async () => {
+  it("a newer click: the earlier link's end and the newer link's start wait for that commit, and land in one frame", async () => {
+    mount();
+    const foreign = deferred();
+
+    controller.startNavigation(`${ORIGIN}/items/2`);
+    await notified();
+    await act(async () => {
+      controller.startNavigation(`${ORIGIN}/items/3`);
+      held(tree("1", foreign.promise));
+    });
+    expect(frames("/items/2")).toEqual(["idle:idle:1", "pending:loading:1"]);
+    expect(frames("/items/3")).toEqual(["idle:idle:1", "idle:loading:1"]);
+
+    await release(foreign);
+    expect(frames("/items/2")).toEqual([
+      "idle:idle:1",
+      "pending:loading:1",
+      "idle:loading:1",
+    ]);
+    expect(frames("/items/3")).toEqual([
+      "idle:idle:1",
+      "idle:loading:1",
+      "pending:loading:1",
+    ]);
+  });
+
+  it("an abort: the link's end and useNavigation's idle wait for that commit, and land in one frame", async () => {
+    mount();
+    const foreign = deferred();
+
+    controller.startNavigation(`${ORIGIN}/items/2`);
+    await notified();
+    await act(async () => {
+      controller.abortNavigation();
+      held(tree("1", foreign.promise));
+    });
+    expect(frames("/items/2")).toEqual(["idle:idle:1", "pending:loading:1"]);
+
+    await release(foreign);
+    expect(frames("/items/2")).toEqual([
+      "idle:idle:1",
+      "pending:loading:1",
+      "idle:idle:1",
+    ]);
+  });
+});
+
+describe("useLinkStatus commit lane", () => {
+  it("a navigation aborted while another flow's commit is held, its notification on its own task, ends its pending at once", async () => {
     mount();
     const foreign = deferred();
 
@@ -196,10 +256,18 @@ describe("useLinkStatus commit lane", () => {
     await act(async () => held(tree("1", foreign.promise)));
     handle[Symbol.dispose]();
     await notified();
-    expect(frames("/items/2")).toEqual(["idle:1", "pending:1", "idle:1"]);
+    expect(frames("/items/2")).toEqual([
+      "idle:idle:1",
+      "pending:loading:1",
+      "idle:idle:1",
+    ]);
 
     await release(foreign);
-    expect(frames("/items/2")).toEqual(["idle:1", "pending:1", "idle:1"]);
+    expect(frames("/items/2")).toEqual([
+      "idle:idle:1",
+      "pending:loading:1",
+      "idle:idle:1",
+    ]);
   });
 
   it("a prefetch: false fill: the fill's flush shows pending before the hand-over, and it ends with the page", async () => {
@@ -212,15 +280,19 @@ describe("useLinkStatus commit lane", () => {
       // the bridge delivers the navigation state first
       // (PartialUpdateConfig.fill.flush, flushSync(flushRouteState)).
       flushSync(() => controller.flushRouteState());
-      expect(frames("/items/2")).toEqual(["idle:1", "pending:1"]);
+      expect(frames("/items/2")).toEqual(["idle:idle:1", "pending:loading:1"]);
       handle.complete(new URL("/items/2", ORIGIN));
       held(tree("2", holes.promise));
     });
-    expect(frames("/items/2")).toEqual(["idle:1", "pending:1"]);
+    expect(frames("/items/2")).toEqual(["idle:idle:1", "pending:loading:1"]);
 
     await release(holes);
     await waitFor(() =>
-      expect(frames("/items/2")).toEqual(["idle:1", "pending:1", "idle:2"]),
+      expect(frames("/items/2")).toEqual([
+        "idle:idle:1",
+        "pending:loading:1",
+        "idle:idle:2",
+      ]),
     );
   });
 
@@ -257,17 +329,18 @@ describe("useLinkStatus commit lane", () => {
     // Every commit of the link to the restored entry reads idle: the page
     // left, the restored one and its revalidation.
     expect(frames("/items/1")).toEqual([
-      "idle:1",
-      "idle:2",
-      "idle:1",
-      "idle:1*",
+      "idle:idle:1",
+      "idle:loading:1",
+      "idle:idle:2",
+      "idle:idle:1",
+      "idle:idle:1*",
     ]);
     expect(frames("/items/2")).toEqual([
-      "idle:1",
-      "pending:1",
-      "idle:2",
-      "idle:1",
-      "idle:1*",
+      "idle:idle:1",
+      "pending:loading:1",
+      "idle:idle:2",
+      "idle:idle:1",
+      "idle:idle:1*",
     ]);
   });
 
@@ -287,11 +360,15 @@ describe("useLinkStatus commit lane", () => {
       replace: true,
     });
     await notified();
-    expect(frames("/items/2")).toEqual(["idle:1", "pending:1"]);
+    expect(frames("/items/2")).toEqual(["idle:idle:1", "pending:loading:1"]);
 
     await release(page);
     await waitFor(() => expect(onScreen()).toBe("2"));
-    expect(frames("/items/2")).toEqual(["idle:1", "pending:1", "idle:2"]);
+    expect(frames("/items/2")).toEqual([
+      "idle:idle:1",
+      "pending:loading:1",
+      "idle:idle:2",
+    ]);
     refetch[Symbol.dispose]();
   });
 });
