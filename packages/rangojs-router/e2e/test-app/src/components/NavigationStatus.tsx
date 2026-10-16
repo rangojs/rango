@@ -13,6 +13,9 @@ export function NavigationStatus({ testId }: { testId: string }) {
   return (
     <div data-testid={testId}>
       <span data-testid={`${testId}-state`}>state:{nav.state}</span>
+      <span data-testid={`${testId}-navigating`}>
+        navigating:{nav.isNavigating ? "true" : "false"}
+      </span>
       <span data-testid={`${testId}-streaming`}>
         streaming:{nav.isStreaming ? "true" : "false"}
       </span>

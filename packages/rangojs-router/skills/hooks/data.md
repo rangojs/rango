@@ -14,7 +14,8 @@ function ProductPrice() {
 
   // data: T (guaranteed - throws if not in context)
   // isLoading: boolean (refetch/load() states + a held navigation replacing
-  //   this data — NOT the initial streamed read)
+  //   this data — NOT the initial streamed read, and NOT a server action
+  //   re-running the loader)
   // error: Error | null
 
   return <span>${data.price}</span>;
@@ -29,6 +30,12 @@ boundary (or the route's `loading()`) — it does NOT render with
 component renders, `data` is present. (On document loads a loader registered
 with `{ ssr: false }` is already settled at first paint, so its
 reads never suspend there — see `/loader`.)
+
+**`isLoading` covers navigations and `load()` only.** When a server action
+re-runs the loader (its revalidation), `isLoading` stays `false`: the action's
+own progress is `useAction()`'s `state`, or `useNavigation().state`, which is
+`"loading"` while an action runs. Read those for an action spinner and keep
+`isLoading` for "this data is being replaced by a navigation or refresh".
 
 **A held navigation flags the data it keeps on screen.** When a navigation
 keeps the current content visible while the loader re-runs (a `transition()`
