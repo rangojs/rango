@@ -34,7 +34,11 @@
     "packages/rangojs-router/e2e/use-loader-settled-read.test.ts",
     "tests/cloudflare-basic/e2e/hook-render-stability.test.ts",
     "tests/cloudflare-basic/e2e/use-loader-settled-read.test.ts",
-    "tests/shared-e2e/src/use-loader-settled-read-scenario.ts"
+    "tests/shared-e2e/src/use-loader-settled-read-scenario.ts",
+    "packages/rangojs-router/src/testing/__tests__/render-route-action-latest-call.test.tsx",
+    "packages/rangojs-router/e2e/action-latest-call.test.ts",
+    "tests/cloudflare-basic/e2e/action-latest-call.test.ts",
+    "tests/shared-e2e/src/action-latest-call-scenario.ts"
   ],
   "guardFiles": [
     "tools/hook-lock.json",
