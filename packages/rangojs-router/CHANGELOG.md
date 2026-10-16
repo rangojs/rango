@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.26.2 (2026-10-16)
 
-### Fixed: an `ssr: false` loader that throws on a document load renders the default error boundary instead of a blank page or a raw 500
+### Fixed: an `ssr: false` loader that throws on a document load renders the default error boundary instead of a blank page or a raw 500 ([#1190](https://github.com/rangojs/rango/pull/1190))
 
 **Before.** On a route with no `errorBoundary()` (and no
 `createRouter({ defaultErrorBoundary })`), an `ssr: false` loader that threw
