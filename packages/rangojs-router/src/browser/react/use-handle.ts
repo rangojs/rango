@@ -77,13 +77,16 @@ export function useHandle<T, A, S>(
  * A page in a transition (signal "anchor") does not: until it commits
  * (releaseRouteState() from the provider's layout effect, signal "release"),
  * a new value waits, and is applied in the commit's task, right after the
- * page's own commit. In the page's lane, a value that suspends in a revealed
- * <Suspense> (a crumb's content) would hold the page; in a lane of its own,
- * it commits over the page being left and takes the page's transition types
- * (#1165); and a transition entangled with the page misses its commit when it
- * is set after React rendered the page, before its view transition's
- * mutation, and starts a view transition of its own. A value shallow-equal to
- * the last one sets nothing, so a reader renders only when its value moves.
+ * page's own commit. A newer anchor (a second click, an action over the held
+ * page) sets only the change its own flush brings; a value that waited for
+ * the earlier page waits on for the release. In the page's lane, a value
+ * that suspends in a revealed <Suspense> (a crumb's content) would hold the
+ * page; in a lane of its own, it commits over the page being left and takes
+ * the page's transition types (#1165); and a transition entangled with the
+ * page misses its commit when it is set after React rendered the page,
+ * before its view transition's mutation, and starts a view transition of its
+ * own. A value shallow-equal to the last one sets nothing, so a reader
+ * renders only when its value moves.
  */
 export function useCommitAnchoredState<T>(
   init: () => T,
@@ -97,15 +100,21 @@ export function useCommitAnchoredState<T>(
   });
   const [set] = useState(() => (next: T, signal?: RouteStateSignal): void => {
     const r = ref.current;
-    if (signal) r.waiting = signal === "anchor";
-    if (!shallowEqual(next, r.last)) {
+    const anchor = signal === "anchor";
+    if (signal) r.waiting = anchor;
+    const moved = !shallowEqual(next, r.last);
+    if (moved) {
       r.last = next;
       r.held = true;
     }
-    // The anchor's own change goes in the page's lane, with the page.
-    if (!r.held || (r.waiting && signal !== "anchor")) return;
+    // Only the anchor's own change goes in the page's lane, with the page.
+    if (!r.held || (r.waiting && !(anchor && moved))) return;
     r.held = false;
-    setValue(() => r.last);
+    // The value at dispatch: React runs an updater at render when the fiber
+    // has another update pending, and by then r.last can hold a value that
+    // waits.
+    const v = r.last;
+    setValue(() => v);
   });
   return [value, set];
 }
