@@ -1316,6 +1316,12 @@ export const urlpatterns = urls(
           loader(MirrorBasketLoader),
           loader(MirrorVehicleLoader),
           include("/__client-urls", pureClientUrls),
+          // A group only this async include loads: route discovery inside
+          // router.fetch is its first import (e2e/dev-rsc-reload.test.ts).
+          include("/__client-urls-lazy", async () => {
+            await import("./rsc-reload-probe-discovery.js");
+            return import("./client-urls/lazy.js");
+          }),
         ]),
         // A clientUrls() group with a module-local intercept whose loaders
         // take prefetch: false and a server-run revalidate().

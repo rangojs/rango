@@ -74,3 +74,96 @@ describe("a router whose module copy a runner full reload dropped", () => {
     ).rejects.toThrow("missing-router.ts");
   });
 });
+
+describe("a runner full reload that lands while the request runs", () => {
+  async function loadHandoff() {
+    const handoff = await import("../dev-reload-handoff.js");
+    return {
+      serveAcrossRunnerReload: handoff.serveAcrossRunnerReload,
+      reload: () => reloadRunner(handoff.watchRunnerReloads),
+    };
+  }
+
+  const recreatedAnswer = async () => async () =>
+    new Response("re-created router");
+
+  it("re-runs a GET that failed after the reload on the re-created router", async () => {
+    const { serveAcrossRunnerReload, reload } = await loadHandoff();
+
+    const response = await serveAcrossRunnerReload(
+      new Request("http://localhost/"),
+      async () => {
+        reload();
+        throw new Error("has no server registration");
+      },
+      recreatedAnswer,
+    );
+
+    expect(await response.text()).toBe("re-created router");
+  });
+
+  it("discards a GET response served across the reload and cancels its body", async () => {
+    const { serveAcrossRunnerReload, reload } = await loadHandoff();
+    const cancel = vi.fn();
+    const split = new Response(new ReadableStream({ cancel }));
+
+    const response = await serveAcrossRunnerReload(
+      new Request("http://localhost/"),
+      async () => {
+        reload();
+        return split;
+      },
+      recreatedAnswer,
+    );
+
+    expect(await response.text()).toBe("re-created router");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the outcome of a POST, which a re-run would repeat", async () => {
+    const { serveAcrossRunnerReload, reload } = await loadHandoff();
+    const recreated = vi.fn(recreatedAnswer);
+
+    await expect(
+      serveAcrossRunnerReload(
+        new Request("http://localhost/", { method: "POST", body: "a=1" }),
+        async () => {
+          reload();
+          throw new Error("split action");
+        },
+        recreated,
+      ),
+    ).rejects.toThrow("split action");
+    expect(recreated).not.toHaveBeenCalled();
+  });
+
+  it("keeps the outcome when no router was re-created", async () => {
+    const { serveAcrossRunnerReload, reload } = await loadHandoff();
+
+    await expect(
+      serveAcrossRunnerReload(
+        new Request("http://localhost/"),
+        async () => {
+          reload();
+          throw new Error("has no server registration");
+        },
+        async () => undefined,
+      ),
+    ).rejects.toThrow("has no server registration");
+  });
+
+  it("leaves a request no reload touched alone", async () => {
+    const { serveAcrossRunnerReload } = await loadHandoff();
+    const recreated = vi.fn(recreatedAnswer);
+    const served = new Response("this router");
+
+    const response = await serveAcrossRunnerReload(
+      new Request("http://localhost/"),
+      async () => served,
+      recreated,
+    );
+
+    expect(response).toBe(served);
+    expect(recreated).not.toHaveBeenCalled();
+  });
+});
