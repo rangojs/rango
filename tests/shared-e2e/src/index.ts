@@ -80,6 +80,8 @@ export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario
 export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
 export { runActionLatestCallTests } from "./action-latest-call-scenario.js";
 export type { ActionLatestCallScenarioOptions } from "./action-latest-call-scenario.js";
+export { runNavIdleOverlapTests } from "./nav-idle-overlap-scenario.js";
+export type { NavIdleOverlapScenarioOptions } from "./nav-idle-overlap-scenario.js";
 export { runAsyncHandlesTests } from "./async-handles-scenario.js";
 export type { AsyncHandlesScenarioOptions } from "./async-handles-scenario.js";
 export { runHandlesCommitTests } from "./handles-commit-scenario.js";

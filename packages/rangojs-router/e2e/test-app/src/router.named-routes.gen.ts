@@ -387,6 +387,7 @@ export const NamedRoutes = {
   "mwChain.detail": "/mw-chain/detail/:slug",
   "mwChain.index": "/mw-chain",
   navIdle: "/nav-idle",
+  navIdleOverlap: "/nav-idle-overlap",
   navIdleVt: "/nav-idle-vt",
   negotiateJsonFirst: "/negotiate-test-json-first",
   negotiateJsonFirstRsc: "/negotiate-test-json-first",

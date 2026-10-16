@@ -38,7 +38,10 @@ import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
-import { NavIdleTagsLoader } from "./loaders/nav-idle.js";
+import {
+  NavIdleOverlapTagsLoader,
+  NavIdleTagsLoader,
+} from "./loaders/nav-idle.js";
 import { LoadMoreLoader } from "./loaders/location-state.js";
 import {
   DepCrumbProductLoader,
@@ -201,7 +204,12 @@ import {
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { LoaderParamsProbe } from "./components/LoaderParamsProbe.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
-import { NavIdlePage } from "./pages/nav-idle.js";
+import {
+  NavIdleOverlapPage,
+  NavIdlePage,
+  navIdleOverlapAway,
+  navIdleSkipOnAction,
+} from "./pages/nav-idle.js";
 import { FeatureDetailPage, FeaturesShell } from "./pages/features.js";
 import {
   BlogLayout,
@@ -2190,6 +2198,21 @@ export const urlpatterns = urls(
           loader(NavIdleTagsLoader),
           transition(),
         ]),
+        // #1164's chips while an action settles, or a newer navigation ends
+        // with no page, during a 1.5 s hold (hook-lock rows S10, S8).
+        path(
+          "/nav-idle-overlap",
+          NavIdleOverlapPage,
+          { name: "navIdleOverlap" },
+          () => [
+            middleware(navIdleOverlapAway),
+            loader(NavIdleOverlapTagsLoader, () => [
+              revalidate(navIdleSkipOnAction),
+            ]),
+            revalidate(navIdleSkipOnAction),
+            transition(),
+          ],
+        ),
         path("/scripts-demo", ScriptsDemoPage, { name: "scriptsDemo" }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
 
