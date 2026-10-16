@@ -636,9 +636,12 @@ export function createEventController(
 
   const notifyHandles = makeDebouncedNotifier(handleListeners);
 
+  // Handles first: the signal reaches useCommitAnchoredState before this
+  // flush's location change does, so an anchor tells its own change from a
+  // value that waited for an earlier page.
   function flushRouteState(signal?: RouteStateSignal): void {
-    notifyStateListeners.flush();
     notifyHandles.flush(signal);
+    notifyStateListeners.flush();
   }
 
   function getState(): DerivedNavigationState {
