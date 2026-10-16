@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.26.2 (2026-10-16)
+
+### Fixed: an `ssr: false` loader that throws on a document load renders the default error boundary instead of a blank page or a raw 500 ([#1190](https://github.com/rangojs/rango/pull/1190))
+
+**Before.** On a route with no `errorBoundary()` (and no
+`createRouter({ defaultErrorBoundary })`), an `ssr: false` loader that threw
+on a document load took the whole document down. A full render answered with
+the host's raw 500 (in production, an error text with a server stack; in dev,
+the Vite overlay). On a `ppr` shell HIT whose loader run threw, the baked
+content showed for a moment, then the page went blank and never hydrated: the
+browser decodes an `ssr: false` loader while it builds the page's tree, and
+with no fallback to place the build failed above every error boundary,
+including the router's `RootErrorBoundary`.
+
+```ts
+path("/dashboard", Dashboard, { name: "dashboard", ppr: true }, () => [
+  loader(Account, { ssr: false }), // throws: the account service is down
+]);
+// Before: HIT -> blank page; MISS -> raw 500 from the host.
+// Now: the router's default error boundary in place of the route, layouts kept.
+```
+
+**Now.** The failure renders the router's default error boundary (the
+"Internal Server Error" page, with the error's details in dev) in place of the
+route, as a handler that throws with no `errorBoundary()` does, and a full
+render answers 500. A shell HIT stays 200 (its status was sent with the
+shell), still shows its baked content first and then reports a hydration
+mismatch before the default error boundary replaces it, as it does with a
+route `errorBoundary()`. `onError` reports the failure with
+`handledByBoundary: true`. Client navigations, actions and
+loaders without `ssr: false` are unchanged, and so is a declared
+`errorBoundary()` or `defaultErrorBoundary`.
+
 ## 0.26.1 (2026-10-15)
 
 ### Fixed: a ppr route whose loader pins exceed `maxSnapshotBytes` no longer serves a document shell that React re-renders on the client ([#1187](https://github.com/rangojs/rango/pull/1187))

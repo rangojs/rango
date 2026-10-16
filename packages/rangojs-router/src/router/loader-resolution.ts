@@ -55,6 +55,7 @@ import {
 } from "../server/handle-store.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { DefaultErrorFallback } from "../default-error-boundary.js";
 import { defineRewrittenFrom } from "../server/rewrite-trail.js";
 import {
   firstUnitCandidate,
@@ -154,6 +155,9 @@ function pushHandleValue(
  *   This has a simplified signature for internal use - the caller (typically
  *   wrapLoaderPromise in router.ts) is responsible for bridging to the full
  *   OnErrorCallback with complete request context (request, url, env, etc.).
+ * @param useDefaultErrorBoundary - An `ssr: false` loader on a document or
+ *   capture render: an error with no declared boundary gets
+ *   `DefaultErrorFallback` and a 500 (it would otherwise reject the tree).
  */
 export function wrapLoaderWithErrorHandling<T>(
   promise: Promise<T>,
@@ -177,13 +181,15 @@ export function wrapLoaderWithErrorHandling<T>(
       | ReactNode
       | ((props: { pathname: string }) => ReactNode);
   },
+  useDefaultErrorBoundary?: boolean,
 ): Promise<LoaderDataResult<T>> {
   // Extract the trailing token from segmentId (format: "<shortCode>D<i>.<loaderId>").
   // The token is the loader's $$id (hash#export in prod, pathfrag#export in dev),
   // not a clean display name.
   const loaderName = segmentId.split(".").pop() || "unknown";
   // Captured now: the rejection can settle outside the request's ALS frame.
-  const renderErrors = _getRequestContext()?._renderErrors;
+  const requestContext = _getRequestContext();
+  const renderErrors = requestContext?._renderErrors;
 
   return Promise.resolve(promise)
     .then(
@@ -286,7 +292,9 @@ export function wrapLoaderWithErrorHandling<T>(
       renderErrors?.push(error);
 
       // Find nearest error boundary
-      const fallback = findNearestErrorBoundary(entry);
+      const declared = findNearestErrorBoundary(entry);
+      const fallback =
+        declared ?? (useDefaultErrorBoundary ? DefaultErrorFallback : null);
 
       // Create error info
       const errorInfo = createErrorInfo(error, segmentId, "loader");
@@ -341,6 +349,8 @@ export function wrapLoaderWithErrorHandling<T>(
         segmentId,
         message: errorInfo.message,
       });
+      // The default boundary answers 500, as in catchSegmentError.
+      if (!declared) requestContext?._setStatus(500);
 
       return {
         __loaderResult: true,

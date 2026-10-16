@@ -926,9 +926,10 @@ by a navigation alone carries no pins, and its replay runs these loaders fresh.
   fill the holes — and the recorded baked paths are overlaid onto the fresh
   result, so the payload matches the prelude while the nested promises stream
   fresh. A fresh rejection skips the overlay and goes to the loader's error
-  boundary: on a document HIT the payload then carries the error where the
-  HTML has the baked value, and React renders that part again on the client
-  (one hydration mismatch, the one known residual of a HIT). Give it its own cache,
+  boundary (the route's `errorBoundary()`, else the router's default one): on
+  a document HIT the payload then carries the error where the HTML has the
+  baked value, and React renders that part again on the client (one
+  hydration mismatch, the one known residual of a HIT). Give it its own cache,
   `loader(Def, { ssr: false }, () => [cache({ ttl })])`, so that run reads
   through the loader cache.
 

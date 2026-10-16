@@ -531,6 +531,7 @@ export function createRouter<TEnv = any>(
       isPartial?: boolean;
       requestStartTime?: number;
     },
+    useDefaultErrorBoundary?: boolean,
   ): Promise<LoaderDataResult<T>> {
     const loaderStart = telemetrySink ? performance.now() : 0;
     const loaderRequestId = telemetrySink
@@ -600,6 +601,7 @@ export function createRouter<TEnv = any>(
         findNearestNotFoundBoundary,
         notFoundComponent: notFound,
       },
+      useDefaultErrorBoundary,
     );
 
     // Emit loader.end after the promise settles (fire-and-forget)

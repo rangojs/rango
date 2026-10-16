@@ -38,6 +38,7 @@ import { shellCachePatterns } from "./urls/shell-cache.js";
 import { pprHeaderGuardPatterns } from "./urls/ppr-header-guard.js";
 import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
 import { shellPushOwnershipPatterns } from "./urls/shell-push-ownership.js";
+import { holeyThrowsPatterns } from "./urls/holey-throws.js";
 import { pprIncludeBakePatterns } from "./urls/ppr-include-bake.js";
 import { prerenderWarmPatterns } from "./urls/prerender-warm.js";
 import { requestKeyPatterns } from "./urls/request-keys.js";
@@ -1249,6 +1250,8 @@ export const urlpatterns = urls(
 
       // PPR push-ownership fixtures — /shell-push (issues #1001, #1003).
       include("/", shellPushOwnershipPatterns, { name: "" }),
+      // An ssr: false loader that throws with no errorBoundary() (dc-t92).
+      include("/", holeyThrowsPatterns, { name: "" }),
 
       // A ppr page under a store layout with an ssr: false loader, declared
       // directly and through include() — /ppr-include (issue #1179).

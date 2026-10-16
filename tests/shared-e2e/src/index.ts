@@ -21,6 +21,8 @@ export type {
   ExistingServerKind,
 } from "./assert-existing-server.js";
 export { acquireE2eSlot } from "./e2e-slot.js";
+export { defineFlaggedLoaderDefaultBoundaryTests } from "./flagged-loader-default-boundary.js";
+export type { FlaggedLoaderDefaultBoundaryFixture } from "./flagged-loader-default-boundary.js";
 import { guardHydrationErrors } from "./hydration-guard.js";
 export { guardHydrationErrors };
 export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
