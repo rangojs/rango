@@ -561,6 +561,42 @@ describe("createShellCaptureHandler", () => {
   });
 });
 
+// dc-t93: renderHTML answers a shell error with a recovery document in
+// production. The PPR capture (runtime and build-time) never does: a shell
+// error still rejects it, and its callers store nothing (shell-capture.ts
+// captureAndStoreShell rethrows; the build capture fails the URL).
+describe("createShellCaptureHandler: a shell error in production (dc-t93)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.mocked(console.error).mockRestore?.();
+  });
+
+  it("rejects with the error and produces no recovery document", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const boom = new Error("loader read outside Suspense");
+    function Broken(): React.ReactNode {
+      throw boom;
+    }
+    mockedRenderSegments.mockImplementation(() =>
+      Promise.resolve(
+        React.createElement(
+          "html",
+          null,
+          React.createElement("body", null, React.createElement(Broken)),
+        ),
+      ),
+    );
+
+    const rejection = await createShellCaptureHandler(makeDeps())(
+      makeRscStream("CAPTURE_FLIGHT"),
+      { quiesce: Promise.resolve() },
+    ).catch((error: unknown) => error);
+
+    expect(rejection).toBe(boom);
+  });
+});
+
 describe("createShellResumeHandler", () => {
   it("(b) resumes a postponed shell into the hole content + $RC, without re-emitting the shell", async () => {
     const captured = await captureShell(makeDeps(), "cap");
@@ -680,6 +716,9 @@ describe("createShellResumeHandler", () => {
       Promise.resolve(makeTree(rejected, "res")),
     );
     const onError = vi.fn();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     const stream = await createShellResumeHandler(makeDeps())(
       makeRscStream("RESUME_FLIGHT"),
       { postponed: captured!.postponed, onError },
@@ -687,6 +726,9 @@ describe("createShellResumeHandler", () => {
     await readAll(stream);
 
     expect(onError.mock.calls).toEqual([[boom]]);
+    // It originated in this render: printed once, as the original error.
+    expect(consoleError.mock.calls).toEqual([[boom]]);
+    consoleError.mockRestore();
   });
 
   it("throws a descriptive error resuming a postponed shell without the resume dep", async () => {

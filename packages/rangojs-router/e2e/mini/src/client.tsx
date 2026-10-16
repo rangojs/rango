@@ -40,6 +40,7 @@ import {
   EchoLoader,
   FlashMessage,
   ManifestPricesLoader,
+  ShellErrorLoader,
   Origin,
 } from "./shared.js";
 import {
@@ -138,6 +139,12 @@ export function ClockWidget() {
       </button>
     </div>
   );
+}
+
+// dc-t93: reads ShellErrorLoader with no Suspense above it.
+export function ShellErrorReader() {
+  const { data } = useLoader(ShellErrorLoader);
+  return <span data-testid="mini-shell-data">{data}</span>;
 }
 
 export function FreshClock() {

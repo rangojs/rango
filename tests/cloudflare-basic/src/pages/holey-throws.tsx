@@ -1,9 +1,15 @@
-import { createLoader, urls } from "@rangojs/router";
+import { createLoader, notFound, redirect, urls } from "@rangojs/router";
 import {
+  HoleyShellHooks,
+  HoleyShellIndex,
+  HoleyShellReader,
+  HoleyShellSsrThrower,
+  HoleyShellTarget,
   HoleyThrowsLayout,
   HoleyThrowsView,
   type HoleyThrowsData,
 } from "../components/HoleyThrowsView.js";
+import { HoleyShellNotes, HoleyShellState } from "../components/holey-shell.js";
 
 // dc-t92 fixture: an ssr: false loader whose value holds a promise (a pin with
 // a hole, so the loader runs on every shell HIT). Once the probe's generation
@@ -41,9 +47,118 @@ export function HoleyBoundary({ error }: { error: Error }) {
   );
 }
 
+// dc-t93 fixtures: each read has no <Suspense> above it, so the failure
+// reaches React's server-render shell on a document load. Body:
+// tests/shared-e2e/src/ssr-shell-error.ts.
+export const HoleyShellLoader = createLoader(async (): Promise<string> => {
+  throw new Error("holey-shell-loader-error");
+});
+
+export const HoleyShellNotFoundLoader = createLoader(
+  async (): Promise<string> => {
+    notFound("holey-shell-missing");
+  },
+);
+
+export const HoleyShellRedirectLoader = createLoader(
+  async (): Promise<string> => {
+    throw redirect("/holey-throws/shell-target");
+  },
+);
+
+export const HoleyShellRedirectStateLoader = createLoader(
+  async (): Promise<string> => {
+    throw redirect("/holey-throws/shell-target", {
+      state: HoleyShellState({ text: "carried-by-redirect" }),
+    });
+  },
+);
+
+function shellPage(loader: typeof HoleyShellLoader) {
+  return function HoleyShellPage() {
+    return (
+      <main data-testid="holey-shell-page">
+        <HoleyShellReader loader={loader} />
+      </main>
+    );
+  };
+}
+
+function HoleyShellSsrThrowPage() {
+  return (
+    <main data-testid="holey-shell-page">
+      <HoleyShellSsrThrower />
+    </main>
+  );
+}
+
 export const holeyThrowsPatterns = urls(
   ({ path, layout, loader, errorBoundary }) => [
     layout(<HoleyThrowsLayout />, () => [
+      path("/holey-throws/shell", () => <HoleyShellIndex />, {
+        name: "holeyShell",
+      }),
+      path(
+        "/holey-throws/shell-loader",
+        shellPage(HoleyShellLoader),
+        { name: "holeyShellLoader" },
+        () => [loader(HoleyShellLoader)],
+      ),
+      path(
+        "/holey-throws/shell-loader-bounded",
+        shellPage(HoleyShellLoader),
+        { name: "holeyShellLoaderBounded" },
+        () => [loader(HoleyShellLoader), errorBoundary(HoleyBoundary)],
+      ),
+      path(
+        "/holey-throws/shell-not-found",
+        shellPage(HoleyShellNotFoundLoader),
+        { name: "holeyShellNotFound" },
+        () => [loader(HoleyShellNotFoundLoader)],
+      ),
+      path(
+        "/holey-throws/shell-redirect",
+        shellPage(HoleyShellRedirectLoader),
+        { name: "holeyShellRedirect" },
+        () => [loader(HoleyShellRedirectLoader)],
+      ),
+      path(
+        "/holey-throws/shell-redirect-state",
+        shellPage(HoleyShellRedirectStateLoader),
+        { name: "holeyShellRedirectState" },
+        () => [loader(HoleyShellRedirectStateLoader)],
+      ),
+      path("/holey-throws/shell-target", () => <HoleyShellTarget />, {
+        name: "holeyShellTarget",
+      }),
+      path(
+        "/holey-throws/shell-ppr",
+        shellPage(HoleyShellLoader),
+        { name: "holeyShellPpr", ppr: { ttl: 300, swr: 120 } },
+        () => [loader(HoleyShellLoader)],
+      ),
+      path("/holey-throws/shell-ssr-throw", HoleyShellSsrThrowPage, {
+        name: "holeyShellSsrThrow",
+      }),
+      path(
+        "/holey-throws/shell-ssr-throw-bounded",
+        HoleyShellSsrThrowPage,
+        { name: "holeyShellSsrThrowBounded" },
+        () => [errorBoundary(HoleyBoundary)],
+      ),
+      path(
+        "/holey-throws/shell-hooks",
+        (ctx) => {
+          ctx.use(HoleyShellNotes)("from-the-handler");
+          return (
+            <main data-testid="holey-shell-page">
+              <HoleyShellHooks />
+              <HoleyShellSsrThrower />
+            </main>
+          );
+        },
+        { name: "holeyShellHooks" },
+      ),
       path(
         "/holey-throws/document",
         HoleyThrowsPage,

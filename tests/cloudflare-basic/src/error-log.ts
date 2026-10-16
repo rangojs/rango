@@ -14,6 +14,7 @@ export interface OnErrorRecord {
   phase: string;
   message: string;
   pathname?: string;
+  handledByBoundary?: boolean;
   metadata?: Record<string, unknown>;
 }
 

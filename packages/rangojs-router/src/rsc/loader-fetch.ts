@@ -15,8 +15,12 @@ import { requestHeaders } from "../server/request-headers.js";
 import { FORBIDDEN_KEYS } from "../context-var.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { isDataNotFoundError } from "../errors.js";
+import { printServerError } from "../server/print-server-error.js";
 import { executeLoaderMiddleware } from "../router/middleware.js";
-import { getRequestContext } from "../server/request-context.js";
+import {
+  _getRequestContext,
+  getRequestContext,
+} from "../server/request-context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import {
   createReverseFunction,
@@ -54,10 +58,17 @@ export function renderLoaderError<TEnv>(
   meta: LoaderErrorMeta<TEnv>,
 ): Response {
   const { request, url, env, loaderId } = meta;
+  // Read once here: onError can fire outside the ALS frame.
+  const requestContext = _getRequestContext();
   const rscStream = ctx.renderToReadableStream(
     { loaderResult: null, loaderError },
     {
       onError: (renderError: unknown) => {
+        printServerError(
+          renderError,
+          { label: "Rendering error", name: loaderId, pathname: url.pathname },
+          requestContext,
+        );
         ctx.callOnError(renderError, "rendering", {
           request,
           url,
@@ -78,19 +89,22 @@ export function renderLoaderError<TEnv>(
  * Build the 500 RSC error Response for a failed fetchable loader. Shared by the
  * module-load-error catch (the import itself threw) and the loader-execution
  * error catch — both call onError("loader") and serialize the same dev-gated
- * error payload. The only per-site difference is the console.error label,
- * passed in.
+ * error payload. The only per-site difference is the printed label, passed in.
  */
 function buildLoaderErrorResponse<TEnv>(
   ctx: HandlerContext<TEnv>,
   error: unknown,
   meta: LoaderErrorMeta<TEnv>,
-  logLabel: string,
+  label: string,
 ): Response {
   const { request, url, env, loaderId } = meta;
   const isDev = process.env.NODE_ENV !== "production";
 
-  console.error(logLabel, error);
+  printServerError(
+    error,
+    { label, name: loaderId, pathname: url.pathname },
+    _getRequestContext(),
+  );
 
   ctx.callOnError(error, "loader", {
     request,
@@ -145,7 +159,7 @@ export async function handleLoaderFetch<TEnv>(
       ctx,
       error,
       { request, url, env, loaderId },
-      `[RSC] Loader module load failed for "${loaderId}":`,
+      "Loader module load error",
     );
   }
   if (!registeredLoader) {
@@ -288,10 +302,21 @@ export async function handleLoaderFetch<TEnv>(
             loaderResult: unknown;
           }
           const loaderPayload: LoaderPayload = { loaderResult: result };
+          // Read once here: onError can fire outside the ALS frame.
+          const requestContext = _getRequestContext();
           const rscStream = ctx.renderToReadableStream<LoaderPayload>(
             loaderPayload,
             {
               onError: (error: unknown) => {
+                printServerError(
+                  error,
+                  {
+                    label: "Rendering error",
+                    name: loaderId,
+                    pathname: url.pathname,
+                  },
+                  requestContext,
+                );
                 ctx.callOnError(error, "rendering", {
                   request,
                   url,
@@ -342,7 +367,7 @@ export async function handleLoaderFetch<TEnv>(
       ctx,
       error,
       { request, url, env, loaderId },
-      "[RSC] Loader error:",
+      "Loader error",
     );
   }
 }

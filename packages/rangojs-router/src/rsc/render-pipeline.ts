@@ -2,6 +2,7 @@ import { appendMetric } from "../router/metrics.js";
 import type { MetricsStore } from "../server/context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { printServerError } from "../server/print-server-error.js";
 import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
@@ -156,11 +157,18 @@ function createFlightStage<TEnv>(
     input.payload.metadata.devDiscoveryEpoch = input.ctx.devDiscoveryEpoch;
   }
   // Read once here: onError can fire outside the ALS frame.
-  const renderErrors = _getRequestContext()?._renderErrors;
+  const requestContext = _getRequestContext();
+  const renderErrors = requestContext?._renderErrors;
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
       renderErrors?.push(error);
+      // The client gets a masked copy (an error row); the original prints here.
+      printServerError(
+        error,
+        { label: "Rendering error", pathname: input.url.pathname },
+        requestContext,
+      );
       input.ctx.callOnError(error, "rendering", {
         request: input.request,
         url: input.url,

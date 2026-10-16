@@ -446,18 +446,21 @@ describe("renderRoute: hydrate", () => {
     expect(getByTestId("late").textContent).toBe("arrived");
   });
 
-  it("an unguarded document read fails the server pass as in SSR, and the globals come back", async () => {
+  it("an unguarded document read fails the server pass as in SSR, the tree renders as production's recovery document does, and the globals come back", async () => {
+    document.title = "doc-title";
     function Title() {
-      return <p>{document.title}</p>;
+      return <p data-testid="title">{document.title}</p>;
     }
-    const mounted = document.body.childElementCount;
 
-    await expect(
-      renderRoute([{ path: "/", Component: Title }], { hydrate: true }),
-    ).rejects.toThrow("document is not defined");
+    const { shellError, serverHtml, recoverableErrors, getByTestId } =
+      await renderRoute([{ path: "/", Component: Title }], { hydrate: true });
 
+    expect(shellError).toBeInstanceOf(ReferenceError);
+    expect((shellError as Error).message).toContain("document is not defined");
+    expect(serverHtml).toBe("");
+    expect(recoverableErrors).toEqual([]);
+    expect(getByTestId("title").textContent).toBe("doc-title");
     expect(currentPass()).toBe("client");
-    expect(document.body.childElementCount).toBe(mounted);
   });
 
   it("refuses to hydrate on an RTL that drops onRecoverableError", async () => {

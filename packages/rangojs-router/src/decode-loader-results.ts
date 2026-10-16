@@ -19,7 +19,10 @@ import { LoaderRedirect } from "./loader-redirect.js";
  *
  * Only decodeLoaderEntry (the read-site path — client components, so the
  * throw lands in the router-owned boundary; during document SSR, Fizz emits
- * the Suspense fallback and replays the throw at hydration) throws these.
+ * the Suspense fallback and replays the throw at hydration, and with no
+ * Suspense above the read the throw fails the shell, which renderHTML answers
+ * with a recovery document or a 3xx, ssr/shell-error-document.tsx) throws
+ * these.
  * decodeLoaderResults runs during the tree build on settled results, where a
  * throw would collapse the whole payload — it routes signals through the
  * errorFallback slot instead (same visual: the slot replaces the children
@@ -32,6 +35,16 @@ export const LOADER_NOT_FOUND_FALLBACK: unique symbol = Symbol(
   "rango.loaderNotFound",
 );
 export const LOADER_REDIRECT: unique symbol = Symbol("rango.loaderRedirect");
+
+/** The redirect a `LoaderRedirect` thrown by throwSignal carries, if any. */
+export function loaderRedirectOf(
+  error: unknown,
+): { to: string; status?: number; state?: unknown } | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  return (error as Record<PropertyKey, unknown>)[LOADER_REDIRECT] as
+    | { to: string; status?: number; state?: unknown }
+    | undefined;
+}
 
 function throwSignal(result: any): void {
   if (result.notFound === true) {
@@ -71,6 +84,13 @@ function signalFallback(result: any): ReactNode | undefined {
 }
 
 /**
+ * Marks an error loaderResultError rebuilt from a loader's ErrorInfo (masked
+ * in production). The server printed the original where the loader ran, so
+ * the SSR render never prints the rebuild.
+ */
+const REBUILT_LOADER_ERROR: unique symbol = Symbol();
+
+/**
  * A failed loader entry's error, rebuilt with the ErrorInfo identity
  * (name/stack/code/cause) instead of a stripped generic Error.
  */
@@ -83,7 +103,15 @@ export function loaderResultError(result: { error: ErrorInfo }): Error {
   if (info.name) err.name = info.name;
   if (info.stack) err.stack = info.stack;
   if (info.code !== undefined) (err as { code?: string }).code = info.code;
+  (err as { [REBUILT_LOADER_ERROR]?: true })[REBUILT_LOADER_ERROR] = true;
   return err;
+}
+
+/** Whether `error` is a rebuild loaderResultError made (see the marker). */
+export function isRebuiltLoaderError(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && REBUILT_LOADER_ERROR in error
+  );
 }
 
 /** A loader that threw: not ok, and not a notFound()/redirect() signal. */

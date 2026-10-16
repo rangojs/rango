@@ -28,6 +28,7 @@ import { getSSRSetup, createSsrHtmlStage, isRscRequest } from "./ssr-setup.js";
 import type { RscPayload } from "./types.js";
 import type { SSRModule } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
+import { markServerErrorPrinted } from "../server/print-server-error.js";
 import type { PprReplayBypassReason } from "./shell-capture-constants.js";
 import {
   createResponseWithMergedHeaders,
@@ -1988,8 +1989,11 @@ function serveShellHit(
         // The HIT request's origin — same host as the capture's (key-scoped).
         origin: url.origin,
         // The document cache reads the list before storing this composite.
+        // resumeShellHTML printed what started in the resume, or it is a copy
+        // whose original printed upstream: a refusing writer prints nothing.
         onError: (error) => {
           reqCtx._renderErrors?.push(error);
+          markServerErrorPrinted(error, reqCtx);
         },
       }),
     );

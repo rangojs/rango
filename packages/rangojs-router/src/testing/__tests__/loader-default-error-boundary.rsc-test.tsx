@@ -6,6 +6,10 @@
  * fallback. The browser decodes a flagged loader while it builds the tree, so
  * the build rejected above every error boundary (a blank page on the HIT) and
  * the SSR shell failed (the host's raw 500 on the MISS).
+ *
+ * dc-q61: one status rule. A declared errorBoundary() answers 500 too wherever
+ * the status has not gone out (a document, a ppr MISS); a shell HIT keeps the
+ * 200 it sent with its shell.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -51,6 +55,15 @@ function setup() {
         loader(Flagged, { ssr: false }),
         errorBoundary(<p>declared-error</p>),
       ]),
+      path(
+        "/declared-shell",
+        Page,
+        { name: "declaredShell", ppr: true },
+        () => [
+          loader(Flagged, { ssr: false }),
+          errorBoundary(<p>declared-error</p>),
+        ],
+      ),
     ]),
   );
   return {
@@ -63,6 +76,23 @@ beforeEach(async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   await resetShellTestState();
 });
+
+/**
+ * The server prints the loader's original error once, where the loader ran,
+ * whichever boundary renders it; the client gets the masked message.
+ */
+function expectPrintedOnce(pathname: string): void {
+  const prints = vi
+    .mocked(console.error)
+    .mock.calls.filter(
+      (call) =>
+        call[1] instanceof Error && call[1].message === "flagged loader down",
+    );
+  expect(prints).toHaveLength(1);
+  expect(prints[0]![0]).toMatch(
+    new RegExp(`^\\[RSC\\] Loader error \\(.*\\) ${pathname}:$`),
+  );
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -77,6 +107,7 @@ describe("an ssr: false loader that throws, with no errorBoundary()", () => {
 
     expect(result.response.status).toBe(500);
     expect(result.flight).toContain(DEFAULT_UI);
+    expectPrintedOnce("/plain");
   });
 
   it("a ppr MISS renders the router's default error boundary with a 500", async () => {
@@ -102,17 +133,45 @@ describe("an ssr: false loader that throws, with no errorBoundary()", () => {
     const hit = await serve("/shell");
 
     expect(hit.shellStatus).toBe("HIT");
+    expect(hit.response.status).toBe(200);
     expect(hit.flight).toContain(DEFAULT_UI);
   });
+});
 
-  it("a declared errorBoundary() keeps its own fallback and status", async () => {
+describe("an ssr: false loader that throws, with a declared errorBoundary() (dc-q61)", () => {
+  it("a document keeps its own fallback and answers 500", async () => {
     const { serve } = setup();
     failing = true;
 
     const result = await serve("/declared");
 
-    expect(result.response.status).toBe(200);
+    expect(result.response.status).toBe(500);
     expect(result.flight).toContain("declared-error");
     expect(result.flight).not.toContain(DEFAULT_UI);
+    expectPrintedOnce("/declared");
+  });
+
+  it("a ppr MISS answers 500 and stores no shell", async () => {
+    const { serve } = setup();
+    failing = true;
+
+    const result = await serve("/declared-shell");
+
+    expect(result.shellStatus).toBe("MISS");
+    expect(result.response.status).toBe(500);
+    expect(result.flight).toContain("declared-error");
+    expect(await result.readEntry()).toBeNull();
+  });
+
+  it("a shell HIT keeps the 200 its shell went out with", async () => {
+    const { serve } = setup();
+    expect((await serve("/declared-shell")).shellStatus).toBe("MISS");
+    failing = true;
+
+    const hit = await serve("/declared-shell");
+
+    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.response.status).toBe(200);
+    expect(hit.flight).toContain("declared-error");
   });
 });

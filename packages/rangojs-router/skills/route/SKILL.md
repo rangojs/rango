@@ -564,7 +564,10 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
   `loading(fallback, { ssr: false })` on a document load) still sets 500 / 404.
   A loader's 404 is likewise only set when its rejection settles before the
   response is built.
-- `onError` fires once per failure.
+- `onError` fires once per failure, and the server console prints the
+  original error once, where it happened
+  (`[RSC] Handler error (<segment>) <path>:`); only what the browser receives
+  is masked.
 - A failed render is never stored: `cache()` skips the write for the scope that
   holds the failed segment, a `ppr` shell and the document cache refuse the
   whole document, and a Prerender route still fails the build.

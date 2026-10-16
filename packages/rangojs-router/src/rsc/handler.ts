@@ -63,6 +63,10 @@ import {
   invokeOnError,
   resolveDefaultNotFound,
 } from "../router/error-handling.js";
+import {
+  printServerError,
+  wasServerErrorPrinted,
+} from "../server/print-server-error.js";
 import { createReverseFunction } from "../router/handler-context.js";
 import { contextSet } from "../context-var.js";
 import {
@@ -1304,7 +1308,15 @@ export function createRSCHandler<
             actionId: plan.actionId,
             handledByBoundary: false,
           });
-          console.error(`[RSC] Action error:`, error);
+          printServerError(
+            error,
+            {
+              label: "Action error",
+              name: plan.actionId,
+              pathname: url.pathname,
+            },
+            reqCtx,
+          );
           throw error;
         }
       }
@@ -1548,14 +1560,24 @@ export function createRSCHandler<
           );
         }
 
-        // Report unhandled errors
-        callOnError(error, "routing", {
-          request,
-          url,
-          env,
-          handledByBoundary: false,
-        });
-        console.error(`[RSC] Error:`, error);
+        // Report unhandled errors. Skip one the request already printed or
+        // recorded as done: a shell error renderHTML rethrew to the host (dev),
+        // which the html stage (rsc/ssr-setup.ts) reported when it started in
+        // the SSR render; a copy's original was reported where it started.
+        const printedContext = _getRequestContext();
+        if (!wasServerErrorPrinted(error, printedContext)) {
+          callOnError(error, "routing", {
+            request,
+            url,
+            env,
+            handledByBoundary: false,
+          });
+          printServerError(
+            error,
+            { label: "Error", pathname: url.pathname },
+            printedContext,
+          );
+        }
         throw error;
       }
     };

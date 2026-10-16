@@ -8,6 +8,7 @@ export const routes = {
   errClientBoom: "/errors/client-boom",
   errGo: "/errors/go",
   errMissing: "/errors/missing",
+  errShellLoader: "/errors/shell-loader",
   home: "/",
   hooks: "/hooks",
   login: "/login",

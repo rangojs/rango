@@ -107,10 +107,10 @@ function breadcrumbTests(mode: "dev" | "build") {
           ),
         ).toBeVisible();
       } else {
-        // Production builds strip the specific message but React's RSC error
-        // includes "Server Components render" — more specific than generic "error"
+        // Production answers the recovery document; its client render ends on
+        // the root error boundary, which omits the message.
         await expect(
-          page.getByText(/Server Components render/i).first(),
+          page.getByText("Internal Server Error").first(),
         ).toBeVisible();
       }
     });

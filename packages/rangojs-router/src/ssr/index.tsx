@@ -12,6 +12,16 @@ import {
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
 import { isThenable } from "../handles/is-thenable.js";
+import {
+  isAbortedRender,
+  isFlightDecodedError,
+  isLoaderSignalError,
+} from "../errors.js";
+import { isRebuiltLoaderError } from "../decode-loader-results.js";
+import {
+  answerShellError,
+  type ShellErrorRecovery,
+} from "./shell-error-document.js";
 import type { ErrorPhase } from "../types.js";
 import type { HeadScriptsOption } from "../vite/plugin-types.js";
 
@@ -141,6 +151,21 @@ export interface SSRRenderOptions {
    * otherwise completed document. React's default console.error is kept.
    */
   onError?: (error: unknown) => void;
+
+  /**
+   * Called once when the render failed before any HTML was produced (a shell
+   * error), before renderHTML answers it or rethrows it. `status` and
+   * `location` are the answer's; both are absent when the error is rethrown
+   * to the host (dev). `originated`: the error started in this render. When
+   * false it is a copy (a loader's masked rebuild, an error Flight decoded, a
+   * payload that did not decode) whose original was reported where it started.
+   */
+  onShellError?: (shellError: {
+    error: unknown;
+    originated: boolean;
+    status?: number;
+    location?: string;
+  }) => void;
 }
 
 /**
@@ -457,6 +482,23 @@ async function settleSsrFalseFirstFlush(
   for (let turn = 0; !whole && turn < SSR_FALSE_FIRST_FLUSH_TURNS; turn++) {
     await macrotask();
   }
+}
+
+/**
+ * Whether this render prints `error`. A failure prints once, where it
+ * originated: what reaches the SSR render from the server is a copy (a
+ * loader's masked rebuild, an error Flight decoded) whose original the server
+ * printed, and a loader's notFound()/redirect() is control flow, as is the
+ * render's own abort. A component that throws during this render is the
+ * original.
+ */
+function originatedHere(error: unknown): boolean {
+  return (
+    !isLoaderSignalError(error) &&
+    !isRebuiltLoaderError(error) &&
+    !isFlightDecodedError(error) &&
+    !isAbortedRender(error)
+  );
 }
 
 /**
@@ -849,13 +891,22 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       search,
       origin,
       onError: onRenderError,
+      onShellError,
     } = options ?? {};
+
+    // What a shell error is answered with (ssr/shell-error-document.tsx).
+    let flight: ReadableStream<Uint8Array> | undefined;
+    let recovery: ShellErrorRecovery | undefined;
+    let payloadFailed = false;
+    // The errors Fizz reported, which its onError below printed.
+    let reportedByFizz: Set<unknown> | undefined;
 
     try {
       // Tee the stream:
       // - rscStream1: For SSR rendering (deserialize to React VDOM)
       // - rscStream2: For browser hydration (inject as __FLIGHT_DATA__)
       const [rscStream1, rscStream2] = rscStream.tee();
+      flight = rscStream2;
 
       // Deserialization starts here (not lazily on SsrRoot's first render) so
       // the auto-raise below can read payload metadata before the fizz call.
@@ -880,6 +931,10 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         // tree while static-part search reads render what the key names.
         search,
         origin,
+        // Runs before Fizz rejects (attached when the tree build starts).
+        onTreeError: () => {
+          recovery = undefined;
+        },
       });
 
       const bootstrap = await resolveBootstrap(deps);
@@ -888,7 +943,18 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // Awaiting the payload here is latency-neutral: fizz cannot emit even
       // <html> until this same promise settles. A rejection lands in the
       // catch below — the same reportRenderError path a shell error takes.
-      const awaitsBeforeFlush = hasAwaitBeforeFlush(await payload);
+      let decoded: Awaited<typeof payload>;
+      try {
+        decoded = await payload;
+      } catch (error) {
+        payloadFailed = true;
+        throw error;
+      }
+      recovery = {
+        bootstrap,
+        themeConfig: decoded.metadata?.themeConfig ?? null,
+      };
+      const awaitsBeforeFlush = hasAwaitBeforeFlush(decoded);
       const progressiveChunkSize =
         deps.progressiveChunkSize ??
         (awaitsBeforeFlush ? Number.MAX_SAFE_INTEGER : undefined);
@@ -904,13 +970,12 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           formState,
           nonce,
           ...(progressiveChunkSize !== undefined && { progressiveChunkSize }),
-          ...(onRenderError && {
-            onError: (error: unknown) => {
-              onRenderError(error);
-              // What React's default onError does (it only logs).
-              console.error(error);
-            },
-          }),
+          onError: (error: unknown) => {
+            onRenderError?.(error);
+            (reportedByFizz ??= new Set()).add(error);
+            // What React's default onError does (it only logs).
+            if (originatedHere(error)) console.error(error);
+          },
         }),
       );
 
@@ -938,10 +1003,47 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
       return html.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
     } catch (error) {
-      reportRenderError(onError, error);
-      throw error;
+      // Fizz printed what it reported. Printed here: what never reached Fizz
+      // and started in this render, a bootstrap failure or a payload that did
+      // not decode without a Flight error row (no `digest`: the stream broke).
+      // A Flight copy printed with its original in the Flight render. The
+      // handler's catch skips what the html stage marked printed.
+      if (!isLoaderSignalError(error)) reportRenderError(onError, error);
+      if (originatedHere(error) && !reportedByFizz?.has(error)) {
+        console.error(error);
+      }
+      const originated = !payloadFailed && originatedHere(error);
+      if (shellErrorReachesHost(error)) {
+        onShellError?.({ error, originated });
+        throw error;
+      }
+      const answer = await answerShellError(
+        deps,
+        error,
+        recovery,
+        flight,
+        nonce,
+      );
+      onShellError?.({
+        error,
+        originated,
+        status: answer.status,
+        location: answer.location,
+      });
+      return answer.body;
     }
   };
+}
+
+/**
+ * In dev a shell error reaches the host as the original error object,
+ * so Vite's overlay shows its message and source-mapped stack. A loader's
+ * notFound()/redirect() is control flow and is answered as in production.
+ * This is the one gate: returning false here makes dev answer every shell
+ * error as production does.
+ */
+function shellErrorReachesHost(error: unknown): boolean {
+  return process.env.NODE_ENV !== "production" && !isLoaderSignalError(error);
 }
 
 /**
@@ -1269,6 +1371,7 @@ export function createShellResumeHandler<TEnv = unknown>(
               onError: (error) => {
                 opts.onError?.(error);
                 reportRenderError(onError, error);
+                if (originatedHere(error)) console.error(error);
               },
               nonce,
             }),

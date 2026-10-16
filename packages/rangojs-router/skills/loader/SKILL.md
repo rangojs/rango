@@ -980,10 +980,10 @@ export const ProductLoader = createLoader(async (ctx) => {
 
 Semantics by lane:
 
-| Signal       | Document load                                                                                                                                                                                                                                               | Client navigation                                 |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `notFound()` | Not-found UI resolves server-side (nearest `notFoundBoundary` → router option → default) and rides the envelope; the 404 STATUS is **opportunistic** — real only if the rejection beats Response construction. `ssr: false` (below) makes it deterministic. | 404 UI swaps in, URL preserved, payload stays 200 |
-| `redirect()` | 200 document, then a client-side replace to the target — **no document-lane 302 from loaders**; pre-stream redirect authority belongs to middleware                                                                                                         | Redirect envelope navigates to the target         |
+| Signal       | Document load, read inside `<Suspense>` or under `loading()`                                                                                                                                                                                                | Document load, read outside any `<Suspense>`                                                                                          | Client navigation                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `notFound()` | Not-found UI resolves server-side (nearest `notFoundBoundary` → router option → default) and rides the envelope; the 404 STATUS is **opportunistic** — real only if the rejection beats Response construction. `ssr: false` (below) makes it deterministic. | A real 404; the browser renders the not-found UI with the layouts kept (the recovery document, below)                                 | 404 UI swaps in, URL preserved, payload stays 200 |
+| `redirect()` | 200 document, then a client-side replace to the target                                                                                                                                                                                                      | A real 3xx (the redirect's own status) with `Location`; with `state`, the recovery document (200), then the client replace carries it | Redirect envelope navigates to the target         |
 
 With `loader(Def, { ssr: false })` the result is settled BEFORE the document
 flushes, so both signals are resolved server-side while the tree is built:
@@ -998,11 +998,51 @@ gets no shell, and its renders deliver the signal as above.
 A flagged loader that throws (anything but `notFound()` or `redirect()`) is
 resolved the same way: its route's `errorBoundary()` renders at the owning
 segment, else `createRouter({ defaultErrorBoundary })`, else the router's
-default error boundary (the "Internal Server Error" page) with a 500, as a
-handler that throws does; a declared `errorBoundary()` or
-`defaultErrorBoundary` answers 200 here. Layouts above it stay. On a `ppr` shell HIT whose
-run throws, the baked content shows first and the boundary replaces it at
-hydration, after React reports a hydration mismatch.
+default error boundary (the "Internal Server Error" page), with a 500 in every
+case, as a handler that throws does. Layouts above it stay. On a `ppr` shell HIT whose run throws, the status
+went out with the shell (200), the baked content shows first, and the boundary
+replaces it at hydration, after React reports a hydration mismatch.
+
+### A read outside any `<Suspense>` on a document load
+
+A read that throws with no `<Suspense>` above it (no `loading()`, no inline
+boundary) fails React's server render before any HTML exists: React's server
+renderer runs no error boundaries. In production the router then answers a
+small recovery document that carries the same page data, and the browser
+renders the page instead of hydrating it, so the document ends where a client
+navigation to the URL ends:
+
+| What the read throws       | Document status    | What the browser shows                                                                                             |
+| -------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| An error                   | 500                | The route's `errorBoundary()` (or `defaultErrorBoundary`) with the layouts kept; with neither, `RootErrorBoundary` |
+| `notFound()`               | 404                | The not-found UI, layouts kept                                                                                     |
+| `redirect()`               | the redirect's 3xx | The target (the browser follows `Location`)                                                                        |
+| `redirect(url, { state })` | 200                | The target, after the client replace that carries the state                                                        |
+
+The same holds for any client component that throws only during the server
+render: the recovery document is a 500, and the page renders in the browser.
+In dev an error keeps Vite's error overlay with the original stack;
+`notFound()` and `redirect()` are answered as in production. A `ppr` route
+never stores such a document as its shell, and the document cache never stores
+it. `onError` gets the loader's own report (phase `loader`), with the original
+error, and no second report for the document. `notFound()` and
+`redirect()` are control flow: neither is reported nor printed.
+
+A read under `loading()` or a `<Suspense>` streams the page with that
+boundary's fallback and keeps the 200 it already sent.
+
+### What the server prints
+
+A loader that throws prints its original error, message and stack, to the
+server console once per request, where it ran:
+`[RSC] Loader error (ProductLoader) /product/1:` and the error. That holds
+whatever renders it (a route `errorBoundary()`, `defaultErrorBoundary`, the
+default page, `RootErrorBoundary` in the browser), on every lane (a document,
+a client navigation, an action's revalidation, a prefetch, a `ppr` capture),
+in dev and production. Only the copy the browser receives is masked
+(`An error occurred` in production). A handler that reads the same loader
+with `ctx.use()` does not print it again. `notFound()` and `redirect()` never
+print.
 
 Session/auth gates belong in middleware (they are request-shaped, not
 data-shaped, and middleware CAN emit a real pre-stream 302). Data-dependent

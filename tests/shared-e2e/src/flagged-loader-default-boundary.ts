@@ -11,7 +11,8 @@ import { expectConsole } from "./console-guard.js";
 // Fixture (both apps): the holey-throws routes. The loader throws once the
 // probe's generation is bumped; the routes sit in a layout marked
 // `holey-layout`. `/holey-throws/bounded` declares an errorBoundary(): the
-// comparator that keeps the route's own boundary and its 200.
+// comparator that keeps the route's own boundary. It answers 500 too
+// (dc-q61): one status rule wherever the status has not gone out yet.
 
 export interface FlaggedLoaderDefaultBoundaryFixture {
   url: (path: string) => string;
@@ -73,7 +74,7 @@ export function defineFlaggedLoaderDefaultBoundaryTests(
     await expectDefaultErrorBoundary(page);
   });
 
-  test("a route with an errorBoundary() answers 200 with its own boundary", async ({
+  test("a route with an errorBoundary() answers 500 with its own boundary", async ({
     page,
   }) => {
     const probe = `bounded-${randomUUID().slice(0, 8)}`;
@@ -83,7 +84,7 @@ export function defineFlaggedLoaderDefaultBoundaryTests(
       fixture().url(`/holey-throws/bounded?probe=${probe}`),
     );
 
-    expect(response?.status()).toBe(200);
+    expect(response?.status()).toBe(500);
     await expect(page.getByTestId("holey-route-boundary")).toHaveText(
       /^route-boundary: /,
     );
@@ -114,6 +115,8 @@ export function defineFlaggedLoaderDefaultBoundaryTests(
     const response = await page.goto(url);
 
     expect(response?.headers()["x-rango-shell"]).toBe("HIT");
+    // The status went out with the shell.
+    expect(response?.status()).toBe(200);
     await expectDefaultErrorBoundary(page);
   });
 }

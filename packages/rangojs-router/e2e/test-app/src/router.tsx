@@ -287,6 +287,7 @@ export const router = createRouter<AppEnv>({
       message: context.error.message,
       pathname: context.pathname,
       actionId: context.actionId,
+      handledByBoundary: context.handledByBoundary,
       metadata: context.metadata,
     });
   },
