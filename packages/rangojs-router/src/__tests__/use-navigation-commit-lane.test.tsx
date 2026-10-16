@@ -23,6 +23,8 @@ import { useParams } from "../browser/react/use-params.js";
 import { usePathname } from "../browser/react/use-pathname.js";
 import { useSearchParams } from "../browser/react/use-search-params.js";
 import { commitInTransition } from "../browser/partial-update.js";
+import { emitNetworkError } from "../browser/network-error-handler.js";
+import { NetworkError } from "../errors.js";
 import { LoaderStore } from "../loader-store.js";
 import type { NavigationUpdate } from "../browser/types.js";
 import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
@@ -51,6 +53,8 @@ const ORIGIN = "http://localhost";
 let controller: EventController;
 let loaders: LoaderStore;
 let log: string[];
+// What each commit put on screen (Location's layout effect).
+let commits: string[];
 let setTree!: (tree: ReactNode) => void;
 let stub: ReturnType<typeof installViewTransitionStub> | undefined;
 let form: "selector" | "full state";
@@ -75,6 +79,9 @@ function Location({ idle }: { idle: boolean }): ReactNode {
   const id = useParams((params) => params.id);
   const entry = `${idle ? "idle" : "loading"} ${pathname}?${search} id=${id}`;
   log.push(entry);
+  useLayoutEffect(() => {
+    commits.push(entry);
+  });
   return <p data-testid="reader">{entry}</p>;
 }
 
@@ -182,7 +189,8 @@ async function startInsideHeldCommit(
         </>,
       );
       handle = controller.startNavigation("/items/1?tag=b");
-      controller.flushRouteState();
+      // NavigationProvider's flush for a tree handed over in a transition.
+      controller.flushRouteState("anchor");
     });
   });
   return handle;
@@ -218,6 +226,7 @@ function dedupe(list: string[]): string[] {
 
 beforeEach(() => {
   log = [];
+  commits = [];
   extra = null;
   stub = undefined;
   loaders = new LoaderStore();
@@ -433,7 +442,7 @@ describe.each([
       expect(reader()).toBe("idle /items/1?tag=a&tag=b id=1");
     });
 
-    it("a navigation aborted while another commit is held reports idle at once, and nothing reports loading once that commit lands", async () => {
+    it("a navigation aborted while another commit is held reports idle at once, and idle again once that commit lands", async () => {
       const result = mount(vt);
       const reader = () => result.getByTestId("reader").textContent;
       const hold = deferred();
@@ -444,6 +453,62 @@ describe.each([
       expect(reader()).toBe("idle /items/1?tag=a&tag=b id=1");
 
       await release(hold, reader, "idle /items/1?tag=a&tag=b id=1");
+      // The abort's idle came from the timer while the commit was held: it
+      // waited, and that commit lands with the start flushed inside it
+      // (loading), then its release brings idle in the same task.
+      expect(dedupe(commits)).toEqual([
+        "idle /items/1?tag=a&tag=b id=1",
+        "loading /items/1?tag=a&tag=b id=1",
+        "idle /items/1?tag=a&tag=b id=1",
+      ]);
+    });
+
+    // A newer navigation that fails while a page is held: the bridge hands
+    // the error tree over in a transition (emitNetworkError), then disposes
+    // the navigation. The hand-over anchors like any page, so idle waits for
+    // the error tree's commit instead of landing on the page being left. The
+    // error tree is held here so its commit is still pending when the
+    // dispose's notification runs, as a view transition or the scheduler's
+    // order can leave it in a browser.
+    it("a newer navigation that fails while a page is held never shows idle with the old search", async () => {
+      const result = mount(vt);
+      const reader = () => result.getByTestId("reader").textContent;
+      const hold = deferred();
+
+      const handle = controller.startNavigation("/items/1?tag=b");
+      await notified();
+      await commit(handle, "/items/1?tag=b", { id: "1" }, hold.promise, vt);
+      const second = controller.startNavigation("/items/1?tag=c");
+      await notified();
+      await act(async () => {
+        emitNetworkError(
+          (update) => {
+            setTree(
+              <>
+                <p data-testid="error-screen">error</p>
+                <Hold until={hold.promise} />
+              </>,
+            );
+            controller.flushRouteState(
+              update.inTransition ? "anchor" : "release",
+            );
+          },
+          new NetworkError("offline", { url: "/items/1?tag=c" }),
+          "/items/1",
+        );
+        second[Symbol.dispose]();
+      });
+      await notified();
+      expect(reader()).toBe("loading /items/1?tag=a&tag=b id=1");
+
+      await act(async () => {
+        hold.resolve();
+        await hold.promise;
+      });
+      await waitFor(() =>
+        expect(result.queryByTestId("error-screen")).not.toBeNull(),
+      );
+      expect(sinceStart()).not.toContain("idle /items/1?tag=a&tag=b id=1");
     });
   },
 );

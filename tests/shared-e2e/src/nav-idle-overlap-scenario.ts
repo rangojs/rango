@@ -13,8 +13,11 @@ import { expect, test, type Page } from "@playwright/test";
  * 300 ms. The external host answers 204 here, so the document stays while
  * React still holds the page.
  *
- * A recorder samples the chips on every animation frame and after every DOM
- * mutation: once chip a is gone, no sample may show it again.
+ * A recorder samples the chips, the server's tags and useNavigation's state
+ * (NavIdleFilters' data-idle, data-full-idle) on every animation frame and
+ * after every DOM mutation: once chip a is gone, no sample may show it again,
+ * no sample shows idle over the page being left, and no animation frame shows
+ * loading over the new page.
  */
 
 export interface NavIdleOverlapScenarioOptions {
@@ -25,7 +28,14 @@ export interface NavIdleOverlapScenarioOptions {
   externalUrl: string;
 }
 
-type Sample = { chips: string; tags: string };
+/** One recorded screen: an animation frame, or the DOM after a mutation. */
+type Sample = {
+  kind: "frame" | "mutation";
+  chips: string;
+  tags: string;
+  idle: string;
+  fullIdle: string;
+};
 type Overlap = { event: string; tags: string; search: string };
 type NavIdleEntry = { idle: boolean; fullIdle: boolean; search: string };
 type ProbeWindow = {
@@ -62,7 +72,7 @@ async function open(
     w.__chipSamples = [];
     w.__navIdleOverlap = [];
     w.__navIdleLog = [];
-    const sample = (): void => {
+    const sample = (kind: Sample["kind"]): void => {
       const chips = [
         ...document.querySelectorAll('[data-testid^="nav-idle-remove-"]'),
       ]
@@ -71,15 +81,26 @@ async function open(
       const tags =
         document.querySelector('[data-testid="nav-idle-server-tags"]')
           ?.textContent ?? "";
-      w.__chipSamples!.push({ chips, tags });
+      const list = document.querySelector<HTMLElement>(
+        '[data-testid="nav-idle-chips"]',
+      );
+      w.__chipSamples!.push({
+        kind,
+        chips,
+        tags,
+        idle: list?.dataset.idle ?? "",
+        fullIdle: list?.dataset.fullIdle ?? "",
+      });
     };
-    new MutationObserver(sample).observe(document.body, {
+    new MutationObserver(() => sample("mutation")).observe(document.body, {
       childList: true,
       subtree: true,
       characterData: true,
+      attributes: true,
+      attributeFilter: ["data-idle", "data-full-idle"],
     });
     const frame = (): void => {
-      sample();
+      sample("frame");
       requestAnimationFrame(frame);
     };
     requestAnimationFrame(frame);
@@ -110,17 +131,41 @@ async function expectChipNeverReturns(page: Page): Promise<void> {
     { samples: after.length, showingChipA: back.length, first: back[0] },
     "samples showing chip a again",
   ).toEqual({ samples: after.length, showingChipA: 0, first: undefined });
-  expect(after[after.length - 1]).toEqual({ chips: "b", tags: "b" });
+  const end = after[after.length - 1];
+  expect({ chips: end.chips, tags: end.tags, idle: end.idle }).toEqual({
+    chips: "b",
+    tags: "b",
+    idle: "true",
+  });
   // The cause, on the hooks: from the navigation's loading on, no commit had
   // idle with the old search (the click's own commit, before loading, has),
-  // through a selector or through the full state.
+  // through a selector or through the full state; and no recorded screen
+  // showed idle over the page being left.
   for (const read of ["idle", "fullIdle"] as const) {
     const fromLoading = log.slice(log.findIndex((e) => !e[read]));
     expect(
       fromLoading.filter((e) => e[read] && e.search === "tag=a&tag=b"),
       `commits with ${read} and the old search`,
     ).toEqual([]);
+    const screens = after.slice(after.findIndex((e) => e[read] === "false"));
+    expect(
+      screens.filter((e) => e[read] === "true" && e.tags === "a,b").length,
+      `screens with ${read} over the page being left`,
+    ).toBe(0);
   }
+  // The page commits with the hold's loading and its release brings idle
+  // right after (docs/internal/execution-model.md): in the same task, or in
+  // a view transition when its `ready` resolves. No animation frame shows
+  // loading over the new page.
+  expect(
+    after.filter(
+      (e) =>
+        e.kind === "frame" &&
+        e.tags === "b" &&
+        (e.idle === "false" || e.fullIdle === "false"),
+    ).length,
+    "animation frames with loading over the new page",
+  ).toBe(0);
 }
 
 async function overlaps(page: Page): Promise<Overlap[]> {
