@@ -5,10 +5,15 @@ import {
   useContext,
   useState,
   useEffect,
+  useOptimistic,
   type Context,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
-import type { EventController, NavigationEntry } from "../event-controller.js";
+import type {
+  EventController,
+  NavigationEntry,
+  RouteStateSignal,
+} from "../event-controller.js";
 
 /**
  * Context for Link component to provide its destination URL
@@ -75,10 +80,11 @@ function isPendingFor(
 /**
  * Hook to track the pending state of a Link component
  *
- * Must be used inside a Link component. Returns `{ pending: true }` from the
- * click until the page the navigation brings commits: under transition()
- * while React holds that page, and through a server redirect until the
- * target page commits. A newer navigation ends it at once.
+ * Must be used inside a Link component. Returns `{ pending: true }` while a
+ * navigation to the link's destination is in flight, until the page it
+ * brings commits: under transition() while React holds that page, and
+ * through a server redirect until the target page commits. A newer
+ * navigation ends it at once.
  *
  * Useful for showing inline loading indicators on individual links.
  *
@@ -109,6 +115,7 @@ export function useLinkStatus(): LinkStatus {
       !ctx.eventController.getHydrationSnapshot() &&
       isPendingFor(linkTo, visibleNavigation(ctx.eventController), origin),
   );
+  const [shown, show] = useOptimistic(pending);
 
   // The value commits in the lane of the notification that carries it, as
   // useNavigation's does: urgent from the click's notification (a task of its
@@ -123,17 +130,26 @@ export function useLinkStatus(): LinkStatus {
   // instead of spinning beside the newer link. A reader whose value did not
   // move bails out in React. A background navigation is not a newer one: an
   // action's refetch while a page is held leaves its link pending.
+  //
+  // A start can reach the hook inside another flow's commit (an action's,
+  // handed to React before the click's notification went out), whose
+  // transition React may hold. There it shows through an optimistic value
+  // set in that transition, as the loader's stream pin does
+  // (loader-store.ts announcePendingStreams): urgent now, reverted with that
+  // commit, never in a commit of its own.
   useEffect(() => {
     if (!ctx || linkTo === null) {
       return;
     }
 
     let last: NavigationEntry | null | undefined;
-    const update = () => {
+    const update = (signal?: RouteStateSignal) => {
       const navigation = visibleNavigation(ctx.eventController);
       if (navigation === last) return;
       last = navigation;
-      setPending(isPendingFor(linkTo, navigation, origin));
+      const next = isPendingFor(linkTo, navigation, origin);
+      setPending(next);
+      if (next && signal === "anchor") show(true);
     };
 
     // Catch-up: re-read state synchronously on mount before subscribing, so a
@@ -150,5 +166,5 @@ export function useLinkStatus(): LinkStatus {
     return { pending: false };
   }
 
-  return { pending };
+  return { pending: shown };
 }

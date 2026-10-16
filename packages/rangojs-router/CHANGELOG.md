@@ -26,11 +26,14 @@ Under `transition()`, React then held the page being left for the rest of the
 wait, with the spinner already gone. Through a server redirect, the clicked
 link's spinner ended before the redirect was read.
 
-**Now.** `pending` is `true` from the click until the commit that shows the
-destination: its `loading()` skeleton, or under `transition()` the page
-itself, which React holds until it is ready. Through a server redirect the
-clicked link stays pending until the target page commits. A newer
-navigation, an abort or a failure ends it at once. `renderRoute` does the
+**Now.** `pending` is `true` from the click's notification until the commit
+that shows the destination: its `loading()` skeleton, or under
+`transition()` the page itself, which React holds until it is ready.
+Through a server redirect the clicked link stays pending until the target
+page commits. A newer navigation or an abort ends it at once, and a failure
+ends it with the error. `useNavigation().pendingUrl` is unchanged: it still
+turns `null` when the response arrives, so while the response streams a
+link reads `pending` and `pendingUrl` is `null`. `renderRoute` does the
 same: `pending` is held with a `transition` navigate()'s commit.
 
 ### Fixed: a server action during a held navigation leaves the page its transition types
@@ -40,9 +43,10 @@ change while React held the next page (a Save pressed during the wait)
 committed in a transition of its own and took the page's transition types,
 so a `<ViewTransition>` keyed by `push` did not animate the page.
 
-**Now.** `useAction()` and `useLinkStatus()` set their values urgently or
-with the page and start no transition of their own, so the page's commit
-carries its types.
+**Now.** `useAction()` sets every state urgently, and `useLinkStatus()`
+sets `pending` urgently and ends it with the page; neither starts a
+transition of its own, so the page's commit carries its types. A
+`useAction()` value never waits for the page.
 
 ## 0.26.4 (2026-10-16)
 

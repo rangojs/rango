@@ -114,9 +114,10 @@ export type UpdateCallback = (update: {
 }) => void;
 
 /**
- * State change listener
+ * State change listener. `signal`: set when a payload update flushed the
+ * notification (flushRouteState), "anchor" inside a commit's transition.
  */
-export type StateListener = () => void;
+export type StateListener = (signal?: RouteStateSignal) => void;
 
 /**
  * Action state listener
@@ -276,7 +277,9 @@ export interface EventController {
    * `signal`: handle readers learn how the page is handed over. After
    * "anchor" (a page in a transition) values that arrive before
    * releaseRouteState() wait for it (useCommitAnchoredState,
-   * react/use-handle.ts).
+   * react/use-handle.ts). State listeners get it with a queued
+   * notification: useLinkStatus shows a start that arrives inside the
+   * transition at once.
    */
   flushRouteState(signal?: RouteStateSignal): void;
   /**
@@ -462,18 +465,18 @@ function matchesActionId(
 
 interface DebouncedNotifier {
   schedule(): void;
-  flush(signal?: RouteStateSignal): void;
+  flush(signal?: RouteStateSignal, always?: boolean): void;
 }
 
 // Batch rapid notifications into one task to prevent render storms. The
 // explicit flush lets a React update owner preserve its scheduling lane; a
-// signal is delivered even with nothing queued.
+// signal is delivered even with nothing queued, unless `always` is false.
 function makeDebouncedNotifier(
   listeners: Set<(signal?: RouteStateSignal) => void>,
 ): DebouncedNotifier {
   let timeout: ReturnType<typeof setTimeout> | null = null;
-  const flush = (signal?: RouteStateSignal) => {
-    if (timeout === null && !signal) return;
+  const flush = (signal?: RouteStateSignal, always = signal !== undefined) => {
+    if (timeout === null && !always) return;
     clearTimeout(timeout ?? undefined);
     timeout = null;
     notifyListeners(
@@ -642,7 +645,7 @@ export function createEventController(
   const notifyHandles = makeDebouncedNotifier(handleListeners);
 
   function flushRouteState(signal?: RouteStateSignal): void {
-    notifyStateListeners.flush();
+    notifyStateListeners.flush(signal, false);
     notifyHandles.flush(signal);
   }
 
