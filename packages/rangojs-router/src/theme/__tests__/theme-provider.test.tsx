@@ -186,6 +186,49 @@ describe("post-mount cookie re-sync (PPR shell HIT theme fidelity)", () => {
   });
 });
 
+// dc-t93: a server-render shell error answers a recovery document the browser
+// renders with createRoot. React mounts <html> fresh and drops the class the
+// head's theme script set, so the provider applies its theme again, in a
+// layout effect, before the first paint. Here the stored theme equals
+// initialTheme, so the post-mount re-sync has nothing to change.
+describe("a document rendered instead of hydrated", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    document.documentElement.className = "";
+  });
+
+  it("applies the visitor's theme to <html> on mount", () => {
+    document.cookie = "theme=dark; Path=/";
+
+    renderProvider({ initialTheme: "dark" });
+
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("mutates no class on <html> when the head script already applied the theme", () => {
+    document.documentElement.className = "dark";
+    document.cookie = "theme=dark; Path=/";
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => {
+      mutations.push(...records);
+    });
+    observer.observe(document.documentElement, { attributes: true });
+
+    renderProvider({ initialTheme: "dark" });
+    mutations.push(...observer.takeRecords());
+    observer.disconnect();
+
+    expect(mutations).toEqual([]);
+    expect(document.documentElement.className).toBe("dark");
+  });
+
+  it("applies initialTheme when no theme is stored", () => {
+    renderProvider({ initialTheme: "light" });
+
+    expect(document.documentElement.classList.contains("light")).toBe(true);
+  });
+});
+
 // HYDRATION PARITY: the initializer is both the server (SSR/resume) render and
 // the client's hydration render — it must NEVER read cookie/localStorage. The
 // server renders with the payload's initialTheme (on a PPR shell HIT that is

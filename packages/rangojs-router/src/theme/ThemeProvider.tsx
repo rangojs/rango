@@ -14,6 +14,7 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   useRef,
@@ -65,6 +66,19 @@ function readThemeFromStorage(storageKey: string): string | null {
   }
 }
 
+/**
+ * The visitor's explicit stored theme: the first VALID of the cookie and
+ * localStorage. An empty/garbage cookie value (e.g. a deleted cookie leaving
+ * "theme=") must not shadow a valid localStorage value behind a bare
+ * null-coalesce.
+ */
+function readStoredTheme(config: ResolvedThemeConfig): Theme | null {
+  return ([
+    readThemeFromCookie(config.storageKey),
+    readThemeFromStorage(config.storageKey),
+  ].find((v) => v !== null && isValidTheme(v, config)) ?? null) as Theme | null;
+}
+
 function writeThemeToCookie(storageKey: string, theme: Theme): void {
   if (typeof document === "undefined") return;
 
@@ -97,15 +111,16 @@ function applyThemeToDocument(theme: Theme, config: ResolvedThemeConfig): void {
   if (config.attribute === "class") {
     for (const t of config.themes) {
       const v = config.value[t] || t;
-      el.classList.remove(v);
+      if (v !== value && el.classList.contains(v)) el.classList.remove(v);
     }
-    el.classList.add(value);
+    // Applying the active theme again mutates nothing (a hydrated page).
+    if (!el.classList.contains(value)) el.classList.add(value);
   } else {
     el.setAttribute(config.attribute, value);
   }
 
   if (config.enableColorScheme) {
-    el.style.colorScheme = resolved;
+    if (el.style.colorScheme !== resolved) el.style.colorScheme = resolved;
   }
 }
 
@@ -129,6 +144,16 @@ export function ThemeProvider({
 
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>("light");
 
+  // A document rendered with createRoot instead of hydrated (the recovery
+  // document a server-render shell error answers, ssr/shell-error-document.tsx)
+  // mounts <html> fresh: React drops every attribute the head's theme script
+  // set. Apply the theme again before the first paint. On a hydrated document
+  // this writes what the script already applied.
+  useLayoutEffect(() => {
+    applyThemeToDocument(readStoredTheme(config) ?? theme, config);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     setSystemTheme(getSystemTheme());
     // Re-sync state from an EXPLICITLY stored theme after mount. initialTheme
@@ -143,17 +168,10 @@ export function ThemeProvider({
     // Only an explicit cookie/localStorage value re-syncs — a defaultTheme
     // fallback must not override a server-provided initialTheme when the
     // visitor never chose a theme.
-    // First VALID candidate wins — an empty/garbage cookie value (e.g. a
-    // deleted cookie leaving "theme=") must not shadow a valid localStorage
-    // value behind a bare null-coalesce.
-    const explicit =
-      [
-        readThemeFromCookie(config.storageKey),
-        readThemeFromStorage(config.storageKey),
-      ].find((v) => v !== null && isValidTheme(v, config)) ?? null;
+    const explicit = readStoredTheme(config);
     if (explicit !== null && explicit !== theme) {
-      setThemeState(explicit as Theme);
-      applyThemeToDocument(explicit as Theme, config);
+      setThemeState(explicit);
+      applyThemeToDocument(explicit, config);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

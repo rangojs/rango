@@ -61,6 +61,7 @@ import {
   findNearestNotFoundBoundary as findNotFoundBoundary,
   invokeOnError,
 } from "./router/error-handling.js";
+import { printServerError } from "./server/print-server-error.js";
 
 // Extracted module factories
 import { createSegmentWrappers } from "./router/segment-wrappers.js";
@@ -497,8 +498,20 @@ export function createRouter<TEnv = any>(
     // Report streaming handler errors to onError as a side-effect.
     // The rejection still propagates to the RSC stream for client error boundaries.
     // Captures request context eagerly (closure) so the catch handler has full context.
-    if (reqCtx && onError) {
+    // Printed here, where it originated, whether a boundary recovers it or
+    // Flight reports it again (printed once per request).
+    if (reqCtx) {
       tracked.catch((error) => {
+        printServerError(
+          error,
+          {
+            label: "Handler error",
+            name: errorContext?.segmentId,
+            pathname: reqCtx.url.pathname,
+          },
+          reqCtx,
+        );
+        if (!onError) return;
         callOnError(error, "handler", {
           request: reqCtx.request,
           url: reqCtx.url,

@@ -9,6 +9,7 @@ export interface OnErrorRecord {
   phase: string;
   message: string;
   pathname?: string;
+  handledByBoundary?: boolean;
   actionId?: string;
   metadata?: Record<string, unknown>;
 }

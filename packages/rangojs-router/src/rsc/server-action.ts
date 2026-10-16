@@ -17,9 +17,11 @@
 
 import { requestHeaders } from "../server/request-headers.js";
 import {
+  _getRequestContext,
   getRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
+import { printServerError } from "../server/print-server-error.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { resolveActionRefId } from "../router/is-action.js";
 import type { TraceSpan } from "../router/tracing.js";
@@ -161,6 +163,12 @@ export async function executeServerAction<TEnv>(
       actionId,
       handledByBoundary: !!decodeBoundary,
     });
+    // The server log gets the decode error itself, not the sanitized wrapper.
+    printServerError(
+      error,
+      { label: "Action decode error", name: actionId, pathname: url.pathname },
+      _getRequestContext(),
+    );
 
     if (decodeBoundary) {
       return {
@@ -248,6 +256,14 @@ export async function executeServerAction<TEnv>(
 
     returnValue = { ok: false, data: actionResultData };
     actionStatus = 500;
+    // Flight writes the error into the action's result without reporting it:
+    // printed here, once. A thrown non-redirect Response prints the Error that
+    // replaced it.
+    printServerError(
+      actionResultData,
+      { label: "Action error", name: actionId, pathname: url.pathname },
+      _getRequestContext(),
+    );
 
     // Try to render error boundary.
     // Report the action error first so it is not lost if matchError throws.

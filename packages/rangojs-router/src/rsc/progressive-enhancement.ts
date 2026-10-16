@@ -8,9 +8,11 @@
 
 import { bodylessHeaders, requestHeaders } from "../server/request-headers.js";
 import {
+  _getRequestContext,
   getRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
+import { printServerError } from "../server/print-server-error.js";
 import { createSsrHtmlStage } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
@@ -146,7 +148,6 @@ async function runFormAction<TEnv>(
     if (failure.boundary) {
       return { reactFormState: null, directActionId: null, failure };
     }
-    console.error("[RSC] Progressive enhancement form parse error:", error);
     return createResponseWithMergedHeaders(null, { status: 400 });
   }
 
@@ -225,9 +226,6 @@ async function runFormAction<TEnv>(
 
   if (failure?.boundary) {
     return { reactFormState: null, directActionId, failure };
-  }
-  if (failure) {
-    console.error("[RSC] Progressive enhancement action error:", failure.error);
   }
 
   // Handle Response returned from action during PE.
@@ -511,6 +509,17 @@ async function matchPeFailure<TEnv>(
   if (actionRan) {
     getRequestContext()._inActionRevalidation = true;
   }
+
+  // Printed here, once, whether or not a boundary renders it.
+  printServerError(
+    error,
+    {
+      label: actionRan ? "Action error" : "Action form parse error",
+      name: actionId ?? undefined,
+      pathname: url.pathname,
+    },
+    _getRequestContext(),
+  );
 
   let boundary: MatchResult | null;
   try {

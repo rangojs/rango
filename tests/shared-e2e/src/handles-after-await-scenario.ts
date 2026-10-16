@@ -33,7 +33,9 @@ const LATE_PUSH_MESSAGE = /was pushed after handle collection completed/;
 const DEFER_HINT =
   /reserve the slot there with ctx\.use\(Handle\)\.defer\(\) and resolve it from the component/;
 // The RSC error production renders in place of the late-push message.
-const PRODUCTION_RENDER_ERROR = /Server Components render/i;
+// A production document answers the recovery document, whose client render
+// ends on the root error boundary; production omits the message.
+const PRODUCTION_DOCUMENT_ERROR = "Internal Server Error";
 
 async function waitForHydration(page: Page): Promise<void> {
   await page.waitForFunction(
@@ -436,7 +438,9 @@ export function runHandlesAfterAwaitTests(
       expect(response?.status()).toBe(500);
       await expect(
         page
-          .getByText(options.production ? PRODUCTION_RENDER_ERROR : DEFER_HINT)
+          .getByText(
+            options.production ? PRODUCTION_DOCUMENT_ERROR : DEFER_HINT,
+          )
           .first(),
       ).toBeVisible({ timeout: NAV_TIMEOUT });
 

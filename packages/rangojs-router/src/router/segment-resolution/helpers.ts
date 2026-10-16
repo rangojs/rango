@@ -17,7 +17,11 @@ import {
   createNotFoundSegment,
   resolveNotFoundFallback,
 } from "../error-handling.js";
-import { getRequestContext } from "../../server/request-context.js";
+import { printServerError } from "../../server/print-server-error.js";
+import {
+  _getRequestContext,
+  getRequestContext,
+} from "../../server/request-context.js";
 import { DefaultErrorFallback } from "../../default-error-boundary.js";
 import type { EntryData } from "../../server/context";
 import type {
@@ -294,6 +298,13 @@ export function catchSegmentError<TEnv>(
       params,
     );
   }
+
+  // The client gets the masked ErrorInfo; the original prints here.
+  printServerError(
+    error,
+    { label: "Handler error", name: entry.shortCode, pathname },
+    _getRequestContext(),
+  );
 
   const fallback = deps.findNearestErrorBoundary(entry);
   const segmentType: ErrorInfo["segmentType"] = entry.type;

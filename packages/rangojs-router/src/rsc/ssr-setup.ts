@@ -23,6 +23,7 @@ import {
 } from "../router/content-negotiation.js";
 import { _getRequestContext } from "../server/request-context.js";
 import { renderedLocation } from "./full-payload.js";
+import { markServerErrorPrinted } from "../server/print-server-error.js";
 
 export type SSRSetup = readonly [SSRModule, SSRStreamMode];
 
@@ -134,9 +135,30 @@ export function createSsrHtmlStage<TEnv>(
           origin: location.origin,
           // A component that throws inside a Suspense boundary leaves an
           // errored boundary in a completed document; the document cache
-          // reads the list before storing it.
+          // reads the list before storing it. renderHTML printed what Fizz
+          // reports, or it was printed where it originated (a loader's or a
+          // Flight copy), so the writer that refuses it prints nothing more.
           onError: (error) => {
             renderErrors?.push(error);
+            markServerErrorPrinted(error, reqCtx);
+          },
+          // Reported once, phase "rendering", only when the error started in
+          // the SSR render: a copy (a loader's masked rebuild, a Flight error,
+          // a payload failure) was reported with its original where it started,
+          // and a loader's notFound()/redirect() is control flow. Marked
+          // printed, so the handler's catch neither reports nor prints what
+          // dev rethrows.
+          onShellError: ({ error, originated, status, location }) => {
+            if (status !== undefined) reqCtx?._setStatus(status);
+            if (location) reqCtx?.res.headers.set("Location", location);
+            markServerErrorPrinted(error, reqCtx);
+            if (!originated) return;
+            options.ctx.callOnError(error, "rendering", {
+              request: options.request,
+              url: options.url,
+              env: options.env,
+              handledByBoundary: false,
+            });
           },
         }),
       ...(options.init && { init: options.init }),

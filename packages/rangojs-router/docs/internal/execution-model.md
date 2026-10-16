@@ -938,6 +938,152 @@ Pinned by `router/__tests__/streamed-handler-boundary.test.ts`,
 and the `streaming-errors` e2e describes in `e2e/error-boundary.test.ts` and
 `tests/cloudflare-basic/e2e/streamed-handler-boundary.test.ts`.
 
+### A server-render shell error answers a recovery document
+
+Where a throw lands decides the document. In the RSC render it reaches a
+segment boundary (`catchSegmentError`), and the payload carries the fallback.
+Inside a `<Suspense>` during SSR, Fizz client-renders that boundary and the
+router's boundaries run in the browser. Outside every `<Suspense>` it fails
+Fizz's shell: Fizz runs no error boundaries, so `renderToReadableStream`
+rejects. That is a loader read of a failed result (`decodeLoaderEntry`), its
+`notFound()`/`redirect()` marker, or any client component that throws only on
+the server. A route `errorBoundary()` changes nothing there; before dc-t93 the
+host answered its raw 500 (a stack with server paths in production).
+
+`renderHTML` (`ssr/index.tsx`) now answers it (`ssr/shell-error-document.tsx`
+`answerShellError`), in this order:
+
+1. A loader `redirect()` with no state: a real 3xx with `Location`, empty body
+   (the marker carries the redirect's own `status`, `loader-resolution.ts`).
+   With `state` it falls through: the state rides the history entry the
+   client replace writes, which a 3xx cannot carry (dc-q60).
+2. The payload decoded and the tree built: a recovery document,
+   `<html data-rango-ssr-error>`, a `<noscript>` heading (a JavaScript visitor
+   sees the client render's boundary, not a flash of the heading), the theme
+   script, the same bootstrap and nonce, and the untouched second branch of
+   the Flight tee. 404 for a `notFound()` marker, 200 for a `redirect()` with
+   state (as the same redirect inside a `<Suspense>`: the document, then the
+   client replace), 500 otherwise. The browser entry
+   (`vite/plugins/virtual-entries.ts`) renders it with `createRoot` instead of
+   `hydrateRoot`, so the document ends where a client navigation to the URL
+   ends. React's client render drops the `<html>` attributes the head script
+   set, so `ThemeProvider` applies its theme again in a layout effect (it
+   removes no class it is about to add, so a hydrated page mutates nothing).
+3. The payload did not decode, or the tree build rejected
+   (`createSsrRootComponent`'s `onTreeError`): a static document with no
+   scripts and nothing from the error. The browser would build the same tree
+   from the same payload and fail the same way.
+
+The status and `Location` reach the response through the html stage's
+`onShellError` (`rsc/ssr-setup.ts`), which writes the request stub before the
+response is built.
+
+Dev: an error reaches the host as the original error object, so Vite's
+overlay shows its message and source-mapped stack (dc-q62). The overlay page
+does not reload when the file is fixed (measured on dc-t93); the recovery path
+updates in place. `shellErrorReachesHost` in `ssr/index.tsx` is the one gate.
+`notFound()` and `redirect()` take the production path in dev too.
+
+Rules that are easy to break:
+
+- One report per failure. A loader failure keeps its own `onError` report
+  (phase `loader`). The html stage reports the shell error once (phase
+  `rendering`, `handledByBoundary: false`) and marks it printed, so the
+  handler's render catch neither reports (`routing`) nor prints it when dev
+  rethrows it (`wasServerErrorPrinted`). A payload failure was reported by the
+  Flight render, and so is an error React decoded from Flight
+  (`isFlightDecodedError`: it sets `digest`, so the html stage skips its
+  copy); a `notFound()`/`redirect()` marker is control flow and is never
+  reported or printed (`isLoaderSignalError`, name-based because the RSC and
+  SSR environments hold different module instances of the marker symbols).
+- One console line per failure: see "Server errors print once, where they
+  originate" below. On the SSR side `renderHTML` prints only what originated
+  in its render (`originatedHere`: not a loader's rebuild, not a Flight copy,
+  not a signal). The host's own dev print stays.
+- Never stored. The document cache refuses a 404/500 by status
+  (`shouldCacheResponse`) and the 200 for a redirect with state through
+  `_renderErrors` (`throwIfRenderErrored`): Fizz's onError already put the
+  error there. The PPR capture and the build-time shell capture run
+  `captureShellHTML`, which still rejects on a shell error; they never call
+  `renderHTML`.
+- An `ssr: false` loader's error answers 500 whichever boundary renders it
+  (dc-q61, `useDefaultErrorBoundary` in `wrapLoaderWithErrorHandling`). It
+  settles before the first flush, so the write lands; on a shell HIT the
+  status went out with the shell and the write is inert.
+
+Pinned by `ssr/__tests__/shell-error-document.test.tsx` (real Fizz, every
+answer, dev rethrows the same instance), `ssr/__tests__/shell-handlers.test.tsx`
+(capture still rejects),
+`cache/__tests__/document-cache-shell-error.test.tsx` (never stored, onError
+once), `vite/__tests__/virtual-entry-browser.test.ts`,
+`theme/__tests__/theme-provider.test.tsx`, the userland
+`testing/__tests__/render-route-shell-error.test.tsx` and
+`loader-default-error-boundary.rsc-test.tsx`, and the `ssr shell error`
+e2e describes in `e2e/ssr-shell-error.test.ts`,
+`e2e/ssr-shell-error-mini.test.ts` and
+`tests/cloudflare-basic/e2e/ssr-shell-error.test.ts` (dev + production).
+
+### Server errors print once, where they originate
+
+The browser gets a masked copy of a server failure (`createErrorInfo`,
+React's Flight error rows); the server console gets the original, message and
+stack, once per request, in dev and production and on every lane.
+`printServerError` (`server/print-server-error.ts`, a leaf module the cache
+layer reads too) is the one place that prints:
+`[RSC] <label> (<name>) <pathname>:` and the error object. It records each
+error object in the request context's `_printedErrors`, so a second place that
+sees the same object prints nothing (a loader error a handler rethrows through
+`ctx.use()`, a streamed handler rejection Flight reports again). The record is
+per request: a module-level rejection shared by two requests prints in each.
+
+The origins that call it:
+
+| Origin                                                 | Where                                                                                                        | Label                                     |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| A loader throws (any boundary, any lane)               | `wrapLoaderWithErrorHandling` (`loader-resolution.ts`)                                                       | `Loader error`                            |
+| A server component throws in Flight                    | `createFlightStage` onError (`rsc/render-pipeline.ts`)                                                       | `Rendering error`                         |
+| A handler throws, a boundary renders it                | `catchSegmentError` (`segment-resolution/helpers.ts`)                                                        | `Handler error`                           |
+| A streamed handler rejects                             | `trackHandler` (`router.ts`)                                                                                 | `Handler error`                           |
+| A JS action throws or its arguments do not decode      | `executeServerAction` (`rsc/server-action.ts`); Flight writes the error into the result without reporting it | `Action error`, `Action decode error`     |
+| A no-JS form action throws, or its body does not parse | `matchPeFailure` (`rsc/progressive-enhancement.ts`)                                                          | `Action error`, `Action form parse error` |
+| A fetchable loader throws or fails to serialize        | `rsc/loader-fetch.ts`                                                                                        | `Loader error`, `Rendering error`         |
+| The action phase or the render throws past every catch | the action and render catches (`rsc/handler.ts`)                                                             | `Action error`, `Error`                   |
+
+Rules that are easy to break:
+
+- Control flow never prints: `notFound()`, a thrown `Response` or a loader's
+  redirect marker, `Skip`, and the render's own cancellation
+  (`isAbortedRender` in `errors.ts`: React's "The render was aborted by the
+  server", or an `AbortError` once the request's signal is aborted). A
+  loader's own `AbortController` or fetch timeout on a live request is a
+  failure and prints. A `rewrite()` thrown from a loader or a handler is a
+  misuse that renders a 500 and prints; the rewrite passes
+  (`rsc/rewrite-passes.ts`) consume a middleware's rewrite before any print
+  site sees it.
+- The SSR render never prints what it received from the server: a loader's
+  masked rebuild (`loaderResultError` marks it, `isRebuiltLoaderError`), a
+  Flight copy (`digest`), or its own abort. It prints a component that throws
+  in its own render (live SSR and the resume of a `ppr` HIT's holes). The html
+  stage and the HIT tail's resume (`rsc/rsc-rendering.ts`) record every error
+  Fizz reports as done (`markServerErrorPrinted`), since the SSR render
+  printed it or its original printed upstream.
+- A writer that refuses a failed render (the document cache, `cacheRoute`, a
+  `ppr` capture) logs through `reportCacheError`, which skips the error when
+  `wasServerErrorPrinted`: the refusal is reported to `onError`, the error is
+  not printed twice.
+- A Flight onError can fire outside the request's ALS frame: pass the request
+  context captured when the render started.
+- In dev, Vite prints what reaches it (`[vite] Internal server error:`), so a
+  shell error rethrown for the overlay prints there too.
+
+Pinned by `router/__tests__/server-error-print.test.ts`,
+`rsc/__tests__/action-error-print.test.ts`,
+`ssr/__tests__/shell-error-document.test.tsx` ("what it prints"),
+`ssr/__tests__/shell-handlers.test.tsx` (the resume hole),
+`cache/__tests__/report-cache-error-print.test.ts`, the userland
+`loader-default-error-boundary.rsc-test.tsx`, and the `ssr shell error` e2e
+(the server's own output, both apps, dev and production).
+
 ## Loader Context: params vs routeParams
 
 Loaders receive two param fields:
@@ -1955,12 +2101,13 @@ should not be treated as equivalent.
   (the host's raw 500) and a shell HIT's hydration throws in
   `NavigationProvider`'s `use(payload.root)`, above every error boundary (a
   blank page). So a flagged loader's error with no `errorBoundary()` (and no
-  `defaultErrorBoundary`) gets the router's default error boundary and a 500
-  on the server (`useDefaultErrorBoundary` in
+  `defaultErrorBoundary`) gets the router's default error boundary on the
+  server (`useDefaultErrorBoundary` in
   `router/loader-resolution.ts` `wrapLoaderWithErrorHandling`, passed by
-  `segment-resolution/fresh.ts` for `awaitBeforeFlush` loaders, dc-t92),
-  pinned by `e2e/flagged-loader-default-boundary.test.ts` (both apps, dev +
-  production).
+  `segment-resolution/fresh.ts` for `awaitBeforeFlush` loaders, dc-t92), and
+  every flagged loader error answers 500, declared boundary included
+  (dc-q61), pinned by `e2e/flagged-loader-default-boundary.test.ts` (both
+  apps, dev + production).
 
 - **A fill request (`prefetch: false`) is the same rule with no way out.**
   Deferred work runs in the fill, after the prefetch already rendered the

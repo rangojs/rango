@@ -23,6 +23,8 @@ export type {
 export { acquireE2eSlot } from "./e2e-slot.js";
 export { defineFlaggedLoaderDefaultBoundaryTests } from "./flagged-loader-default-boundary.js";
 export type { FlaggedLoaderDefaultBoundaryFixture } from "./flagged-loader-default-boundary.js";
+export { defineSsrShellErrorTests } from "./ssr-shell-error.js";
+export type { SsrShellErrorFixture } from "./ssr-shell-error.js";
 import { guardHydrationErrors } from "./hydration-guard.js";
 export { guardHydrationErrors };
 export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";

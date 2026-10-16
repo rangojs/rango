@@ -1,5 +1,147 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a server-render error outside `<Suspense>` answers a recovery document instead of the host's raw 500
+
+**Before.** An error thrown while the document rendered on the server, with
+no `<Suspense>` above it, took the whole response down: React's server
+renderer runs no error boundaries, so the router rethrew and the host answered
+its own 500. In production that body was a stack trace with server file paths
+(a `<pre>` from the Node preview, miniflare's text on workerd); in dev, the
+Vite overlay. A route `errorBoundary()` or `createRouter({ defaultErrorBoundary })`
+changed nothing. The common trigger is a `useLoader` read of a failed loader
+in a client component outside any `<Suspense>`; a loader's `notFound()` and
+`redirect()` read the same way failed too (a 500 instead of a 404 or a
+redirect), and so did a client component that throws only during SSR.
+
+```tsx
+path("/product/:id", ProductPage, { name: "product" }, () => [
+  loader(ProductLoader), // reads with useLoader() in a client component, no <Suspense>
+  errorBoundary(ProductError),
+]);
+// Before, the loader throws on a document load: the host's raw 500.
+// Now: 500, ProductError with the layouts kept, as a client navigation shows.
+```
+
+**Now.** In production the router answers a small recovery document that
+carries the same page data, and the generated browser entry renders it with
+`createRoot` instead of hydrating it, so the document ends where a client
+navigation to the URL ends:
+
+| The read throws                       | Before  | Now                                                                                |
+| ------------------------------------- | ------- | ---------------------------------------------------------------------------------- |
+| An error                              | raw 500 | 500; the route's `errorBoundary()`, `defaultErrorBoundary`, or `RootErrorBoundary` |
+| `notFound()`                          | raw 500 | 404; the not-found UI, layouts kept                                                |
+| `redirect(url)`                       | raw 500 | the redirect's own 3xx with `Location`                                             |
+| `redirect(url, { state })`            | raw 500 | 200, then the client replace to the target carries the state                       |
+| A client component throws only on SSR | raw 500 | 500; the page renders in the browser                                               |
+| The page data itself failed           | raw 500 | 500, a static error page with no scripts and nothing from the error                |
+
+The recovery document is never stored: not by the document cache, not as a
+`ppr` shell, not by a build-time prerender (a shell capture whose render
+fails still refuses, as before). If the theme is configured, the visitor's
+theme applies before the first paint, as on a hydrated page. `onError` gets
+one report per failure, carrying the original error: a loader's own `loader`
+report (before, a second `routing` report carried the masked copy), or one
+`rendering` report (`handledByBoundary: false`) for an error that starts in
+the server render itself. A loader's `notFound()` and `redirect()` are control flow:
+they are no longer reported or printed as errors. What the server prints is
+in the entry below.
+
+In dev an error still reaches Vite's error overlay unchanged (the original
+error and its source-mapped stack); `notFound()` and `redirect()` are answered
+as in production. A hand-written browser entry should render a document whose
+`<html>` has `data-rango-ssr-error` with `createRoot` instead of `hydrateRoot`
+(see the `/router-setup` skill); one that hydrates it anyway ends on the same
+screen after React reports hydration error #418.
+
+`renderRoute({ hydrate: true })` from `@rangojs/router/testing` mirrors it: a
+server-pass error outside `<Suspense>` no longer rejects; the tree renders with
+`createRoot` and the result's `shellError` holds the error.
+
+```tsx
+const { shellError, getByTestId } = await renderRoute(
+  [{ path: "/products", Component: ProductsPage }], // reads window on render
+  { hydrate: true },
+);
+expect(shellError).toBeInstanceOf(ReferenceError);
+expect(getByTestId("products")).toBeTruthy();
+```
+
+### Changed: an `ssr: false` loader error caught by a declared `errorBoundary()` answers 500 on a document
+
+**Before.** On a document load, an `ssr: false` loader that threw answered 500
+when the router's default error boundary rendered it (#1190), but 200 when the
+route's own `errorBoundary()` or `createRouter({ defaultErrorBoundary })` did.
+
+```ts
+path("/account", AccountPage, { name: "account" }, () => [
+  loader(Account, { ssr: false }), // throws
+  errorBoundary(AccountError),
+]);
+// Before: 200 with AccountError. Now: 500 with AccountError.
+```
+
+**Now.** Every such error answers 500 wherever the status has not been sent:
+a document and a `ppr` MISS. A `ppr` shell HIT keeps the 200 it sent with its
+shell, and an error a loader without `ssr: false` streams after the shell
+(under `loading()` or an inline `<Suspense>`) keeps 200, since the status is
+already out. The page, the boundary and `onError` are unchanged.
+
+### Changed: a server-side failure prints its original error once, where it happened
+
+**Before.** What reached the server console depended on the lane. A loader
+error or a server component error printed only when the document's server
+render failed or rendered an errored `<Suspense>` boundary, and then it printed
+the copy the browser gets: in production the masked `Error: An error occurred`
+(or React's "omitted in production builds" text), with a stack inside React,
+often two or three times (`[RSC] Error:`, the host). The same failure on a
+client navigation, an action's revalidation or a prefetch printed nothing, and
+so did a loader or handler error a boundary rendered (only `onError` saw it).
+
+```ts
+export const ProductLoader = createLoader(async (ctx) => {
+  return db.product(ctx.params.id); // throws: connection refused
+});
+// Before, production server log: "Error: An error occurred" (or nothing).
+// Now: [RSC] Loader error (ProductLoader) /product/1: Error: connect ECONNREFUSED ...
+```
+
+**Now.** Every server-side failure prints its original error, message and
+stack, once per request, where it originated, in dev and production and on
+every lane (document, client navigation, action revalidation, prefetch,
+shell capture). Only what the browser receives stays masked.
+
+| Failure                                                        | Before (production)                                              | Now                                                         |
+| -------------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------- |
+| A loader throws, read outside `<Suspense>`                     | masked copy, 2-3 times                                           | `[RSC] Loader error (<loader>) <path>:` and the original    |
+| A loader throws under `loading()` or `<Suspense>`              | masked copy once (document only)                                 | the same line, once                                         |
+| A loader error a boundary renders (`ssr: false`, any boundary) | nothing (the default boundary: `[RSC] Error:`)                   | the same line, once                                         |
+| A server component throws in the Flight render                 | masked copy (document only)                                      | `[RSC] Rendering error <path>:` and the original            |
+| A handler throws and a boundary renders it                     | nothing                                                          | `[RSC] Handler error (<segment>) <path>:` and the original  |
+| A client component throws during the server render             | the original, 1-3 times                                          | the original, once                                          |
+| A JS server action throws (a boundary or not)                  | nothing                                                          | `[RSC] Action error (<id>) <path>:` and the original        |
+| A JS action's arguments do not decode                          | nothing                                                          | `[RSC] Action decode error (<id>) <path>:` and the original |
+| A no-JS form action throws                                     | `[RSC] Progressive enhancement action error:` (no boundary only) | `[RSC] Action error (<id>) <path>:`, boundary or not        |
+| An unhandled error                                             | `[RSC] Error:`                                                   | `[RSC] Error <path>:`                                       |
+| A fetchable loader throws                                      | `[RSC] Loader error:`                                            | `[RSC] Loader error (<id>) <path>:`                         |
+| `notFound()`, a redirect, `Skip`, a cancelled render           | printed when read outside `<Suspense>`                           | never                                                       |
+
+A cancelled render is React's "The render was aborted by the server" or an
+`AbortError` after the request itself was aborted (a client disconnect); a
+loader's own `AbortController` or fetch timeout on a live request is a
+failure and prints. A `rewrite()` thrown from a loader or a handler (it
+belongs in middleware) renders a 500 and prints. In dev, Vite still prints
+what reaches it on its own (`[vite] Internal server error:`): a shell error
+rethrown for the overlay prints there too.
+
+A cache that refuses to store a failed render (the document cache, a `cache()`
+scope, a `ppr` capture) reports it to `onError` without printing it again.
+`onError` gets the original too: a document whose loader read failed is
+reported once, by the loader (phase `loader`), not again with the masked copy
+the render saw.
+
 ## 0.26.2 (2026-10-16)
 
 ### Fixed: an `ssr: false` loader that throws on a document load renders the default error boundary instead of a blank page or a raw 500 ([#1190](https://github.com/rangojs/rango/pull/1190))

@@ -245,10 +245,19 @@ function text(
   return served.segments.find(pick)?.component?.props?.children;
 }
 
+/**
+ * The rejection's messages, as printed: once, where the handler rejected
+ * (`[RSC] Handler error`). cacheRoute's refusal reports it without printing it
+ * again.
+ */
 function failedWriteLogs(): string[] {
-  return consoleError.mock.calls
-    .filter((args) => String(args[0]).includes("[CacheScope] Failed to cache"))
-    .map((args) => (args[1] as Error).message);
+  const printed = consoleError.mock.calls.filter(
+    (args) => args[1] instanceof Error,
+  );
+  for (const args of printed) {
+    expect(String(args[0])).toMatch(/^\[RSC\] Handler error /);
+  }
+  return printed.map((args) => (args[1] as Error).message);
 }
 
 describe("a streamed handler that rejects after resolution is not written to the route cache", () => {
@@ -312,7 +321,11 @@ describe("a streamed handler that rejects after resolution is not written to the
     expect(calls.route).toBe(callsBefore + 2);
     expect(nav.status).toBe(200);
     expect(nav.writes).toEqual([]);
-    expect(failedWriteLogs()).toEqual(["route upstream down"]);
+    // Each run rejected with its own error: each prints once.
+    expect(failedWriteLogs()).toEqual([
+      "route upstream down",
+      "route upstream down",
+    ]);
 
     fail = false;
     callsBefore = calls.route;
