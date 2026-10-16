@@ -118,7 +118,7 @@ The selector is applied when the router store changes (a navigation or new handl
 
 ### useLinkStatus()
 
-Pending state inside a `<Link>`: `pending` is `true` while a navigation to that link's `to` is in flight, until the page it brings commits (its `loading()` skeleton, or the page itself under `transition()`; through a server redirect, the target page). A newer navigation or an abort ends it at once, and a failure ends it with the error. It lasts longer than `useNavigation().pendingUrl`, which turns `null` when the response arrives. The component calling it must render inside a `Link`.
+Pending state inside a `<Link>`: `pending` is `true` while a navigation to that link's `to` is in flight, until the page it brings commits (its `loading()` skeleton, or the page itself under `transition()`; through a server redirect, the target page). A newer navigation or an abort ends it at once, and a failure ends it with the error. Like `useNavigation()`, a change commits with the notification that carries it: in the narrow case where a server action's commit is handed to React in the click's task, the spinner shows, or a newer click or an abort ends it, when that commit lands. It lasts longer than `useNavigation().pendingUrl`, which turns `null` when the response arrives. The component calling it must render inside a `Link`.
 
 ```tsx
 "use client";

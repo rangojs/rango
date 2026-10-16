@@ -1691,19 +1691,25 @@ Here is how each hook gets there:
   (`_redirectFrom`, set in `followServerRedirect`), so the clicked link stays
   pending through the hop. It sets its value once per navigation, so a
   newer visible one ends a link whose `false` React still holds with an
-  earlier page, at the newer click; an action's background refetch does
-  not. A start can also reach it inside another flow's commit (an action's,
-  handed to React before the click's notification went out): state
-  listeners get the flush's signal, and on "anchor" a `true` also goes
-  through `useOptimistic` set in that transition, which renders urgently and
-  reverts with that commit, as the loader's stream pin does
-  (`announcePendingStreams`). `useNavigation` has no such pin: there its
-  `loading` waits for that commit (`use-navigation-commit-lane.test.tsx`, "a
-  navigation whose start is flushed inside a held commit").
-- `useAction` values never wait for a page. Action notifications go out
-  only on `notifyAction`'s timer, which `flushRouteState()` does not flush,
-  so every state commits urgently, also while React holds a page, and the
-  hook starts no transition of its own.
+  earlier page; an action's background refetch does not.
+- One rule covers `useLinkStatus` and `useNavigation` alike: a notification
+  commits in the lane that carries it. The click's own notification, an
+  abort's and a newer click's go out on the controller's timer, in a task of
+  their own, so they commit urgently. One that another flow's commit (an
+  action's, handed to React before the timer fired) flushes inside its
+  transition commits with that commit, which React may hold: a start, a
+  newer click and an abort alike, for both hooks in the same frame
+  (`src/__tests__/use-link-status-commit-lane.test.tsx`). That is a known
+  trade, not the design: a click whose start notification is flushed inside
+  another flow's held commit shows its spinner, and `loading`, when that
+  commit lands.
+- `useAction` values never wait for a page. Action notifications go out on
+  `notifyAction`'s timer, which `flushRouteState()` does not flush, and
+  synchronously from `abortAllActions()` (called from a back/forward that
+  changes the intercept context in `navigation-bridge.ts` and from an
+  action's error path in `server-action-bridge.ts`); neither runs inside a
+  transition. So every state commits urgently, also while React holds a page,
+  and the hook starts no transition of its own.
 - Both hooks used to pin with `useOptimistic` in a `startTransition` of
   their own. React commits the revert of such a pin on its own, as a
   transition-only commit, which took the types queued for a held page (a

@@ -39,8 +39,8 @@ import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 const ItemLoader = { __brand: "loader" } as unknown as LoaderDefinition<string>;
 
 let spinnerLog: string[];
-/** Every commit of link 2's reader: "<pending> <state> <pathname> <page>". */
-let chrome: string[];
+/** Every commit of a link's reader: "<pending> <state> <pathname> <page>". */
+let chrome: Record<string, string[]>;
 /** Every commit of the full-state useAction reader: "<state> <page>". */
 let actions: string[];
 let stub: ReturnType<typeof installViewTransitionStub> | undefined;
@@ -60,16 +60,17 @@ function ActionStatus(): ReactNode {
 
 function onScreen(): string {
   if (document.querySelector('[data-testid="skeleton"]')) return "skeleton";
+  if (document.querySelector('[data-testid="error"]')) return "error";
   return document.querySelector('[data-testid="page"]')?.textContent ?? "-";
 }
 
-/** Reads three hooks in one component, inside link 2. */
-function Chrome(): ReactNode {
+/** Reads three hooks in one component, inside link `id`. */
+function Chrome({ id }: { id: string }): ReactNode {
   const { pending } = useLinkStatus();
   const { state } = useNavigation();
   const pathname = usePathname();
   useLayoutEffect(() => {
-    chrome.push(
+    (chrome[id] ??= []).push(
       `${pending ? "pending" : "idle"} ${state} ${pathname} ${onScreen()}`,
     );
   });
@@ -89,11 +90,11 @@ function Shell(): ReactNode {
   return (
     <div>
       <nav>
-        {["2", "3", "4"].map((id) => (
+        {["2", "3", "4", "f"].map((id) => (
           <Link key={id} to={`/items/${id}`}>
             {id}
             {id !== "4" && <Spinner id={id} />}
-            {id === "2" && <Chrome />}
+            {(id === "2" || id === "f") && <Chrome id={id} />}
           </Link>
         ))}
       </nav>
@@ -106,8 +107,20 @@ function Shell(): ReactNode {
   );
 }
 
+/**
+ * /items/f: the page's handler threw, and the server answered with the
+ * route's errorBoundary() fallback in its place.
+ */
 function Item(): ReactNode {
   const { id } = useParams<{ id: string }>();
+  return id === "f" ? (
+    <p data-testid="error">failed</p>
+  ) : (
+    <ItemContent id={id!} />
+  );
+}
+
+function ItemContent({ id }: { id: string }): ReactNode {
   const { data } = useLoader(ItemLoader);
   return (
     <ViewTransition
@@ -155,7 +168,7 @@ function dedupe(list: string[]): string[] {
 }
 
 beforeEach(() => {
-  chrome = [];
+  chrome = {};
   actions = [];
   spinnerLog = [];
   pushAnimated = [];
@@ -299,7 +312,7 @@ describe("renderRoute: optimistic hook values settle in the page's commit (frame
     });
     await waitFor(() => expect(onScreen()).toBe("2:two"));
 
-    expect(dedupe(chrome)).toEqual([
+    expect(dedupe(chrome["2"] ?? [])).toEqual([
       "idle idle /items/1 1:one",
       "pending loading /items/1 1:one",
       "idle idle /items/2 2:two",
@@ -322,7 +335,7 @@ describe("renderRoute: optimistic hook values settle in the page's commit (frame
     await waitFor(() => expect(onScreen()).toBe("2:two"));
 
     // The skeleton's commit brings all three; the reveal changes none.
-    expect(dedupe(chrome)).toEqual([
+    expect(dedupe(chrome["2"] ?? [])).toEqual([
       "idle idle /items/1 1:one",
       "pending loading /items/1 1:one",
       "idle idle /items/2 skeleton",
@@ -353,7 +366,7 @@ describe("renderRoute: optimistic hook values settle in the page's commit (frame
     await waitFor(() => expect(onScreen()).toBe("2:two"));
     await settle();
 
-    expect(dedupe(chrome)).toEqual([
+    expect(dedupe(chrome["2"] ?? [])).toEqual([
       "idle idle /items/1 1:one",
       "pending loading /items/1 1:one",
       "idle loading /items/2 2:two",
@@ -397,6 +410,20 @@ describe("renderRoute: optimistic hook values settle in the page's commit (frame
     expect(stub!.types()).toEqual([["push", "navigation"]]);
   });
 
+  it("a page that fails into its route's errorBoundary(): the link's pending ends in the commit that shows the error", async () => {
+    const { router } = await render(true);
+
+    await router.navigate("/items/f");
+    await settle();
+    await waitFor(() => expect(onScreen()).toBe("error"));
+
+    expect(dedupe(chrome["f"] ?? [])).toEqual([
+      "idle idle /items/1 1:one",
+      "pending loading /items/1 1:one",
+      "idle idle /items/f error",
+    ]);
+  });
+
   it("a navigation the router fails (a network error, a response it cannot read): the root error screen replaces the page and its link in one commit", async () => {
     const { router, queryByText } = await render(true);
 
@@ -419,7 +446,7 @@ describe("renderRoute: optimistic hook values settle in the page's commit (frame
     expect(queryByText("Internal Server Error")).not.toBeNull();
     // The link's last commit is the page it was pending on: no frame shows
     // it beside the error screen.
-    expect(dedupe(chrome)).toEqual([
+    expect(dedupe(chrome["2"] ?? [])).toEqual([
       "idle idle /items/1 1:one",
       "pending loading /items/1 1:one",
     ]);

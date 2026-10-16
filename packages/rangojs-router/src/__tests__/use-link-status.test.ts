@@ -5,9 +5,8 @@ let capturedEffectDeps: any[] | undefined;
 
 let stateSlots: Array<[any, ReturnType<typeof vi.fn>]> = [];
 let stateIndex = 0;
-const { startTransition, setOptimistic } = vi.hoisted(() => ({
+const { startTransition } = vi.hoisted(() => ({
   startTransition: vi.fn((fn: () => void) => fn()),
-  setOptimistic: vi.fn(),
 }));
 
 vi.mock("react", async () => {
@@ -30,7 +29,6 @@ vi.mock("react", async () => {
       capturedEffectFn = fn;
       capturedEffectDeps = deps;
     }),
-    useOptimistic: vi.fn((base: unknown) => [base, setOptimistic]),
     startTransition,
   };
 });
@@ -174,24 +172,6 @@ describe("useLinkStatus", () => {
     ec.navigation = null;
     notify();
     expect(setPending).toHaveBeenLastCalledWith(false);
-    expect(startTransition).not.toHaveBeenCalled();
-    expect(setOptimistic).not.toHaveBeenCalled();
-  });
-
-  it("a start delivered inside a commit's transition also shows through an optimistic value set there", () => {
-    const ec = createMockEventController(null);
-    const { setPending, notify } = mount(ec);
-
-    ec.navigation = entry("/dashboard");
-    (notify as (signal?: string) => void)("anchor");
-    expect(setPending).toHaveBeenLastCalledWith(true);
-    expect(setOptimistic).toHaveBeenCalledWith(true);
-
-    // Its end in the page's commit is the base value alone.
-    ec.navigation = null;
-    (notify as (signal?: string) => void)("anchor");
-    expect(setPending).toHaveBeenLastCalledWith(false);
-    expect(setOptimistic).toHaveBeenCalledOnce();
     expect(startTransition).not.toHaveBeenCalled();
   });
 

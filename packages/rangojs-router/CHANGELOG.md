@@ -31,7 +31,11 @@ that shows the destination: its `loading()` skeleton, or under
 `transition()` the page itself, which React holds until it is ready.
 Through a server redirect the clicked link stays pending until the target
 page commits. A newer navigation or an abort ends it at once, and a failure
-ends it with the error. `useNavigation().pendingUrl` is unchanged: it still
+ends it with the error. Like `useNavigation()`, a change commits in the lane
+of the notification that carries it: one that another flow's commit flushes
+inside its transition (a server action's, handed to React in the click's
+task) commits with that commit, so in that narrow case the spinner shows,
+or a newer click or an abort ends it, when that commit lands. `useNavigation().pendingUrl` is unchanged: it still
 turns `null` when the response arrives, so while the response streams a
 link reads `pending` and `pendingUrl` is `null`. `renderRoute` does the
 same: `pending` is held with a `transition` navigate()'s commit.
