@@ -355,6 +355,7 @@ import { transitionKindsPatterns } from "./pages/transition-kinds.js";
 import { asyncHandlesPatterns } from "./pages/async-handles.js";
 import { handlesCommitPatterns } from "./pages/handles-commit.js";
 import { vtBackPatterns } from "./pages/vt-back.js";
+import { actionLatestCallPatterns } from "./pages/action-latest-call.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -3202,6 +3203,9 @@ export const urlpatterns = urls(
         // A cached back/forward animates under transition() (mirrors the
         // router e2e app's /vt-back/*).
         include("/", vtBackPatterns, { name: "" }),
+        // useAction() reports the latest call of an action called twice
+        // (mirrors the router e2e app's /action-latest*).
+        include("/", actionLatestCallPatterns, { name: "" }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {

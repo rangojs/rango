@@ -12,6 +12,8 @@ export const routes = {
   "actionFailureServer.items": "/action-failure-server/items",
   "actionFailureServer.throw": "/action-failure-server/throw",
   "actionFailureServer.throwLoading": "/action-failure-server/throw-loading",
+  actionLatest: "/action-latest",
+  actionLatestVt: "/action-latest-vt",
   actionLocationState: "/action-location-state",
   "api.cacheInvalidate": "/api/cache/invalidate",
   "api.health": "/api/health",
