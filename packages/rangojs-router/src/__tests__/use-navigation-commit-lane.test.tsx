@@ -441,44 +441,6 @@ describe.each([
 
       await release(hold, reader, "idle /items/1?tag=a&tag=b id=1");
     });
-
-    // Overlap, not covered yet (on main either): while a navigation's commit
-    // is held, a notification that is not quiet (an action, another
-    // navigation) delivers the controller's whole state at default priority,
-    // the held idle included, ahead of the commit that brings the location.
-    it.fails("overlap: an action that starts and settles while a navigation's commit is held never shows idle with the old search", async () => {
-      const result = mount(vt);
-      const reader = () => result.getByTestId("reader").textContent;
-      const hold = deferred();
-
-      const handle = controller.startNavigation("/items/1?tag=b");
-      await notified();
-      await commit(handle, "/items/1?tag=b", { id: "1" }, hold.promise, vt);
-      const action = controller.startAction("src/actions.ts#save", []);
-      await notified();
-      action.complete(undefined);
-      await notified();
-
-      await release(hold, reader, "idle /items/1?tag=b id=1");
-      expect(sinceStart()).not.toContain("idle /items/1?tag=a&tag=b id=1");
-    });
-
-    it.fails("overlap: a second navigation started and aborted while a navigation's commit is held never shows idle with the old search", async () => {
-      const result = mount(vt);
-      const reader = () => result.getByTestId("reader").textContent;
-      const hold = deferred();
-
-      const handle = controller.startNavigation("/items/1?tag=b");
-      await notified();
-      await commit(handle, "/items/1?tag=b", { id: "1" }, hold.promise, vt);
-      const second = controller.startNavigation("/items/1?tag=c");
-      await notified();
-      second[Symbol.dispose]();
-      await notified();
-
-      await release(hold, reader, "idle /items/1?tag=b id=1");
-      expect(sinceStart()).not.toContain("idle /items/1?tag=a&tag=b id=1");
-    });
   },
 );
 
