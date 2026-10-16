@@ -119,6 +119,19 @@ slot's id, or the orphan layout's id. The owning entry's error boundary still
 renders the fallback in the same place, and its fallback receives the same
 `segmentType` and `segmentId`. No change in your code.
 
+### Fixed: `useAction()` follows the latest call when an earlier call returns after it
+
+**Before.** With the same action called twice and the later call returning
+first, `useAction()` went back to the earlier call, which was still running:
+an AddToCart button showed "Adding…" again, never showed the later call's
+result, and ended on the earlier call's result.
+
+**Now.** The hook reports the last call to start. It shows that call's result
+when it returns, and an earlier call that settles afterwards changes nothing,
+a result or an error alike. A string id (`useAction("addToCart")`) follows the
+latest call of any action with that export name; a function or a full id
+follows the latest call of that action.
+
 ## 0.28.0 (2026-10-25)
 
 ### Fixed: a rewritten request's telemetry events carry one `requestId` ([#1269](https://github.com/rangojs/rango/pull/1269))
