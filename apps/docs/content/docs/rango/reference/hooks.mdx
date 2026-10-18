@@ -317,7 +317,7 @@ const lastCrumb = useHandle(Breadcrumbs, (data) => data.at(-1));
 
 ### useAction(action, selector?)
 
-Tracks the lifecycle of a server action wherever on the page it was invoked. If the same action fires several times, the hook reports the latest call. For the full action surface, including `useActionState` and `useOptimistic`, see [Server Actions](/docs/rango/guides/server-actions).
+Tracks the lifecycle of a server action wherever on the page it was invoked. If the same action fires several times, the hook reports the latest call, the last one to start. When it returns before an earlier call, the hook shows its result, and the earlier call settling afterwards changes nothing the hook reports, a result or an error alike; that call still resolves or rejects for its caller, its revalidation re-renders the page, and an error-boundary response replaces it. A latest call that was aborted reports nothing (`idle`, no result or error); the router aborts calls in flight when another call's response is an error boundary, and on Back/Forward into or out of an intercept. A function or a full id matches that action only; a string name matches every action with that export name, and the hook follows the latest call among them. The hook tracks one call at a time, not one per argument: a reader that filters on `payload` (one button per product) cannot track an earlier call once a later one starts. For per-call state, use `useActionState` or `useTransition` in the component that makes the call. For the full action surface, including `useActionState` and `useOptimistic`, see [Server Actions](/docs/rango/guides/server-actions).
 
 ```tsx
 "use client";

@@ -27,6 +27,7 @@ import {
 import { hooksPatterns } from "./urls/hooks.js";
 import { renderStabilityPatterns } from "./urls/render-stability.js";
 import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
+import { actionLatestCallPatterns } from "./urls/action-latest-call.js";
 import { asyncHandlesPatterns } from "./urls/async-handles.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
 import { vtBackPatterns } from "./urls/vt-back.js";
@@ -1212,6 +1213,8 @@ export const urlpatterns = urls(
       // Hook render-stability fixture (render/commit tracking)
       include("/", renderStabilityPatterns, { name: "" }),
       include("/", navIdleLocationPatterns, { name: "" }),
+      // useAction() reports the latest call of an action called twice.
+      include("/", actionLatestCallPatterns, { name: "" }),
       // A navigation's title and crumbs commit with its page.
       include("/", handlesCommitPatterns, { name: "" }),
       // Async handle values: awaited in SSR, held then swapped on navs.
