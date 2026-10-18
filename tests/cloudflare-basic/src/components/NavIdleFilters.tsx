@@ -53,7 +53,11 @@ export function NavIdleFilters(): React.ReactNode {
   });
 
   return (
-    <ul data-testid="nav-idle-chips">
+    <ul
+      data-testid="nav-idle-chips"
+      data-idle={String(idle)}
+      data-full-idle={String(fullIdle)}
+    >
       {shown.map((tag) => (
         <li key={tag}>
           {tag}

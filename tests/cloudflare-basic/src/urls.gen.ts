@@ -164,6 +164,7 @@ export const routes = {
   "mixedClientAsync.detail": "/mixed-client-async/:slug",
   "mixedClientAsync.index": "/mixed-client-async",
   navIdle: "/nav-idle",
+  navIdleOverlap: "/nav-idle-overlap",
   navIdleVt: "/nav-idle-vt",
   nestedCondition: "/nested-condition",
   nestedKey: "/nested-key",
