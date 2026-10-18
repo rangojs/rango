@@ -13,6 +13,7 @@
   ],
   "lockTests": [
     "packages/rangojs-router/src/__tests__/use-navigation-commit-lane.test.tsx",
+    "packages/rangojs-router/src/testing/__tests__/render-route-navigation-kinds.test.tsx",
     "packages/rangojs-router/src/__tests__/use-handle-commit-lane.test.tsx",
     "packages/rangojs-router/src/__tests__/use-handle-hydration.test.tsx",
     "packages/rangojs-router/src/__tests__/router-hooks-hydration.test.tsx",

@@ -733,8 +733,10 @@ a hard load of the target URL renders the full route.
   values during SSR (live request seeds the SSR store; on ppr routes the
   capture/resume renders seed the shell key's own sorted search — search is
   part of shell identity, so static-part reads are legal).
-  `useNavigation`/`useLinkStatus` report the canonical nav, but a reader
-  inside optimistically-swapped content (destination WITH `loading()`)
+  `useNavigation`/`useLinkStatus` report the canonical nav (while the frame
+  shows, `useNavigation()` is `state: "loading"` with `location` the
+  committed URL, even though the URL hooks already report the frame's
+  destination), but a reader inside optimistically-swapped content (destination WITH `loading()`)
   unmounts at click — put status readers in surviving chrome. Errors: wrap
   throwers in the client `ErrorBoundary`; `useFetchLoader` works unchanged
   (route-independent lane; `revalidate()` deliberately not consulted).

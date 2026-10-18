@@ -332,6 +332,68 @@ test.describe("useAction", () => {
   });
 });
 
+/**
+ * useNavigation() during a server action: `state` is "loading" while the
+ * action runs (a progress indicator has something to show), "idle" after;
+ * `isNavigating` stays false because no navigation is in flight, and is true
+ * during a real navigation. The streaming action takes 3 s and /slow ~1 s, so
+ * both windows are observable.
+ */
+function defineStateDuringActionTests(f: {
+  url: (path: string) => string;
+}): void {
+  test("state is loading while a server action runs and idle after", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    const state = page.locator('[data-testid="nav-status-state"]');
+    const navigating = page.locator('[data-testid="nav-status-navigating"]');
+    await expect(state).toContainText("state:idle");
+    await expect(navigating).toContainText("navigating:false");
+
+    await page.locator('[data-testid="streaming-btn"]').click();
+
+    // Loading for the action's duration, with no navigation in flight.
+    await expect(state).toContainText("state:loading", { timeout: 2000 });
+    await expect(navigating).toContainText("navigating:false");
+    await expect(
+      page.locator('[data-testid="nav-status-streaming"]'),
+    ).toContainText("streaming:true");
+
+    await expect(
+      page.locator('[data-testid="StreamingActionStatus-action-status"]'),
+    ).toContainText("idle", { timeout: 10000 });
+    await expect(state).toContainText("state:idle");
+    await expect(navigating).toContainText("navigating:false");
+  });
+
+  test("isNavigating is true during a navigation and false after it", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    const state = page.locator('[data-testid="nav-status-state"]');
+    const navigating = page.locator('[data-testid="nav-status-navigating"]');
+
+    await page.locator('[data-testid="slow-link"]').click();
+    await expect(navigating).toContainText("navigating:true", {
+      timeout: 2000,
+    });
+    await expect(state).toContainText("state:loading");
+    await expect(navigating).toContainText("navigating:false", {
+      timeout: 10000,
+    });
+    await expect(state).toContainText("state:idle");
+  });
+}
+
 test.describe("useNavigation during actions", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -339,42 +401,7 @@ test.describe("useNavigation during actions", () => {
     isolatedServer: true,
   });
 
-  test("should remain idle during server action", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/product/product-a"));
-    await waitForHydration(page);
-
-    // Navigation should be idle initially
-    await expect(
-      page.locator('[data-testid="nav-status-state"]'),
-    ).toContainText("state:idle");
-
-    // Click streaming action
-    const button = page.locator('[data-testid="streaming-btn"]');
-    await button.click();
-
-    // Action should be in progress (loading or streaming — both indicate
-    // an in-flight action; the loading→streaming hop can be too fast to catch)
-    await expect(
-      page.locator('[data-testid="StreamingActionStatus-action-status"]'),
-    ).toContainText(/(loading|streaming)/, { timeout: 5000 });
-
-    // Navigation state should still be idle (actions don't affect navigation state)
-    await expect(
-      page.locator('[data-testid="nav-status-state"]'),
-    ).toContainText("state:idle");
-
-    // Wait for action to settle; the streaming-actions suite owns the actual
-    // streamed result DOM assertions, while this test verifies navigation
-    // state remains idle throughout the server action lifecycle.
-    await expect(
-      page.locator('[data-testid="StreamingActionStatus-action-status"]'),
-    ).toContainText("idle", { timeout: 10000 });
-    await expect(
-      page.locator('[data-testid="nav-status-state"]'),
-    ).toContainText("state:idle");
-  });
+  defineStateDuringActionTests(f);
 
   test("should track navigation and action independently", async ({ page }) => {
     using _ = expectNoPageError(page);
@@ -540,4 +567,15 @@ test.describe("useAction (production)", () => {
       page.locator('[data-testid="add-to-cart-btn-result"]'),
     ).toBeVisible();
   });
+});
+
+test.describe("useNavigation during actions (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  defineStateDuringActionTests(f);
 });
