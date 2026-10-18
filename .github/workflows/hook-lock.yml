@@ -1,0 +1,83 @@
+name: Hook lock
+
+# Required check. Fails when a PR touches a file listed in tools/hook-lock.json
+# unless the PR has the label "hook-lock: approved" (owner only) and its body
+# links the hooks design (dc-t84 or dc-d152). Every new push drops the label, so
+# an approval covers only the diff that was reviewed.
+#
+# pull_request_target runs with a write token and the BASE branch's workflow
+# and scripts. This job never checks out or executes PR code: it checks out the
+# base ref only, and reads the changed-file list, labels and body through the
+# API. Because the base's script and list are used, a PR cannot weaken the guard
+# it is evaluated by; the guard files are themselves in the locked list.
+# Passing PR text to the script goes through env vars and a JSON file, never
+# through shell interpolation.
+on:
+  pull_request_target:
+    types:
+      [
+        opened,
+        synchronize,
+        reopened,
+        labeled,
+        unlabeled,
+        edited,
+        ready_for_review,
+      ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  hook-lock:
+    name: hook-lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Default ref for pull_request_target is the base branch: trusted code.
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Drop the approval label on a new push
+        if: github.event.action == 'synchronize'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # 404 means the label was not set.
+          gh api -X DELETE "repos/$REPO/issues/$PR/labels/hook-lock%3A%20approved" || true
+
+      - name: Check the changed files against the lock
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          # Old and new path, so a rename out of a locked path is seen.
+          gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' | sort -u > files.txt
+          # Fresh labels, after the drop above.
+          gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name' > labels.txt
+          # The files API lists at most 3000 files; fail closed beyond that.
+          if [ "$(wc -l < files.txt)" -ge 3000 ]; then
+            echo "hook-lock: PR lists 3000+ files; cannot verify." >&2
+            exit 1
+          fi
+          jq -n --rawfile files files.txt --rawfile labels labels.txt --arg body "$PR_BODY" \
+            '{changedFiles: ($files | split("\n") | map(select(. != ""))),
+              labels: ($labels | split("\n") | map(select(. != ""))),
+              body: $body}' > input.json
+          node tools/check-hook-lock.mjs input.json
