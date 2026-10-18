@@ -19,6 +19,39 @@ action with that export name; a function or a full id follows the latest call
 of that action. The hook tracks one call at a time, so a reader that filters
 on `payload` cannot track an earlier call once a later one starts.
 
+### Changed: `useLinkStatus()` stays pending until the page shows
+
+**Before.** A link's `pending` ended when the response started streaming.
+Under `transition()`, React then held the page being left for the rest of the
+wait, with the spinner already gone. Through a server redirect, the clicked
+link's spinner ended before the redirect was read.
+
+**Now.** `pending` is `true` from the click's notification until the commit
+that shows the destination: its `loading()` skeleton, or under
+`transition()` the page itself, which React holds until it is ready.
+Through a server redirect the clicked link stays pending until the target
+page commits. A newer navigation or an abort ends it at once, and a failure
+ends it with the error. Like `useNavigation()`, a change commits in the lane
+of the notification that carries it: one that another flow's commit flushes
+inside its transition (a server action's, handed to React in the click's
+task) commits with that commit, so in that narrow case the spinner shows,
+or a newer click or an abort ends it, when that commit lands. `useNavigation().pendingUrl` is unchanged: it still
+turns `null` when the response arrives, so while the response streams a
+link reads `pending` and `pendingUrl` is `null`. `renderRoute` does the
+same: `pending` is held with a `transition` navigate()'s commit.
+
+### Fixed: a server action during a held navigation leaves the page its transition types
+
+**Before.** With `transition()` and a view transition, a `useAction()` state
+change while React held the next page (a Save pressed during the wait)
+committed in a transition of its own and took the page's transition types,
+so a `<ViewTransition>` keyed by `push` did not animate the page.
+
+**Now.** `useAction()` sets every state urgently, and `useLinkStatus()`
+sets `pending` urgently and ends it with the page; neither starts a
+transition of its own, so the page's commit carries its types. A
+`useAction()` value never waits for the page.
+
 ## 0.26.4 (2026-10-16)
 
 ### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))

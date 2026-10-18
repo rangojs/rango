@@ -3,11 +3,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 let capturedEffectFn: (() => (() => void) | void) | null = null;
 let capturedEffectDeps: any[] | undefined;
 
-let refSlots: Array<{ current: any }> = [];
-let refIndex = 0;
 let stateSlots: Array<[any, ReturnType<typeof vi.fn>]> = [];
 let stateIndex = 0;
-let setOptimistic = vi.fn();
+const { startTransition } = vi.hoisted(() => ({
+  startTransition: vi.fn((fn: () => void) => fn()),
+}));
 
 vi.mock("react", async () => {
   const actual = await vi.importActual<typeof import("react")>("react");
@@ -25,21 +25,11 @@ vi.mock("react", async () => {
       stateIndex++;
       return slot;
     }),
-    useRef: vi.fn((val: any) => {
-      if (refIndex < refSlots.length) {
-        return refSlots[refIndex++];
-      }
-      const ref = { current: val };
-      refSlots.push(ref);
-      refIndex++;
-      return ref;
-    }),
     useEffect: vi.fn((fn: () => (() => void) | void, deps?: any[]) => {
       capturedEffectFn = fn;
       capturedEffectDeps = deps;
     }),
-    useOptimistic: vi.fn((base: any) => [base, setOptimistic]),
-    startTransition: vi.fn((fn: () => void) => fn()),
+    startTransition,
   };
 });
 
@@ -49,18 +39,31 @@ import {
   LinkContext,
 } from "../browser/react/use-link-status.js";
 import { NavigationStoreContext } from "../browser/react/context.js";
+import type { NavigationEntry } from "../browser/event-controller.js";
 
 const mockedUseContext = vi.mocked(useContext);
 
-function createMockEventController(pendingUrl: string | null = null) {
+function entry(
+  url: string,
+  options?: NavigationEntry["options"],
+): NavigationEntry {
   return {
-    getState: vi.fn(() => ({
-      state: pendingUrl ? "loading" : "idle",
-      pendingUrl,
-    })),
-    getHydrationSnapshot: vi.fn(() => undefined),
+    url,
+    abort: new AbortController(),
+    phase: "fetching",
+    startedAt: 0,
+    options,
+  };
+}
+
+function createMockEventController(initial: NavigationEntry | null = null) {
+  const ec = {
+    navigation: initial,
+    getCurrentNavigation: vi.fn(() => ec.navigation),
+    getHydrationSnapshot: vi.fn((): object | undefined => undefined),
     subscribe: vi.fn((_cb: () => void) => vi.fn()),
   };
+  return ec;
 }
 
 /**
@@ -75,16 +78,24 @@ function wireContexts(linkTo: string | null, ctx: any) {
   });
 }
 
+/** Mount the hook and run its effect; returns the setter and the listener. */
+function mount(ec: ReturnType<typeof createMockEventController>) {
+  wireContexts("/dashboard", { eventController: ec });
+  const result = useLinkStatus();
+  const setPending = stateSlots[0][1];
+  capturedEffectFn!();
+  setPending.mockClear();
+  const notify = ec.subscribe.mock.calls[0][0] as () => void;
+  return { result, setPending, notify };
+}
+
 describe("useLinkStatus", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedEffectFn = null;
     capturedEffectDeps = undefined;
-    refSlots = [];
-    refIndex = 0;
     stateSlots = [];
     stateIndex = 0;
-    setOptimistic = vi.fn();
   });
 
   it("returns not pending when not inside a Link", () => {
@@ -94,11 +105,18 @@ describe("useLinkStatus", () => {
   });
 
   it("seeds pending from the controller for a matching link", () => {
-    const ec = createMockEventController("/dashboard");
+    const ec = createMockEventController(entry("http://localhost/dashboard"));
     wireContexts("/dashboard", { eventController: ec });
 
-    const result = useLinkStatus();
-    expect(result).toEqual({ pending: true });
+    expect(useLinkStatus()).toEqual({ pending: true });
+  });
+
+  it("seeds not pending while the document hydrates", () => {
+    const ec = createMockEventController(entry("/dashboard"));
+    ec.getHydrationSnapshot.mockReturnValue({});
+    wireContexts("/dashboard", { eventController: ec });
+
+    expect(useLinkStatus()).toEqual({ pending: false });
   });
 
   it("subscribes with [linkTo, origin] dependency array", () => {
@@ -119,112 +137,86 @@ describe("useLinkStatus", () => {
    * Mirrors usePathname / useSearchParams catch-up.
    */
   it("catches up on a navigation that started between render and effect commit", () => {
-    let pendingUrl: string | null = null;
-    const ec = {
-      getState: vi.fn(() => ({
-        state: pendingUrl ? "loading" : "idle",
-        pendingUrl,
-      })),
-      getHydrationSnapshot: vi.fn(() => undefined),
-      subscribe: vi.fn((_cb: () => void) => vi.fn()),
-    };
+    const ec = createMockEventController(null);
     wireContexts("/dashboard", { eventController: ec });
 
     // Seeding render: idle, not pending.
     useLinkStatus();
-    const setBasePending = stateSlots[0][1];
-    expect(setBasePending).not.toHaveBeenCalled();
+    const setPending = stateSlots[0][1];
+    expect(setPending).not.toHaveBeenCalled();
 
     // Navigation to /dashboard starts BEFORE the effect commits.
-    pendingUrl = "/dashboard";
+    ec.navigation = entry("/dashboard");
 
     // Effect commit: catch-up must observe pending and enqueue it.
     capturedEffectFn!();
 
-    expect(setBasePending).toHaveBeenCalledWith(true);
+    expect(setPending).toHaveBeenCalledWith(true);
     expect(ec.subscribe).toHaveBeenCalledOnce();
   });
 
-  it("does not enqueue on effect commit when pending is unchanged", () => {
+  it("is pending from the navigation's start until it ends, and never starts a transition", () => {
     const ec = createMockEventController(null);
-    wireContexts("/dashboard", { eventController: ec });
+    const { setPending, notify } = mount(ec);
 
-    useLinkStatus();
-    const setBasePending = stateSlots[0][1];
+    ec.navigation = entry("/dashboard");
+    notify();
+    expect(setPending).toHaveBeenLastCalledWith(true);
 
-    capturedEffectFn!();
+    // The response starts streaming: the same navigation, nothing to set.
+    ec.navigation.phase = "streaming";
+    notify();
+    expect(setPending).toHaveBeenCalledOnce();
 
-    expect(setBasePending).not.toHaveBeenCalled();
-    expect(ec.subscribe).toHaveBeenCalledOnce();
+    // The commit clears it, inside the page's update.
+    ec.navigation = null;
+    notify();
+    expect(setPending).toHaveBeenLastCalledWith(false);
+    expect(startTransition).not.toHaveBeenCalled();
   });
 
-  /**
-   * Regression (F1): the optimistic pending value must be released when the
-   * navigation returns to idle. While loading, useLinkStatus pins the optimistic
-   * value to `true` in a transition; at completion `state.state` is already
-   * "idle", so the old code only ran setBasePending(false) and left the pinned
-   * optimistic `true` in place. For view-transition routes the base `false` is
-   * deferred behind the still-pending commit transition, so the spinner stayed
-   * stuck.
-   */
-  it("releases the pinned optimistic value when navigation returns to idle", () => {
-    let state = "idle";
-    let pendingUrl: string | null = null;
-    const ec = {
-      getState: vi.fn(() => ({ state, pendingUrl })),
-      getHydrationSnapshot: vi.fn(() => undefined),
-      subscribe: vi.fn((_cb: () => void) => vi.fn()),
-    };
-    wireContexts("/dashboard", { eventController: ec });
+  it("a newer navigation sets the value again at its call, even when it did not move", () => {
+    const ec = createMockEventController(entry("/dashboard"));
+    const { setPending, notify } = mount(ec);
 
-    useLinkStatus();
-    capturedEffectFn!();
-    const subscribeCallback = ec.subscribe.mock.calls[0][0];
+    // Committed: false, which React may hold with the page.
+    ec.navigation = null;
+    notify();
+    // An unrelated notification while that page is held sets nothing.
+    notify();
+    expect(setPending.mock.calls).toEqual([[false]]);
 
-    // Navigation to /dashboard starts: loading + pending. This pins the
-    // optimistic value to true inside a transition.
-    state = "loading";
-    pendingUrl = "/dashboard";
-    subscribeCallback();
-    expect(setOptimistic).toHaveBeenCalledWith(true);
-
-    setOptimistic.mockClear();
-
-    // Navigation completes: state is idle and no longer pending. The pinned
-    // optimistic `true` must be released by setting it back to false.
-    state = "idle";
-    pendingUrl = null;
-    subscribeCallback();
-
-    expect(setOptimistic).toHaveBeenCalledWith(false);
+    // A newer navigation elsewhere: false again, now, at its call.
+    ec.navigation = entry("/other");
+    notify();
+    expect(setPending.mock.calls).toEqual([[false], [false]]);
   });
 
-  it("does not release when nothing was pinned (no spurious optimistic call)", () => {
-    // A navigation to a DIFFERENT link never pins this link's optimistic value;
-    // when it settles, no release should fire.
-    let state = "idle";
-    let pendingUrl: string | null = null;
-    const ec = {
-      getState: vi.fn(() => ({ state, pendingUrl })),
-      getHydrationSnapshot: vi.fn(() => undefined),
-      subscribe: vi.fn((_cb: () => void) => vi.fn()),
-    };
-    wireContexts("/dashboard", { eventController: ec });
+  it("stays pending through a server redirect from this link", () => {
+    const ec = createMockEventController(entry("/dashboard"));
+    const { setPending, notify } = mount(ec);
 
-    useLinkStatus();
-    capturedEffectFn!();
-    const subscribeCallback = ec.subscribe.mock.calls[0][0];
+    ec.navigation = entry("/login", { _redirectFrom: "/dashboard" });
+    notify();
+    expect(setPending).toHaveBeenLastCalledWith(true);
+  });
 
-    // A different link is navigated to: this link is not pending, so no pin.
-    state = "loading";
-    pendingUrl = "/other";
-    subscribeCallback();
-    expect(setOptimistic).not.toHaveBeenCalled();
+  it("a navigation that shows no loading state neither makes a link pending nor ends one", () => {
+    const ec = createMockEventController(null);
+    const { setPending, notify } = mount(ec);
 
-    // It settles back to idle: still no optimistic release for this link.
-    state = "idle";
-    pendingUrl = null;
-    subscribeCallback();
-    expect(setOptimistic).not.toHaveBeenCalled();
+    ec.navigation = entry("/dashboard", { skipLoadingState: true });
+    notify();
+    expect(setPending).not.toHaveBeenCalled();
+
+    // This link's navigation commits (false, held with its page); an
+    // action's background refetch then starts: nothing is set again.
+    ec.navigation = entry("/dashboard");
+    notify();
+    ec.navigation = null;
+    notify();
+    ec.navigation = entry("/dashboard", { skipLoadingState: true });
+    notify();
+    expect(setPending.mock.calls).toEqual([[true], [false]]);
   });
 });

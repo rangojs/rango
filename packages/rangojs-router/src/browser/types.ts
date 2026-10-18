@@ -519,6 +519,8 @@ export interface NavigateOptionsInternal extends Omit<
   _skipCache?: boolean;
   /** Server redirects already followed by this navigation chain (0 for a user navigation) */
   _redirectHops?: number;
+  /** The URL a redirected navigation chain started from: a link to it stays pending (useLinkStatus) */
+  _redirectFrom?: string;
 }
 
 /**

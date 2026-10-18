@@ -291,6 +291,8 @@ describe("navigation-bridge: a refetched traversal the server redirects (#1047)"
       replace: true,
       _skipCache: true,
       _redirectHops: 1,
+      // A link to the entry stays pending until the target commits.
+      _redirectFrom: "http://localhost/list?page=2",
     });
     expect(updates).toEqual([]);
     expect(setLocation).not.toHaveBeenCalled();
@@ -383,6 +385,10 @@ describe("navigation-bridge: a server redirect loop", () => {
     await bridge.navigate("http://localhost/ping");
 
     expect(navigate).toHaveBeenCalledTimes(HOP_LIMIT + 1);
+    // Every hop names the URL the chain started from (useLinkStatus).
+    expect(
+      navigate.mock.calls.slice(1).map(([, o]) => (o as any)._redirectFrom),
+    ).toEqual(Array(HOP_LIMIT).fill("http://localhost/ping"));
     expect(updates).toHaveLength(1);
     expect((updates[0].update as any).metadata.isError).toBe(true);
     const loopLogs = consoleError.mock.calls.filter(([message]) =>

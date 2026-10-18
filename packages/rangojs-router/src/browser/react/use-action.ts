@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  useContext,
-  useState,
-  useEffect,
-  useRef,
-  useOptimistic,
-  startTransition,
-} from "react";
+import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
 import type { TrackedActionState } from "../types.js";
@@ -143,8 +136,12 @@ export function useAction<T>(
       ? getActionId(action)
       : "";
 
-  // Base state for useOptimistic
-  const [baseState, setBaseState] = useState<T | TrackedActionState>(() => {
+  // The value commits in the lane of the notification that carries it, which
+  // runs outside any transition (notifyAction's task), so it shows at once,
+  // also while React holds a page. A transition of its own would commit on
+  // its own, take the transition types queued for a held page, and could
+  // start a view transition with none.
+  const [value, setValue] = useState<T | TrackedActionState>(() => {
     if (!ctx) {
       return selector ? selector(DEFAULT_ACTION_STATE) : DEFAULT_ACTION_STATE;
     }
@@ -154,11 +151,8 @@ export function useAction<T>(
       : ctx.eventController.getActionState(actionId);
     return selector ? selector(state) : state;
   });
-  const prevSelected = useRef(baseState);
-  prevSelected.current = baseState;
-  const [optimisticState, setOptimisticState] = useOptimistic<
-    T | TrackedActionState
-  >(null!);
+  const prevSelected = useRef(value);
+  prevSelected.current = value;
 
   // Ref keeps the latest selector for subscription callbacks without
   // re-subscribing on every render. Selector changes themselves are not
@@ -179,7 +173,7 @@ export function useAction<T>(
       : currentState;
     if (!shallowEqual(currentSelected, prevSelected.current)) {
       prevSelected.current = currentSelected;
-      setBaseState(currentSelected);
+      setValue(currentSelected);
     }
 
     // Subscribe to action-specific updates
@@ -192,10 +186,7 @@ export function useAction<T>(
 
         if (!shallowEqual(selectedState, prevSelected.current)) {
           prevSelected.current = selectedState;
-          setBaseState(selectedState);
-          startTransition(() => {
-            setOptimisticState(selectedState);
-          });
+          setValue(selectedState);
         }
       },
     );
@@ -205,7 +196,7 @@ export function useAction<T>(
     };
   }, [actionId]);
 
-  return (optimisticState ?? baseState) as T | TrackedActionState;
+  return value;
 }
 
 export type { TrackedActionState };

@@ -57,7 +57,14 @@ on screen:
 | the page has not fully arrived yet             | `isStreaming`: true from the start of the request until the stream ends             |
 | which page is on screen while the request runs | `location`, or `usePathname()` / `useSearchParams()` (see [`./urls.md`](./urls.md)) |
 
-`pendingUrl` covers the network wait. Once the response has arrived a loader
+`pendingUrl` covers the network wait, and `useLinkStatus()` covers more: a
+link's `pending` stays `true` after `pendingUrl` turns `null`, while the
+response streams and React holds the page being left, until the destination
+commits (see [useLinkStatus()](#uselinkstatus)). For a spinner on the clicked
+link, read `useLinkStatus()`; `pendingUrl` names the URL only while the
+request is out.
+
+Once the response has arrived a loader
 may still be streaming, and React keeps the page being left on screen where a
 navigation holds its content (a same-route change, a `transition()` route,
 with or without a view transition). `state` stays `"loading"` through that
@@ -219,7 +226,8 @@ left, `useSegments()` keeps that page's path and segments.
 ### useLinkStatus()
 
 Track pending state inside a Link component. `pending` is `true` while a
-navigation to this link's `to` is in flight:
+navigation to the link's `to` is in flight, until the page it brings
+commits:
 
 ```tsx
 "use client";
@@ -236,3 +244,31 @@ function LoadingIndicator() {
   <LoadingIndicator />
 </Link>;
 ```
+
+The spinner ends in the commit that shows the destination: its `loading()`
+skeleton without `transition()`, or the page itself under `transition()`,
+where React holds the page being left until the new one is ready. Through a
+server redirect, the clicked link stays pending until the target page
+commits. A newer navigation and an abort end it at once, outside the narrow
+case below. A failure ends it with the error: a route's `errorBoundary()` commits like a page, and a
+failure the router shows at its root (a network error, a response it cannot
+read) replaces the page, links included.
+
+`pending` follows the same rule as `useNavigation()`: a change commits in the
+lane of the notification that carries it. The click's notification goes out
+a task after the click and commits urgently, so the spinner shows at once,
+and an abort or a newer click ends it the same way. The hook starts no
+transition of its own, so it never takes the page's transition types. A
+fully prefetched click whose page commits before that task shows no pending
+state: its page is already there.
+
+One narrow case is a known trade: when another flow's commit (a server
+action's) is handed to React in the same task as the click, before the
+click's notification goes out, the notification commits with that commit.
+If React holds it, the spinner, and `useNavigation()`'s `loading`, show when
+it lands; a newer click or an abort delivered that way ends an earlier
+spinner when it lands too.
+
+`pending` lasts longer than `useNavigation().pendingUrl`, which turns `null`
+when the response arrives. While the response streams, a link reads `pending`
+and `pendingUrl` is `null`.

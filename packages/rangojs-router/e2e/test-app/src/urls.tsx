@@ -14,6 +14,7 @@ import { suspenseCasesPatterns } from "./urls/suspense-cases.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
 import { transitionKindsPatterns } from "./urls/transition-kinds.js";
+import { optimisticSettlePatterns } from "./urls/optimistic-settle.js";
 
 import { errorsPatterns } from "./urls/errors.js";
 import {
@@ -1173,6 +1174,9 @@ export const urlpatterns = urls(
       include("/", conditionalTransitionPatterns, { name: "" }),
       // #1165: each transition commit carries its kind as a transition type.
       include("/", transitionKindsPatterns, { name: "" }),
+      // Optimistic hook values settle in the page's commit and leave it its
+      // transition types (useLinkStatus, useAction).
+      include("/", optimisticSettlePatterns, { name: "" }),
 
       // #622 follow-up (HIGH): shared layout + client-mount-suspense children
       include("/", clientSuspensePatterns, { name: "" }),
