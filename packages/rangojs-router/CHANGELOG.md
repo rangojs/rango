@@ -1,5 +1,58 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `@rolldown/plugin-transform-imports` reaches route discovery, so a barrel import from a server component builds ([#1204](https://github.com/rangojs/rango/pull/1204))
+
+**Before.** plugin-rsc's README recommends `@rolldown/plugin-transform-imports`
+when a server component imports one export from a barrel package and another
+module in that barrel imports `client-only` (vitejs/vite-plugin-react#1519).
+Rango's discovery server forwarded only user plugins with `resolveId` or
+`load`, so this transform-only plugin never ran there. Discovery loaded the
+whole barrel, and `vite build` failed with `[rango] Build-time router
+discovery failed: 'client-only' cannot be imported in server build`. In
+Cloudflare-preset dev, every request answered 500 with the same error.
+Node-preset dev worked.
+
+**Now.** Discovery runs that plugin's import rewrite too, so the build and
+Cloudflare-preset dev load only the subpath the app imports. Other
+transform-only plugins are still not forwarded.
+
+### Fixed: a script that dispatches `DOMContentLoaded` again no longer breaks the page ([#1207](https://github.com/rangojs/rango/pull/1207), [#1205](https://github.com/rangojs/rango/issues/1205))
+
+**Before.** The browser entry closed the document's Flight stream on every
+`DOMContentLoaded` event dispatched on `document`, the browser's own and any a
+script sent with `document.dispatchEvent(new Event("DOMContentLoaded"))`. Some
+third-party embeds send it again, for example at 2, 5 and 10 s. While the page
+was still streaming, that closed the stream early: every pending boundary
+rejected with `Error: Connection closed.` and the root error boundary replaced
+the page. After the page had loaded, the second close threw an uncaught
+`TypeError: Failed to execute 'close' on 'ReadableStreamDefaultController'`,
+which reached error monitoring.
+
+**Now.** Only the browser's own `DOMContentLoaded` closes the stream, once. An
+event a script dispatches is ignored: a streaming page keeps streaming, and
+nothing throws after the load. The stream is rango's own now
+(`browser/document-flight-stream.ts`) instead of `rsc-html-stream/client`.
+
+### Fixed: a PPR shell HIT keeps an `ssr: false` route's completed boundaries in place ([#1208](https://github.com/rangojs/rango/pull/1208), [#1206](https://github.com/rangojs/rango/issues/1206))
+
+**Before.** For a route with a `loader(Def, { ssr: false })`, the live
+document render raises React's `progressiveChunkSize` so completed
+`<Suspense>` content ships where it belongs. The `ppr` shell capture did not:
+it rendered with React's 12800-byte default, so once the shell passed that
+budget, every completed boundary over about 500 bytes was stored as its
+fallback plus a hidden `<div hidden>` segment and a `$RC` reveal script. Every
+shell HIT then painted the fallback first and swapped the content in, a flash
+the same page's live render never showed. Setting
+`rango({ progressiveChunkSize: Number.MAX_SAFE_INTEGER })` worked around it.
+
+**Now.** The capture applies the same auto-raise as the live render when the
+route has an `ssr: false` loader, so the stored shell, and the HIT built from
+it, carries the content in place. The resumed holes of a HIT use the captured
+value too, as the live render does. An explicit `progressiveChunkSize` still
+wins on both paths.
+
 ## 0.26.4 (2026-10-16)
 
 ### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))

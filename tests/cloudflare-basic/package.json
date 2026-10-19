@@ -22,6 +22,7 @@
   "dependencies": {
     "@rangojs/router": "workspace:*",
     "@shared/docs": "workspace:*",
+    "rango-e2e-barrel-lib": "file:__test_packages__/rango-e2e-barrel-lib",
     "rango-e2e-deep-context-lib": "file:__test_packages__/rango-e2e-deep-context-lib",
     "react": "catalog:",
     "react-dom": "catalog:",
@@ -31,6 +32,7 @@
     "@cloudflare/vite-plugin": "^1.44.0",
     "@cloudflare/workers-types": "^5.20260708.1",
     "@playwright/test": "^1.62.0",
+    "@rolldown/plugin-transform-imports": "^0.1.2",
     "@shared/e2e": "workspace:*",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^24.10.1",

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { gotoLateHistory, warmUp } from "./late-history-fixture.js";
 
 /**
  * Late handle pushes on the document's late channel belong to the document's
@@ -23,8 +24,8 @@ const NOTE = "late history note";
 const OTHER_NOTE = "other page note";
 
 // Record the document's Flight text. The client replaces __FLIGHT_DATA.push
-// (rsc-html-stream), so later rows never land in the array; the accessor wraps
-// whichever push is installed.
+// (browser/document-flight-stream.ts), so later rows never land in the array;
+// the accessor wraps whichever push is installed.
 async function recordFlightText(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const text: string[] = [];
@@ -56,31 +57,6 @@ function flightHasNote(page: Page): Promise<boolean> {
 
 async function waitForLatePush(page: Page): Promise<void> {
   await page.waitForFunction(pushArrived, NOTE);
-}
-
-async function gotoLateHistory(
-  page: Page,
-  options: LateHandleHistoryScenarioOptions,
-  search: string,
-): Promise<void> {
-  await page.goto(options.url(`/late-history/page?${search}`), {
-    waitUntil: "commit",
-  });
-  await page.waitForFunction(() =>
-    document.documentElement.hasAttribute("data-lh-mounted"),
-  );
-}
-
-// Loads the fixture's modules once, so the timed load hydrates before its push.
-async function warmUp(
-  page: Page,
-  options: LateHandleHistoryScenarioOptions,
-): Promise<void> {
-  await page.goto(options.url("/late-history/other"));
-  await expect(page.getByTestId("lh-other")).toBeVisible();
-  await page.waitForFunction(() =>
-    document.documentElement.hasAttribute("data-lh-mounted"),
-  );
 }
 
 // Every note list the reader showed from now on, as a joined snapshot.
