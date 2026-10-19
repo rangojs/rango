@@ -68,6 +68,7 @@ import { CacheLabPage } from "./pages/cache-lab.js";
 import { CACHE_LAB_TAGS } from "./cache-lab-contract.js";
 import { CacheLabPulseLoader } from "./cache-lab-data.js";
 import { AboutPage } from "./pages/about.js";
+import { BarrelImportsPage } from "./pages/barrel-imports.js";
 import { LinkExternalOriginPage } from "./pages/link-external-origin.js";
 import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
@@ -1212,6 +1213,7 @@ export const urlpatterns = urls(
         // per route. Nameless so the named-routes gen files stay unchanged.
         path("/app-root/hero", () => <SplitHero />),
         path("/app-root/gallery", () => <SplitGallery />),
+        path("/barrel-imports", BarrelImportsPage),
         layout(ClientPackageResolutionLayout, () => [
           path("/client-package-resolution", ClientPackageResolutionPage, {
             name: "clientPackageResolution",

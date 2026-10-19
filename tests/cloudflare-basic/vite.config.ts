@@ -4,6 +4,7 @@ import { defineConfig, type Plugin } from "vite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rango } from "@rangojs/router/vite";
+import transformImports from "@rolldown/plugin-transform-imports";
 import { analyze } from "../../tools/bundle-analyze";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -148,6 +149,13 @@ export default defineConfig(({ isPreview }) => ({
     tsconfigPaths: true,
   },
   plugins: [
+    // Rewrites barrel imports for /barrel-imports (e2e/barrel-imports.test.ts).
+    transformImports({
+      "rango-e2e-barrel-lib": {
+        transform: "rango-e2e-barrel-lib/{{kebabCase member}}",
+        skipDefaultConversion: true,
+      },
+    }),
     parityAliasPlugin(),
     rscReloadProbe(),
     // React Compiler via plugin-react's native option; compiles client components only.

@@ -350,7 +350,8 @@ export async function createTempRscServer(
         },
       },
       // Forwarded user resolution plugins (e.g. vite-tsconfig-paths). Stripped
-      // to resolveId/load and placed last so framework resolution runs first;
+      // to resolveId/load (plus transform for import rewriters, see
+      // IMPORT_REWRITE_PLUGINS) and placed last so framework resolution runs first;
       // Vite re-sorts by `enforce`, so `enforce: "pre"` resolvers still lead.
       ...state.userResolvePlugins,
     ],
@@ -592,8 +593,9 @@ export function createRouterDiscoveryPlugin(
       // Capture user's resolve aliases for the temp server
       s.userResolveAlias = config.resolve.alias;
       // Capture the data-only resolution config (resolve.*, define, oxc) and
-      // the user's resolution plugins (resolveId/load) so the discovery temp
-      // server resolves modules the same way the real environment does.
+      // the user's resolution plugins (resolveId/load, plus import rewriters'
+      // transform) so the discovery temp server resolves modules the same way
+      // the real environment does.
       // Without this, both flavors of user resolution are absent during
       // discovery/prerender/static rendering even though they apply at request
       // time: third-party resolvers (e.g. vite-tsconfig-paths, forwarded as

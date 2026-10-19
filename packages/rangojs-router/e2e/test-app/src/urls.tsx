@@ -117,6 +117,7 @@ import { streamModePatterns } from "./urls/stream-mode.js";
 import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
 import { contextDedupPatterns } from "./urls/context-dedup.js";
 import { clientPackageResolutionPatterns } from "./urls/client-package-resolution.js";
+import { BarrelImportsPage } from "./components/BarrelImportsPage.js";
 import { parallelMetaPatterns } from "./urls/parallel-meta.js";
 import { parallelMetaStalePatterns } from "./urls/parallel-meta-stale.js";
 import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
@@ -1921,6 +1922,9 @@ export const urlpatterns = urls(
       include("/client-package-resolution", clientPackageResolutionPatterns, {
         name: "clientPackageResolution",
       }),
+
+      // Nameless so the named-routes gen files stay unchanged.
+      path("/barrel-imports", BarrelImportsPage),
 
       // @meta parallel slot pattern (handles from parallel slots)
       include("/parallel-meta", parallelMetaPatterns, {

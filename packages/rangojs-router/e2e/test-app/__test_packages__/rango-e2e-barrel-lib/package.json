@@ -1,0 +1,20 @@
+{
+  "name": "rango-e2e-barrel-lib",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./button": "./button.js"
+  },
+  "dependencies": {
+    "client-only": "0.0.1"
+  },
+  "peerDependencies": {
+    "react": ">=19"
+  }
+}

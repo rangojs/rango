@@ -122,9 +122,10 @@ options (`logger`, function-valued `sources`) do not exist on the native path;
 
 Nothing to configure. Rango's discovery/prerender step runs a throwaway temp Vite
 server (`createTempRscServer`) that forwards only your **resolution** plugins
-(`resolveId` / `load`) and denies every `vite:*` plugin, so `vite:react-compiler`
-never runs there. That is correct: the temp runner only produces **data**
-(serialized Flight payloads + the route manifest), not shipped code, and React
+(`resolveId` / `load`, plus the import rewrite of
+`@rolldown/plugin-transform-imports`) and denies every `vite:*` plugin, so
+`vite:react-compiler` never runs there. That is correct: the temp runner only
+produces **data** (serialized Flight payloads + the route manifest), not shipped code, and React
 Compiler is a memoization-only transform that does not change rendered output.
 Your shipped client bundle is compiled by the `react({ compiler: true })` in your
 app's own plugin array.

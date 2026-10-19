@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import path from "path";
 import react from "@vitejs/plugin-react";
+import transformImports from "@rolldown/plugin-transform-imports";
 import { rango, poke } from "@rangojs/router/vite";
 import devtoolsJson from "vite-plugin-devtools-json";
 import { analyze } from "../../../../tools/bundle-analyze";
@@ -42,6 +43,13 @@ export default defineConfig(({ command }) => ({
   cacheDir:
     process.env.RANGO_E2E_VITE_CACHE_DIR ?? "node_modules/.vite-e2e-test-app",
   plugins: [
+    // Rewrites barrel imports for /barrel-imports (e2e/barrel-imports.test.ts).
+    transformImports({
+      "rango-e2e-barrel-lib": {
+        transform: "rango-e2e-barrel-lib/{{kebabCase member}}",
+        skipDefaultConversion: true,
+      },
+    }),
     parityAliasPlugin(),
     react(),
     rango(headScripts ? { headScripts } : undefined),
