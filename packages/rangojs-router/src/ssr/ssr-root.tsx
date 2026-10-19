@@ -147,11 +147,11 @@ function createSsrEventController(opts: {
 
 /**
  * Deserialize the Flight stream branch into the payload SsrRoot renders,
- * fragment expansion included. Factored out of SsrRoot so createSSRHandler can
- * create the promise BEFORE fizz starts and read metadata that must influence
- * the fizz call itself (the ssr:false progressiveChunkSize auto-raise) —
- * awaiting it there is latency-neutral because fizz cannot emit even <html>
- * until this same promise settles.
+ * fragment expansion included. Factored out of SsrRoot so createSSRHandler and
+ * createShellCaptureHandler can create the promise BEFORE fizz starts and read
+ * metadata that must influence the fizz call itself (the ssr:false
+ * progressiveChunkSize auto-raise) — awaiting it there is latency-neutral
+ * because fizz cannot emit even <html> until this same promise settles.
  */
 export function deserializeSsrPayload(
   createFromReadableStream: CreateFromReadableStream,

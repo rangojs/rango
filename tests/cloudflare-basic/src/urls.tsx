@@ -146,6 +146,7 @@ import {
   pprFlightErrorPasses,
 } from "./loaders/ppr-shell.js";
 import { PprJsxPage } from "./pages/ppr-jsx.js";
+import { PprInlinePage } from "./pages/ppr-inline.js";
 import {
   PprIncludeBakeLayout,
   PprIncludeBakePage,
@@ -180,6 +181,7 @@ import {
 import { PprLoadMorePage } from "./pages/ppr-load-more.js";
 import { PprLoadMorePageLoader } from "./loaders/ppr-load-more.js";
 import { PprJsxLoader } from "./loaders/ppr-jsx.js";
+import { PprInlineLoader } from "./loaders/ppr-inline.js";
 import {
   PprDriftLayout,
   PprDriftPricePage,
@@ -2527,6 +2529,13 @@ export const urlpatterns = urls(
         path("/ppr-jsx", PprJsxPage, { ppr: { ttl: 300, swr: 120 } }, () => [
           loader(PprJsxLoader, { ssr: false }),
         ]),
+        // Issue #1206 fixture (loaders/ppr-inline.ts).
+        path(
+          "/ppr-inline",
+          PprInlinePage,
+          { ppr: { ttl: 300, swr: 120 } },
+          () => [loader(PprInlineLoader, { ssr: false })],
+        ),
         // Issue #925: a { cache: false } var read inside "use cache" throws.
         middleware(requestTenantMiddleware, () => [
           path("/use-cache-non-cacheable", UseCacheNonCacheablePage, () => [

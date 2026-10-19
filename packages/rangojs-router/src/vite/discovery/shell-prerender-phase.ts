@@ -187,7 +187,8 @@ export async function runShellPrerenderPhase(
       prerender: reactDomStatic.prerender ?? reactDomStatic.default?.prerender,
       injectRSCPayload: htmlStream.injectRSCPayload,
       headScripts: "preinit",
-      // Build-captured shells must honor the explicit outlining budget: the
+      // Build-captured shells honor the explicit outlining budget, or the
+      // ssr:false auto-raise without one (createShellCaptureHandler): the
       // capture value rides the postponed state into every runtime resume().
       ...(s.opts?.progressiveChunkSize !== undefined && {
         progressiveChunkSize: s.opts.progressiveChunkSize,
