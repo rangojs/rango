@@ -234,7 +234,6 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                 },
               },
               optimizeDeps: {
-                include: [nested("rsc-html-stream/client")],
                 exclude: excludeDeps,
                 rolldownOptions: sharedRolldownOptions,
               },
@@ -457,7 +456,6 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
                   "react-dom",
                   "react/jsx-runtime",
                   "react/jsx-dev-runtime",
-                  nested("rsc-html-stream/client"),
                 ],
                 exclude: excludeDeps,
                 rolldownOptions: sharedRolldownOptions,

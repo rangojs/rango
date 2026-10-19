@@ -59,7 +59,8 @@ import { setActiveInterceptTargets } from "../client-urls/navigation.js";
  */
 export interface InitBrowserAppOptions {
   /**
-   * RSC stream containing the initial payload (from rsc-html-stream/client)
+   * RSC stream containing the initial payload
+   * (`@rangojs/router/internal/deps/html-stream-client`)
    */
   rscStream: ReadableStream<Uint8Array>;
 
@@ -697,7 +698,7 @@ export interface RangoProps {}
  * @example
  * ```tsx
  * import { initBrowserApp, Rango } from "@rangojs/router/browser";
- * import { rscStream } from "rsc-html-stream/client";
+ * import { rscStream } from "@rangojs/router/internal/deps/html-stream-client";
  * import * as rscBrowser from "@vitejs/plugin-rsc/browser";
  *
  * async function main() {

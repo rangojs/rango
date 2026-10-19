@@ -18,6 +18,23 @@ Node-preset dev worked.
 Cloudflare-preset dev load only the subpath the app imports. Other
 transform-only plugins are still not forwarded.
 
+### Fixed: a script that dispatches `DOMContentLoaded` again no longer breaks the page ([#1207](https://github.com/rangojs/rango/pull/1207), [#1205](https://github.com/rangojs/rango/issues/1205))
+
+**Before.** The browser entry closed the document's Flight stream on every
+`DOMContentLoaded` event dispatched on `document`, the browser's own and any a
+script sent with `document.dispatchEvent(new Event("DOMContentLoaded"))`. Some
+third-party embeds send it again, for example at 2, 5 and 10 s. While the page
+was still streaming, that closed the stream early: every pending boundary
+rejected with `Error: Connection closed.` and the root error boundary replaced
+the page. After the page had loaded, the second close threw an uncaught
+`TypeError: Failed to execute 'close' on 'ReadableStreamDefaultController'`,
+which reached error monitoring.
+
+**Now.** Only the browser's own `DOMContentLoaded` closes the stream, once. An
+event a script dispatches is ignored: a streaming page keeps streaming, and
+nothing throws after the load. The stream is rango's own now
+(`browser/document-flight-stream.ts`) instead of `rsc-html-stream/client`.
+
 ## 0.26.4 (2026-10-16)
 
 ### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))
