@@ -189,12 +189,12 @@ interface RangoBaseOptions {
    * the CSS. Trade-off: inline content delays later shell bytes behind it,
    * which is why React outlines by default.
    *
-   * When UNSET, document renders whose matched chain has a
-   * `loader(Def, { ssr: false })` entry auto-raise to MAX_SAFE_INTEGER — the
-   * loader was awaited before first flush precisely so its content ships
-   * in-place, and outlining the boundary it feeds would defeat that. Setting
-   * an explicit value disables the auto-raise. The auto-raise is live-SSR
-   * only; captured shells use the explicit value or React's default.
+   * When UNSET, document renders and PPR shell captures whose matched chain
+   * has a `loader(Def, { ssr: false })` entry auto-raise to MAX_SAFE_INTEGER —
+   * the loader was awaited before first flush precisely so its content ships
+   * in-place, and outlining the boundary it feeds would defeat that. A shell
+   * HIT inherits the captured value, so it matches the live render. Setting
+   * an explicit value disables the auto-raise.
    *
    * Apps with a custom SSR entry set this per-handler via
    * `SSRDependencies.progressiveChunkSize`.

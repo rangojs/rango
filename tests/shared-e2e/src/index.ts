@@ -1,7 +1,6 @@
 import {
   errors,
   expect,
-  type APIRequestContext,
   type ConsoleMessage,
   type Locator,
   type Page,
@@ -26,6 +25,12 @@ export type { FlaggedLoaderDefaultBoundaryFixture } from "./flagged-loader-defau
 export { defineSsrShellErrorTests } from "./ssr-shell-error.js";
 export type { SsrShellErrorFixture } from "./ssr-shell-error.js";
 import { guardHydrationErrors } from "./hydration-guard.js";
+import {
+  waitForShellHydration,
+  warmShellRequestToHit,
+} from "./shell-request.js";
+
+export { waitForShellHydration, warmShellRequestToHit };
 export { guardHydrationErrors };
 export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
 export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
@@ -51,6 +56,8 @@ export { runSsrFalseFormTests } from "./ssr-false-form-scenario.js";
 export type { SsrFalseFormScenarioOptions } from "./ssr-false-form-scenario.js";
 export { runPprIncludeBakeTests } from "./ppr-include-bake-scenario.js";
 export type { PprIncludeBakeScenarioOptions } from "./ppr-include-bake-scenario.js";
+export { runPprSsrFalseInlineTests } from "./ppr-ssr-false-inline-scenario.js";
+export type { PprSsrFalseInlineScenarioOptions } from "./ppr-ssr-false-inline-scenario.js";
 export {
   expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
   expectLayoutLoaderHeldAcrossNavigations,
@@ -225,19 +232,6 @@ export function checkoutPortOffset(): number {
     h = (h * 31 + repoRoot.charCodeAt(i)) | 0;
   }
   return ((h >>> 0) % 150) * 200;
-}
-
-/**
- * Wait for hydration without waiting for DOMContentLoaded. A pending PPR hole
- * keeps the document stream open, so the normal helper cannot reach its
- * hydration check until the condition this kind of test needs to observe has
- * already disappeared.
- */
-export async function waitForShellHydration(page: Page): Promise<void> {
-  await page.waitForFunction(
-    () => document.documentElement.hasAttribute("data-hydrated"),
-    { timeout: 20_000 },
-  );
 }
 
 /**
@@ -2316,18 +2310,6 @@ const PUSH_HTML_HEADERS = { Accept: "text/html" };
 
 function pushProbe(kind: string): string {
   return `${kind}-${randomUUID().slice(0, 8)}`;
-}
-
-/** Request `url` as a document until its PPR shell is captured and HITs. */
-export async function warmShellRequestToHit(
-  request: APIRequestContext,
-  url: string,
-): Promise<void> {
-  await expect(async () => {
-    const res = await request.get(url, { headers: PUSH_HTML_HEADERS });
-    expect(res.status()).toBe(200);
-    expect(res.headers()["x-rango-shell"]).toBe("HIT");
-  }).toPass({ timeout: 20_000 });
 }
 
 function warmShellToHit(page: Page, url: string): Promise<void> {

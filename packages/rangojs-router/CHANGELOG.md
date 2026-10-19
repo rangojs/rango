@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a PPR shell HIT keeps an `ssr: false` route's completed boundaries in place ([#1208](https://github.com/rangojs/rango/pull/1208), [#1206](https://github.com/rangojs/rango/issues/1206))
+
+**Before.** For a route with a `loader(Def, { ssr: false })`, the live
+document render raises React's `progressiveChunkSize` so completed
+`<Suspense>` content ships where it belongs. The `ppr` shell capture did not:
+it rendered with React's 12800-byte default, so once the shell passed that
+budget, every completed boundary over about 500 bytes was stored as its
+fallback plus a hidden `<div hidden>` segment and a `$RC` reveal script. Every
+shell HIT then painted the fallback first and swapped the content in, a flash
+the same page's live render never showed. Setting
+`rango({ progressiveChunkSize: Number.MAX_SAFE_INTEGER })` worked around it.
+
+**Now.** The capture applies the same auto-raise as the live render when the
+route has an `ssr: false` loader, so the stored shell, and the HIT built from
+it, carries the content in place. The resumed holes of a HIT use the captured
+value too, as the live render does. An explicit `progressiveChunkSize` still
+wins on both paths.
+
 ## 0.26.4 (2026-10-16)
 
 ### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))

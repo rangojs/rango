@@ -51,6 +51,7 @@ import {
   ShellLoadMorePageLoader,
 } from "./shell-cache.defs.js";
 import { ShellJsxLoader, ShellJsxPage } from "./shell-cache-jsx.js";
+import { ShellInlineLoader, ShellInlinePage } from "./shell-cache-inline.js";
 import {
   ShellBakedView,
   ShellBakedOnlyView,
@@ -1064,6 +1065,13 @@ export const shellCachePatterns = urls(
       ShellJsxPage,
       { ppr: { ttl: 300, swr: 120 } },
       () => [loader(ShellJsxLoader, { ssr: false })],
+    ),
+    // Issue #1206 fixture (shell-cache-inline.tsx).
+    path(
+      "/shell-cache/inline",
+      ShellInlinePage,
+      { ppr: { ttl: 300, swr: 120 } },
+      () => [loader(ShellInlineLoader, { ssr: false })],
     ),
     path("/shell-cache/stale-replay/:id", ShellStaleReplayPage, {
       name: "shellCacheStaleReplay",

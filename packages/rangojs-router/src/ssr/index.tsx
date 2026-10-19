@@ -230,13 +230,15 @@ export interface SSRDependencies<TEnv = unknown> {
    * the `rango({ progressiveChunkSize })` plugin option here (canonical docs
    * on `RangoBaseOptions.progressiveChunkSize` in vite/plugin-types.ts).
    *
-   * When UNSET, createSSRHandler auto-raises to Number.MAX_SAFE_INTEGER for
-   * document renders whose matched chain has a `loader(Def, { ssr: false })`
-   * entry (payload segments carry `awaitBeforeFlush`): the loader was awaited
-   * before first flush precisely so its content ships in-place, and React
-   * 19.2's Fizz would otherwise move any completed boundary over ~500 bytes
-   * to an end-of-stream `<div hidden>` + $RC reveal once the shell saturates
-   * the default 12800 budget. An explicit value disables the auto-raise.
+   * When UNSET, createSSRHandler and createShellCaptureHandler auto-raise to
+   * Number.MAX_SAFE_INTEGER for document renders and shell captures whose
+   * matched chain has a `loader(Def, { ssr: false })` entry (payload segments
+   * carry `awaitBeforeFlush`): the loader was awaited before first flush
+   * precisely so its content ships in-place, and React 19.2's Fizz would
+   * otherwise move any completed boundary over ~500 bytes to an end-of-stream
+   * `<div hidden>` + $RC reveal once the shell saturates the default 12800
+   * budget. A shell HIT inherits the raise (prelude and resumed holes), so it
+   * matches the live render. An explicit value disables the auto-raise.
    */
   progressiveChunkSize?: number;
 
@@ -446,6 +448,18 @@ function hasAwaitBeforeFlush(payload: {
   metadata?: { segments?: readonly { awaitBeforeFlush?: true }[] };
 }): boolean {
   return payload.metadata?.segments?.some((s) => s.awaitBeforeFlush) === true;
+}
+
+/**
+ * The progressiveChunkSize renderHTML and captureShellHTML pass to Fizz (see
+ * SSRDependencies.progressiveChunkSize): the explicit option, else the
+ * ssr:false auto-raise.
+ */
+function documentChunkSize(
+  explicit: number | undefined,
+  awaitsBeforeFlush: boolean,
+): number | undefined {
+  return explicit ?? (awaitsBeforeFlush ? Number.MAX_SAFE_INTEGER : undefined);
 }
 
 /**
@@ -955,9 +969,10 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         themeConfig: decoded.metadata?.themeConfig ?? null,
       };
       const awaitsBeforeFlush = hasAwaitBeforeFlush(decoded);
-      const progressiveChunkSize =
-        deps.progressiveChunkSize ??
-        (awaitsBeforeFlush ? Number.MAX_SAFE_INTEGER : undefined);
+      const progressiveChunkSize = documentChunkSize(
+        deps.progressiveChunkSize,
+        awaitsBeforeFlush,
+      );
 
       // Render React tree to HTML stream
       // Pass formState for useActionState progressive enhancement if provided
@@ -1110,9 +1125,23 @@ export function createShellCaptureHandler<TEnv = unknown>(
       const payloadSettled = new Promise<void>((resolve) => {
         settlePayload = resolve;
       });
+      // Bootstrap resolution raced against the deadline (see resolveBootstrap):
+      // null means the deadline won — the bounded no-shell degrade.
+      const bootstrap = await resolveBootstrap(deps, deadline.promise);
+      if (bootstrap === null) {
+        return null;
+      }
+
+      // Decoded after the bootstrap, as SsrRoot's first render used to, so
+      // the capture gate's quiet clock starts only once fizz is about to.
+      const payload = deserializeSsrPayload(
+        createFromReadableStream,
+        rscStream,
+      );
       const SsrRoot = createSsrRootComponent({
         createFromReadableStream,
         rscStream,
+        payload,
         onPayloadSettled: settlePayload,
         // The shell key's own search: static-part search reads render what
         // the key names, and the resume pass seeds the identical string.
@@ -1120,12 +1149,17 @@ export function createShellCaptureHandler<TEnv = unknown>(
         origin: opts.origin,
       });
 
-      // Bootstrap resolution raced against the deadline (see resolveBootstrap):
-      // null means the deadline won — the bounded no-shell degrade.
-      const bootstrap = await resolveBootstrap(deps, deadline.promise);
-      if (bootstrap === null) {
-        return null;
-      }
+      // ssr:false auto-raise (SSRDependencies.progressiveChunkSize); resume()
+      // inherits it from the postponed state. A rejected or late payload
+      // skips it and fails or degrades below as before.
+      const awaitsBeforeFlush = await Promise.race([
+        payload.then(hasAwaitBeforeFlush, () => false),
+        deadline.promise.then(() => false),
+      ]);
+      const progressiveChunkSize = documentChunkSize(
+        deps.progressiveChunkSize,
+        awaitsBeforeFlush,
+      );
 
       // Start prerender first, then run the abort schedule concurrently. When
       // holes are pending, prerender's promise settles only after abort(); when
@@ -1140,14 +1174,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
       const prerenderPromise = prerender(<SsrRoot />, {
         signal: controller.signal,
         ...bootstrap,
-        // Explicit option only — the ssr:false auto-raise is live-SSR scoped
-        // (RangoBaseOptions.progressiveChunkSize documents the contract); the
-        // capture handler starts prerender without deserializing the payload,
-        // so segment metadata is not read here. The captured value rides the
-        // postponed state into every later resume().
-        ...(deps.progressiveChunkSize !== undefined && {
-          progressiveChunkSize: deps.progressiveChunkSize,
-        }),
+        ...(progressiveChunkSize !== undefined && { progressiveChunkSize }),
         // Abort is how capture WORKS: once the shell is quiet we abort() to
         // freeze the prelude and let the still-pending holes postpone. React
         // reports the abort reason for each pending boundary through onError.

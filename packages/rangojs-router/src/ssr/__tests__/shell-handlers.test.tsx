@@ -561,6 +561,154 @@ describe("createShellCaptureHandler", () => {
   });
 });
 
+// Issue #1206: a capture whose matched chain has a loader(Def, { ssr: false })
+// raises progressiveChunkSize as the live render does, so a completed boundary
+// ships in place in the prelude instead of as a fallback plus an outlined
+// `<div hidden>` segment and a $RC reveal.
+describe("createShellCaptureHandler: the ssr: false progressiveChunkSize auto-raise (#1206)", () => {
+  /** Past both Fizz outlining gates on its own: >500 B and >12800 B. */
+  function Grid({ label }: { label: string }) {
+    return React.createElement(
+      "ul",
+      { id: "grid" },
+      Array.from({ length: 500 }, (_, i) =>
+        React.createElement("li", { key: i }, `${label} tile ${i} in place`),
+      ),
+    );
+  }
+
+  function gridBoundary(label: string) {
+    return React.createElement(
+      React.Suspense,
+      { fallback: React.createElement("span", null, `${label}-FALLBACK`) },
+      React.createElement(Grid, { label }),
+    );
+  }
+
+  /**
+   * A completed GRID boundary and, with `hole`, a boundary suspended on it
+   * that renders a second grid (NESTED) once it resolves.
+   */
+  function makeGridTree(hole?: Promise<unknown>) {
+    function Hole() {
+      React.use(hole!);
+      return gridBoundary("NESTED");
+    }
+    return React.createElement(
+      "html",
+      null,
+      React.createElement(
+        "body",
+        null,
+        React.createElement("h1", null, "SHELL-CONTENT"),
+        gridBoundary("GRID"),
+        hole &&
+          React.createElement(
+            React.Suspense,
+            { fallback: React.createElement("span", null, "HOLE-FALLBACK") },
+            React.createElement(Hole),
+          ),
+      ),
+    );
+  }
+
+  function payload(awaitBeforeFlush: boolean) {
+    return {
+      metadata: {
+        pathname: "/",
+        params: {},
+        matched: ["/"],
+        segments: [{ id: "M0L0" }, { id: "M0L0D0.loader", awaitBeforeFlush }],
+      },
+    };
+  }
+
+  function gridDeps(
+    awaitBeforeFlush: boolean,
+    overrides: Partial<SSRDependencies> = {},
+  ): SSRDependencies {
+    return makeDeps({
+      createFromReadableStream: vi
+        .fn()
+        .mockResolvedValue(payload(awaitBeforeFlush)),
+      ...overrides,
+    });
+  }
+
+  async function captureGrid(deps: SSRDependencies, hole?: Promise<unknown>) {
+    mockedRenderSegments.mockImplementation(() =>
+      Promise.resolve(makeGridTree(hole)),
+    );
+    const result = await createShellCaptureHandler(deps)(
+      makeRscStream("GRID_FLIGHT"),
+      { quiesce: Promise.resolve() },
+    );
+    expect(result).not.toBeNull();
+    return result!;
+  }
+
+  it("keeps a completed boundary in place when a payload segment carries awaitBeforeFlush", async () => {
+    const spy = vi.fn(prerender);
+    const result = await captureGrid(gridDeps(true, { prerender: spy as any }));
+    const prelude = decoder.decode(result.prelude);
+
+    expect(prelude).toContain("GRID tile 499 in place");
+    expect(prelude).not.toContain("GRID-FALLBACK");
+    expect(prelude).not.toContain("<div hidden");
+    expect(prelude).not.toContain("$RC");
+    expect(result.postponed).toBeNull();
+    expect((spy.mock.calls[0]![1] as any).progressiveChunkSize).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
+  });
+
+  it("outlines the same boundary without an ssr: false loader (React's default)", async () => {
+    const result = await captureGrid(gridDeps(false));
+    const prelude = decoder.decode(result.prelude);
+
+    expect(prelude).toContain("GRID-FALLBACK");
+    expect(prelude).toContain("<div hidden");
+    expect(prelude).toContain("$RC");
+    expect(prelude.indexOf("GRID-FALLBACK")).toBeLessThan(
+      prelude.indexOf("GRID tile 0 in place"),
+    );
+  });
+
+  it("an explicit progressiveChunkSize disables the auto-raise", async () => {
+    const spy = vi.fn(prerender);
+    await captureGrid(
+      gridDeps(true, { prerender: spy as any, progressiveChunkSize: 4096 }),
+    );
+    expect((spy.mock.calls[0]![1] as any).progressiveChunkSize).toBe(4096);
+  });
+
+  it("the resumed tail inherits the raise: a completed boundary inside a hole ships in the hole's segment", async () => {
+    const captured = await captureGrid(gridDeps(true), new Promise(() => {}));
+    const prelude = decoder.decode(captured.prelude);
+    expect(prelude).toContain("GRID tile 499 in place");
+    expect(prelude).not.toContain("GRID-FALLBACK");
+    expect(prelude).toContain("HOLE-FALLBACK");
+    expect(typeof captured.postponed).toBe("string");
+
+    mockedRenderSegments.mockImplementation(() =>
+      Promise.resolve(makeGridTree(Promise.resolve("ok"))),
+    );
+    // Resume deps without the ssr: false signal: the raise can only come
+    // from the postponed state.
+    const tail = await readAll(
+      await createShellResumeHandler(gridDeps(false))(
+        makeRscStream("GRID_RESUME_FLIGHT"),
+        { postponed: captured.postponed },
+      ),
+    );
+
+    // One outlined segment: the hole itself. The nested grid is in it.
+    expect(tail).toContain("NESTED tile 499 in place");
+    expect(tail).not.toContain("NESTED-FALLBACK");
+    expect(tail.match(/<div hidden/g)).toHaveLength(1);
+  });
+});
+
 // dc-t93: renderHTML answers a shell error with a recovery document in
 // production. The PPR capture (runtime and build-time) never does: a shell
 // error still rejects it, and its callers store nothing (shell-capture.ts

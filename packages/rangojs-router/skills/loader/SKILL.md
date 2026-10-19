@@ -1136,8 +1136,9 @@ COMPLETED Suspense boundary over ~500 bytes to an end-of-stream
 `progressiveChunkSize` budget — the bytes are in the HTML, but not at their
 document position, and a consumer that doesn't execute scripts never sees
 them revealed. When the matched chain has a flagged loader, the document
-render raises the budget to `MAX_SAFE_INTEGER` automatically, so the awaited
-content renders where it belongs. Pin the budget yourself (in either
+render and the `ppr` shell capture raise the budget to `MAX_SAFE_INTEGER`
+automatically, so the awaited content renders where it belongs, on a shell
+HIT too. Pin the budget yourself (in either
 direction) with `rango({ progressiveChunkSize })` in the Vite config — an
 explicit value disables the auto-raise. Boundaries hoisting stylesheets
 still outline; their reveal must wait for the CSS.
@@ -1160,9 +1161,7 @@ The costs and constraints:
   served from the shell and does not run (unless the capture marked it to run:
   see `/ppr` → On a shell HIT); one whose return carries promises
   runs on every HIT, with its baked parts overlaid. A `cookies()`, `headers()`,
-  `ctx.request.headers` or `{ cache: false }` read in it refuses the capture. The
-  `progressiveChunkSize` auto-raise is live-document only; captured shells
-  outline per the explicit option or React's default.
+  `ctx.request.headers` or `{ cache: false }` read in it refuses the capture.
 
 Also available in `clientUrls()` route groups (`/client-urls`), where the
 loader-heavy shape makes it most useful.
