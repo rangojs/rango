@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `@rolldown/plugin-transform-imports` reaches route discovery, so a barrel import from a server component builds ([#1204](https://github.com/rangojs/rango/pull/1204))
+
+**Before.** plugin-rsc's README recommends `@rolldown/plugin-transform-imports`
+when a server component imports one export from a barrel package and another
+module in that barrel imports `client-only` (vitejs/vite-plugin-react#1519).
+Rango's discovery server forwarded only user plugins with `resolveId` or
+`load`, so this transform-only plugin never ran there. Discovery loaded the
+whole barrel, and `vite build` failed with `[rango] Build-time router
+discovery failed: 'client-only' cannot be imported in server build`. In
+Cloudflare-preset dev, every request answered 500 with the same error.
+Node-preset dev worked.
+
+**Now.** Discovery runs that plugin's import rewrite too, so the build and
+Cloudflare-preset dev load only the subpath the app imports. Other
+transform-only plugins are still not forwarded.
+
 ## 0.26.4 (2026-10-16)
 
 ### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))

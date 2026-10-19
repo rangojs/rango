@@ -65,6 +65,19 @@ describe("selectForwardableResolvePlugins", () => {
     expect(selectForwardableResolvePlugins(plugins)).toHaveLength(0);
   });
 
+  it("forwards the barrel import rewriter with its transform (vite-plugin-react#1519)", () => {
+    const transform = {
+      filter: { id: /\.[jt]sx?$/ },
+      handler: () => undefined,
+    };
+    const plugins: Plugin[] = [
+      { name: "rolldown-plugin-transform-imports", transform },
+    ];
+    expect(selectForwardableResolvePlugins(plugins)).toEqual([
+      { name: "rolldown-plugin-transform-imports", transform },
+    ]);
+  });
+
   it("forwards plugins that only expose load", () => {
     const plugins: Plugin[] = [{ name: "virtual-modules", load }];
     const out = selectForwardableResolvePlugins(plugins);

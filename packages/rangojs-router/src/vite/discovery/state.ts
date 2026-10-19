@@ -135,9 +135,10 @@ export interface DiscoveryState {
     | import("../utils/forward-user-plugins.js").ForwardedRunnerConfig
     | undefined;
   /**
-   * User resolution plugins (resolveId/load), stripped to their resolution
-   * surface, forwarded into the discovery temp server. Lets third-party
-   * resolvers such as vite-tsconfig-paths participate in discovery.
+   * User resolution plugins (resolveId/load, plus import rewriters' transform),
+   * stripped to their resolution surface, forwarded into the discovery temp
+   * server. Lets third-party resolvers such as vite-tsconfig-paths participate
+   * in discovery.
    */
   userResolvePlugins: import("vite").Plugin[];
   scanFilter: ScanFilter | undefined;

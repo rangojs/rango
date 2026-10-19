@@ -37,18 +37,39 @@ function isDenied(name: string): boolean {
 }
 
 /**
- * A plugin participates in resolution if it exposes `resolveId` or `load`.
- * Plugins that only transform, configure the server, or hook into the build
- * lifecycle do not affect how bare specifiers resolve, so we skip them to keep
+ * Transform-only plugins forwarded with their `transform` hook. A plugin
+ * belongs here only if its transform changes the code or imports discovery
+ * evaluates, and reads only state built at construction or in
+ * `config`/`configResolved`. Neither shows in a hook's shape, so the list is
+ * by name: forwarding every transform would let e.g. @tailwindcss/vite cache
+ * per-environment state built from the temp server's config.
+ *
+ * `rolldown-plugin-transform-imports` (@rolldown/plugin-transform-imports)
+ * rewrites barrel imports to subpaths (vitejs/vite-plugin-react#1519). Dropped,
+ * discovery loads the whole barrel and fails on a leaf importing `client-only`.
+ */
+const IMPORT_REWRITE_PLUGINS: ReadonlySet<string> = new Set([
+  "rolldown-plugin-transform-imports",
+]);
+
+/**
+ * A plugin participates in resolution if it exposes `resolveId` or `load`, or
+ * rewrites imports (IMPORT_REWRITE_PLUGINS). Other plugins that only transform,
+ * configure the server, or hook into the build lifecycle are skipped to keep
  * the forwarded surface minimal.
  */
-function hasResolutionHooks(p: Plugin): boolean {
-  return Boolean((p as any).resolveId || (p as any).load);
+function isForwardable(p: Plugin): boolean {
+  return Boolean(
+    (p as any).resolveId ||
+    (p as any).load ||
+    IMPORT_REWRITE_PLUGINS.has(p.name),
+  );
 }
 
 /**
- * Strip a resolved plugin instance down to its resolution hooks plus the
- * gating fields that decide whether/where it runs.
+ * Strip a resolved plugin instance down to its resolution hooks (and an import
+ * rewriter's `transform`) plus the gating fields that decide whether/where it
+ * runs.
  *
  * We reuse the SAME instance objects captured from `config.plugins`. By the
  * time `configResolved` fires on the discovery plugin, every plugin's own
@@ -78,6 +99,8 @@ function stripToResolutionHooks(p: Plugin): Plugin {
     (stripped as any).applyToEnvironment = (p as any).applyToEnvironment;
   if ((p as any).resolveId) (stripped as any).resolveId = (p as any).resolveId;
   if ((p as any).load) (stripped as any).load = (p as any).load;
+  if (IMPORT_REWRITE_PLUGINS.has(p.name))
+    (stripped as any).transform = (p as any).transform;
   return stripped;
 }
 
@@ -95,7 +118,7 @@ export function selectForwardableResolvePlugins(
   for (const p of plugins) {
     const name = p?.name;
     if (!name || isDenied(name)) continue;
-    if (!hasResolutionHooks(p)) continue;
+    if (!isForwardable(p)) continue;
     forwarded.push(stripToResolutionHooks(p));
   }
   return forwarded;

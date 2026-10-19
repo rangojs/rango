@@ -15,11 +15,13 @@
   "dependencies": {
     "@rangojs/router": "workspace:*",
     "fake-context-lib": "file:__test_packages__/fake-context-lib",
+    "rango-e2e-barrel-lib": "file:__test_packages__/rango-e2e-barrel-lib",
     "rango-e2e-deep-context-lib": "file:__test_packages__/rango-e2e-deep-context-lib",
     "react": "catalog:",
     "react-dom": "catalog:"
   },
   "devDependencies": {
+    "@rolldown/plugin-transform-imports": "^0.1.2",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
