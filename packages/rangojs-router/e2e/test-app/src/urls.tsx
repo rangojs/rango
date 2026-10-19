@@ -8,6 +8,7 @@ import { slowPatternsWithoutDetail } from "./urls/slow.js";
 import { suspenseStreamPatterns } from "./urls/suspense-stream.js";
 import { clientSuspensePatterns } from "./urls/client-suspense.js";
 import { lateHistoryPatterns } from "./urls/late-history.js";
+import { actionStalePatterns } from "./urls/action-stale.js";
 import { heldBoundaryPatterns } from "./urls/held-boundary.js";
 import { peFormStatePatterns } from "./urls/pe-form-state.js";
 import { suspenseCasesPatterns } from "./urls/suspense-cases.js";
@@ -1181,6 +1182,9 @@ export const urlpatterns = urls(
         name: "interceptHeld",
       }),
       include("/", lateHistoryPatterns, { name: "" }),
+      // A navigation during or after an action is stale
+      // (e2e/action-stale-navigation.test.ts).
+      include("/", actionStalePatterns),
       include("/", peFormStatePatterns, { name: "" }),
       include("/", suspenseCasesPatterns, { name: "sc" }),
 

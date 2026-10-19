@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NetworkError, ServerRedirect } from "../errors";
 import type { DecodedPrefetch } from "../browser/prefetch/cache";
+import type { FetchPartialOptions } from "../browser/types";
 
 const {
   getRangoStateMock,
@@ -50,9 +51,13 @@ function makeEntry(
 
 vi.mock("../browser/rango-state", () => ({
   getRangoState: getRangoStateMock,
+  adoptRangoState: vi.fn(() => true),
+  getRangoStateCookieName: vi.fn(() => "rango-state"),
+  setRangoStateObserver: vi.fn(),
 }));
 
 vi.mock("../browser/prefetch/cache", () => ({
+  clearPrefetchCache: vi.fn(),
   consumePrefetch: consumePrefetchMock,
   consumeInflightPrefetch: consumeInflightPrefetchMock,
   buildPrefetchKey: buildPrefetchKeyMock,
@@ -66,7 +71,14 @@ vi.mock("../browser/prefetch/loader", () => ({
 }));
 
 import { createNavigationClient } from "../browser/navigation-client";
-import { enterActionFence, __resetActionFence } from "../browser/action-fence";
+import { createNavigationStore } from "../browser/navigation-store";
+import { registerNavigationStore } from "../browser/navigation-store-handle";
+import { invalidateClientCache } from "../browser/invalidate-client-cache";
+import {
+  enterActionFence,
+  exitActionFence,
+  __resetActionFence,
+} from "../browser/action-fence";
 
 describe("navigation-client", () => {
   beforeEach(() => {
@@ -120,7 +132,7 @@ describe("navigation-client", () => {
     const init = ((fetchCall as [unknown, RequestInit | undefined])[1] ??
       {}) as RequestInit;
     expect(String(fetchUrl)).toContain(
-      "/products?_rsc_partial=true&_rsc_segments=root%2Cproducts&_rsc_stale=true&_rsc_v=v7",
+      "/products?_rsc_partial=true&_rsc_segments=root%2Cproducts&_rsc_v=v7&_rsc_stale=true",
     );
     // Linked to `signal` until the response arrives (next tests).
     expect(init.signal).toBeInstanceOf(AbortSignal);
@@ -1029,6 +1041,82 @@ describe("navigation-client", () => {
     it("does not override the cache mode when no action fence is active", async () => {
       const init = await freshFetchInit();
       expect(init.cache).toBeUndefined();
+    });
+  });
+
+  // action-fence.ts: every request but an HMR refetch while an action is in
+  // flight carries _rsc_stale; once it lands, none does.
+  describe("a navigation sent before an action lands is stale", () => {
+    afterEach(() => __resetActionFence());
+
+    /** One request; the URL it fetched, or null when a prefetch served it. */
+    async function navigate(
+      overrides: Partial<FetchPartialOptions> = {},
+    ): Promise<string | null> {
+      const fetchMock = vi.fn(
+        async (_url: string | URL, _init?: RequestInit) =>
+          new Response(null, { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      await createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          await responsePromise;
+          return { metadata: { matched: [], diff: [], isPartial: true } };
+        },
+      } as any).fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+        ...overrides,
+      });
+      const call = fetchMock.mock.calls[0];
+      return call ? String(call[0]) : null;
+    }
+
+    const entry = () => makeEntry({ metadata: { matched: [], diff: [] } });
+
+    it("stales a navigation and a fill during the flight, not an HMR refetch", async () => {
+      enterActionFence();
+      expect(await navigate()).toContain("_rsc_stale=true");
+      expect(await navigate({ fill: true })).toContain("_rsc_stale=true");
+      expect(await navigate({ hmr: true })).not.toContain("_rsc_stale");
+    });
+
+    it("does not stale a navigation after the action landed", async () => {
+      enterActionFence();
+      expect(await navigate()).toContain("_rsc_stale=true");
+      exitActionFence();
+      expect(await navigate()).not.toContain("_rsc_stale");
+    });
+
+    it("does not stale a navigation after the store invalidated", async () => {
+      const store = createNavigationStore({
+        initialLocation: { href: "http://localhost/products" },
+        initialSegmentIds: ["products"],
+      });
+      registerNavigationStore(store);
+      store.markCacheAsStaleAndBroadcast();
+      store.clearHistoryCache();
+      vi.stubGlobal("document", {});
+      invalidateClientCache();
+      expect(await navigate()).not.toContain("_rsc_stale");
+    });
+
+    it("serves a cached prefetch during the flight, keyed without the flag", async () => {
+      enterActionFence();
+      consumePrefetchMock.mockReturnValueOnce(entry());
+      expect(await navigate()).toBeNull();
+      expect(buildPrefetchKeyMock.mock.results.at(-1)?.value).not.toContain(
+        "_rsc_stale",
+      );
+    });
+
+    it("does not adopt an in-flight prefetch during the flight", async () => {
+      enterActionFence();
+      consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(entry()));
+      expect(await navigate()).toContain("_rsc_stale=true");
+      expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
+      expect(cancelAllPrefetchesMock).toHaveBeenCalledWith("/products");
     });
   });
 

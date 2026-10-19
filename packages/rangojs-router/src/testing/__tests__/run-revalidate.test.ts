@@ -97,6 +97,44 @@ describe("runRevalidate (public testing primitive)", () => {
     expect(await runRevalidate(defer, { method: "POST" })).toBe(true);
   });
 
+  // A navigation sent before an in-flight action lands is stale: the browser
+  // marks it with `stale: true`.
+  // A layout loader that must follow mutations writes
+  // `stale || defaultShouldRevalidate`; `stale` never moves the default.
+  it("re-runs a layout loader on stale || defaultShouldRevalidate for a stale navigation only", async () => {
+    const followsMutations: ShouldRevalidateFn = ({
+      stale,
+      defaultShouldRevalidate,
+    }) => stale || defaultShouldRevalidate;
+    const navigation = {
+      currentUrl: "/product",
+      nextUrl: "/other",
+      belongsToRoute: false,
+    };
+
+    expect(
+      await runRevalidate(followsMutations, { ...navigation, stale: true }),
+    ).toBe(true);
+    expect(await runRevalidate(followsMutations, navigation)).toBe(false);
+    // The action's own revalidation re-runs it by default.
+    expect(
+      await runRevalidate(followsMutations, {
+        currentUrl: "/product",
+        belongsToRoute: false,
+        action: addToCart,
+      }),
+    ).toBe(true);
+
+    const defaults: boolean[] = [];
+    await runRevalidate(
+      ({ defaultShouldRevalidate }) => {
+        defaults.push(defaultShouldRevalidate);
+      },
+      { ...navigation, stale: true },
+    );
+    expect(defaults).toEqual([false]);
+  });
+
   it("threads soft verdicts and stops at a boolean", async () => {
     expect(
       await runRevalidate([

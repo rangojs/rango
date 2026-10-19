@@ -203,7 +203,16 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // behind a generation and history-key guard, and scroll-restoration.ts
 // restores in that commit. None of it can load lazily: it runs in every
 // navigation's commit and every popstate.
-const ROUTER_CHUNK_GZIP_MAX = 49.375 * 1024;
+//
+// Raised 49.375KB -> 49.5KB on 2026-10-20 for dc-t108 (#1211), measured on
+// cloudflare-basic from main 19f9651ed 50515B -> 50565B (+50B gzip, 5B over the
+// old limit). A navigation request sent before an in-flight action lands is
+// stale (action-fence.ts, navigation-client.ts), a cached prefetch is served
+// during an action's flight, and the bridge refetches the page on screen when a
+// navigation commits while the action's tree renders (server-action-bridge.ts
+// refetchNavigatedAway). None of it can load lazily: it runs in every
+// navigation request and every action. One 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 49.5 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

@@ -416,6 +416,15 @@ client-side. The actual conclusion: the eager _clear_ must become an eager
     (`cached.stale || fenceActive()`), and the SWR revalidation must fire when
     `fenceActive()` even if `entry[2]` is false. `navigation-bridge.ts` is
     therefore part of the implementation surface (added below).
+  - _Later: prefetch hits and the stale flag._ The fence no longer suspends
+    prefetch hits. A cached prefetch is served during the flight; a click
+    that commits before the action's own commit gets the bridge's
+    `navigated-away` refetch, at classification or while the action's tree
+    renders (`refetchNavigatedAway`). An in-flight prefetch is not adopted
+    during the flight. Every navigation request during the flight sends
+    `_rsc_stale=true` (fence up means the last action has not landed). After
+    the action lands, loaders on its page have re-run, so later navigations are
+    not stale. Prefetches never carry it.
 - **At response, no directive:** perform today's full invalidation — mark
   history stale, clear the prefetch map, rotate the state, broadcast — then
   the usual revalidation refetch. Same end state as today, shifted to response
@@ -1103,8 +1112,9 @@ review while leaving a hole.
   still rotates (the `Set-Cookie` path is not suppressible); a `keepClientCache()`
   action overlapping a directive-free action still invalidates (keep is a
   per-action, not global, guarantee).
-- Unit (bridge): the fence suspends prefetch consumption for the duration of
-  an action's flight; the fence is refcounted across concurrent actions — each
+- Unit (bridge): the fence makes navigation requests stale and keeps an
+  in-flight prefetch from being adopted (see "Later: prefetch hits and the
+  stale flag"); the fence is refcounted across concurrent actions — each
   response decrements once and the fence lifts only at zero, so a keep response
   does **not** lift the fence while a non-keep action is still pending; a
   directive-free response reproduces today's end state exactly (re-mark stale

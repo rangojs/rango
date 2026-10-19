@@ -249,7 +249,8 @@ _which_ action with `ctx.isAction(addToCart)` (rename-safe); branch on _what it
 returned_ with `ctx.actionResult` — the value your `"use server"` function
 returned, for outcome-conditional revalidation. The arg also exposes `actionId`
 (raw `path#export`), `actionUrl`, `formData` (form-based actions only), `method`,
-and `stale` (the `_rsc_stale` signal that an action ran in this or another tab).
+and `stale` (true on a navigation sent while a server action is in flight, and on a
+stale history entry's background revalidation; see `/loader`).
 `actionId`, `actionUrl`, `actionResult`, and `formData` are `undefined` on plain
 navigation; `method` is `"GET"` there and `"POST"` for an action. Call
 `ctx.isAction()` with no arguments to ask "was this any action?".

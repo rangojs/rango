@@ -477,6 +477,34 @@ the same context as an escape hatch, alongside `actionResult`, `formData`,
 `actionUrl`, `currentParams`/`nextParams`, `currentUrl`/`nextUrl`,
 `fromRouteName`/`toRouteName`, and the full handler `context`.
 
+#### Following mutations across navigations: `stale`
+
+A navigation request sent before an in-flight server action's response lands
+reaches every `revalidate()` with `stale: true`, as does the background
+revalidation of a stale history entry (Back/Forward). After the action lands,
+its page's loaders have re-run and later navigations are not stale. Prefetches
+never carry it.
+`defaultShouldRevalidate` does not change, so a loader without `revalidate()`
+behaves as before.
+
+A layout loader that a navigation keeps, such as a cart count or a notification
+badge, follows mutations with one predicate:
+
+```typescript
+layout(RootLayout, () => [
+  loader(CartCountLoader, () => [
+    revalidate(
+      ({ stale, defaultShouldRevalidate }) => stale || defaultShouldRevalidate,
+    ),
+  ]),
+  // ... routes
+]);
+```
+
+Without it, a user who clicks "Add to cart" and then a link before the action
+answers can see the count from before the action until a later request re-runs
+the loader.
+
 ### Revalidation Contracts for Loader Dependencies
 
 If a loader reads `ctx.get()` data produced by an outer handler/layout, share

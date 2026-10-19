@@ -534,6 +534,11 @@ revalidates), flushes the prefetch cache, rotates the router's state cookie,
 and tells other open tabs to do the same. This happens for every action that
 reached the server, including ones that threw. No setup is needed.
 
+A navigation sent during an action's flight reaches every `revalidate()` with
+`stale: true`; after the action lands it does not. A layout loader the
+navigation keeps follows the action with `stale || defaultShouldRevalidate`
+(see `/loader`, "Following mutations across navigations").
+
 ### `keepClientCache()` — skip it for no-op actions
 
 Some hot actions change nothing a route renders: a debounced draft autosave, an

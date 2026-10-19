@@ -53,6 +53,50 @@ it, carries the content in place. The resumed holes of a HIT use the captured
 value too, as the live render does. An explicit `progressiveChunkSize` still
 wins on both paths.
 
+### Fixed: a navigation sent before a server action lands is stale, so a held layout loader shows the action's write
+
+**Before.** `revalidate()` received `stale: true` only on the background
+revalidation of a stale history entry. A navigation made while a server action
+was in flight reached the server unmarked. Suppose a user clicked "Add to cart"
+and then a link before the action answered. If the action answered first, its
+revalidation showed the new cart count, and then the navigation committed with
+the layout's count from before the action. The count stayed wrong until a later
+request re-ran the layout's loader. A prefetched link
+clicked during the action also waited for a request of its own: the prefetch
+was not used until the action settled.
+
+```ts
+layout(RootLayout, () => [
+  loader(CartCountLoader, () => [
+    revalidate(
+      ({ stale, defaultShouldRevalidate }) => stale || defaultShouldRevalidate,
+    ),
+  ]),
+  // ... routes
+]);
+// Before: a link clicked during addToCart can leave the old count on screen.
+// Now: that navigation is stale, so the loader re-runs and shows the write.
+```
+
+**Now.** Every navigation request sent before an in-flight action's response
+lands carries `_rsc_stale=true`, and every `revalidate()` of such a request
+receives `stale: true`. Once the action lands, its page's loaders have re-run,
+so later navigations are not stale. `defaultShouldRevalidate` does not change,
+so a loader without `revalidate()` behaves as before. Prefetches never carry
+the flag. `invalidateClientCache()` and other tabs' actions mark history
+entries stale for Back/Forward only, as before.
+
+A prefetched link clicked during an action now shows its page at once. When
+the click commits before the action's own commit, the client refetches the page
+on screen once the action answers, which brings the action's write. That
+refetch already ran for a navigation committed before the action's response;
+it now also runs for one committed while the action's revalidation renders,
+where the action's result was dropped with nothing refetched.
+
+Not covered: a navigation that commits after the action's revalidation still
+restores held segments from before the action when their loaders do not read
+`stale`, such as a layout loader that the action re-ran by default.
+
 ## 0.26.4 (2026-10-16)
 
 ### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))

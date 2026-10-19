@@ -289,6 +289,19 @@ export function createServerActionBridge(
         exitActionFence();
       }
     };
+    // A navigation committed the page on screen without this action's write:
+    // refetch it, stale (segments []). Not on keepClientCache(), nor on an
+    // intercept route.
+    const refetchNavigatedAway = (
+      action: TransitionWhenActionInput,
+      onInterceptRoute: boolean,
+    ): void => {
+      if (keepCache || onInterceptRoute) return;
+      refetchRoute({ actionId: id, action }).catch((error) => {
+        if (isBackgroundSuppressible(error)) return;
+        console.error("[Browser] Background revalidation failed:", error);
+      });
+    };
     try {
       const segmentState = store.getSegmentState();
 
@@ -306,6 +319,13 @@ export function createServerActionBridge(
       // Must use window.location (not store.path) because intercepts change URL
       // without changing store.path (e.g., /kanban -> /kanban/card/1)
       const actionStartPathname = window.location.pathname;
+      // A navigation committed since the action started (the pathname or the
+      // history entry, as classifyActionOutcome reads them) or since `key`
+      // was read: the action's commit is dropped and the page refetched.
+      const navigatedSince = (key: string): boolean =>
+        window.location.pathname !== actionStartPathname ||
+        window.history.state?.key !== locationKey ||
+        store.getHistoryKey() !== key;
 
       // Build action request URL with current segments
       const url = new URL(window.location.href);
@@ -582,15 +602,15 @@ export function createServerActionBridge(
 
         // transition({ when }) decides the error-boundary commit too, with
         // `action.error` set.
+        const errorAction: TransitionWhenActionInput = {
+          id,
+          formData: findActionFormData(args),
+          error: returnValue && !returnValue.ok ? returnValue.data : undefined,
+        };
         const errorGatedOff = decideActionGatedOff(
           errorResult.segments,
           metadata,
-          {
-            id,
-            formData: findActionFormData(args),
-            error:
-              returnValue && !returnValue.ok ? returnValue.data : undefined,
-          },
+          errorAction,
         );
 
         // Render the full tree with error segment merged with parent layouts
@@ -604,18 +624,14 @@ export function createServerActionBridge(
         });
 
         // Re-check route stability after async renderSegments — user may have
-        // navigated away while the error tree was being prepared.
-        if (window.location.pathname !== actionStartPathname) {
+        // navigated away during the flight or while the error tree was being
+        // prepared. The refetch renders another page: no error to decide on.
+        if (navigatedSince(currentKey)) {
           log("user navigated during error render, skipping");
-          if (returnValue && !returnValue.ok) {
-            throw returnValue.data;
-          }
-          handle.complete(undefined);
-          return undefined;
-        }
-        const currentKeyNow = store.getHistoryKey();
-        if (currentKeyNow !== currentKey) {
-          log("history key changed during error render, skipping cache update");
+          refetchNavigatedAway(
+            { id, formData: errorAction.formData },
+            store.getInterceptSourceUrl() !== null,
+          );
           if (returnValue && !returnValue.ok) {
             throw returnValue.data;
           }
@@ -766,17 +782,7 @@ export function createServerActionBridge(
           if (scenario.historyKeyChanged) {
             // Invalidation is deferred to finalizeAction(); here we only trigger
             // the revalidation refetch of the new route (suppressed on keep).
-            if (!scenario.onInterceptRoute && !keepCache) {
-              refetchRoute({ actionId: id, action: whenAction }).catch(
-                (error) => {
-                  if (isBackgroundSuppressible(error)) return;
-                  console.error(
-                    "[Browser] Background revalidation failed:",
-                    error,
-                  );
-                },
-              );
-            }
+            refetchNavigatedAway(whenAction, scenario.onInterceptRoute);
             break;
           }
 
@@ -889,17 +895,15 @@ export function createServerActionBridge(
           });
           revalidationError = await revalidationErrorOf(segments);
 
-          // Re-check if user navigated away (could happen during async renderSegments)
-          if (window.location.pathname !== actionStartPathname) {
+          // Re-check if user navigated away during the async renderSegments:
+          // nothing is cached under the old key, and the page that navigation
+          // committed missed the write.
+          if (navigatedSince(currentKey)) {
             log("user navigated during render, skipping");
-            break;
-          }
-
-          // Verify the store's current key still matches what we captured at action start
-          // If they differ, user navigated away and we should NOT cache under the old key
-          const currentKeyNow = store.getHistoryKey();
-          if (currentKeyNow !== currentKey) {
-            log("history key changed during action, skipping cache update");
+            refetchNavigatedAway(
+              whenAction,
+              store.getInterceptSourceUrl() !== null,
+            );
             break;
           }
 

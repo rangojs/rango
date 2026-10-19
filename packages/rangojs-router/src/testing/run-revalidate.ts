@@ -67,7 +67,10 @@ export interface RunRevalidateOptions<TEnv = any> {
    * loader, which a navigation keeps by default.
    */
   belongsToRoute?: boolean;
-  /** `stale`: a history-entry background revalidation. */
+  /**
+   * `stale`: a navigation sent during a server action's flight, or a history
+   * entry's background revalidation.
+   */
   stale?: boolean;
   /** `toRouteName` (and `routeName`). */
   routeName?: string;

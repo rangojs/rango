@@ -799,3 +799,136 @@ describe("server-action-bridge concurrent actions whose loader fails on its reru
     expect(t.cache.get("/")!.segments[1]).toBe(t.refetched.segments[1]);
   });
 });
+
+// A navigation that commits after the action's response was classified, while
+// its tree is built, drops the action's commit. The page it committed missed
+// the write, so the bridge refetches it, as it does for a navigation committed
+// before the response (navigated-away). The error-boundary path has no
+// classify step, so it checks the flight too.
+describe("server-action-bridge navigation committed during the action's render", () => {
+  const route = { id: "R0", type: "route", component: "div" };
+  const answer = {
+    pathname: "/",
+    segments: [route],
+    matched: ["R0"],
+    diff: ["R0"],
+    isPartial: true,
+  };
+
+  function setup(
+    payload: unknown,
+    headers?: Record<string, string>,
+    during: "render" | "flight" = "render",
+  ) {
+    stubWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        // A same-pathname navigation (another history entry) commits while
+        // the request is out.
+        if (during === "flight") {
+          window.location.href = "http://localhost/?page=2";
+          window.history.state.key = "k2";
+        }
+        return new Response(null, { status: 200, headers });
+      }),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = {
+      ...createMockStore(),
+      loaders: new LoaderStore(),
+      getHistoryKey: vi.fn(() => "/"),
+      getCachedSegments: vi.fn(() => ({ segments: [route], stale: false })),
+      setSegmentIds: vi.fn(),
+      cacheSegmentsForHistory: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const fetchPartial = vi.fn(() => new Promise(() => {}));
+    const onUpdate = vi.fn();
+    const setServerCallback = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: { fetchPartial } as any,
+      eventController: createEventController(),
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async (response: Promise<Response>) => {
+          await response;
+          return payload;
+        }),
+        setServerCallback,
+      } as any,
+      onUpdate,
+      renderSegments: vi.fn(async () => {
+        if (during === "render") {
+          Object.assign(window.location, {
+            href: "http://localhost/other",
+            pathname: "/other",
+          });
+        }
+        return "tree";
+      }),
+    }).register();
+    const call = setServerCallback.mock.calls[0]![0] as (
+      id: string,
+      args: unknown[],
+    ) => Promise<unknown>;
+    return { call, fetchPartial, onUpdate };
+  }
+
+  it("refetches the page on screen, stale, instead of committing", async () => {
+    const t = setup({
+      metadata: answer,
+      returnValue: { ok: true, data: "saved" },
+    });
+    await expect(t.call("hash#save", [])).resolves.toBe("saved");
+    expect(t.onUpdate).not.toHaveBeenCalled();
+    expect(t.fetchPartial).toHaveBeenCalledTimes(1);
+    expect(t.fetchPartial).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetUrl: "http://localhost/other",
+        segmentIds: [],
+        staleRevalidation: true,
+      }),
+    );
+  });
+
+  it("refetches it after an error-boundary response too", async () => {
+    const failure = new Error("out of stock");
+    const t = setup({
+      metadata: { ...answer, isError: true },
+      returnValue: { ok: false, data: failure },
+    });
+    await expect(t.call("hash#save", [])).rejects.toBe(failure);
+    expect(t.onUpdate).not.toHaveBeenCalled();
+    expect(t.fetchPartial).toHaveBeenCalledTimes(1);
+  });
+
+  it("refetches after an error-boundary response when a same-pathname navigation committed during the flight", async () => {
+    const failure = new Error("out of stock");
+    const t = setup(
+      {
+        metadata: { ...answer, isError: true },
+        returnValue: { ok: false, data: failure },
+      },
+      undefined,
+      "flight",
+    );
+    await expect(t.call("hash#save", [])).rejects.toBe(failure);
+    expect(t.onUpdate).not.toHaveBeenCalled();
+    expect(t.fetchPartial).toHaveBeenCalledWith(
+      expect.objectContaining({ targetUrl: "http://localhost/?page=2" }),
+    );
+  });
+
+  it("does not refetch for an action that called keepClientCache()", async () => {
+    const t = setup(
+      { metadata: answer, returnValue: { ok: true, data: "saved" } },
+      { "x-rango-keep-cache": "1" },
+    );
+    await expect(t.call("hash#save", [])).resolves.toBe("saved");
+    expect(t.fetchPartial).not.toHaveBeenCalled();
+  });
+});

@@ -107,9 +107,6 @@ export function createNavigationClient(
       const fetchUrl = new URL(targetUrl, window.location.origin);
       fetchUrl.searchParams.set("_rsc_partial", "true");
       fetchUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
-      if (staleRevalidation) {
-        fetchUrl.searchParams.set("_rsc_stale", "true");
-      }
       if (version) {
         fetchUrl.searchParams.set("_rsc_v", version);
       }
@@ -144,18 +141,21 @@ export function createNavigationClient(
       // server-action invalidation) auto-invalidates both scopes.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
-      // Suspend prefetch consumption while an action is in flight: a queued
-      // prefetch holds pre-mutation data and must not be served until the
-      // action's response decides whether anything changed.
+      // A prefetch served during an action's flight holds pre-write data; the
+      // bridge refetches the page on screen when the click commits before the
+      // action's own commit (server-action-bridge.ts refetchNavigatedAway).
       const canUsePrefetch =
-        !staleRevalidation &&
-        !hmr &&
-        !fill &&
-        !interceptSourceUrl &&
-        !isActionFenceActive();
+        !staleRevalidation && !hmr && !fill && !interceptSourceUrl;
       const rangoState = getRangoState();
       const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
       const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);
+      // A request sent before an in-flight action lands is stale, fills
+      // included and HMR excluded. Set after the prefetch keys, which never
+      // carry it.
+      const fenced = isActionFenceActive();
+      if ((fenced && !hmr) || staleRevalidation) {
+        fetchUrl.searchParams.set("_rsc_stale", "true");
+      }
 
       let cachedEntry: DecodedPrefetch | null = null;
       let hitKey: string | null = null;
@@ -169,8 +169,11 @@ export function createNavigationClient(
         }
       }
 
+      // An in-flight prefetch is not adopted during an action's flight: it
+      // commits when it arrives, possibly after the action's commit, which
+      // no refetch follows, with a read from before the click.
       let inflightEntryPromise: Promise<DecodedPrefetch | null> | null = null;
-      if (canUsePrefetch && !cachedEntry) {
+      if (canUsePrefetch && !cachedEntry && !fenced) {
         inflightEntryPromise = consumeInflightPrefetch(cacheKey);
         if (inflightEntryPromise) {
           hitKey = cacheKey;

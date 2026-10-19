@@ -768,12 +768,10 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   // ── Staleness signal ─────────────────────────────────────────────────
 
   /**
-   * `true` when the browser signals that data may be stale — typically because
-   * a server action was executed in this or another tab (`_rsc_stale` header).
-   *
-   * This is NOT segment cache staleness (loaders are never segment-cached).
-   * Use this to decide whether loader data should be re-fetched after an
-   * action that may have mutated backend state.
+   * `true` on a navigation request sent while a server action is in flight
+   * (before its response lands), and on a stale history entry's revalidation
+   * (`_rsc_stale`); never on a prefetch. Follow mutations with
+   * `stale || defaultShouldRevalidate`.
    */
   stale?: boolean;
 }) => boolean | { defaultShouldRevalidate: boolean } | null | void;

@@ -44,6 +44,8 @@ export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
 export { runLateHandleHistoryTests } from "./late-handle-history-scenario.js";
 export { runRedispatchedDomContentLoadedTests } from "./redispatched-dom-content-loaded-scenario.js";
 export type { RedispatchedDomContentLoadedScenarioOptions } from "./redispatched-dom-content-loaded-scenario.js";
+export { runActionStaleNavigationTests } from "./action-stale-navigation-scenario.js";
+export type { ActionStaleNavigationScenarioOptions } from "./action-stale-navigation-scenario.js";
 export { runHandlesAfterAwaitTests } from "./handles-after-await-scenario.js";
 export type { HandlesAfterAwaitScenarioOptions } from "./handles-after-await-scenario.js";
 export { runActionFailureTests } from "./action-failure-scenario.js";

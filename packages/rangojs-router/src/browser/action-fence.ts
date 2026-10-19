@@ -6,7 +6,9 @@
  * start. While the fence is up, the decision of whether the action invalidated
  * anything is deferred to the response:
  *
- * - prefetch consumption is suspended (a queued prefetch result is not served),
+ * - every request but an HMR refetch is stale (`_rsc_stale`,
+ *   navigation-client.ts),
+ * - an in-flight prefetch is not adopted (navigation-client.ts),
  * - a genuine navigation during the flight fetches with `cache: "no-store"` so
  *   it cannot be served stale bytes from the browser's Vary-keyed HTTP cache,
  * - popstate reads are treated as stale-while-revalidate.
@@ -41,7 +43,7 @@ export function isActionFenceActive(): boolean {
   return fenceCount > 0;
 }
 
-/** Test-only: reset the refcount between cases. */
+/** Test-only: reset the fence between cases. */
 export function __resetActionFence(): void {
   fenceCount = 0;
 }
