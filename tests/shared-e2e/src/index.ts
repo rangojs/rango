@@ -46,6 +46,8 @@ export { runRedispatchedDomContentLoadedTests } from "./redispatched-dom-content
 export type { RedispatchedDomContentLoadedScenarioOptions } from "./redispatched-dom-content-loaded-scenario.js";
 export { runActionStaleNavigationTests } from "./action-stale-navigation-scenario.js";
 export type { ActionStaleNavigationScenarioOptions } from "./action-stale-navigation-scenario.js";
+export { runActionHeldSegmentsTests } from "./action-held-segments-scenario.js";
+export type { ActionHeldSegmentsScenarioOptions } from "./action-held-segments-scenario.js";
 export { runHandlesAfterAwaitTests } from "./handles-after-await-scenario.js";
 export type { HandlesAfterAwaitScenarioOptions } from "./handles-after-await-scenario.js";
 export { runActionFailureTests } from "./action-failure-scenario.js";
