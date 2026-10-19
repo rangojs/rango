@@ -11,7 +11,9 @@ import { waitForShellHydration } from "./shell-request.js";
  * app (a 300 ms cart loader, a product page that answers at once, a second
  * page that answers after 300-500 ms, actions that answer after 0-800 ms
  * before their revalidation); both apps call this from a dev and a
- * (production) describe.
+ * (production) describe. The document cache never answers a stale request
+ * either: two cached pages (s-maxage=60, keyed per test by ?k) are navigated
+ * with and without one.
  */
 
 export interface ActionStaleNavigationScenarioOptions {
@@ -26,6 +28,8 @@ interface PartialRequest {
   prefetch: boolean;
   at: number;
   finished: boolean;
+  /** x-document-cache-status: undefined until answered, null when not consulted. */
+  status?: string | null;
 }
 
 // The fixture's partial requests from now on, in the order they were sent.
@@ -49,6 +53,12 @@ function recordPartials(page: Page): PartialRequest[] {
     };
     sent.push(entry);
     entries.set(request, entry);
+  });
+  page.on("response", (response) => {
+    const entry = entries.get(response.request());
+    if (entry) {
+      entry.status = response.headers()["x-document-cache-status"] ?? null;
+    }
   });
   page.on("requestfinished", (request) => {
     const entry = entries.get(request);
@@ -115,6 +125,35 @@ async function openProductPage(
   return sent;
 }
 
+const CACHED = "/action-stale/cached/";
+
+// The navigations to the document-cached pages, split by staleness.
+function cachedNavigations(sent: PartialRequest[]): {
+  plain: PartialRequest[];
+  stale: PartialRequest[];
+} {
+  const cached = sent.filter(
+    (entry) => entry.path.startsWith(CACHED) && !entry.prefetch,
+  );
+  return {
+    plain: cached.filter((entry) => !entry.stale),
+    stale: cached.filter((entry) => entry.stale),
+  };
+}
+
+// A fresh load of cached page a, whose held segments are what a navigation
+// from it lists: the cache key includes them.
+async function loadCachedPage(
+  page: Page,
+  options: ActionStaleNavigationScenarioOptions,
+  key: string,
+): Promise<void> {
+  await page.goto(options.url(`${CACHED}a?k=${key}`));
+  await waitForShellHydration(page);
+  await expect(page.getByTestId("as-cached-a")).toBeVisible();
+  await expect(page.getByTestId("as-cart")).toHaveText("cart:0");
+}
+
 export function runActionStaleNavigationTests(
   options: ActionStaleNavigationScenarioOptions,
 ): void {
@@ -130,6 +169,11 @@ export function runActionStaleNavigationTests(
       await waitForSettled(page);
       await page.getByTestId("as-to-other").click();
       await expect(page.getByTestId("as-other")).toBeVisible();
+      const key = randomUUID();
+      await useKey(page, options, key);
+      await loadCachedPage(page, options, key);
+      await page.getByTestId("as-to-cached-b").click();
+      await expect(page.getByTestId("as-cached-b")).toBeVisible();
     } finally {
       await page.close();
     }
@@ -277,5 +321,77 @@ export function runActionStaleNavigationTests(
     const [toProduct] = navigations(sent, "/action-stale/pdp");
     expect(toProduct?.stale, "the next navigation is not").toBe(false);
     await expect(page.getByTestId("as-cart-runs")).toHaveText(String(runs));
+  });
+
+  test("a navigation sent while an action is in flight is not answered from the document cache", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+    const key = randomUUID();
+    await useKey(page, options, key);
+    const sent = recordPartials(page);
+
+    // A plain navigation from a freshly loaded a goes through the cache. The
+    // stale request below repeats it from another fresh load.
+    await loadCachedPage(page, options, key);
+    await page.getByTestId("as-to-cached-b").click();
+    await expect(page.getByTestId("as-cached-b")).toBeVisible();
+    await loadCachedPage(page, options, key);
+
+    // The action writes at once and answers 500 ms later: the link is
+    // clicked inside its flight.
+    await page.getByTestId("as-add-first").click();
+    await page.getByTestId("as-to-cached-b").click();
+    await waitForShown(page, "as-cached-b");
+    const shown = await page.getByTestId("as-cart").textContent();
+    expect(await isPending(page), "the page commits during the flight").toBe(
+      true,
+    );
+    expect(shown, "the held layout shows the write at the commit").toBe(
+      "cart:1",
+    );
+    await waitForSettled(page);
+    await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
+
+    const { plain, stale } = cachedNavigations(sent);
+    await expect.poll(() => plain[0]?.status).toEqual(expect.any(String));
+    expect(stale.length, "a stale request was sent").toBeGreaterThan(0);
+    await expect
+      .poll(() => stale.every((entry) => entry.status === null))
+      .toBe(true);
+  });
+
+  test("a Back revalidation after an action is not answered from the document cache", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+    const key = randomUUID();
+    await useKey(page, options, key);
+    const sent = recordPartials(page);
+    await loadCachedPage(page, options, key);
+
+    // b to a, plain, stores the response Back's revalidation of a repeats: the
+    // same page, the same segments held.
+    await page.getByTestId("as-to-cached-b").click();
+    await expect(page.getByTestId("as-cached-b")).toBeVisible();
+    await page.getByTestId("as-to-cached-a").click();
+    await expect(page.getByTestId("as-cached-a")).toBeVisible();
+    await page.getByTestId("as-to-cached-b").click();
+    await expect(page.getByTestId("as-cached-b")).toBeVisible();
+    await page.getByTestId("as-add-fast").click();
+    await waitForSettled(page);
+    await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
+
+    // a's entry is stale: Back shows it and revalidates it in the background.
+    await page.goBack();
+    await expect(page.getByTestId("as-cached-a")).toBeVisible();
+    await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
+
+    const { plain, stale } = cachedNavigations(sent);
+    await expect.poll(() => plain[0]?.status).toEqual(expect.any(String));
+    expect(stale.length, "a stale request was sent").toBeGreaterThan(0);
+    await expect
+      .poll(() => stale.every((entry) => entry.status === null))
+      .toBe(true);
   });
 }

@@ -97,6 +97,28 @@ Not covered: a navigation that commits after the action's revalidation still
 restores held segments from before the action when their loaders do not read
 `stale`, such as a layout loader that the action re-ran by default.
 
+### Fixed: the document cache never answers a stale request, so a cached page shows the visitor's own write
+
+**Before.** `createDocumentCacheMiddleware()` keys an entry by URL and the
+client's segment list, and ignores the `_rsc_stale` param. A stale request
+(a navigation sent while a server action is in flight, or the background
+revalidation of a Back/Forward entry marked stale) was answered from the entry
+a plain request with the same segments had stored. On a page that sends `s-maxage`, the visitor who had just added to the
+cart was shown the page's loader data from before the write, and a layout loader
+that returns `stale || defaultShouldRevalidate` did not re-run. A stale
+revalidation was also stored, under the plain request's key.
+
+**Now.** A stale request skips the document cache: it renders fresh, so every
+`revalidate()` sees `stale: true`, and the stored entry is neither served to it
+nor replaced by it. The client marks stale every request it sends while an
+action is in flight, a Back/Forward revalidation, and any request that holds no
+segments (`router.refresh()`, a cross-tab refresh, the refetch after an action):
+its data may predate a write and the cache cannot tell. The response carries
+`private, no-cache`, so a shared cache keyed by URL does not store it either. Other visitors keep reading the entry until it expires or a
+tag it carries is invalidated (`updateTag()` in the action).
+`serveShellRequest(router, url, { partial: { stale: true } })` sends the
+param, as the browser does.
+
 ## 0.26.4 (2026-10-16)
 
 ### Fixed: the first dev request renders when the RSC dependency reload lands inside it ([#1194](https://github.com/rangojs/rango/pull/1194), [#1186](https://github.com/rangojs/rango/issues/1186))

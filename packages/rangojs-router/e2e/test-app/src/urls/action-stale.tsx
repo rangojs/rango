@@ -1,4 +1,4 @@
-import { urls, type Handler } from "@rangojs/router";
+import { urls, type Handler, type Middleware } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import {
   ActionStaleCartLoader,
@@ -61,8 +61,33 @@ const ActionStaleOther: Handler = async (ctx) => {
   );
 };
 
+// Two pages the document cache stores, each linking to the other. Their route
+// middleware opts every response in (s-maxage). ?k keys their entries to one
+// test, as the as-key cookie keys the state: the cache key ignores cookies.
+// Body: tests/shared-e2e/src/action-stale-navigation-scenario.ts.
+const cacheForAMinute: Middleware = async (ctx, next) => {
+  ctx.header("Cache-Control", "s-maxage=60");
+  await next();
+};
+
+const ActionStaleCached: Handler = (ctx) => {
+  const page = ctx.url.pathname.endsWith("/a") ? "a" : "b";
+  const other = page === "a" ? "b" : "a";
+  return (
+    <div data-testid={`as-cached-${page}`}>
+      <Link
+        to={`/action-stale/cached/${other}?k=${ctx.searchParams.get("k")}`}
+        prefetch="none"
+        data-testid={`as-to-cached-${other}`}
+      >
+        {other}
+      </Link>
+    </div>
+  );
+};
+
 export const actionStalePatterns = urls(
-  ({ layout, path, loader, revalidate }) => [
+  ({ layout, path, loader, middleware, revalidate }) => [
     layout(ActionStaleLayout, () => [
       loader(ActionStaleCartLoader, () => [
         revalidate(
@@ -73,6 +98,12 @@ export const actionStalePatterns = urls(
       loader(ActionStalePlainLoader),
       path("/action-stale/pdp", ActionStalePdp),
       path("/action-stale/other", ActionStaleOther),
+      path("/action-stale/cached/a", ActionStaleCached, () => [
+        middleware(cacheForAMinute),
+      ]),
+      path("/action-stale/cached/b", ActionStaleCached, () => [
+        middleware(cacheForAMinute),
+      ]),
     ]),
   ],
 );

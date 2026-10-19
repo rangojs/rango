@@ -202,6 +202,11 @@ suffixes are still appended.
 
 - Server actions (`_rsc_action`)
 - Loader requests (`_rsc_loader`)
+- Stale requests (`_rsc_stale`): the client marks stale every request it sends
+  while an action is in flight, a Back/Forward revalidation, and any request
+  that holds no segments (`router.refresh()`, a cross-tab refresh, the refetch
+  after an action). Each renders at the origin and is not stored, because its
+  data may predate a write and the cache cannot tell.
 - Non-GET requests
 - Responses without an `s-maxage` `Cache-Control` directive
 - Responses whose `Cache-Control` also contains `private`, `no-store`, or an

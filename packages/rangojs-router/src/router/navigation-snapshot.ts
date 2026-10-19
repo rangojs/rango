@@ -1,5 +1,6 @@
 import { isLoaderSegmentId } from "../browser/react/filter-segment-order.js";
 import { requestHeaders } from "../server/request-headers.js";
+import { STALE_PARAM } from "../prefetch-markers.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 
 export interface NavigationSnapshot {
@@ -134,7 +135,7 @@ export async function resolveNavigation(
 ): Promise<NavigationSnapshot | null> {
   const clientSegmentIds =
     url.searchParams.get("_rsc_segments")?.split(",").filter(Boolean) || [];
-  const stale = url.searchParams.get("_rsc_stale") === "true";
+  const stale = url.searchParams.get(STALE_PARAM) === "true";
   const previousUrl = getNavigationContextHeader(request, url.origin);
   const interceptSourceUrl = getInterceptSourceHeader(request);
   const isHmr = !!requestHeaders(request).get("X-RSC-HMR");

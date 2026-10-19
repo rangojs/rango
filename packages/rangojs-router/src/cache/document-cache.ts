@@ -14,7 +14,7 @@
  */
 
 import { requestHeaders } from "../server/request-headers.js";
-import { FILL_PARAM } from "../prefetch-markers.js";
+import { FILL_PARAM, STALE_PARAM } from "../prefetch-markers.js";
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import {
   documentCacheStoresRender,
@@ -238,11 +238,17 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return next();
     }
 
-    // Skip fill requests (prefetch: false): a fill is the second half of one
-    // adoption, rendered against what that client holds. Never served from a
-    // stored body and never stored. Asked of the raw URL like the two skips
-    // above: the request context is not read yet.
-    if (rawUrl.searchParams.has(FILL_PARAM)) {
+    // Skip fill and stale partial requests: never served from a stored body,
+    // never stored. A fill renders against what one client holds. A stale
+    // request (sent during an action's flight, on a Back/Forward revalidation,
+    // or holding no segments) may follow a write the key cannot see. Partial
+    // only: _rsc params leave the key, so a document GET carrying them must not
+    // force an origin render.
+    if (
+      rawUrl.searchParams.has("_rsc_partial") &&
+      (rawUrl.searchParams.has(FILL_PARAM) ||
+        rawUrl.searchParams.get(STALE_PARAM) === "true")
+    ) {
       return next();
     }
 

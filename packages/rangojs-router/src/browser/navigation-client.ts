@@ -38,7 +38,7 @@ import {
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
 import { cancelAllPrefetches } from "./prefetch/loader.js";
-import { FILL_PARAM } from "../prefetch-markers.js";
+import { FILL_PARAM, STALE_PARAM } from "../prefetch-markers.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -154,7 +154,7 @@ export function createNavigationClient(
       // carry it.
       const fenced = isActionFenceActive();
       if ((fenced && !hmr) || staleRevalidation) {
-        fetchUrl.searchParams.set("_rsc_stale", "true");
+        fetchUrl.searchParams.set(STALE_PARAM, "true");
       }
 
       let cachedEntry: DecodedPrefetch | null = null;
