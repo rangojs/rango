@@ -100,6 +100,15 @@ async function waitForSettled(page: Page): Promise<void> {
   await expect(page.locator("html")).not.toHaveAttribute("data-as-pending");
 }
 
+// Resolves on the frame the action settles, like waitForShown.
+async function waitForSettledNow(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => !document.documentElement.hasAttribute("data-as-pending"),
+    null,
+    { polling: "raf" },
+  );
+}
+
 // The product page under a fresh key (cart 0), and the partial requests made
 // from its load on.
 async function openProductPage(
@@ -319,5 +328,82 @@ export function runActionStaleNavigationTests(
     await expect(page.getByTestId("as-slow")).toBeVisible({ timeout: 5000 });
     await expect(page).toHaveURL(/\/action-stale\/slow$/);
     await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
+  });
+  // dc-q78: a navigation whose server read came before the write commits
+  // after the action landed; nothing refetches the page it put on screen.
+  test("a navigation read before a late write and committed after the action landed shows the write", async ({
+    page,
+  }) => {
+    test.fail(
+      true,
+      "dc-q78: the page committed after the land keeps its pre-write read",
+    );
+    test.setTimeout(60000);
+    await openProductPage(page, options);
+    const carts: string[] = [];
+    await page.exposeFunction("__asCart", (value: string) => carts.push(value));
+    await page.evaluate(() => {
+      let last: string | null | undefined;
+      new MutationObserver(() => {
+        const value = document.querySelector(
+          '[data-testid="as-cart"]',
+        )?.textContent;
+        if (value == null || value === last) return;
+        last = value;
+        (self as unknown as { __asCart(value: string): void }).__asCart(value);
+      }).observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    });
+
+    // The action writes 800 ms in and lands once its revalidation reran the
+    // 300 ms cart loader. The read page reads the cart as its request
+    // arrives and answers after 1800 ms.
+    await page.getByTestId("as-add-last").click();
+    await page.getByTestId("as-to-read").click();
+    await waitForShown(page, "as-read");
+    expect(
+      await isPending(page),
+      "the action landed before the page committed",
+    ).toBe(false);
+    test.info().annotations.push({
+      type: "carts",
+      description: carts.join(" -> "),
+    });
+    await expect(page.getByTestId("as-read")).toHaveText("read:1", {
+      timeout: 5000,
+    });
+    await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
+  });
+
+  // An action's navigated-away refetch that a newer click supersedes: the
+  // page that click commits holds the layout from the page that missed the
+  // write, and its request is not stale (the action has settled).
+  test("a link clicked while the navigated-away refetch is in flight shows the write", async ({
+    page,
+  }) => {
+    test.fail(true, "a superseded navigated-away refetch is not run again");
+    test.setTimeout(60000);
+    const sent = await openProductPage(page, options);
+
+    // The action writes 800 ms in, just before it answers; the page answers
+    // after 300 ms, so it commits during the flight with cart:0. The
+    // action's refetch of it answers after 300-600 ms more.
+    await page.getByTestId("as-add-last").click();
+    await page.getByTestId("as-to-other").click();
+    await waitForShown(page, "as-other");
+    await waitForSettledNow(page);
+    await page.getByTestId("as-to-pdp").click();
+    const [, refetch] = navigations(sent, "/action-stale/other");
+    expect(refetch?.stale, "the action refetched the page it left").toBe(true);
+    expect(refetch?.finished, "the refetch had not answered at the click").toBe(
+      false,
+    );
+    await expect(page.getByTestId("as-pdp")).toBeVisible();
+    await expect(page.getByTestId("as-cart")).toHaveText("cart:1", {
+      timeout: 5000,
+    });
   });
 }

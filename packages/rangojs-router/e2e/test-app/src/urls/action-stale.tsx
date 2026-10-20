@@ -5,7 +5,7 @@ import {
   ActionStalePlainLoader,
 } from "./action-stale.defs.js";
 import { ActionStaleBar } from "./action-stale.client.js";
-import { wait } from "./action-stale.store.js";
+import { actionStaleState, wait } from "./action-stale.store.js";
 
 // A layout cart count whose loader opts into `stale`, a layout loader on the
 // default, a product page with the add-to-cart action, and a second page. The
@@ -35,6 +35,9 @@ const ActionStalePdp: Handler = (ctx) => {
         data-testid="as-to-other-slow"
       >
         Other, slow
+      </Link>
+      <Link to="/action-stale/read" prefetch="none" data-testid="as-to-read">
+        Read
       </Link>
       {ctx.searchParams.get("prefetch") === "render" && (
         <Link
@@ -71,6 +74,15 @@ const ActionStaleSlow: Handler = async () => {
   return <div data-testid="as-slow">Slow page</div>;
 };
 
+// Reads the cart as it starts and answers 1800 ms later: its read comes
+// before the write an action makes at 800 ms, its commit after that action
+// lands (dc-q78).
+const ActionStaleRead: Handler = async () => {
+  const { cart } = actionStaleState();
+  await wait(1800);
+  return <div data-testid="as-read">{`read:${cart}`}</div>;
+};
+
 export const actionStalePatterns = urls(
   ({ layout, path, loader, revalidate }) => [
     layout(ActionStaleLayout, () => [
@@ -84,6 +96,7 @@ export const actionStalePatterns = urls(
       path("/action-stale/pdp", ActionStalePdp),
       path("/action-stale/other", ActionStaleOther),
       path("/action-stale/slow", ActionStaleSlow),
+      path("/action-stale/read", ActionStaleRead),
     ]),
   ],
 );
