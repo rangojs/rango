@@ -1,6 +1,6 @@
 "use client";
 
-import { useLoader } from "@rangojs/router/client";
+import { useLoader, useNavigation } from "@rangojs/router/client";
 import {
   ActionStaleCartLoader,
   ActionStalePlainLoader,
@@ -19,9 +19,11 @@ function run(writeAt: "first" | "last", ms: number): void {
 export function ActionStaleBar() {
   const { data: cart } = useLoader(ActionStaleCartLoader);
   const { data: plain } = useLoader(ActionStalePlainLoader);
+  const navigation = useNavigation((nav) => nav.state);
   return (
     <div>
       <p data-testid="as-cart">{`cart:${cart.cart}`}</p>
+      <p data-testid="as-navigation">{navigation}</p>
       <p data-testid="as-cart-runs">{cart.runs}</p>
       <p data-testid="as-plain">{plain}</p>
       <button data-testid="as-add-first" onClick={() => run("first", 500)}>

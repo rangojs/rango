@@ -420,7 +420,9 @@ client-side. The actual conclusion: the eager _clear_ must become an eager
     prefetch hits. A cached prefetch is served during the flight; a click
     that commits before the action's own commit gets the bridge's
     `navigated-away` refetch, at classification or while the action's tree
-    renders (`refetchNavigatedAway`). An in-flight prefetch is not adopted
+    renders (`refetchNavigatedAway`). The refetch never supersedes a
+    navigation the user started: it waits for it and refetches the page it
+    commits (`refetchShown`). An in-flight prefetch is not adopted
     during the flight. Every navigation request during the flight sends
     `_rsc_stale=true` (fence up means the last action has not landed). After
     the action lands, loaders on its page have re-run, so later navigations are

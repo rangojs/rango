@@ -20,6 +20,12 @@ export interface ActionStaleNavigationScenarioOptions {
   warmUp: boolean;
 }
 
+// A state useNavigation() showed, and whether the slow page was on screen.
+interface NavigationValue {
+  state: string;
+  slow: boolean;
+}
+
 interface PartialRequest {
   path: string;
   stale: boolean;
@@ -288,12 +294,11 @@ export function runActionStaleNavigationTests(
     await expect(page.getByTestId("as-cart-runs")).toHaveText(String(runs));
   });
 
-  // dc-t114: the action's refetch of the page on screen supersedes the newer
-  // navigation still in flight, so the last click is lost.
+  // dc-t114: the action's refetch of the page on screen never supersedes a
+  // newer navigation still in flight; it refetches the page that one commits.
   test("a second navigation still in flight when the action answers commits with the write", async ({
     page,
   }) => {
-    test.fail(true, "dc-t114: the navigated-away refetch drops navigation 2");
     test.setTimeout(60000);
     await openProductPage(page, options);
     const sequence: string[] = [];
@@ -310,6 +315,28 @@ export function runActionStaleNavigationTests(
         sequence.push(`failed ${url.pathname}`);
       }
     });
+    // Every state useNavigation() shows from here on, and whether the slow
+    // page was on screen when it did.
+    await page.evaluate(() => {
+      const read = () =>
+        document.querySelector('[data-testid="as-navigation"]')?.textContent;
+      const seen: NavigationValue[] = [];
+      let last = read();
+      new MutationObserver(() => {
+        const state = read();
+        if (state == null || state === last) return;
+        last = state;
+        seen.push({
+          state,
+          slow: !!document.querySelector('[data-testid="as-slow"]'),
+        });
+      }).observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+      Object.assign(self, { __asNavigationSeen: seen });
+    });
 
     // The action answers at 500 ms. The 300 ms page commits first; the
     // 900 ms page, clicked right after, is still in flight at 500 ms.
@@ -325,19 +352,58 @@ export function runActionStaleNavigationTests(
       type: "requests",
       description: sequence.join(" | "),
     });
+    // The user's navigation stays the one useNavigation() reports until it
+    // commits; the action's refetch after it is a background request.
+    await expect(page.getByTestId("as-navigation")).toHaveText("idle", {
+      timeout: 5000,
+    });
+    const seen = await page.evaluate(
+      () =>
+        (self as unknown as { __asNavigationSeen: NavigationValue[] })
+          .__asNavigationSeen,
+    );
+    expect(
+      seen.filter((entry) => entry.state === "idle" && !entry.slow),
+      `idle before the slow page: ${JSON.stringify(seen)}`,
+    ).toEqual([]);
     await expect(page.getByTestId("as-slow")).toBeVisible({ timeout: 5000 });
     await expect(page).toHaveURL(/\/action-stale\/slow$/);
     await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
   });
+
+  // The navigation the action's refetch waits for is superseded by a newer
+  // click: the wait moves to that click, and the page it commits gets the
+  // refetch. The 300 ms page commits during the flight with the pre-write
+  // cart; the 900 ms page is still out when the action settles.
+  test("a third navigation that supersedes the one the refetch waits for shows the write", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+    const sent = await openProductPage(page, options);
+
+    await page.getByTestId("as-add-last").click();
+    await page.getByTestId("as-to-other").click();
+    await waitForShown(page, "as-other");
+    expect(await isPending(page), "the action is in flight").toBe(true);
+    await page.getByTestId("as-to-slow").click();
+    await waitForSettledNow(page);
+    await page.getByTestId("as-to-pdp").click();
+    const [toSlow] = navigations(sent, "/action-stale/slow");
+    expect(toSlow?.finished, "the slow page had not answered").toBe(false);
+
+    await expect(page.getByTestId("as-pdp")).toBeVisible();
+    await expect(page).toHaveURL(/\/action-stale\/pdp$/);
+    await expect(page.getByTestId("as-cart")).toHaveText("cart:1", {
+      timeout: 5000,
+    });
+    await expect(page.getByTestId("as-slow")).toHaveCount(0);
+  });
+
   // dc-q78: a navigation whose server read came before the write commits
-  // after the action landed; nothing refetches the page it put on screen.
+  // after the action landed; the action refetches the page it put on screen.
   test("a navigation read before a late write and committed after the action landed shows the write", async ({
     page,
   }) => {
-    test.fail(
-      true,
-      "dc-q78: the page committed after the land keeps its pre-write read",
-    );
     test.setTimeout(60000);
     await openProductPage(page, options);
     const carts: string[] = [];
@@ -380,11 +446,11 @@ export function runActionStaleNavigationTests(
 
   // An action's navigated-away refetch that a newer click supersedes: the
   // page that click commits holds the layout from the page that missed the
-  // write, and its request is not stale (the action has settled).
+  // write, and its request is not stale (the action has settled), so the
+  // refetch runs again for it.
   test("a link clicked while the navigated-away refetch is in flight shows the write", async ({
     page,
   }) => {
-    test.fail(true, "a superseded navigated-away refetch is not run again");
     test.setTimeout(60000);
     const sent = await openProductPage(page, options);
 

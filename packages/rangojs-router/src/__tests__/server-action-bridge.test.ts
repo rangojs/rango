@@ -932,3 +932,241 @@ describe("server-action-bridge navigation committed during the action's render",
     expect(t.fetchPartial).not.toHaveBeenCalled();
   });
 });
+
+// An action's refetch of the page on screen never supersedes a navigation the
+// user started (dc-t114): it waits for that navigation to settle, then
+// refetches what is on screen, whole and stale (dc-q78). A refetch a click
+// supersedes runs again for the page that click commits, and a land with a
+// navigation in flight schedules the same refetch.
+describe("server-action-bridge refetch follows the screen", () => {
+  const route = { id: "R0", type: "route", component: "div" };
+  const answer = {
+    pathname: "/",
+    segments: [route],
+    matched: ["R0"],
+    diff: ["R0"],
+    isPartial: true,
+  };
+
+  /**
+   * One action whose response the test releases. `during` runs while the
+   * request is out: a navigation committing (another pathname and history
+   * entry) makes the action navigated-away. Each refetch request is answered
+   * when the test resolves it.
+   */
+  function setup(during?: (t: { eventController: any }) => void) {
+    stubWindow();
+    let release!: () => void;
+    const responded = new Promise<void>((resolve) => (release = resolve));
+    const eventController = createEventController();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        during?.({ eventController });
+        await responded;
+        return new Response(null, { status: 200 });
+      }),
+    );
+    let historyKey = "/";
+    const cache = new Map<string, { segments: unknown[]; stale: boolean }>([
+      ["/", { segments: [route], stale: false }],
+    ]);
+    const store = {
+      ...createMockStore(),
+      loaders: new LoaderStore(),
+      getHistoryKey: vi.fn(() => historyKey),
+      setHistoryKey: vi.fn((key: string) => (historyKey = key)),
+      getCachedSegments: vi.fn((key: string) => cache.get(key)),
+      cacheSegmentsForHistory: vi.fn((key: string, segments: unknown[]) => {
+        cache.set(key, { segments, stale: false });
+      }),
+      setSegmentIds: vi.fn(),
+      setCurrentUrl: vi.fn(),
+      setPath: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const answers: Array<(value: unknown) => void> = [];
+    const fetchPartial = vi.fn(
+      () => new Promise((resolve) => answers.push(resolve)),
+    );
+    const setServerCallback = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: { fetchPartial } as any,
+      eventController,
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async (response: Promise<Response>) => {
+          await response;
+          return { metadata: answer, returnValue: { ok: true, data: "saved" } };
+        }),
+        setServerCallback,
+      } as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    }).register();
+    const call = (setServerCallback.mock.calls[0]![0] as Function)(
+      "hash#save",
+      [],
+    ) as Promise<unknown>;
+    // A navigation the user started, and its commit (the transaction's end):
+    // the page it puts on screen is at `pathname`, under its own entry.
+    const navigate = (pathname: string) => {
+      const handle = eventController.startNavigation(
+        `http://localhost${pathname}`,
+      );
+      return {
+        handle,
+        commit() {
+          Object.assign(window.location, {
+            href: `http://localhost${pathname}`,
+            pathname,
+          });
+          window.history.state.key = pathname;
+          historyKey = pathname;
+          cache.set(pathname, { segments: [route], stale: false });
+          handle.complete(new URL(`http://localhost${pathname}`));
+          handle[Symbol.dispose]();
+        },
+      };
+    };
+    const refetched = () =>
+      fetchPartial.mock.calls.map(
+        (args) => (args as unknown as [{ targetUrl: string }])[0].targetUrl,
+      );
+    // The microtasks a settled navigation's waiter and the refetch's start
+    // take.
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    return {
+      call,
+      release,
+      navigate,
+      refetched,
+      fetchPartial,
+      answers,
+      eventController,
+      flush,
+    };
+  }
+
+  it("waits for a navigation in flight when the action answers, then refetches the page it commits", async () => {
+    let second!: { handle: any; commit(): void };
+    const t = setup(() => {
+      // Navigation 1 commits /other, navigation 2 to /slow is still out.
+      Object.assign(window.location, {
+        href: "http://localhost/other",
+        pathname: "/other",
+      });
+      window.history.state.key = "/other";
+      second = t.navigate("/slow");
+    });
+    t.release();
+    await expect(t.call).resolves.toBe("saved");
+    await t.flush();
+    expect(second.handle.signal.aborted).toBe(false);
+    expect(t.fetchPartial).not.toHaveBeenCalled();
+
+    second.commit();
+    await t.flush();
+    expect(t.fetchPartial).toHaveBeenCalledTimes(1);
+    expect(t.fetchPartial).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetUrl: "http://localhost/slow",
+        segmentIds: [],
+        staleRevalidation: true,
+      }),
+    );
+  });
+
+  it("moves its wait to a newer navigation that supersedes the one it waited for", async () => {
+    let second!: { handle: any; commit(): void };
+    const t = setup(() => {
+      Object.assign(window.location, {
+        href: "http://localhost/other",
+        pathname: "/other",
+      });
+      window.history.state.key = "/other";
+      second = t.navigate("/slow");
+    });
+    t.release();
+    await t.call;
+    const third = t.navigate("/third");
+    await t.flush();
+    expect(second.handle.signal.aborted).toBe(true);
+    expect(t.fetchPartial).not.toHaveBeenCalled();
+
+    third.commit();
+    await t.flush();
+    expect(t.refetched()).toEqual(["http://localhost/third"]);
+  });
+
+  it("refetches nothing after a navigation that failed: its error stays on screen", async () => {
+    let second!: { handle: any; commit(): void };
+    const t = setup(() => {
+      Object.assign(window.location, {
+        href: "http://localhost/other",
+        pathname: "/other",
+      });
+      window.history.state.key = "/other";
+      second = t.navigate("/slow");
+    });
+    t.release();
+    await t.call;
+    second.handle[Symbol.dispose]();
+    await t.flush();
+    expect(t.fetchPartial).not.toHaveBeenCalled();
+  });
+
+  it("runs again for the page a click commits when the click leaves the refetch before it committed", async () => {
+    const t = setup(() => {
+      Object.assign(window.location, {
+        href: "http://localhost/other",
+        pathname: "/other",
+      });
+      window.history.state.key = "/other";
+    });
+    t.release();
+    await t.call;
+    await t.flush();
+    expect(t.refetched()).toEqual(["http://localhost/other"]);
+
+    const click = t.navigate("/pdp");
+    // The refetch's response still arrives, and is ignored.
+    t.answers[0]!({
+      payload: { metadata: answer },
+      streamComplete: Promise.resolve(),
+    });
+    await t.flush();
+    expect(t.fetchPartial).toHaveBeenCalledTimes(1);
+
+    click.commit();
+    await t.flush();
+    expect(t.refetched()).toEqual([
+      "http://localhost/other",
+      "http://localhost/pdp",
+    ]);
+  });
+
+  it("schedules the refetch from its land when a navigation is in flight, and none without one", async () => {
+    let click!: { handle: any; commit(): void };
+    const t = setup(() => {
+      click = t.navigate("/next");
+    });
+    t.release();
+    await expect(t.call).resolves.toBe("saved");
+    await t.flush();
+    expect(t.fetchPartial).not.toHaveBeenCalled();
+
+    click.commit();
+    await t.flush();
+    expect(t.refetched()).toEqual(["http://localhost/next"]);
+
+    const quiet = setup();
+    quiet.release();
+    await expect(quiet.call).resolves.toBe("saved");
+    await quiet.flush();
+    expect(quiet.fetchPartial).not.toHaveBeenCalled();
+  });
+});

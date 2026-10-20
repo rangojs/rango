@@ -3216,3 +3216,115 @@ describe("an action refetch whose loader throws on its rerun", () => {
     expect(nav.result).toBeUndefined();
   });
 });
+
+// dc-t110: a link clicked while an action is in flight copies the page's
+// segments at the click. When the action lands on that page first, the
+// segments the navigation keeps are read from the page on screen, so the
+// navigation never takes the action's data back.
+describe("partial-update: the segments a navigation keeps come from the page on screen", () => {
+  const layout = (run: number) =>
+    seg("L0", { type: "layout", component: `layout-run-${run}` });
+  const payload = {
+    metadata: {
+      isPartial: true,
+      segments: [seg("L0R1", { component: "next-route" })],
+      matched: ["L0", "L0R1"],
+      diff: ["L0R1"],
+    },
+  };
+
+  /** The page on screen, which an action's land replaces (a new array). */
+  function setup() {
+    const store = createMockStore({
+      cachedSegments: [layout(1), seg("L0R0")],
+    });
+    let onScreen: ResolvedSegment[] = [layout(1), seg("L0R0")];
+    store.getCachedSegments.mockImplementation((key: string) =>
+      key === "/" ? { segments: onScreen, stale: false } : undefined,
+    );
+    const land = () => {
+      onScreen = [layout(2), seg("L0R0")];
+    };
+    return { store, land };
+  }
+
+  const keptLayout = (renderSegments: ReturnType<typeof vi.fn>, call: number) =>
+    (renderSegments.mock.calls[call]![0] as ResolvedSegment[]).find(
+      (s) => s.id === "L0",
+    )!.component;
+
+  it("keeps the layout an action committed while the request was out", async () => {
+    const { store, land } = setup();
+    const { client } = createMockClient(payload);
+    client.fetchPartial.mockImplementationOnce(async () => {
+      land();
+      return { payload, streamComplete: Promise.resolve() } as any;
+    });
+    const renderSegments = vi.fn(async () => "tree");
+    const tx = createMockTx();
+    await createPartialUpdater({
+      getVersion: () => undefined,
+      store: store as any,
+      client: client as any,
+      onUpdate: vi.fn(),
+      renderSegments,
+    })("http://localhost/next", ["L0", "L0R0"], false, undefined, tx);
+
+    expect(renderSegments).toHaveBeenCalledTimes(1);
+    expect(keptLayout(renderSegments, 0)).toBe("layout-run-2");
+    const committed = (tx.commit.mock.calls[0] as unknown[])[1];
+    expect((committed as ResolvedSegment[])[0]!.component).toBe("layout-run-2");
+  });
+
+  it("renders once more when an action commits during the render, and commits that tree", async () => {
+    const { store, land } = setup();
+    const { client } = createMockClient(payload);
+    let renders = 0;
+    const renderSegments = vi.fn(async () => {
+      if (renders === 0) land();
+      return `tree-${++renders}`;
+    });
+    const onUpdate = vi.fn();
+    await createPartialUpdater({
+      getVersion: () => undefined,
+      store: store as any,
+      client: client as any,
+      onUpdate,
+      renderSegments,
+    })(
+      "http://localhost/next",
+      ["L0", "L0R0"],
+      false,
+      undefined,
+      createMockTx(),
+    );
+
+    expect(renderSegments).toHaveBeenCalledTimes(2);
+    expect(keptLayout(renderSegments, 0)).toBe("layout-run-1");
+    expect(keptLayout(renderSegments, 1)).toBe("layout-run-2");
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(onUpdate.mock.calls[0]![0].root).toBe("tree-2");
+  });
+
+  it("keeps the copy taken at the click when nothing committed to the page", async () => {
+    const { store } = setup();
+    const { client } = createMockClient(payload);
+    const renderSegments = vi.fn(async () => "tree");
+    await createPartialUpdater({
+      getVersion: () => undefined,
+      store: store as any,
+      client: client as any,
+      onUpdate: vi.fn(),
+      renderSegments,
+    })(
+      "http://localhost/next",
+      ["L0", "L0R0"],
+      false,
+      undefined,
+      createMockTx(),
+    );
+
+    expect(renderSegments).toHaveBeenCalledTimes(1);
+    expect(keptLayout(renderSegments, 0)).toBe("layout-run-1");
+  });
+});

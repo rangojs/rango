@@ -380,6 +380,38 @@ describe("createNavigationTransaction", () => {
     });
   });
 
+  // NavigationEntry.settled: the transaction's end reaches the handle,
+  // committed or not, and nothing else moves (an action's refetch waits on
+  // it, server-action-bridge.ts refetchShown).
+  it("settles its entry when it ends: true once committed, false without a commit", async () => {
+    const { store, eventController } = createTestContext();
+    const committed = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/target",
+    );
+    const committedEntry = eventController.getCurrentNavigation()!;
+    committed.commit({
+      url: "http://localhost/target",
+      segmentIds: [],
+      segments: [],
+    });
+    committed[Symbol.dispose]();
+    expect(locationHref).toBe("http://localhost/target");
+    expect(eventController.getState().location.pathname).toBe("/target");
+    await expect(committedEntry.settled).resolves.toBe(true);
+
+    const failed = createNavigationTransaction(
+      store,
+      eventController,
+      "http://localhost/other",
+    );
+    const failedEntry = eventController.getCurrentNavigation()!;
+    failed[Symbol.dispose]();
+    expect(eventController.getCurrentNavigation()).toBeNull();
+    await expect(failedEntry.settled).resolves.toBe(false);
+  });
+
   it("cacheOnly commit completes the navigation handle", () => {
     const { store, eventController } = createTestContext();
 

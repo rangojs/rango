@@ -2026,6 +2026,32 @@ should not be treated as equivalent.
   - revalidate that outer segment too, or
   - load/guard the data in the child independently.
 
+- **An action's refetch follows the page on screen (JS transport).** When a
+  navigation commits before an action's own commit, the page it put on
+  screen missed the write, and the bridge refetches it whole and stale
+  (`refetchNavigatedAway` -> `refetchRoute` in
+  `browser/server-action-bridge.ts`). That refetch is a `skipLoadingState`
+  navigation, and a navigation aborts the one in flight, so the bridge never
+  starts it while a navigation the user started (a click, a Back/Forward
+  that misses the history cache, `router.refresh()`) is in flight: the
+  user's request may predate the write too. `refetchShown` waits on that
+  navigation's `NavigationEntry.settled` (`browser/event-controller.ts`),
+  which resolves when its transaction ends (after a `prefetch: false` fill),
+  then refetches whatever is on screen; a navigation that failed keeps its
+  error and gets none. A refetch a user navigation leaves before it
+  committed runs again for the page that navigation commits. An action that
+  lands with a navigation in flight schedules the same refetch, and
+  `hmr-missing`, `consolidation-needed` and the same-key navigated-away
+  refetch defer the same way (the call then resolves without waiting and
+  reports no `revalidationError` from it). An intercept page is not
+  refetched. What a navigation keeps follows the screen too: the held
+  segments it reconciles are read from the page on screen when an action
+  committed to it after the click (`held` in `browser/partial-update.ts`),
+  and a land during the navigation's render renders the tree once more.
+  Pinned by `action-stale-navigation` and `action-held-segments` (both
+  apps, dev + production) and `server-action-bridge.test.ts` ("refetch
+  follows the screen").
+
 - **A loader that throws on the action's revalidation does not fail the
   action (JS transport).** The action has run and returned, so its call
   resolves with its result, on every route (`urls()` with or without

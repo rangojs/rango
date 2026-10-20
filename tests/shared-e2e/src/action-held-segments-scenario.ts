@@ -6,9 +6,10 @@ import { waitForShellHydration } from "./shell-request.js";
  * A navigation never moves data on screen backwards (dc-t110). A link clicked
  * while an action is in flight takes its copy of the held layout at the click
  * (partial-update.ts cachedSegs); the action answers first and commits its
- * revalidation on the product page; then the navigation commits the layout
- * from that copy. A layout loader without revalidate(), which the action
- * re-ran by default, goes back from the action's run to the one before it.
+ * revalidation on the product page; then the navigation commits. The layout
+ * it keeps is read from the page on screen (partial-update.ts held), so a
+ * layout loader without revalidate(), which the action re-ran by default,
+ * keeps the action's run instead of going back to the one before it.
  * Fixture: action-stale.tsx in each app (as-plain is that loader's run count);
  * both apps call this from a dev and a (production) describe.
  */
@@ -64,9 +65,6 @@ export function runActionHeldSegmentsTests(
   test("a navigation that commits after an action's revalidation keeps the action's data in a held layout", async ({
     page,
   }) => {
-    // dc-t110: open. The navigation commits the held layout from the copy
-    // it took at the click, so this fails until the owner decides the fix.
-    test.fail();
     test.setTimeout(60000);
     await openProductPage(page, options);
     // Every value the plain loader shows from here on, and whether the

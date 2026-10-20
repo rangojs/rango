@@ -1688,7 +1688,9 @@ its placeholders and drops its response; if the entry is untouched the fill
 lands. An action that refetches through a navigation transaction of its own
 (`refetchRoute` in `src/browser/server-action-bridge.ts`) does start one, and
 cancels the fill: its request lists the placeholders as not held, so its
-response renders what they stand for.
+response renders what they stand for. A refetch that waits for a navigation
+the user started (`refetchShown`) starts only once that navigation's
+transaction has ended, after its own fill.
 
 A navigation that starts cancels the fill at once, not when it commits. That
 is the trade the signal makes. A navigation that starts and then ends without

@@ -661,6 +661,23 @@ export function createPartialUpdater(
         : undefined;
     const cachedSegs = targetCache ?? getCurrentCachedSegments();
     const cachedSegsSource = targetCache ? "history-cache" : "current-page";
+    // The segments this navigation keeps, by id: from the copy taken at the
+    // click, or, once something committed to the page on screen since (an
+    // action's land, dc-t110), from that page, so a navigation never takes
+    // it back to older data. By object: a commit replaces the entry's array,
+    // a `prefetch: false` fill writes into it.
+    const entryAtStart = entryOnScreen();
+    const held = (): ResolvedSegment[] => {
+      if (
+        targetCache ||
+        entryOnScreen() === entryAtStart ||
+        store.getHistoryKey() !== historyKeyAtStart
+      ) {
+        return cachedSegs;
+      }
+      const now = new Map(getCurrentCachedSegments().map((s) => [s.id, s]));
+      return cachedSegs.map((s) => now.get(s.id) ?? s);
+    };
     // Rendered from the history cache, the page starts from the entry's
     // pushes whether or not the response re-renders. Read before tx.commit():
     // it records the controller's handle state (the document snapshot during
@@ -752,7 +769,7 @@ export function createPartialUpdater(
 
       if (!diff || diff.length === 0) {
         const matchedIds = matched || [];
-        const cacheMap = new Map(cachedSegs.map((s) => [s.id, s]));
+        const cacheMap = new Map(held().map((s) => [s.id, s]));
         const existingSegments = matchedIds
           .map((id: string) => cacheMap.get(id))
           .filter(Boolean) as ResolvedSegment[];
@@ -882,7 +899,7 @@ export function createPartialUpdater(
           matched: matchedIds,
           diff: sent,
           serverSegments,
-          cachedSegments: cachedSegs,
+          cachedSegments: held(),
           insertMissingDiff: true,
         });
       let reconciled = reconcile();
@@ -1020,49 +1037,60 @@ export function createPartialUpdater(
       } else if (holes) {
         config.fill?.flush();
       }
-      const renderOptions = {
-        transitionGatedOff: gatedOff,
-        isAction: mode.type === "action",
-        // forceAwait unwraps the ROUTER loader promises during render so they
-        // land without a loading()/fallback frame. A fully-prefetched nav has
-        // its router data already resolved (the prefetch stream drained), so
-        // awaiting it here is free; the commit below then runs in a transition
-        // (fullyPrefetched branch) so nothing router-owned can flash. A page
-        // that waited for its fill is still streaming it.
-        forceAwait:
-          mode.type === "stale-revalidation" || (fullyPrefetched && !waited),
-        interceptSegments:
-          reconciled.interceptSegments.length > 0
-            ? reconciled.interceptSegments
-            : undefined,
-      };
       let newTree: Awaited<ReturnType<typeof renderSegments>>;
-      if (signal) {
-        // Race render against abort. Store the abort handler and register it
-        // { once:true } so a non-aborted render (which wins the race) can
-        // remove it in finally — otherwise the listener stays attached and the
-        // rejecting promise never settles. Mirrors teeWithCompletion in
-        // browser/response-adapter.ts.
-        let onAbort: (() => void) | undefined;
-        const abortPromise = new Promise<never>((_, reject) => {
-          if (signal.aborted) {
-            reject(new DOMException("Navigation aborted", "AbortError"));
-            return;
+      // Something committed to the page on screen during the render (an
+      // action's land): reconcile the held segments from it and render once
+      // more.
+      for (let pass = 0; ; pass++) {
+        const rendered = entryOnScreen();
+        const renderOptions = {
+          transitionGatedOff: gatedOff,
+          isAction: mode.type === "action",
+          // forceAwait unwraps the ROUTER loader promises during render so
+          // they land without a loading()/fallback frame. A fully-prefetched
+          // nav has its router data already resolved (the prefetch stream
+          // drained), so awaiting it here is free; the commit below then runs
+          // in a transition (fullyPrefetched branch) so nothing router-owned
+          // can flash. A page that waited for its fill is still streaming it.
+          forceAwait:
+            mode.type === "stale-revalidation" || (fullyPrefetched && !waited),
+          interceptSegments:
+            reconciled.interceptSegments.length > 0
+              ? reconciled.interceptSegments
+              : undefined,
+        };
+        if (signal) {
+          // Race render against abort. Store the abort handler and register
+          // it { once:true } so a non-aborted render (which wins the race) can
+          // remove it in finally — otherwise the listener stays attached and
+          // the rejecting promise never settles. Mirrors teeWithCompletion in
+          // browser/response-adapter.ts.
+          let onAbort: (() => void) | undefined;
+          const abortPromise = new Promise<never>((_, reject) => {
+            if (signal.aborted) {
+              reject(new DOMException("Navigation aborted", "AbortError"));
+              return;
+            }
+            onAbort = () =>
+              reject(new DOMException("Navigation aborted", "AbortError"));
+            signal.addEventListener("abort", onAbort, { once: true });
+          });
+          try {
+            newTree = await Promise.race([
+              renderSegments(reconciled.mainSegments, renderOptions),
+              abortPromise,
+            ]);
+          } finally {
+            if (onAbort) signal.removeEventListener("abort", onAbort);
           }
-          onAbort = () =>
-            reject(new DOMException("Navigation aborted", "AbortError"));
-          signal.addEventListener("abort", onAbort, { once: true });
-        });
-        try {
-          newTree = await Promise.race([
-            renderSegments(reconciled.mainSegments, renderOptions),
-            abortPromise,
-          ]);
-        } finally {
-          if (onAbort) signal.removeEventListener("abort", onAbort);
+        } else {
+          newTree = await renderSegments(
+            reconciled.mainSegments,
+            renderOptions,
+          );
         }
-      } else {
-        newTree = await renderSegments(reconciled.mainSegments, renderOptions);
+        if (pass || entryOnScreen() === rendered || signal?.aborted) break;
+        reconciled = reconcile();
       }
 
       // A background refresh keeps the stale page on screen when a loader it

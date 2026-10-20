@@ -190,20 +190,68 @@ export function createServerActionBridge(
       action,
     });
 
-  /**
-   * Refetch current route via a navigation transaction.
-   * Encapsulates the repeated pattern of creating a navTx + fetchPartialUpdate
-   * used by navigated-away, hmr-missing, and consolidation-needed scenarios.
-   * Resolves with the error of a loader that threw on the refetch.
-   */
-  async function refetchRoute(opts?: {
+  type RefetchOptions = {
     segments?: string[];
     interceptSourceUrl?: string | null;
     actionId?: string;
     /** transition({ when }) `action` fields for the refetch commit. */
     action?: TransitionWhenActionInput;
-  }): Promise<Error | undefined> {
-    const src = opts?.interceptSourceUrl ?? null;
+    /** The entry the action landed: no refetch while it is on screen. */
+    landed?: ResolvedSegment[];
+  };
+
+  const reportRefetch = (error: unknown): void => {
+    if (isBackgroundSuppressible(error)) return;
+    console.error("[Browser] Background revalidation failed:", error);
+  };
+
+  // A navigation the user started (a click, Back/Forward, refresh()), not a
+  // background refetch or revalidation.
+  const userNavigation = () => {
+    const pending = eventController.getCurrentNavigation();
+    return pending?.options?.skipLoadingState ? undefined : pending;
+  };
+
+  /**
+   * Refetch the page on screen, whole and stale, once no navigation the user
+   * started is in flight. That navigation is never superseded (dc-t114): its
+   * request may predate the action's write, so the page it puts on screen
+   * is refetched once it has settled (dc-q78). One that failed keeps its
+   * error on screen. Not an intercept page, whose source is not known here.
+   */
+  function refetchShown(opts: RefetchOptions): void {
+    const pending = userNavigation();
+    if (pending) {
+      void pending.settled.then((committed) => {
+        if (committed || pending.abort.signal.aborted) refetchShown(opts);
+      });
+    } else if (
+      opts.landed !==
+        store.getCachedSegments(store.getHistoryKey())?.segments &&
+      store.getInterceptSourceUrl() === null
+    ) {
+      refetchRoute({ actionId: opts.actionId, action: opts.action }).catch(
+        reportRefetch,
+      );
+    }
+  }
+
+  /**
+   * Refetch current route via a navigation transaction.
+   * Encapsulates the repeated pattern of creating a navTx + fetchPartialUpdate
+   * used by navigated-away, hmr-missing, and consolidation-needed scenarios.
+   * Resolves with the error of a loader that threw on the refetch, and with
+   * nothing when it defers to a navigation the user started (refetchShown).
+   */
+  async function refetchRoute(
+    opts: RefetchOptions = {},
+  ): Promise<Error | undefined> {
+    if (userNavigation()) {
+      refetchShown(opts);
+      return;
+    }
+    const key = store.getHistoryKey();
+    const src = opts.interceptSourceUrl ?? null;
     const navTx = createNavigationTransaction(
       store,
       eventController,
@@ -213,7 +261,7 @@ export function createServerActionBridge(
     try {
       return await fetchPartialUpdate(
         window.location.href,
-        opts?.segments ?? [],
+        opts.segments ?? [],
         false,
         navTx.handle.signal,
         navTx.with({
@@ -224,12 +272,24 @@ export function createServerActionBridge(
         {
           type: "action" as const,
           ...(src ? { interceptSourceUrl: src } : {}),
-          ...(opts?.actionId !== undefined ? { actionId: opts.actionId } : {}),
-          ...(opts?.action ? { action: opts.action } : {}),
+          ...(opts.actionId !== undefined ? { actionId: opts.actionId } : {}),
+          ...(opts.action ? { action: opts.action } : {}),
         },
       );
     } finally {
       navTx[Symbol.dispose]();
+      // Left before it committed by a navigation that moves the page (one the
+      // user started, or a Back/Forward restore): the page on screen then
+      // holds what this refetch did not bring. Not when another refetch left
+      // it: that one brings it.
+      const { handle } = navTx;
+      if (
+        handle.signal.aborted &&
+        !handle.completed &&
+        (store.getHistoryKey() !== key || userNavigation())
+      ) {
+        refetchShown(opts);
+      }
     }
   }
 
@@ -297,10 +357,7 @@ export function createServerActionBridge(
       onInterceptRoute: boolean,
     ): void => {
       if (keepCache || onInterceptRoute) return;
-      refetchRoute({ actionId: id, action }).catch((error) => {
-        if (isBackgroundSuppressible(error)) return;
-        console.error("[Browser] Background revalidation failed:", error);
-      });
+      refetchRoute({ actionId: id, action }).catch(reportRefetch);
     };
     try {
       const segmentState = store.getSegmentState();
@@ -668,6 +725,9 @@ export function createServerActionBridge(
           { root: errorTree, metadata: metadata! },
           errorGatedOff,
         );
+        if (!keepCache) {
+          refetchShown({ actionId: id, landed: errorResult.segments });
+        }
 
         // Throw the error so the action promise rejects
         if (returnValue && !returnValue.ok) {
@@ -937,6 +997,15 @@ export function createServerActionBridge(
             { root: newTree, metadata: metadata! },
             gatedOff,
           );
+          // A navigation in flight was sent before this land: the page it
+          // commits is refetched once it has (refetchShown).
+          if (!keepCache) {
+            refetchShown({
+              actionId: id,
+              action: whenAction,
+              landed: fullSegments,
+            });
+          }
           // Invalidation deferred to finalizeAction() (runs after this caches
           // the fresh segments), suppressed when the action called
           // keepClientCache().

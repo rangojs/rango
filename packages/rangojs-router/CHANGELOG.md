@@ -93,9 +93,41 @@ refetch already ran for a navigation committed before the action's response;
 it now also runs for one committed while the action's revalidation renders,
 where the action's result was dropped with nothing refetched.
 
-Not covered: a navigation that commits after the action's revalidation still
-restores held segments from before the action when their loaders do not read
-`stale`, such as a layout loader that the action re-ran by default.
+### Fixed: an action's refetch follows the page on screen, so a click made during an action is never lost and a navigation never takes the action's data back
+
+**Before.** Four races between a server action and the user's navigations
+left the wrong page or the wrong data on screen:
+
+- A first link committed during the action and a second one was still in
+  flight when the action answered. The action's refetch of the page on screen
+  superseded the second navigation: its response arrived and was ignored, and
+  the user stayed on the first page.
+- The action answered first, then a link clicked during it committed. The
+  layouts that navigation kept came from a copy taken at the click, so a
+  layout loader the action re-ran (the default) went back to its value from
+  before the action.
+- A navigation whose server read came before the action's write committed
+  after the action landed. It kept that read, and nothing refetched it.
+- A link clicked while the action's refetch was in flight superseded the
+  refetch, and the page that click committed kept the held data from before
+  the write.
+
+**Now.** An action's refetch never supersedes a navigation the user started
+(a click, a Back/Forward that misses the history cache, `router.refresh()`).
+It waits for that navigation to commit, then refetches the page it put on
+screen, whole and stale, one round trip later. A refetch a click supersedes
+runs again for the page that click commits. An action that lands while a
+navigation is in flight schedules the same refetch. A navigation that fails
+keeps its error on screen and is not refetched. The layouts a navigation keeps
+are read from the page on screen when it commits, so an action that lands
+during the navigation keeps its data; if it lands while the navigation's tree
+renders, the tree renders once more.
+
+`useNavigation()` stays `loading` until the user's navigation commits, where
+it used to turn `idle` once the refetch replaced it; the refetch then runs in
+the background. An action whose refetch waits for a navigation resolves
+without waiting for that refetch, and reports no `revalidationError` from it.
+An intercept page is still not refetched, as before.
 
 ## 0.26.4 (2026-10-16)
 

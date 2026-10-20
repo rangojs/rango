@@ -958,7 +958,9 @@ renders on the plain lane, so the pending call waits for its loaders only to
 report, as the partial lane's commit does); `refetchRoute` hands it back as
 the action's `revalidationError`. That covers the refetch after several
 actions (`consolidation-needed`), after a navigation during the action that
-kept the history entry, and after an HMR update. An answer cached while a
+kept the history entry, and after an HMR update, unless a navigation the
+user started is in flight: the refetch then waits for it and reports
+nothing, and the call resolves without it. An answer cached while a
 sibling is still fetching (`concurrent-skip`, `:831`) is never rendered and
 reports nothing: it resolves when its metadata lands, as before, and the
 sibling's refetch reruns those loaders and reports to the action that ran

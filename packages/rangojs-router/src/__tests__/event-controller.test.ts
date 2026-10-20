@@ -387,6 +387,56 @@ describe("createEventController", () => {
       first.complete(loc("/page1")); // should not update location
       expect(ctrl.getState().location.pathname).toBe("/");
     });
+
+    // An action's refetch waits on it (server-action-bridge.ts refetchShown).
+    describe("settled", () => {
+      const settledOf = (ctrl: EventController) => {
+        let value: boolean | undefined;
+        void ctrl.getCurrentNavigation()!.settled.then((v) => (value = v));
+        return () => value;
+      };
+
+      it("resolves true when the transaction ends after the commit, not at the commit", async () => {
+        const ctrl = createController();
+        const handle = ctrl.startNavigation("/about");
+        const settled = settledOf(ctrl);
+        handle.complete(loc("/about"));
+        await Promise.resolve();
+        // A prefetch: false fill still runs between the two.
+        expect(settled()).toBeUndefined();
+
+        handle[Symbol.dispose]();
+        await Promise.resolve();
+        expect(settled()).toBe(true);
+      });
+
+      it("resolves false when it ends without a commit", async () => {
+        const ctrl = createController();
+        const handle = ctrl.startNavigation("/about");
+        const settled = settledOf(ctrl);
+        handle[Symbol.dispose]();
+        await Promise.resolve();
+        expect(settled()).toBe(false);
+      });
+
+      it("resolves false at once when a newer navigation leaves it", async () => {
+        const ctrl = createController();
+        ctrl.startNavigation("/page1");
+        const settled = settledOf(ctrl);
+        ctrl.startNavigation("/page2");
+        await Promise.resolve();
+        expect(settled()).toBe(false);
+      });
+
+      it("resolves false when abortNavigation() leaves it", async () => {
+        const ctrl = createController();
+        ctrl.startNavigation("/about");
+        const settled = settledOf(ctrl);
+        ctrl.abortNavigation();
+        await Promise.resolve();
+        expect(settled()).toBe(false);
+      });
+    });
   });
 
   // ======================================================================

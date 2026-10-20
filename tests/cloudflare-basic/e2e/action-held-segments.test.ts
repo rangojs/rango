@@ -3,7 +3,7 @@ import { runActionHeldSegmentsTests } from "@shared/e2e";
 import { useFixture } from "./fixture";
 
 /**
- * A navigation never moves data on screen backwards (dc-t110, open). Body:
+ * A navigation never moves data on screen backwards (dc-t110). Body:
  * tests/shared-e2e/src/action-held-segments-scenario.ts.
  */
 function describeActionHeldSegments(mode: "dev" | "build") {

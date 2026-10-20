@@ -52,6 +52,13 @@ export interface NavigationEntry {
   phase: NavigationPhase;
   startedAt: number;
   options?: NavigateOptionsInternal & { skipLoadingState?: boolean };
+  /**
+   * Resolves when the navigation's transaction ends, with whether it
+   * committed, or with false once it is left (aborted). It ends after a
+   * `prefetch: false` fill, so whoever waits on it never cuts one short.
+   * An action's refetch waits on it (server-action-bridge.ts refetchShown).
+   */
+  settled: Promise<boolean>;
 }
 
 /**
@@ -743,13 +750,16 @@ export function createEventController(
     }
 
     const abort = new AbortController();
+    let settle!: (committed: boolean) => void;
     const entry: NavigationEntry = {
       url,
       abort,
       phase: "fetching",
       startedAt: Date.now(),
       options,
+      settled: new Promise((resolve) => (settle = resolve)),
     };
+    abort.signal.addEventListener("abort", () => settle(false));
 
     currentNavigation = entry;
     notify();
@@ -797,6 +807,7 @@ export function createEventController(
 
       // Disposable: cleanup if not completed (e.g., error thrown)
       [Symbol.dispose]() {
+        settle(completed);
         // If aborted by another navigation, don't touch state
         if (abort.signal.aborted) return;
 

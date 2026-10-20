@@ -212,7 +212,18 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // navigation commits while the action's tree renders (server-action-bridge.ts
 // refetchNavigatedAway). None of it can load lazily: it runs in every
 // navigation request and every action. One 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 49.5 * 1024;
+//
+// Raised 49.5KB -> 49.625KB on 2026-10-20 for dc-t114, dc-t110 and dc-q78
+// (design dc-d179), measured on cloudflare-basic from 817a143fb 50565B
+// -> 50804B (+239B gzip). An action's refetch of the page on screen waits for
+// a navigation the user started instead of superseding it, and runs again
+// when a click supersedes it (server-action-bridge.ts refetchShown, on the
+// event controller's NavigationEntry.settled); a navigation keeps the
+// segments the page on screen holds now, not the copy taken at the click,
+// and renders once more when an action lands during its render
+// (partial-update.ts held). None of it can load lazily: it runs in every
+// action's end and every navigation's commit. One 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 49.625 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

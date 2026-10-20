@@ -156,7 +156,6 @@ export function createNavigationTransaction(
   url: string,
   options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
 ): NavigationTransaction {
-  let committed = false;
   const currentUrl = window.location.href;
 
   const handle = eventController.startNavigation(url, options);
@@ -165,8 +164,6 @@ export function createNavigationTransaction(
    * Commit the navigation - updates store and URL atomically
    */
   function commit(opts: CommitOptions): CommitResult {
-    committed = true;
-
     const {
       url,
       segmentIds,
@@ -304,14 +301,10 @@ export function createNavigationTransaction(
       };
     },
 
+    // Always reaches the handle, committed or not: its dispose settles the
+    // entry (NavigationEntry.settled) and resets nothing once it completed.
     [Symbol.dispose]() {
-      if (handle.signal.aborted) {
-        return;
-      }
-
-      if (!committed) {
-        handle[Symbol.dispose]();
-      }
+      if (!handle.signal.aborted) handle[Symbol.dispose]();
     },
   };
 }
