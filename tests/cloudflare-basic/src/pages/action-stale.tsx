@@ -57,8 +57,18 @@ const ActionStaleOther: Handler = async (ctx) => {
       <Link to="/action-stale/pdp" prefetch="none" data-testid="as-to-pdp">
         Product
       </Link>
+      <Link to="/action-stale/slow" prefetch="none" data-testid="as-to-slow">
+        Slow
+      </Link>
     </div>
   );
+};
+
+// Answers after 900 ms: later than the 500 ms action and the 300 ms page
+// before it.
+const ActionStaleSlow: Handler = async () => {
+  await wait(900);
+  return <div data-testid="as-slow">Slow page</div>;
 };
 
 export const actionStalePatterns = urls(
@@ -73,6 +83,7 @@ export const actionStalePatterns = urls(
       loader(ActionStalePlainLoader),
       path("/action-stale/pdp", ActionStalePdp),
       path("/action-stale/other", ActionStaleOther),
+      path("/action-stale/slow", ActionStaleSlow),
     ]),
   ],
 );

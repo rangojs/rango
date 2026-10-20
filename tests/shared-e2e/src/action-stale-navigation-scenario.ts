@@ -278,4 +278,46 @@ export function runActionStaleNavigationTests(
     expect(toProduct?.stale, "the next navigation is not").toBe(false);
     await expect(page.getByTestId("as-cart-runs")).toHaveText(String(runs));
   });
+
+  // dc-t114: the action's refetch of the page on screen supersedes the newer
+  // navigation still in flight, so the last click is lost.
+  test("a second navigation still in flight when the action answers commits with the write", async ({
+    page,
+  }) => {
+    test.fail(true, "dc-t114: the navigated-away refetch drops navigation 2");
+    test.setTimeout(60000);
+    await openProductPage(page, options);
+    const sequence: string[] = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (!url.pathname.includes("/action-stale/")) return;
+      sequence.push(
+        `${url.searchParams.has("_rsc_action") ? "action" : "partial"} ${url.pathname}`,
+      );
+    });
+    page.on("requestfailed", (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.includes("/action-stale/")) {
+        sequence.push(`failed ${url.pathname}`);
+      }
+    });
+
+    // The action answers at 500 ms. The 300 ms page commits first; the
+    // 900 ms page, clicked right after, is still in flight at 500 ms.
+    await page.getByTestId("as-add-first").click();
+    await page.getByTestId("as-to-other").click();
+    await waitForShown(page, "as-other");
+    expect(await isPending(page), "the action is in flight").toBe(true);
+    await page.getByTestId("as-to-slow").click();
+    expect(await isPending(page), "the action is still in flight").toBe(true);
+
+    await waitForSettled(page);
+    test.info().annotations.push({
+      type: "requests",
+      description: sequence.join(" | "),
+    });
+    await expect(page.getByTestId("as-slow")).toBeVisible({ timeout: 5000 });
+    await expect(page).toHaveURL(/\/action-stale\/slow$/);
+    await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
+  });
 }
