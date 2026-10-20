@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Fixed: a PPR shell whose `ssr: false` loader now answers `notFound()` or `redirect()` stops serving ([#1213](https://github.com/rangojs/rango/issues/1213))
+
+**Before.** A `ppr` route captured while its `loader(Def, { ssr: false })`
+returned data kept serving that capture after the loader started answering
+`notFound()` or `redirect()` (the record was deleted or moved upstream). Past
+the shell's `ttl`, every document was a stale shell HIT with the deleted
+record's data and `Meta` title, status 200, and client navigations replayed
+the same entry (`x-rango-ppr-replay: HIT; freshness=stale`), for the whole
+`swr` window. The stale HIT's recapture refused, as it should, but the
+refusal only backed the URL off and left the stored entry in place.
+
+**Now.** A recapture refused because an `ssr: false` loader answered
+`notFound()` or `redirect()` retires the URL's stored shell entries, the
+document shell and the navigation replay entry beside it. The stale HIT that
+started the recapture is still served (SWR); from the next request on,
+documents render live (a 404, or the redirect) and navigations no longer
+replay the old entry. A loader that throws any other error is still treated
+as a failure: the stale entry keeps serving while the URL backs off.
+
+One case is not covered yet: an entry only a client navigation captured is
+never recaptured by a later navigation, so it serves until its `ttl + swr`
+runs out. The document request for the same URL already renders live.
+
 ### Fixed: `@rolldown/plugin-transform-imports` reaches route discovery, so a barrel import from a server component builds ([#1204](https://github.com/rangojs/rango/pull/1204))
 
 **Before.** plugin-rsc's README recommends `@rolldown/plugin-transform-imports`

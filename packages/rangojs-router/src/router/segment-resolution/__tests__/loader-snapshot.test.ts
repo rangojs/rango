@@ -46,12 +46,13 @@ describe("elideLoaderContainer", () => {
     );
   });
 
-  it("reports a REJECTED container as rejected", async () => {
-    const rejected = Promise.reject(new Error("boom"));
+  it("reports a REJECTED container as rejected, with its reason", async () => {
+    const error = new Error("boom");
+    const rejected = Promise.reject(error);
     rejected.catch(() => {});
-    expect(await elideLoaderContainer(rejected)).toEqual({
-      state: "rejected",
-    });
+    const elided = await elideLoaderContainer(rejected);
+    expect(elided).toEqual({ state: "rejected", reason: error });
+    expect(elided.state === "rejected" && elided.reason).toBe(error);
   });
 
   it("treats non-plain objects (Date, Map, class) as pinned leaves", async () => {

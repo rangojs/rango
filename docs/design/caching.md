@@ -953,6 +953,8 @@ Action:   |  serve   | serve+reval   |  miss       |
 
 A route refresh that resolves an error or notFound boundary is not written, the same way the MISS gate in `cache-store.ts` skips a non-200 response, so the stale entry keeps serving until a later refresh succeeds or the entry expires (`rerenderAndCacheRoute` in `match-middleware/background-revalidation.ts`; proactive caching goes through the same gate).
 
+The PPR shell (Layer 2) differs for one signal. A shell's stale HIT recaptures, and a recapture refused because a `loader(Def, { ssr: false })` answered `notFound()` or `redirect()` retires the URL's stored shell entries (a tombstone over the document key and its navigation key, `retireShellEntries` in `src/rsc/shell-capture.ts`, issue #1213): the loader's answer is about the URL, so the old shell would otherwise serve the deleted record for its whole SWR window. Every other refusal (an identity read, a loader that throws anything else, a size limit) leaves the stale shell serving while the key backs off, as the route refresh above does. The document cache, the response cache, route `cache()` records and a loader's own `cache()` keep their stale entry on a refresh that answers 404 or a redirect; the on-demand prerender store tombstones a page whose refresh answers `notFound()` (`create-prerender-trigger.ts`).
+
 ### Data Structures
 
 This POC sketch carried `createdAt`/`staleAt`/`revalidationContext` and a

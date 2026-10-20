@@ -1708,6 +1708,38 @@ far more likely to be a genuinely ineligible route, which should be re-probed
 rarely. (This is item 3 of #652; items 1–2 — barrier narrowing and drain
 unification — remain open.)
 
+#### A refusal that retires the stored entries (#1213)
+
+Backoff alone is right when the refusal says nothing about the entry already
+stored: an identity read, a loader that failed, an entry over a size limit. The
+stale entry keeps serving while the key backs off. One refusal is different. A
+`loader(Def, { ssr: false })` that answers `notFound()` or `redirect()` during
+the capture says the URL has no shell any more: the record was deleted or
+moved. Backing off left the old entry serving the deleted record, status 200,
+on every document and navigation until its `ttl + swr` ran out, because each
+stale HIT's recapture refused again.
+
+So the capture drain (`captureAndStoreShell`) marks that refusal
+(`CaptureAttemptStats.retire`), and `runShellCapture` retires the URL's stored
+entries: `retireShellEntries` writes a tombstone (`writeShellTombstone`, the
+one `degradeUnreplayableShell` writes) over the document key and its
+`navigationShellKey`. Documents then read a MISS and render live; partial
+replay reads `no-segment-snapshot`. The key still backs off. The raw loader
+promise the capture registers (`resolveLoaderData`) rejects with the
+`notFound()` error or the `redirect()` Response, so the drain reads the
+rejection's `reason` (`elideLoaderContainer` carries it); an `ok: false`
+signal envelope counts the same. Before #1213 the drain classified only the
+envelope, and a real capture's signal took the generic "rejected" branch.
+Only the runtime capture retires;
+producer B calls `captureAndStoreShell` directly and stores nothing on a
+refusal.
+
+One gap is left. A navigation-only entry (a cold navigation's capture, or a
+document capture whose pins went over `maxSnapshotBytes`) is never recaptured:
+partial replay is passive (see "Navigation reuse is segment caching, not Flight
+resume" above), and a 404 document
+schedules no capture. Such an entry serves until its `ttl + swr` runs out.
+
 ### Capture quiesce: task-based, not wall-clock
 
 Capture has to decide when the shell has finished streaming so it can abort

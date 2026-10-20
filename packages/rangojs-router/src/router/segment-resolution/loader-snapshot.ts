@@ -69,7 +69,7 @@ async function probeSettled(
   p: PromiseLike<unknown>,
 ): Promise<
   | { state: "fulfilled"; value: unknown }
-  | { state: "rejected" }
+  | { state: "rejected"; reason: unknown }
   | { state: "pending" }
 > {
   const PENDING = Symbol("pending");
@@ -82,20 +82,21 @@ async function probeSettled(
     const raced = await Promise.race([Promise.resolve(p), sentinel]);
     if (raced === PENDING) return { state: "pending" };
     return { state: "fulfilled", value: raced };
-  } catch {
-    return { state: "rejected" };
+  } catch (reason) {
+    return { state: "rejected", reason };
   }
 }
 
 export type ElideResult =
   | { state: "ok"; value: unknown; hasHole: boolean }
-  | { state: "rejected" };
+  | { state: "rejected"; reason: unknown };
 
 /**
  * Deep-elide a settled bake-lane container for recording. Nested promises
  * become hole markers: the capture masked each of them (never settles), so
  * it postponed as a hole. A REJECTED container poisons the record (error UI
- * must never bake into a shared shell) — the caller refuses the capture.
+ * must never bake into a shared shell) — the caller refuses the capture, and
+ * reads the rejection's `reason` to tell a notFound()/redirect() from a failure.
  * Plain data objects, arrays and the props of host, Suspense/Fragment and
  * client-reference elements are
  * traversed copy-on-write (an element through cloneElementWithProps); a shared
@@ -118,7 +119,7 @@ export async function elideLoaderContainer(
     if (probed.state === "pending") {
       return { state: "ok", value: { [LOADER_HOLE_KEY]: 1 }, hasHole: true };
     }
-    if (probed.state === "rejected") return { state: "rejected" };
+    if (probed.state === "rejected") return probed;
     return elideLoaderContainer(probed.value, seen);
   }
   return elideNested(value, seen);

@@ -993,7 +993,9 @@ renders the not-found UI at the owning segment with a real 404. No read site
 runs, so a `useLoader` in a layout above every Suspense boundary is safe. On a
 `ppr` route, a flagged loader that settles with `notFound()` or `redirect()`
 during the shell capture refuses the capture (warned once per key): that URL
-gets no shell, and its renders deliver the signal as above.
+gets no shell, and its renders deliver the signal as above. A shell stored for
+the URL before the loader started answering so is retired by that capture:
+the stale HIT that recaptured is the last one it serves.
 
 A flagged loader that throws (anything but `notFound()` or `redirect()`) is
 resolved the same way: its route's `errorBoundary()` renders at the owning

@@ -62,6 +62,7 @@ import {
   resolveShellCaptureDebugSink,
   takeCaptureDebugEventForTiming,
   describeShellCaptureEvent,
+  writeShellTombstone,
   type ShellCaptureDescriptor,
 } from "./shell-capture.js";
 import {
@@ -1807,37 +1808,23 @@ async function isSettled(value: unknown): Promise<boolean> {
 
 /**
  * Evict a shell whose doc record cannot be replayed, or one with a loader pin
- * that failed to decode. The store has no shell delete, so the entry is
- * overwritten with a tombstone: a navigationOnly entry with no document half
- * and no snapshot, which document serving treats as a MISS (shellServePlan,
- * the build shell included) and partial replay as `no-segment-snapshot`. The
- * recapture overwrites it with a sound entry. Only for a broken entry: a
- * snapshot read that was merely slow (`snapshotFailure: "unavailable"`)
- * leaves the entry alone.
+ * that failed to decode: overwrite it with a tombstone (writeShellTombstone)
+ * and recapture, which overwrites the tombstone with a sound entry. Only for
+ * a broken entry: a snapshot read that was merely slow
+ * (`snapshotFailure: "unavailable"`) leaves the entry alone.
  */
 async function degradeUnreplayableShell(
   descriptor: ShellCaptureDescriptor,
   entry: ShellEntryHead,
   scheduleRecapture: () => void,
 ): Promise<void> {
-  const store = descriptor.store;
-  try {
-    await store?.putShell?.(
-      descriptor.key,
-      {
-        reactVersion: entry.reactVersion,
-        buildVersion: entry.buildVersion,
-        snapshot: [],
-        navigationOnly: true,
-        createdAt: Date.now(),
-      },
-      descriptor.ttl,
-      0,
-    );
-  } catch (error) {
-    reportCacheError(error, "cache-write", "[ShellServe] tombstone");
-  }
-  store?.dropShellMemo?.(descriptor.key);
+  await writeShellTombstone(
+    descriptor.store,
+    descriptor.key,
+    entry,
+    descriptor.ttl,
+    "[ShellServe] tombstone",
+  );
   scheduleRecapture();
 }
 
