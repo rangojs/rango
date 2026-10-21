@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.26.5 (2026-10-21)
 
 ### Fixed: `@rolldown/plugin-transform-imports` reaches route discovery, so a barrel import from a server component builds ([#1204](https://github.com/rangojs/rango/pull/1204))
 
