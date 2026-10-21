@@ -52,6 +52,8 @@ import {
 } from "./shell-cache.defs.js";
 import { ShellJsxLoader, ShellJsxPage } from "./shell-cache-jsx.js";
 import { ShellInlineLoader, ShellInlinePage } from "./shell-cache-inline.js";
+import { ShellGoneLoader, ShellGonePage } from "./shell-cache-gone.js";
+import { shellGoneDeleted } from "./shell-cache-gone-records.js";
 import {
   ShellBakedView,
   ShellBakedOnlyView,
@@ -707,6 +709,7 @@ export const shellCachePatterns = urls(
     transition,
     revalidate,
     cache,
+    notFoundBoundary,
   }) => [
     layout(ShellCacheLayout, () => [
       // ppr carries the WHOLE shell policy (ttl/swr/tags); no middleware exists.
@@ -1073,6 +1076,23 @@ export const shellCachePatterns = urls(
       { ppr: { ttl: 300, swr: 120 } },
       () => [loader(ShellInlineLoader, { ssr: false })],
     ),
+    // Issue #1213 fixture (shell-cache-gone.tsx): ttl 1s, so the e2e reaches
+    // the stale HIT without waiting.
+    path(
+      "/shell-cache/gone/:id",
+      ShellGonePage,
+      { ppr: { ttl: 1, swr: 300 } },
+      () => [
+        loader(ShellGoneLoader, { ssr: false }),
+        notFoundBoundary(() => (
+          <p data-testid="shell-gone-not-found">Record not found</p>
+        )),
+      ],
+    ),
+    path.json("/shell-cache/gone-delete/:id", (ctx): { deleted: string } => {
+      shellGoneDeleted.add(ctx.params.id);
+      return { deleted: ctx.params.id };
+    }),
     path("/shell-cache/stale-replay/:id", ShellStaleReplayPage, {
       name: "shellCacheStaleReplay",
       ppr: { ttl: 300, swr: 120 },

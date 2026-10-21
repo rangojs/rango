@@ -39,10 +39,14 @@ import {
   PPR_LANE_HINT,
   SHELL_CAPTURE_MAX_WAIT_MS,
   SHELL_CAPTURE_TASK_HARD_CAP_MS,
+  documentShellKey,
+  navigationShellKey,
   resetShellWarningsForTests,
   warnOnce,
   type ShellCaptureRefusal,
 } from "./shell-capture-constants.js";
+import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponse } from "../response-utils.js";
 import { noteWarmWrite } from "../prerender/warm-request.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { observePhase, PHASES } from "../router/instrument.js";
@@ -325,6 +329,14 @@ function isSettledLoaderSignal(value: unknown): boolean {
     isLoaderDataResult(value) &&
     !value.ok &&
     (value.redirect !== undefined || value.notFound === true)
+  );
+}
+
+/** A bake-lane container's rejection by notFound() or redirect(). */
+function isLoaderSignalReason(reason: unknown): boolean {
+  return (
+    isDataNotFoundError(reason) ||
+    (reason instanceof Response && isRedirectResponse(reason))
   );
 }
 
@@ -1502,7 +1514,76 @@ type CaptureAttemptStats = Pick<
   pendingStacks?: string[];
   /** The route cache() record an `expired` attempt ran out on. */
   expired?: { route: string; record: RouteRecordWindow; captureMs: number };
+  /**
+   * A bake-lane loader answered notFound() or redirect(): the URL has no
+   * shell, so runShellCapture retires the stored entries
+   * (retireShellEntries). A rejected loader only backs the key off.
+   */
+  retire?: true;
 };
+
+/**
+ * Overwrite a stored shell with a tombstone: a navigationOnly entry with no
+ * document half and no snapshot. The store has no shell delete; document
+ * serving reads a tombstone as a MISS (it shadows a build shell too), and
+ * partial replay as `no-segment-snapshot`. The next capture that stores
+ * overwrites it. Drops the isolate's memoized copy. Never throws.
+ */
+export async function writeShellTombstone(
+  store: SegmentCacheStore<any> | undefined,
+  key: string,
+  stamp: Pick<ShellCacheEntry, "reactVersion" | "buildVersion">,
+  ttl: number | undefined,
+  label: string,
+): Promise<void> {
+  try {
+    await store?.putShell?.(
+      key,
+      {
+        reactVersion: stamp.reactVersion,
+        buildVersion: stamp.buildVersion,
+        snapshot: [],
+        navigationOnly: true,
+        createdAt: Date.now(),
+      },
+      ttl,
+      0,
+    );
+  } catch (error) {
+    reportCacheError(error, "cache-write", label);
+  }
+  store?.dropShellMemo?.(key);
+}
+
+/**
+ * Tombstone the document shell and the navigation-only entry of the URL a
+ * capture was for: a bake-lane loader answered notFound() or redirect(), so
+ * the URL has no shell. Left in place, a stored entry served the page the
+ * loader no longer returns until its SWR window ran out, recaptures refusing
+ * meanwhile (issue #1213).
+ */
+async function retireShellEntries(
+  descriptor: ShellCaptureDescriptor,
+  reqCtx: RequestContext<any>,
+): Promise<void> {
+  const store = descriptor.store ?? reqCtx._cacheStore;
+  const key = documentShellKey(descriptor.key);
+  const stamp = {
+    reactVersion: React.version,
+    buildVersion: descriptor.buildVersion,
+  };
+  await Promise.all(
+    [key, navigationShellKey(key)].map((entryKey) =>
+      writeShellTombstone(
+        store,
+        entryKey,
+        stamp,
+        descriptor.ttl,
+        "[ShellCache] retire",
+      ),
+    ),
+  );
+}
 
 /**
  * Run the shell capture with a single in-place retry, then store the result.
@@ -1560,7 +1641,8 @@ async function runShellCapture(
       descriptor,
       stats,
     );
-    const { noShellCause, pendingStacks, expired, ...eventFields } = stats;
+    const { noShellCause, pendingStacks, expired, retire, ...eventFields } =
+      stats;
     publishCaptureDebugEvent(descriptor, {
       key,
       outcome,
@@ -1571,12 +1653,19 @@ async function runShellCapture(
     return { outcome, stats };
   };
 
-  const taskStartedAt = performance.now();
-  const first = await timedAttempt(1);
   // "refused" is deterministic (identity guard / rejected bake-lane loader —
   // its own warning already fired): no retry, and the caller backs the key off
   // exactly like a structural no-shell.
-  if (first.outcome === "refused") return "no-shell";
+  const refusedTerminal = async (
+    stats: CaptureAttemptStats,
+  ): Promise<"no-shell"> => {
+    if (stats.retire) await retireShellEntries(descriptor, reqCtx);
+    return "no-shell";
+  };
+
+  const taskStartedAt = performance.now();
+  const first = await timedAttempt(1);
+  if (first.outcome === "refused") return refusedTerminal(first.stats);
   if (first.outcome === "stored" || first.outcome === "redirect") {
     return first.outcome;
   }
@@ -1618,7 +1707,7 @@ async function runShellCapture(
       first.outcome === "expired" ? "twice in a row" : "on the in-place retry",
     );
   }
-  if (second.outcome === "refused") return "no-shell";
+  if (second.outcome === "refused") return refusedTerminal(second.stats);
   if (second.outcome !== "no-shell") return second.outcome;
 
   // Both attempts came back with no usable shell. Cold-start would have healed by
@@ -2495,6 +2584,26 @@ async function captureAndStoreShell(
       const runs: 0 | 1 = reqCtx._shellCaptureUnrecordedLoaderPush ? 1 : 0;
       for (const [segmentKey, containerPromise] of loaderRecords) {
         const elided = await elideLoaderContainer(containerPromise);
+        // notFound()/redirect() reject the raw loader promise the capture
+        // registers (loader-cache.ts resolveLoaderData); an ok:false envelope
+        // carries the same signal. The tree builder resolves them to
+        // LoaderRedirect / the not-found UI (segment-system
+        // buildLoaderStreams), which must not bake into a shell every visitor
+        // shares, and the URL's stored entries are retired.
+        if (
+          elided.state === "rejected"
+            ? isLoaderSignalReason(elided.reason)
+            : isSettledLoaderSignal(elided.value)
+        ) {
+          warnCaptureRefusedOnce(
+            capture.key,
+            `the loader for segment "${segmentKey}" settled with redirect()/notFound() during capture, so the URL has no shell: its stored shell entries are retired and its requests render live until a capture stores one. ` +
+              "If the signal depends on the request, drop its ssr: false to move it to the live lane, or move the decision into middleware.",
+            PPR_LANE_HINT,
+          );
+          stats.retire = true;
+          return refuse(stats, "loader");
+        }
         if (elided.state === "rejected") {
           warnCaptureRefusedOnce(
             capture.key,
@@ -2507,20 +2616,6 @@ async function captureAndStoreShell(
         // The container itself never settled: it is a hole (under an ancestor
         // boundary) or the trivial-prelude gate already fired. Omit — no pin.
         if (isLoaderHoleMarker(elided.value)) continue;
-        // redirect()/notFound() RESOLVE as ok:false envelopes
-        // (wrapLoaderWithErrorHandling), so the rejection check above never
-        // sees them; the tree builder resolves them to LoaderRedirect / the
-        // not-found UI (segment-system buildLoaderStreams), which must not
-        // bake into a shell every visitor shares.
-        if (isSettledLoaderSignal(elided.value)) {
-          warnCaptureRefusedOnce(
-            capture.key,
-            `the loader for segment "${segmentKey}" settled with redirect()/notFound() during capture; a request-specific signal must not bake into the shared shell. ` +
-              "Drop its ssr: false to move it to the live lane, or move the decision into middleware.",
-            PPR_LANE_HINT,
-          );
-          return refuse(stats, "loader");
-        }
         // Past the hole check: this container settled with real material that
         // bakes into the shell prelude (independent of the snapshot pin below).
         bakedLoaderMaterial = true;

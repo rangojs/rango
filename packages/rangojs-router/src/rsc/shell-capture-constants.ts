@@ -148,13 +148,22 @@ export function visitorShellKey(
   );
 }
 
+const NAVIGATION_SHELL_SUFFIX = ":navigation";
+
 /**
  * The navigation-only entry beside a document shell key (a cold partial
  * request's capture, rsc-rendering.ts). A suffix after the (encoded)
  * partition: partitionShellKey keeps the two unambiguous.
  */
 export function navigationShellKey(key: string): string {
-  return `${key}:navigation`;
+  return `${key}${NAVIGATION_SHELL_SUFFIX}`;
+}
+
+/** The document shell key of `key`: itself, or the key navigationShellKey suffixed. */
+export function documentShellKey(key: string): string {
+  return key.endsWith(NAVIGATION_SHELL_SUFFIX)
+    ? key.slice(0, -NAVIGATION_SHELL_SUFFIX.length)
+    : key;
 }
 
 /**

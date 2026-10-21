@@ -147,6 +147,7 @@ import {
 } from "./loaders/ppr-shell.js";
 import { PprJsxPage } from "./pages/ppr-jsx.js";
 import { PprInlinePage } from "./pages/ppr-inline.js";
+import { PprGonePage } from "./pages/ppr-gone.js";
 import {
   PprIncludeBakeLayout,
   PprIncludeBakePage,
@@ -182,6 +183,8 @@ import { PprLoadMorePage } from "./pages/ppr-load-more.js";
 import { PprLoadMorePageLoader } from "./loaders/ppr-load-more.js";
 import { PprJsxLoader } from "./loaders/ppr-jsx.js";
 import { PprInlineLoader } from "./loaders/ppr-inline.js";
+import { PprGoneLoader } from "./loaders/ppr-gone.js";
+import { pprGoneDeleted } from "./loaders/ppr-gone-records.js";
 import {
   PprDriftLayout,
   PprDriftPricePage,
@@ -2536,6 +2539,23 @@ export const urlpatterns = urls(
           { ppr: { ttl: 300, swr: 120 } },
           () => [loader(PprInlineLoader, { ssr: false })],
         ),
+        // Issue #1213 fixture (loaders/ppr-gone.ts): ttl 1s, so the e2e
+        // reaches the stale HIT without waiting.
+        path(
+          "/ppr-gone/:id",
+          PprGonePage,
+          { ppr: { ttl: 1, swr: 300 } },
+          () => [
+            loader(PprGoneLoader, { ssr: false }),
+            notFoundBoundary(() => (
+              <p data-testid="ppr-gone-not-found">Record not found</p>
+            )),
+          ],
+        ),
+        path.json("/ppr-gone-delete/:id", (ctx): { deleted: string } => {
+          pprGoneDeleted.add(ctx.params.id);
+          return { deleted: ctx.params.id };
+        }),
         // Issue #925: a { cache: false } var read inside "use cache" throws.
         middleware(requestTenantMiddleware, () => [
           path("/use-cache-non-cacheable", UseCacheNonCacheablePage, () => [

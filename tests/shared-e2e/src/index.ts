@@ -60,6 +60,8 @@ export { runPprIncludeBakeTests } from "./ppr-include-bake-scenario.js";
 export type { PprIncludeBakeScenarioOptions } from "./ppr-include-bake-scenario.js";
 export { runPprSsrFalseInlineTests } from "./ppr-ssr-false-inline-scenario.js";
 export type { PprSsrFalseInlineScenarioOptions } from "./ppr-ssr-false-inline-scenario.js";
+export { runPprLoaderNotFoundTests } from "./ppr-loader-not-found-scenario.js";
+export type { PprLoaderNotFoundScenarioOptions } from "./ppr-loader-not-found-scenario.js";
 export {
   expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
   expectLayoutLoaderHeldAcrossNavigations,

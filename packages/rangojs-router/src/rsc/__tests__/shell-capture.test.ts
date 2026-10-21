@@ -52,6 +52,7 @@ import {
   recordRequestTags,
 } from "../../cache/cache-tag.js";
 import { runInsideLoaderScope } from "../../server/context.js";
+import { DataNotFoundError } from "../../errors.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { SSRModule } from "../types.js";
 
@@ -3944,6 +3945,121 @@ describe("runShellCapture", () => {
           refusal: "identity",
         }),
       ).toBe("refused refusal=identity");
+    });
+  });
+
+  // Issue #1213: a bake-lane notFound()/redirect() is an answer about the
+  // URL, so the refusal tombstones the document shell and the
+  // navigation-only entry beside it. A rejection only backs the key off.
+  describe("a bake-lane loader's notFound()/redirect() retires the stored entries", () => {
+    const rejecting = (reason: unknown) => {
+      const rejected = Promise.reject(reason);
+      rejected.catch(() => {});
+      return rejected;
+    };
+
+    async function refuseWith(
+      container: () => Promise<unknown>,
+      key: string,
+    ): Promise<ReturnType<typeof makePutShell>> {
+      const putShell = makePutShell();
+      const { ctx, ssrModule } = makeCtx(okMatch, storedShell("captured"), {
+        tags: [],
+        during: () => {
+          getRequestContext()._shellCaptureLoaderRecords?.set(
+            "M0D0.app/x#L",
+            container(),
+          );
+        },
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const outcome = await runShellCapture(
+          ctx,
+          new Request("http://localhost/p"),
+          {},
+          new URL("http://localhost/p"),
+          makeReqCtx(),
+          ssrModule,
+          {
+            key,
+            buildVersion: "test-build",
+            ttl: 300,
+            store: { putShell } as any,
+          },
+          0,
+        );
+        expect(outcome).toBe("no-shell");
+      } finally {
+        warnSpy.mockRestore();
+      }
+      return putShell;
+    }
+
+    it.each([
+      [
+        "notFound() (a rejected container)",
+        () => rejecting(new DataNotFoundError("gone")),
+      ],
+      [
+        "redirect() (a rejected container)",
+        () =>
+          rejecting(
+            new Response(null, {
+              status: 302,
+              headers: { Location: "/moved" },
+            }),
+          ),
+      ],
+      [
+        "a notFound() envelope",
+        () =>
+          Promise.resolve({
+            __loaderResult: true,
+            ok: false,
+            notFound: true,
+            error: { message: "gone", name: "DataNotFoundError" },
+            fallback: null,
+          }),
+      ],
+    ])("%s", async (_label, container) => {
+      const putShell = await refuseWith(container, "/p:shell");
+
+      expect(putShell.mock.calls.map(([key]) => key).sort()).toEqual([
+        "/p:shell",
+        "/p:shell:navigation",
+      ]);
+      for (const [, entry, ttl, swr] of putShell.mock.calls) {
+        expect(entry).toEqual({
+          reactVersion: React.version,
+          buildVersion: "test-build",
+          snapshot: [],
+          navigationOnly: true,
+          createdAt: expect.any(Number),
+        });
+        expect([ttl, swr]).toEqual([300, 0]);
+      }
+    });
+
+    it("a navigation-only capture retires the document shell too", async () => {
+      const putShell = await refuseWith(
+        () => rejecting(new DataNotFoundError("gone")),
+        "/p:shell:navigation",
+      );
+
+      expect(putShell.mock.calls.map(([key]) => key).sort()).toEqual([
+        "/p:shell",
+        "/p:shell:navigation",
+      ]);
+    });
+
+    it("a rejected loader stores and retires nothing", async () => {
+      const putShell = await refuseWith(
+        () => rejecting(new Error("upstream down")),
+        "/p:shell",
+      );
+
+      expect(putShell).not.toHaveBeenCalled();
     });
   });
 
