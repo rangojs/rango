@@ -705,7 +705,12 @@ component. Because prerendering is a build-time cache, that reference must
 survive serialize -> store -> deserialize -> re-serialize -> invoke:
 
 1. `hashServerRefs` rewrites the build-discovery server's dev-style reference id
-   to the production hash.
+   to the production hash. It rewrites the same id inside the action id
+   (`"<id>#<name>"`) that plugin-rsc 0.5.37+ passes to
+   `encryptActionBoundArgs` and `decryptActionBoundArgs` as AES-GCM additional
+   data. Without that, the build encrypts the captured scope under
+   `/src/urls/prerender.tsx#...` while the production bundle decrypts under
+   `<hash>#...`, and every invocation fails with `OperationError`.
 2. Export-only loader modules are replaced with non-RSC scan stubs before
    plugin-rsc performs import-only analysis, keeping their server implementation
    imports out of the SSR graph and the production reference manifest intact.
