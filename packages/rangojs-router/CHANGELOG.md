@@ -1,21 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.26.6 (2026-10-21)
 
-### Changed: the router requires `@vitejs/plugin-rsc` `^0.5.38`
-
-The router's range was `^0.5.36`, so a fresh install already resolved 0.5.38,
-but the router's own tests ran on 0.5.36. They now run on the version a fresh
-install gets.
-
-If you set your own persistent key with `defineEncryptionKey`, one thing
-changes when you move from 0.5.36: plugin-rsc 0.5.37 binds the encrypted values
-an inline `"use server"` function captures to that function's action id. During
-a rolling deploy from 0.5.36, a form or action whose encrypted captures were
-issued by the old build fails to decrypt on the new one. Without a persistent
-key, captures already never decrypt across builds, so nothing changes.
-
-### Fixed: an inline `"use server"` action rendered by `Static()` or `Prerender()` runs on plugin-rsc 0.5.37+
+### Fixed: an inline `"use server"` action rendered by `Static()` or `Prerender()` runs on plugin-rsc 0.5.37+ ([#1223](https://github.com/rangojs/rango/pull/1223))
 
 **Before.** A `Static()` or `Prerender()` handler that renders an inline
 `"use server"` function capturing a value (an article id, a build token) built
@@ -30,6 +17,19 @@ were not affected.
 
 **After.** The build rewrites the action id to the production hash before it
 encrypts, so the action runs. No change in your code; rebuild.
+
+### Changed: the router requires `@vitejs/plugin-rsc` `^0.5.38` ([#1223](https://github.com/rangojs/rango/pull/1223))
+
+The router's range was `^0.5.36`, so a fresh install already resolved 0.5.38,
+but the router's own tests ran on 0.5.36. They now run on the version a fresh
+install gets.
+
+If you set your own persistent key with `defineEncryptionKey`, one thing
+changes when you move from 0.5.36: plugin-rsc 0.5.37 binds the encrypted values
+an inline `"use server"` function captures to that function's action id. During
+a rolling deploy from 0.5.36, a form or action whose encrypted captures were
+issued by the old build fails to decrypt on the new one. Without a persistent
+key, captures already never decrypt across builds, so nothing changes.
 
 ## 0.26.5 (2026-10-21)
 
