@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed: the router requires `@vitejs/plugin-rsc` `^0.5.38`
+
+The router's range was `^0.5.36`, so a fresh install already resolved 0.5.38,
+but the router's own tests ran on 0.5.36. They now run on the version a fresh
+install gets.
+
+If you set your own persistent key with `defineEncryptionKey`, one thing
+changes when you move from 0.5.36: plugin-rsc 0.5.37 binds the encrypted values
+an inline `"use server"` function captures to that function's action id. During
+a rolling deploy from 0.5.36, a form or action whose encrypted captures were
+issued by the old build fails to decrypt on the new one. Without a persistent
+key, captures already never decrypt across builds, so nothing changes.
+
 ## 0.26.5 (2026-10-21)
 
 ### Fixed: `@rolldown/plugin-transform-imports` reaches route discovery, so a barrel import from a server component builds ([#1204](https://github.com/rangojs/rango/pull/1204))
