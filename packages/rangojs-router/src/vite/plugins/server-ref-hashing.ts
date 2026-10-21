@@ -9,7 +9,14 @@ const debug = createRangoDebugger(NS.transform);
  * Replace dev-style server-reference ids with their production hashes. The temp
  * server renders Static/Prerender in a dev/serve Vite server, so plugin-rsc mints
  * a dev-style id (e.g. "/src/urls/prerender.tsx"); rewriting only the id (group 2)
- * leaves the hoisted function and its trailing encrypted .bind(...) untouched.
+ * leaves the hoisted function untouched.
+ *
+ * The same id also prefixes the action id ("<id>#<name>") that plugin-rsc
+ * >= 0.5.37 passes to encryptActionBoundArgs/decryptActionBoundArgs as AES-GCM
+ * additional data. The production bundle decrypts under "<hash>#<name>", so bound
+ * args encrypted at build time under the dev-style id fail with OperationError on
+ * invocation. Rewriting every `"<id>#` literal to `"<hash>#` binds them to the
+ * runtime's id.
  * Exported for testing; used by hashServerRefs. Returns null if nothing changed.
  */
 export function transformServerRefs(
@@ -18,8 +25,8 @@ export function transformServerRefs(
 ): string | null {
   if (!code.includes("registerServerReference")) return null;
 
-  let hasReplacement = false;
-  const result = code.replace(
+  const hashes = new Map<string, string>();
+  let result = code.replace(
     registerServerReferenceRegex(),
     (match, _value: string, refKey: string) => {
       // The temp server is not a long-lived HMR server, so ids are bare; strip a
@@ -27,12 +34,16 @@ export function transformServerRefs(
       const cleanKey = refKey.split("?")[0]!;
       const hash = computeProductionHash(projectRoot, cleanKey);
       if (hash === cleanKey) return match;
-      hasReplacement = true;
+      hashes.set(refKey, hash);
       return match.replace(`"${refKey}"`, `"${hash}"`);
     },
   );
 
-  return hasReplacement ? result : null;
+  if (hashes.size === 0) return null;
+  for (const [refKey, hash] of hashes) {
+    result = result.replaceAll(`"${refKey}#`, `"${hash}#`);
+  }
+  return result;
 }
 
 /**

@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Changed: the router requires `@vitejs/plugin-rsc` `^0.5.38`
+
+The router's range was `^0.5.36`, so a fresh install already resolved 0.5.38,
+but the router's own tests ran on 0.5.36. They now run on the version a fresh
+install gets.
+
+If you set your own persistent key with `defineEncryptionKey`, one thing
+changes when you move from 0.5.36: plugin-rsc 0.5.37 binds the encrypted values
+an inline `"use server"` function captures to that function's action id. During
+a rolling deploy from 0.5.36, a form or action whose encrypted captures were
+issued by the old build fails to decrypt on the new one. Without a persistent
+key, captures already never decrypt across builds, so nothing changes.
+
+### Fixed: an inline `"use server"` action rendered by `Static()` or `Prerender()` runs on plugin-rsc 0.5.37+
+
+**Before.** A `Static()` or `Prerender()` handler that renders an inline
+`"use server"` function capturing a value (an article id, a build token) built
+fine, but in production every call to that action failed on the server with
+`DOMException [OperationError]`, and the client never got a result. A fresh
+install hit this: the router's `^0.5.36` range already resolves plugin-rsc
+0.5.38. plugin-rsc 0.5.37 binds the encrypted captures to the action id, and
+the build-time render encrypted them under the development id
+(`/src/urls/prerender.tsx#...`) while the production bundle decrypts under the
+hashed id. Dev, runtime `cache()`/`"use cache"` hits and runtime PPR shells
+were not affected.
+
+**After.** The build rewrites the action id to the production hash before it
+encrypts, so the action runs. No change in your code; rebuild.
+
 ## 0.26.5 (2026-10-21)
 
 ### Fixed: `@rolldown/plugin-transform-imports` reaches route discovery, so a barrel import from a server component builds ([#1204](https://github.com/rangojs/rango/pull/1204))

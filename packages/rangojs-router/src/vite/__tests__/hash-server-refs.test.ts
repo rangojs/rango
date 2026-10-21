@@ -39,6 +39,34 @@ describe("transformServerRefs", () => {
     expect(result).toContain(`.bind(null, encryptActionBoundArgs(["a1"]))`);
   });
 
+  it("rewrites the action id plugin-rsc binds encrypted bound args to", () => {
+    // plugin-rsc >= 0.5.37 passes "<reference id>#<export name>" as AES-GCM
+    // additional data to both encrypt and decrypt. The production bundle
+    // decrypts under the hashed id, so the build-time encrypt must use it too.
+    const input = [
+      `const $$hoist_0_likeAction = async function($$hoist_encoded) { const [articleId] = await __vite_rsc_encryption_runtime.decryptActionBoundArgs($$hoist_encoded, "/src/urls/prerender.tsx#$$hoist_0_likeAction"); };`,
+      `$$ReactServer.registerServerReference($$hoist_0_likeAction, "/src/urls/prerender.tsx", "$$hoist_0_likeAction").bind(null, __vite_rsc_encryption_runtime.encryptActionBoundArgs([articleId], "/src/urls/prerender.tsx#$$hoist_0_likeAction"))`,
+    ].join("\n");
+
+    const result = transformServerRefs(input, root)!;
+    const expectedHash = sha256_12("src/urls/prerender.tsx");
+    expect(result).not.toContain("/src/urls/prerender.tsx");
+    expect(result).toContain(
+      `decryptActionBoundArgs($$hoist_encoded, "${expectedHash}#$$hoist_0_likeAction")`,
+    );
+    expect(result).toContain(
+      `encryptActionBoundArgs([articleId], "${expectedHash}#$$hoist_0_likeAction")`,
+    );
+  });
+
+  it("rewrites a queried id's action id to the same hash", () => {
+    const input = `registerServerReference($$h, "/src/urls/prerender.tsx?t=1", "$$h").bind(null, encryptActionBoundArgs([x], "/src/urls/prerender.tsx?t=1#$$h"))`;
+    const result = transformServerRefs(input, root)!;
+    expect(result).toContain(
+      `encryptActionBoundArgs([x], "${sha256_12("src/urls/prerender.tsx")}#$$h")`,
+    );
+  });
+
   it("uses the same hash for multiple actions from one module", () => {
     const input = [
       `registerServerReference($$hoist_0_a, "/src/urls/prerender.tsx", "a")`,
