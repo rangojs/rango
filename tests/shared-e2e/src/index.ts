@@ -85,6 +85,8 @@ export type { InterceptHeldScenarioOptions } from "./intercept-held-scenario.js"
 export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
+export { runActionOwnExportTests } from "./action-own-export-scenario.js";
+export type { ActionOwnExportScenarioOptions } from "./action-own-export-scenario.js";
 export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario.js";
 export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
 export { runAsyncHandlesTests } from "./async-handles-scenario.js";

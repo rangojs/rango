@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed: an action id no longer resolves an inherited name
+
+**Before.** In production, an action id whose module key or export name is a
+built-in object property, such as `<key>#constructor` or
+`toString#constructor`, resolved to a JavaScript built-in, and the router
+called it. No app code or data was reachable.
+
+**Now.** Production builds give the server-reference map and each of its
+entries a null prototype. The map level covers every action path (JS calls,
+no-JS forms, form state and decoded arguments); the entry level covers JS
+calls, and React already checks the name's own property on the other paths.
+Such an id is answered as an unknown action, as a missing export is.
+
 ### Fixed: `@rolldown/plugin-transform-imports` reaches route discovery, so a barrel import from a server component builds ([#1204](https://github.com/rangojs/rango/pull/1204))
 
 **Before.** plugin-rsc's README recommends `@rolldown/plugin-transform-imports`

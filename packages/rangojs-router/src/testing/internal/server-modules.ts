@@ -8,7 +8,9 @@ const SERVER_MODULES: Map<string, Record<string, unknown>> = new Map();
 /**
  * Register `exports` as the server module `id`, merging into an earlier call.
  * The module object is kept and mutated: the stub's require is memoized per
- * id, so a later export must appear on the object it first returned.
+ * id, so a later export must appear on the object it first returned. It has a
+ * null prototype, as a production build's server-reference entry does, so
+ * `<id>#constructor` resolves to nothing.
  */
 export function registerServerModule(
   id: string,
@@ -16,7 +18,7 @@ export function registerServerModule(
 ): void {
   const existing = SERVER_MODULES.get(id);
   if (existing) Object.assign(existing, exports);
-  else SERVER_MODULES.set(id, { ...exports });
+  else SERVER_MODULES.set(id, Object.assign(Object.create(null), exports));
 }
 
 /** The module a decoded server reference resolves to. */

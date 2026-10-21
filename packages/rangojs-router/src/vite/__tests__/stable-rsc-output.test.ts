@@ -11,19 +11,17 @@ import {
   sortDefaultExportProperties,
   stableRscOutput,
 } from "../plugins/stable-rsc-output.js";
+import { pluginRscServerReferences } from "./helpers/plugin-rsc-server-references.js";
 
-/** The module as plugin-rsc 0.5.35 generates it, for `ids` in that order. */
+/** The module as plugin-rsc generates it, for `ids` in that order. */
 function serverReferencesModule(ids: string[]): string {
-  let code = "";
-  for (const id of ids) {
-    code += `
-  ${JSON.stringify(id)}: async () => {
-    const {run} = await import(${JSON.stringify(`/src/${id}.ts`)});
-    return {run};
-  },
-`;
-  }
-  return `export default {${code}};\n`;
+  return pluginRscServerReferences(
+    ids.map((id) => ({
+      referenceKey: id,
+      importId: `/src/${id}.ts`,
+      exportNames: ["run", "default"],
+    })),
+  );
 }
 
 function evaluate(code: string): Record<string, unknown> {

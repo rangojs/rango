@@ -18,6 +18,7 @@ import { clientUrlsRevalidateHoistPlugin } from "./plugins/client-urls-revalidat
 import { createClientUrlRevalidateIndex } from "./discovery/state.js";
 import { clientRefDedup } from "./plugins/client-ref-dedup.js";
 import { stableRscOutput } from "./plugins/stable-rsc-output.js";
+import { serverReferencesNullPrototype } from "./plugins/server-references-null-prototype.js";
 import { VIRTUAL_IDS } from "./plugins/virtual-entries.js";
 import {
   getExcludeDeps,
@@ -564,6 +565,7 @@ export async function rango(options?: RangoOptions): Promise<PluginOption[]> {
   }
   plugins.push(clientChunksReport());
   plugins.push(stableRscOutput());
+  plugins.push(serverReferencesNullPrototype());
 
   plugins.push({
     name: "@rangojs/router:client-component-hmr",

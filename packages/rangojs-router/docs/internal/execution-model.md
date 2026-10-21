@@ -60,6 +60,10 @@ response carries its headers. JS keeps the match in the continuation's
 (`rsc/progressive-enhancement.ts`). A no-JS form body that does not parse
 takes the same path. Pinned by `[A3]`.
 
+Production builds give plugin-rsc's server-reference map (every action path) and its
+entries (`loadServerAction`; React's decoders check own names) a null prototype, so an
+inherited key or name is an unknown action (`vite/plugins/server-references-null-prototype.ts`).
+
 ### 4) Intercept request
 
 ```text
