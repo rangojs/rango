@@ -10,7 +10,8 @@ import path from "node:path";
 
 /**
  * HMR on an open intercept route:
- * 1. Should preserve intercept context when the route still matches.
+ * 1. Should preserve intercept context when the route still matches, and
+ *    keep the page under the intercept.
  * 2. Should transition to full page when the intercept guard changes
  *    to no longer match (intercept -> non-intercept).
  */
@@ -63,6 +64,7 @@ test.describe.serial("intercept-hmr", () => {
     await expect(page.getByTestId("intercept-indicator")).toHaveText(
       "Intercepted",
     );
+    await expect(page.getByTestId("product-list")).toBeVisible();
 
     // Modify the intercept handler to trigger RSC HMR
     const modified = originalContent.replace(
@@ -90,5 +92,7 @@ test.describe.serial("intercept-hmr", () => {
     await expect(page.getByTestId("product-modal")).toBeVisible();
     // The full page view should NOT appear
     await expect(page.getByTestId("product-detail-page")).not.toBeVisible();
+    // The page under the intercept stays.
+    await expect(page.getByTestId("product-list")).toBeVisible();
   });
 });

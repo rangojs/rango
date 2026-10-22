@@ -42,6 +42,7 @@ import { setAppVersion } from "./app-version.js";
 import {
   isInterceptSegment,
   splitInterceptSegments,
+  wholeInterceptMatched,
 } from "./intercept-utils.js";
 import { createAppShellRef } from "./app-shell.js";
 import { bootLog, IS_BROWSER_DEBUG } from "./logging.js";
@@ -531,6 +532,9 @@ export async function initBrowserApp(
         const streamingToken = handle.startStreaming();
 
         const interceptSourceUrl = store.getInterceptSourceUrl();
+        // Read before a version change below clears the history cache.
+        const onScreen =
+          store.getCachedSegments(store.getHistoryKey())?.segments ?? [];
 
         try {
           const { payload, streamComplete } = await client.fetchPartial({
@@ -582,7 +586,17 @@ export async function initBrowserApp(
           // a paramless document GET would run the SSR path and surface the
           // not-found page during that same transient.
           if (payload.metadata?.isPartial) {
-            const segments = payload.metadata.segments || [];
+            // Held nothing: an intercept answer keeps the page under the slot
+            // from the entry on screen; the layouts and the slot are fresh.
+            let segments = payload.metadata.segments || [];
+            const kept = wholeInterceptMatched(onScreen, payload.metadata);
+            if (kept) {
+              payload.metadata.matched = kept;
+              const byId = new Map(
+                [...onScreen, ...segments].map((s) => [s.id, s]),
+              );
+              segments = kept.flatMap((id) => byId.get(id) ?? []);
+            }
             const matched = payload.metadata.matched || [];
 
             // Derive intercept state from the returned payload, not the

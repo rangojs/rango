@@ -70,6 +70,13 @@ export const urlpatterns = urls(({ path, layout, intercept, loader, loading }) =
 | Direct URL `/shop/product/abc` | Full `<ProductPage />` page                          |
 | Browser back                   | Close modal, restore previous state                  |
 
+A server action on `/shop` that calls `redirect("/shop/product/abc")` opens the
+intercept too, and so does a link from `/shop` to a route that redirects
+there. The page under it is the browser's copy, as on a link click: it
+keeps its last render, so it shows its pre-action data until the intercept
+closes. An action submitted from inside an open intercept leaves that page the
+same way.
+
 ## Intercept with Layout
 
 Wrap intercept content in a modal layout. The layout renders the intercept

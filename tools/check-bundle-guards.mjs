@@ -203,7 +203,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // behind a generation and history-key guard, and scroll-restoration.ts
 // restores in that commit. None of it can load lazily: it runs in every
 // navigation's commit and every popstate.
-const ROUTER_CHUNK_GZIP_MAX = 49.375 * 1024;
+//
+// Raised 49.375KB -> 49.5KB on 2026-10-22 for rango-t126, measured on
+// cloudflare-basic from main d824ba672 50517B -> 50634B (+117B gzip): an
+// intercept answer to a request that held no segments keeps the page under
+// the slot (browser/intercept-utils.ts wholeInterceptMatched, applied where
+// partial-update.ts unpacks every partial answer). It cannot load lazily: it
+// runs on every navigation and action response. One 128B step, the owner's
+// call.
+const ROUTER_CHUNK_GZIP_MAX = 49.5 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

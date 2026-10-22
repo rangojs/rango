@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: the page under an intercept stays when a redirect opens the intercept, or on Back/Forward over an intercept left early
+
+**Before.** Under an intercept the server never renders the page under it:
+that page comes from the segments the browser says it holds. A few requests
+hold none, and their answer listed only the layouts and the intercept's slot,
+so the page under the intercept disappeared, leaving the layout with an empty
+outlet. A consumer hit this in two ways:
+
+- a server action on a page that calls `redirect()` to a route intercepted
+  from that page, or a link to a route that redirects to one;
+- Back, then Forward, over an intercept whose handler pushed a handle value
+  that had not resolved when the user left it.
+
+In dev, every server edit with an intercept open did the same, and the page's
+handle pushes (breadcrumbs, `Meta`) went with it.
+
+**After.** The browser keeps the page the answer lands over, as the server
+lists it for a request that holds it. Its handle pushes stay. It keeps its
+last render: after a server action redirects into an intercept, the page under
+it shows its pre-action data until the intercept closes, as it does after an
+action submitted from inside an open intercept. The layouts and the
+intercept are rendered fresh. No change in your code.
+
 ## 0.26.6 (2026-10-21)
 
 ### Fixed: an inline `"use server"` action rendered by `Static()` or `Prerender()` runs on plugin-rsc 0.5.37+ ([#1223](https://github.com/rangojs/rango/pull/1223))

@@ -82,6 +82,8 @@ export { runHistoryCacheHandlesTests } from "./history-cache-handles-scenario.js
 export type { HistoryCacheHandlesScenarioOptions } from "./history-cache-handles-scenario.js";
 export { runInterceptHeldTests } from "./intercept-held-scenario.js";
 export type { InterceptHeldScenarioOptions } from "./intercept-held-scenario.js";
+export { runInterceptWholeRequestTests } from "./intercept-whole-request-scenario.js";
+export type { InterceptWholeRequestScenarioOptions } from "./intercept-whole-request-scenario.js";
 export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
