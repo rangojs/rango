@@ -75,7 +75,7 @@ export interface InitBrowserAppOptions {
   storeOptions?: {
     /**
      * Maximum number of history entries to cache
-     * @default 10
+     * @default 20
      */
     cacheSize?: number;
   };

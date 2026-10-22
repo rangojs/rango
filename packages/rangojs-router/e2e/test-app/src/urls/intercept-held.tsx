@@ -29,6 +29,8 @@ import {
 //  - /push-held/:id the modal's handler pushes a crumb, and its loader,
 //                 which skips revalidate(), pushes one.
 // The /mixed modal links to /loader/1: both modals read the held loader.
+// The /handler intercept and its full page link to /away, which no
+// intercept targets (intercept-history-scenario).
 // The layout shows the crumb handle; it pushes "layout" itself.
 function InterceptHeldLayout() {
   return (
@@ -84,6 +86,41 @@ function InterceptHeldIndex() {
         data-testid="ih-open-push-held"
       >
         Open held-loader-push modal
+      </Link>
+    </div>
+  );
+}
+
+// Taller than the viewport, so a scroll offset shows.
+const TALL = { height: "300vh" };
+
+// A page no intercept targets; its link steps `?n`, one history entry per
+// click (intercept-history-scenario).
+function InterceptHeldAway({ n }: { n: number }) {
+  return (
+    <div data-testid="ih-away" style={TALL}>
+      <span data-testid="ih-away-n">{n}</span>
+      <Link
+        to={`/intercept-held/away?n=${n + 1}`}
+        prefetch="none"
+        data-testid="ih-away-next"
+      >
+        Next
+      </Link>
+    </div>
+  );
+}
+
+function InterceptHeldHandlerPage() {
+  return (
+    <div data-testid="ih-handler-page" style={TALL}>
+      full page
+      <Link
+        to="/intercept-held/away?n=1"
+        prefetch="none"
+        data-testid="ih-handler-page-away"
+      >
+        Away
       </Link>
     </div>
   );
@@ -183,7 +220,15 @@ export const interceptHeldPatterns = urls(
           ],
         ),
 
-        path("/handler/:id", FullPage("ih-handler-page"), {
+        path(
+          "/away",
+          (ctx) => (
+            <InterceptHeldAway n={Number(ctx.searchParams.get("n") ?? 0)} />
+          ),
+          { name: "away" },
+        ),
+
+        path("/handler/:id", InterceptHeldHandlerPage, {
           name: "handlerItem",
         }),
         intercept("@modal", ".handlerItem", (ctx) => {
@@ -191,6 +236,13 @@ export const interceptHeldPatterns = urls(
           return (
             <Modal testId="ih-handler-modal">
               <p data-testid="ih-handler-modal-id">{ctx.params.id}</p>
+              <Link
+                to="/intercept-held/away?n=1"
+                prefetch="none"
+                data-testid="ih-handler-intercept-away"
+              >
+                Away
+              </Link>
             </Modal>
           );
         }),

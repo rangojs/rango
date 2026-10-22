@@ -185,6 +185,28 @@ describe("clearLocationStateOnDocumentLoad", () => {
     expect(replaceStateSpy.mock.calls[0]).toEqual([kept, ""]);
   });
 
+  // A document request never renders an intercept: the entry is a full page
+  // for later Back/Forward.
+  it("drops the intercept marks in the same pass, keeping key, idx and location state", () => {
+    const kept = {
+      "__rsc_ls_a1b2c3d4#Sort": { order: "asc" },
+      state: { from: "list" },
+      idx: 2,
+      key: "scroll-key",
+    };
+    historyState = {
+      ...kept,
+      intercept: true,
+      sourceUrl: "/list",
+      "__rsc_ls_a1b2c3d4#Carried~r": ["a"],
+    };
+
+    clearLocationStateOnDocumentLoad();
+
+    expect(replaceStateSpy).toHaveBeenCalledOnce();
+    expect(replaceStateSpy.mock.calls[0]).toEqual([kept, ""]);
+  });
+
   it.each([
     ["null", null],
     ["a primitive", "primitive"],

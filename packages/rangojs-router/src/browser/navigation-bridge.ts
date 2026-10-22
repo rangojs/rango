@@ -643,16 +643,27 @@ export function createNavigationBridge(
       const isIntercept = historyState?.intercept === true;
       const interceptSourceUrl = historyState?.sourceUrl;
 
-      // Check if intercept context is changing (same URL, different intercept state)
-      // If so, abort in-flight actions - their results would be for wrong context
       const currentInterceptSource = store.getInterceptSourceUrl();
       const newInterceptSource = interceptSourceUrl ?? null;
-      if (currentInterceptSource !== newInterceptSource) {
-        debugLog(
-          `[Browser] Intercept context changing (${currentInterceptSource} -> ${newInterceptSource}), aborting in-flight actions`,
-        );
-        eventController.abortAllActions();
-      }
+      // Enter the entry's intercept context: in-flight actions of another
+      // context are aborted (their results would be for the wrong one).
+      const enterInterceptContext = (): void => {
+        if (currentInterceptSource !== newInterceptSource) {
+          debugLog(
+            `[Browser] Intercept context changing (${currentInterceptSource} -> ${newInterceptSource}), aborting in-flight actions`,
+          );
+          eventController.abortAllActions();
+        }
+        store.setInterceptSourceUrl(newInterceptSource);
+      };
+      // An intercept is fetched only from its source page (the page under
+      // an open intercept counts as on screen). From any other page the
+      // entry loads as a document, which renders its URL's full page.
+      const loadsDocument =
+        isIntercept &&
+        generateHistoryKey(
+          currentInterceptSource ?? store.getSegmentState().currentUrl,
+        ) !== generateHistoryKey(interceptSourceUrl);
 
       // Popstate that exits an intercept to a non-intercept destination. The
       // fallback fetch path below needs `leave-intercept` mode so it filters
@@ -672,13 +683,6 @@ export function createNavigationBridge(
         "key:",
         historyKey,
       );
-
-      // If this is an intercept, restore the intercept context
-      if (isIntercept && interceptSourceUrl) {
-        store.setInterceptSourceUrl(interceptSourceUrl);
-      } else {
-        store.setInterceptSourceUrl(null);
-      }
 
       // Helper to check if streaming is in progress
       const isStreaming = () => eventController.getState().isStreaming;
@@ -701,6 +705,7 @@ export function createNavigationBridge(
       const isStale = (cached?.stale ?? false) || isActionFenceActive();
 
       if (isRestorable(cachedSegments)) {
+        enterInterceptContext();
         // transition({ when }) decides the restore (kind "pop") against the
         // entry being left, so before the store moves to the restored entry.
         // The decision the entry was committed with is not reused: it was
@@ -872,7 +877,15 @@ export function createNavigationBridge(
         debugLog("[Browser] History cache miss for key:", historyKey);
       }
 
-      // Fetch if not cached
+      // Fetch if not cached. The document load starts at the top: pagehide
+      // saves the scroll on screen under this entry, and the browser
+      // restores it after the reload. Instant, so `scroll-behavior: smooth`
+      // cannot leave it part-way when pagehide saves it.
+      if (loadsDocument) {
+        window.scrollTo({ top: 0, behavior: "instant" });
+        return window.location.reload();
+      }
+      enterInterceptContext();
       const tx = createNavigationTransaction(store, eventController, url, {
         replace: true,
       });

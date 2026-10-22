@@ -290,6 +290,7 @@ export const NamedRoutes = {
   index: "/",
   inlineAction: "/inline-action",
   inlineBoundAction: "/inline-bound-action",
+  "interceptHeld.away": "/intercept-held/away",
   "interceptHeld.handlerItem": "/intercept-held/handler/:id",
   "interceptHeld.index": "/intercept-held",
   "interceptHeld.loaderItem": "/intercept-held/loader/:id",

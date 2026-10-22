@@ -64,11 +64,22 @@ export const urlpatterns = urls(({ path, layout, intercept, loader, loading }) =
 
 ## Navigation Behavior
 
-| Navigation Type                | What Renders                                         |
-| ------------------------------ | ---------------------------------------------------- |
-| Click link `/shop/product/abc` | `<ProductModal />` in `@modal`, background preserved |
-| Direct URL `/shop/product/abc` | Full `<ProductPage />` page                          |
-| Browser back                   | Close modal, restore previous state                  |
+| Navigation Type                                       | What Renders                                         |
+| ----------------------------------------------------- | ---------------------------------------------------- |
+| Click link `/shop/product/abc`                        | `<ProductModal />` in `@modal`, background preserved |
+| Direct URL `/shop/product/abc`, or a reload           | Full `<ProductPage />` page                          |
+| Back from the open intercept                          | The intercept closes; the source page stays          |
+| Back/Forward onto the intercept's entry               | The intercept over its source page                   |
+| The same, uncached, from a page other than the source | Full `<ProductPage />` page, as a document load      |
+
+Only a client navigation from the source page shows an intercept. Back/Forward
+restores an intercept's entry from the history cache (`initBrowserApp`'s
+`storeOptions.cacheSize`, 20 by default), or fetches it when its source page is
+on screen. From any other page (after a reload, or once the entry was evicted)
+it costs a full page load, from the top, which drops `clearOnReload` location
+state like any document load, and the entry is a full page from then on. In
+dev, an edit that changes the app version clears the history cache, so the
+next Back/Forward onto an intercept entry takes that path.
 
 ## Intercept with Layout
 

@@ -118,11 +118,16 @@ describe("location state is versioned by the app version", () => {
     GridState.write(grid);
     SortState.write({ order: "asc" });
     window.history.replaceState(
-      { ...window.history.state, idx: 3, key: "scroll-key", intercept: true },
+      { ...window.history.state, idx: 3, key: "scroll-key" },
       "",
     );
 
     await loadDocument("build-2");
+    // A client navigation's mark: a document load drops it.
+    window.history.replaceState(
+      { ...window.history.state, intercept: true },
+      "",
+    );
     for (const write of [
       () => SortState.write({ order: "desc" }),
       () => mergeLocationState({ [SortState.__rsc_ls_key]: { order: "desc" } }),

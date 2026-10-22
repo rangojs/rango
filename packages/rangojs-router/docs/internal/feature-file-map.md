@@ -43,7 +43,8 @@ readers and writers; importable from server code) and
 (`useLocationState`). How a slot reaches or leaves `history.state` is owned by
 [`browser/history-state.ts`](../../src/browser/history-state.ts): navigation
 state resolution, server-set state merging, and the start-up removal of
-`clearOnReload` slots, which
+`clearOnReload` slots and of the entry's intercept marks (a document load is
+never an intercept), which
 [`browser/rsc-router.tsx`](../../src/browser/rsc-router.tsx) (`initBrowserApp`)
 and [`testing/render-route.tsx`](../../src/testing/render-route.tsx) (`hydrate`
 mode) both call. Key injection is the Vite plugin's

@@ -130,6 +130,7 @@ export const routes = {
   inlineDocs: "/inline/docs",
   inlineIndex: "/inline",
   inlinePricing: "/inline/pricing",
+  "interceptHeld.away": "/intercept-held/away",
   "interceptHeld.handlerItem": "/intercept-held/handler/:id",
   "interceptHeld.index": "/intercept-held",
   "interceptHeld.loaderItem": "/intercept-held/loader/:id",

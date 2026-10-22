@@ -203,7 +203,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // behind a generation and history-key guard, and scroll-restoration.ts
 // restores in that commit. None of it can load lazily: it runs in every
 // navigation's commit and every popstate.
-const ROUTER_CHUNK_GZIP_MAX = 49.375 * 1024;
+//
+// Raised 49.375KB -> 50KB on 2026-10-22, the owner's call (shared with
+// rango-t108). For rango-t127, measured on cloudflare-basic from main
+// d824ba672 50517B -> 50581B (+64B gzip): a Back/Forward onto an intercept
+// entry the client no longer holds loads it as a document (navigation-bridge.ts
+// handlePopstate), and a document load drops the entry's intercept marks
+// (history-state.ts clearLocationStateOnDocumentLoad). Both run on every
+// popstate and every boot, so neither can load lazily.
+const ROUTER_CHUNK_GZIP_MAX = 50 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
