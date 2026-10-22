@@ -100,6 +100,8 @@ After a server action or a client navigation, the router does not re-render the 
 
 So a route entry re-runs **as a unit** on actions, with handler-first ordering preserved — handler `ctx.set()` data consumed by the entry's own children needs no configuration at all. Every loader re-runs too, including loaders attached to outer layouts. Outer layouts themselves are the opposite: skipped by default.
 
+Back or Forward onto a page a server action made stale takes the same defaults. Back renders the cached page, then revalidates it in the background with `stale: true`, so a layout's loader shows the write. That revalidation renders live, as the action does: no `cache()` record or PPR replay answers it. The trace reasons read `stale:route-segment` and so on, and `isAction()` is false on that request. A layout whose `ctx.set()` value the page reads needs `ctx.stale` in its contract, as it needs the actions: see [Data Flow](/docs/rango/concepts/data-flow).
+
 Navigation defaults are narrower. The route segment and the segments inside its `path()` re-run only when params or search change, and layouts and loaders above the route are not re-run, even when params change. A segment the client doesn't hold yet always renders.
 
 A `revalidate()` predicate overrides these defaults per segment. Returning `true` or `false` is a hard decision, returning `undefined` defers to the default, and the callback must be synchronous. See [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate) for the predicate API.

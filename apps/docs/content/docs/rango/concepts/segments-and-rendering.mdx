@@ -55,7 +55,7 @@ Three details worth knowing:
 
 A client navigation or an action response is not a page render. The server re-runs a **selected subset** of segments, streams them, and the client merges them into the cached segment set:
 
-- After an action, the matched route's own entry — its handler plus its orphan layouts and parallels — re-runs together by default, and so does every loader. Outer layout entries are skipped by default (the revalidation trace calls this `action:parent-chain-skip`).
+- After an action, the matched route's own entry — its handler plus its orphan layouts and parallels — re-runs together by default, and so does every loader. Outer layout entries are skipped by default (the revalidation trace calls this `action:parent-chain-skip`). Back or Forward onto a page an action made stale re-runs the same set (`stale:*` in the trace), rendered live rather than from a `cache()` record or a PPR replay. Every request the browser marks stale renders live the same way: `router.refresh()`, the cross-tab refresh, Back after `invalidateClientCache()` or a state-cookie rotation, and the follow-up revalidation after an action.
 - On a navigation, the route and the segments inside its `path()` re-run when params or search change. Layouts above the route are kept, even when params change.
 - `revalidate()` predicates adjust that selection per segment — see [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate).
 - Everything not selected is kept exactly as cached, boundary shape included, so React reconciles kept segments in place. State in a kept layout survives while the route below it streams in fresh.

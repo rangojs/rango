@@ -52,6 +52,8 @@ export const PPR_REPLAY_STATUS_HEADER: string = "x-rango-ppr-replay";
  */
 export const PPR_REPLAY_BYPASS_REASONS = [
   "method",
+  // A stale request (`_rsc_stale`) renders live, as an action does.
+  "stale",
   "dynamic",
   "nonce",
   "store-unavailable",

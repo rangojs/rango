@@ -224,7 +224,8 @@ import * as CartActions from "./actions/cart";
 
 parallel({ "@cart": () => <CartSummary /> }, () => [
   loader(CartLoader),
-  revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+  // after cart actions, and on Back after an action
+  revalidate((ctx) => ctx.isAction(CartActions) || ctx.stale || undefined),
 ]);
 ```
 
@@ -241,7 +242,7 @@ import type { Revalidate } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
 
 export const revalidateCartData: Revalidate = (ctx) =>
-  ctx.isAction(CartActions) || undefined;
+  ctx.stale || ctx.isAction(CartActions) || undefined;
 
 layout(CartLayout, () => [
   revalidate(revalidateCartData), // producer reruns

@@ -202,6 +202,19 @@ export interface MatchContext<TEnv = any> {
 }
 
 /**
+ * An action, or a stale partial (`_rsc_stale`: Back/Forward onto an entry
+ * marked stale, `refresh()`, the cross-tab refresh, the action follow-up, a
+ * zero-segment refetch), renders live: no route-cache or prerender-store read
+ * a live handler can replace, and no store. An action's render is never
+ * stored, so a record can be older than the copy the client holds after it.
+ */
+export function rendersLive(
+  ctx: Pick<MatchContext, "isAction" | "stale">,
+): boolean {
+  return ctx.isAction || ctx.stale;
+}
+
+/**
  * Mutable state that flows through the pipeline
  */
 export interface MatchPipelineState {

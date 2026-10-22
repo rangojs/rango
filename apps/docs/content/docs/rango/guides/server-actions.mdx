@@ -195,8 +195,9 @@ import * as CartActions from "./actions/cart";
 export const urlpatterns = urls(({ layout, path, loader, revalidate }) => [
   layout(ShopLayout, () => [
     // The header's cart badge lives in this layout, which is skipped after
-    // actions by default. Opt it in for cart actions only.
-    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+    // actions by default. Opt it in for cart actions, and for Back after an
+    // action.
+    revalidate((ctx) => ctx.isAction(CartActions) || ctx.stale || undefined),
     path("/cart", CartPage, { name: "cart" }, () => [loader(CartLoader)]),
     path("/", HomePage, { name: "home" }, () => [
       // Static content: skip the re-run after every action.

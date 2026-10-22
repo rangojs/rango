@@ -24,6 +24,22 @@ import { makeIsAction } from "./is-action.js";
 const REVALIDATE_ALWAYS: ShouldRevalidateFn<any, any> = () => true;
 const REVALIDATE_NEVER: ShouldRevalidateFn<any, any> = () => false;
 
+/** Trace reasons of the action defaults, per lane: an action, a stale request. */
+const ACTION_DEFAULT_REASONS = {
+  action: {
+    route: "action:route-segment",
+    loader: "action:loader-segment",
+    routeChild: "action:belongs-to-route",
+    parentChain: "action:parent-chain-skip",
+  },
+  stale: {
+    route: "stale:route-segment",
+    loader: "stale:loader-segment",
+    routeChild: "stale:belongs-to-route",
+    parentChain: "stale:parent-chain-skip",
+  },
+} as const;
+
 /**
  * The predicate `revalidate(true)` / `revalidate(false)` stands for: the
  * constant hard decision of `revalidate(() => true)` / `() => false`.
@@ -61,8 +77,13 @@ export interface EvaluateRevalidationOptions<TEnv> {
   context: HandlerContext<any, TEnv>;
   /** Action context if triggered by action */
   actionContext?: ActionContext;
-  /** If true, this is a stale cache revalidation request */
+  /** The browser's `_rsc_stale` signal: seeds the action defaults. */
   stale?: boolean;
+  /**
+   * The route-cache entry is past its TTL (SWR). Predicates see it as `stale`;
+   * it never seeds the action defaults.
+   */
+  cacheStale?: boolean;
   /** Trace source hint for the revalidation trace */
   traceSource?: RevalidationTraceEntry["source"];
   /**
@@ -100,6 +121,7 @@ export async function evaluateRevalidation<TEnv>(
     context,
     actionContext,
     stale,
+    cacheStale,
     traceSource,
     defaultOverride,
   } = options;
@@ -147,19 +169,23 @@ export async function evaluateRevalidation<TEnv>(
   if (defaultOverride) {
     defaultShouldRevalidate = defaultOverride.value;
     defaultReason = defaultOverride.reason;
-  } else if (request.method === "POST") {
+  } else if (request.method === "POST" || stale) {
+    // A stale request re-renders a page an action may have changed after the
+    // client cached it. Not an action: no actionContext, isAction() is false.
+    const reasons =
+      ACTION_DEFAULT_REASONS[request.method === "POST" ? "action" : "stale"];
     if (segment.type === "route") {
       defaultShouldRevalidate = true;
-      defaultReason = "action:route-segment";
+      defaultReason = reasons.route;
     } else if (segment.type === "loader") {
       defaultShouldRevalidate = true;
-      defaultReason = "action:loader-segment";
+      defaultReason = reasons.loader;
     } else if (segment.belongsToRoute) {
       defaultShouldRevalidate = true;
-      defaultReason = "action:belongs-to-route";
+      defaultReason = reasons.routeChild;
     } else {
       defaultShouldRevalidate = false;
-      defaultReason = "action:parent-chain-skip";
+      defaultReason = reasons.parentChain;
     }
   } else {
     if (segment.type === "route") {
@@ -251,7 +277,7 @@ export async function evaluateRevalidation<TEnv>(
         routeName: toRouteName,
         fromRouteName,
         toRouteName,
-        stale,
+        stale: cacheStale ? true : stale,
       });
     } catch (error) {
       // A thrown Response is control flow (e.g. `throw redirect(...)`), not a

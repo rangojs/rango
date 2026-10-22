@@ -207,7 +207,7 @@ revalidate((ctx) => (ctx.isAction() ? ctx.isAction(CartActions) : undefined));
 - On navigation, it returns `undefined`, which defers to the default, so navigation behaves as before.
 - `ctx.isAction(CartActions)` matches actions **by reference**. A renamed or moved action becomes a type error instead of a silently broken string comparison. It also accepts a single action (`ctx.isAction(addToCart)`) or several.
 
-The shorter `ctx.isAction(CartActions) || undefined` would narrow nothing here: after a non-cart action it returns `undefined`, the default applies, and loaders re-run after every action anyway.
+The shorter `ctx.isAction(CartActions) || ctx.stale || undefined` would narrow nothing here: after a non-cart action it returns `undefined`, the default applies, and loaders re-run after every action anyway.
 
 So the loop closes: submit the form on a product page, `addToCart` updates the cookie, `CartLoader` re-resolves, and the badge in the layout ticks up, with no manual refresh logic anywhere.
 

@@ -243,89 +243,44 @@ describe("cache-hit trace entries", () => {
     consoleSpy.mockRestore();
   });
 
-  it("forwards ctx.stale to evaluateRevalidation for cached segments with rules", async () => {
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  it("a stale request skips the route-cache lookup, as an action does", async () => {
+    const seg = makeSegment("L0", "layout");
+    const ctx = makeCtx(["L0"], [seg]);
+    const lookup = vi.spyOn(ctx.cacheScope as any, "lookupRouteDetailed");
+    // _rsc_stale=true from the client.
+    ctx.stale = true;
+    const state = makeState();
+
+    const segments = await collect(withCacheLookup(ctx, state)(empty()));
+
+    expect(lookup).not.toHaveBeenCalled();
+    expect(state.cacheHit).toBe(false);
+    expect(segments).toEqual([]);
+  });
+
+  it("hands a cache entry's own staleness to cached segments' predicates as cacheStale, not stale", async () => {
     mockEvaluateRevalidation.mockClear();
     mockEvaluateRevalidation.mockResolvedValue(false);
-
-    // Provide revalidation rules for L0 so evaluateRevalidation is called
     const rules = new Map();
     rules.set("L0", { revalidate: [() => true] });
     mockRevalidateRules.value = rules;
 
     const seg = makeSegment("L0", "layout");
     const ctx = makeCtx(["L0"], [seg]);
-    // Mark the request as stale (simulating _rsc_stale=true from client)
-    ctx.stale = true;
-    const state = makeState();
-
-    await runWithRouterLogContext(
-      { request: ctx.request, transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-          stale: true,
-        });
-
-        const middleware = withCacheLookup(ctx, state);
-        await collect(middleware(empty()));
-      },
-    );
-
-    // evaluateRevalidation must receive stale: true from ctx.stale
-    expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
-    expect(mockEvaluateRevalidation).toHaveBeenCalledWith(
-      expect.objectContaining({ stale: true }),
-    );
-
-    mockRevalidateRules.value = null;
-    consoleSpy.mockRestore();
-  });
-
-  // This exercises the runtime cache-hit loader path (cache-lookup.ts ~662),
-  // not the prerender store-hit path (~242) which requires full prerender
-  // infrastructure mocking. The store-hit stale forwarding is covered by
-  // the direct unit test in stale-propagation.test.ts which calls
-  // resolveLoadersOnlyWithRevalidation with stale=true and verifies it
-  // reaches evaluateRevalidation.
-  it("forwards ctx.stale to resolveLoadersOnlyWithRevalidation on runtime cache-hit", async () => {
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    mockResolveLoadersOnlyWithRevalidation.mockClear();
-    mockResolveLoadersOnlyWithRevalidation.mockResolvedValue({
-      segments: [],
-      matchedIds: [],
+    (ctx.cacheScope as any).lookupRouteDetailed = async () => ({
+      status: "hit",
+      result: { segments: [seg], shouldRevalidate: true },
     });
 
-    const seg = makeSegment("L0", "layout");
-    const ctx = makeCtx(["L0"], [seg]);
-    ctx.stale = true;
-    const state = makeState();
+    await collect(withCacheLookup(ctx, makeState())(empty()));
 
-    await runWithRouterLogContext(
-      { request: ctx.request, transaction: "test" },
-      async () => {
-        startRevalidationTrace({
-          method: "GET",
-          prevUrl: "http://localhost/a",
-          nextUrl: "http://localhost/b",
-          routeKey: "test.route",
-          isAction: false,
-          stale: true,
-        });
+    expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
+    const [options] = mockEvaluateRevalidation.mock.calls[0] as unknown as [
+      { cacheStale?: boolean; stale?: boolean },
+    ];
+    expect(options.cacheStale).toBe(true);
+    expect(options.stale).toBeUndefined();
 
-        const middleware = withCacheLookup(ctx, state);
-        await collect(middleware(empty()));
-      },
-    );
-
-    expect(mockResolveLoadersOnlyWithRevalidation).toHaveBeenCalledTimes(1);
-    const lastArg = mockResolveLoadersOnlyWithRevalidation.mock.calls[0].at(-1);
-    expect(lastArg).toBe(true);
-
-    consoleSpy.mockRestore();
+    mockRevalidateRules.value = null;
   });
 });

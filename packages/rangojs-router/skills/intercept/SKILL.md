@@ -207,7 +207,7 @@ import type { Revalidate } from "@rangojs/router";
 import * as ProductActions from "./actions/product";
 
 export const revalidateProductShell: Revalidate = (ctx) =>
-  ctx.isAction(ProductActions) || undefined;
+  ctx.stale || ctx.isAction(ProductActions) || undefined;
 
 layout(ProductLayout, () => [
   revalidate(revalidateProductShell), // producer reruns

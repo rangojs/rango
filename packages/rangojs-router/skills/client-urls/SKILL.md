@@ -326,7 +326,8 @@ Per request: a JS action POST runs the predicate with `method: "POST"`,
 `FormData` argument) and `actionUrl`; the default is true. An in-group
 navigation GET defaults to true when params or search changed. A prefetch
 partial runs the predicate, so a prefetched in-group navigation honours it. A
-stale back/forward revalidation sees `stale: true`. Document requests and
+stale back/forward revalidation sees `stale: true` and takes an action's
+defaults (the default is true). Document requests and
 no-JS form posts hold no segments, so every loader renders whatever a predicate
 says. On the action-triggered refetch GET (consolidation) `isAction()` is false,
 as for `urls()`. `currentParams`/`nextParams` are the server's route params,
