@@ -38,7 +38,7 @@ import {
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
 import { cancelAllPrefetches } from "./prefetch/loader.js";
-import { FILL_PARAM } from "../prefetch-markers.js";
+import { FILL_PARAM, STALE_PARAM } from "../prefetch-markers.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -108,7 +108,7 @@ export function createNavigationClient(
       fetchUrl.searchParams.set("_rsc_partial", "true");
       fetchUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
       if (staleRevalidation) {
-        fetchUrl.searchParams.set("_rsc_stale", "true");
+        fetchUrl.searchParams.set(STALE_PARAM, "true");
       }
       if (version) {
         fetchUrl.searchParams.set("_rsc_v", version);
@@ -144,15 +144,10 @@ export function createNavigationClient(
       // server-action invalidation) auto-invalidates both scopes.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
-      // Suspend prefetch consumption while an action is in flight: a queued
-      // prefetch holds pre-mutation data and must not be served until the
-      // action's response decides whether anything changed.
+      // A prefetch served during an action's flight holds pre-write data:
+      // the action bridge's follow-up refetches the page it commits.
       const canUsePrefetch =
-        !staleRevalidation &&
-        !hmr &&
-        !fill &&
-        !interceptSourceUrl &&
-        !isActionFenceActive();
+        !staleRevalidation && !hmr && !fill && !interceptSourceUrl;
       const rangoState = getRangoState();
       const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
       const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);

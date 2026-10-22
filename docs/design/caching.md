@@ -239,6 +239,15 @@ reports, so a navigation's Flight response, or a document whose `ssr: false`
 loader planted its `errorBoundary()` fallback, used to be stored, and a failing
 stale refresh replaced a healthy entry with it.
 
+The tier also skips a stale request (`_rsc_stale`): the key omits stale, and a
+stale render re-runs loaders a plain request under the same key keeps, so its
+body differs. The client marks stale the follow-up revalidation after an
+action, a Back/Forward entry's revalidation, and any request that holds no
+segments (`router.refresh()`, a cross-tab refresh): its data may predate a
+write and the cache cannot tell. Each renders at the origin, is never stored,
+and answers `private, no-cache`. An app that wants the shared entry refreshed
+after a write tags it and calls `updateTag()`.
+
 ### Layer 2: Shell Cache + Fresh Streaming
 
 Cache synchronous shell, stream fresh data through Suspense boundaries.

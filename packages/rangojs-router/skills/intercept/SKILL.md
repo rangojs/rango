@@ -146,6 +146,18 @@ the modal keeps the data of the others, as it does on a link to another
 intercepted route that reads the same loader. In `clientUrls()` the predicate
 runs on the server too (`/client-urls`).
 
+The page under an intercept does not re-render while the intercept is on
+screen. An action that settles after the intercept opened (one sent from the
+page underneath just before the user opened it) runs no background
+revalidation. The page underneath keeps its data until the user leaves the
+intercept. Leaving it with Back revalidates that page as stale (the
+action marked the history cache stale): loaders that opt in with
+`revalidate(({ stale }) => stale)` re-run. Going Back or Forward out of the
+intercept while an action from it is in flight does not abort the action:
+`useAction()` gets its result, and the page underneath gets the background
+revalidation (`/server-actions`, "When the user navigates while the action
+runs").
+
 A `revalidate()` placed directly in the intercept's `use()` (or returned from
 its handler's `.use`) throws at definition time. Attach it to the loader:
 

@@ -387,6 +387,117 @@ describe("createEventController", () => {
       first.complete(loc("/page1")); // should not update location
       expect(ctrl.getState().location.pathname).toBe("/");
     });
+
+    // An action's follow-up waits on it (server-action-bridge.ts followUp).
+    describe("settled", () => {
+      const settledOf = (ctrl: EventController) => {
+        let value: boolean | undefined;
+        void ctrl.getCurrentNavigation()!.settled.then((v) => (value = v));
+        return () => value;
+      };
+
+      it("resolves true when the transaction ends after the commit, not at the commit", async () => {
+        const ctrl = createController();
+        const handle = ctrl.startNavigation("/about");
+        const settled = settledOf(ctrl);
+        handle.complete(loc("/about"));
+        await Promise.resolve();
+        // A prefetch: false fill still runs between the two.
+        expect(settled()).toBeUndefined();
+
+        handle[Symbol.dispose]();
+        await Promise.resolve();
+        expect(settled()).toBe(true);
+      });
+
+      it("resolves false when it ends without a commit", async () => {
+        const ctrl = createController();
+        const handle = ctrl.startNavigation("/about");
+        const settled = settledOf(ctrl);
+        handle[Symbol.dispose]();
+        await Promise.resolve();
+        expect(settled()).toBe(false);
+      });
+
+      it("resolves false at once when a newer navigation leaves it", async () => {
+        const ctrl = createController();
+        ctrl.startNavigation("/page1");
+        const settled = settledOf(ctrl);
+        ctrl.startNavigation("/page2");
+        await Promise.resolve();
+        expect(settled()).toBe(false);
+      });
+
+      it("resolves false when abortNavigation() leaves it", async () => {
+        const ctrl = createController();
+        ctrl.startNavigation("/about");
+        const settled = settledOf(ctrl);
+        ctrl.abortNavigation();
+        await Promise.resolve();
+        expect(settled()).toBe(false);
+      });
+
+      it("waits for the streams it opened when they outlast the transaction", async () => {
+        const ctrl = createController();
+        const handle = ctrl.startNavigation("/about");
+        const settled = settledOf(ctrl);
+        const stream = handle.startStreaming();
+        handle.complete(loc("/about"));
+        handle[Symbol.dispose]();
+        await Promise.resolve();
+        expect(settled()).toBeUndefined();
+
+        stream.end();
+        await Promise.resolve();
+        expect(settled()).toBe(true);
+      });
+
+      it("resolves false at once when a newer navigation leaves it while it streams", async () => {
+        const ctrl = createController();
+        const handle = ctrl.startNavigation("/about");
+        const settled = settledOf(ctrl);
+        handle.startStreaming();
+        handle.complete(loc("/about"));
+        ctrl.startNavigation("/next");
+        await Promise.resolve();
+        expect(handle.signal.aborted).toBe(true);
+        expect(settled()).toBe(false);
+      });
+    });
+
+    // The navigation the action bridge waits for (server-action-bridge.ts
+    // userNavigation): the newest one, from its start until it settles.
+    describe("getUnsettledNavigation", () => {
+      it("returns the newest navigation, committed or not, until it settles", () => {
+        const ctrl = createController();
+        expect(ctrl.getUnsettledNavigation()).toBeNull();
+        const handle = ctrl.startNavigation("/about");
+        const entry = ctrl.getCurrentNavigation();
+        expect(ctrl.getUnsettledNavigation()).toBe(entry);
+
+        const stream = handle.startStreaming();
+        handle.complete(loc("/about"));
+        expect(ctrl.getCurrentNavigation()).toBeNull();
+        expect(ctrl.getUnsettledNavigation()).toBe(entry);
+        handle[Symbol.dispose]();
+        expect(ctrl.getUnsettledNavigation()).toBe(entry);
+        stream.end();
+        expect(ctrl.getUnsettledNavigation()).toBeNull();
+      });
+
+      it("moves to a newer navigation, and clears when one is left or fails", () => {
+        const ctrl = createController();
+        ctrl.startNavigation("/page1");
+        const second = ctrl.startNavigation("/page2");
+        expect(ctrl.getUnsettledNavigation()?.url).toBe("/page2");
+        second[Symbol.dispose]();
+        expect(ctrl.getUnsettledNavigation()).toBeNull();
+
+        ctrl.startNavigation("/page3");
+        ctrl.abortNavigation();
+        expect(ctrl.getUnsettledNavigation()).toBeNull();
+      });
+    });
   });
 
   // ======================================================================

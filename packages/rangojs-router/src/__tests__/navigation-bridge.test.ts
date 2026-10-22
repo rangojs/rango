@@ -766,6 +766,55 @@ describe("navigation-bridge handlePopstate intercept exit", () => {
     expect(mode).toEqual({ type: "leave-intercept" });
   });
 
+  it("keeps in-flight actions running when Back leaves an intercept", async () => {
+    // An action whose modal closes before its response is an ordinary
+    // navigate-away: its caller gets its result, and its exit owes the page
+    // underneath the follow-up (server-action-bridge.ts followUp).
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/shop",
+        origin: "http://localhost",
+      },
+      history: { state: {} },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+
+    const store = createStore();
+    store.getInterceptSourceUrl.mockReturnValue("http://localhost/shop");
+    store.getCachedSegments.mockReturnValue(undefined);
+
+    const eventController = {
+      ...createEventController(),
+      setLocation: vi.fn(),
+      abortAllActions: vi.fn(),
+      getState: vi.fn(() => ({ isStreaming: false })),
+      setParams: vi.fn(),
+    };
+
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: eventController as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: new AbortController().signal },
+      with: (overrides: Record<string, unknown>) => ({
+        ...overrides,
+        handle: { signal: new AbortController().signal },
+      }),
+      [Symbol.dispose]: vi.fn(),
+    });
+
+    await bridge.handlePopstate();
+
+    expect(eventController.abortAllActions).not.toHaveBeenCalled();
+    expect(store.setInterceptSourceUrl).toHaveBeenCalledWith(null);
+  });
+
   it("passes undefined mode for ordinary popstate with no intercept history", async () => {
     vi.stubGlobal("window", {
       location: {

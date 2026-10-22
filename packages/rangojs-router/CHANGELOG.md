@@ -1,5 +1,58 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: an action's write shows on the page the user navigated to while it ran
+
+**Before.** A user clicks "Add to cart" and then a link, or goes Back, before
+the action lands. The action's revalidation was dropped, so the new page kept
+its pre-write data in every loader the navigation held, such as a layout's
+cart count, until something else re-ran it. An action that failed after the
+user left got nothing at all. And the refetch an action started when it landed
+superseded a click still in flight, so that click's page never committed.
+
+**Now.** Once the last action in flight settles, the router revalidates the
+page on screen once, in the background, whenever an action's own response
+could not reach it:
+
+- Every loader on that page re-runs: the request holds no segments, so no
+  `revalidate()` predicate is consulted.
+- The result commits with no `loading()` fallback and no remount.
+  `useNavigation().state` stays `"idle"`.
+- It waits for the user's navigation and never cancels it. A click in flight
+  when the action lands reads `"loading"` until its page commits.
+- Several actions share one revalidation, and a `redirect()` replaces it.
+- Nothing runs while an intercept is on screen. Leaving it with Back sends a
+  stale revalidation, which re-runs the loaders that opt in with
+  `revalidate(({ stale }) => stale)`, as before.
+- A user who stayed on the page gets no extra request.
+
+No change in your code. `keepClientCache()` turns this off for that action.
+
+### Fixed: the document cache never answers a stale request
+
+**Before.** On a route with `s-maxage`, `createDocumentCacheMiddleware()` could
+answer Back's revalidation after an action from a body cached before the write.
+The page then kept showing pre-write data, even though the router had marked
+it stale.
+
+**Now.** A partial request carrying `_rsc_stale` is neither served from nor
+stored in the document cache, and the server answers it with
+`private, no-cache`. Stale requests are Back/Forward onto a page an action made
+stale, the background revalidation after an action, and `refresh()`. For a
+shared entry refreshed after a write, tag it and call `updateTag()`.
+
+### Changed: going Back or Forward out of an intercept no longer aborts its actions
+
+**Before.** Back or Forward into or out of an intercept aborted every
+action in flight, although the server had already received it and ran it.
+`useAction()` went back to idle with no result, and the caller's `await`
+resolved with `undefined`.
+
+**Now.** The action keeps running. `useAction()` and the caller's `await` get
+its real result, and the page underneath gets the background revalidation
+above. This matches what already happened when a link left the intercept.
+
 ## 0.26.6 (2026-10-21)
 
 ### Fixed: an inline `"use server"` action rendered by `Static()` or `Prerender()` runs on plugin-rsc 0.5.37+ ([#1223](https://github.com/rangojs/rango/pull/1223))

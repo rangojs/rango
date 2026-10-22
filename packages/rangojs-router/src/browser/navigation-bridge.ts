@@ -643,16 +643,9 @@ export function createNavigationBridge(
       const isIntercept = historyState?.intercept === true;
       const interceptSourceUrl = historyState?.sourceUrl;
 
-      // Check if intercept context is changing (same URL, different intercept state)
-      // If so, abort in-flight actions - their results would be for wrong context
+      // Actions in flight keep running across an intercept change, as across
+      // any navigation (server-action-bridge.ts followUp).
       const currentInterceptSource = store.getInterceptSourceUrl();
-      const newInterceptSource = interceptSourceUrl ?? null;
-      if (currentInterceptSource !== newInterceptSource) {
-        debugLog(
-          `[Browser] Intercept context changing (${currentInterceptSource} -> ${newInterceptSource}), aborting in-flight actions`,
-        );
-        eventController.abortAllActions();
-      }
 
       // Popstate that exits an intercept to a non-intercept destination. The
       // fallback fetch path below needs `leave-intercept` mode so it filters
