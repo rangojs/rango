@@ -273,8 +273,8 @@ export interface RequestContext<
 
   /**
    * @internal Handle store for tracking handle data across segments.
-   * Readonly: a background render that needs its own store derives a context
-   * (rerenderAndCacheRoute, shell-capture.ts) instead of swapping this field,
+   * Readonly: a render that needs its own store derives a render pass
+   * (deriveRenderPass, server/render-pass.ts) instead of swapping this field,
    * which the foreground still reads while it produces the page.
    */
   readonly _handleStore: HandleStore;
@@ -1926,8 +1926,8 @@ export function rebaseRequestContext(
 /**
  * Wire a fresh render barrier onto `ctx`, closure-bound to THIS ctx and THIS
  * handle store. Called by createRequestContext for every fresh context, and by
- * deriveShellCaptureContext (rsc/shell-capture.ts) for the PPR capture's
- * derived context.
+ * deriveRenderPass (server/render-pass.ts) for a derived pass whose
+ * RENDER_PASS_FIELDS row owns its barrier (the PPR capture and the HIT tail).
  *
  * The derived-context call is load-bearing (issue #684, plan 009): the capture
  * context is `Object.create(reqCtx)`, so without its own wiring every

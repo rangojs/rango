@@ -12,9 +12,6 @@
       "packages/rangojs-router/src/cache/vercel/__tests__/vercel-cache-store.test.ts": 1,
       "packages/rangojs-router/src/route-definition/__tests__/rewrite.test.ts": 2,
       "packages/rangojs-router/src/router/__tests__/shell-capture-live-lane-ctx-use.test.ts": 1,
-      "packages/rangojs-router/src/router/match-middleware/background-revalidation.ts": 1,
-      "packages/rangojs-router/src/rsc/rsc-rendering.ts": 1,
-      "packages/rangojs-router/src/rsc/shell-capture.ts": 1,
       "packages/rangojs-router/src/server/__tests__/build-version-table.test.ts": 1,
       "packages/rangojs-router/src/server/__tests__/context-fast-properties.test.ts": 3,
       "packages/rangojs-router/src/server/__tests__/cookie-store.test.ts": 1

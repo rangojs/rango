@@ -1,11 +1,12 @@
 /**
- * The request context, the middleware ctx, the handle store and a parsed
- * cookie jar keep V8 fast properties (#1109). A get/set member in an object literal, a data property
- * redefined as an accessor, or an accessor defined with a per-call closure
- * puts the object in dictionary mode, where every property read is a hash
- * lookup for the object's whole lifetime. Each accessor is a shared
- * descriptor instead, and these tests pin that the property surface did not
- * change with it: same descriptors, same enumerability, same values.
+ * The request context, a derived render pass, the middleware ctx, the handle
+ * store and a parsed cookie jar keep V8 fast properties (#1109). A get/set
+ * member in an object literal, a data property redefined as an accessor, or
+ * an accessor defined with a per-call closure puts the object in dictionary
+ * mode, where every property read is a hash lookup for the object's whole
+ * lifetime. Each accessor is a shared descriptor instead, and these tests pin
+ * that the property surface did not change with it: same descriptors, same
+ * enumerability, same values.
  *
  * %HasFastProperties is read through V8's natives syntax, enabled at runtime;
  * on a runtime without it the fast-properties checks are skipped.
@@ -19,7 +20,13 @@ import {
   type RequestContext,
 } from "../request-context.js";
 import { createHandleStore } from "../handle-store.js";
+import { deriveRenderPass } from "../render-pass.js";
 import { parseCookiesFromHeader } from "../cookie-parse.js";
+import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
+import {
+  RecordingShellStore,
+  SnapshotOnlySegmentStore,
+} from "../../cache/shell-snapshot.js";
 import { createMiddlewareContext } from "../../router/middleware.js";
 import { NOCACHE_SYMBOL } from "../../cache/taint.js";
 
@@ -183,6 +190,55 @@ describe("request context", () => {
     expect(keys).toContain("res");
     expect(keys).toContain("_renderBarrier");
     expect(keys).not.toContain("theme");
+  });
+});
+
+describe("derived render pass", () => {
+  // The rows write their fields with named stores: one Object.assign of the
+  // capture's 30-odd fields leaves it in dictionary mode.
+  itFast(
+    "a shell capture with every optional field keeps fast properties",
+    () => {
+      const base = makeRequestContext();
+      const store = new RecordingShellStore(new MemorySegmentCacheStore());
+      const request = new Request("https://example.com/other?x=1");
+      const pass = deriveRenderPass(base, "shell-capture", {
+        handleStore: createHandleStore(),
+        identity: { request, url: new URL(request.url) },
+        recording: {
+          store,
+          implicitCache: {
+            ttl: 60,
+            swr: 300,
+            store: new SnapshotOnlySegmentStore(store),
+            keyPrefix: "doc",
+          },
+        },
+      });
+      expect(Object.getPrototypeOf(pass)).toBe(base);
+      expect(hasFastProperties!(pass)).toBe(true);
+    },
+  );
+
+  itFast("a PPR tail keeps fast properties", () => {
+    const base = makeRequestContext();
+    const pass = deriveRenderPass(base, "ppr-tail", {
+      handleStore: base._handleStore,
+      loaderSeed: new Map(),
+      implicitCache: { keyPrefix: "doc", docTail: true },
+    });
+    expect(Object.getPrototypeOf(pass)).toBe(base);
+    expect(hasFastProperties!(pass)).toBe(true);
+  });
+
+  itFast("a background re-render keeps fast properties", () => {
+    const base = makeRequestContext();
+    const pass = deriveRenderPass(base, "background-revalidation", {
+      handleStore: createHandleStore(),
+      sink: makeRequestContext(),
+    });
+    expect(Object.getPrototypeOf(pass)).toBe(base);
+    expect(hasFastProperties!(pass)).toBe(true);
   });
 });
 
