@@ -212,7 +212,8 @@ function createPrerenderPassthroughFn(
  * ReverseScope, so `.name` resolves in the module that declared the segment.
  * The scope rides the object, not the call frame: it holds after an `await`
  * and in a component the ctx is handed to. Every other field reads through
- * live (`_currentSegmentId` as resolution moves it, ctx.set values).
+ * live (`_currentSegmentId` as resolution moves it, unless the ctx is a
+ * withSegmentPin child, ctx.set values).
  * `_reverseScope` keys a "use cache" call that takes this ctx (cache-runtime.ts).
  */
 export function withReverseScope<C>(
@@ -224,6 +225,38 @@ export function withReverseScope<C>(
   scoped.reverse = scopeReverse((ctx as any).reverse, scope);
   scoped._reverseScope = scope;
   return scoped;
+}
+
+/**
+ * The ctx a handler the walker does not await gets (a `loading()` route or
+ * slot handler): a prototype child of the request's one handler ctx that
+ * keeps the segment pinned when the handler starts. The walker moves the
+ * shared `_currentSegmentId` pin on to the next segment while a streamed
+ * handler is still running, so a `ctx.use(Handle)` after an `await` (a
+ * microtask or real I/O) filed the push under a later slot or the route, out
+ * of collect order.
+ *
+ * The parent's `use` (whichever setup installed it, a loader cache()
+ * interceptor included) reads the pin synchronously: a handle push's segment,
+ * a loader's owning segment at kickoff. The child shows it its own pin for
+ * that one synchronous call and puts the walker's back before any other code
+ * runs.
+ */
+export function withSegmentPin<C>(ctx: C): C {
+  const parent = ctx as InternalHandlerContext<any, any>;
+  const segmentId = parent._currentSegmentId;
+  const pinned = Object.create(parent) as InternalHandlerContext<any, any>;
+  pinned._currentSegmentId = segmentId;
+  pinned.use = ((item: any) => {
+    const live = parent._currentSegmentId;
+    parent._currentSegmentId = segmentId;
+    try {
+      return parent.use(item);
+    } finally {
+      parent._currentSegmentId = live;
+    }
+  }) as typeof parent.use;
+  return pinned as C;
 }
 
 /**

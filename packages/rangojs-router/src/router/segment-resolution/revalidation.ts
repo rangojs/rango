@@ -67,7 +67,7 @@ import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { isLayoutLoaderCopy } from "../../client-urls/layout-loader-copies.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeSegmentHandler } from "../instrument.js";
-import { withReverseScope } from "../handler-context.js";
+import { withReverseScope, withSegmentPin } from "../handler-context.js";
 import { runInSegmentTagScope } from "../../cache/cache-tag.js";
 import { trackStreamedHandler } from "./streamed-handler-boundary.js";
 import {
@@ -764,7 +764,10 @@ async function resolveParallelSlotComponent<TEnv>(
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         parallelId;
       handlerRan = true;
-      const slotContext = withReverseScope(context, parallelEntry.reverseScope);
+      const slotContext = withReverseScope(
+        hasLoadingFallback ? withSegmentPin(context) : context,
+        parallelEntry.reverseScope,
+      );
       // FRESH meters the slot handler (its perf metric) and runs it inside its
       // rango.handler span; a partial pass runs it in the slot's tag scope.
       const doneHandler = fresh
@@ -1154,7 +1157,12 @@ async function resolveRouteComponent<TEnv>(
   }
   if (!actionContext) {
     const result = handleHandlerResult(
-      observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+      observeSegmentHandler(
+        entry.shortCode,
+        entry.id,
+        handler,
+        withSegmentPin(context),
+      ),
     );
     if (result instanceof Promise) {
       warnOnStreamedResponse(result, entry.id);

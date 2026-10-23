@@ -241,6 +241,12 @@ default and **warns in dev** (`collectHandleData` runtime, folded out of product
 default, but a CUSTOM-collect handle that failed to register silently gets the wrong
 shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 
+**A streamed handler's pushes stay in its own segment:** a `loading()` route or
+slot handler gets `withSegmentPin(ctx)` (`router/handler-context.ts`), so its
+`ctx.use(Handle)`, a loader it starts and a `"use cache"` call given the ctx file
+under its segment after an `await`, not the one the walker pinned since (see
+execution-model.md "A streamed handler keeps its segment").
+
 ---
 
 ## Feature Map by Capability

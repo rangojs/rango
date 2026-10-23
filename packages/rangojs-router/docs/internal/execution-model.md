@@ -1991,7 +1991,10 @@ Limits:
   resolves from the matched route everywhere, a layout included.
 - A layout's or slot's ctx is a different object from the route's. Its own
   fields are `reverse` and `_reverseScope`, so `{ ...ctx }` there copies only
-  those. A getter keyed by its holder resolves through the prototype chain
+  those. A `loading()` route's or slot's ctx is a prototype child too ("A
+  streamed handler keeps its segment" below): `{ ...ctx }` there copies only
+  that child's own `_currentSegmentId` and `use`, or, for a slot with a scope,
+  the `reverse` and `_reverseScope` of the scope's child above it. A getter keyed by its holder resolves through the prototype chain
   (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
   child inherits.
 - `Static()` layouts and slots bake at build time through
@@ -2002,6 +2005,44 @@ Limits:
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,
 and the `reverse-segment-scope` e2e (test-app and cloudflare-basic).
+
+### A streamed handler keeps its segment
+
+A handle push lands in the bucket of the segment whose handler made it.
+`useHandle` collects the buckets in segment order (`filterSegmentOrder` over
+`matched`), so a push in the wrong bucket shows out of order, and a partial
+navigation replaces it with the other segment's run.
+
+The walker pins `_currentSegmentId` on the request's one handler ctx before
+each segment's loaders and handler, and the handler ctx's `use` reads the pin
+when it is called. The pin is the handler's own only while the walker awaits
+the handler. You might expect that to cover every handler, but the walker
+does not await a `loading()` route or slot handler: it goes on to the route's
+slots, the next slot or the route while that handler still runs. A route
+under `loading()` doing `await getProduct(); ctx.use(Breadcrumbs)(...)` filed
+its crumb in its slot's bucket, and a streamed slot's push landed in the next
+slot's or the route's. A timer or I/O await did it as surely as a microtask
+one, on the document and on a navigation.
+
+How: such a handler gets `withSegmentPin(ctx)` (`router/handler-context.ts`),
+a prototype child holding the pin of its start. Its `use` shows that pin to
+the parent's `use` for the one synchronous call, where the push's segment and
+a started loader's owning segment are read, and restores the walker's pin
+after it. The child's own `_currentSegmentId` is what `cache-runtime.ts` reads
+from a ctx argument, so a `"use cache"` call given it records and replays its
+pushes under the handler's segment too.
+
+Not changed: an awaited handler (a layout, a route or slot without
+`loading()`, an action's route) runs on the shared ctx, and an orphan layout,
+which has no pin of its own, files under the segment pinned before it (the
+route). An intercept's handler resolves after the main walk, so nothing moves
+its pin. A push function bound before the await (`const push =
+ctx.use(Handle)`) was always filed right.
+
+Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
+(document and navigation; microtask and timer awaits; a handle push, a loader
+the handler starts, a `"use cache"` call) and the `withSegmentPin` cases in
+`router/__tests__/handler-context.test.ts`.
 
 ### Cache-safety contract for context variables
 
