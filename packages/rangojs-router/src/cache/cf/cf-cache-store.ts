@@ -1401,8 +1401,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               : "l1-miss",
           matchMs,
         });
-        const kvResult = await this.readKv(key, f);
-        return matchError ? (kvResult ?? f.readError) : kvResult;
+        if (!matchError) return this.readKv(key, f);
+        return (await this.readKv(key, f)) ?? f.readError;
       }
 
       // A non-200 entry (a cached error response, or a foreign response that
