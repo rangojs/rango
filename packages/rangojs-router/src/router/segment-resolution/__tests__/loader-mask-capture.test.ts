@@ -68,18 +68,23 @@ function createEntry(loader: any, loading?: unknown): EntryData {
 function runRevalidationFunnel(entry: EntryData, ctx: any) {
   const url = new URL("https://example.com/x");
   return resolveOwnerLoaders(
+    {
+      context: ctx,
+      // Client has never seen the segment, so shouldRun is true without invoking
+      // evaluateRevalidation.
+      client: new Set<string>(),
+      params: {},
+      prevParams: {},
+      request: new Request(url),
+      prevUrl: url,
+      nextUrl: url,
+      routeKey: "route-key",
+      deps: {
+        wrapLoaderPromise: (promise: Promise<unknown>) => promise,
+      } as never,
+    },
     ownerOf(entry),
-    ctx,
     true,
-    // Client has never seen the segment, so shouldRun is true without invoking
-    // evaluateRevalidation.
-    new Set<string>(),
-    {},
-    new Request(url),
-    url,
-    url,
-    "route-key",
-    { wrapLoaderPromise: (promise: Promise<unknown>) => promise } as never,
   );
 }
 

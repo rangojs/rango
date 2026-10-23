@@ -20,6 +20,7 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 import { resolveInterceptEntry } from "../intercept-resolution.js";
+import { heldNothingPassInput } from "../segment-resolution/resolution-pass.js";
 
 const Layout = () => <div>layout</div>;
 const ModalChrome = () => <div>modal-chrome</div>;
@@ -363,13 +364,13 @@ describe("intercept handler lanes left unchanged", () => {
     await expect(
       runWithRequestContext(reqCtx, () =>
         resolveInterceptEntry(
+          {
+            ...heldNothingPassInput(context, interceptEntry.routeName, {}),
+            deps,
+          },
           interceptEntry,
           parentEntry,
-          {},
-          context,
           true,
-          deps,
-          undefined,
           { background: true },
         ),
       ),
@@ -419,13 +420,13 @@ describe("intercept handler lanes left unchanged", () => {
 
     const result = await runWithRequestContext(reqCtx, () =>
       resolveInterceptEntry(
+        {
+          ...heldNothingPassInput(context, interceptEntry.routeName, {}),
+          deps,
+        },
         interceptEntry,
         parentEntry,
-        {},
-        context,
         true,
-        deps,
-        undefined,
         { background: true },
       ),
     );

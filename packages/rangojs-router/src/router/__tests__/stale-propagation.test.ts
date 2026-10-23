@@ -121,17 +121,19 @@ describe("loader revalidation stale isolation", () => {
     const segmentId = "L0R0D0.cart-loader";
 
     await resolveLoadersOnlyWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set([segmentId]),
+        params: {},
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+        // stale: no browser staleness signal
+      },
       [entry],
-      makeContext(),
-      new Set([segmentId]),
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      "test.route",
-      makeDeps(),
-      undefined, // actionContext
-      undefined, // stale: no browser staleness signal
     );
 
     expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
@@ -149,17 +151,19 @@ describe("loader revalidation stale isolation", () => {
     const segmentId = "L0R0D0.cart-loader-stale";
 
     await resolveLoadersOnlyWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set([segmentId]),
+        params: {},
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+        stale: true, // stale: browser says action happened
+      },
       [entry],
-      makeContext(),
-      new Set([segmentId]),
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      "test.route",
-      makeDeps(),
-      undefined, // actionContext
-      true, // stale: browser says action happened
     );
 
     expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
@@ -178,17 +182,19 @@ describe("stale propagation through resolveLoadersOnlyWithRevalidation", () => {
     const segmentId = "L0R0D0.my-loader";
 
     await resolveLoadersOnlyWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set([segmentId]), // Must be in clientSegmentIds for evaluateRevalidation to be called
+        params: {},
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+        stale: true,
+      },
       [entry],
-      makeContext(),
-      new Set([segmentId]), // Must be in clientSegmentIds for evaluateRevalidation to be called
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      "test.route",
-      makeDeps(),
-      undefined, // actionContext
-      true, // stale
     );
 
     expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
@@ -204,16 +210,18 @@ describe("stale propagation through resolveLoadersOnlyWithRevalidation", () => {
     const segmentId = "L0R0D0.my-loader";
 
     await resolveLoadersOnlyWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set([segmentId]),
+        params: {},
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+      },
       [entry],
-      makeContext(),
-      new Set([segmentId]),
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      "test.route",
-      makeDeps(),
-      undefined, // actionContext
       // stale omitted
     );
 
@@ -232,21 +240,24 @@ describe("stale propagation through resolveAllSegmentsWithRevalidation (full pip
     const segmentId = "L0R0D0.pipeline-loader";
 
     await resolveAllSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set([segmentId, "L0R0"]), // loader + route in client set
+        params: { id: "1" },
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+        stale: true,
+      },
       [entry],
-      "test.route",
-      { id: "1" },
-      makeContext(),
-      new Set([segmentId, "L0R0"]), // loader + route in client set
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      undefined, // actionContext
-      null, // interceptResult
-      "test.route",
-      "/test",
-      makeDeps(),
-      true, // stale
+      {
+        interceptResult: null,
+        localRouteName: "test.route",
+        pathname: "/test",
+      },
     );
 
     // evaluateRevalidation should have been called with stale: true
@@ -264,20 +275,23 @@ describe("stale propagation through resolveAllSegmentsWithRevalidation (full pip
     const segmentId = "L0R0D0.pipeline-loader-no-stale";
 
     await resolveAllSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set([segmentId, "L0R0"]),
+        params: { id: "1" },
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+      },
       [entry],
-      "test.route",
-      { id: "1" },
-      makeContext(),
-      new Set([segmentId, "L0R0"]),
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      undefined,
-      null,
-      "test.route",
-      "/test",
-      makeDeps(),
+      {
+        interceptResult: null,
+        localRouteName: "test.route",
+        pathname: "/test",
+      },
       // stale omitted
     );
 

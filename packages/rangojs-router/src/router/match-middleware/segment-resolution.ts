@@ -90,6 +90,7 @@ import type { ResolvedSegment } from "../../types.js";
 import type { EntryData } from "../../server/context.js";
 import { _getRequestContext } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
+import { resolutionPassInput } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 
@@ -184,20 +185,13 @@ export function withSegmentResolution<TEnv>(
       // Partial match (navigation) - resolution with revalidation logic
       const result = await Store.run(() =>
         resolveAllSegmentsWithRevalidation(
+          resolutionPassInput(ctx),
           ctx.entries,
-          ctx.routeKey,
-          ctx.matched.params,
-          ctx.handlerContext,
-          ctx.clientSegmentSet,
-          ctx.prevParams,
-          ctx.request,
-          ctx.prevUrl,
-          ctx.url,
-          ctx.actionContext,
-          ctx.interceptResult,
-          ctx.localRouteName,
-          ctx.pathname,
-          ctx.stale,
+          {
+            interceptResult: ctx.interceptResult,
+            localRouteName: ctx.localRouteName,
+            pathname: ctx.pathname,
+          },
         ),
       );
 
