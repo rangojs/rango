@@ -2061,7 +2061,7 @@ Mechanics (the invariants the code comments point at):
 - **One choke point, not enumerated wrappers.** Every consumer-reachable
   mutation of the stub response's Headers funnels through a guarded proxy
   shadowed onto the stub `Response` instance
-  (`createRequestContext`, `src/server/request-context.ts`): `ctx.header`,
+  (`createResponseSink`, `src/server/response-sink.ts`): `ctx.header`,
   `setCookie`/`deleteCookie` (and `cookies().set`), `ctx.setTheme`, the
   handler `ctx.headers` proxy, and raw `ctx.res.headers.set(...)` all hit the
   guard at the mutation itself. `setStatus`/`onResponse` are not Headers

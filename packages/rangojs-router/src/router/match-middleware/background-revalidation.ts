@@ -109,7 +109,6 @@ import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { getContext } from "../../server/context.js";
 import { executionStart } from "../../cache/tag-invalidation.js";
 import {
-  createRequestContext,
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
@@ -146,17 +145,8 @@ export async function rerenderAndCacheRoute<TEnv>(
 ): Promise<number> {
   const start = executionStart();
   const handleStore = routerCtx.createHandleStore();
-  // Response writes land in a throwaway context nothing merges or drains.
-  const sink = createRequestContext({
-    env: ctx.env,
-    request: ctx.request,
-    url: ctx.url,
-    variables: {},
-    themeConfig: requestCtx._themeConfig,
-  });
   const renderCtx = deriveRenderPass(requestCtx, "background-revalidation", {
     handleStore,
-    sink,
   });
   const store = Object.assign(Object.create(ctx.Store), { metrics: undefined });
   const runInStore = <T>(fn: () => T): T =>
@@ -214,10 +204,10 @@ export async function rerenderAndCacheRoute<TEnv>(
 
     handleStore.seal();
     // Boundaries set 500/404 through _setStatus (catchSegmentError), which
-    // lands on the sink.
-    if (sink.res.status !== 200) {
+    // lands on the pass's discarding sink.
+    if (renderCtx.res.status !== 200) {
       debugLog("backgroundRevalidation", "skipping cache for non-200 render", {
-        status: sink.res.status,
+        status: renderCtx.res.status,
         pathname: ctx.pathname,
       });
       return 0;

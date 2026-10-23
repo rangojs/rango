@@ -15,8 +15,8 @@ import {
   createRequestContext,
   runWithRequestContext,
   parseCookiesFromHeader as parseCookies,
-  serializeCookieValue as serializeCookie,
 } from "../server/request-context.js";
+import { serializeCookieValue as serializeCookie } from "../server/response-sink.js";
 import { createResponseWithMergedHeaders } from "../rsc/helpers.js";
 import { resolveTracing } from "./tracing.js";
 import {

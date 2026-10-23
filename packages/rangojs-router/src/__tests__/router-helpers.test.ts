@@ -9,10 +9,8 @@ import {
   compileMiddlewarePattern as parseMiddlewarePattern,
   extractParams,
 } from "../router/middleware.js";
-import {
-  parseCookiesFromHeader as parseCookies,
-  serializeCookieValue as serializeCookie,
-} from "../server/request-context.js";
+import { parseCookiesFromHeader as parseCookies } from "../server/request-context.js";
+import { serializeCookieValue as serializeCookie } from "../server/response-sink.js";
 import { createReverse } from "../reverse.js";
 import type { RouteEntry, TrailingSlashMode } from "../types.js";
 

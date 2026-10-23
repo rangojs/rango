@@ -45,6 +45,7 @@ import type { RouterContext } from "../../router/router-context.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
+import { KEEP_CACHE_HEADER } from "../../browser/cookie-name.js";
 import {
   resetShellTestState,
   serveShellRequest,
@@ -68,6 +69,7 @@ function ownKeys(object: object): string[] {
 function requestContext(
   href = "https://example.com/p",
   withStore = true,
+  stateCookieName?: string,
 ): RequestContext {
   const request = new Request(href);
   return createRequestContext({
@@ -78,6 +80,7 @@ function requestContext(
     cacheStore: withStore ? new MemorySegmentCacheStore() : undefined,
     // ctx.setTheme exists only with a theme config.
     themeConfig: resolveThemeConfig(true),
+    stateCookieName,
   });
 }
 
@@ -372,7 +375,8 @@ describe("PPR HIT tail context (createTailContext)", () => {
 
 describe("background re-render context (rerenderAndCacheRoute)", () => {
   it("owns its handle store, error lists and response writers; inherits the request's render barrier", async () => {
-    const base = requestContext();
+    // With a state cookie, so a rotation on the request's sink writes.
+    const base = requestContext("https://example.com/p", true, "rango-state");
     // The foreground has rendered: it measured, recovered and reported.
     Object.assign(base, {
       _metricsStore: { metrics: [] },
@@ -443,8 +447,8 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       _renderErrors: [],
       _onResponseCallbacks: [],
     });
-    // Response writes land on a throwaway response: no writer is the
-    // request's.
+    // Response writes land on a response nothing sends: no writer is the
+    // request's, and calling each leaves the request's response as it was.
     const writers = [
       "header",
       "setCookie",
@@ -459,13 +463,33 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       [],
     );
     expect(ctx.res).not.toBe(base.res);
+    const response = base.res;
     ctx.setStatus(500);
+    ctx._setStatus(404);
     ctx.header("x-background", "1");
     ctx.setCookie("background", "1");
     ctx.deleteCookie("session");
+    ctx.setTheme!("dark");
+    ctx._rotateStateCookie();
+    ctx._setKeepCacheDirective();
+    expect(base.res).toBe(response);
     expect(base.res.status).toBe(200);
-    expect(base.res.headers.get("x-background")).toBeNull();
-    expect(base.res.headers.get("set-cookie")).toBeNull();
+    expect([...base.res.headers]).toEqual([]);
+    // They landed on the pass's response. A discarding sink has no state
+    // cookie to rotate.
+    expect(ctx.res.status).toBe(404);
+    expect(ctx.res.headers.get("x-background")).toBe("1");
+    expect(ctx.res.headers.get(KEEP_CACHE_HEADER)).toBe("1");
+    expect(ctx.res.headers.getSetCookie()).toEqual([
+      "background=1",
+      "session=; Max-Age=0",
+      expect.stringMatching(/^theme=dark;/),
+    ]);
+    // The pass's rotation did not spend the request's.
+    base._rotateStateCookie();
+    expect(base.res.headers.getSetCookie()).toEqual([
+      expect.stringMatching(/^rango-state=/),
+    ]);
     // No barrier of its own: the request's, as it is today.
     expect(Object.hasOwn(ctx, "_resolveRenderBarrier")).toBe(false);
     expect(ctx._resolveRenderBarrier).toBe(base._resolveRenderBarrier);

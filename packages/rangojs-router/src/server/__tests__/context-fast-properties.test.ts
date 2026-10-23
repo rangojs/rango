@@ -235,7 +235,6 @@ describe("derived render pass", () => {
     const base = makeRequestContext();
     const pass = deriveRenderPass(base, "background-revalidation", {
       handleStore: createHandleStore(),
-      sink: makeRequestContext(),
     });
     expect(Object.getPrototypeOf(pass)).toBe(base);
     expect(hasFastProperties!(pass)).toBe(true);

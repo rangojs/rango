@@ -7,11 +7,8 @@
  */
 import type { RecordingShellStore } from "../cache/shell-snapshot.js";
 import type { HandleStore } from "./handle-store.js";
-import {
-  bindRes,
-  wireRenderBarrier,
-  type RequestContext,
-} from "./request-context.js";
+import { wireRenderBarrier, type RequestContext } from "./request-context.js";
+import { bindResponseSink, createResponseSink } from "./response-sink.js";
 
 type ShellImplicitCache = NonNullable<RequestContext["_shellImplicitCache"]>;
 
@@ -39,8 +36,6 @@ export interface RenderPassInit {
   };
   "background-revalidation": {
     handleStore: HandleStore;
-    /** Throwaway: the pass's response writes land here and are dropped. */
-    sink: RequestContext<any>;
   };
 }
 
@@ -49,6 +44,12 @@ export type RenderPurpose = keyof RenderPassInit;
 interface PassFieldPolicy<I> {
   /** "own": wireRenderBarrier(pass, init.handleStore) before `own` runs. */
   readonly renderBarrier: "own" | "inherited";
+  /**
+   * Where the pass's response writes land. "request": the request's sink,
+   * through the prototype. "discard": a discarding sink
+   * (server/response-sink.ts), bound after `own` runs.
+   */
+  readonly sink: "request" | "discard";
   /**
    * Named stores, not one Object.assign: on Node 24 an Object.assign that
    * takes the object to 20 own properties leaves it in V8 dictionary mode
@@ -70,6 +71,7 @@ export const RENDER_PASS_FIELDS: {
     // ctx.rendered() returns at once and ctx.use(handle) bakes the
     // foreground's handles into the shell.
     renderBarrier: "own",
+    sink: "request",
     own(pass, { handleStore, identity, recording }, base) {
       // Fresh: the foreground's is drained and throws LateHandlePushError.
       pass._handleStore = handleStore;
@@ -131,6 +133,8 @@ export const RENDER_PASS_FIELDS: {
     // An inherited barrier carries the base's premature non-streaming handle
     // snapshot into a streaming tail.
     renderBarrier: "own",
+    // The tail's writes are this response's.
+    sink: "request",
     own(pass, { handleStore, loaderSeed, implicitCache }) {
       // #1035: the document hydrates with the handles as of the record
       // replay, before any loader runs.
@@ -152,7 +156,11 @@ export const RENDER_PASS_FIELDS: {
   "background-revalidation": {
     // The request's barrier; whether this pass needs its own is rango-t160.
     renderBarrier: "inherited",
-    own(pass, { handleStore, sink }) {
+    // A layout above the cache() boundary or an error boundary's status
+    // would otherwise reach the live response. rerenderAndCacheRoute reads
+    // the pass's status from its own `res`.
+    sink: "discard",
+    own(pass, { handleStore }) {
       // Read late by loader pushes and cache-scope.ts; setupLoaderAccess
       // binds it at setup, so that also runs inside this pass.
       pass._handleStore = handleStore;
@@ -160,18 +168,8 @@ export const RENDER_PASS_FIELDS: {
       pass._metricsStore = undefined;
       pass._renderErrors = [];
       pass._recoveredHandlerErrors = undefined;
-      // Response writes go to the sink: a layout above the cache() boundary
-      // or an error boundary's status would otherwise reach the live response.
+      // Its onResponse registrations stay off the live response.
       pass._onResponseCallbacks = [];
-      pass.header = sink.header;
-      pass.setCookie = sink.setCookie;
-      pass.deleteCookie = sink.deleteCookie;
-      pass.setStatus = sink.setStatus;
-      pass._setStatus = sink._setStatus;
-      pass.setTheme = sink.setTheme;
-      pass._rotateStateCookie = sink._rotateStateCookie;
-      pass._setKeepCacheDirective = sink._setKeepCacheDirective;
-      bindRes(pass, () => sink.res);
     },
   },
 };
@@ -191,5 +189,11 @@ export function deriveRenderPass<P extends RenderPurpose, TEnv>(
     wireRenderBarrier(pass, init.handleStore);
   }
   policy.own(pass, init, base);
+  if (policy.sink === "discard") {
+    bindResponseSink(
+      pass,
+      createResponseSink({ discard: true, themeConfig: base._themeConfig }),
+    );
+  }
   return pass;
 }

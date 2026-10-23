@@ -296,7 +296,7 @@ before implementing]**:
 
 - **Idempotency is not inherited — implement it.** `cookies().set()` reaches
   `ctx.setCookie()`, which does `headers.append("Set-Cookie", …)`
-  (`request-context.ts:732`) with no name-based dedup; two calls emit two
+  (`setCookie` in `server/response-sink.ts`) with no name-based dedup; two calls emit two
   `Set-Cookie` headers (and, with a per-call `Date.now()`, two distinct
   timestamps). The "one `Set-Cookie`, no matter how many calls" guarantee in the
   table below is therefore not free — mint the rotated value once behind a
