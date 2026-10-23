@@ -1,15 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
 
 test.describe.configure({ mode: "serial" });
 
-test.describe("search params", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
+function searchParamsSuite(f: Fixture) {
   test("should render search page with typed search params", async ({
     page,
   }) => {
@@ -85,15 +80,8 @@ test.describe("search params", () => {
       "page: undefined",
     );
   });
-});
 
-test.describe("search params (production)", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "build",
-  });
-
-  test("should parse typed search params in production", async ({ page }) => {
+  test("should parse typed search params", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/search?q=react&page=10&sort=downloads"));
@@ -107,4 +95,14 @@ test.describe("search params (production)", () => {
       "page-type: number",
     );
   });
+}
+
+test.describe("search params", () => {
+  const f = useFixture({ root: ".", mode: "dev" });
+  searchParamsSuite(f);
+});
+
+test.describe("search params (production)", () => {
+  const f = useFixture({ root: ".", mode: "build" });
+  searchParamsSuite(f);
 });
