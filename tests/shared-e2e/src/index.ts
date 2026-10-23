@@ -60,6 +60,8 @@ export type { ActionFollowUpScenarioOptions } from "./action-follow-up-scenario.
 export { runHandlesAfterAwaitTests } from "./handles-after-await-scenario.js";
 export type { HandlesAfterAwaitScenarioOptions } from "./handles-after-await-scenario.js";
 export { runActionFailureTests } from "./action-failure-scenario.js";
+export { runActionBoundaryTests } from "./action-boundary-scenario.js";
+export type { ActionBoundaryScenarioOptions } from "./action-boundary-scenario.js";
 export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
 export {
   expectBackOntoAStalePageShowsTheWrite,
