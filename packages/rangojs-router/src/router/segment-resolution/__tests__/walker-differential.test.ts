@@ -5,7 +5,19 @@
  * context built the same way. They agree segment for segment except for the
  * differences named below. When the fresh walk becomes a pass of the
  * revalidating walker, each named difference becomes an explicit branch of
- * that pass, and this file stays green with the same list.
+ * that pass, and this file stays green with the same list. Two of them are
+ * internal-only (`INTERNAL_ONLY`): the walks may stop differing there, and
+ * they must not differ in what the payload and the render read.
+ *
+ * Each case also pins the fresh walk's own output (segment id, type, the
+ * component's text and the loader data), so a change both walkers share
+ * shows too.
+ *
+ * Besides a request's walk, the passes that call the fresh walker with
+ * options: build time (prerender-match.ts), the background re-render of a
+ * stale route record (background-revalidation.ts, `skipLoaders`) and the
+ * live pass above a cache() HIT (cache-lookup.ts, the entries above the
+ * marker with the full `chain`).
  *
  * Both walkers run as the router runs them: a router built from the DSL, the
  * RouterContext its match builds (its deps, findMatch, handler contexts and
@@ -35,6 +47,9 @@ import {
 import { resolveRoute, type RouteSnapshot } from "../../route-snapshot.js";
 import { createPrerenderContext } from "../../handler-context.js";
 import { setupBuildUse } from "../../loader-resolution.js";
+import { buildMatchResult } from "../../match-result.js";
+import type { MatchContext, MatchPipelineState } from "../../match-context.js";
+import { restoreParallelLoaderMarkers } from "../../../segment-system.js";
 import type { ResolutionPassInput } from "../resolution-pass.js";
 import type { HandlerContext, ResolvedSegment } from "../../../types.js";
 
@@ -260,31 +275,73 @@ async function project(segment: ResolvedSegment): Promise<Projected> {
 
 interface Walk {
   segments: Projected[];
+  /**
+   * The segments as the payload carries them and the render reads them:
+   * through buildMatchResult (match-result.ts, which strips `_handlerRan`)
+   * and restoreParallelLoaderMarkers (segment-system.tsx renderSegments).
+   */
+  delivered: Projected[];
   /** What match middleware records as the matched ids. */
   matchedIds: string[];
+  /** One line per segment: id, type, component text, loader data. */
+  lines: string[];
   /** The message of what the walk threw, if it threw. */
   threw?: string;
 }
 
-interface Pass {
+/** Which pass calls the walker, beside a request's own walk. */
+interface PassKind {
+  /** Build time, as prerender-match.ts walks. */
+  build: boolean;
+  intercept: boolean;
+  /** The background re-render of a stale route record. */
+  skipLoaders: boolean;
+  /** The live pass above a cache() HIT: the entries above the marker. */
+  aboveMarker: boolean;
+}
+
+interface Pass extends PassKind {
   pathname: string;
   snapshot: RouteSnapshot;
   context: HandlerContext<any>;
   request: Request;
   url: URL;
-  build: boolean;
-  intercept: boolean;
+}
+
+/**
+ * The entries a pass walks: the route's chain, or for the live pass above a
+ * cache() HIT the entries above the marker, with the full chain passed as
+ * `chain` (cache-lookup.ts).
+ */
+function passEntries(pass: Pass): {
+  entries: EntryData[];
+  chain?: EntryData[];
+} {
+  const entries = pass.snapshot.entries;
+  if (!pass.aboveMarker) return { entries };
+  const marker = entries.findIndex((entry) => entry.type === "cache");
+  expect(marker).toBeGreaterThan(0);
+  return { entries: entries.slice(0, marker), chain: entries };
 }
 
 function walkFresh(pass: Pass): Promise<ResolvedSegment[]> {
+  const { entries, chain } = passEntries(pass);
   return routerCtx.resolveAllSegments(
-    pass.snapshot.entries,
+    entries,
     pass.snapshot.routeKey,
     pass.snapshot.params,
     pass.context,
     new Map(),
-    // What prerender-match.ts passes at build time.
-    pass.build ? { skipLoaders: true, throwOnError: true } : undefined,
+    pass.build
+      ? // prerender-match.ts
+        { skipLoaders: true, throwOnError: true }
+      : pass.skipLoaders
+        ? // background-revalidation.ts rerenderAndCacheRoute
+          { skipLoaders: true }
+        : chain
+          ? // cache-lookup.ts, the live pass of a full match
+            { chain }
+          : undefined,
   );
 }
 
@@ -324,14 +381,67 @@ function walkRevalidating(
     nextUrl: pass.url,
     routeKey: pass.snapshot.routeKey,
   };
-  return routerCtx.resolveAllSegmentsWithRevalidation(
-    input,
-    pass.snapshot.entries,
-    {
-      interceptResult,
-      localRouteName: pass.snapshot.localRouteName,
-      pathname: pass.pathname,
-    },
+  const { entries, chain } = passEntries(pass);
+  return routerCtx.resolveAllSegmentsWithRevalidation(input, entries, {
+    interceptResult,
+    localRouteName: pass.snapshot.localRouteName,
+    pathname: pass.pathname,
+    ...(chain && { chain }),
+  });
+}
+
+/** The text a rendered value shows: its strings, elements unwrapped. */
+async function textOf(node: unknown): Promise<string> {
+  if (node instanceof Promise) return textOf(await node);
+  if (typeof node === "string" || typeof node === "number") return `${node}`;
+  if (Array.isArray(node)) {
+    return (await Promise.all(node.map(textOf))).join("");
+  }
+  if (isValidElement(node)) {
+    return textOf((node.props as { children?: unknown }).children);
+  }
+  return "";
+}
+
+/** `id type`, then the component's text and the loader data, when present. */
+async function line(segment: ResolvedSegment): Promise<string> {
+  const text = await textOf(segment.component);
+  const data = await segment.loaderData;
+  return [
+    `${segment.id} ${segment.type}`,
+    ...(text ? [JSON.stringify(text)] : []),
+    ...(data !== undefined ? [JSON.stringify(data)] : []),
+  ].join(" ");
+}
+
+/**
+ * The segments as they leave the server and reach the tree: the match
+ * result of the request kind each walker serves (a full match for the fresh
+ * walk, a partial one with nothing held for the revalidating walk), then
+ * the render's marker restore.
+ */
+function delivered(
+  walker: "fresh" | "revalidating",
+  pass: Pass,
+  segments: ResolvedSegment[],
+  matchedIds: string[],
+): ResolvedSegment[] {
+  const ctx = {
+    isFullMatch: walker === "fresh",
+    interceptResult: null,
+    clientSegmentIds: [],
+    manifestEntry: pass.snapshot.manifestEntry,
+    matched: { params: pass.snapshot.params },
+    routeKey: pass.snapshot.routeKey,
+    routeMiddleware: [],
+  } as unknown as MatchContext;
+  const state = {
+    matchedIds,
+    interceptSegments: [],
+    slots: {},
+  } as unknown as MatchPipelineState;
+  return restoreParallelLoaderMarkers(
+    buildMatchResult(segments, ctx, state).segments,
   );
 }
 
@@ -343,7 +453,7 @@ function walkRevalidating(
 async function walk(
   walker: "fresh" | "revalidating",
   pathname: string,
-  options: { isSSR: boolean; build: boolean; intercept: boolean },
+  options: PassKind & { isSSR: boolean },
 ): Promise<Walk> {
   const request = new Request(
     options.build
@@ -406,26 +516,33 @@ async function walk(
           store.parent,
           fn,
         );
+      let result: { segments: ResolvedSegment[]; matchedIds: string[] };
       try {
         if (walker === "fresh") {
           const segments = await inStore(() => walkFresh(pass));
-          return {
-            segments: await Promise.all(segments.map(project)),
-            matchedIds: segments.map((s) => s.id),
-          };
+          result = { segments, matchedIds: segments.map((s) => s.id) };
+        } else {
+          result = await inStore(() => walkRevalidating(pass));
         }
-        const result = await inStore(() => walkRevalidating(pass));
-        return {
-          segments: await Promise.all(result.segments.map(project)),
-          matchedIds: result.matchedIds,
-        };
       } catch (error) {
+        const threw = (error as Error).message;
         return {
           segments: [],
+          delivered: [],
           matchedIds: [],
-          threw: (error as Error).message,
+          lines: [`threw: ${threw}`],
+          threw,
         };
       }
+      const { segments, matchedIds } = result;
+      return {
+        segments: await Promise.all(segments.map(project)),
+        delivered: await Promise.all(
+          delivered(walker, pass, segments, matchedIds).map(project),
+        ),
+        matchedIds,
+        lines: await Promise.all(segments.map(line)),
+      };
     }),
   );
 }
@@ -442,15 +559,19 @@ type Differences = Partial<Record<Exception | "unnamed", string[]>>;
 
 type Exception =
   /**
-   * The revalidating walker marks a segment whose handler it ran
-   * (`_handlerRan`, read by match-result.ts); the fresh walker never sets
-   * it. Neither marks an orphan layout or an error segment.
+   * Internal-only. The revalidating walker marks a segment whose handler it
+   * ran (`_handlerRan`); the fresh walker never sets it. Neither marks an
+   * orphan layout or an error segment. buildMatchResult (match-result.ts)
+   * strips it from the segments it returns. Only a partial match reads it
+   * before that, for `resolvedIds` (the revalidating side, pinned byte for
+   * byte by prefetch-false-unflagged.rsc-test.tsx); a full match never does.
    */
   | "handler ran marker"
   /**
-   * The fresh walker tags a slot's loaders with the slot's loading()
-   * (`parallelLoading`); the revalidating walker leaves it to
-   * restoreParallelLoaderMarkers (segment-system.tsx).
+   * Internal-only. The fresh walker tags a slot's loaders with the slot's
+   * loading() (`parallelLoading`); the revalidating walker does not.
+   * renderSegments restores the tag on every render
+   * (restoreParallelLoaderMarkers, segment-system.tsx).
    */
   | "slot loading tag"
   /**
@@ -471,12 +592,30 @@ type Exception =
    * At build time the fresh walker rethrows a handler error (throwOnError);
    * the revalidating walker renders the route's error segment.
    */
-  | "build-time handler error";
+  | "build-time handler error"
+  /**
+   * The background re-render of a stale route record walks fresh with
+   * skipLoaders (background-revalidation.ts rerenderAndCacheRoute): the
+   * fresh walk has no loader segments, which the revalidating walk returns
+   * and lists as matched.
+   */
+  | "skipped loaders";
+
+/**
+ * The differences that stay inside the server or the render: the walks may
+ * stop differing there, and the segments delivered (`Walk.delivered`) never
+ * differ there.
+ */
+const INTERNAL_ONLY: readonly Exception[] = [
+  "handler ran marker",
+  "slot loading tag",
+];
 
 function differences(
   fresh: Walk,
   revalidating: Walk,
-  options: { build: boolean; intercept: boolean },
+  options: PassKind,
+  view: "segments" | "delivered" = "segments",
 ): Differences {
   const out: Differences = {};
   const add = (name: Exception | "unnamed", line: string): void => {
@@ -484,7 +623,7 @@ function differences(
   };
 
   if (fresh.threw !== undefined || revalidating.threw !== undefined) {
-    const errorSegments = revalidating.segments
+    const errorSegments = revalidating[view]
       .filter((s) => s.type === "error")
       .map((s) => `${s.id}: ${(s.error as { message: string }).message}`);
     if (options.build && fresh.threw !== undefined && !revalidating.threw) {
@@ -498,16 +637,18 @@ function differences(
     return out;
   }
 
-  const freshById = new Map(fresh.segments.map((s) => [s.id as string, s]));
+  const freshById = new Map(fresh[view].map((s) => [s.id as string, s]));
   const revalidatingById = new Map(
-    revalidating.segments.map((s) => [s.id as string, s]),
+    revalidating[view].map((s) => [s.id as string, s]),
   );
   for (const id of freshById.keys()) {
     if (revalidatingById.has(id)) continue;
     add(options.intercept ? "skipped under intercept" : "unnamed", id);
   }
-  for (const id of revalidatingById.keys()) {
-    if (!freshById.has(id)) add("unnamed", `revalidating only: ${id}`);
+  for (const [id, r] of revalidatingById) {
+    if (freshById.has(id)) continue;
+    if (options.skipLoaders && r.type === "loader") add("skipped loaders", id);
+    else add("unnamed", `revalidating only: ${id}`);
   }
   const freshOrder = [...freshById.keys()].filter((id) =>
     revalidatingById.has(id),
@@ -556,7 +697,12 @@ function differences(
     );
   }
   for (const id of matchedOnlyRevalidating) {
-    add("unnamed", `matched by revalidating only: ${id}`);
+    add(
+      options.skipLoaders && revalidatingById.get(id)?.type === "loader"
+        ? "skipped loaders"
+        : "unnamed",
+      `matched by revalidating only: ${id}`,
+    );
   }
   return out;
 }
@@ -565,11 +711,11 @@ function differences(
 // Cases (docs/tree-structure.md shapes, plus build time and intercept)
 // ---------------------------------------------------------------------------
 
-interface Case {
+interface Case extends Partial<PassKind> {
   name: string;
   pathname: string;
-  build?: boolean;
-  intercept?: boolean;
+  /** The fresh walk, one `line()` per segment, the same on both partitions. */
+  fresh: string[];
   expected: Differences;
 }
 
@@ -577,36 +723,70 @@ const CASES: Case[] = [
   {
     name: "plain route",
     pathname: "/plain",
+    fresh: ["M0L0 layout", 'M0L0L0 layout "root"', 'M0L0L0R1 route "plain"'],
     expected: { "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R1"] },
   },
   {
     name: "loading undefined, with a loader",
     pathname: "/loading-undefined",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0R2D0.walker#Data loader {"__loaderResult":true,"ok":true,"data":{"value":"data"}}',
+      'M0L0L0R2 route "loading undefined"',
+    ],
     expected: { "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R2"] },
   },
   {
     name: "loading(false), with a loader",
     pathname: "/loading-false",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0R3D0.walker#Data loader {"__loaderResult":true,"ok":true,"data":{"value":"data"}}',
+      'M0L0L0R3 route "loading false"',
+    ],
     expected: { "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R3"] },
   },
   {
     name: "loading(truthy), with a loader",
     pathname: "/loading-truthy",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0R4D0.walker#Data loader {"__loaderResult":true,"ok":true,"data":{"value":"data"}}',
+      'M0L0L0R4 route "loading truthy"',
+    ],
     expected: { "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R4"] },
   },
   {
     name: "loading(..., { ssr: false }), with a loader",
     pathname: "/loading-ssr-false",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0R5D0.walker#Data loader {"__loaderResult":true,"ok":true,"data":{"value":"data"}}',
+      'M0L0L0R5 route "loading ssr false"',
+    ],
     expected: { "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R5"] },
   },
   {
     name: "loading(truthy), async handler",
     pathname: "/streamed",
+    fresh: ["M0L0 layout", 'M0L0L0 layout "root"', 'M0L0L0R6 route "streamed"'],
     expected: { "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R6"] },
   },
   {
     name: "parallel slot with a loader and loading()",
     pathname: "/parallel",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0L0 layout "slots"',
+      'M0L0L0L0.@side parallel "side"',
+      'M0L0L0L0D0.walker#Slot loader {"__loaderResult":true,"ok":true,"data":{"value":"slot"}}',
+      'M0L0L0L0R0 route "parallel"',
+    ],
     expected: {
       "handler ran marker": [
         "M0L0",
@@ -621,6 +801,15 @@ const CASES: Case[] = [
   {
     name: "orphan layout with a slot, inheriting the route's loaders",
     pathname: "/orphan",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0R7D0.walker#Data loader {"__loaderResult":true,"ok":true,"data":{"value":"data"}}',
+      'M0L0L0R7L0D0.walker#Data loader {"__loaderResult":true,"ok":true,"data":{"value":"data"}}',
+      'M0L0L0R7L0 layout "orphan layout"',
+      'M0L0L0R7L0.@aside parallel "aside"',
+      'M0L0L0R7 route "orphan"',
+    ],
     expected: {
       "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R7L0.@aside", "M0L0L0R7"],
     },
@@ -628,6 +817,14 @@ const CASES: Case[] = [
   {
     name: "routeless layout nested in a cache() marker (#918), route before the marker",
     pathname: "/before-marker",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0L1 layout "host"',
+      "M0L0L0L1C0 layout",
+      'M0L0L0L1C0L0 layout "nested routeless"',
+      'M0L0L0L1R0 route "before"',
+    ],
     expected: {
       "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0L1", "M0L0L0L1R0"],
     },
@@ -635,6 +832,14 @@ const CASES: Case[] = [
   {
     name: "routeless layout after a cache() marker (#918), route after the marker",
     pathname: "/after-marker",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0L1 layout "host"',
+      "M0L0L0L1C0 layout",
+      'M0L0L0L1C0L0 layout "nested routeless"',
+      'M0L0L0L1C0R0 route "after"',
+    ],
     expected: {
       "handler ran marker": [
         "M0L0",
@@ -648,12 +853,25 @@ const CASES: Case[] = [
   {
     name: "include()",
     pathname: "/inc/page",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0I0R0D0.walker#Data loader {"__loaderResult":true,"ok":true,"data":{"value":"data"}}',
+      'M0L0L0I0R0 route "included"',
+    ],
     expected: { "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0I0R0"] },
   },
   {
     name: "intercepted route",
     pathname: "/photo/1",
     intercept: true,
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0L2 layout "gallery"',
+      'M0L0L0L2R1D0.walker#Data loader {"__loaderResult":true,"ok":true,"data":{"value":"data"}}',
+      'M0L0L0L2R1 route "photo"',
+    ],
     expected: {
       "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0L2"],
       "skipped under intercept": [
@@ -666,6 +884,13 @@ const CASES: Case[] = [
   {
     name: "the same route, not intercepted",
     pathname: "/photo/1",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0L2 layout "gallery"',
+      'M0L0L0L2R1D0.walker#Data loader {"__loaderResult":true,"ok":true,"data":{"value":"data"}}',
+      'M0L0L0L2R1 route "photo"',
+    ],
     expected: {
       "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0L2", "M0L0L0L2R1"],
     },
@@ -673,18 +898,29 @@ const CASES: Case[] = [
   {
     name: "handler error",
     pathname: "/throws",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0R8 error "route failed"',
+    ],
     expected: { "handler ran marker": ["M0L0", "M0L0L0"] },
   },
   {
     name: "build time, no loader",
     pathname: "/plain",
     build: true,
+    fresh: ["M0L0 layout", 'M0L0L0 layout "root"', 'M0L0L0R1 route "plain"'],
     expected: { "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R1"] },
   },
   {
     name: "build time, a loader",
     pathname: "/loading-truthy",
     build: true,
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0R4 route "loading truthy"',
+    ],
     expected: {
       "handler ran marker": ["M0L0", "M0L0L0"],
       "build-time loaders": [
@@ -696,11 +932,36 @@ const CASES: Case[] = [
     name: "build time, handler error",
     pathname: "/throws",
     build: true,
+    fresh: ["threw: handler failed"],
     expected: {
       "build-time handler error": [
         'fresh threw "handler failed"; revalidating rendered M0L0L0R8: handler failed',
       ],
     },
+  },
+  {
+    name: "background re-render of a route record (skipLoaders), with a loader",
+    pathname: "/loading-truthy",
+    skipLoaders: true,
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0R4 route "loading truthy"',
+    ],
+    expected: {
+      "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R4"],
+      "skipped loaders": [
+        "M0L0L0R4D0.walker#Data",
+        "matched by revalidating only: M0L0L0R4D0.walker#Data",
+      ],
+    },
+  },
+  {
+    name: "live pass above a cache() HIT, the marker's routeless layout in the chain (#918)",
+    pathname: "/after-marker",
+    aboveMarker: true,
+    fresh: ["M0L0 layout", 'M0L0L0 layout "root"', 'M0L0L0L1 layout "host"'],
+    expected: { "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0L1"] },
   },
 ];
 
@@ -711,12 +972,64 @@ describe("fresh vs revalidating walker, nothing held by the client", () => {
   ])("%s", (_partition, isSSR) => {
     it.each(CASES)(
       "$name: only the named differences",
-      async ({ pathname, build = false, intercept = false, expected }) => {
-        const options = { isSSR, build, intercept };
+      async ({
+        pathname,
+        build = false,
+        intercept = false,
+        skipLoaders = false,
+        aboveMarker = false,
+        fresh: freshLines,
+        expected,
+      }) => {
+        const options = { isSSR, build, intercept, skipLoaders, aboveMarker };
         const fresh = await walk("fresh", pathname, options);
         const revalidating = await walk("revalidating", pathname, options);
-        expect(differences(fresh, revalidating, options)).toEqual(expected);
+        expect(fresh.lines).toEqual(freshLines);
+
+        // The internal-only differences may be gone; any left are as listed.
+        const seen = differences(fresh, revalidating, options);
+        for (const name of INTERNAL_ONLY) {
+          const lines = seen[name];
+          delete seen[name];
+          if (!lines) continue;
+          expect(expected[name] ?? []).toEqual(expect.arrayContaining(lines));
+        }
+        const required = { ...expected };
+        for (const name of INTERNAL_ONLY) delete required[name];
+        expect(seen).toEqual(required);
+
+        // Delivered, they do not differ there at all.
+        expect(differences(fresh, revalidating, options, "delivered")).toEqual(
+          required,
+        );
       },
     );
   });
+});
+
+describe("loading(..., { ssr: false }) by manifest partition", () => {
+  /** The spinner as `project()` settles it. */
+  const SPINNER = { element: "i", key: null, props: { children: "spinner" } };
+  it.each([
+    ["fresh", true, null],
+    ["fresh", false, SPINNER],
+    ["revalidating", true, null],
+    ["revalidating", false, SPINNER],
+  ] as const)(
+    "%s walk, isSSR %s: the route's loading is %j",
+    async (walker, isSSR, loading) => {
+      const { segments } = await walk(walker, "/loading-ssr-false", {
+        isSSR,
+        build: false,
+        intercept: false,
+        skipLoaders: false,
+        aboveMarker: false,
+      });
+      // The document's loading(false) reaches the client as null
+      // (structure.test.tsx, the `ssr: false` row).
+      expect(segments.find((s) => s.type === "route")?.loading).toEqual(
+        loading,
+      );
+    },
+  );
 });

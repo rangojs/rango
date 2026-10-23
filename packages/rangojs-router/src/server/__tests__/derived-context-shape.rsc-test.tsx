@@ -44,6 +44,7 @@ import type { MatchContext } from "../../router/match-context.js";
 import type { RouterContext } from "../../router/router-context.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
+import { resolveThemeConfig } from "../../theme/constants.js";
 import {
   resetShellTestState,
   serveShellRequest,
@@ -75,6 +76,8 @@ function requestContext(
     url: new URL(request.url),
     variables: {},
     cacheStore: withStore ? new MemorySegmentCacheStore() : undefined,
+    // ctx.setTheme exists only with a theme config.
+    themeConfig: resolveThemeConfig(true),
   });
 }
 
@@ -181,6 +184,86 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     expect(capture.res).toBe(base.res);
     expect(base._resolvedCacheKeys).toBeInstanceOf(Map);
     expect(capture._resolvedCacheKeys).toBe(base._resolvedCacheKeys);
+  });
+
+  it("starts from its own reset values when the request has already rendered (#684)", async () => {
+    const base = requestContext();
+    const onError = (): void => {};
+    base._handleStore.onError = onError;
+    // The request's barrier resolved, and the request rendered, reported and
+    // tagged before the capture is derived.
+    base._resolveRenderBarrier([]);
+    await base._renderBarrier;
+    Object.assign(base, {
+      _metricsStore: { metrics: [] },
+      _tracing: { tracer: {} },
+      _routeRecordWindow: { reads: [] },
+      _recoveredHandlerErrors: new Map([["M0", new Error("recovered")]]),
+      _shellFragmentPayload: true,
+      _dynamic: true,
+      _treeHasStreaming: true,
+      _renderBarrierSegmentOrder: ["x"],
+      _renderBarrierHandleSnapshot: {},
+      _renderBarrierGuardClosed: true,
+      _renderBarrierWaiters: new Set(["w"]),
+      _handlerLoaderDeps: new Set(["d"]),
+      _awaitBeforeFlushLoaderIds: new Set(["a"]),
+      _renderErrors: [new Error("rendered")],
+    });
+    base._onResponseCallbacks.push((response) => response);
+    base._requestTags.add("t");
+    base._explicitTaggedStores = new Set([base._cacheStore!]);
+
+    const { derivedCtx: capture } = deriveShellCaptureContext(base, {
+      ttl: 60,
+      swr: 300,
+    });
+
+    expect({
+      _metricsStore: capture._metricsStore,
+      _tracing: capture._tracing,
+      _routeRecordWindow: capture._routeRecordWindow,
+      _recoveredHandlerErrors: capture._recoveredHandlerErrors,
+      _shellFragmentPayload: capture._shellFragmentPayload,
+      _dynamic: capture._dynamic,
+      _treeHasStreaming: capture._treeHasStreaming,
+      _renderBarrierSegmentOrder: capture._renderBarrierSegmentOrder,
+      _renderBarrierHandleSnapshot: capture._renderBarrierHandleSnapshot,
+      _renderBarrierGuardClosed: capture._renderBarrierGuardClosed,
+      _renderBarrierWaiters: capture._renderBarrierWaiters,
+      _handlerLoaderDeps: capture._handlerLoaderDeps,
+      _awaitBeforeFlushLoaderIds: capture._awaitBeforeFlushLoaderIds,
+      _renderErrors: capture._renderErrors,
+      _onResponseCallbacks: capture._onResponseCallbacks,
+      _requestTags: capture._requestTags,
+      _explicitTaggedStores: capture._explicitTaggedStores,
+    }).toEqual({
+      _metricsStore: undefined,
+      _tracing: undefined,
+      _routeRecordWindow: undefined,
+      _recoveredHandlerErrors: undefined,
+      _shellFragmentPayload: false,
+      _dynamic: false,
+      _treeHasStreaming: undefined,
+      _renderBarrierSegmentOrder: undefined,
+      _renderBarrierHandleSnapshot: undefined,
+      _renderBarrierGuardClosed: undefined,
+      _renderBarrierWaiters: undefined,
+      _handlerLoaderDeps: undefined,
+      _awaitBeforeFlushLoaderIds: undefined,
+      _renderErrors: [],
+      _onResponseCallbacks: [],
+      _requestTags: new Set(),
+      _explicitTaggedStores: new Set(),
+    });
+    // Its barrier is pending until the capture's own tree resolves it.
+    const pending = Symbol("pending");
+    expect(
+      await Promise.race([capture._renderBarrier, Promise.resolve(pending)]),
+    ).toBe(pending);
+    // The handle store is new; its error reporting is the request's.
+    expect(capture._handleStore).not.toBe(base._handleStore);
+    expect(capture._handleStore.onError).toBe(onError);
   });
 
   it("a navigation-only capture also owns the URL it renders", () => {
@@ -290,6 +373,13 @@ describe("PPR HIT tail context (createTailContext)", () => {
 describe("background re-render context (rerenderAndCacheRoute)", () => {
   it("owns its handle store, error lists and response writers; inherits the request's render barrier", async () => {
     const base = requestContext();
+    // The foreground has rendered: it measured, recovered and reported.
+    Object.assign(base, {
+      _metricsStore: { metrics: [] },
+      _recoveredHandlerErrors: new Map([["M0", new Error("recovered")]]),
+      _renderErrors: [new Error("rendered")],
+    });
+    base._onResponseCallbacks.push((response) => response);
     const handleStore = createHandleStore();
     let renderCtx: RequestContext | undefined;
     let ownAtStart: string[] = [];
@@ -342,16 +432,40 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       "setTheme",
     ]);
     expect(ctx._handleStore).toBe(handleStore);
-    expect(ctx._metricsStore).toBeUndefined();
-    expect(ctx._renderErrors).toEqual([]);
-    expect(ctx._renderErrors).not.toBe(base._renderErrors);
-    expect(ctx._onResponseCallbacks).not.toBe(base._onResponseCallbacks);
-    // Response writes land on a throwaway response.
+    expect({
+      _metricsStore: ctx._metricsStore,
+      _recoveredHandlerErrors: ctx._recoveredHandlerErrors,
+      _renderErrors: ctx._renderErrors,
+      _onResponseCallbacks: ctx._onResponseCallbacks,
+    }).toEqual({
+      _metricsStore: undefined,
+      _recoveredHandlerErrors: undefined,
+      _renderErrors: [],
+      _onResponseCallbacks: [],
+    });
+    // Response writes land on a throwaway response: no writer is the
+    // request's.
+    const writers = [
+      "header",
+      "setCookie",
+      "deleteCookie",
+      "setStatus",
+      "_setStatus",
+      "setTheme",
+      "_rotateStateCookie",
+      "_setKeepCacheDirective",
+    ] as const;
+    expect(writers.filter((writer) => ctx[writer] === base[writer])).toEqual(
+      [],
+    );
     expect(ctx.res).not.toBe(base.res);
     ctx.setStatus(500);
     ctx.header("x-background", "1");
+    ctx.setCookie("background", "1");
+    ctx.deleteCookie("session");
     expect(base.res.status).toBe(200);
     expect(base.res.headers.get("x-background")).toBeNull();
+    expect(base.res.headers.get("set-cookie")).toBeNull();
     // No barrier of its own: the request's, as it is today.
     expect(Object.hasOwn(ctx, "_resolveRenderBarrier")).toBe(false);
     expect(ctx._resolveRenderBarrier).toBe(base._resolveRenderBarrier);

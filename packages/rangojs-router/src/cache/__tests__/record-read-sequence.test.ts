@@ -2,9 +2,10 @@
  * What one record read returns, which debug events it emits in which order,
  * which errors it reports, and which tiers still hold the entry after it:
  * per store (memory, Vercel, Cloudflare with and without KV), per family
- * (segment `get`, item `getItem`, response `getResponse`) and per outcome
- * (hit, miss, corrupt, expired, masked, stale, read error, and the
- * Cloudflare tiers' own degradations).
+ * (segment `get`, item `getItem`, response `getResponse`, and the shell
+ * family's `getShell`, its passive form and `readShellDocument`) and per
+ * outcome (hit, miss, corrupt, a read after a corrupt one, expired, masked,
+ * stale, read error, and the Cloudflare tiers' own degradations).
  *
  * Each store keeps its own read path today; one shared record read must
  * reproduce every row. The debug events follow the order of the store's
@@ -31,6 +32,8 @@ import {
   CACHE_READ_ERROR,
   type CachedEntryData,
   type SegmentCacheStore,
+  type ShellCacheEntry,
+  type ShellSnapshotRecord,
 } from "../types.js";
 import {
   createRequestContext,
@@ -46,7 +49,16 @@ const STALE_AT = T0 + (TTL + 1) * 1000;
 /** Past ttl + swr. */
 const EXPIRED_AT = T0 + (TTL + SWR + 40) * 1000;
 
-type Family = "segment" | "item" | "response";
+type Family =
+  | "segment"
+  | "item"
+  | "response"
+  /** getShell, which claims a stale shell's revalidation. */
+  | "shell"
+  /** getShell(key, { claimRevalidation: false }). */
+  | "shell passive"
+  /** readShellDocument, the document serve path's read. */
+  | "shell document";
 
 // ---------------------------------------------------------------------------
 // Platform backends
@@ -200,7 +212,14 @@ function memoryHarness(): Harness {
 function vercelHarness(): Harness {
   const cache = new FakeRuntimeCache();
   const events: string[] = [];
-  const code = { segment: "s", item: "i", response: "r" } as const;
+  const code: Record<Family, string> = {
+    segment: "s",
+    item: "i",
+    response: "r",
+    shell: "h",
+    "shell passive": "h",
+    "shell document": "h",
+  };
   const keysOf = (family: Family, key: string): string[] =>
     [...cache.values.keys()].filter((k) =>
       k.endsWith(`rg:${code[family]}:${key}`),
@@ -232,6 +251,9 @@ const CF_MARK: Record<Family, string> = {
   segment: "",
   item: "fn:",
   response: "doc:",
+  shell: "shell2:",
+  "shell passive": "shell2:",
+  "shell document": "shell2:",
 };
 
 function cfHarness(withKv: boolean): Harness {
@@ -378,10 +400,34 @@ async function write(
     await h.store.set(key, data, TTL, SWR);
   } else if (family === "item") {
     await h.store.setItem!(key, "v1", { ttl: TTL, swr: SWR, tags: [tag] });
-  } else {
+  } else if (family === "response") {
     await h.store.putResponse!(key, new Response("r1"), TTL, SWR, [tag]);
+  } else {
+    const entry: ShellCacheEntry = {
+      prelude: btoa("p1"),
+      postponed: null,
+      reactVersion: "react",
+      buildVersion: "build",
+      // The doc record a HIT replays the handler layer from.
+      snapshot: [
+        {
+          family: "segment",
+          key: "doc",
+          value: { segments: [], handles: "h1", expiresAt: 0 },
+        },
+      ],
+      docKey: "doc",
+      createdAt: Date.now(),
+    };
+    await h.store.putShell!(key, entry, TTL, SWR, [tag]);
   }
   await settle(h);
+}
+
+/** A shell's snapshot, named when it is not the doc record written. */
+function snapshotOf(snapshot: ShellSnapshotRecord[] | undefined): string {
+  const keys = snapshot?.map((record) => record.key).join();
+  return keys === "doc" ? "" : `, snapshot ${JSON.stringify(keys ?? null)}`;
 }
 
 /** What the caller gets; a hit's value is named when it is not the one written. */
@@ -401,7 +447,7 @@ async function read(h: Harness, family: Family, key: string): Promise<string> {
     if (got === STALLED) return "stalled";
     result = got;
     if (got && got.value !== "v1") value = `, value ${got.value}`;
-  } else {
+  } else if (family === "response") {
     const got = await within(h.store.getResponse!(key));
     if (got === STALLED) return "stalled";
     result = got;
@@ -409,6 +455,30 @@ async function read(h: Harness, family: Family, key: string): Promise<string> {
     const body = got ? await within(got.response.text()) : "r1";
     if (body === STALLED) value = ", body stalls";
     else if (body !== "r1") value = `, body ${JSON.stringify(body)}`;
+  } else if (family === "shell document") {
+    const got = await within(h.store.readShellDocument!(key));
+    if (got === STALLED) return "stalled";
+    result = got;
+    if (got) {
+      const prelude = new TextDecoder().decode(got.prelude);
+      if (prelude !== "p1") value = `, prelude ${JSON.stringify(prelude)}`;
+      value += snapshotOf(await got.snapshot);
+    }
+  } else {
+    const got = await within(
+      h.store.getShell!(
+        key,
+        family === "shell passive" ? { claimRevalidation: false } : undefined,
+      ),
+    );
+    if (got === STALLED) return "stalled";
+    result = got;
+    if (got) {
+      if (got.entry.prelude !== btoa("p1")) {
+        value = `, prelude ${JSON.stringify(got.entry.prelude)}`;
+      }
+      value += snapshotOf(got.entry.snapshot);
+    }
   }
   if (!result) return "miss";
   return (result.shouldRevalidate ? "hit, revalidate" : "hit") + value;
@@ -441,6 +511,13 @@ const CASES = {
   hit: () => {},
   miss: () => {},
   corrupt: (h, family, key) => h.control.corrupt!(family, key),
+  "corrupt, read again": async (h, family, key) => {
+    // The read after the read that found the entry corrupt: what it healed.
+    h.control.corrupt!(family, key);
+    await read(h, family, key);
+    await settle(h);
+    h.events.length = 0;
+  },
   expired: () => {
     vi.setSystemTime(EXPIRED_AT);
   },
@@ -487,6 +564,9 @@ const DEBUG_OP: Record<Family, string> = {
   segment: "get",
   item: "getItem",
   response: "getResponse",
+  shell: "getShell",
+  "shell passive": "getShell",
+  "shell document": "getShell",
 };
 
 let tagSeq = 0;
@@ -503,9 +583,10 @@ async function observe(
 ): Promise<string[]> {
   vi.setSystemTime(T0);
   const h = STORES[storeName]();
-  const key = `k-${family}`;
-  // A tag of its own: the Cloudflare marker memo lives per isolate.
+  // A tag and a key of its own: the Cloudflare marker and shell memos live
+  // per isolate.
   const tag = `t${++tagSeq}`;
+  const key = `k${tagSeq}`;
   // An earlier request to the same URL wrote the entry (the Cloudflare store
   // derives its Cache API URLs from the request's host).
   if (name !== "miss") {
@@ -555,137 +636,241 @@ afterEach(() => {
  * One row per store, case and family:
  * `store | case | family | read | debug events | reported | held`.
  * - read: "hit", "hit, revalidate", "miss" or "read-error"; a hit whose
- *   value, handles or body is not the one written names it.
- * - debug events: in emit order, `>` between them.
+ *   value, handles, body, prelude or snapshot is not the one written names
+ *   it.
+ * - debug events: in emit order, `>` between them. The Cloudflare store
+ *   emits none for a response or shell read.
  * - reported: the error categories the request's onError received.
  * - held: the backend tiers still holding the entry once the read settled.
  * `-` is nothing (and, under held, a store with no backend); `none` is no
  * tier holding the entry.
  */
 const EXPECTED = `
-memory | hit                    | segment  | hit                  | -                        | -             | -
-memory | hit                    | item     | hit                  | -                        | -             | -
-memory | hit                    | response | hit                  | -                        | -             | -
-memory | miss                   | segment  | miss                 | -                        | -             | -
-memory | miss                   | item     | miss                 | -                        | -             | -
-memory | miss                   | response | miss                 | -                        | -             | -
-memory | expired                | segment  | miss                 | -                        | -             | -
-memory | expired                | item     | miss                 | -                        | -             | -
-memory | expired                | response | miss                 | -                        | -             | -
-memory | masked                 | segment  | miss                 | -                        | -             | -
-memory | masked                 | item     | miss                 | -                        | -             | -
-memory | masked                 | response | miss                 | -                        | -             | -
-memory | stale                  | segment  | miss                 | -                        | -             | -
-memory | stale                  | item     | hit, revalidate      | -                        | -             | -
-memory | stale                  | response | hit, revalidate      | -                        | -             | -
-memory | stale, read again      | segment  | miss                 | -                        | -             | -
-memory | stale, read again      | item     | hit, revalidate      | -                        | -             | -
-memory | stale, read again      | response | hit, revalidate      | -                        | -             | -
-vercel | hit                    | segment  | hit                  | fresh                    | -             | runtime cache
-vercel | hit                    | item     | hit                  | fresh                    | -             | runtime cache
-vercel | hit                    | response | hit                  | fresh                    | -             | runtime cache
-vercel | miss                   | segment  | miss                 | miss                     | -             | none
-vercel | miss                   | item     | miss                 | miss                     | -             | none
-vercel | miss                   | response | miss                 | miss                     | -             | none
-vercel | expired                | segment  | miss                 | miss                     | -             | none
-vercel | expired                | item     | miss                 | miss                     | -             | none
-vercel | expired                | response | miss                 | miss                     | -             | none
-vercel | masked                 | segment  | miss                 | miss                     | -             | none
-vercel | masked                 | item     | miss                 | miss                     | -             | none
-vercel | masked                 | response | miss                 | miss                     | -             | none
-vercel | stale                  | segment  | hit, revalidate      | stale-revalidate         | -             | runtime cache
-vercel | stale                  | item     | hit, revalidate      | stale-revalidate         | -             | runtime cache
-vercel | stale                  | response | hit, revalidate      | stale-revalidate         | -             | runtime cache
-vercel | stale, read again      | segment  | hit                  | fresh                    | -             | runtime cache
-vercel | stale, read again      | item     | hit                  | fresh                    | -             | runtime cache
-vercel | stale, read again      | response | hit                  | fresh                    | -             | runtime cache
-vercel | corrupt                | segment  | miss                 | corrupt                  | cache-corrupt | none
-vercel | corrupt                | item     | miss                 | corrupt                  | cache-corrupt | none
-vercel | corrupt                | response | miss                 | corrupt                  | cache-corrupt | none
-vercel | read error             | segment  | read-error           | error                    | cache-read    | runtime cache
-vercel | read error             | item     | miss                 | error                    | cache-read    | runtime cache
-vercel | read error             | response | miss                 | error                    | cache-read    | runtime cache
-cf     | hit                    | segment  | hit                  | l1-fresh                 | -             | L1
-cf     | hit                    | item     | hit                  | l1-fresh                 | -             | L1
-cf     | hit                    | response | hit                  | -                        | -             | L1
-cf     | miss                   | segment  | miss                 | l1-miss                  | -             | none
-cf     | miss                   | item     | miss                 | l1-miss                  | -             | none
-cf     | miss                   | response | miss                 | -                        | -             | none
-cf     | expired                | segment  | miss                 | l1-miss                  | -             | none
-cf     | expired                | item     | miss                 | l1-miss                  | -             | none
-cf     | expired                | response | miss                 | -                        | -             | none
-cf     | masked                 | segment  | hit                  | l1-fresh                 | -             | L1
-cf     | masked                 | item     | hit                  | l1-fresh                 | -             | L1
-cf     | masked                 | response | hit                  | -                        | -             | L1
-cf     | stale                  | segment  | hit, revalidate      | l1-stale-revalidate      | -             | L1
-cf     | stale                  | item     | hit, revalidate      | l1-stale-revalidate      | -             | L1
-cf     | stale                  | response | hit, revalidate      | -                        | -             | L1
-cf     | stale, read again      | segment  | hit                  | l1-revalidating-guarded  | -             | L1
-cf     | stale, read again      | item     | hit                  | l1-revalidating-guarded  | -             | L1
-cf     | stale, read again      | response | hit                  | -                        | -             | L1
-cf     | corrupt                | segment  | miss                 | body-error               | cache-corrupt | none
-cf     | corrupt                | item     | miss                 | body-error               | cache-corrupt | none
-cf     | corrupt                | response | hit, body "not json" | -                        | -             | L1
-cf     | read error             | segment  | read-error           | match-error              | cache-read    | L1
-cf     | read error             | item     | miss                 | match-error              | cache-read    | L1
-cf     | read error             | response | miss                 | -                        | cache-read    | L1
-cf     | slow lookup            | segment  | miss                 | match-timeout            | -             | L1
-cf     | slow lookup            | item     | miss                 | match-timeout            | -             | L1
-cf     | slow lookup            | response | miss                 | -                        | -             | L1
-cf     | slow body              | segment  | miss                 | body-timeout             | -             | L1
-cf     | slow body              | item     | miss                 | body-timeout             | -             | L1
-cf     | slow body              | response | hit, body stalls     | -                        | -             | L1
-cf     | non-200                | segment  | miss                 | non-200                  | -             | L1
-cf     | non-200                | item     | miss                 | non-200                  | -             | L1
-cf     | non-200                | response | miss                 | -                        | -             | L1
-cf+kv  | hit                    | segment  | hit                  | l1-fresh                 | -             | L1+KV
-cf+kv  | hit                    | item     | hit                  | l1-fresh                 | -             | L1+KV
-cf+kv  | hit                    | response | hit                  | -                        | -             | L1+KV
-cf+kv  | miss                   | segment  | miss                 | l1-miss > kv-miss        | -             | none
-cf+kv  | miss                   | item     | miss                 | l1-miss > kv-miss        | -             | none
-cf+kv  | miss                   | response | miss                 | -                        | -             | none
-cf+kv  | expired                | segment  | miss                 | l1-miss > kv-miss        | -             | none
-cf+kv  | expired                | item     | miss                 | l1-miss > kv-miss        | -             | none
-cf+kv  | expired                | response | miss                 | -                        | -             | none
-cf+kv  | masked                 | segment  | miss                 | tag-invalidated          | -             | L1+KV
-cf+kv  | masked                 | item     | miss                 | tag-invalidated          | -             | L1+KV
-cf+kv  | masked                 | response | miss                 | -                        | -             | L1+KV
-cf+kv  | stale                  | segment  | hit, revalidate      | l1-stale-revalidate      | -             | L1+KV
-cf+kv  | stale                  | item     | hit, revalidate      | l1-stale-revalidate      | -             | L1+KV
-cf+kv  | stale                  | response | hit, revalidate      | -                        | -             | L1+KV
-cf+kv  | stale, read again      | segment  | hit                  | l1-revalidating-guarded  | -             | L1+KV
-cf+kv  | stale, read again      | item     | hit                  | l1-revalidating-guarded  | -             | L1+KV
-cf+kv  | stale, read again      | response | hit                  | -                        | -             | L1+KV
-cf+kv  | corrupt                | segment  | hit                  | body-error > kv-fresh    | cache-corrupt | L1+KV
-cf+kv  | corrupt                | item     | hit                  | body-error > kv-fresh    | cache-corrupt | L1+KV
-cf+kv  | corrupt                | response | hit, body "not json" | -                        | -             | L1+KV
-cf+kv  | read error             | segment  | hit                  | match-error > kv-fresh   | cache-read    | L1+KV
-cf+kv  | read error             | item     | hit                  | match-error > kv-fresh   | cache-read    | L1+KV
-cf+kv  | read error             | response | hit                  | -                        | cache-read    | L1+KV
-cf+kv  | slow lookup            | segment  | hit                  | match-timeout > kv-fresh | -             | L1+KV
-cf+kv  | slow lookup            | item     | hit                  | match-timeout > kv-fresh | -             | L1+KV
-cf+kv  | slow lookup            | response | hit                  | -                        | -             | L1+KV
-cf+kv  | slow body              | segment  | hit                  | body-timeout > kv-fresh  | -             | L1+KV
-cf+kv  | slow body              | item     | hit                  | body-timeout > kv-fresh  | -             | L1+KV
-cf+kv  | slow body              | response | hit, body stalls     | -                        | -             | L1+KV
-cf+kv  | non-200                | segment  | hit                  | non-200 > kv-fresh       | -             | L1+KV
-cf+kv  | non-200                | item     | hit                  | non-200 > kv-fresh       | -             | L1+KV
-cf+kv  | non-200                | response | hit                  | -                        | -             | L1+KV
-cf+kv  | L1 lost, KV hit        | segment  | hit                  | l1-miss > kv-fresh       | -             | L1+KV
-cf+kv  | L1 lost, KV hit        | item     | hit                  | l1-miss > kv-fresh       | -             | L1+KV
-cf+kv  | L1 lost, KV hit        | response | hit                  | -                        | -             | L1+KV
-cf+kv  | L1 lost, KV stale      | segment  | hit, revalidate      | l1-miss > kv-stale       | -             | L1+KV
-cf+kv  | L1 lost, KV stale      | item     | hit, revalidate      | l1-miss > kv-stale       | -             | L1+KV
-cf+kv  | L1 lost, KV stale      | response | hit, revalidate      | -                        | -             | L1+KV
-cf+kv  | L1 lost, KV corrupt    | segment  | miss                 | l1-miss > kv-miss        | cache-corrupt | none
-cf+kv  | L1 lost, KV corrupt    | item     | miss                 | l1-miss > kv-miss        | cache-corrupt | none
-cf+kv  | L1 lost, KV corrupt    | response | miss                 | -                        | cache-corrupt | none
-cf+kv  | L1 lost, KV read error | segment  | read-error           | l1-miss > error          | cache-read    | KV
-cf+kv  | L1 lost, KV read error | item     | miss                 | l1-miss > error          | cache-read    | KV
-cf+kv  | L1 lost, KV read error | response | miss                 | -                        | cache-read    | KV
-cf+kv  | L1 lost, KV slow       | segment  | miss                 | l1-miss > kv-timeout     | -             | KV
-cf+kv  | L1 lost, KV slow       | item     | miss                 | l1-miss > kv-timeout     | -             | KV
-cf+kv  | L1 lost, KV slow       | response | miss                 | -                        | -             | KV
+memory | hit                    | segment        | hit                  | -                        | -             | -
+memory | hit                    | item           | hit                  | -                        | -             | -
+memory | hit                    | response       | hit                  | -                        | -             | -
+memory | hit                    | shell          | hit                  | -                        | -             | -
+memory | hit                    | shell passive  | hit                  | -                        | -             | -
+memory | miss                   | segment        | miss                 | -                        | -             | -
+memory | miss                   | item           | miss                 | -                        | -             | -
+memory | miss                   | response       | miss                 | -                        | -             | -
+memory | miss                   | shell          | miss                 | -                        | -             | -
+memory | miss                   | shell passive  | miss                 | -                        | -             | -
+memory | expired                | segment        | miss                 | -                        | -             | -
+memory | expired                | item           | miss                 | -                        | -             | -
+memory | expired                | response       | miss                 | -                        | -             | -
+memory | expired                | shell          | miss                 | -                        | -             | -
+memory | expired                | shell passive  | miss                 | -                        | -             | -
+memory | masked                 | segment        | miss                 | -                        | -             | -
+memory | masked                 | item           | miss                 | -                        | -             | -
+memory | masked                 | response       | miss                 | -                        | -             | -
+memory | masked                 | shell          | miss                 | -                        | -             | -
+memory | masked                 | shell passive  | miss                 | -                        | -             | -
+memory | stale                  | segment        | miss                 | -                        | -             | -
+memory | stale                  | item           | hit, revalidate      | -                        | -             | -
+memory | stale                  | response       | hit, revalidate      | -                        | -             | -
+memory | stale                  | shell          | hit, revalidate      | -                        | -             | -
+memory | stale                  | shell passive  | hit, revalidate      | -                        | -             | -
+memory | stale, read again      | segment        | miss                 | -                        | -             | -
+memory | stale, read again      | item           | hit, revalidate      | -                        | -             | -
+memory | stale, read again      | response       | hit, revalidate      | -                        | -             | -
+memory | stale, read again      | shell          | hit, revalidate      | -                        | -             | -
+memory | stale, read again      | shell passive  | hit, revalidate      | -                        | -             | -
+vercel | hit                    | segment        | hit                  | fresh                    | -             | runtime cache
+vercel | hit                    | item           | hit                  | fresh                    | -             | runtime cache
+vercel | hit                    | response       | hit                  | fresh                    | -             | runtime cache
+vercel | hit                    | shell          | hit                  | fresh                    | -             | runtime cache
+vercel | hit                    | shell passive  | hit                  | fresh                    | -             | runtime cache
+vercel | hit                    | shell document | hit                  | fresh                    | -             | runtime cache
+vercel | miss                   | segment        | miss                 | miss                     | -             | none
+vercel | miss                   | item           | miss                 | miss                     | -             | none
+vercel | miss                   | response       | miss                 | miss                     | -             | none
+vercel | miss                   | shell          | miss                 | miss                     | -             | none
+vercel | miss                   | shell passive  | miss                 | miss                     | -             | none
+vercel | miss                   | shell document | miss                 | miss                     | -             | none
+vercel | expired                | segment        | miss                 | miss                     | -             | none
+vercel | expired                | item           | miss                 | miss                     | -             | none
+vercel | expired                | response       | miss                 | miss                     | -             | none
+vercel | expired                | shell          | miss                 | miss                     | -             | none
+vercel | expired                | shell passive  | miss                 | miss                     | -             | none
+vercel | expired                | shell document | miss                 | miss                     | -             | none
+vercel | masked                 | segment        | miss                 | miss                     | -             | none
+vercel | masked                 | item           | miss                 | miss                     | -             | none
+vercel | masked                 | response       | miss                 | miss                     | -             | none
+vercel | masked                 | shell          | miss                 | miss                     | -             | none
+vercel | masked                 | shell passive  | miss                 | miss                     | -             | none
+vercel | masked                 | shell document | miss                 | miss                     | -             | none
+vercel | stale                  | segment        | hit, revalidate      | stale-revalidate         | -             | runtime cache
+vercel | stale                  | item           | hit, revalidate      | stale-revalidate         | -             | runtime cache
+vercel | stale                  | response       | hit, revalidate      | stale-revalidate         | -             | runtime cache
+vercel | stale                  | shell          | hit, revalidate      | stale-revalidate         | -             | runtime cache
+vercel | stale                  | shell passive  | hit, revalidate      | stale-revalidate         | -             | runtime cache
+vercel | stale                  | shell document | hit, revalidate      | stale-revalidate         | -             | runtime cache
+vercel | stale, read again      | segment        | hit                  | fresh                    | -             | runtime cache
+vercel | stale, read again      | item           | hit                  | fresh                    | -             | runtime cache
+vercel | stale, read again      | response       | hit                  | fresh                    | -             | runtime cache
+vercel | stale, read again      | shell          | hit                  | fresh                    | -             | runtime cache
+vercel | stale, read again      | shell passive  | hit, revalidate      | stale-revalidate         | -             | runtime cache
+vercel | stale, read again      | shell document | hit                  | fresh                    | -             | runtime cache
+vercel | corrupt                | segment        | miss                 | corrupt                  | cache-corrupt | none
+vercel | corrupt                | item           | miss                 | corrupt                  | cache-corrupt | none
+vercel | corrupt                | response       | miss                 | corrupt                  | cache-corrupt | none
+vercel | corrupt                | shell          | miss                 | corrupt                  | cache-corrupt | none
+vercel | corrupt                | shell passive  | miss                 | corrupt                  | cache-corrupt | none
+vercel | corrupt                | shell document | miss                 | corrupt                  | cache-corrupt | none
+vercel | corrupt, read again    | segment        | miss                 | miss                     | -             | none
+vercel | corrupt, read again    | item           | miss                 | miss                     | -             | none
+vercel | corrupt, read again    | response       | miss                 | miss                     | -             | none
+vercel | corrupt, read again    | shell          | miss                 | miss                     | -             | none
+vercel | corrupt, read again    | shell passive  | miss                 | miss                     | -             | none
+vercel | corrupt, read again    | shell document | miss                 | miss                     | -             | none
+vercel | read error             | segment        | read-error           | error                    | cache-read    | runtime cache
+vercel | read error             | item           | miss                 | error                    | cache-read    | runtime cache
+vercel | read error             | response       | miss                 | error                    | cache-read    | runtime cache
+vercel | read error             | shell          | miss                 | error                    | cache-read    | runtime cache
+vercel | read error             | shell passive  | miss                 | error                    | cache-read    | runtime cache
+vercel | read error             | shell document | miss                 | error                    | cache-read    | runtime cache
+cf     | hit                    | segment        | hit                  | l1-fresh                 | -             | L1
+cf     | hit                    | item           | hit                  | l1-fresh                 | -             | L1
+cf     | hit                    | response       | hit                  | -                        | -             | L1
+cf     | hit                    | shell          | hit                  | -                        | -             | L1
+cf     | hit                    | shell passive  | hit                  | -                        | -             | L1
+cf     | hit                    | shell document | hit                  | -                        | -             | L1
+cf     | miss                   | segment        | miss                 | l1-miss                  | -             | none
+cf     | miss                   | item           | miss                 | l1-miss                  | -             | none
+cf     | miss                   | response       | miss                 | -                        | -             | none
+cf     | miss                   | shell          | miss                 | -                        | -             | none
+cf     | miss                   | shell passive  | miss                 | -                        | -             | none
+cf     | miss                   | shell document | miss                 | -                        | -             | none
+cf     | expired                | segment        | miss                 | l1-miss                  | -             | none
+cf     | expired                | item           | miss                 | l1-miss                  | -             | none
+cf     | expired                | response       | miss                 | -                        | -             | none
+cf     | expired                | shell          | miss                 | -                        | -             | none
+cf     | expired                | shell passive  | miss                 | -                        | -             | none
+cf     | expired                | shell document | miss                 | -                        | -             | none
+cf     | masked                 | segment        | hit                  | l1-fresh                 | -             | L1
+cf     | masked                 | item           | hit                  | l1-fresh                 | -             | L1
+cf     | masked                 | response       | hit                  | -                        | -             | L1
+cf     | masked                 | shell          | hit                  | -                        | -             | L1
+cf     | masked                 | shell passive  | hit                  | -                        | -             | L1
+cf     | masked                 | shell document | hit                  | -                        | -             | L1
+cf     | stale                  | segment        | hit, revalidate      | l1-stale-revalidate      | -             | L1
+cf     | stale                  | item           | hit, revalidate      | l1-stale-revalidate      | -             | L1
+cf     | stale                  | response       | hit, revalidate      | -                        | -             | L1
+cf     | stale                  | shell          | hit, revalidate      | -                        | -             | L1
+cf     | stale                  | shell passive  | hit, revalidate      | -                        | -             | L1
+cf     | stale                  | shell document | hit, revalidate      | -                        | -             | L1
+cf     | stale, read again      | segment        | hit                  | l1-revalidating-guarded  | -             | L1
+cf     | stale, read again      | item           | hit                  | l1-revalidating-guarded  | -             | L1
+cf     | stale, read again      | response       | hit                  | -                        | -             | L1
+cf     | stale, read again      | shell          | hit, revalidate      | -                        | -             | L1
+cf     | stale, read again      | shell passive  | hit, revalidate      | -                        | -             | L1
+cf     | stale, read again      | shell document | hit, revalidate      | -                        | -             | L1
+cf     | corrupt                | segment        | miss                 | body-error               | cache-corrupt | none
+cf     | corrupt                | item           | miss                 | body-error               | cache-corrupt | none
+cf     | corrupt                | response       | hit, body "not json" | -                        | -             | L1
+cf     | corrupt                | shell          | miss                 | -                        | cache-corrupt | none
+cf     | corrupt                | shell passive  | miss                 | -                        | cache-corrupt | none
+cf     | corrupt                | shell document | miss                 | -                        | cache-corrupt | none
+cf     | corrupt, read again    | segment        | miss                 | l1-miss                  | -             | none
+cf     | corrupt, read again    | item           | miss                 | l1-miss                  | -             | none
+cf     | corrupt, read again    | response       | hit, body "not json" | -                        | -             | L1
+cf     | corrupt, read again    | shell          | miss                 | -                        | -             | none
+cf     | corrupt, read again    | shell passive  | miss                 | -                        | -             | none
+cf     | corrupt, read again    | shell document | miss                 | -                        | -             | none
+cf     | read error             | segment        | read-error           | match-error              | cache-read    | L1
+cf     | read error             | item           | miss                 | match-error              | cache-read    | L1
+cf     | read error             | response       | miss                 | -                        | cache-read    | L1
+cf     | read error             | shell          | miss                 | -                        | cache-read    | L1
+cf     | read error             | shell passive  | miss                 | -                        | cache-read    | L1
+cf     | read error             | shell document | miss                 | -                        | cache-read    | L1
+cf     | slow lookup            | segment        | miss                 | match-timeout            | -             | L1
+cf     | slow lookup            | item           | miss                 | match-timeout            | -             | L1
+cf     | slow lookup            | response       | miss                 | -                        | -             | L1
+cf     | slow body              | segment        | miss                 | body-timeout             | -             | L1
+cf     | slow body              | item           | miss                 | body-timeout             | -             | L1
+cf     | slow body              | response       | hit, body stalls     | -                        | -             | L1
+cf     | non-200                | segment        | miss                 | non-200                  | -             | L1
+cf     | non-200                | item           | miss                 | non-200                  | -             | L1
+cf     | non-200                | response       | miss                 | -                        | -             | L1
+cf+kv  | hit                    | segment        | hit                  | l1-fresh                 | -             | L1+KV
+cf+kv  | hit                    | item           | hit                  | l1-fresh                 | -             | L1+KV
+cf+kv  | hit                    | response       | hit                  | -                        | -             | L1+KV
+cf+kv  | hit                    | shell          | hit                  | -                        | -             | L1+KV
+cf+kv  | hit                    | shell passive  | hit                  | -                        | -             | L1+KV
+cf+kv  | hit                    | shell document | hit                  | -                        | -             | L1+KV
+cf+kv  | miss                   | segment        | miss                 | l1-miss > kv-miss        | -             | none
+cf+kv  | miss                   | item           | miss                 | l1-miss > kv-miss        | -             | none
+cf+kv  | miss                   | response       | miss                 | -                        | -             | none
+cf+kv  | miss                   | shell          | miss                 | -                        | -             | none
+cf+kv  | miss                   | shell passive  | miss                 | -                        | -             | none
+cf+kv  | miss                   | shell document | miss                 | -                        | -             | none
+cf+kv  | expired                | segment        | miss                 | l1-miss > kv-miss        | -             | none
+cf+kv  | expired                | item           | miss                 | l1-miss > kv-miss        | -             | none
+cf+kv  | expired                | response       | miss                 | -                        | -             | none
+cf+kv  | expired                | shell          | miss                 | -                        | -             | none
+cf+kv  | expired                | shell passive  | miss                 | -                        | -             | none
+cf+kv  | expired                | shell document | miss                 | -                        | -             | none
+cf+kv  | masked                 | segment        | miss                 | tag-invalidated          | -             | L1+KV
+cf+kv  | masked                 | item           | miss                 | tag-invalidated          | -             | L1+KV
+cf+kv  | masked                 | response       | miss                 | -                        | -             | L1+KV
+cf+kv  | masked                 | shell          | miss                 | -                        | -             | L1+KV
+cf+kv  | masked                 | shell passive  | miss                 | -                        | -             | L1+KV
+cf+kv  | masked                 | shell document | miss                 | -                        | -             | L1+KV
+cf+kv  | stale                  | segment        | hit, revalidate      | l1-stale-revalidate      | -             | L1+KV
+cf+kv  | stale                  | item           | hit, revalidate      | l1-stale-revalidate      | -             | L1+KV
+cf+kv  | stale                  | response       | hit, revalidate      | -                        | -             | L1+KV
+cf+kv  | stale                  | shell          | hit, revalidate      | -                        | -             | L1+KV
+cf+kv  | stale                  | shell passive  | hit, revalidate      | -                        | -             | L1+KV
+cf+kv  | stale                  | shell document | hit, revalidate      | -                        | -             | L1+KV
+cf+kv  | stale, read again      | segment        | hit                  | l1-revalidating-guarded  | -             | L1+KV
+cf+kv  | stale, read again      | item           | hit                  | l1-revalidating-guarded  | -             | L1+KV
+cf+kv  | stale, read again      | response       | hit                  | -                        | -             | L1+KV
+cf+kv  | stale, read again      | shell          | hit, revalidate      | -                        | -             | L1+KV
+cf+kv  | stale, read again      | shell passive  | hit, revalidate      | -                        | -             | L1+KV
+cf+kv  | stale, read again      | shell document | hit, revalidate      | -                        | -             | L1+KV
+cf+kv  | corrupt                | segment        | hit                  | body-error > kv-fresh    | cache-corrupt | L1+KV
+cf+kv  | corrupt                | item           | hit                  | body-error > kv-fresh    | cache-corrupt | L1+KV
+cf+kv  | corrupt                | response       | hit, body "not json" | -                        | -             | L1+KV
+cf+kv  | corrupt                | shell          | hit                  | -                        | cache-corrupt | L1+KV
+cf+kv  | corrupt                | shell passive  | hit                  | -                        | cache-corrupt | L1+KV
+cf+kv  | corrupt                | shell document | hit                  | -                        | cache-corrupt | L1+KV
+cf+kv  | corrupt, read again    | segment        | hit                  | l1-fresh                 | -             | L1+KV
+cf+kv  | corrupt, read again    | item           | hit                  | l1-fresh                 | -             | L1+KV
+cf+kv  | corrupt, read again    | response       | hit, body "not json" | -                        | -             | L1+KV
+cf+kv  | corrupt, read again    | shell          | hit                  | -                        | -             | L1+KV
+cf+kv  | corrupt, read again    | shell passive  | hit                  | -                        | -             | L1+KV
+cf+kv  | corrupt, read again    | shell document | hit                  | -                        | -             | L1+KV
+cf+kv  | read error             | segment        | hit                  | match-error > kv-fresh   | cache-read    | L1+KV
+cf+kv  | read error             | item           | hit                  | match-error > kv-fresh   | cache-read    | L1+KV
+cf+kv  | read error             | response       | hit                  | -                        | cache-read    | L1+KV
+cf+kv  | read error             | shell          | hit                  | -                        | cache-read    | L1+KV
+cf+kv  | read error             | shell passive  | hit                  | -                        | cache-read    | L1+KV
+cf+kv  | read error             | shell document | hit                  | -                        | cache-read    | L1+KV
+cf+kv  | slow lookup            | segment        | hit                  | match-timeout > kv-fresh | -             | L1+KV
+cf+kv  | slow lookup            | item           | hit                  | match-timeout > kv-fresh | -             | L1+KV
+cf+kv  | slow lookup            | response       | hit                  | -                        | -             | L1+KV
+cf+kv  | slow body              | segment        | hit                  | body-timeout > kv-fresh  | -             | L1+KV
+cf+kv  | slow body              | item           | hit                  | body-timeout > kv-fresh  | -             | L1+KV
+cf+kv  | slow body              | response       | hit, body stalls     | -                        | -             | L1+KV
+cf+kv  | non-200                | segment        | hit                  | non-200 > kv-fresh       | -             | L1+KV
+cf+kv  | non-200                | item           | hit                  | non-200 > kv-fresh       | -             | L1+KV
+cf+kv  | non-200                | response       | hit                  | -                        | -             | L1+KV
+cf+kv  | L1 lost, KV hit        | segment        | hit                  | l1-miss > kv-fresh       | -             | L1+KV
+cf+kv  | L1 lost, KV hit        | item           | hit                  | l1-miss > kv-fresh       | -             | L1+KV
+cf+kv  | L1 lost, KV hit        | response       | hit                  | -                        | -             | L1+KV
+cf+kv  | L1 lost, KV stale      | segment        | hit, revalidate      | l1-miss > kv-stale       | -             | L1+KV
+cf+kv  | L1 lost, KV stale      | item           | hit, revalidate      | l1-miss > kv-stale       | -             | L1+KV
+cf+kv  | L1 lost, KV stale      | response       | hit, revalidate      | -                        | -             | L1+KV
+cf+kv  | L1 lost, KV corrupt    | segment        | miss                 | l1-miss > kv-miss        | cache-corrupt | none
+cf+kv  | L1 lost, KV corrupt    | item           | miss                 | l1-miss > kv-miss        | cache-corrupt | none
+cf+kv  | L1 lost, KV corrupt    | response       | miss                 | -                        | cache-corrupt | none
+cf+kv  | L1 lost, KV read error | segment        | read-error           | l1-miss > error          | cache-read    | KV
+cf+kv  | L1 lost, KV read error | item           | miss                 | l1-miss > error          | cache-read    | KV
+cf+kv  | L1 lost, KV read error | response       | miss                 | -                        | cache-read    | KV
+cf+kv  | L1 lost, KV slow       | segment        | miss                 | l1-miss > kv-timeout     | -             | KV
+cf+kv  | L1 lost, KV slow       | item           | miss                 | l1-miss > kv-timeout     | -             | KV
+cf+kv  | L1 lost, KV slow       | response       | miss                 | -                        | -             | KV
 `;
 
 interface Row {

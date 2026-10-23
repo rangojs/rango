@@ -7,8 +7,11 @@
  * state (useActionState, refs, local state).
  *
  * Runs on the real wrapper components; only `window` is stubbed for the
- * browser paths. A change to how segments reach renderSegments must leave
- * every shape here as it is.
+ * browser paths. The segments are built here, as each path hands them to
+ * renderSegments, so this pins renderSegments (and, for the `ssr: false`
+ * row, the client's reconcile before it); what the server walks into those
+ * segments is pinned by walker-differential.test.ts and
+ * stored-source.rsc-test.tsx.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -28,6 +31,10 @@ import {
 } from "../../route-content-wrapper.js";
 import { RootErrorBoundary } from "../../root-error-boundary.js";
 import { MountContextProvider } from "../../browser/react/mount-context.js";
+import {
+  reconcileSegments,
+  type ReconcileActor,
+} from "../../browser/segment-reconciler.js";
 
 function Layout(): ReactNode {
   return null;
@@ -132,17 +139,63 @@ function routeLoader(): ResolvedSegment {
   };
 }
 
+/** An error segment where the route was, as createErrorSegment builds it. */
+function errorSegment(): ResolvedSegment {
+  return {
+    id: "M0L0L0R0",
+    namespace: "page",
+    type: "error",
+    index: 0,
+    component: createElement(Page),
+    params: { id: "1" },
+    error: {
+      message: "failed",
+      name: "Error",
+      segmentId: "M0L0L0R0",
+      segmentType: "route",
+    },
+  };
+}
+
+/** A notFound segment, as createNotFoundSegment builds it. */
+function notFoundSegment(): ResolvedSegment {
+  return {
+    id: "M0L0L0R0.notFound",
+    namespace: "page",
+    type: "notFound",
+    index: 0,
+    component: createElement(Page),
+    params: { id: "1" },
+    notFoundInfo: {
+      message: "missing",
+      segmentId: "M0L0L0R0",
+      segmentType: "route",
+    },
+  };
+}
+
 /**
  * The render paths, as each reaches renderSegments: the document's SSR pass
  * (no window), a navigation, a back/forward restore and an action re-render
- * in the browser.
+ * in the browser. `actor` is the reconcile a page that already holds the
+ * segments runs before rendering a navigation or an action
+ * (segment-reconciler.ts); a back/forward restore renders what it stored.
  */
 const PATHS = {
-  ssr: { browser: false, options: undefined },
-  navigation: { browser: true, options: undefined },
-  backForward: { browser: true, options: { forceAwait: true } },
-  action: { browser: true, options: { isAction: true } },
-} as const;
+  ssr: { browser: false, options: undefined, actor: undefined },
+  navigation: { browser: true, options: undefined, actor: "navigation" },
+  backForward: {
+    browser: true,
+    options: { forceAwait: true },
+    actor: undefined,
+  },
+  action: { browser: true, options: { isAction: true }, actor: "action" },
+} as const satisfies Record<
+  string,
+  { browser: boolean; options: unknown; actor: ReconcileActor | undefined }
+>;
+
+type RenderPath = keyof typeof PATHS;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -150,15 +203,14 @@ afterEach(() => {
 
 /** The tree's shape on every render path, built from fresh segment objects. */
 async function shapesOnEveryPath(
-  build: () => ResolvedSegment[],
-): Promise<Record<keyof typeof PATHS, string[]>> {
-  const shapes = {} as Record<keyof typeof PATHS, string[]>;
-  for (const [path, { browser, options }] of Object.entries(PATHS)) {
+  build: (path: RenderPath) => ResolvedSegment[],
+): Promise<Record<RenderPath, string[]>> {
+  const shapes = {} as Record<RenderPath, string[]>;
+  for (const path of Object.keys(PATHS) as RenderPath[]) {
+    const { browser, options } = PATHS[path];
     if (browser) vi.stubGlobal("window", {});
     try {
-      shapes[path as keyof typeof PATHS] = await shape(
-        await renderSegments(build(), options),
-      );
+      shapes[path] = await shape(await renderSegments(build(path), options));
     } finally {
       vi.unstubAllGlobals();
     }
@@ -168,7 +220,7 @@ async function shapesOnEveryPath(
 
 /** Asserts `expected` on every render path. */
 async function expectShape(
-  build: () => ResolvedSegment[],
+  build: (path: RenderPath) => ResolvedSegment[],
   expected: string[],
 ): Promise<void> {
   const shapes = await shapesOnEveryPath(build);
@@ -328,6 +380,94 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "    OutletProvider#cg:/shop",
         "      StreamedLoaderErrorBoundary",
         "        <Page>",
+        "    <Layout>",
+      ],
+    );
+  });
+
+  describe("keys under a transition() scope", () => {
+    it.each([
+      ["an error segment", errorSegment, "M0L0L0R0-id=1"],
+      ["a notFound segment", notFoundSegment, "M0L0L0R0.notFound-id=1"],
+    ])(
+      "%s keeps its params, which a route there drops",
+      async (_label, segment, key) => {
+        await expectShape(
+          () => [layout({ transition: {} }), segment()],
+          [
+            "RootErrorBoundary",
+            "  OutletProvider#M0L0",
+            "    ViewTransition",
+            `      OutletProvider#${key}`,
+            "        <Page>",
+            "    <Layout>",
+          ],
+        );
+      },
+    );
+
+    it("a route-owned layout drops its params, as its route does", async () => {
+      const owned = (): ResolvedSegment =>
+        layout({
+          id: "M0L0L0",
+          namespace: "owned",
+          layoutName: "owned",
+          belongsToRoute: true,
+        });
+      await expectShape(
+        () => [layout(), owned(), route({ transition: {} })],
+        [
+          "RootErrorBoundary",
+          "  OutletProvider#M0L0",
+          "    OutletProvider#M0L0L0",
+          "      OutletProvider#M0L0L0R0",
+          "        ViewTransition",
+          "          <Page>",
+          "      <Layout>",
+          "    <Layout>",
+        ],
+      );
+      // Outside the scope both keep them.
+      await expectShape(
+        () => [layout(), owned(), route()],
+        [
+          "RootErrorBoundary",
+          "  OutletProvider#M0L0",
+          "    OutletProvider#M0L0L0-id=1",
+          "      OutletProvider#M0L0L0R0-id=1",
+          "        <Page>",
+          "      <Layout>",
+          "    <Layout>",
+        ],
+      );
+    });
+  });
+
+  it("loading(..., { ssr: false }): the document's null loading, kept by the client's reconcile, on every path", async () => {
+    // A document evaluation sets the entry's loading to false
+    // (applyDocumentModeLoading), which the walkers emit as `loading: null`
+    // (fresh.ts, revalidation.ts); a navigation gets the fallback. A page
+    // holding the document's segments keeps its null when a navigation or an
+    // action answers with the fallback.
+    await expectShape(
+      (path) => {
+        const held = [layout(), route({ loading: null })];
+        const { actor } = PATHS[path];
+        if (!actor) return held;
+        const answer = [layout(), route({ loading: createElement(Spinner) })];
+        return reconcileSegments({
+          actor,
+          matched: ["M0L0", "M0L0L0R0"],
+          diff: ["M0L0L0R0"],
+          serverSegments: answer,
+          cachedSegments: held,
+        }).mainSegments;
+      },
+      [
+        "RootErrorBoundary",
+        "  OutletProvider#M0L0",
+        "    OutletProvider#M0L0L0R0-id=1",
+        "      <Page>",
         "    <Layout>",
       ],
     );

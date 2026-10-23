@@ -11,6 +11,11 @@
  * request handler, on its own router with the same tree; only the route's
  * storage differs. The page handler counts its runs, so each served response
  * is shown to come from the store, not from a render.
+ *
+ * An action re-renders live, past the segment cache, except on a Prerender
+ * route that is not a passthrough: its handler is evicted at build, so the
+ * re-render serves the stored entry (cache-lookup.ts, the gate in front of
+ * tryPrerenderLookup). Both Prerender sources must keep answering it.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React, { isValidElement } from "react";
@@ -27,6 +32,7 @@ vi.mock(
 import {
   resetShellTestState,
   serveShellRequest,
+  type ServeShellRequestOptions,
   type ServeShellRequestResult,
 } from "../../../testing/flight.entry.js";
 import { textContent } from "../../../testing/flight-tree.js";
@@ -97,6 +103,8 @@ function makeRouter(source: Source) {
 interface Served {
   segments: unknown[];
   handles: unknown;
+  /** An action's answer, as the browser reads it. */
+  answer?: unknown;
 }
 
 /**
@@ -121,13 +129,23 @@ async function served(result: ServeShellRequestResult): Promise<Served> {
       return fields;
     }),
   );
-  return { segments, handles: (await result.readHandles())?.hydration };
+  const answer = await result.readAction();
+  return {
+    segments,
+    handles: (await result.readHandles())?.hydration,
+    ...(answer && { answer }),
+  };
+}
+
+/** A JS server action called from the page. */
+async function save(): Promise<string> {
+  return "saved";
 }
 
 /** Stores the page in `source` the way production fills it, then serves it. */
 async function serveFrom(
   source: Source,
-  options: { partial?: { from: string } } = {},
+  options: ServeShellRequestOptions = {},
 ): Promise<Served> {
   const router = makeRouter(source);
   const cacheStore = new MemorySegmentCacheStore();
@@ -135,6 +153,9 @@ async function serveFrom(
     // The first request of the same kind renders and writes the record (a
     // navigation's record is keyed apart from a document's).
     await serveShellRequest(router, "/item/1", { cacheStore, ...options });
+  } else if (source === "prerender build" && options.action) {
+    // The build artifact exists before the page calls the action.
+    await serveShellRequest(router, "/item/1", { cacheStore });
   } else if (source === "on-demand overlay") {
     expect(await router.prerender({ env: {} })("/item/1")).toMatchObject({
       ok: true,
@@ -146,7 +167,7 @@ async function serveFrom(
     cacheStore,
     ...options,
   });
-  if (source === "prerender build") {
+  if (source === "prerender build" && !options.action) {
     // The URL's first request bakes the build artifact (one handler run, as
     // `vite build` runs it) and is served from the prerender store.
     expect(pageRuns - runsBefore).toBe(1);
@@ -187,6 +208,31 @@ describe("stored segments: the same entry from each source", () => {
       expect(JSON.stringify(fromCache.handles)).toContain('"title":"item 1"');
       expect(fromBuild).toEqual(fromCache);
       expect(fromOverlay).toEqual(fromCache);
+    },
+  );
+});
+
+describe("an action re-render of a Prerender route", () => {
+  it.each(["prerender build", "on-demand overlay"] as const)(
+    "%s: serves the stored entry, the handler does not run",
+    async (source) => {
+      const navigation = await serveFrom(source, { partial: { from: "/" } });
+      // serveFrom fails when the page handler runs for the action.
+      const { answer, ...action } = await serveFrom(source, {
+        action: { ref: save, id: "src/item.actions.ts#save" },
+      });
+      expect(answer).toEqual({
+        ok: true,
+        result: "saved",
+        revalidationError: null,
+      });
+      expect(action.segments).toMatchObject([
+        { type: "layout" },
+        { type: "layout", component: "text: shell" },
+        { type: "route", component: "text: item 1", params: { id: "1" } },
+        { type: "loader", loaderData: { ok: true, data: { stock: 3 } } },
+      ]);
+      expect(action).toEqual(navigation);
     },
   );
 });
