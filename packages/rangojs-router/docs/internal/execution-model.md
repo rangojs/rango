@@ -110,10 +110,14 @@ from inside the intercept.
 Only a client navigation from the source page shows an intercept, and the
 browser keeps it that way on Back/Forward (`navigation-bridge.ts`
 `handlePopstate`). An intercept entry the history cache restores re-opens the
-intercept (a stale one revalidates in the background, from its source). One
-it must fetch (no cached copy, a `prefetch: false` placeholder, or a cached
-copy that failed to render) is fetched as an intercept only while its source
-page is on screen, under an open intercept or not. From any other page it
+intercept (a stale one revalidates in the background, from its source). The
+cache keys an intercept entry by its URL and its source page
+(`generateHistoryKey` in `browser/navigation-store.ts`): the same URL opened
+from two pages is two trees, and with one key the later tree replaced the
+earlier, so Back onto the earlier entry restored the intercept over the wrong
+page. An intercept entry it must fetch (no cached copy, a `prefetch: false`
+placeholder, or a cached copy that failed to render) is fetched as an
+intercept only while its source page is on screen, under an open intercept or not. From any other page it
 loads as a document: `location.reload()`, scrolled to the top first so the
 position `pagehide` saves under the entry is 0. The server renders the full
 page, the load drops `clearOnReload` slots as any document load does, and

@@ -34,10 +34,46 @@ describe("navigation-store", () => {
       );
     });
 
-    it("appends :intercept suffix when requested", () => {
+    it("keys an intercept entry by its URL and its source page", () => {
       expect(
-        generateHistoryKey("http://example.com/shop", { intercept: true }),
-      ).toBe("/shop:intercept");
+        generateHistoryKey("http://example.com/item/1?tab=a#top", {
+          intercept: true,
+          interceptSource: "http://example.com/list?page=2#row",
+        }),
+      ).toBe("/item/1?tab=a:intercept:/list?page=2");
+    });
+
+    it("gives the same URL intercepted from two source pages two keys", () => {
+      const fromList = generateHistoryKey("/item/1", {
+        intercept: true,
+        interceptSource: "/list",
+      });
+      const fromSearch = generateHistoryKey("/item/1", {
+        intercept: true,
+        interceptSource: "/search",
+      });
+      expect(fromList).not.toBe(fromSearch);
+      expect(fromList).not.toBe(generateHistoryKey("/item/1"));
+    });
+
+    it("normalizes the source as it does the URL (a full href and its path key alike)", () => {
+      expect(
+        generateHistoryKey("/item/1", {
+          intercept: true,
+          interceptSource: "http://localhost/list?q=1#x",
+        }),
+      ).toBe(
+        generateHistoryKey("/item/1", {
+          intercept: true,
+          interceptSource: "/list?q=1",
+        }),
+      );
+    });
+
+    it("keys an intercept with an unknown source apart from the plain entry", () => {
+      expect(
+        generateHistoryKey("/item/1", { intercept: true, interceptSource: "" }),
+      ).toBe("/item/1:intercept:");
     });
 
     it("handles relative paths using localhost base", () => {
@@ -120,12 +156,48 @@ describe("navigation-store", () => {
       expect(store.getCachedSegments("/unknown")).toBeUndefined();
     });
 
-    it("hasHistoryCache returns correct status", () => {
+    it("hasInterceptCache finds an intercept entry for the key from any source page", () => {
       const store = createTestStore();
-      expect(store.hasHistoryCache("/page")).toBe(false);
+      store.cacheSegmentsForHistory("/item/1", []);
+      store.cacheSegmentsForHistory(
+        generateHistoryKey("/item/10", {
+          intercept: true,
+          interceptSource: "/list",
+        }),
+        [],
+      );
+      expect(store.hasInterceptCache("/item/1")).toBe(false);
 
-      store.cacheSegmentsForHistory("/page", []);
-      expect(store.hasHistoryCache("/page")).toBe(true);
+      store.cacheSegmentsForHistory(
+        generateHistoryKey("/item/1", {
+          intercept: true,
+          interceptSource: "/search",
+        }),
+        [],
+      );
+      expect(store.hasInterceptCache("/item/1")).toBe(true);
+      expect(store.hasInterceptCache("/item/1?tab=a")).toBe(false);
+      expect(store.hasInterceptCache("/item/10")).toBe(true);
+    });
+
+    it("keeps one intercept entry per source page for the same URL", () => {
+      const store = createTestStore();
+      const fromList = [{ id: "list" }] as any;
+      const fromSearch = [{ id: "search" }] as any;
+      const listKey = generateHistoryKey("/item/1", {
+        intercept: true,
+        interceptSource: "/list",
+      });
+      const searchKey = generateHistoryKey("/item/1", {
+        intercept: true,
+        interceptSource: "/search",
+      });
+
+      store.cacheSegmentsForHistory(listKey, fromList);
+      store.cacheSegmentsForHistory(searchKey, fromSearch);
+
+      expect(store.getCachedSegments(listKey)!.segments).toBe(fromList);
+      expect(store.getCachedSegments(searchKey)!.segments).toBe(fromSearch);
     });
 
     it("updates existing entry in-place", () => {

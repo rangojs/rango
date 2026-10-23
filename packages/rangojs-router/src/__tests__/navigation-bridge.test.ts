@@ -27,7 +27,7 @@ function createStore() {
     rememberDisplayedEntry: vi.fn(),
     getHistoryEntryMemory: vi.fn(() => undefined),
     getCachedSegments: vi.fn((): any => undefined),
-    hasHistoryCache: vi.fn(() => false),
+    hasInterceptCache: vi.fn(() => false),
     cacheSegmentsForHistory: vi.fn(),
     updateCacheHandleData: vi.fn(),
     setInterceptSourceUrl: vi.fn(),
@@ -303,7 +303,7 @@ describe("navigation-bridge revalidate: false", () => {
 
     const store = createStore();
     store.getHistoryKey.mockReturnValue(
-      "http://localhost/product/123?tab=reviews:intercept",
+      "/product/123?tab=reviews:intercept:/products",
     );
     store.getCachedSegments.mockReturnValue({
       segments: [{ id: "root", type: "layout" }] as any,
@@ -336,9 +336,9 @@ describe("navigation-bridge revalidate: false", () => {
       "/product/123?tab=specs",
     );
 
-    // Store history key should include :intercept suffix
+    // Store history key names the intercept's source page
     expect(store.setHistoryKey).toHaveBeenCalledWith(
-      expect.stringContaining("intercept"),
+      "/product/123?tab=specs:intercept:/products",
     );
   });
 
@@ -1060,7 +1060,10 @@ describe("navigation-bridge handlePopstate onto an intercept entry", () => {
     expect(reload).not.toHaveBeenCalled();
     expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
     expect(onUpdate).toHaveBeenCalledOnce();
-    expect(store.setHistoryKey).toHaveBeenCalledWith("/item/1:intercept");
+    expect(store.getCachedSegments).toHaveBeenCalledWith(
+      "/item/1:intercept:/list",
+    );
+    expect(store.setHistoryKey).toHaveBeenCalledWith("/item/1:intercept:/list");
     expect(store.setInterceptSourceUrl).toHaveBeenLastCalledWith(SOURCE);
   });
 
