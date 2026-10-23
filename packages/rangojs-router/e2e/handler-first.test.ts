@@ -1,15 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
-// -- Dev mode ----------------------------------------------------------------
-
-test.describe("handler-first execution order (dev)", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function handlerFirstSuite(f: Fixture) {
   test("route handler ctx.set() is visible to layout via ctx.get()", async ({
     page,
   }) => {
@@ -42,95 +35,41 @@ test.describe("handler-first execution order (dev)", () => {
       "Sidebar got: from-handler",
     );
   });
-});
 
-// -- Production build --------------------------------------------------------
+  test("cache scope: handler ctx.set() visible to parallel via SSR", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/handler-first/cache-scope"));
+    await waitForHydration(page);
+
+    const handlerTs = await page
+      .getByTestId("cache-scope-handler-ts")
+      .textContent();
+    const sidebarTs = await page
+      .getByTestId("cache-scope-sidebar-ts")
+      .textContent();
+
+    expect(handlerTs).toBeTruthy();
+    expect(sidebarTs).toBe(handlerTs);
+  });
+}
+
+test.describe("handler-first execution order (dev)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  handlerFirstSuite(f);
+});
 
 test.describe("handler-first execution order (production)", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "build",
-  });
-
-  test("route handler ctx.set() is visible to layout via ctx.get()", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/handler-first"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("handler-first-title")).toHaveText(
-      "Handler First",
-    );
-    await expect(page.getByTestId("layout-get-value")).toHaveText(
-      "Layout got: from-handler",
-    );
-  });
-
-  test("route handler ctx.set() is visible to parallel via ctx.get()", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/handler-first"));
-    await waitForHydration(page);
-
-    await expect(page.getByTestId("sidebar-get-value")).toHaveText(
-      "Sidebar got: from-handler",
-    );
-  });
-
-  test("cache scope: handler ctx.set() visible to parallel via SSR", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/handler-first/cache-scope"));
-    await waitForHydration(page);
-
-    const handlerTs = await page
-      .getByTestId("cache-scope-handler-ts")
-      .textContent();
-    const sidebarTs = await page
-      .getByTestId("cache-scope-sidebar-ts")
-      .textContent();
-
-    expect(handlerTs).toBeTruthy();
-    expect(sidebarTs).toBe(handlerTs);
-  });
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  handlerFirstSuite(f);
 });
 
-// -- Revalidation + cache mix (dev-only) ------------------------------------
-// These tests exercise client navigation cache behavior with revalidate(() => true)
-// and cache({ ttl }) mixing. Dev-only because they require isolated server state
-// and test runtime cache semantics that are not meaningful in static build output.
+// Revalidation + cache mix: client navigation cache behavior with
+// revalidate(() => true) and cache({ ttl }) mixing.
 
-test.describe("revalidate and cache mix (dev)", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
-  test("cache scope: handler ctx.set() visible to parallel via SSR", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/handler-first/cache-scope"));
-    await waitForHydration(page);
-
-    const handlerTs = await page
-      .getByTestId("cache-scope-handler-ts")
-      .textContent();
-    const sidebarTs = await page
-      .getByTestId("cache-scope-sidebar-ts")
-      .textContent();
-
-    expect(handlerTs).toBeTruthy();
-    expect(sidebarTs).toBe(handlerTs);
-  });
-
+function revalidateCacheMixSuite(f: Fixture) {
   test("revalidate(() => true) forces fresh content on client navigation", async ({
     page,
   }) => {
@@ -209,4 +148,14 @@ test.describe("revalidate and cache mix (dev)", () => {
       .textContent();
     expect(cachedSidebarTs2).toBe(cachedHandlerTs1);
   });
+}
+
+test.describe("revalidate and cache mix (dev)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  revalidateCacheMixSuite(f);
+});
+
+test.describe("revalidate and cache mix (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  revalidateCacheMixSuite(f);
 });

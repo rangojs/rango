@@ -45,11 +45,6 @@
     "reason": "HMR / Vite serve-only; no production preview counterpart"
   },
   {
-    "base": "revalidate and cache mix",
-    "file": "packages/rangojs-router/e2e/handler-first.test.ts",
-    "reason": "Historical debt: production twin deferred (handler-first order is already paired)"
-  },
-  {
     "base": "usenavigation during actions",
     "file": "packages/rangojs-router/e2e/hooks.test.ts",
     "reason": "Historical debt: production twin deferred (useNavigation / useAction already paired)"

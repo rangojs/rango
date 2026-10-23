@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
 
 /**
@@ -10,12 +10,7 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  * - ctx.reverse with search params appends query string
  * - Combined route params + search params
  */
-test.describe("Typed Search Params", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function typedSearchParamsSuite(f: Fixture) {
   test.describe("Search index route (required + optional params)", () => {
     test("should parse required string and optional number from query string", async ({
       page,
@@ -198,17 +193,8 @@ test.describe("Typed Search Params", () => {
       await expect(testId(page, "detail-q")).toContainText("q: typescript");
     });
   });
-});
 
-test.describe("Typed Search Params (production)", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "build",
-  });
-
-  test("should parse typed search params in production build", async ({
-    page,
-  }) => {
+  test("should parse typed search params", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/search?q=react&page=5&sort=downloads"));
@@ -224,9 +210,7 @@ test.describe("Typed Search Params (production)", () => {
     );
   });
 
-  test("should parse search params on detail route in production", async ({
-    page,
-  }) => {
+  test("should parse search params on detail route", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/search/tools?q=vscode&active=true"));
@@ -243,9 +227,7 @@ test.describe("Typed Search Params (production)", () => {
     );
   });
 
-  test("should generate reverse URLs with search params in production", async ({
-    page,
-  }) => {
+  test("should generate reverse URLs with search params", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/search?q=anything"));
@@ -258,4 +240,14 @@ test.describe("Typed Search Params (production)", () => {
       "detail: /search/books?q=typescript&active=true",
     );
   });
+}
+
+test.describe("Typed Search Params", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  typedSearchParamsSuite(f);
+});
+
+test.describe("Typed Search Params (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  typedSearchParamsSuite(f);
 });

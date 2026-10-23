@@ -50,12 +50,7 @@ async function expectEvictedEntryKeepsLinkState(
   await expect(page.locator('[data-testid="plain-count"]')).toHaveText("5");
 }
 
-test.describe("location-state", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function locationStateSuite(f: Fixture) {
   test("redirect with flash state shows flash message on target page", async ({
     page,
   }) => {
@@ -122,6 +117,7 @@ test.describe("location-state", () => {
     // Navigate away
     await page.locator('[data-testid="ls-other-link"]').click();
     await expect(page.locator('[data-testid="ls-other-page"]')).toBeVisible();
+    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
 
     // Go back to index - flash should NOT re-appear
     await goBack(page);
@@ -338,6 +334,17 @@ test.describe("location-state", () => {
     );
     expect(flashKeys.length).toBe(0);
   });
+}
+
+test.describe("location-state", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  locationStateSuite(f);
+});
+
+test.describe("location-state (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  test.setTimeout(120000);
+  locationStateSuite(f);
 });
 
 /**
@@ -411,12 +418,7 @@ async function expectRouterReplaceTypedStateRoundTrips(
   await expectTypedTarget(page, "Replaced Product", "12");
 }
 
-test.describe("link-state-prop", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function linkStatePropSuite(f: Fixture) {
   test("Link state survives a back to an entry the history cache evicted", async ({
     page,
   }) => {
@@ -639,325 +641,27 @@ test.describe("link-state-prop", () => {
     const state = await getHistoryState(page);
     expect(state?.state).toEqual({ from: "list", count: 5 });
   });
+}
+
+test.describe("link-state-prop", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  linkStatePropSuite(f);
 });
 
-/**
- * Production build tests for Link state prop
- */
 test.describe("link-state-prop (production)", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "build",
-  });
-
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   test.setTimeout(120000);
-
-  test("Link state survives a back to an entry the history cache evicted in production build", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-    await expectEvictedEntryKeepsLinkState(page, f);
-  });
-
-  test("router.push typed state round-trips through back/forward in production build", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-    await expectRouterPushTypedStateRoundTrips(page, f);
-  });
-
-  test("router.replace typed state round-trips through back/forward in production build", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-    await expectRouterReplaceTypedStateRoundTrips(page, f);
-  });
-
-  test("typed eager state works in production build", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state/link-state"));
-    await waitForHydration(page);
-
-    await page.locator('[data-testid="link-typed-eager"]').click();
-    await expect(
-      page.locator('[data-testid="link-state-target"]'),
-    ).toBeVisible();
-
-    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
-      "Eager Product",
-    );
-    await expect(
-      page.locator('[data-testid="typed-product-price"]'),
-    ).toHaveText("42");
-  });
-
-  test("typed JIT state works in production build", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state/link-state"));
-    await waitForHydration(page);
-
-    await page.locator('[data-testid="link-typed-jit"]').click();
-    await expect(
-      page.locator('[data-testid="link-state-target"]'),
-    ).toBeVisible();
-
-    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
-      "JIT Product",
-    );
-    await expect(
-      page.locator('[data-testid="typed-product-price"]'),
-    ).toHaveText("99");
-  });
-
-  test("typed JIT getter runs at click time in production build", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state/link-state"));
-    await waitForHydration(page);
-
-    await page.locator('[data-testid="link-typed-jit-timing"]').click();
-    await expect(
-      page.locator('[data-testid="link-state-target"]'),
-    ).toBeVisible();
-
-    // productPrice = 42 proves the getter ran after mount (at click time)
-    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
-      "JIT Timing",
-    );
-    await expect(
-      page.locator('[data-testid="typed-product-price"]'),
-    ).toHaveText("42");
-  });
-
-  test("plain static state works in production build", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state/link-state"));
-    await waitForHydration(page);
-
-    await page.locator('[data-testid="link-plain-static"]').click();
-    await expect(
-      page.locator('[data-testid="link-state-plain-target"]'),
-    ).toBeVisible();
-
-    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
-    await expect(page.locator('[data-testid="plain-count"]')).toHaveText("5");
-  });
-
-  test("plain JIT state works in production build", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state/link-state"));
-    await waitForHydration(page);
-
-    await page.locator('[data-testid="link-plain-jit"]').click();
-    await expect(
-      page.locator('[data-testid="link-state-plain-target"]'),
-    ).toBeVisible();
-
-    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("jit");
-    await expect(page.locator('[data-testid="plain-count"]')).toHaveText("7");
-  });
-
-  test("typed state persists through back/forward in production build", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state/link-state"));
-    await waitForHydration(page);
-
-    // Navigate to typed target
-    await page.locator('[data-testid="link-typed-eager"]').click();
-    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
-      "Eager Product",
-    );
-
-    // Navigate back
-    await page.locator('[data-testid="link-state-back"]').click();
-    await expect(
-      page.locator('[data-testid="link-state-index"]'),
-    ).toBeVisible();
-
-    // Browser back to typed target
-    await goBack(page);
-    await expect(page.locator('[data-testid="typed-product-name"]')).toHaveText(
-      "Eager Product",
-    );
-    await expect(
-      page.locator('[data-testid="typed-product-price"]'),
-    ).toHaveText("42");
-  });
-
-  test("plain state persists through back/forward in production build", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state/link-state"));
-    await waitForHydration(page);
-
-    // Navigate to plain target
-    await page.locator('[data-testid="link-plain-static"]').click();
-    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
-
-    // Navigate back
-    await page.locator('[data-testid="link-state-back"]').click();
-    await expect(
-      page.locator('[data-testid="link-state-index"]'),
-    ).toBeVisible();
-
-    // Browser back to plain target
-    await goBack(page);
-    await expect(page.locator('[data-testid="plain-from"]')).toHaveText("list");
-    await expect(page.locator('[data-testid="plain-count"]')).toHaveText("5");
-  });
+  linkStatePropSuite(f);
 });
 
 /**
- * Production build tests for location state
- */
-test.describe("location-state (production)", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "build",
-  });
-
-  test.setTimeout(120000);
-
-  test("redirect with flash state works in production build", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state"));
-    await waitForHydration(page);
-
-    // No flash initially
-    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
-
-    // Trigger redirect
-    await page.locator('[data-testid="ls-redirect-link"]').click();
-
-    // Should redirect with flash
-    await expect(page).toHaveURL(/\/location-state$/);
-    await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Item saved successfully!",
-    );
-  });
-
-  test("ctx.setLocationState works in production build", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state"));
-    await waitForHydration(page);
-
-    // Navigate to ctx-state page
-    await page.locator('[data-testid="ls-ctx-state-link"]').click();
-    await expect(
-      page.locator('[data-testid="ls-ctx-state-page"]'),
-    ).toBeVisible();
-
-    // Server-set state should be available
-    await expect(page.locator('[data-testid="server-info-data"]')).toHaveText(
-      "server-set-value",
-    );
-  });
-
-  test("action redirect with flash works in production build", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state"));
-    await waitForHydration(page);
-
-    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
-
-    // Click action redirect button
-    await page.locator('[data-testid="action-redirect-btn"]').click();
-
-    // Should redirect with flash
-    await expect(page).toHaveURL(/\/location-state$/);
-    await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Action saved successfully!",
-    );
-  });
-
-  test("thrown action redirect with flash works in production build", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state"));
-    await waitForHydration(page);
-
-    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
-
-    await page.locator('[data-testid="throw-redirect-btn"]').click();
-
-    await expect(page).toHaveURL(/\/location-state$/);
-    await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Thrown redirect flash!",
-    );
-  });
-
-  test("thrown action simple redirect works in production build", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state"));
-    await waitForHydration(page);
-
-    await page.locator('[data-testid="throw-simple-redirect-btn"]').click();
-
-    await expect(page).toHaveURL(/\/location-state\/target$/);
-    await expect(page.locator('[data-testid="ls-target"]')).toBeVisible();
-    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
-  });
-
-  test("flash auto-clears in production build", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state"));
-    await waitForHydration(page);
-
-    // Get flash via redirect
-    await page.locator('[data-testid="ls-redirect-link"]').click();
-    await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Item saved successfully!",
-    );
-
-    // Navigate away
-    await page.locator('[data-testid="ls-other-link"]').click();
-    await expect(page.locator('[data-testid="ls-other-page"]')).toBeVisible();
-    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
-
-    // Navigate back - flash should not reappear
-    await goBack(page);
-    await expect(page.locator('[data-testid="ls-index"]')).toBeVisible();
-    await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
-  });
-});
-
-/**
- * Stateful navigation failure tests — dev
+ * Stateful navigation failure tests
  *
  * Verifies that when a Link-with-state navigation fails (network error),
- * the error UI renders at the target URL. The early pushState is intentional
- * and the failed destination owns the URL.
+ * the error UI renders and the URL stays at the source: pushState happens
+ * only on a successful commit.
  */
-test.describe("stateful-navigation-failure", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
+function statefulNavigationFailureSuite(f: Fixture) {
   test("failed stateful navigation shows error UI at source URL", async ({
     page,
   }) => {
@@ -996,51 +700,16 @@ test.describe("stateful-navigation-failure", () => {
     expect(page.url()).toContain("/location-state/link-state");
     expect(page.url()).not.toContain("/target");
   });
+}
+
+test.describe("stateful-navigation-failure", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  statefulNavigationFailureSuite(f);
 });
 
-/**
- * Stateful navigation failure tests — production
- */
 test.describe("stateful-navigation-failure (production)", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "build",
-  });
-
-  test("failed stateful navigation shows error UI at source URL", async ({
-    page,
-  }) => {
-    // The bare link-state Links viewport-prefetch by default; a completed
-    // prefetch of the target would be adopted by the click and the navigation
-    // would SUCCEED instead of hitting the abort below — block prefetch
-    // before load.
-    await blockPrefetch(page);
-
-    await page.goto(f.url("/location-state/link-state"));
-    await waitForHydration(page);
-
-    await expect(
-      page.locator('[data-testid="link-state-index"]'),
-    ).toBeVisible();
-
-    // Intercept only the RSC partial request to the target route
-    await page.route(
-      (url) =>
-        url.pathname.includes("/location-state/link-state/target") &&
-        url.searchParams.has("_rsc_partial"),
-      (route) => route.abort("failed"),
-    );
-
-    // Click a Link with state
-    await page.locator('[data-testid="link-typed-eager"]').click();
-
-    // The error UI should appear
-    await expect(page.getByRole("heading", { name: /error/i })).toBeVisible();
-
-    // URL stays at source — pushState only happens on successful commit
-    expect(page.url()).toContain("/location-state/link-state");
-    expect(page.url()).not.toContain("/target");
-  });
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  statefulNavigationFailureSuite(f);
 });
 
 /**
@@ -1048,9 +717,7 @@ test.describe("stateful-navigation-failure (production)", () => {
  * succession must leave the URL at the second link's target, not
  * rolled back to the source by the first transaction's dispose.
  */
-test.describe("stateful-navigation-superseded", () => {
-  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
-
+function statefulNavigationSupersededSuite(f: Fixture) {
   test("second stateful nav wins when first is superseded", async ({
     page,
   }) => {
@@ -1080,37 +747,16 @@ test.describe("stateful-navigation-superseded", () => {
     ).toBeVisible();
     expect(page.url()).toContain("/location-state/link-state/plain-target");
   });
+}
+
+test.describe("stateful-navigation-superseded", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  statefulNavigationSupersededSuite(f);
 });
 
 test.describe("stateful-navigation-superseded (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
-
-  test("second stateful nav wins when first is superseded", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/location-state/link-state"));
-    await waitForHydration(page);
-
-    await expect(
-      page.locator('[data-testid="link-state-index"]'),
-    ).toBeVisible();
-
-    await page.evaluate(() => {
-      document
-        .querySelector<HTMLElement>('[data-testid="link-typed-eager"]')!
-        .click();
-      document
-        .querySelector<HTMLElement>('[data-testid="link-plain-static"]')!
-        .click();
-    });
-
-    await expect(
-      page.locator('[data-testid="link-state-plain-target"]'),
-    ).toBeVisible();
-    expect(page.url()).toContain("/location-state/link-state/plain-target");
-  });
+  statefulNavigationSupersededSuite(f);
 });
 
 /**
@@ -1123,7 +769,7 @@ test.describe("stateful-navigation-superseded (production)", () => {
  *  4. write() merges with existing history.state (router bookkeeping intact)
  *  5. delete() removes the slot but leaves the rest of history.state
  */
-function staticWriteSuite(f: ReturnType<typeof useFixture>) {
+function staticWriteSuite(f: Fixture) {
   test("write persists across hard reload", async ({ page }) => {
     using _ = expectNoPageError(page);
 
@@ -1292,7 +938,7 @@ test.describe("location-state.static-write (production)", () => {
  * Same-key/distinct tests wait on a deterministic "both settled" marker rather
  * than a fixed sleep. Non-flash slots, so they also persist across back/forward.
  */
-function actionLocationStateSuite(f: ReturnType<typeof useFixture>) {
+function actionLocationStateSuite(f: Fixture) {
   test("single non-redirect action sets location state", async ({ page }) => {
     using _ = expectNoPageError(page);
 
