@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { useFixture, type Fixture } from "./fixture";
+import { bothModes, type Fixture } from "./fixture";
 
 /**
  * Tests that validate response route caching via cache() boundaries.
@@ -267,12 +267,4 @@ function responseCacheSuite(f: Fixture) {
   });
 }
 
-test.describe("response-cache (dev)", () => {
-  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
-  responseCacheSuite(f);
-});
-
-test.describe("response-cache (production)", () => {
-  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
-  responseCacheSuite(f);
-});
+bothModes("response-cache", responseCacheSuite, { root: "./e2e/test-app" });

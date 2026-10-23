@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { useFixture, type Fixture } from "./fixture";
+import { bothModes, type Fixture } from "./fixture";
 import {
   blockPrefetch,
   expectNoPageError,
@@ -61,14 +61,8 @@ function handlerFirstSuite(f: Fixture) {
   });
 }
 
-test.describe("handler-first execution order (dev)", () => {
-  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
-  handlerFirstSuite(f);
-});
-
-test.describe("handler-first execution order (production)", () => {
-  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
-  handlerFirstSuite(f);
+bothModes("handler-first execution order", handlerFirstSuite, {
+  root: "./e2e/test-app",
 });
 
 // Revalidation + cache mix: client navigation cache behavior with
@@ -169,12 +163,6 @@ function revalidateCacheMixSuite(f: Fixture) {
   });
 }
 
-test.describe("revalidate and cache mix (dev)", () => {
-  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
-  revalidateCacheMixSuite(f);
-});
-
-test.describe("revalidate and cache mix (production)", () => {
-  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
-  revalidateCacheMixSuite(f);
+bothModes("revalidate and cache mix", revalidateCacheMixSuite, {
+  root: "./e2e/test-app",
 });

@@ -15,22 +15,36 @@
 // dev/prod pairs) cannot be statically classified; they are reported as
 // warnings, not failures, so their bucketing must be guaranteed by the helper.
 //
+// Title helpers (prodDescribe, bothModes; TITLE_HELPERS in
+// lib/e2e-bucketing-scan.mjs) are expanded into the describes they register
+// and checked like hand-written ones. A call the guard cannot expand fails: a
+// computed name for a helper with a dev describe, an aliased import or a
+// namespace call. So does a definition that does not register what the
+// expansion assumes, checked in the module each calling file imports it from.
+//
 // Run: node tools/check-e2e-bucketing.mjs   (exits non-zero on any violation)
 
 import path from "node:path";
-import { REPO_ROOT, scanSplitSuites } from "./lib/e2e-bucketing-scan.mjs";
+import {
+  REPO_ROOT,
+  bucketingViolations,
+  helperDefinitionViolations,
+  scanSplitSuites,
+} from "./lib/e2e-bucketing-scan.mjs";
 
 const violations = [];
 const warnings = [];
+const definitionCache = new Map();
 
 for (const { file, records } of scanSplitSuites()) {
+  for (const v of bucketingViolations(records)) violations.push({ file, ...v });
+  const helpers = new Set(records.flatMap((d) => (d.via ? [d.via] : [])));
+  if (helpers.size > 0) {
+    violations.push(
+      ...helperDefinitionViolations(file, helpers, definitionCache),
+    );
+  }
   for (const d of records) {
-    if (d.build && !d.taggedProd) {
-      violations.push({ file, line: d.line, title: d.fullPath, kind: "build" });
-    }
-    if (d.dev && d.taggedProd) {
-      violations.push({ file, line: d.line, title: d.fullPath, kind: "dev" });
-    }
     // A non-literal mode means we cannot tell build from dev statically. If the
     // title is also dynamic, we cannot tell its bucket either: surface it.
     if (d.indeterminate && !d.build && !d.dev) {
@@ -58,7 +72,9 @@ if (violations.length > 0) {
   for (const v of violations) {
     console.error(`  ${path.relative(REPO_ROOT, v.file)}:${v.line}`);
     console.error(`    title: ${v.title}`);
-    if (v.kind === "build") {
+    if (v.kind === "helper") {
+      console.error(`    issue: ${v.problem}\n`);
+    } else if (v.kind === "build") {
       console.error(
         "    issue: build fixture not matched by the production grep (lands in dev)",
       );

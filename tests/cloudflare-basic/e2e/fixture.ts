@@ -238,3 +238,22 @@ export function useFixture(options: {
     proc: () => proc,
   };
 }
+
+/**
+ * Registers `suite` as "<name> (dev)" on a dev server and as
+ * "<name> (production)" on a build. tools/check-e2e-bucketing.mjs expands each
+ * call the same way and checks this body against that expansion
+ * (TITLE_HELPERS in tools/lib/e2e-bucketing-scan.mjs): pass a literal name.
+ */
+export function bothModes(
+  name: string,
+  suite: (f: Fixture) => void,
+  options: Omit<Parameters<typeof useFixture>[0], "mode">,
+): void {
+  test.describe(`${name} (dev)`, () => {
+    suite(useFixture({ ...options, mode: "dev" }));
+  });
+  test.describe(`${name} (production)`, () => {
+    suite(useFixture({ ...options, mode: "build" }));
+  });
+}
