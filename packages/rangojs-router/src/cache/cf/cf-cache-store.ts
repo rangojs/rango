@@ -514,22 +514,66 @@ interface CFReadFamily<
   kvMethod: string;
   promoteLabel: string;
   /** The corrupt-L1 label of a read that claims the revalidation. */
-  staleLabel?: string;
+  staleLabel: string;
+  /** Report a tag-marker-namespace key and miss (isReservedSegmentKey). */
+  rejectsReservedKeys: boolean;
   validate(envelope: E): boolean;
   /** An L1 hit's value: its parsed body, or the document's client Response. */
   fromL1(body: B, shouldRevalidate: boolean, tags?: string[]): V;
   tags(envelope: E): { tags?: string[]; taggedAt?: number };
   /** A KV hit's value; throws when the envelope does not rebuild. */
   fromKv(envelope: E, shouldRevalidate: boolean): V;
-  /** A KV hit's L1 entry, before the headers promoteToL1 adds. */
-  toL1(envelope: E): {
-    body: BodyInit;
-    headers: HeadersInit;
-    init?: ResponseInit;
-  };
+  /**
+   * A KV hit's L1 entry: its body and headers, with promoteToL1's
+   * Cache-Control, the envelope's deadlines and its tag headers.
+   */
+  toL1(
+    envelope: E,
+    cacheControl: string,
+    tagHeaders: Record<string, string>,
+  ): Response;
 }
 
-const JSON_L1_HEADERS = { "Content-Type": "application/json" };
+/**
+ * Merge the internal tag headers (tagHeaderEntries) onto an existing Headers
+ * instance. The from-scratch paths spread them into an object-literal init;
+ * the document put/promote paths build a Headers first, so they .set() each
+ * entry instead — except `Cache-Tag`, which is APPENDED: a document author
+ * may have set their own Cache-Tag, and clobbering it would break their CDN
+ * purging. Append produces the comma-merged list CF expects.
+ */
+function setTagHeaders(
+  headers: Headers,
+  tagHeaders: Record<string, string>,
+): void {
+  for (const [name, value] of Object.entries(tagHeaders)) {
+    if (name === "Cache-Tag") headers.append(name, value);
+    else headers.set(name, value);
+  }
+}
+
+/**
+ * A JSON family's promoted L1 entry, marked HIT as set() marks it. A plain
+ * header record: building a Headers and set()-ing each entry costs the KV-hit
+ * path a second validation pass per header.
+ */
+function jsonL1Entry(
+  body: string,
+  e: KVDeadlines,
+  cacheControl: string,
+  tagHeaders: Record<string, string>,
+): Response {
+  return new Response(body, {
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": cacheControl,
+      [CACHE_STALE_AT_HEADER]: String(e.s),
+      [CACHE_EXPIRES_AT_HEADER]: String(e.e),
+      [CACHE_STATUS_HEADER]: "HIT",
+      ...tagHeaders,
+    },
+  });
+}
 
 const SEGMENT_READ: CFReadFamily<
   KVSegmentEnvelope,
@@ -547,12 +591,14 @@ const SEGMENT_READ: CFReadFamily<
   kvMethod: "kvGetSegment",
   promoteLabel: "[CFCacheStore] promoteSegmentToL1",
   staleLabel: "get(revalidating)",
+  rejectsReservedKeys: true,
   validate: (e) =>
     typeof e.e === "number" && typeof e.s === "number" && e.d != null,
   tags: (e) => e.d,
   fromL1: (data, shouldRevalidate) => ({ data, shouldRevalidate }),
   fromKv: (e, shouldRevalidate) => ({ data: e.d, shouldRevalidate }),
-  toL1: (e) => ({ body: JSON.stringify(e.d), headers: JSON_L1_HEADERS }),
+  toL1: (e, cacheControl, tagHeaders) =>
+    jsonL1Entry(JSON.stringify(e.d), e, cacheControl, tagHeaders),
 };
 
 const ITEM_READ: CFReadFamily<
@@ -568,6 +614,8 @@ const ITEM_READ: CFReadFamily<
   version: "data",
   kvMethod: "kvGetItem",
   promoteLabel: "[CFCacheStore] promoteItemToL1",
+  staleLabel: "getItem",
+  rejectsReservedKeys: false,
   validate: (e) =>
     typeof e.v === "string" &&
     typeof e.e === "number" &&
@@ -585,10 +633,13 @@ const ITEM_READ: CFReadFamily<
     shouldRevalidate,
     tags: e.t,
   }),
-  toL1: (e) => ({
-    body: JSON.stringify({ value: e.v, handles: e.h }),
-    headers: JSON_L1_HEADERS,
-  }),
+  toL1: (e, cacheControl, tagHeaders) =>
+    jsonL1Entry(
+      JSON.stringify({ value: e.v, handles: e.h }),
+      e,
+      cacheControl,
+      tagHeaders,
+    ),
 };
 
 const RESPONSE_READ: CFReadFamily<
@@ -604,6 +655,9 @@ const RESPONSE_READ: CFReadFamily<
   version: "document",
   kvMethod: "kvGetResponse",
   promoteLabel: "[CFCacheStore] promoteResponseToL1",
+  // Never read: the document returns before the body read.
+  staleLabel: "getResponse",
+  rejectsReservedKeys: false,
   validate: (e) =>
     typeof e.b === "string" &&
     typeof e.st === "number" &&
@@ -639,12 +693,24 @@ const RESPONSE_READ: CFReadFamily<
       shouldRevalidate,
     };
   },
-  // `hd` is client-facing: promoteToL1 re-attaches the internal headers.
-  toL1: (e) => ({
-    body: base64ToBuffer(e.b),
-    headers: e.hd,
-    init: { status: e.st, statusText: e.stx },
-  }),
+  // `hd` is client-facing: the internal headers are re-attached and the
+  // author's Cache-Control is stashed for toClientResponse, as putResponse does.
+  toL1: (e, cacheControl, tagHeaders) => {
+    const headers = new Headers(e.hd);
+    const originalCacheControl = headers.get("Cache-Control");
+    if (originalCacheControl !== null) {
+      headers.set(CACHE_ORIG_CC_HEADER, originalCacheControl);
+    }
+    headers.set("Cache-Control", cacheControl);
+    headers.set(CACHE_STALE_AT_HEADER, String(e.s));
+    headers.set(CACHE_EXPIRES_AT_HEADER, String(e.e));
+    setTagHeaders(headers, tagHeaders);
+    return new Response(base64ToBuffer(e.b), {
+      status: e.st,
+      statusText: e.stx,
+      headers,
+    });
+  },
 };
 
 // ============================================================================
@@ -1266,8 +1332,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Get cached entry data by key (readL1). On L1 miss, falls back to KV (L2)
    * if configured; KV hits are promoted to L1 in the background.
    */
-  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
-    if (this.isReservedSegmentKey(key, "cache-read")) return null;
+  get(key: string): Promise<CacheGetResult | null | CacheReadError> {
     return this.readL1(key, SEGMENT_READ);
   }
 
@@ -1292,7 +1357,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * - If already REVALIDATING (and recent), returns shouldRevalidate: false
    * - If fresh, returns shouldRevalidate: false
    *
-   * Every degraded L1 read falls through to KV (readKv).
+   * Every degraded L1 read falls through to KV (readKv). The family methods
+   * return it unwrapped: an async wrapper adds two promises and two microtask
+   * ticks to every read.
    * @internal
    */
   private async readL1<
@@ -1300,6 +1367,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     V,
     Err extends CacheReadError | null,
   >(key: string, f: CFReadFamily<E, unknown, V, Err>): Promise<V | null | Err> {
+    if (f.rejectsReservedKeys && this.isReservedSegmentKey(key, "cache-read"))
+      return null;
     const debug = this.debugSink(f.debugOp, key);
     try {
       const cache = await this.getCache();
@@ -1447,7 +1516,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
             cache,
             request,
             error,
-            shouldRevalidate ? (f.staleLabel ?? f.debugOp) : f.debugOp,
+            shouldRevalidate ? f.staleLabel : f.debugOp,
             () => this.readKv(key, f),
           );
         return this.readKv(key, f, true);
@@ -1598,7 +1667,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Its body streams to the client unread, outside the debug surface. Falls
    * back to KV (L2) on L1 miss.
    */
-  async getResponse(
+  getResponse(
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
     return this.readL1(key, RESPONSE_READ);
@@ -1691,7 +1760,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // toClientResponse before serving.
       headers.set(CACHE_EXPIRES_AT_HEADER, String(staleAt + swrWindow * 1000));
       // Internal tag headers (stripped by toClientResponse before serving).
-      this.setTagHeaders(headers, tags, taggedAt);
+      setTagHeaders(headers, this.tagHeaderEntries(tags, taggedAt));
 
       const toCache = new Response(l1Body, {
         status: response.status,
@@ -1766,7 +1835,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Follows the same SWR pattern as get() for segment caching (readL1).
    * Falls back to KV (L2) on L1 miss.
    */
-  async getItem(key: string): Promise<CacheItemResult | null> {
+  getItem(key: string): Promise<CacheItemResult | null> {
     return this.readL1(key, ITEM_READ);
   }
 
@@ -3055,27 +3124,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     return true;
   }
 
-  /**
-   * Merge the internal tag headers onto an existing Headers instance. The
-   * from-scratch paths spread tagHeaderEntries() into an object-literal init;
-   * the document put/promote paths build a Headers first, so they .set() each
-   * entry instead — except `Cache-Tag`, which is APPENDED: a document author
-   * may have set their own Cache-Tag, and clobbering it would break their CDN
-   * purging. Append produces the comma-merged list CF expects.
-   */
-  private setTagHeaders(
-    headers: Headers,
-    tags: string[] | undefined,
-    taggedAt: number | undefined,
-  ): void {
-    for (const [name, value] of Object.entries(
-      this.tagHeaderEntries(tags, taggedAt),
-    )) {
-      if (name === "Cache-Tag") headers.append(name, value);
-      else headers.set(name, value);
-    }
-  }
-
   /** Read an entry's tags/taggedAt back from its headers. */
   private readTagInfo(headers: Headers): {
     tags?: string[];
@@ -3945,8 +3993,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * Promote a KV hit to L1 in the background, under its remaining ttl, with
    * its deadlines (so a promoted entry that later goes stale re-puts with the
    * correct remaining ttl, see set()) and its tags (so it stays
-   * tag-invalidatable). The document's own Cache-Control is stashed for
-   * toClientResponse, as putResponse does.
+   * tag-invalidatable). The family builds the entry (toL1).
    * @internal
    */
   private promoteToL1<E extends KVDeadlines>(
@@ -3966,23 +4013,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           );
           const cache = await this.getCache();
           const request = this.keyToRequest(f.prefix + key, f.version);
-          const entry = f.toL1(envelope);
-          const headers = new Headers(entry.headers);
-          const originalCacheControl = headers.get("Cache-Control");
-          if (originalCacheControl !== null) {
-            headers.set(CACHE_ORIG_CC_HEADER, originalCacheControl);
-          }
-          headers.set("Cache-Control", `public, max-age=${remainingTtl}`);
-          headers.set(CACHE_STALE_AT_HEADER, String(envelope.s));
-          headers.set(CACHE_EXPIRES_AT_HEADER, String(envelope.e));
-          // A JSON entry is marked HIT as set() marks it; a document never is.
-          if (f.family !== "response") headers.set(CACHE_STATUS_HEADER, "HIT");
           const { tags, taggedAt } = f.tags(envelope);
-          this.setTagHeaders(headers, tags, taggedAt);
-
           await cache.put(
             request,
-            new Response(entry.body, { ...entry.init, headers }),
+            f.toL1(
+              envelope,
+              `public, max-age=${remainingTtl}`,
+              this.tagHeaderEntries(tags, taggedAt),
+            ),
           );
         },
         "cache-write",
