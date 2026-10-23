@@ -143,27 +143,6 @@
       "packages/rangojs-router/src/vite/__tests__/dev-discovery-recovery.test.ts": 2
     },
     "rsc-param-literal": {
-      "packages/rangojs-router/src/browser/connection-warmup.ts": 1,
-      "packages/rangojs-router/src/browser/history-state.ts": 1,
-      "packages/rangojs-router/src/browser/navigation-client.ts": 5,
-      "packages/rangojs-router/src/browser/prefetch/cache.ts": 1,
-      "packages/rangojs-router/src/browser/prefetch/fetch.ts": 5,
-      "packages/rangojs-router/src/browser/prefetch/queue.ts": 1,
-      "packages/rangojs-router/src/browser/server-action-bridge.ts": 5,
-      "packages/rangojs-router/src/cache/cache-scope.ts": 2,
-      "packages/rangojs-router/src/cache/document-cache.ts": 5,
-      "packages/rangojs-router/src/prefetch-markers.ts": 2,
-      "packages/rangojs-router/src/router/navigation-snapshot.ts": 2,
-      "packages/rangojs-router/src/router/request-classification.ts": 7,
-      "packages/rangojs-router/src/rsc/handler.ts": 10,
-      "packages/rangojs-router/src/rsc/loader-fetch.ts": 4,
-      "packages/rangojs-router/src/rsc/response-route-handler.ts": 1,
-      "packages/rangojs-router/src/rsc/rewrite-passes.ts": 1,
-      "packages/rangojs-router/src/rsc/shell-serve.ts": 1,
-      "packages/rangojs-router/src/rsc/ssr-setup.ts": 4,
-      "packages/rangojs-router/src/testing/dispatch.ts": 2,
-      "packages/rangojs-router/src/testing/e2e/page-helpers.ts": 1,
-      "packages/rangojs-router/src/testing/serve-shell-request.ts": 6,
       "packages/rangojs-router/src/use-loader.tsx": 4
     },
     "browser-import-into-server": {

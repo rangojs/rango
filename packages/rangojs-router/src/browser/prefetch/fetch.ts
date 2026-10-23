@@ -38,6 +38,7 @@ import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../../segment-fragments.js";
 import { PREFETCH_HEADER } from "../../prefetch-markers.js";
 import type { RscPayload } from "../types.js";
 import { getRegisteredStore } from "../navigation-store-handle.js";
+import { writePartialParams } from "../wire-protocol.js";
 
 /**
  * Decoder injected at app startup (see setPrefetchDecoder). This is
@@ -153,24 +154,15 @@ function buildPrefetchUrl(
   if (targetUrl.origin !== window.location.origin) {
     return null;
   }
-  targetUrl.searchParams.set("_rsc_partial", "true");
-  if (segmentIds.length > 0) {
-    targetUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
-  }
-  if (version) {
-    targetUrl.searchParams.set("_rsc_v", version);
-  }
-  if (routerId) {
-    targetUrl.searchParams.set("_rsc_rid", routerId);
-  }
   // The page's rewrite target, so the server diffs against the route that
   // rendered it, as for the navigation.
-  const rewriteTarget =
-    getRegisteredStore()?.getHistoryEntryMemory()?.rewriteTarget;
-  if (rewriteTarget) {
-    targetUrl.searchParams.set("_rsc_rt", rewriteTarget);
-  }
-  return targetUrl;
+  return writePartialParams(targetUrl, {
+    segmentIds,
+    emptySegments: "omit",
+    version,
+    routerId,
+    rewriteTarget: getRegisteredStore()?.getHistoryEntryMemory()?.rewriteTarget,
+  });
 }
 
 /**

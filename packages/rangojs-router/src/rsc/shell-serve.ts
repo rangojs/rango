@@ -36,6 +36,7 @@ import {
   warnOnce,
 } from "./shell-capture-constants.js";
 import { routerKeyPrefix } from "../cache/cache-key-utils.js";
+import { WIRE } from "../wire-params.js";
 
 export {
   PPR_REPLAY_STATUS_HEADER,
@@ -128,19 +129,13 @@ export function resolvePprConfig(
 }
 
 /**
- * The forced-MISS query marker. A document HIT that cannot finish its tail
- * reloads the page with it (shellReloadScript); the serve gate renders a
- * request carrying it on axis 1, with no shell read and no capture, so the
- * reload can never be a HIT that degrades again. The handler drops it from
- * the request on entry (withoutShellMissMarker) and keeps only the flag
- * (RequestContext._shellForcedMiss), so nothing else sees it.
- */
-export const SHELL_MISS_PARAM: string = "_rsc_shell";
-
-/**
- * The request without the forced-MISS marker, or undefined when it carries
- * none. The handler calls it before anything reads the request: left in, the
- * marker reached `ctx.request.url`, `originalUrl`, middleware, and the SSR
+ * The request without the forced-MISS marker (`WIRE.shellMiss`), or
+ * undefined when it carries none. A document HIT that cannot finish its tail
+ * reloads the page with the marker (shellReloadScript); the serve gate
+ * renders a request carrying it on axis 1, with no shell read and no
+ * capture, so the reload can never be a HIT that degrades again. The handler
+ * calls this on entry, before anything reads the request, and keeps only the
+ * flag (RequestContext._shellForcedMiss): left in, the marker reached `ctx.request.url`, `originalUrl`, middleware, and the SSR
  * search seed (so `useSearchParams` rendered it), and a `"use cache"` key
  * built from the request URL was never read again. GET and HEAD only: the
  * reload is a navigation, and a request with a body cannot be re-created
@@ -148,11 +143,11 @@ export const SHELL_MISS_PARAM: string = "_rsc_shell";
  * other request.
  */
 export function withoutShellMissMarker(request: Request): Request | undefined {
-  if (!request.url.includes(SHELL_MISS_PARAM)) return undefined;
+  if (!request.url.includes(WIRE.shellMiss)) return undefined;
   if (request.method !== "GET" && request.method !== "HEAD") return undefined;
   const url = new URL(request.url);
-  if (!url.searchParams.has(SHELL_MISS_PARAM)) return undefined;
-  url.searchParams.delete(SHELL_MISS_PARAM);
+  if (!url.searchParams.has(WIRE.shellMiss)) return undefined;
+  url.searchParams.delete(WIRE.shellMiss);
   return new Request(url, request);
 }
 
@@ -168,8 +163,8 @@ export function withoutShellMissMarker(request: Request): Request | undefined {
 export function shellReloadScript(): string {
   return inlineShellScript(
     "(function(){var u=new URL(location.href);" +
-      `if(u.searchParams.has(${JSON.stringify(SHELL_MISS_PARAM)}))return;` +
-      `u.searchParams.set(${JSON.stringify(SHELL_MISS_PARAM)},"miss");` +
+      `if(u.searchParams.has(${JSON.stringify(WIRE.shellMiss)}))return;` +
+      `u.searchParams.set(${JSON.stringify(WIRE.shellMiss)},"miss");` +
       "try{window.stop()}catch(e){}location.replace(u.href)})()",
   );
 }

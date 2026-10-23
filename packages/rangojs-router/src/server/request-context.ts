@@ -403,9 +403,9 @@ export interface RequestContext<
 
   /**
    * @internal The request carried the forced-MISS reload marker
-   * (shell-serve.ts SHELL_MISS_PARAM). The handler strips the marker from the
-   * request on entry and sets this; the shell gate renders the request like a
-   * cache miss.
+   * (`WIRE.shellMiss`). The handler strips the marker from the request on
+   * entry (shell-serve.ts withoutShellMissMarker) and sets this; the shell
+   * gate renders the request like a cache miss.
    */
   _shellForcedMiss?: true;
 

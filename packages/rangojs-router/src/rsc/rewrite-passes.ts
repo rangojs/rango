@@ -26,6 +26,7 @@ import {
   recordRewriteHop,
   recordRewriteShell,
 } from "../server/rewrite-trail.js";
+import { WIRE } from "../wire-params.js";
 
 /** Response header naming the route path a rewritten request rendered. */
 export const REWRITE_HEADER = "x-rango-rewrite";
@@ -138,7 +139,7 @@ export function applyRewrite(
 ): RewritePass {
   // A loader fetch first: `load()` with a body is a POST, and its refusal
   // is the loader fetch's.
-  if (reqCtx.originalUrl.searchParams.has("_rsc_loader")) {
+  if (reqCtx.originalUrl.searchParams.has(WIRE.loader)) {
     throw rewriteNotSupported(rewrite, "loader-fetch");
   }
   if (passRequest.method !== "GET" && passRequest.method !== "HEAD") {

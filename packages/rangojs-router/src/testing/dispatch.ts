@@ -157,6 +157,7 @@ import {
 } from "../router/timeout.js";
 import type { OnTimeoutCallback, ResolvedTimeouts } from "../router/timeout.js";
 import { applyStreamIdleTimeout } from "../rsc/stream-idle.js";
+import { WIRE } from "../wire-params.js";
 
 /**
  * The internal subset of the router surface dispatch depends on. The public
@@ -484,8 +485,8 @@ export async function dispatch<TEnv = any>(
     search?: Record<string, unknown>,
   ) => string;
 
-  const isPartial = url.searchParams.has("_rsc_partial");
-  const isAction = url.searchParams.has("_rsc_action");
+  const isPartial = url.searchParams.has(WIRE.partial);
+  const isAction = url.searchParams.has(WIRE.action);
 
   // Telemetry: mirror the router's match-transaction lifecycle onto the
   // configured sink so a consumer can unit-test createRouter({ telemetry })

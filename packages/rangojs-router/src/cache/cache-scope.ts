@@ -54,6 +54,7 @@ import {
 import type { RequestContext } from "../server/request-context.js";
 import { runIdentityExempt } from "./cache-exec-scope.js";
 import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
+import { WIRE } from "../wire-params.js";
 
 /**
  * Narrow the request's route-record window (RequestContext._routeRecordWindow)
@@ -130,7 +131,7 @@ function getDefaultRouteCacheKey(
   prefixOverride?: "doc",
 ): string {
   const ctx = getRequestContext();
-  const isPartial = ctx?.originalUrl?.searchParams.has("_rsc_partial") ?? false;
+  const isPartial = ctx?.originalUrl?.searchParams.has(WIRE.partial) ?? false;
   const searchParams = ctx?.url.searchParams;
   const host = ctx?.url.host ?? "localhost";
 
@@ -1022,7 +1023,7 @@ export class CacheScope {
     recordRequestTags(tags, requestCtx);
 
     // Check if this is a partial request (navigation) vs document request
-    const isPartial = requestCtx.originalUrl.searchParams.has("_rsc_partial");
+    const isPartial = requestCtx.originalUrl.searchParams.has(WIRE.partial);
 
     if (INTERNAL_RANGO_DEBUG) {
       debugCacheLog(
