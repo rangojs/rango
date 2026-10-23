@@ -64,11 +64,29 @@ export const urlpatterns = urls(({ path, layout, intercept, loader, loading }) =
 
 ## Navigation Behavior
 
-| Navigation Type                | What Renders                                         |
-| ------------------------------ | ---------------------------------------------------- |
-| Click link `/shop/product/abc` | `<ProductModal />` in `@modal`, background preserved |
-| Direct URL `/shop/product/abc` | Full `<ProductPage />` page                          |
-| Browser back                   | Close modal, restore previous state                  |
+| Navigation Type                                       | What Renders                                         |
+| ----------------------------------------------------- | ---------------------------------------------------- |
+| Click link `/shop/product/abc`                        | `<ProductModal />` in `@modal`, background preserved |
+| Direct URL `/shop/product/abc`, or a reload           | Full `<ProductPage />` page                          |
+| Back from the open intercept                          | The intercept closes; the source page stays          |
+| Back/Forward onto the intercept's entry               | The intercept over its source page                   |
+| The same, uncached, from a page other than the source | Full `<ProductPage />` page, as a document load      |
+
+Only a client navigation from the source page shows an intercept. Back/Forward
+restores an intercept's entry from the history cache (`initBrowserApp`'s
+`storeOptions.cacheSize`, 20 by default), or fetches it when its source page is
+on screen. From any other page (after a reload, or once the entry was evicted)
+it costs a full page load, from the top, which drops `clearOnReload` location
+state like any document load, and the entry is a full page from then on. In
+dev, an edit that changes the app version clears the history cache, so the
+next Back/Forward onto an intercept entry takes that path.
+
+A server action on `/shop` that calls `redirect("/shop/product/abc")` opens the
+intercept too, and so does a link from `/shop` to a route that redirects
+there. The page under it is the browser's copy, as on a link click: it
+keeps its last render, so it shows its pre-action data until the intercept
+closes. An action submitted from inside an open intercept leaves that page the
+same way.
 
 ## Intercept with Layout
 
@@ -145,6 +163,18 @@ action from the modal re-runs only the loaders whose predicate says so, and
 the modal keeps the data of the others, as it does on a link to another
 intercepted route that reads the same loader. In `clientUrls()` the predicate
 runs on the server too (`/client-urls`).
+
+The page under an intercept does not re-render while the intercept is on
+screen. An action that settles after the intercept opened (one sent from the
+page underneath just before the user opened it) runs no background
+revalidation. The page underneath keeps its data until the user leaves the
+intercept. Leaving it with Back revalidates that page as stale (the
+action marked the history cache stale): loaders that opt in with
+`revalidate(({ stale }) => stale)` re-run. Going Back or Forward out of the
+intercept while an action from it is in flight does not abort the action:
+`useAction()` gets its result, and the page underneath gets the background
+revalidation (`/server-actions`, "When the user navigates while the action
+runs").
 
 A `revalidate()` placed directly in the intercept's `use()` (or returned from
 its handler's `.use`) throws at definition time. Attach it to the loader:

@@ -203,7 +203,34 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // behind a generation and history-key guard, and scroll-restoration.ts
 // restores in that commit. None of it can load lazily: it runs in every
 // navigation's commit and every popstate.
-const ROUTER_CHUNK_GZIP_MAX = 49.375 * 1024;
+//
+// Raised 49.375KB -> 49.5KB on 2026-10-22 for rango-t126, measured on
+// cloudflare-basic from main d824ba672 50517B -> 50634B (+117B gzip): an
+// intercept answer to a request that held no segments keeps the page under
+// the slot (browser/intercept-utils.ts wholeInterceptMatched, applied where
+// partial-update.ts unpacks every partial answer). It cannot load lazily: it
+// runs on every navigation and action response. One 128B step, the owner's
+// call.
+//
+// Raised 49.5KB -> 50KB on 2026-10-22 for rango-t108, measured on
+// cloudflare-basic with main d824ba672's browser source 50516B -> 50782B
+// (+266B gzip): an action that did not land on the page on screen owes it one
+// follow-up revalidation, which the batch's last exit runs after the
+// navigation the user started settles, its stream and fill included
+// (server-action-bridge.ts followUp, NavigationEntry.settled), never twice at
+// once and never over a newer action's commit; and a prefetch is served
+// during an action's flight. None of it can load lazily: it runs at every
+// action's exit, and the action bridge is not split (AGENTS.md Bundle
+// hygiene). Rounded up to 50KB, the owner's call (rango-t108 D4, then the
+// review fixes).
+//
+// Within 50KB for rango-t127, measured on cloudflare-basic from main
+// d824ba672 50517B -> 50581B (+64B gzip): a Back/Forward onto an intercept
+// entry the client no longer holds loads it as a document (navigation-bridge.ts
+// handlePopstate), and a document load drops the entry's intercept marks
+// (history-state.ts clearLocationStateOnDocumentLoad). Both run on every
+// popstate and every boot, so neither can load lazily.
+const ROUTER_CHUNK_GZIP_MAX = 50 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

@@ -7,7 +7,11 @@ import type {
   UpdateSubscriber,
 } from "./types.js";
 import { addTransitionType, createPartialUpdater } from "./partial-update.js";
-import { enterActionFence, exitActionFence } from "./action-fence.js";
+import {
+  enterActionFence,
+  exitActionFence,
+  isActionFenceActive,
+} from "./action-fence.js";
 import { KEEP_CACHE_HEADER } from "./cookie-name.js";
 import { createNavigationTransaction } from "./navigation-transaction.js";
 import {
@@ -16,7 +20,12 @@ import {
 } from "./segment-reconciler.js";
 import { startTransition } from "react";
 import { liveHandleDataForCache } from "./navigation-store.js";
-import type { EventController, ActionHandle } from "./event-controller.js";
+import type {
+  EventController,
+  ActionHandle,
+  NavigationEntry,
+  NavigationHandle,
+} from "./event-controller.js";
 import {
   toNetworkError,
   emitNetworkError,
@@ -190,30 +199,153 @@ export function createServerActionBridge(
       action,
     });
 
-  /**
-   * Refetch current route via a navigation transaction.
-   * Encapsulates the repeated pattern of creating a navTx + fetchPartialUpdate
-   * used by navigated-away, hmr-missing, and consolidation-needed scenarios.
-   * Resolves with the error of a loader that threw on the refetch.
-   */
-  async function refetchRoute(opts?: {
+  type RefetchOptions = {
     segments?: string[];
     interceptSourceUrl?: string | null;
     actionId?: string;
     /** transition({ when }) `action` fields for the refetch commit. */
     action?: TransitionWhenActionInput;
-  }): Promise<Error | undefined> {
-    const src = opts?.interceptSourceUrl ?? null;
+  };
+
+  /** The follow-up's transition({ when }) fields: the last owing action's. */
+  type FollowUp = Pick<RefetchOptions, "actionId" | "action">;
+
+  /**
+   * A navigation the user started (a click, Back/Forward, refresh(), an
+   * action's redirect) that a refetch may supersede: not committed yet, or
+   * committed with its transaction (a `prefetch: false` fill) or its stream
+   * still open (NavigationEntry.settled). A refetch never starts while one
+   * is open: its startNavigation would abort it, and with it the fill. A
+   * background revalidation (skipLoadingState: the follow-up, a repair, a
+   * Back/Forward entry's SWR) is not one.
+   */
+  const unsettledUserNavigation = (): NavigationEntry | undefined => {
+    const pending = eventController.getUnsettledNavigation();
+    return pending && !pending.options?.skipLoadingState ? pending : undefined;
+  };
+
+  /**
+   * A navigation the user started that may commit data read before an
+   * action's write: it has not committed yet. One that committed and only
+   * streams does not count: the action's own response re-rendered its page.
+   */
+  const pendingUserNavigation = (): boolean => {
+    const pending = eventController.getCurrentNavigation();
+    return !!pending && !pending.options?.skipLoadingState;
+  };
+
+  /**
+   * The follow-up the page on screen is owed (finalizeAction sets it, a
+   * redirect clears it as it starts, followUp() takes it). Closure state of
+   * this bridge, as are the three below: no hook reads it, and the store
+   * stays the one source of truth for what hooks render (AGENTS.md Hard
+   * rule 8).
+   */
+  let owed: FollowUp | undefined;
+  /** An action of the batch wrote (R1 applied); reset when the fence drops. */
+  let batchWrote = false;
+  /**
+   * Follow-ups started so far. Only the newest one runs again when it ends
+   * left: a newer one started after it, so its request read every write so
+   * far. A left follow-up's response still arrives (its request is not tied
+   * to its signal), and re-owing from it would start one that leaves the
+   * newer one, whose late answer would do the same, without end.
+   */
+  let followUpsStarted = 0;
+  /** The newest follow-up, until it ends: leaveFollowUp() aborts it. */
+  let followUpRunning: { handle: NavigationHandle; due: FollowUp } | undefined;
+
+  /**
+   * The follow-up revalidation: the rules are R1-R7 in
+   * docs/internal/execution-model.md. Once the batch's last action exited,
+   * the page on screen that missed a write is refetched once, whole (no
+   * segments held, so every loader re-runs), in the action lane (storeOnly,
+   * skipLoadingState: useNavigation() stays idle).
+   *
+   * - Never over an intercept: a request holding no segments drops the page
+   *   under it (match-result.ts buildMatchResult). Checked when it would run,
+   *   against the page then on screen; the debt is dropped there.
+   * - Never supersedes a navigation the user started (dc-t114): it waits for
+   *   NavigationEntry.settled, then looks again. A navigation that failed
+   *   keeps its error on screen, and the debt is dropped.
+   * - Runs again when it is left before its commit (a navigation, or an action
+   *   that started: leaveFollowUp), for the page then on screen.
+   */
+  function followUp(): void {
+    if (!owed || isActionFenceActive()) return;
+    const pending = unsettledUserNavigation();
+    if (pending) {
+      void pending.settled.then((committed) => {
+        if (!committed && !pending.abort.signal.aborted) owed = undefined;
+        followUp();
+      });
+      return;
+    }
+    const due = owed;
+    owed = undefined;
+    if (store.getInterceptSourceUrl()) return;
+    const generation = ++followUpsStarted;
+    refetchRoute(due, {
+      started: (handle) => (followUpRunning = { handle, due }),
+      ended: (left) => {
+        if (generation !== followUpsStarted) return;
+        followUpRunning = undefined;
+        if (!left) return;
+        owed ??= due;
+        followUp();
+      },
+    }).catch((error) => {
+      if (isBackgroundSuppressible(error)) return;
+      console.error("[Browser] Background revalidation failed:", error);
+    });
+  }
+
+  /**
+   * R6: an action that starts while the follow-up has not committed leaves
+   * it, and the batch's end owes it again. Its request may predate that
+   * action's write, and its commit could land after the action's own,
+   * moving data on screen backwards (dc-t110). Through the controller, so
+   * the navigation it started stops being current.
+   */
+  function leaveFollowUp(): void {
+    const running = followUpRunning;
+    const current = eventController.getCurrentNavigation();
+    if (!running || current?.abort !== running.handle.abort) return;
+    owed ??= running.due;
+    eventController.abortNavigation(true);
+  }
+
+  /**
+   * Refetch the page on screen through a navigation transaction in the
+   * action lane: the follow-up, and the hmr-missing and consolidation-needed
+   * repairs. Resolves with whether it started and the error of a loader
+   * that threw on it. Never starts while a navigation the user started may
+   * be superseded (unsettledUserNavigation): its startNavigation would
+   * abort it (dc-t114). A repair that cannot start is owed at the batch's
+   * end instead (finalizeAction). `run` (the follow-up's) is handed the
+   * refetch's navigation, and told once whether it ended left before its
+   * commit.
+   */
+  async function refetchRoute(
+    opts: RefetchOptions = {},
+    run?: {
+      started(handle: NavigationHandle): void;
+      ended(left: boolean): void;
+    },
+  ): Promise<{ started: boolean; error?: Error }> {
+    if (unsettledUserNavigation()) return { started: false };
+    const src = opts.interceptSourceUrl ?? null;
     const navTx = createNavigationTransaction(
       store,
       eventController,
       window.location.href,
       { replace: true, skipLoadingState: true },
     );
+    run?.started(navTx.handle);
     try {
-      return await fetchPartialUpdate(
+      const error = await fetchPartialUpdate(
         window.location.href,
-        opts?.segments ?? [],
+        opts.segments ?? [],
         false,
         navTx.handle.signal,
         navTx.with({
@@ -224,12 +356,14 @@ export function createServerActionBridge(
         {
           type: "action" as const,
           ...(src ? { interceptSourceUrl: src } : {}),
-          ...(opts?.actionId !== undefined ? { actionId: opts.actionId } : {}),
-          ...(opts?.action ? { action: opts.action } : {}),
+          ...(opts.actionId !== undefined ? { actionId: opts.actionId } : {}),
+          ...(opts.action ? { action: opts.action } : {}),
         },
       );
+      return { started: true, error };
     } finally {
       navTx[Symbol.dispose]();
+      run?.ended(navTx.handle.signal.aborted && !navTx.handle.completed);
     }
   }
 
@@ -244,7 +378,18 @@ export function createServerActionBridge(
       if (tx) browserDebugLog(tx, msg, details);
     };
 
+    leaveFollowUp();
     const locationKey = window.history.state?.key;
+    // Capture URL pathname at action start to detect navigation during action
+    // Must use window.location (not store.path) because intercepts change URL
+    // without changing store.path (e.g., /kanban -> /kanban/card/1)
+    const actionStartPathname = window.location.pathname;
+    // The page the action was sent from is no longer on screen: a navigation
+    // committed since it started (the classifyActionOutcome rule). Its
+    // response then commits nothing, and its exit owes the follow-up.
+    const navigatedSince = (): boolean =>
+      window.location.pathname !== actionStartPathname ||
+      window.history.state?.key !== locationKey;
     log("action start", { id, argsCount: args.length });
 
     // Start action in event controller - handles lifecycle tracking. The
@@ -272,6 +417,23 @@ export function createServerActionBridge(
     // its own latch. Latched so the finally AND the early SPA-redirect returns
     // (whose Flight stream never settles) can both call it safely.
     let actionFinalized = false;
+    // Set where the action navigates to its redirect's target.
+    let redirected = false;
+    // Set where its repair refetch could not start (refetchRoute).
+    let repairOwed = false;
+    // R5: the redirect fetches its page after every write so far, so the
+    // batch's debt is cleared as it starts, not at the action's exit: a
+    // sibling that lands during its navigation owes for the page it commits.
+    const startRedirect = (): void => {
+      redirected = true;
+      owed = undefined;
+    };
+    // transition({ when }) `action` for this action's commit, whichever lane
+    // applies it (its own, a repair refetch, or the follow-up).
+    let whenAction: TransitionWhenActionInput = {
+      id,
+      formData: findActionFormData(args),
+    };
     // skipInvalidation: the version-mismatch reload terminal released nothing
     // server-side, so it releases the fence without invalidating.
     const finalizeAction = (skipInvalidation = false): void => {
@@ -284,9 +446,32 @@ export function createServerActionBridge(
         // marking the cache stale + broadcasting cross-tab would be spurious.
         if (responseReceived && !keepCache && !skipInvalidation) {
           store.markCacheAsStaleAndBroadcast();
+          batchWrote = true;
+          // The write may be missing from the page on screen: that page is
+          // not the one the response re-rendered, or a navigation the user
+          // started has not committed and its request may predate the write.
+          // A navigation that committed and only streams owes nothing: this
+          // response re-rendered its page. A later land never clears this:
+          // its request was read after its own write, not necessarily after
+          // this one. A redirect owes nothing: its navigation cleared the
+          // debt (startRedirect).
+          if (!redirected && (navigatedSince() || pendingUserNavigation())) {
+            owed = { actionId: id, action: whenAction };
+          }
+        }
+        // A repair that could not start is owed at the batch's end when an
+        // action of the batch wrote. The repair runs whatever this action's
+        // keepClientCache(), so a keep action that lands last discharges a
+        // directive-free sibling's consolidation; a lone keep action owes
+        // nothing.
+        if (repairOwed && batchWrote) {
+          owed = { actionId: id, action: whenAction };
         }
       } finally {
         exitActionFence();
+        if (!isActionFenceActive()) batchWrote = false;
+        // The batch's last exit runs it (followUp returns while the fence is up).
+        followUp();
       }
     };
     try {
@@ -301,11 +486,6 @@ export function createServerActionBridge(
 
       // Create temporary references for serialization
       const temporaryReferences = deps.createTemporaryReferenceSet();
-
-      // Capture URL pathname at action start to detect navigation during action
-      // Must use window.location (not store.path) because intercepts change URL
-      // without changing store.path (e.g., /kanban -> /kanban/card/1)
-      const actionStartPathname = window.location.pathname;
 
       // Build action request URL with current segments
       const url = new URL(window.location.href);
@@ -411,6 +591,7 @@ export function createServerActionBridge(
         if (redirect && redirect !== "blocked" && !handle.signal.aborted) {
           log("action simple redirect", { url: redirect.url });
           handle.complete(undefined);
+          startRedirect();
           // This path returns a never-settling promise, so the finally never
           // runs: invalidate + release the fence here (the mutation committed
           // and we're navigating away). Latched, so the finally is a no-op.
@@ -529,7 +710,10 @@ export function createServerActionBridge(
               : "blocked action redirect payload",
             { url: redirect.url },
           );
-        } else if (redirect.external) {
+          return returnValue?.data;
+        }
+        startRedirect();
+        if (redirect.external) {
           log("external action redirect", { url: target });
           window.location.assign(target);
         } else {
@@ -582,15 +766,14 @@ export function createServerActionBridge(
 
         // transition({ when }) decides the error-boundary commit too, with
         // `action.error` set.
+        whenAction = {
+          ...whenAction,
+          error: returnValue && !returnValue.ok ? returnValue.data : undefined,
+        };
         const errorGatedOff = decideActionGatedOff(
           errorResult.segments,
           metadata,
-          {
-            id,
-            formData: findActionFormData(args),
-            error:
-              returnValue && !returnValue.ok ? returnValue.data : undefined,
-          },
+          whenAction,
         );
 
         // Render the full tree with error segment merged with parent layouts
@@ -603,19 +786,11 @@ export function createServerActionBridge(
               : undefined,
         });
 
-        // Re-check route stability after async renderSegments — user may have
-        // navigated away while the error tree was being prepared.
-        if (window.location.pathname !== actionStartPathname) {
+        // The page the action was sent from left the screen, during the
+        // flight or while the error tree rendered: the boundary is not shown,
+        // and the action's exit owes the page on screen the follow-up.
+        if (navigatedSince() || store.getHistoryKey() !== currentKey) {
           log("user navigated during error render, skipping");
-          if (returnValue && !returnValue.ok) {
-            throw returnValue.data;
-          }
-          handle.complete(undefined);
-          return undefined;
-        }
-        const currentKeyNow = store.getHistoryKey();
-        if (currentKeyNow !== currentKey) {
-          log("history key changed during error render, skipping cache update");
           if (returnValue && !returnValue.ok) {
             throw returnValue.data;
           }
@@ -709,6 +884,7 @@ export function createServerActionBridge(
       let revalidationError: Error | undefined;
 
       if (returnValue && !returnValue.ok) {
+        whenAction = { ...whenAction, error: returnValue.data };
         handle.fail(returnValue.data);
         throw returnValue.data;
       }
@@ -725,7 +901,6 @@ export function createServerActionBridge(
         currentLocationKey: window.history.state?.key,
         reconciledSegmentCount: fullSegments.length,
         matchedCount: matched.length,
-        currentInterceptSource: store.getInterceptSourceUrl(),
       });
 
       // Apply server-set location state exhaustively here, as a successful-
@@ -745,51 +920,17 @@ export function createServerActionBridge(
           eventController,
         );
       }
-      // transition({ when }) `action` for this action's commit, whichever
-      // lane applies it (normal, or a refetch below).
-      const whenAction: TransitionWhenActionInput = {
-        id,
-        formData: findActionFormData(args),
-        result: returnData,
-      };
+      whenAction = { ...whenAction, result: returnData };
 
       switch (scenario.type) {
         case "navigated-away": {
           log("user navigated away during action", {
             from: actionStartPathname,
             to: window.location.pathname,
-            historyKeyChanged: scenario.historyKeyChanged,
           });
           // Clear concurrent action tracking - don't consolidate for old route's segments
           handle.clearConsolidation();
-
-          if (scenario.historyKeyChanged) {
-            // Invalidation is deferred to finalizeAction(); here we only trigger
-            // the revalidation refetch of the new route (suppressed on keep).
-            if (!scenario.onInterceptRoute && !keepCache) {
-              refetchRoute({ actionId: id, action: whenAction }).catch(
-                (error) => {
-                  if (isBackgroundSuppressible(error)) return;
-                  console.error(
-                    "[Browser] Background revalidation failed:",
-                    error,
-                  );
-                },
-              );
-            }
-            break;
-          }
-
-          // Same history key but different pathname - safe to refetch current
-          // route. Invalidation is deferred to finalizeAction(); here we only
-          // trigger the revalidation refetch (suppressed on keep).
-          if (!keepCache) {
-            revalidationError = await refetchRoute({
-              interceptSourceUrl: store.getInterceptSourceUrl(),
-              actionId: id,
-              action: whenAction,
-            });
-          }
+          // finalizeAction() owes the page on screen the follow-up.
           break;
         }
 
@@ -801,11 +942,13 @@ export function createServerActionBridge(
           // resolving last must discharge a directive-free sibling's repair.
           // See the keep row in docs/design/rango-state-cookie.md (the all-keep
           // edge, and the benign re-mark-stale-after-refetch end-state delta).
-          revalidationError = await refetchRoute({
+          const repair = await refetchRoute({
             interceptSourceUrl,
             actionId: id,
             action: whenAction,
           });
+          revalidationError = repair.error;
+          repairOwed = !repair.started;
           break;
         }
 
@@ -824,12 +967,14 @@ export function createServerActionBridge(
           handle.clearConsolidation();
 
           // Ungated on keepCache, same as hmr-missing above (see the keep row).
-          revalidationError = await refetchRoute({
+          const repair = await refetchRoute({
             segments: segmentsToSend,
             interceptSourceUrl,
             actionId: id,
             action: whenAction,
           });
+          revalidationError = repair.error;
+          repairOwed = !repair.started;
           break;
         }
 

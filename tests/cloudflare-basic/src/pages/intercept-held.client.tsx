@@ -3,7 +3,10 @@
 import type { ReactNode } from "react";
 import { Link, useHandle, useLoader } from "@rangojs/router/client";
 import type { LoaderDefinition } from "@rangojs/router";
-import { interceptHeldAction } from "./intercept-held.actions.js";
+import {
+  interceptHeldAction,
+  interceptHeldRedirectAction,
+} from "./intercept-held.actions.js";
 import {
   InterceptHeldCrumbs,
   InterceptHeldLoader,
@@ -40,6 +43,18 @@ function ActionButton() {
       onClick={() => void interceptHeldAction()}
     >
       Call action
+    </button>
+  );
+}
+
+// On the index page: an action that redirects to an intercepted route.
+export function InterceptHeldRedirectButton() {
+  return (
+    <button
+      data-testid="ih-redirect-to-intercept"
+      onClick={() => void interceptHeldRedirectAction()}
+    >
+      Redirect to an intercepted route
     </button>
   );
 }

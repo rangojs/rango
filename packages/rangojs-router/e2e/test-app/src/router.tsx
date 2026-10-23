@@ -359,6 +359,8 @@ export const router = createRouter<AppEnv>({
   .use("/middleware-test/params/:id", paramsMiddleware)
   // Document cache for the #978 theme routes only (e2e/theme-doc-cache.test.ts).
   .use("/theme/doc-cache/*", createDocumentCacheMiddleware())
+  // And for the stale-request pages (action-follow-up-scenario.ts).
+  .use("/action-stale/cached/*", createDocumentCacheMiddleware())
   // Middleware chain integration test: global layer sets var, header, cookie
   .use("/mw-chain/*", async (ctx, next) => {
     ctx.set("chainGlobal", "from-global");

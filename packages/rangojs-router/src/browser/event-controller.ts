@@ -52,6 +52,18 @@ export interface NavigationEntry {
   phase: NavigationPhase;
   startedAt: number;
   options?: NavigateOptionsInternal & { skipLoadingState?: boolean };
+  /**
+   * Resolves once the navigation has ended: its transaction ended and every
+   * stream it opened closed. True when it committed, false when it ended
+   * without a commit (a failure) or was left (aborted, which settles it at
+   * once). A `prefetch: false` fill holds the transaction open
+   * (partial-update.ts awaits fillHoles before it resolves) and its stream
+   * until the fill's answer streamed, so a waiter never cuts a fill or a
+   * stream short. Only the action bridge's follow-up awaits it
+   * (server-action-bridge.ts followUp); no hook reads it, and settling it
+   * notifies nothing.
+   */
+  settled: Promise<boolean>;
 }
 
 /**
@@ -351,6 +363,12 @@ export interface EventController {
 
   // Direct state access for advanced use
   getCurrentNavigation(): NavigationEntry | null;
+  /**
+   * The newest navigation until it settles (NavigationEntry.settled): before
+   * its commit, and after it while its transaction or a stream is still
+   * open. Null once it settled or was left.
+   */
+  getUnsettledNavigation(): NavigationEntry | null;
   getInflightActions(): Map<string, ActionEntry>;
   /** Whether any concurrent actions have occurred (shared across all handles) */
   hadAnyConcurrentActions(): boolean;
@@ -513,6 +531,9 @@ export function createEventController(
   // links a request to its signal only until then): the navigation stops
   // reading it, and it streams to its end.
   let streamingNavigation: AbortController | null = null;
+  // The newest navigation until it settles (getUnsettledNavigation). Not
+  // derived state: no hook reads it, and moving it notifies nothing.
+  let unsettledNavigation: NavigationEntry | null = null;
 
   const inflightActions = new Map<string, ActionEntry>();
 
@@ -743,19 +764,31 @@ export function createEventController(
     }
 
     const abort = new AbortController();
+    let resolveSettled!: (committed: boolean) => void;
     const entry: NavigationEntry = {
       url,
       abort,
       phase: "fetching",
       startedAt: Date.now(),
       options,
+      settled: new Promise((resolve) => (resolveSettled = resolve)),
     };
+    const settle = (committed: boolean): void => {
+      if (unsettledNavigation === entry) unsettledNavigation = null;
+      resolveSettled(committed);
+    };
+    abort.signal.addEventListener("abort", () => settle(false));
 
     currentNavigation = entry;
+    unsettledNavigation = entry;
     notify();
 
     let completed = false;
+    let disposed = false;
     let openStreams = 0;
+    const settleIfEnded = (): void => {
+      if (disposed && openStreams === 0) settle(completed);
+    };
 
     return {
       abort,
@@ -780,6 +813,7 @@ export function createEventController(
             if (--openStreams === 0 && streamingNavigation === abort) {
               streamingNavigation = null;
             }
+            settleIfEnded();
             notify();
           },
         };
@@ -797,6 +831,8 @@ export function createEventController(
 
       // Disposable: cleanup if not completed (e.g., error thrown)
       [Symbol.dispose]() {
+        disposed = true;
+        settleIfEnded();
         // If aborted by another navigation, don't touch state
         if (abort.signal.aborted) return;
 
@@ -1287,6 +1323,7 @@ export function createEventController(
 
     // Direct access
     getCurrentNavigation: () => currentNavigation,
+    getUnsettledNavigation: () => unsettledNavigation,
     getInflightActions: () => inflightActions,
     hadAnyConcurrentActions: () => hadAnyConcurrentActions,
   };

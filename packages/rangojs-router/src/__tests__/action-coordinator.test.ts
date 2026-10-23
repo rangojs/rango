@@ -34,7 +34,6 @@ function baseInput(
     currentLocationKey: "key1",
     reconciledSegmentCount: 3,
     matchedCount: 3,
-    currentInterceptSource: null,
     ...overrides,
   };
 }
@@ -45,37 +44,16 @@ describe("classifyActionOutcome", () => {
   });
 
   describe("navigated-away scenario", () => {
-    it("detects a changed pathname (keys match -> historyKeyChanged false)", () => {
+    it("detects a changed pathname", () => {
       expect(
         classifyActionOutcome(baseInput({ currentPathname: "/other" })),
-      ).toEqual({
-        type: "navigated-away",
-        historyKeyChanged: false,
-        onInterceptRoute: false,
-      });
+      ).toEqual({ type: "navigated-away" });
     });
 
-    it("detects a changed history key (historyKeyChanged true)", () => {
+    it("detects a changed history key", () => {
       expect(
         classifyActionOutcome(baseInput({ currentLocationKey: "key2" })),
-      ).toEqual({
-        type: "navigated-away",
-        historyKeyChanged: true,
-        onInterceptRoute: false,
-      });
-    });
-
-    it("sets onInterceptRoute when on an intercept route", () => {
-      const result = classifyActionOutcome(
-        baseInput({
-          currentLocationKey: "key2",
-          currentInterceptSource: "/source",
-        }),
-      );
-      expect(result).toMatchObject({
-        type: "navigated-away",
-        onInterceptRoute: true,
-      });
+      ).toEqual({ type: "navigated-away" });
     });
   });
 

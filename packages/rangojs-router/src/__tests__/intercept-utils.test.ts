@@ -5,7 +5,9 @@ import {
   isInterceptSegment,
   splitInterceptSegments,
   hasActiveIntercept,
+  interceptMatched,
   isInterceptOnlyCache,
+  wholeInterceptMatched,
 } from "../browser/intercept-utils";
 
 // ---------------------------------------------------------------------------
@@ -223,6 +225,68 @@ describe("intercept-utils", () => {
         seg("L0R0"),
       ];
       expect(isInterceptOnlyCache(segments)).toBe(true);
+    });
+  });
+
+  describe("interceptMatched", () => {
+    it("lists the held ids without the slot's, then the slot's", () => {
+      expect(
+        interceptMatched(
+          ["L0", "L0R0", "L0.@modal", "L0.@modalD0.old", "L0.@side"],
+          ["L0.@modal", "L0.@modalD0.item"],
+        ),
+      ).toEqual(["L0", "L0R0", "L0.@side", "L0.@modal", "L0.@modalD0.item"]);
+    });
+  });
+
+  describe("wholeInterceptMatched (rango-t126)", () => {
+    const slot = seg("L0.@modal", {
+      type: "parallel",
+      namespace: "intercept:item",
+    });
+    const slotLoader = seg("L0.@modalD0.item", {
+      type: "loader",
+      namespace: "intercept:item",
+    });
+    const answer = {
+      matched: ["L0", "L0.@modal", "L0.@modalD0.item"],
+      segments: [seg("L0", { type: "layout" }), slotLoader, slot],
+      slots: { "@modal": { active: true } as SlotState },
+    };
+
+    it("keeps the page held under the slot, the slot first", () => {
+      expect(
+        wholeInterceptMatched(
+          [seg("L0", { type: "layout" }), seg("L0R0")],
+          answer,
+        ),
+      ).toEqual(["L0", "L0R0", "L0.@modal", "L0.@modalD0.item"]);
+    });
+
+    it("leaves out a held placeholder (prefetch: false), which is not held", () => {
+      expect(
+        wholeInterceptMatched(
+          [
+            seg("L0", { type: "layout" }),
+            seg("L0R0"),
+            seg("L0R0D0.reviews", { type: "loader", deferred: true }),
+          ],
+          answer,
+        ),
+      ).toEqual(["L0", "L0R0", "L0.@modal", "L0.@modalD0.item"]);
+    });
+
+    it("keeps the answer's own matched when it is not an intercept's", () => {
+      expect(
+        wholeInterceptMatched([seg("L0"), seg("L0R0")], {
+          ...answer,
+          slots: {},
+        }),
+      ).toBeUndefined();
+    });
+
+    it("keeps the answer's own matched when the browser holds nothing", () => {
+      expect(wholeInterceptMatched([], answer)).toBeUndefined();
     });
   });
 });

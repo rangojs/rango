@@ -457,4 +457,160 @@ test.describe("pending-actions-navigation (production)", () => {
       page.locator('[data-testid="streaming-btn-result"]'),
     ).not.toBeVisible();
   });
+  test("action on detail page, navigate back to intercept, action completes - should preserve intercept", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="product-link-product-a"]').click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
+
+    // The action's request settles (it is not aborted by the Back).
+    const actionSettled = page.waitForEvent("requestfinished", {
+      predicate: (req) => req.method() === "POST",
+    });
+    await page.locator('[data-testid="add-to-cart-btn"]').click();
+
+    await goBack(page);
+
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="modal-product-name"]')).toHaveText(
+      "Product A",
+    );
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+
+    await actionSettled;
+
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="modal-product-name"]')).toHaveText(
+      "Product A",
+    );
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+  });
+
+  test("action on intercept, navigate to different product, back to index - should restore correctly", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="product-link-product-a"]').click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
+
+    const actionSettled = page.waitForEvent("requestfinished", {
+      predicate: (req) => req.method() === "POST",
+    });
+    const incrementButton = page.locator(
+      '[data-testid="modal-quantity-control"] button:has-text("+")',
+    );
+    await expect(incrementButton).toHaveCount(1);
+    await incrementButton.click();
+
+    await goBack(page);
+    await page.locator('[data-testid="product-link-product-b"]').click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="modal-product-name"]')).toHaveText(
+      "Product B",
+    );
+
+    await actionSettled;
+
+    await goBack(page);
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
+  });
+
+  test("rapid open/close modal with actions - should not leak state", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    let posts = 0;
+    let settled = 0;
+    page.on("request", (req) => {
+      if (req.method() === "POST") posts++;
+    });
+    const onSettled = (req: { method(): string }) => {
+      if (req.method() === "POST") settled++;
+    };
+    page.on("requestfinished", onSettled);
+    page.on("requestfailed", onSettled);
+
+    for (let i = 0; i < 3; i++) {
+      await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+
+      await page.locator('[data-testid="product-link-product-a"]').click();
+      await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+      await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(
+        1,
+      );
+
+      const incrementButton = page.locator(
+        '[data-testid="modal-quantity-control"] button:has-text("+")',
+      );
+      await expect(incrementButton).toHaveCount(1);
+      await incrementButton.click();
+
+      await goBack(page);
+      await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(
+        0,
+      );
+    }
+
+    // Every action's request settles.
+    await expect.poll(() => posts).toBeGreaterThanOrEqual(3);
+    await expect.poll(() => settled).toBe(posts);
+
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(0);
+
+    await page.locator('[data-testid="product-link-product-a"]').click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+  });
+
+  test("action revalidation should be ignored when navigating to completely different route", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    await page.locator('[data-testid="add-to-cart-btn"]').click();
+
+    // A document navigation: the action's page is unloaded with it.
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+    await expect(page.locator('[data-testid="blog-title"]')).toBeVisible();
+
+    // The add-to-cart action answers within a second.
+    await page.waitForTimeout(1000);
+
+    await expect(page.locator('[data-testid="blog-title"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="product-detail-page"]'),
+    ).not.toBeVisible();
+    await expect(
+      page.locator('[data-testid="add-to-cart-btn-result"]'),
+    ).not.toBeVisible();
+  });
 });

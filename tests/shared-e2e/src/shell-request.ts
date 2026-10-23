@@ -24,3 +24,22 @@ export async function warmShellRequestToHit(
     expect(res.headers()["x-rango-shell"]).toBe("HIT");
   }).toPass({ timeout: 20_000 });
 }
+
+type MarkedWindow = { __e2eMarkedDocument?: boolean };
+
+/**
+ * A window global does not survive a document load, so the pair tells a
+ * client navigation (still marked) from a reload or a back/forward that
+ * loaded the document (no longer marked).
+ */
+export async function markDocument(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as MarkedWindow).__e2eMarkedDocument = true;
+  });
+}
+
+export async function isMarkedDocument(page: Page): Promise<boolean> {
+  return page.evaluate(
+    () => (window as unknown as MarkedWindow).__e2eMarkedDocument === true,
+  );
+}

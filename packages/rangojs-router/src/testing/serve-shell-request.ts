@@ -58,7 +58,11 @@ import {
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../segment-fragments.js";
-import { FILL_PARAM, PREFETCH_HEADER } from "../prefetch-markers.js";
+import {
+  FILL_PARAM,
+  PREFETCH_HEADER,
+  STALE_PARAM,
+} from "../prefetch-markers.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import { withoutPushedBy } from "../handles/pushed-by.js";
 import type { HandleData } from "../server/handle-store.js";
@@ -105,6 +109,8 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * that source. `rewriteTarget` sends the `metadata.rewriteTarget` the page at
    * `from` carried when middleware rewrote it (`_rsc_rt`), as the browser
    * does: the server then diffs against the route that rendered that page.
+   * `stale: true` sends a stale request (`_rsc_stale`), as the browser sends
+   * it: every `revalidate()` sees `stale: true` (see `revalidate()`'s `stale`).
    */
   partial?:
     | true
@@ -115,6 +121,7 @@ export interface ServeShellRequestOptions<TEnv = any> {
         prefetch?: boolean;
         fill?: boolean;
         interceptSource?: string;
+        stale?: boolean;
       };
   /**
    * POST this form as a submit before hydration: the no-JS request the
@@ -628,14 +635,21 @@ async function buildRequest(
     prefetch = false,
     fill = false,
     interceptSource,
+    stale = false,
   } = partial === true ? {} : partial;
+  if (stale && prefetch) {
+    throw new Error(
+      "serveShellRequest: partial.stale cannot be combined with partial.prefetch",
+    );
+  }
   const target = new URL(url);
   target.searchParams.set("_rsc_partial", "true");
   target.searchParams.set("_rsc_segments", segments.join(","));
   if (rewriteTarget) target.searchParams.set("_rsc_rt", rewriteTarget);
-  // As the browser sends them: browser/navigation-client.ts (fill) and
+  // As the browser sends them: browser/navigation-client.ts (fill, stale) and
   // browser/prefetch/fetch.ts (prefetch).
   if (fill) target.searchParams.set(FILL_PARAM, "1");
+  if (stale) target.searchParams.set(STALE_PARAM, "true");
   if (prefetch && !headers.has(PREFETCH_HEADER)) {
     headers.set(PREFETCH_HEADER, "1");
   }

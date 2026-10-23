@@ -24,6 +24,7 @@ import {
 import {
   hasActiveIntercept as hasActiveInterceptSlots,
   isInterceptSegment,
+  wholeInterceptMatched,
 } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-transaction.js";
 import { ServerRedirect } from "../errors.js";
@@ -741,6 +742,13 @@ export function createPartialUpdater(
     if (redirected(payload.metadata)) return;
 
     if (payload.metadata?.isPartial) {
+      // Held nothing, answered as an intercept: the page it lands over stays
+      // under the slot, in `matched` for every reader below (the commit's
+      // handle cleanup included).
+      const kept =
+        segments.length === 0 &&
+        wholeInterceptMatched(cachedSegs, payload.metadata);
+      if (kept) payload.metadata.matched = kept;
       const { segments: newSegments, matched, diff } = payload.metadata;
       let serverSegments = newSegments || [];
       let sent = diff || [];

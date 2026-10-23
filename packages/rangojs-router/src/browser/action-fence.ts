@@ -6,15 +6,23 @@
  * start. While the fence is up, the decision of whether the action invalidated
  * anything is deferred to the response:
  *
- * - prefetch consumption is suspended (a queued prefetch result is not served),
- * - a genuine navigation during the flight fetches with `cache: "no-store"` so
- *   it cannot be served stale bytes from the browser's Vary-keyed HTTP cache,
+ * - a navigation during the flight is an ordinary one: a prefetch is served,
+ *   and the page it commits may hold pre-write data until the follow-up below,
+ * - a navigation without a prefetch, and a prefetch, fetch with
+ *   `cache: "no-store"` so they cannot be served stale bytes from the
+ *   browser's Vary-keyed HTTP cache,
  * - popstate reads are treated as stale-while-revalidate.
  *
  * Nothing is wiped, rotated, or broadcast while the fence is up — that is what
  * keeps a sibling tab from seeing a pre-commit signal. Refcounted so concurrent
  * actions compose: each action raises and lowers its own reference, and the
  * fence is down only when the count reaches zero.
+ *
+ * The drop runs the batch's follow-up: when an action of the batch did not
+ * land on the page on screen, the action bridge refetches that page once,
+ * whole, after the navigation the user started, unless an intercept is on
+ * screen (server-action-bridge.ts followUp; the rules are R1-R7 in
+ * docs/internal/execution-model.md).
  *
  * The refcount is a single module-level counter, not keyed by routerId.
  * Consumers (navigation-client.ts, prefetch/fetch.ts, navigation-bridge.ts)

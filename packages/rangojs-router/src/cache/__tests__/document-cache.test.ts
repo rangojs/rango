@@ -842,9 +842,12 @@ describe("createDocumentCacheMiddleware", () => {
       expect(response.headers.has("x-document-cache-status")).toBe(false);
     });
 
-    // prefetch: false (R7): a fill is the second half of one adoption,
-    // rendered against what that client holds.
-    it("should neither store nor serve a fill request", async () => {
+    // A fill (prefetch: false, R7) and a stale request (`_rsc_stale`) render
+    // fresh and leave the stored entry as it was.
+    it.each([
+      ["fill", "&_rsc_fill=1"],
+      ["stale", "&_rsc_stale=true"],
+    ])("should neither store nor serve a %s request", async (kind, param) => {
       const { createDocumentCacheMiddleware } =
         await import("../document-cache.js");
       const originalModule = await import("../../server/request-context.js");
@@ -853,8 +856,8 @@ describe("createDocumentCacheMiddleware", () => {
       );
 
       const middleware = createDocumentCacheMiddleware();
-      const fillUrl =
-        "http://localhost/page?_rsc_partial=true&_rsc_segments=root&_rsc_fill=1";
+      const navigationUrl =
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root";
       const cacheable = (body: string) =>
         vi
           .fn()
@@ -864,26 +867,70 @@ describe("createDocumentCacheMiddleware", () => {
 
       // A navigation with the same segment list is stored first.
       await middleware(
-        createMockMiddlewareContext(
-          "http://localhost/page?_rsc_partial=true&_rsc_segments=root",
-        ),
+        createMockMiddlewareContext(navigationUrl),
         cacheable("navigation"),
       );
       await vi.runAllTimersAsync();
       expect(mockStore.cache.size).toBe(1);
 
-      const next = cacheable("fill");
+      const next = cacheable(kind);
       const response = (await middleware(
-        createMockMiddlewareContext(fillUrl),
+        createMockMiddlewareContext(`${navigationUrl}${param}`),
         next,
       )) as Response;
       await vi.runAllTimersAsync();
 
       expect(next).toHaveBeenCalledTimes(1);
-      expect(await response.text()).toBe("fill");
+      expect(await response.text()).toBe(kind);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
-      expect(mockStore.cache.size).toBe(1);
+
+      const unchanged = cacheable("unused");
+      const hit = (await middleware(
+        createMockMiddlewareContext(navigationUrl),
+        unchanged,
+      )) as Response;
+      expect(unchanged).not.toHaveBeenCalled();
+      expect(hit.headers.get("x-document-cache-status")).toBe("HIT");
+      expect(await hit.text()).toBe("navigation");
     });
+
+    // _rsc params are stripped from the key, so a document GET carrying them
+    // must not let a client force an origin render.
+    it.each(["_rsc_fill=1", "_rsc_stale=true"])(
+      "should still store and serve a document GET carrying %s",
+      async (param) => {
+        const { createDocumentCacheMiddleware } =
+          await import("../document-cache.js");
+        const originalModule = await import("../../server/request-context.js");
+        vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+          mockRequestCtx as any,
+        );
+
+        const middleware = createDocumentCacheMiddleware();
+        const cacheable = (body: string) =>
+          vi.fn().mockResolvedValue(
+            new Response(body, {
+              headers: { "Cache-Control": "s-maxage=60" },
+            }),
+          );
+
+        const stored = (await middleware(
+          createMockMiddlewareContext(`http://localhost/page?${param}`),
+          cacheable("document"),
+        )) as Response;
+        await vi.runAllTimersAsync();
+        expect(stored.headers.get("x-document-cache-status")).toBe("MISS");
+
+        const unchanged = cacheable("unused");
+        const hit = (await middleware(
+          createMockMiddlewareContext("http://localhost/page"),
+          unchanged,
+        )) as Response;
+        expect(unchanged).not.toHaveBeenCalled();
+        expect(hit.headers.get("x-document-cache-status")).toBe("HIT");
+        expect(await hit.text()).toBe("document");
+      },
+    );
 
     it("should skip configured paths", async () => {
       const { createDocumentCacheMiddleware } =

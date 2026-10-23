@@ -534,6 +534,41 @@ revalidates), flushes the prefetch cache, rotates the router's state cookie,
 and tells other open tabs to do the same. This happens for every action that
 reached the server, including ones that threw. No setup is needed.
 
+### When the user navigates while the action runs
+
+Users rarely wait for an action. They click "Add to cart" and then a link, or
+go Back. That navigation is an ordinary one: a prefetched link shows its page at
+once, as it would with no action in flight. That page may show data from before
+the write, such as a layout's cart count the navigation kept. So once the last
+action in flight settles, the router revalidates the page on screen once, in
+the background: every loader on it re-runs, and the result commits with no
+`loading()` fallback and no remount. `useNavigation().state` stays `"idle"`. This covers an action that failed too.
+
+```text
+/product/1: click "Add to cart", then a link to /checkout
+  /checkout shows at once        (layout: cart:0)
+  the action settles
+  one background revalidation    (layout: cart:1)
+```
+
+A few details:
+
+- If the user stays on the page, nothing extra is sent. The action's own
+  response already re-ran that page's loaders.
+- The revalidation waits for a navigation the user started and never cancels
+  it. Several actions in flight share one revalidation.
+- A `redirect()` from the action replaces it: the redirect target renders
+  fresh.
+- If an `intercept()` is on screen, nothing runs. Leaving the intercept with
+  Back restores the page underneath and revalidates it as stale (the
+  action marked the history cache stale). Only loaders that opt in with
+  `revalidate(({ stale }) => stale)` re-run there; the others keep their data
+  until a request re-runs them.
+- It holds no segments, so every loader on the page re-runs whatever its
+  `revalidate()` says, and the document cache never answers it.
+- Going Back or Forward out of an intercept does not abort an action sent from
+  the intercept. `useAction()` and your `await` get its real result.
+
 ### `keepClientCache()` — skip it for no-op actions
 
 Some hot actions change nothing a route renders: a debounced draft autosave, an
@@ -555,8 +590,8 @@ export async function saveDraft(formData: FormData) {
 
 What it suppresses, for this action only: the stale-marking of the history
 cache, the prefetch flush, the state-cookie rotation, the cross-tab broadcast,
-and the background re-fetch the client runs when the user navigated away while
-the action was in flight. What it does not change:
+and the background revalidation the client runs when the user navigated while
+the action was in flight (above). What it does not change:
 
 - The action's own response still carries the revalidation render your
   `revalidate()` rules select, and the client applies it.

@@ -1,5 +1,95 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: the page under an intercept stays when a redirect opens the intercept, or on Back/Forward over an intercept left early
+
+**Before.** Under an intercept the server never renders the page under it:
+that page comes from the segments the browser says it holds. A few requests
+hold none, and their answer listed only the layouts and the intercept's slot,
+so the page under the intercept disappeared, leaving the layout with an empty
+outlet. A consumer hit this in two ways:
+
+- a server action on a page that calls `redirect()` to a route intercepted
+  from that page, or a link to a route that redirects to one;
+- Back, then Forward, over an intercept whose handler pushed a handle value
+  that had not resolved when the user left it.
+
+In dev, every server edit with an intercept open did the same, and the page's
+handle pushes (breadcrumbs, `Meta`) went with it.
+
+**After.** The browser keeps the page the answer lands over, as the server
+lists it for a request that holds it. Its handle pushes stay. It keeps its
+last render: after a server action redirects into an intercept, the page under
+it shows its pre-action data until the intercept closes, as it does after an
+action submitted from inside an open intercept. The layouts and the
+intercept are rendered fresh. No change in your code.
+
+### Fixed: an action's write shows on the page the user navigated to while it ran
+
+**Before.** A user clicks "Add to cart" and then a link, or goes Back, before
+the action lands. The action's revalidation was dropped, so the new page kept
+its pre-write data in every loader the navigation held, such as a layout's
+cart count, until something else re-ran it. An action that failed after the
+user left got nothing at all. And the refetch an action started when it landed
+superseded a click still in flight, so that click's page never committed.
+
+**Now.** Once the last action in flight settles, the router revalidates the
+page on screen once, in the background, whenever an action's own response
+could not reach it:
+
+- Every loader on that page re-runs: the request holds no segments, so no
+  `revalidate()` predicate is consulted.
+- The result commits with no `loading()` fallback and no remount.
+  `useNavigation().state` stays `"idle"`.
+- It waits for the user's navigation and never cancels it. A click in flight
+  when the action lands reads `"loading"` until its page commits.
+- Several actions share one revalidation, and a `redirect()` replaces it.
+- Nothing runs while an intercept is on screen. Leaving it with Back sends a
+  stale revalidation, which re-runs the loaders that opt in with
+  `revalidate(({ stale }) => stale)`, as before.
+- A user who stayed on the page gets no extra request.
+
+No change in your code. `keepClientCache()` turns this off for that action.
+
+### Fixed: the document cache never answers a stale request
+
+**Before.** On a route with `s-maxage`, `createDocumentCacheMiddleware()` could
+answer Back's revalidation after an action from a body cached before the write.
+The page then kept showing pre-write data, even though the router had marked
+it stale.
+
+**Now.** A partial request carrying `_rsc_stale` is neither served from nor
+stored in the document cache, and the server answers it with
+`private, no-cache`. Stale requests are Back/Forward onto a page an action made
+stale, the background revalidation after an action, and `refresh()`. For a
+shared entry refreshed after a write, tag it and call `updateTag()`.
+
+### Changed: going Back or Forward out of an intercept no longer aborts its actions
+
+**Before.** Back or Forward into or out of an intercept aborted every
+action in flight, although the server had already received it and ran it.
+`useAction()` went back to idle with no result, and the caller's `await`
+resolved with `undefined`.
+
+**Now.** The action keeps running. `useAction()` and the caller's `await` get
+its real result, and the page underneath gets the background revalidation
+above. This matches what already happened when a link left the intercept.
+
+### Fixed: Back/Forward onto an intercept entry the client no longer holds no longer opens the intercept over another page
+
+**Before.** After a reload, or once the history cache (`initBrowserApp`'s
+`storeOptions.cacheSize`, 20 by default) evicted it, Back/Forward onto an
+entry that showed an intercept opened the intercept over whatever page was on
+screen.
+
+**Now.** Only a client navigation from the source page shows an intercept.
+When such an entry must be fetched and its source page is on screen, the
+intercept opens over it as before; from any other page the entry loads as a
+document (a full page load, from the top) and renders its URL's full page. A
+document load never leaves an entry marked as an intercept, a reload on an
+open intercept included. No change in your code.
+
 ## 0.26.6 (2026-10-21)
 
 ### Fixed: an inline `"use server"` action rendered by `Static()` or `Prerender()` runs on plugin-rsc 0.5.37+ ([#1223](https://github.com/rangojs/rango/pull/1223))

@@ -26,11 +26,18 @@ export { defineSsrShellErrorTests } from "./ssr-shell-error.js";
 export type { SsrShellErrorFixture } from "./ssr-shell-error.js";
 import { guardHydrationErrors } from "./hydration-guard.js";
 import {
+  isMarkedDocument,
+  markDocument,
   waitForShellHydration,
   warmShellRequestToHit,
 } from "./shell-request.js";
 
-export { waitForShellHydration, warmShellRequestToHit };
+export {
+  isMarkedDocument,
+  markDocument,
+  waitForShellHydration,
+  warmShellRequestToHit,
+};
 export { guardHydrationErrors };
 export { createDeployFixture, readBuiltVersions } from "./deploy-fixture.js";
 export type { DeployFixture, DeployFixtureOptions } from "./deploy-fixture.js";
@@ -44,6 +51,12 @@ export { runHeldBoundaryTests } from "./held-boundary-scenario.js";
 export { runLateHandleHistoryTests } from "./late-handle-history-scenario.js";
 export { runRedispatchedDomContentLoadedTests } from "./redispatched-dom-content-loaded-scenario.js";
 export type { RedispatchedDomContentLoadedScenarioOptions } from "./redispatched-dom-content-loaded-scenario.js";
+export { runActionStaleNavigationTests } from "./action-stale-navigation-scenario.js";
+export type { ActionStaleNavigationScenarioOptions } from "./action-stale-navigation-scenario.js";
+export { runActionHeldSegmentsTests } from "./action-held-segments-scenario.js";
+export type { ActionHeldSegmentsScenarioOptions } from "./action-held-segments-scenario.js";
+export { runActionFollowUpTests } from "./action-follow-up-scenario.js";
+export type { ActionFollowUpScenarioOptions } from "./action-follow-up-scenario.js";
 export { runHandlesAfterAwaitTests } from "./handles-after-await-scenario.js";
 export type { HandlesAfterAwaitScenarioOptions } from "./handles-after-await-scenario.js";
 export { runActionFailureTests } from "./action-failure-scenario.js";
@@ -82,6 +95,10 @@ export { runHistoryCacheHandlesTests } from "./history-cache-handles-scenario.js
 export type { HistoryCacheHandlesScenarioOptions } from "./history-cache-handles-scenario.js";
 export { runInterceptHeldTests } from "./intercept-held-scenario.js";
 export type { InterceptHeldScenarioOptions } from "./intercept-held-scenario.js";
+export { runInterceptWholeRequestTests } from "./intercept-whole-request-scenario.js";
+export type { InterceptWholeRequestScenarioOptions } from "./intercept-whole-request-scenario.js";
+export { runInterceptHistoryTests } from "./intercept-history-scenario.js";
+export type { InterceptHistoryScenarioOptions } from "./intercept-history-scenario.js";
 export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
@@ -529,25 +546,6 @@ export async function expectClientLinkNavigation(
 
 function byTestId(page: Page, id: string): Locator {
   return page.locator(`[data-testid="${id}"]`);
-}
-
-type MarkedWindow = { __e2eMarkedDocument?: boolean };
-
-/**
- * A window global does not survive a document load, so the pair tells a
- * client navigation (still marked) from a reload or a back/forward that
- * loaded the document (no longer marked).
- */
-async function markDocument(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    (window as unknown as MarkedWindow).__e2eMarkedDocument = true;
-  });
-}
-
-async function isMarkedDocument(page: Page): Promise<boolean> {
-  return page.evaluate(
-    () => (window as unknown as MarkedWindow).__e2eMarkedDocument === true,
-  );
 }
 
 /**
