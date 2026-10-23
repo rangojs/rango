@@ -368,6 +368,7 @@ import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
 import { interceptHeldPatterns } from "./pages/intercept-held.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
 import { redirectLoopPatterns } from "./pages/redirect-loop.js";
+import { negotiationPatterns } from "./pages/negotiation.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { prefetchFalsePatterns } from "./pages/prefetch-false.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
@@ -1050,67 +1051,13 @@ export const urlpatterns = urls(
       ),
     ]),
 
-    // Content negotiation test routes (same URL, different response types)
-    path.json(
-      "/test/negotiate",
-      (ctx) => ({
-        format: "json",
-        negotiated: true,
-      }),
-      { name: "testNegotiateJson" },
-    ),
     // data-external SSR/browser agreement (pages/link-external-origin.tsx).
     path("/test/link-external-origin", LinkExternalOriginPage, {
       name: "testLinkExternalOrigin",
     }),
-    path("/test/negotiate", () => <div>HTML version</div>, {
-      name: "testNegotiate",
-    }),
 
-    // Content negotiation: text
-    path("/test/negotiate-text", () => <div>Text HTML version</div>, {
-      name: "testNegotiateText",
-    }),
-    path.text("/test/negotiate-text", () => "plain text response", {
-      name: "testNegotiateTextApi",
-    }),
-
-    // Content negotiation: xml
-    path("/test/negotiate-xml", () => <div>XML HTML version</div>, {
-      name: "testNegotiateXml",
-    }),
-    path.xml("/test/negotiate-xml", () => "<item><status>ok</status></item>", {
-      name: "testNegotiateXmlApi",
-    }),
-
-    // Content negotiation: multiple response types on same path
-    path.json("/test/negotiate-multi", () => ({ format: "json" }), {
-      name: "testNegotiateMultiJson",
-    }),
-    path.text("/test/negotiate-multi", () => "plain text", {
-      name: "testNegotiateMultiText",
-    }),
-    path.xml(
-      "/test/negotiate-multi",
-      () => "<root><format>xml</format></root>",
-      { name: "testNegotiateMultiXml" },
-    ),
-    path("/test/negotiate-multi", () => <div>Multi HTML version</div>, {
-      name: "testNegotiateMulti",
-    }),
-
-    // Content negotiation: wildcard route
-    path.json(
-      "/test/negotiate-wild/*",
-      (ctx) => ({
-        format: "json",
-        wildcard: (ctx.params as Record<string, string>)["*"],
-      }),
-      { name: "testNegotiateWildJson" },
-    ),
-    path("/test/negotiate-wild/*", () => <div>Wildcard HTML</div>, {
-      name: "testNegotiateWild",
-    }),
+    // Content negotiation: several routes on one URL (pages/negotiation.tsx).
+    include("/", negotiationPatterns, { name: "" }),
 
     // MIME type test routes (one per tag, used by e2e tests)
     path.json("/test/mime/json", () => ({ type: "json" }), {
