@@ -14,7 +14,6 @@
  */
 
 import { requestHeaders } from "../server/request-headers.js";
-import { FILL_PARAM, STALE_PARAM } from "../prefetch-markers.js";
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import {
   documentCacheStoresRender,
@@ -45,6 +44,7 @@ import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
   SEGMENT_FRAGMENT_RECOVERY_HEADER,
 } from "../segment-fragments.js";
+import { WIRE } from "../wire-params.js";
 
 export { documentCacheStoresRender };
 
@@ -229,12 +229,12 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     }
 
     // Skip RSC action requests (mutations shouldn't be cached)
-    if (rawUrl.searchParams.has("_rsc_action")) {
+    if (rawUrl.searchParams.has(WIRE.action)) {
       return next();
     }
 
     // Skip loader requests (have their own caching)
-    if (rawUrl.searchParams.has("_rsc_loader")) {
+    if (rawUrl.searchParams.has(WIRE.loader)) {
       return next();
     }
 
@@ -245,9 +245,9 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     // the key cannot see. Partial only: _rsc params leave the key, so a
     // document GET carrying them must not force an origin render.
     if (
-      rawUrl.searchParams.has("_rsc_partial") &&
-      (rawUrl.searchParams.has(FILL_PARAM) ||
-        rawUrl.searchParams.get(STALE_PARAM) === "true")
+      rawUrl.searchParams.has(WIRE.partial) &&
+      (rawUrl.searchParams.has(WIRE.fill) ||
+        rawUrl.searchParams.get(WIRE.stale) === "true")
     ) {
       return next();
     }
@@ -283,7 +283,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     // Determine request type for cache key differentiation.
     // Uses rawUrl for _rsc* param checks and mayNeedSSR for Accept-based
     // detection. Full-document RSC fetches must not share the HTML cache slot.
-    const isPartial = rawUrl.searchParams.has("_rsc_partial");
+    const isPartial = rawUrl.searchParams.has(WIRE.partial);
     const isRscRequest = !mayNeedSSR(ctx.request, rawUrl);
     const typeLabel = isRscRequest ? "RSC" : "HTML";
 
@@ -296,7 +296,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // gracefully to the origin handler instead of rejecting the request.
       // This is a deliberate fail-open-to-origin policy: the fallback is
       // "serve uncached from origin", not "use a different cache key".
-      const clientSegments = rawUrl.searchParams.get("_rsc_segments") || "";
+      const clientSegments = rawUrl.searchParams.get(WIRE.segments) || "";
       const segmentHash =
         isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
       // Fragment envelopes require a capable Rango decoder. Keep that wire

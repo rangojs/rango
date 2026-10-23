@@ -306,7 +306,7 @@ the contract `cache()` has always had:
   `cookies()`, `headers()`, a `{ cache: false }` variable, and
   `ctx.dynamic()` refuse the capture from a handler promise, an async
   component, a handle push, or a loader a handler awaits. The guard flags the
-  capture context (`_shellCaptureGuardTripped`) before it throws, so code
+  capture context (`_shellCaptureState.guardTripped`) before it throws, so code
   that catches the throw still refuses the capture. The handler-invoked
   loader used to be exempt: its identity reads rendered per visitor on the
   re-running HIT. With no re-run, the exemption would bake the capturing

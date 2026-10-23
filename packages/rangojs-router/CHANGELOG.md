@@ -1,5 +1,77 @@
 # Changelog
 
+## Unreleased
+
+### Changed: `dispatch()` answers as production in a few edge cases
+
+**Before.** `dispatch()` from `@rangojs/router/testing` kept its own copy of
+the handler's steps around a response route: the global middleware passes,
+the response route's timeout, the redirect interception and the response's
+finalization. In a few cases its answer differed from the one `router.fetch`
+sends.
+
+**After.** It runs the production handler's request stages, so these cases
+answer as production does:
+
+- An action request (`?_rsc_action`, not a partial) whose final pass ran no
+  global middleware, answered with a 3xx (a trailing-slash redirect, or a
+  redirect from a response route or its route middleware): the 3xx, through
+  the open-redirect guard, instead of a `204` + `X-RSC-Redirect`.
+- A partial request (`?_rsc_partial`) to a trailing-slash path: a global
+  middleware that reads the response after `next()` sees the `204` +
+  `X-RSC-Redirect` instead of a `308`. The response is unchanged.
+- A response route's `renderStartMs` timeout with no global middleware:
+  `onResponse` callbacks the route registered before the deadline no longer
+  apply to the 504 or `onTimeout` response.
+- A content-negotiated response route whose route middleware short-circuits:
+  the response carries `Vary: Accept`.
+- A response route for a type with no MIME (image, stream, any) whose handler
+  returns a value that is not a `Response`: the 500 carries production's
+  message, `Response route handler for "…" must return a Response object`.
+- A throwing `onTimeout` logs `[RSC] onTimeout callback error:` instead of
+  `[dispatch] onTimeout callback error:`.
+- A response-route timeout on a rewritten pass: `onError`, `onTimeout` and
+  the `request.timeout` event carry the rewrite target's request and URL. The
+  event keeps the `requestId` of `dispatch`'s own `request.start` and
+  `request.end`.
+- A stream-idle timeout's `onError` call and `request.timeout` event carry
+  `routeKey`.
+- The same timeout, stream-idle or rewrite error reaches `onError` once per
+  request.
+
+No change in your code. A test that pinned one of the old answers now gets
+production's.
+
+### Changed: `dispatch()` classifies a request as production does
+
+**Before.** `dispatch()` matched each URL with a lookup of its own before the
+global middleware ran, and set the route's params and name there. It never
+answered a reload, and it served an action that a rewrite moved to a response
+route.
+
+**After.** It classifies each pass with the production handler's classify
+stage and answers its terminal plans inside the global middleware chain:
+
+- A request whose `_rsc_v` names another deploy's document version (see
+  `setBuildVersions`) gets the `X-RSC-Reload` production sends, on any route.
+  On a component route `dispatch()` threw, on an unmatched path it answered
+  404, and on a response route a request that was not a partial got the
+  route's response.
+- A partial request (`?_rsc_partial`) whose `_rsc_rid` names another router (a
+  navigation from another app) gets the `X-RSC-Reload` too, where a component
+  route threw and an unmatched path answered 404.
+- An action request (`?_rsc_action`) that a rewrite moved to a response route,
+  a redirect or an unmatched path rejects with production's error, `A rewrite
+of a server action or form post must target a page route; …`, instead of
+  serving the target.
+- Global middleware sees the route in `ctx.routeName` and the request
+  context's `params` after `await next()`, not before it. A trailing-slash
+  redirect sets neither.
+
+The error a component route throws, and when it throws (before any
+middleware), is unchanged. A test that read `ctx.routeName` before `next()`
+in global middleware reads it after `next()`, or from route middleware.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

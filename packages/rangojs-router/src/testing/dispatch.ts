@@ -2,9 +2,12 @@
  * dispatch — in-process request -> Response for unit/integration tests,
  * WITHOUT the Flight RSC runtime.
  *
- * dispatch runs the router's real matching and middleware execution so that
- * redirects, 404s, response routes (path.json / path.text / path.html / ...),
- * and middleware short-circuits behave exactly as in production. It deliberately
+ * dispatch runs the production handler's request stages
+ * (rsc/request-stages.ts: classify, the terminal plans, the global middleware
+ * passes, the response route and the response's finalization) so that
+ * redirects, 404s, reloads, response routes (path.json / path.text /
+ * path.html / ...), and middleware short-circuits behave exactly as in
+ * production. It deliberately
  * does NOT render React Server Components: there is no Flight stream, no SSR,
  * and no DOM. Hit an RSC (component) route and dispatch throws a clear error
  * directing you to renderToFlightString/renderServerTree/renderHandler or an e2e test.
@@ -17,19 +20,20 @@
  *   so a global auth middleware can 401/redirect them and middleware-set
  *   cookies/headers merge onto the 308/404 the way createResponseWithMergedHeaders
  *   merges them in production.
- * - Response routes (non-RSC)                         -> serialized Response
+ * - Response routes (non-RSC), served by production's handleResponseRoute
+ *   (rsc/response-route-handler.ts)                  -> serialized Response
  *   - json:           JSON.stringify(result) (bare value) with application/json
  *   - text/html/xml/md: String(result) with the mapped MIME type
- *   - handler returning or throwing a Response:         re-wrapped like
- *     handleResponseRoute (stub headers/cookies merged, Set-Cookie preserved,
- *     WebSocket upgrade passed through without reconstruction)
+ *   - handler returning or throwing a Response:         re-wrapped (stub
+ *     headers/cookies merged, Set-Cookie preserved, WebSocket upgrade passed
+ *     through without reconstruction)
  *   - handler throwing a non-Response error:            typed 500 / RouterError
- *     status, matching handleResponseRoute (RFC 9457 problem+json body with
- *     application/problem+json for json routes, text/plain message otherwise)
+ *     status (RFC 9457 problem+json body with application/problem+json for
+ *     json routes, text/plain message otherwise)
  *   - content-negotiated route:                         Vary: Accept appended
  *   - cached response route (cache({...})):             getResponse/putResponse
- *     hit/SWR/tag write, resolved from the matched entry tree exactly as
- *     handleResponseRoute does. The write is scheduled via ctx.waitUntil
+ *     hit/SWR/tag write, resolved from the matched entry tree. The write is
+ *     scheduled via ctx.waitUntil
  *     (a microtask without an executionContext), so a HIT-asserting test must
  *     flush microtasks between the seeding dispatch and the asserting one.
  * - Global middleware (router.use(...)) AND route-level middleware, with full
@@ -38,10 +42,17 @@
  *   global middleware runs first (so an auth gate can still 401/redirect),
  *   then — if it passes through — an X-RSC-Reload is returned. Route-level
  *   middleware is skipped on a partial, exactly as production skips it.
- * - A middleware redirect (3xx + Location) on a partial/action request
- *   (?_rsc_partial / ?_rsc_action): converted to a 204 + X-RSC-Redirect via the
- *   real interceptRedirectForPartial, so fetch() does not auto-follow the 3xx —
+ * - A global middleware redirect (3xx + Location) on a partial/action request
+ *   (?_rsc_partial / ?_rsc_action), and a findMatch() redirect on a partial
+ *   request: a 204 + X-RSC-Redirect, so fetch() does not auto-follow the 3xx —
  *   identical to production's no-location-state path.
+ * - The terminal plans production answers inside the global chain
+ *   (terminalPlanResponse): a `_rsc_v` version mismatch and a `_rsc_rid` app
+ *   switch reload (X-RSC-Reload), and an action (?_rsc_action) a rewrite moved
+ *   to a target that is not a page route throws production's error.
+ * - Route params and name are set inside the global chain, after classify, by
+ *   the stage production's executeRequest runs (recordPlanRoute): global
+ *   middleware sees them after next(), not before it.
  * - The open-redirect guard (rsc/redirect-guard.ts) on full (browser-followed)
  *   redirects: a cross-origin Location is rewritten to the basename root unless
  *   redirect(url, { external: true }) opted out, mirroring production's single
@@ -60,7 +71,8 @@
  *   after finalizeResponse (segmentCount 0 / cacheHit false — dispatch renders no
  *   RSC segments and holds no match-cache state), and a thrown non-Response error
  *   emits request.error with phase "routing". All three carry the same requestId
- *   (getRequestId). Emission is gated entirely on a configured sink; with none,
+ *   (getRequestId), as does a response-route timeout on a rewritten pass
+ *   (setRequestId). Emission is gated entirely on a configured sink; with none,
  *   dispatch does zero new work and stays byte-identical for existing callers.
  *   Lets a consumer unit-test their sink wiring in-process instead of only at e2e.
  * - Response-route `renderStartMs` timeouts and `onTimeout`: dispatch races the
@@ -96,26 +108,30 @@
  *   request.start/end/error lifecycle above; cover cache/loader telemetry with an
  *   e2e test driving a real RSC request.
  *
- * dispatch reuses router.previewMatch(), which itself runs content negotiation
- * and resolves route middleware from the matched entry tree, so dispatch's
- * route-middleware collection is exactly the router's, not a re-implementation.
+ * Each pass is classified with the handler's classify stage
+ * (router/request-classification.ts classifyRequest), which runs content
+ * negotiation and resolves route middleware from the matched entry tree, so
+ * dispatch's route-middleware collection is exactly the router's, not a
+ * re-implementation. The origin guard is not run: it gates only the action,
+ * loader and PE-form plans, which classify gives a component route only, and
+ * dispatch throws on those before the pass's middleware.
  */
 
+import type {
+  ClassifyContext,
+  RequestStageContext,
+} from "../rsc/request-stages.js";
+import type {
+  ClassifyRequestDeps,
+  ExecutableRequestPlan,
+  RequestPlan,
+} from "../router/request-classification.js";
 import {
   createRequestContext,
   runWithRequestContext,
-  setRequestContextParams,
 } from "../server/request-context.js";
-import { REWRITE_HEADER, runRewritePasses } from "../rsc/rewrite-passes.js";
-import { defineRewrittenFrom } from "../server/rewrite-trail.js";
 import { resolveRouterVersions } from "../server/build-version-table.js";
-import { executeMiddleware, matchMiddleware } from "../router/middleware.js";
-import type {
-  MiddlewareEntry,
-  MiddlewareFn,
-} from "../router/middleware-types.js";
-import { createReverseFunction } from "../router/handler-context.js";
-import { NOCACHE_SYMBOL } from "../cache/taint.js";
+import type { MiddlewareEntry } from "../router/middleware-types.js";
 import {
   compileSearchParamsFilter,
   type CacheSearchParams,
@@ -123,40 +139,22 @@ import {
 } from "../cache/search-params-filter.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { CacheProfile } from "../cache/profile-registry.js";
-// cache-scope is loaded LAZILY inside the response-route cache path (below):
-// its module graph pulls @vitejs/plugin-rsc/rsc (via segment-codec), which the
-// non-Vite unit-test runner cannot resolve. A static import here would drag that
-// onto the whole testing barrel's eager graph and break every consumer suite
-// that imports `@rangojs/router/testing` without mocking plugin-rsc.
-import type { EntryData } from "../server/context.js";
 import { ensureRouterTrie } from "../rsc/manifest-init.js";
-import { RESPONSE_TYPE_MIME } from "../router/content-negotiation.js";
-import { RouterError } from "../errors.js";
-import { createProblemDetails } from "../rsc/response-error.js";
 import {
-  createReloadResponse,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
-  finalizeResponse,
-  interceptRedirectForPartial,
-  rewrapResponseRouteResponse,
 } from "../rsc/helpers.js";
-import { guardOutgoingRedirect } from "../rsc/redirect-guard.js";
-import { stringifyJsonRouteResult } from "../rsc/json-route-result.js";
-import { isWebSocketUpgradeResponse, trySetHeader } from "../response-utils.js";
-import { invokeOnError } from "../router/error-handling.js";
 import type { OnErrorCallback } from "../types/error-types.js";
 import type { Rango } from "../router/router-interfaces.js";
-import { getRequestId, resolveSink, safeEmit } from "../router/telemetry.js";
-import type { TelemetrySink } from "../router/telemetry.js";
 import {
-  RouterTimeoutError,
-  createDefaultTimeoutResponse,
-  isTimeoutEnabled,
-  withTimeout,
-} from "../router/timeout.js";
+  getRequestId,
+  resolveSink,
+  safeEmit,
+  setRequestId,
+} from "../router/telemetry.js";
+import type { TelemetrySink } from "../router/telemetry.js";
 import type { OnTimeoutCallback, ResolvedTimeouts } from "../router/timeout.js";
-import { applyStreamIdleTimeout } from "../rsc/stream-idle.js";
+import { WIRE } from "../wire-params.js";
 
 /**
  * The internal subset of the router surface dispatch depends on. The public
@@ -181,26 +179,7 @@ interface DispatchableRouter<TEnv> {
   telemetry?: TelemetrySink;
   timeouts?: ResolvedTimeouts;
   onTimeout?: OnTimeoutCallback<TEnv>;
-  findMatch(pathname: string): Promise<{
-    redirectTo?: string;
-    routeKey?: string;
-    params?: Record<string, string>;
-  } | null>;
-  previewMatch(
-    request: Request,
-    input?: { env?: TEnv },
-  ): Promise<{
-    routeMiddleware?: Array<{
-      handler: MiddlewareFn<TEnv>;
-      params: Record<string, string>;
-    }>;
-    responseType?: string;
-    handler?: Function;
-    params?: Record<string, string>;
-    routeKey?: string;
-    negotiated?: boolean;
-    manifestEntry?: EntryData;
-  } | null>;
+  findMatch: ClassifyRequestDeps<TEnv>["findMatch"];
   basename?: string;
   cache?:
     | {
@@ -236,151 +215,42 @@ function toRequest(request: Request | string): Request {
   return new Request(new URL(request, DEFAULT_ORIGIN));
 }
 
+type RequestStages = typeof import("../rsc/request-stages.js");
+
+/** The plan modes dispatch answers; the others render a component. */
+const ANSWERS_MODE: Record<RequestPlan["mode"], boolean> = {
+  redirect: true,
+  response: true,
+  "version-mismatch": true,
+  "app-switch": true,
+  "full-render": false,
+  "partial-render": false,
+  action: false,
+  loader: false,
+  "pe-render": false,
+};
+
 /**
- * Serialize a NON-Response response-route handler result, mirroring the
- * router's handleResponseRoute() contract:
- * - "json" serializes the value (bare) with application/json, rejecting a nested
- *   unresolved Promise via the shared stringifyJsonRouteResult guard,
- * - text/html/xml/md stringify with the mapped MIME type.
- *
- * A handler-returned Response is NOT routed here — callHandler re-wraps it via
- * rewrapHandlerResponse (mirroring handleResponseRoute's rewrapResponse) so the
- * WebSocket-upgrade bypass and Set-Cookie-preserving header merge match
- * production.
+ * Classify one pass (the visitor's URL, or a rewrite target) with the
+ * handler's classify stage. A plan that renders a component throws: that is
+ * a hard boundary of this primitive (no Flight runtime), so it comes before
+ * the pass's global middleware, ahead of any middleware side effect. An
+ * unmatched path is answered (404).
  */
-function serializeResponseRouteResult(
-  result: unknown,
-  responseType: string,
-): Response {
-  if (responseType === "json") {
-    // Serialize through the SAME guard production uses: a nested unresolved
-    // Promise (forgotten await) throws RESPONSE_NOT_SERIALIZABLE here, caught by
-    // callHandler's catch and mapped to the identical typed 500 production
-    // returns -- so a dispatch json test fails exactly where production would,
-    // instead of silently emitting {} and passing.
-    return new Response(stringifyJsonRouteResult(result), {
-      status: 200,
-      headers: { "content-type": "application/json;charset=utf-8" },
-    });
-  }
-
-  if (Object.hasOwn(RESPONSE_TYPE_MIME, responseType)) {
-    return new Response(String(result), {
-      status: 200,
-      headers: {
-        "content-type": `${RESPONSE_TYPE_MIME[responseType]};charset=utf-8`,
-      },
-    });
-  }
-
+async function classifyPass<TEnv>(
+  stages: RequestStages,
+  request: Request,
+  url: URL,
+  ctx: ClassifyContext<TEnv>,
+): Promise<RequestPlan<TEnv>> {
+  const plan = await stages.classify(request, url, ctx);
+  if (ANSWERS_MODE[plan.mode] || stages.isUnmatchedPlan(plan)) return plan;
   throw new Error(
-    `dispatch(): response route handler for "${responseType}" must return a ` +
-      `Response object, got ${typeof result}. Binary/streaming response types ` +
-      `(image, stream, any) must return a Response explicitly.`,
+    `dispatch() does not render RSC routes — the route matched at ` +
+      `"${url.pathname}" is a React Server Component route, not a response ` +
+      `route. Use renderHandler/renderServerTree/renderToFlightString or an ` +
+      `e2e test to exercise component rendering.`,
   );
-}
-
-/**
- * Serialize a thrown handler error into the same typed Response the router's
- * handleResponseRoute() catch block produces:
- * - "json" routes return an RFC 9457 problem+json body (application/problem+json),
- * - all other types return a text/plain body (the RouterError message verbatim,
- *   the Error message in dev, else "Internal Server Error").
- *
- * `status` is the effective HTTP status resolved by the caller (RouterError.status
- * or 500, overridden by ctx.setStatus()); it governs both the HTTP status and the
- * problem body's `status`/`title` members. Reuses the production
- * createProblemDetails so the error body is byte-identical rather than re-derived.
- */
-function serializeResponseRouteError(
-  error: unknown,
-  responseType: string,
-  status: number,
-): Response {
-  const isDev = process.env.NODE_ENV !== "production";
-
-  if (responseType === "json") {
-    return new Response(
-      JSON.stringify(createProblemDetails(error, status, isDev)),
-      {
-        status,
-        headers: { "content-type": "application/problem+json;charset=utf-8" },
-      },
-    );
-  }
-
-  const message =
-    error instanceof RouterError
-      ? error.message
-      : isDev && error instanceof Error
-        ? error.message
-        : "Internal Server Error";
-  return new Response(message, {
-    status,
-    headers: { "content-type": "text/plain;charset=utf-8" },
-  });
-}
-
-/** What one pass of a dispatch matched (the visitor's URL, or a rewrite target). */
-interface DispatchPass<TEnv> {
-  req: Request;
-  url: URL;
-  redirectTo?: string;
-  isUnmatched: boolean;
-  preview: Awaited<ReturnType<DispatchableRouter<TEnv>["previewMatch"]>>;
-  responseType?: string;
-  handler?: Function;
-  params: Record<string, string>;
-  routeKey?: string;
-}
-
-async function matchDispatchPass<TEnv>(
-  router: DispatchableRouter<TEnv>,
-  req: Request,
-  env: TEnv,
-): Promise<DispatchPass<TEnv>> {
-  const url = new URL(req.url);
-  // findMatch carries trailing-slash/redirect targets and null on no match.
-  // previewMatch swallows redirects, so detect them here first.
-  const match = await router.findMatch(url.pathname);
-  const redirectTo = match?.redirectTo;
-  const isUnmatched = !match;
-
-  // previewMatch resolves responseType, the response-route handler, and the
-  // route middleware from the matched entry tree (with content negotiation).
-  // Skip it for a redirect/unmatched path — there is no response route to
-  // resolve, and previewMatch would return null / a redirect marker anyway.
-  const preview =
-    redirectTo || isUnmatched ? null : await router.previewMatch(req, { env });
-
-  // A bare match with no responseType is an RSC route. The RSC-route throw is a
-  // hard boundary of this primitive (no Flight runtime), distinct from the
-  // 308/404 outcomes, so it stays a pre-middleware guard.
-  const responseType = preview?.responseType;
-  const handler = preview?.handler;
-  if (
-    !redirectTo &&
-    !isUnmatched &&
-    (!responseType || typeof handler !== "function")
-  ) {
-    throw new Error(
-      `dispatch() does not render RSC routes — the route matched at ` +
-        `"${url.pathname}" is a React Server Component route, not a response ` +
-        `route. Use renderHandler/renderServerTree/renderToFlightString or an ` +
-        `e2e test to exercise component rendering.`,
-    );
-  }
-  return {
-    req,
-    url,
-    redirectTo,
-    isUnmatched,
-    preview,
-    responseType,
-    handler,
-    params: preview?.params ?? match?.params ?? {},
-    routeKey: preview?.routeKey ?? match?.routeKey,
-  };
 }
 
 /**
@@ -412,16 +282,49 @@ export async function dispatch<TEnv = any>(
   const routerId = router.id ?? router.routerId;
   await ensureRouterTrie(router);
 
-  // The visitor's URL is matched before any middleware runs, so an RSC route
-  // fails here, before a middleware side effect. A rewrite target is matched
-  // the same way, at the start of its pass (below).
-  const firstPass = await matchDispatchPass(router, req, env);
+  const stages = await loadRequestStages();
+  // The store keys with the router's versions, resolved as the production
+  // handler resolves them (rsc/handler.ts).
+  const versions = resolveRouterVersions(routerId);
+  const ctx: RequestStageContext<TEnv> & ClassifyContext<TEnv> = {
+    router: {
+      id: routerId ?? "",
+      findMatch: router.findMatch,
+      basename: router.basename,
+      middleware: router.middleware,
+      onError: router.onError,
+      telemetry: router.telemetry,
+      timeouts: router.timeouts,
+      onTimeout: router.onTimeout,
+    },
+    callOnError: stages.createErrorReporter<TEnv>(router),
+    // A response-route handler's own throw is serialized into the same typed
+    // Response as production but not reported (module header).
+    reportResponseRouteError: () => {},
+    getRequiredRouteMap: () => router.routeMap as Record<string, string>,
+    // No Flight runtime: the no-state 204 + X-RSC-Redirect, dropping any
+    // location state (module header). `external` is forwarded so
+    // redirect(url, { external: true }) keeps its off-host target.
+    createRedirectFlightResponse: (redirectUrl, _locationState, external) =>
+      createSimpleRedirectResponse(redirectUrl, {
+        requestOrigin: url.origin,
+        basename: router.basename,
+        external,
+      }),
+    // The `_rsc_v` reload check reads the DOCUMENT version, as the handler's.
+    version: versions.document,
+  };
+
+  // The visitor's URL is classified before any middleware runs, so an RSC
+  // route fails here, before a middleware side effect. A rewrite target is
+  // classified the same way, at the start of its pass (below).
+  let plan = await classifyPass(stages, req, url, ctx);
 
   const variables: Record<string, unknown> = {};
 
   // Resolve the router's cache store the way the production handler does, so a
   // "use cache" inside a response-route handler reaches the request-scope
-  // (NOCACHE) detection below instead of bypassing on a missing store.
+  // (NOCACHE) detection instead of bypassing on a missing store.
   let cacheStore: SegmentCacheStore | undefined;
   let searchParamsFilter: SearchParamsFilter | undefined;
   const cacheOption = router.cache;
@@ -444,26 +347,11 @@ export async function dispatch<TEnv = any>(
     cacheStore,
     searchParamsFilter,
     cacheProfiles: router.cacheProfiles,
-    // The store keys with the router's versions, resolved as the production
-    // handler resolves them (rsc/handler.ts).
-    versions: resolveRouterVersions(routerId),
+    versions,
   });
-  // Wire background error reporting so cache degradation (reportCacheError ->
-  // _reportBackgroundError) reaches the router's onError, mirroring the production
-  // RSC handler (rsc/handler.ts). Without this, dispatch could not observe onError.
-  requestContext._reportBackgroundError = (error, category) => {
-    if (error != null && typeof error === "object") {
-      if (requestContext._reportedErrors.has(error)) return;
-      requestContext._reportedErrors.add(error);
-    }
-    invokeOnError(
-      router.onError,
-      error,
-      "cache",
-      { request: req, url, metadata: { category } },
-      "RSC",
-    );
-  };
+  // Cache degradation (reportCacheError -> _reportBackgroundError) reaches the
+  // router's onError, as in the production handler.
+  stages.reportBackgroundErrors(requestContext, req, url, ctx.callOnError);
   // Match production: the RSC handler stores the router's basename on the
   // request context (handler.ts), and redirect() prefixes root-relative URLs
   // with it. Mirror it so basename-redirect tests behave as they do in a real
@@ -471,21 +359,7 @@ export async function dispatch<TEnv = any>(
   requestContext._basename = router.basename;
   requestContext._routerId = routerId;
 
-  // Match production's response-route reverse EXACTLY: the real handler builds
-  // it from the route map alone (response-route-handler.ts), with NO matched
-  // routeKey or params. Passing routeKey/params here would auto-fill params from
-  // the matched route, so ctx.reverse("name") could pass in a test while the
-  // real handler throws for the missing param.
-  const reverse = createReverseFunction(
-    router.routeMap as Record<string, string>,
-  ) as (
-    name: string,
-    p?: Record<string, string>,
-    search?: Record<string, unknown>,
-  ) => string;
-
-  const isPartial = url.searchParams.has("_rsc_partial");
-  const isAction = url.searchParams.has("_rsc_action");
+  const isPartial = url.searchParams.has(WIRE.partial);
 
   // Telemetry: mirror the router's match-transaction lifecycle onto the
   // configured sink so a consumer can unit-test createRouter({ telemetry })
@@ -501,307 +375,6 @@ export async function dispatch<TEnv = any>(
   const telemetryStart = sink ? performance.now() : 0;
 
   return runWithRequestContext(requestContext, async () => {
-    // Set params before middleware/handler run, so global middleware sees
-    // ctx.params (production sets them during matching, before middleware).
-    // On a redirect/unmatched path there are no route params.
-    const recordPassParams = (pass: DispatchPass<TEnv>): void => {
-      if (pass.routeKey !== undefined) {
-        setRequestContextParams(pass.params, pass.routeKey);
-      } else {
-        requestContext.params = pass.params;
-      }
-    };
-
-    // The response-route handler (with its own route middleware) lives inside
-    // coreHandler below, mirroring production where handleResponseRoute is
-    // nested inside coreHandler. Built lazily so a redirect/404 path never
-    // touches it.
-    const callResponseRoute = async (
-      pass: DispatchPass<TEnv>,
-    ): Promise<Response> => {
-      const { req, url, preview, params, responseType, handler } = pass;
-      // Match production: a partial (client-navigation) request to a response
-      // route is short-circuited to X-RSC-Reload (handleResponseRoute), BEFORE
-      // route-level middleware runs. Route-level middleware is skipped on a
-      // partial, exactly as production skips it.
-      const partialFinalHandler = async (): Promise<Response> =>
-        createReloadResponse(requestContext, url);
-
-      const cleanUrl = new URL(req.url);
-      for (const key of [...cleanUrl.searchParams.keys()]) {
-        if (key.startsWith("_rsc")) cleanUrl.searchParams.delete(key);
-      }
-
-      // Lightweight response-handler context mirroring handleResponseRoute.
-      const responseHandlerCtx = {
-        request: req,
-        params,
-        env,
-        searchParams: cleanUrl.searchParams,
-        url: cleanUrl,
-        originalUrl: requestContext.originalUrl,
-        pathname: url.pathname,
-        reverse,
-        get: requestContext.get,
-        header: (name: string, value: string) =>
-          requestContext.header(name, value),
-        waitUntil: requestContext.waitUntil.bind(requestContext),
-        executionContext: requestContext.executionContext,
-        _responseType: responseType,
-      };
-      // Brand as request-scoped so a "use cache" inside a response-route handler
-      // is detected as a request-scope violation here exactly as in production
-      // (response-route-handler.ts brands the same shape).
-      defineRewrittenFrom(responseHandlerCtx, requestContext);
-      (responseHandlerCtx as Record<symbol, unknown>)[NOCACHE_SYMBOL] = true;
-
-      const callHandler = async (): Promise<Response> => {
-        let merged: Response;
-        try {
-          let result: unknown;
-          try {
-            result = await (handler as Function)(responseHandlerCtx);
-          } catch (error) {
-            if (!(error instanceof Response)) throw error;
-            result = error;
-          }
-          if (result instanceof Response) {
-            merged = rewrapResponseRouteResponse(result);
-          } else {
-            // Route the serialized (json/text/...) body through the SAME
-            // production finalizer the RSC handler uses, so ctx.onResponse()
-            // callbacks fire and stub headers/cookies + the ctx.setStatus
-            // override merge identically to production. Runs inside
-            // runWithRequestContext, so _getRequestContext() resolves here.
-            const serialized = serializeResponseRouteResult(
-              result,
-              responseType as string,
-            );
-            merged = createResponseWithMergedHeaders(serialized.body, {
-              status: serialized.status,
-              headers: serialized.headers,
-            });
-          }
-        } catch (error) {
-          // Mirror handleResponseRoute's catch: a genuine handler error becomes
-          // the router's typed 500 / RouterError-status Response (NOT a rejected
-          // promise). Middleware short-circuit via thrown Response is handled by
-          // executeMiddleware and never reaches here.
-          const derivedStatus =
-            error instanceof RouterError ? error.status : 500;
-          // Resolve the effective status the way createResponseWithMergedHeaders
-          // (below) will (ctx.res.status override) BEFORE building the problem
-          // body, so the body's status/title match the actual HTTP status when a
-          // handler called ctx.setStatus() before throwing — exactly as
-          // handleResponseRoute resolves it.
-          const status =
-            requestContext.res.status !== 200
-              ? requestContext.res.status
-              : derivedStatus;
-          const serialized = serializeResponseRouteError(
-            error,
-            responseType as string,
-            status,
-          );
-          merged = createResponseWithMergedHeaders(serialized.body, {
-            status: serialized.status,
-            headers: serialized.headers,
-          });
-        }
-
-        // Append Vary: Accept on content-negotiated responses, matching
-        // handleResponseRoute's callHandlerWithVary. Skipped on WebSocket
-        // upgrade responses (immutable headers, Vary meaningless for a 101).
-        if (preview?.negotiated && !isWebSocketUpgradeResponse(merged)) {
-          merged.headers.append("Vary", "Accept");
-        }
-
-        return merged;
-      };
-
-      // On a partial request the reload IS the terminal handler and route
-      // middleware is skipped; otherwise the response-route handler is wrapped
-      // by route-level middleware (production order: route middleware runs
-      // inside handleResponseRoute, after the global chain).
-      if (isPartial) {
-        return partialFinalHandler();
-      }
-
-      // executeHandler = callHandler wrapped by route-level middleware, exactly
-      // the unit the production response cache wraps (response-route-handler.ts).
-      const executeHandler = (): Promise<Response> => {
-        const routeMiddlewareEntries = (preview?.routeMiddleware ?? []).map(
-          (mw) => ({
-            entry: {
-              pattern: null,
-              regex: null,
-              paramNames: [],
-              handler: mw.handler,
-            } as MiddlewareEntry<TEnv>,
-            params: mw.params,
-          }),
-        );
-        if (routeMiddlewareEntries.length === 0) {
-          return callHandler();
-        }
-        return executeMiddleware<TEnv>(
-          routeMiddlewareEntries,
-          req,
-          env,
-          variables,
-          callHandler,
-          reverse,
-        );
-      };
-
-      // Response-route cache path: resolved through the SAME shared serve leaf
-      // (rsc/response-cache-serve.ts) production uses, so a cached
-      // path.json/path.text route hits/SWRs/writes tags through dispatch exactly
-      // as in production — and the two can never drift. Resolved from the matched
-      // entry tree (preview.manifestEntry), which previewMatch surfaces for
-      // response routes.
-      const manifestEntry = preview?.manifestEntry;
-      if (manifestEntry) {
-        // Lazy so the testing barrel's eager graph stays plugin-rsc-free (see the
-        // import note above): the leaf takes createCacheScope as an INJECTED
-        // dep so it never imports plugin-rsc; we hand it the lazily imported
-        // builder here, only once a response route actually matched.
-        const cacheScopeMod = await import("../cache/cache-scope.js");
-        const { serveResponseRouteWithCache } =
-          await import("../rsc/response-cache-serve.js");
-        // requestContext is RequestContext<TEnv>; the leaf is typed against the
-        // default-env RequestContext (it reads only env-agnostic config).
-        // Assignable in the router's own tsc but not when a consumer pins a
-        // concrete Env — cast to the leaf's param type.
-        const cached = await serveResponseRouteWithCache({
-          reqCtx: requestContext as Parameters<
-            typeof serveResponseRouteWithCache
-          >[0]["reqCtx"],
-          manifestEntry,
-          responseType: responseType as string,
-          url,
-          executeHandler,
-          deps: { createCacheScope: cacheScopeMod.createCacheScope },
-        });
-        if (cached !== undefined) return cached;
-      }
-
-      return executeHandler().then(finalizeResponse);
-    };
-
-    // The renderStartMs deadline wraps ONLY the response-route unit, mirroring
-    // handler.ts:845 where withTimeout(handleResponseRoute(...)) runs INSIDE
-    // coreRequestHandler — after the global middleware chain has already
-    // entered. Wrapping the outer chain (as an earlier version did) counted
-    // global middleware time toward the deadline, so a slow global auth
-    // middleware could 504 a request production serves. On timeout the 504/
-    // onTimeout Response is RETURNED from coreHandler so it flows back out
-    // through the global chain and finalizeResponse, identical to production
-    // (handler.ts:857 returns handleTimeoutResponse into the same next() path).
-    const runResponseRoute = async (
-      pass: DispatchPass<TEnv>,
-    ): Promise<Response> => {
-      const { routeKey } = pass;
-      const responseWork = callResponseRoute(pass);
-      const renderOutcome = await withTimeout(
-        responseWork,
-        router.timeouts?.renderStartMs,
-        "render-start",
-      );
-      if (!renderOutcome.timedOut) return renderOutcome.result;
-
-      // The race's losing side keeps executing after the timeout wins; its
-      // eventual Response is dropped. Swallow any rejection (no
-      // unhandled-rejection surfacing) and cancel the orphaned body stream so,
-      // under vitest, the abandoned handler cannot leak into the next test.
-      // Production abandons it too (handler.ts:845); this is a runner-scoped
-      // cleanup, not an observable-behavior change.
-      void responseWork
-        .then(
-          (orphan) => orphan.body?.cancel(),
-          () => {},
-        )
-        .catch(() => {});
-
-      const durationMs = renderOutcome.durationMs;
-      const timeoutError = new RouterTimeoutError("render-start", durationMs);
-      // Field-for-field parity with handleTimeoutResponse's callOnError
-      // (handler.ts:254): env is passed through (was previously dropped). render
-      // is always absent — dispatch runs no Flight/HTML driver, so there is no
-      // foreground cursor to snapshot.
-      invokeOnError(
-        router.onError,
-        timeoutError,
-        "handler",
-        {
-          request: req,
-          url,
-          env,
-          routeKey,
-          handledByBoundary: false,
-          metadata: { timeout: true, phase: "render-start", durationMs },
-        },
-        "RSC",
-      );
-      if (sink) {
-        safeEmit(resolveSink(sink), {
-          type: "request.timeout",
-          timestamp: performance.now(),
-          requestId: telemetryRequestId,
-          phase: "render-start",
-          pathname: url.pathname,
-          routeKey,
-          durationMs,
-          customHandler: router.onTimeout !== undefined,
-        });
-      }
-      if (router.onTimeout) {
-        try {
-          return await router.onTimeout({
-            phase: "render-start",
-            request: req,
-            url,
-            env,
-            routeKey,
-            durationMs,
-          });
-        } catch (error) {
-          if (process.env.NODE_ENV !== "production") {
-            console.error("[dispatch] onTimeout callback error:", error);
-          }
-          return createDefaultTimeoutResponse("render-start");
-        }
-      }
-      return createDefaultTimeoutResponse("render-start");
-    };
-
-    // coreHandler is the single terminal the global middleware chain wraps,
-    // mirroring production's coreHandler (handler.ts): a trailing-slash/redirect
-    // 308, an unmatched-path 404, or the response route. Both the 308 and the
-    // 404 are produced via createResponseWithMergedHeaders so middleware-set
-    // cookies/headers merge onto them, identical to production's
-    // rsc-rendering.ts redirect path — and because they sit inside the chain, a
-    // global middleware that short-circuits (e.g. an auth 401) runs first and
-    // wins, never reaching the 308/404. The renderStartMs deadline lives inside
-    // runResponseRoute (below the chain), never covering the 308/404 paths —
-    // production only wraps the response-route plan (handler.ts:834-856).
-    const coreHandler = async (pass: DispatchPass<TEnv>): Promise<Response> => {
-      const { redirectTo, isUnmatched, url } = pass;
-      if (redirectTo) {
-        return createResponseWithMergedHeaders(null, {
-          status: 308,
-          headers: { Location: redirectTo + url.search },
-        });
-      }
-      if (isUnmatched) {
-        return createResponseWithMergedHeaders("Not Found", {
-          status: 404,
-          headers: { "content-type": "text/plain;charset=utf-8" },
-        });
-      }
-      return runResponseRoute(pass);
-    };
-
     // request.start opens the match transaction, mirroring match-handlers.ts.
     // transaction is always "match" (dispatch has no matchPartial split);
     // isPartial carries the ?_rsc_partial signal the same way production does.
@@ -818,168 +391,90 @@ export async function dispatch<TEnv = any>(
     }
 
     try {
-      // Global (pattern-matched) middleware wraps coreHandler, exactly as
-      // production wraps coreHandler with executeMiddleware (handler.ts:568).
-      // The renderStartMs deadline is deliberately NOT applied here — it wraps
-      // only the response-route unit inside coreHandler (see runResponseRoute),
-      // mirroring handler.ts:845 so global middleware time is never counted
-      // toward the deadline.
-      // A throw rewrite() re-dispatches the same request context as the
-      // target, through the production handler's pass loop
-      // (rsc/rewrite-passes.ts). Each pass matches its URL and builds its own
-      // core handler.
-      let passIndex = 0;
-      const { response: mwResponse, rewrittenTo } = await runRewritePasses({
+      // The production handler's global middleware passes, terminal plans,
+      // response route and finalization (rsc/request-stages.ts).
+      const { response, rewrittenTo, hasMiddleware } =
+        await stages.runRequestPasses({
+          ctx,
+          reqCtx: requestContext,
+          request: req,
+          url,
+          env,
+          variables,
+          beforePass: async (passRequest, passUrl, index) => {
+            if (index > 0) {
+              plan = await classifyPass(stages, passRequest, passUrl, ctx);
+            }
+          },
+          // A rewritten pass's request is a new object, which getRequestId
+          // would give an id of its own.
+          onHop: telemetryRequestId
+            ? (hop) => setRequestId(hop.request, telemetryRequestId)
+            : undefined,
+          // The core the global chain wraps, as the handler's
+          // coreRequestHandler: the terminal plans, then a findMatch()
+          // redirect's 308, the response route, or a 404. The 308 and 404 go
+          // through createResponseWithMergedHeaders, so middleware
+          // cookies/headers merge onto them as production's render path
+          // merges them.
+          core: async (passRequest, passUrl) => {
+            const terminal = stages.terminalPlanResponse(plan, passUrl, ctx);
+            if (terminal) return terminal;
+            const executable = plan as ExecutableRequestPlan<TEnv>;
+            stages.recordPlanRoute(executable);
+            if (executable.mode === "redirect") {
+              return createResponseWithMergedHeaders(null, {
+                status: 308,
+                headers: { Location: executable.redirectUrl },
+              });
+            }
+            if (executable.mode === "response") {
+              return stages.serveResponseRoute(ctx, {
+                match: stages.responseRouteMatch(executable),
+                routeKey: executable.route.routeKey,
+                request: passRequest,
+                url: passUrl,
+                env,
+                variables,
+                abandon: abandonTimedOut,
+              });
+            }
+            return createResponseWithMergedHeaders("Not Found", {
+              status: 404,
+              headers: { "content-type": "text/plain;charset=utf-8" },
+            });
+          },
+        });
+
+      return stages.finalizeRequestResponse(response, {
+        ctx,
         reqCtx: requestContext,
         request: req,
         url,
-        routeMap: () => router.routeMap as Record<string, string>,
-        basename: router.basename,
-        runPass: async (passRequest) => {
-          const pass =
-            passIndex++ === 0
-              ? firstPass
-              : await matchDispatchPass(router, passRequest, env);
-          recordPassParams(pass);
-          const globalMatches = matchMiddleware(
-            pass.url.pathname,
-            router.middleware,
-          );
-          const passCore = (): Promise<Response> => coreHandler(pass);
-          return globalMatches.length === 0
-            ? passCore()
-            : executeMiddleware<TEnv>(
-                globalMatches,
-                pass.req,
-                env,
-                variables,
-                passCore,
-                reverse,
-              );
-        },
-        report: (error, at) => {
-          invokeOnError(
-            router.onError,
-            error,
-            "routing",
-            { request: at.request, url: at.url, env, handledByBoundary: false },
-            "RSC",
-          );
+        env,
+        hasMiddleware,
+        rewrittenTo,
+        // request.end closes the transaction. dispatch produces no RSC
+        // segments and holds no match-cache state, so segmentCount/cacheHit
+        // are 0/false — the same shape production emits for its own redirect
+        // (segment-less) result. The response is built before request.end
+        // (unlike match()/matchPartial()), so it carries the status.
+        beforeGuard: (finalResponse) => {
+          if (!sink) return;
+          safeEmit(resolveSink(sink), {
+            type: "request.end",
+            timestamp: performance.now(),
+            requestId: telemetryRequestId,
+            method: req.method,
+            pathname: url.pathname,
+            transaction: "match",
+            durationMs: performance.now() - telemetryStart,
+            segmentCount: 0,
+            cacheHit: false,
+            status: finalResponse.status,
+          });
         },
       });
-
-      // Match production's global-chain exit (handler.ts): on a partial/action
-      // request a middleware 3xx redirect is converted to a Flight-safe response
-      // so fetch() does not auto-follow it; every path then drains onResponse
-      // callbacks via finalizeResponse. dispatch is RSC-free, so the
-      // createRedirectFlightResponse stand-in falls back to the no-state
-      // 204 + X-RSC-Redirect (see the location-state divergence in the header).
-      let finalResponse: Response;
-      if (isPartial || isAction) {
-        const softOpts = {
-          requestOrigin: url.origin,
-          basename: router.basename,
-        };
-        // Pass `external` through: interceptRedirectForPartial forwards the
-        // out-of-band brand as the third callback arg (helpers.ts). Dropping it
-        // would neutralize redirect(url, { external: true }) to "/" in dispatch
-        // while production preserves it via createRedirectFlightResponse.
-        const intercepted = interceptRedirectForPartial(
-          mwResponse,
-          (redirectUrl, _locationState, external) =>
-            createSimpleRedirectResponse(redirectUrl, {
-              ...softOpts,
-              external,
-            }),
-          softOpts,
-        );
-        finalResponse = finalizeResponse(intercepted ?? mwResponse);
-      } else {
-        finalResponse = finalizeResponse(mwResponse);
-      }
-      if (rewrittenTo !== undefined) {
-        trySetHeader(finalResponse, REWRITE_HEADER, rewrittenTo);
-      }
-
-      // request.end closes the transaction. dispatch produces no RSC segments and
-      // holds no match-cache state, so segmentCount/cacheHit are 0/false — the
-      // same shape production emits for its own redirect (segment-less) result.
-      if (sink) {
-        safeEmit(resolveSink(sink), {
-          type: "request.end",
-          timestamp: performance.now(),
-          requestId: telemetryRequestId,
-          method: req.method,
-          pathname: url.pathname,
-          transaction: "match",
-          durationMs: performance.now() - telemetryStart,
-          segmentCount: 0,
-          cacheHit: false,
-          // dispatch's final response IS built before request.end (unlike
-          // match()/matchPartial(), whose Response is built after), so stamp its
-          // status — the same field a thrown-Response short-circuit carries.
-          status: finalResponse.status,
-        });
-      }
-
-      // Mirror production's single open-redirect chokepoint (handler.ts): every
-      // browser-followed (3xx + Location) redirect is same-origin guarded before
-      // it leaves -- a cross-origin Location is rewritten to the basename root
-      // unless redirect(url, { external: true }) opted out. Soft partial/action
-      // redirects are already resolved at createSimpleRedirectResponse time.
-      const guardedResponse = guardOutgoingRedirect(
-        finalResponse,
-        url.origin,
-        router.basename,
-      );
-
-      // Mirror production's stream-idle watchdog (handler.ts response tail),
-      // same gating and reporting — dispatch is the userland dogfood surface
-      // for timeouts.streamIdleMs, so the primitive carries the real wiring,
-      // not a stub. Websocket check FIRST (an upgrade response's body getter
-      // must never be poked); onTimeout does not apply mid-stream.
-      const streamIdleMs = router.timeouts?.streamIdleMs;
-      if (
-        isTimeoutEnabled(streamIdleMs) &&
-        !isWebSocketUpgradeResponse(guardedResponse) &&
-        guardedResponse.body
-      ) {
-        return applyStreamIdleTimeout(
-          guardedResponse,
-          streamIdleMs!,
-          (trip) => {
-            invokeOnError(
-              router.onError,
-              trip.error,
-              "handler",
-              {
-                request: req,
-                url,
-                env,
-                handledByBoundary: false,
-                metadata: {
-                  timeout: true,
-                  phase: "stream-idle",
-                  durationMs: trip.totalMs,
-                },
-              },
-              "RSC",
-            );
-            if (sink) {
-              safeEmit(resolveSink(sink), {
-                type: "request.timeout",
-                timestamp: performance.now(),
-                requestId: telemetryRequestId,
-                phase: "stream-idle",
-                pathname: url.pathname,
-                durationMs: trip.totalMs,
-                customHandler: false,
-              });
-            }
-          },
-        );
-      }
-      return guardedResponse;
     } catch (error) {
       if (sink) {
         if (error instanceof Response) {
@@ -1019,4 +514,31 @@ export async function dispatch<TEnv = any>(
       throw error;
     }
   });
+}
+
+let requestStages: Promise<RequestStages> | undefined;
+
+/**
+ * The request stages, loaded on the first dispatch so the testing barrel's
+ * eager graph stays what a suite that never dispatches loads. Neither graph
+ * loads @vitejs/plugin-rsc (__tests__/testing-module-graph.test.ts). Held
+ * after the first load: a dynamic import per dispatch costs a module-runner
+ * lookup.
+ */
+function loadRequestStages(): Promise<RequestStages> {
+  return (requestStages ??= import("../rsc/request-stages.js"));
+}
+
+/**
+ * A timed-out response route's work keeps running. Swallow its rejection and
+ * cancel its body so, under a test runner, the abandoned handler cannot leak
+ * into the next test. The production handler leaves it running.
+ */
+function abandonTimedOut(work: Promise<Response>): void {
+  void work
+    .then(
+      (orphan) => orphan.body?.cancel(),
+      () => {},
+    )
+    .catch(() => {});
 }

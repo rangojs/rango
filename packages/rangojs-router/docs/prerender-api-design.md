@@ -490,7 +490,7 @@ The capture must replay the prerender store, as the build phase's does. On the
 Node preset the virtual module sets `__PRERENDER_DEV_URL` in the process the
 capture runs in. On Cloudflare the capture runs in the temp Node server, which
 never evaluates that module, so the plugin sets the global for it when it
-records `devServerOrigin` (`router-discovery.ts`, the Cloudflare branch of
+records `devServerOrigin` (`discovery/dev-server-phase.ts`, the Cloudflare branch of
 `discover`). Before #1057 it did not: the capture found no prerender store,
 rendered the `Prerender` handler live into a doc record, and the worker's HIT
 served the handler layer from the prerender store and lost the loader pushes

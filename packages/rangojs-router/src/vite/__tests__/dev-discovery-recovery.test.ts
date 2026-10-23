@@ -13,9 +13,9 @@ import {
   type DiscoveryState,
 } from "../discovery/state.js";
 
-// The dev recovery wiring in router-discovery.ts's configureServer, driven
-// through the plugin against fake dev servers. discoverRouters and the gen-file
-// writers are stubbed: their own behavior is covered by
+// The dev recovery wiring of configureServer (discovery/dev-server-phase.ts),
+// driven through the plugin against fake dev servers. discoverRouters and the
+// gen-file writers are stubbed: their own behavior is covered by
 // discover-routers-reload.test.ts and the route-types tests. On Cloudflare the
 // discovery temp server comes from the stubbed vite createServer.
 

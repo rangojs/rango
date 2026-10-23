@@ -4,6 +4,7 @@
 
 import type { ConsoleMessage, Expect, Locator, Page } from "@playwright/test";
 import { PREFETCH_HEADER } from "../../prefetch-markers.js";
+import { WIRE } from "../../wire-params.js";
 
 // ============================================================================
 //  Standalone helpers (need only a page/locator)
@@ -177,8 +178,7 @@ export function isPrefetchRequest(req: {
 
 // Module-level matcher + handler so blockPrefetch/unblockPrefetch share
 // stable references — Playwright's unroute matches by identity.
-const rscPartialUrl = (url: URL): boolean =>
-  url.searchParams.has("_rsc_partial");
+const rscPartialUrl = (url: URL): boolean => url.searchParams.has(WIRE.partial);
 async function abortPrefetchRoute(
   route: import("@playwright/test").Route,
 ): Promise<void> {

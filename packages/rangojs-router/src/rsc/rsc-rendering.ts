@@ -10,8 +10,8 @@ import {
   getRequestContext,
   setRequestContextParams,
   runWithRequestContext,
-  wireRenderBarrier,
 } from "../server/request-context.js";
+import { deriveRenderPass } from "../server/render-pass.js";
 import {
   SeededShellStore,
   ShellRecordUnavailableError,
@@ -99,7 +99,8 @@ import {
 import { contextGet } from "../context-var.js";
 import { rewriteShellAudience, rewriteTrail } from "../server/rewrite-trail.js";
 import { visitorShellKey } from "./shell-capture-constants.js";
-import { PREFETCH_HEADER, STALE_PARAM } from "../prefetch-markers.js";
+import { PREFETCH_HEADER } from "../prefetch-markers.js";
+import { WIRE } from "../wire-params.js";
 import {
   isWarmReplace,
   noteWarmShellEvent,
@@ -1275,7 +1276,7 @@ function renderPreparedRscResponse<TEnv>(
     reqCtx._payloadDeferred ||
     (isPartial &&
       (reqCtx._requestKind === "fill" ||
-        url.searchParams.get(STALE_PARAM) === "true"))
+        url.searchParams.get(WIRE.stale) === "true"))
   ) {
     rscHeaders["cache-control"] = NOT_REUSED;
   }
@@ -1465,7 +1466,7 @@ async function matchPartialWithPprReplay<TEnv>(
   }
   // A stale partial renders live, as an action does (rendersLive,
   // router/match-context.ts): the record may predate the action's write.
-  if (url.searchParams.get(STALE_PARAM) === "true") {
+  if (url.searchParams.get(WIRE.stale) === "true") {
     return runMatch({ outcome: "BYPASS", reason: "stale" });
   }
   // Fragment passthrough (#700), extended to partial replay. Navigation
@@ -1905,26 +1906,6 @@ function serveShellHit(
   /** The first loader pin of the entry that failed to decode (dc-t89). */
   let undecodablePin: string | undefined;
 
-  const createTailContext = (): RequestContext<any> => {
-    const tailCtx: RequestContext<any> = Object.create(reqCtx);
-    // Matching writes render state onto the derived context. Its barrier must
-    // close over that same context or a streaming tail inherits the base
-    // context's premature non-streaming handle snapshot.
-    wireRenderBarrier(tailCtx, handleStore);
-    // The tail's render barrier resolves once its record is replayed and
-    // before a loader runs (cache-lookup.ts withCacheLookup, yieldFromStore).
-    // The store then holds what the prelude was rendered from, so that is
-    // the snapshot the document hydrates with; what this request's loaders
-    // do to it afterwards reaches the client after hydration
-    // (HandleStore.freezeDocumentSnapshot, issue #1035).
-    const resolveRenderBarrier = tailCtx._resolveRenderBarrier;
-    tailCtx._resolveRenderBarrier = (segments) => {
-      handleStore.freezeDocumentSnapshot();
-      resolveRenderBarrier(segments);
-    };
-    return tailCtx;
-  };
-
   const renderTail = async (
     activeCtx: RequestContext<any>,
   ): Promise<ReadableStream<Uint8Array> | { redirect: string }> => {
@@ -2036,7 +2017,6 @@ function serveShellHit(
         tailTiming.snapshotParseMs = Math.round(snapshotStats.parseMs);
       }
     }
-    const seededCtx = createTailContext();
     const records = snapshot ?? [];
     // Loader-family records (bake-lane containers, loader-container-bake):
     // decode into a seed Map for the resolveLoaderData overlay, so the
@@ -2060,32 +2040,31 @@ function serveShellHit(
         `[Server][ppr] shell HIT: loader seed built +${Math.round(performance.now() - seedStart)}ms (abs ${Math.round(performance.now())})`,
       );
     }
-    if (loaderSeed) seededCtx._shellLoaderSeed = loaderSeed;
-    // The handler layer is REPLAYED from the entry's own doc record, never
-    // executed: the implicit doc scope replaces any route-derived scope
-    // (docTail), looks the record up by the key the capture wrote
-    // (fixedDocKey), and reads it from a segment-only overlay of the snapshot
-    // (the real store never holds a doc: record). A lookup that does not hit
-    // throws ShellRecordUnavailableError (withCacheLookup), handled by the
-    // degrade below. Live and promise-carrying bake-lane loaders still run
-    // fresh; a promise-free bake-lane loader is served from its pin
-    // (_shellLoaderSeed, loader-cache.ts). A Prerender route's tail takes
-    // the handler layer from the prerender store before this scope is
-    // consulted, and the loader pushes from `prerenderHandles`.
-    seededCtx._shellImplicitCache = {
-      ttl: descriptor.ttl,
-      swr: descriptor.swr,
-      store: new SeededShellStore(reqCtx._cacheStore!, records),
-      keyPrefix: "doc",
-      docTail: true,
-      fixedDocKey: entry.docKey,
-      prerenderHandles: shellPrerenderHandles(records),
-    };
-    // Fragment splice (issue #700): store hits in THIS tail emit their stored
-    // segment fragments verbatim (expanded by segment-fragments.ts). The flag
-    // lives on the derived context so it can never leak into a capture render,
-    // which serializes segments and must see real elements.
-    seededCtx._shellFragmentPayload = true;
+    // What the tail owns, and why: RENDER_PASS_FIELDS["ppr-tail"].
+    const seededCtx = deriveRenderPass(reqCtx, "ppr-tail", {
+      handleStore,
+      loaderSeed,
+      // The handler layer is REPLAYED from the entry's own doc record, never
+      // executed: the implicit doc scope replaces any route-derived scope
+      // (docTail), looks the record up by the key the capture wrote
+      // (fixedDocKey), and reads it from a segment-only overlay of the
+      // snapshot (the real store never holds a doc: record). A lookup that
+      // does not hit throws ShellRecordUnavailableError (withCacheLookup),
+      // handled by the degrade below. Live and promise-carrying bake-lane
+      // loaders still run fresh; a promise-free bake-lane loader is served
+      // from its pin (_shellLoaderSeed, loader-cache.ts). A Prerender route's
+      // tail takes the handler layer from the prerender store before this
+      // scope is consulted, and the loader pushes from `prerenderHandles`.
+      implicitCache: {
+        ttl: descriptor.ttl,
+        swr: descriptor.swr,
+        store: new SeededShellStore(reqCtx._cacheStore!, records),
+        keyPrefix: "doc",
+        docTail: true,
+        fixedDocKey: entry.docKey,
+        prerenderHandles: shellPrerenderHandles(records),
+      },
+    });
     return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
   })();
   // The stream below is the only consumer; pre-attach a no-op catch so a tail

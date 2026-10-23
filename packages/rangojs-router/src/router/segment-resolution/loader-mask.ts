@@ -7,9 +7,9 @@
  * consuming Suspense subtree postpones as a hole, and the serve pass runs them
  * fresh into it.
  *
- * Capture mode is signalled by `requestCtx._shellCaptureRun`, set to true ONLY on
+ * Capture mode is signalled by `requestCtx._shellCaptureState.run`, set ONLY on
  * the derived request context of the background capture task (shell-capture.ts);
- * the foreground render never sets it. This module is the single home for the
+ * the foreground render never has it. This module is the single home for the
  * mask so every loader execution site gates the same way (loader-cache.ts
  * `resolveLoaderData`, revalidation.ts `resolveOwnerLoaders`).
  */
@@ -22,7 +22,7 @@ import { isRenderableLoading } from "../../types/boundaries.js";
 
 /**
  * True when the current render is the active PPR shell capture and route loaders
- * must be masked rather than executed. Reads `_shellCaptureRun` off the ALS
+ * must be masked rather than executed. Reads `_shellCaptureState` off the ALS
  * request context (the capture task re-establishes its derived context via
  * runWithRequestContext), so it is accurate at the loader resolution sites, which
  * run synchronously inside the pipeline's context frame.
@@ -30,7 +30,7 @@ import { isRenderableLoading } from "../../types/boundaries.js";
 export function isShellCaptureActive(
   reqCtx: RequestContext<any> | undefined = _getRequestContext(),
 ): boolean {
-  return reqCtx?._shellCaptureRun === true;
+  return reqCtx?._shellCaptureState?.run === true;
 }
 
 // createMaskedLoaderPromise lives in the leaf module mask-nested.ts, beside

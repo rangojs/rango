@@ -437,7 +437,7 @@ async function discoverRoutersPass(
   // while runtime (trie-ranked: wildcard last) matches the real route and
   // misses the manifest — wrong-content bake for plain Prerender routes, a
   // guaranteed 404 once handler eviction runs. Dev never hits this because
-  // propagateDiscoveryState (router-discovery.ts) pushes the same setters on
+  // propagateDiscoveryState (dev-server-phase.ts) pushes the same setters on
   // every discovery/HMR pass; configureServer early-returns in build mode, so
   // collection was the one findMatch consumer running trieless. Mirrors the
   // dev perRouterSetters loop; deliberately does NOT markRouterTrieAuthoritative

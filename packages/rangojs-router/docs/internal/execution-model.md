@@ -1247,7 +1247,7 @@ Guarantees, each pinned by a semantic matrix row:
   (`visitorShellKey`: the visitor's URL partitioned by
   `rw:<target path+search>`, the route's own partition after it), captured
   with the visitor's location and `ctx.rewrittenFrom`
-  (`_shellCaptureForVisitor`); the target's own shell stays its own.
+  (`_shellCaptureState.forVisitor`); the target's own shell stays its own.
   `.shell("target")` reads and captures the target's shared shell, as before
   #1146. `[RW8]`
 - A navigation, prefetch or action from a page middleware rewrote diffs
@@ -1317,7 +1317,7 @@ guards run on that re-render, as on a direct visit; they never guarded the
 action itself, since route middleware never wraps action execution. Only
 the action and PE branches render from the outcome, so after the action the
 target must be a page route: a response route, a redirect or no match on
-pass 2 is an error (`coreRequestHandler`), not a fresh POST that a response
+pass 2 is an error (`terminalPlanResponse` in `rsc/request-stages.ts`), not a fresh POST that a response
 route's handler would serve as a second mutation. Before the action no
 outcome exists, so pass 2 is classified as any request: a response route
 target serves a plain POST with its body, as a direct post to it would. A JS
@@ -1437,7 +1437,7 @@ Where the old and the new URL show:
   function it throws, and a loader's own `cache()` fill records it. A render
   other visitors may be served (`rendersForSharedAudience`: a PPR shell
   capture, a render the document cache stores) reads `undefined`, as a direct
-  visit would, except a visitor-keyed shell capture (`_shellCaptureForVisitor`),
+  visit would, except a visitor-keyed shell capture (`_shellCaptureState.forVisitor`),
   whose key covers the URL; any other render that reads the visitor's URL is
   not stored by the document cache (`_payloadVisitorLocation`). A middleware
   ctx reads it plainly: middleware runs per request and is never stored.

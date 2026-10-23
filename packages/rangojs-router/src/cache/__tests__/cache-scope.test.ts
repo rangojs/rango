@@ -65,7 +65,10 @@ const { executionStart, markInvalidated } =
 import type { SegmentCacheStore, CachedEntryData } from "../types.js";
 import type { PartialCacheOptions } from "../../types.js";
 import type { RequestContext } from "../../server/request-context.js";
-import { makeRequestContext } from "../../__tests__/kit/request-context.js";
+import {
+  makeRequestContext,
+  makeShellCaptureState,
+} from "../../__tests__/kit/request-context.js";
 
 const PRODUCTS_URL = "https://example.com/products";
 
@@ -692,14 +695,13 @@ describe("CacheScope - router.prerender() warm", () => {
     const scope = new CacheScope({ ttl: 60, store });
     await seed(scope, store);
 
-    // Typed so check-internals counts the Object.create below.
-    const foreground: RequestContext = makeRequestContext({
+    const foreground = makeRequestContext({
       url: PRODUCTS_URL,
       cacheStore: store,
     });
     foreground._prerenderWarm = createWarmRecord("replace", store);
     const capture = Object.create(foreground) as typeof foreground;
-    capture._shellCaptureRun = true;
+    capture._shellCaptureState = makeShellCaptureState();
     const outcome = await runWithRequestContext(capture, () =>
       scope.lookupRouteDetailed("/products", {}),
     );

@@ -169,8 +169,10 @@ The render barrier is a deferred promise on the request context:
   artifacts. Same as cache hit.
 - **PPR shell capture (bake lane)**: the capture's derived context gets its
   OWN barrier, wired to the capture's fresh handle store
-  (`wireRenderBarrier` in `server/request-context.ts`, called from
-  `deriveShellCaptureContext` in `rsc/shell-capture.ts`). This is scar
+  (`wireRenderBarrier` in `server/request-context.ts`, called by
+  `deriveRenderPass` in `server/render-pass.ts` for the `shell-capture` and
+  `ppr-tail` rows of `RENDER_PASS_FIELDS`; the background re-render's row
+  inherits the request's barrier). This is scar
   tissue (issue #684, plan 009): the derived context is
   `Object.create(reqCtx)`, and before the explicit wiring every
   `_renderBarrier*` read fell through the prototype to the foreground

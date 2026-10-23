@@ -395,8 +395,11 @@ const EarlyBakeLoader = createLoader(async (ctx) => {
 /** Reads readRecaptureLive during a capture only. */
 const RecaptureBakeLoader = createLoader(async (ctx) => ({
   baked:
-    (getRequestContext() as unknown as { _shellCaptureRun?: boolean })
-      ._shellCaptureRun === true
+    (
+      getRequestContext() as unknown as {
+        _shellCaptureState?: { run: true };
+      }
+    )._shellCaptureState?.run === true
       ? `baked-${await readRecaptureLive(ctx)}`
       : "baked-none",
 }));

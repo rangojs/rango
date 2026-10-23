@@ -1,6 +1,5 @@
 import { negotiateRoute } from "./content-negotiation.js";
 import { runWithRouterLogContext, withRouterLogScope } from "./logging.js";
-import type { EntryData } from "../server/context";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { MiddlewareFn } from "./middleware.js";
 import { resolveRoute } from "./route-snapshot.js";
@@ -12,8 +11,8 @@ export interface PreviewMatchDeps<TEnv = any> {
 }
 
 /**
- * Preview match - returns route middleware without segment resolution.
- * Also returns responseType and handler for response routes (non-RSC short-circuit).
+ * Preview match - returns the route, its params and route middleware without
+ * segment resolution (a content-negotiated variant's, when one wins).
  */
 export async function previewMatch<TEnv = any>(
   request: Request,
@@ -24,11 +23,7 @@ export async function previewMatch<TEnv = any>(
     handler: MiddlewareFn;
     params: Record<string, string>;
   }>;
-  responseType?: string;
-  handler?: Function;
   params?: Record<string, string>;
-  negotiated?: boolean;
-  manifestEntry?: EntryData;
   routeKey?: string;
 } | null> {
   return runWithRouterLogContext(
@@ -56,46 +51,16 @@ export async function previewMatch<TEnv = any>(
         }
 
         const snapshot = result.snapshot;
-        const { matched, manifestEntry, routeMiddleware, responseType } =
-          snapshot;
-
+        const { matched } = snapshot;
+        // A winning response variant brings its own route middleware.
         const negotiation = await negotiateRoute(request, pathname, snapshot);
-        if (negotiation) {
-          return {
-            routeMiddleware:
-              negotiation.routeMiddleware.length > 0
-                ? negotiation.routeMiddleware
-                : undefined,
-            responseType: negotiation.responseType,
-            handler: negotiation.handler,
-            params: matched.params,
-            manifestEntry: negotiation.manifestEntry,
-            routeKey: matched.routeKey,
-            // omitted unless a variant negotiated, preserving the prior public
-            // shape (absent for plain response routes, not negotiated:false)
-            ...(negotiation.negotiated ? { negotiated: true } : {}),
-          };
-        }
-
-        // No negotiation or RSC won — return default route info
-        const hasVariants =
-          matched.negotiateVariants && matched.negotiateVariants.length > 0;
+        const routeMiddleware =
+          negotiation?.routeMiddleware ?? snapshot.routeMiddleware;
         return {
           routeMiddleware:
             routeMiddleware.length > 0 ? routeMiddleware : undefined,
           params: matched.params,
           routeKey: matched.routeKey,
-          ...(responseType
-            ? {
-                responseType,
-                handler:
-                  manifestEntry.type === "route"
-                    ? manifestEntry.handler
-                    : undefined,
-                manifestEntry,
-              }
-            : {}),
-          ...(hasVariants ? { negotiated: true } : {}),
         };
       }),
   );

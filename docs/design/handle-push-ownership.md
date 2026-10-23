@@ -736,7 +736,7 @@ Three pieces, in three commits, so that any can change without the others.
   is cut down by `getDataForSegment(id, true)`, the same filter
   `captureHandles` writes the record with, so the two cannot disagree.
   `buildFullPayload` (`rsc/full-payload.ts`) passes it under
-  `_shellCaptureRun`, which covers both producers (the runtime capture and
+  `_shellCaptureState.run`, which covers both producers (the runtime capture and
   the build-time one).
 - The funnel keeps a deferred push as a promise of its value:
   `Promise.resolve(value).then(mask)` (`rsc/shell-capture.ts`
@@ -1036,7 +1036,7 @@ mechanism did: only what the server puts in each channel.
   `Promise.resolve(value).then(judge)`: `judge` masks the settled value, and
   when that value held a promise it retags the slot as an unrecorded loader
   push (`HandleStore.unrecordPush`) and sets
-  `_shellCaptureUnrecordedLoaderPush`. The retag runs inside the slot's own
+  `_shellCaptureState.unrecordedLoaderPush`. The retag runs inside the slot's own
   `then`, so it lands before the record-first wait resumes, before
   `captureHandles` writes the record and before the prelude renders. A
   thenable push credited to a live-lane body, or to no body and no replay,

@@ -33,8 +33,9 @@ import {
 // pulls @vitejs/plugin-rsc (a virtual: module the plain node/vitest runner cannot
 // resolve). It is imported LAZILY at the two call sites below (deserializeSegments
 // in lookupRoute, serializeSegments in cacheRoute) so that requiring cache-scope —
-// e.g. dispatch's lazy `import("../cache/cache-scope.js")` for the response-route
-// cache path — does not crash a consumer test that never mocks plugin-rsc. Behavior
+// e.g. through the request stages dispatch loads for a response route
+// (rsc/request-stages.ts) — does not crash a consumer test that never mocks
+// plugin-rsc. Behavior
 // is unchanged: both methods are async and already awaited the codec.
 import {
   captureHandles,
@@ -54,14 +55,16 @@ import {
 import type { RequestContext } from "../server/request-context.js";
 import { runIdentityExempt } from "./cache-exec-scope.js";
 import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
+import { WIRE } from "../wire-params.js";
 
 /**
- * Narrow the request's route-record window (RequestContext._routeRecordWindow)
- * to a record this request read or wrote: fresh until `freshUntil` (the
- * record's `expiresAt`), then stale for `swr` seconds. A shell capture starts
- * with no window of its own (shell-capture.ts deriveShellCaptureContext sets
- * it undefined), so it narrows only to the records the capture itself read
- * or wrote.
+ * Narrow a shell capture's route-record window
+ * (ShellCaptureState.routeRecordWindow) to a record the capture read or
+ * wrote: fresh until `freshUntil` (the record's `expiresAt`), then stale for
+ * `swr` seconds. A capture starts with no window of its own
+ * (RENDER_PASS_FIELDS["shell-capture"] creates it undefined), so it narrows
+ * only to the records the capture itself read or wrote. Only a capture reads
+ * the window (shell-capture.ts capShellWindow): another render notes nothing.
  */
 function noteRouteRecordWindow(
   requestCtx: RequestContext,
@@ -70,6 +73,8 @@ function noteRouteRecordWindow(
   swr: number,
   written: boolean,
 ): void {
+  const captureState = requestCtx._shellCaptureState;
+  if (!captureState) return;
   const next = {
     freshUntil,
     staleUntil: freshUntil + swr * 1000,
@@ -77,9 +82,9 @@ function noteRouteRecordWindow(
     swr,
     written,
   };
-  const current = requestCtx._routeRecordWindow;
+  const current = captureState.routeRecordWindow;
   // The record that runs out first names the config; freshness is the least.
-  requestCtx._routeRecordWindow = current
+  captureState.routeRecordWindow = current
     ? {
         ...(current.staleUntil <= next.staleUntil ? current : next),
         freshUntil: Math.min(current.freshUntil, freshUntil),
@@ -130,7 +135,7 @@ function getDefaultRouteCacheKey(
   prefixOverride?: "doc",
 ): string {
   const ctx = getRequestContext();
-  const isPartial = ctx?.originalUrl?.searchParams.has("_rsc_partial") ?? false;
+  const isPartial = ctx?.originalUrl?.searchParams.has(WIRE.partial) ?? false;
   const searchParams = ctx?.url.searchParams;
   const host = ctx?.url.host ?? "localhost";
 
@@ -1022,7 +1027,7 @@ export class CacheScope {
     recordRequestTags(tags, requestCtx);
 
     // Check if this is a partial request (navigation) vs document request
-    const isPartial = requestCtx.originalUrl.searchParams.has("_rsc_partial");
+    const isPartial = requestCtx.originalUrl.searchParams.has(WIRE.partial);
 
     if (INTERNAL_RANGO_DEBUG) {
       debugCacheLog(

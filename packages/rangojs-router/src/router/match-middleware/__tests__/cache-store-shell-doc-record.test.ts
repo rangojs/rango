@@ -40,6 +40,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../../server/request-context.js";
+import { makeShellCaptureState } from "../../../__tests__/kit/request-context.js";
 import {
   CacheScope,
   resolveShellImplicitCacheScope,
@@ -73,7 +74,7 @@ interface Harness {
 
 /**
  * Build a capture-shaped request context: recording store as the app store,
- * `_shellCaptureRun` set, and the capture marker whose store is the
+ * `_shellCaptureState` set, and the capture marker whose store is the
  * SnapshotOnlySegmentStore — exactly what createDerivedContext installs.
  * The document identity URL carries no `_rsc_partial`, so key resolution
  * lands in the `doc:` namespace on both the marker and a default-keyed
@@ -97,7 +98,7 @@ function makeHarness(): Harness {
     } as any,
   }) as RequestContext<any>;
   reqCtx._cacheStore = recording;
-  reqCtx._shellCaptureRun = true;
+  reqCtx._shellCaptureState = makeShellCaptureState();
   reqCtx._shellImplicitCache = {
     ttl: 300,
     swr: 60,
@@ -278,7 +279,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
 
   it("records nothing outside a capture render (replay serve must not mint doc records)", async () => {
     const h = makeHarness();
-    h.reqCtx._shellCaptureRun = undefined;
+    h.reqCtx._shellCaptureState = undefined;
     const explicit = new CacheScope({ ttl: 30, key: () => "consumer-key" });
 
     await h.run(explicit);

@@ -458,8 +458,9 @@ the request is a fill:
   another method that carries either marker is a normal request. The header
   and the param are read once, when the request context is created
   (`requestKind()`, kept as `RequestContext._requestKind`; the names are
-  `PREFETCH_HEADER` and `FILL_PARAM`, in the dependency-free
-  `src/prefetch-markers.ts` the browser imports too). The decision is one
+  `PREFETCH_HEADER` in `src/prefetch-markers.ts` and `WIRE.fill` in
+  `src/wire-params.ts`, both dependency free and imported by the browser
+  too). The decision is one
   function, `partialDeferralMode()`, with a truth table beside it: an action
   is always a POST and a capture always runs the full match, so no real
   request can show those conditions apart.

@@ -43,6 +43,7 @@ import { abortAllPrefetches } from "./loader.js";
 import { notifyPrefetchCacheInvalidated } from "./invalidation.js";
 import { invalidateRangoState } from "../rango-state.js";
 import type { RscPayload } from "../types.js";
+import { WIRE } from "../../wire-params.js";
 
 /**
  * A prefetch that has been fetched AND eagerly decoded. Storing the decoded
@@ -190,7 +191,7 @@ let generation = 0;
  */
 export function buildPrefetchKey(prefix: string, targetUrl: URL): string {
   const normalizedTarget = new URL(targetUrl);
-  normalizedTarget.searchParams.delete("_rsc_segments");
+  normalizedTarget.searchParams.delete(WIRE.segments);
   return prefix + "\0" + normalizedTarget.pathname + normalizedTarget.search;
 }
 
