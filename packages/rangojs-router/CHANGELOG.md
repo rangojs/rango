@@ -72,6 +72,48 @@ The error a component route throws, and when it throws (before any
 middleware), is unchanged. A test that read `ctx.routeName` before `next()`
 in global middleware reads it after `next()`, or from route middleware.
 
+### Fixed: a handle a `loading()` route or slot pushes after an `await` shows in its own place in `useHandle` ([#1258](https://github.com/rangojs/rango/pull/1258))
+
+**Before.** The router does not wait for a route or parallel slot handler
+under `loading()`: it goes on to the route's slots, the next slot or the
+route while that handler runs. A `ctx.use(Handle)` push the handler made
+after its first `await` (a fetch, a timer, any promise) was filed under the
+segment the router had reached by then, so `useHandle` showed it out of
+order. The same went for a loader the handler started after the `await`, and
+for the pushes of a `"use cache"` function given the ctx, on a miss and on
+the replay of a hit.
+
+```tsx
+// Under a layout that pushes { label: "Shop" }.
+path(
+  "/product/:id",
+  async (ctx) => {
+    const product = await getProduct(ctx.params.id);
+    ctx.use(Breadcrumbs)({ label: product.name });
+    return <Product product={product} />;
+  },
+  { name: "product" },
+  () => [
+    loading(<ProductSkeleton />),
+    parallel({
+      "@reviews": (ctx) => {
+        ctx.use(Breadcrumbs)({ label: "Reviews" });
+        return <Reviews />;
+      },
+    }),
+  ],
+);
+// Before: useHandle(Breadcrumbs) gave Shop, Reviews, Product.
+// After:  Shop, Product, Reviews.
+```
+
+**After.** Each push lands under the segment whose handler made it, wherever
+the `await` sits, on the document and on a navigation. No change in your
+code. A handler without `loading()` and a push function bound before the
+`await` (`const push = ctx.use(Handle)`) were filed right before, and are
+unchanged. `{ ...ctx }` in a `loading()` route copies the same fields as
+before.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
