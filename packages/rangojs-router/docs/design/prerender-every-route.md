@@ -390,7 +390,7 @@ read:
   reads as an L1 miss: `CFCacheStore.get`, `getItem`, `getResponse` and the
   shell read (`readShellDocumentWithin`, and `readMemoizedShell` for a copy in
   the isolate's shell memo) go on to the entry's KV key through the readers a
-  plain miss uses (`kvGetSegment`, `kvGetItem`, `kvGetResponse`,
+  plain miss uses (`readKv` for the three data families,
   `kvReadShellDocument`). Those check what KV holds against the same markers
   (`isGloballyInvalidated`; the values that rejected the copy are already in
   the request's memo, so an entry carrying the same tags costs no second

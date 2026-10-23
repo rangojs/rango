@@ -789,7 +789,7 @@ or cheap renders, where the extra get after every invalidation buys nothing.
 Three things keep it safe and bounded:
 
 - The KV entry goes through the reader and the check a plain miss uses
-  (`kvGetSegment` and its siblings, `isGloballyInvalidated`), so a value from
+  (`CFCacheStore.readKv`, `isGloballyInvalidated`), so a value from
   before the marker is never served, however stale KV's answer is. The
   markers that rejected the L1 copy are in the request's memo by then, so a
   KV entry carrying the same tags costs no second marker read.
