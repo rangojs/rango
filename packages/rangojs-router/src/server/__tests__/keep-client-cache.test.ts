@@ -5,22 +5,14 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  createRequestContext,
   runWithRequestContext,
+  type RequestContext,
 } from "../request-context.js";
+import { makeRequestContext } from "../../__tests__/kit/index.js";
 import { keepClientCache } from "../cookie-store.js";
 import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
 
-function makeCtx() {
-  return createRequestContext({
-    env: {},
-    request: new Request("https://example.com"),
-    url: new URL("https://example.com"),
-    variables: {},
-  });
-}
-
-const directive = (ctx: ReturnType<typeof makeCtx>): string | null =>
+const directive = (ctx: RequestContext): string | null =>
   ctx.res.headers.get("x-rango-keep-cache");
 
 describe("keepClientCache() (server seat)", () => {
@@ -29,13 +21,13 @@ describe("keepClientCache() (server seat)", () => {
   });
 
   it("sets the directive header", () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext();
     runWithRequestContext(ctx, () => keepClientCache());
     expect(directive(ctx)).toBe("1");
   });
 
   it("is idempotent within a request (one header regardless of call count)", () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext();
     runWithRequestContext(ctx, () => {
       keepClientCache();
       keepClientCache();
@@ -46,7 +38,7 @@ describe("keepClientCache() (server seat)", () => {
   });
 
   it("throws inside a cache-exec boundary (the cookies() guard)", () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext();
     runWithRequestContext(ctx, () =>
       runWithCacheExecScope(() => {
         expect(() => keepClientCache()).toThrow(/use cache/);

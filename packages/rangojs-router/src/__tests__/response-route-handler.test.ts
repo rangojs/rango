@@ -11,6 +11,7 @@ import {
 } from "../server/request-context.js";
 import { handleResponseRoute } from "../rsc/response-route-handler.js";
 import { createCacheScope } from "../cache/cache-scope.js";
+import { MemorySegmentCacheStore } from "../cache/memory-segment-store.js";
 import { runWithCacheExecScope } from "../cache/cache-exec-scope.js";
 import { createVar } from "../context-var.js";
 import type { HandlerContext } from "../rsc/handler-context.js";
@@ -408,18 +409,9 @@ describe("response-route-handler", () => {
   });
 
   describe("response cache condition()", () => {
-    function createMockStore() {
-      return {
-        get: vi.fn(),
-        set: vi.fn(),
-        getResponse: vi.fn(),
-        putResponse: vi.fn(),
-      };
-    }
-
     function createMockCacheScope(
       condition: ((ctx: any) => boolean) | undefined,
-      store: ReturnType<typeof createMockStore>,
+      store: MemorySegmentCacheStore,
     ) {
       return {
         enabled: true,
@@ -437,8 +429,8 @@ describe("response-route-handler", () => {
     }
 
     it("condition() === false skips cache read", async () => {
-      const store = createMockStore();
-      store.getResponse.mockResolvedValue({
+      const store = new MemorySegmentCacheStore();
+      vi.spyOn(store, "getResponse").mockResolvedValue({
         response: new Response(JSON.stringify({ data: "cached" }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -480,7 +472,8 @@ describe("response-route-handler", () => {
     });
 
     it("condition() === false skips cache write", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      vi.spyOn(store, "putResponse");
       const scope = createMockCacheScope(() => false, store);
       vi.mocked(createCacheScope).mockReturnValue(scope as any);
 
@@ -527,8 +520,8 @@ describe("response-route-handler", () => {
         },
       );
 
-      const store = createMockStore();
-      store.getResponse.mockResolvedValue({
+      const store = new MemorySegmentCacheStore();
+      vi.spyOn(store, "getResponse").mockResolvedValue({
         response: cachedResponse,
         shouldRevalidate: false,
       });

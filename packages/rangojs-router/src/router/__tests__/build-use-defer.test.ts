@@ -3,10 +3,8 @@ import {
   setupBuildUse,
   setupLoaderAccessSilent,
 } from "../loader-resolution.js";
-import {
-  createRequestContext,
-  runWithRequestContext,
-} from "../../server/request-context.js";
+import { runWithRequestContext } from "../../server/request-context.js";
+import { makeRequestContext } from "../../__tests__/kit/index.js";
 import { createHandle } from "../../handle.js";
 import type { HandlerContext } from "../../types";
 
@@ -19,15 +17,6 @@ import type { HandlerContext } from "../../types";
 
 const Breadcrumbs = createHandle<{ label: string }>();
 
-function makeReqCtx() {
-  return createRequestContext<Record<string, never>>({
-    env: {},
-    request: new Request("http://localhost/"),
-    url: new URL("http://localhost/"),
-    variables: {},
-  });
-}
-
 function makeCtx(segmentId: string): HandlerContext<any, any> {
   return { _currentSegmentId: segmentId } as unknown as HandlerContext<
     any,
@@ -37,7 +26,7 @@ function makeCtx(segmentId: string): HandlerContext<any, any> {
 
 describe("setupBuildUse — ctx.use(Handle).defer() on the build path (D2)", () => {
   it("returns a push whose .defer() is callable and reserves a slot", async () => {
-    const reqCtx = makeReqCtx();
+    const reqCtx = makeRequestContext({ url: "http://localhost/" });
     await runWithRequestContext(reqCtx, async () => {
       const ctx = makeCtx("R0");
       setupBuildUse(ctx);
@@ -59,7 +48,7 @@ describe("setupBuildUse — ctx.use(Handle).defer() on the build path (D2)", () 
   });
 
   it("a direct (non-deferred) push still works on the build path", async () => {
-    const reqCtx = makeReqCtx();
+    const reqCtx = makeRequestContext({ url: "http://localhost/" });
     await runWithRequestContext(reqCtx, async () => {
       const ctx = makeCtx("R0");
       setupBuildUse(ctx);
@@ -73,7 +62,7 @@ describe("setupBuildUse — ctx.use(Handle).defer() on the build path (D2)", () 
 
 describe("setupLoaderAccessSilent — ctx.use(Handle).defer() in silent mode (D2)", () => {
   it("returns a no-op push whose .defer() is still callable (does not throw)", async () => {
-    const reqCtx = makeReqCtx();
+    const reqCtx = makeRequestContext({ url: "http://localhost/" });
     await runWithRequestContext(reqCtx, async () => {
       const ctx = makeCtx("R0");
       setupLoaderAccessSilent(ctx, new Map());

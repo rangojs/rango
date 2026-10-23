@@ -58,8 +58,9 @@ vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 const { serializeSegments, deserializeSegments, fragmentSegments } =
   await import("../segment-codec.js");
 const { CacheScope } = await import("../cache-scope.js");
-const { createRequestContext, runWithRequestContext } =
+const { runWithRequestContext } =
   await import("../../server/request-context.js");
+const { makeRequestContext } = await import("../../__tests__/kit/index.js");
 
 /** JSON "decoder" matching the mocked codec — the consumer expansion stand-in. */
 async function jsonDecode(stream: ReadableStream<Uint8Array>) {
@@ -165,18 +166,6 @@ describe("CacheScope.lookupRoute under _shellFragmentPayload", () => {
     } as unknown as SegmentCacheStore & { entry: CachedEntryData };
   }
 
-  function makeCtx(store: SegmentCacheStore, fragmentPayload: boolean) {
-    const ctx = createRequestContext({
-      env: {},
-      request: new Request("https://example.com/products"),
-      url: new URL("https://example.com/products"),
-      variables: {},
-      cacheStore: store,
-    });
-    if (fragmentPayload) ctx._shellFragmentPayload = true;
-    return ctx;
-  }
-
   function makeScope(store: SegmentCacheStore) {
     const config: PartialCacheOptions = { ttl: 60, store };
     return new CacheScope(config);
@@ -184,7 +173,11 @@ describe("CacheScope.lookupRoute under _shellFragmentPayload", () => {
 
   it("emits fragment envelopes on a hit when the tail marker is set", async () => {
     const store = await makeHitStore();
-    const ctx = makeCtx(store, true);
+    const ctx = makeRequestContext({
+      url: "https://example.com/products",
+      cacheStore: store,
+    });
+    ctx._shellFragmentPayload = true;
 
     const result = await runWithRequestContext(ctx, () =>
       makeScope(store).lookupRoute("/products", {}),
@@ -199,7 +192,10 @@ describe("CacheScope.lookupRoute under _shellFragmentPayload", () => {
 
   it("keeps the decoded-element path without the marker (every non-tail render)", async () => {
     const store = await makeHitStore();
-    const ctx = makeCtx(store, false);
+    const ctx = makeRequestContext({
+      url: "https://example.com/products",
+      cacheStore: store,
+    });
 
     const result = await runWithRequestContext(ctx, () =>
       makeScope(store).lookupRoute("/products", {}),

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { LoaderEntry } from "../server/context";
-import type { SegmentCacheStore, CacheItemResult } from "../cache/types";
 
 // Mock segment-codec (RSC serialization)
 vi.mock("../cache/segment-codec.js", () => ({
@@ -34,7 +33,10 @@ vi.mock("../internal-debug.js", () => ({
 }));
 
 import { resolveLoaderData } from "../router/segment-resolution/loader-cache";
-import { MemorySegmentCacheStore } from "../cache/memory-segment-store.js";
+import {
+  MemorySegmentCacheStore,
+  type MemorySegmentCacheStoreOptions,
+} from "../cache/memory-segment-store.js";
 import { createMetricsStore } from "../router/metrics";
 import { resolveTracing } from "../router/tracing.js";
 import { serializeResult, deserializeResult } from "../cache/segment-codec";
@@ -43,17 +45,17 @@ import {
   _getRequestContext,
 } from "../server/request-context";
 
-function createMockStore(
-  overrides?: Partial<SegmentCacheStore>,
-): SegmentCacheStore {
-  return {
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => {}),
-    delete: vi.fn(async () => false),
-    getItem: vi.fn(async () => null),
-    setItem: vi.fn(async () => {}),
-    ...overrides,
-  };
+/**
+ * A real MemorySegmentCacheStore whose item reads and writes are spied on:
+ * the tests assert the keys and options the loader cache sends it.
+ */
+function spiedMemoryStore(
+  options?: MemorySegmentCacheStoreOptions,
+): MemorySegmentCacheStore {
+  const store = new MemorySegmentCacheStore(options);
+  vi.spyOn(store, "getItem");
+  vi.spyOn(store, "setItem");
+  return store;
 }
 
 function createMockLoader(id: string, returnValue: unknown = { data: "test" }) {
@@ -155,13 +157,10 @@ describe("loader-cache", () => {
         // Store returns a cached value -> readThroughItem short-circuits, ctx.use
         // is never called, and no loader metric is recorded (the loader did not
         // run). The hit is a cache.decision fact, not a loader phase.
-        const cacheStore = createMockStore({
-          getItem: vi.fn(
-            async (): Promise<CacheItemResult> => ({
-              value: JSON.stringify({ data: "cached" }),
-              shouldRevalidate: false,
-            }),
-          ),
+        const cacheStore = spiedMemoryStore();
+        vi.spyOn(cacheStore, "getItem").mockResolvedValue({
+          value: JSON.stringify({ data: "cached" }),
+          shouldRevalidate: false,
         });
         const loader = createMockLoader("Hit#default");
         const entry = createLoaderEntry(loader, { store: cacheStore });
@@ -184,7 +183,7 @@ describe("loader-cache", () => {
 
   describe("cache key resolution", () => {
     it("uses default key: loader:{id}:{pathname}", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("my-loader");
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx();
@@ -197,7 +196,7 @@ describe("loader-cache", () => {
     });
 
     it("includes sorted params in default key", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("loader-params");
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx({ z: "last", a: "first" });
@@ -215,7 +214,7 @@ describe("loader-cache", () => {
       // hosts would serve one host's cached loader data to the other.
       const keyFor = async (host: string) => {
         mockRequestCtx.url = { host, searchParams: new URLSearchParams() };
-        const store = createMockStore();
+        const store = spiedMemoryStore();
         const loader = createMockLoader("tenant-loader");
         await resolveLoaderData(
           createLoaderEntry(loader, { store }),
@@ -239,7 +238,7 @@ describe("loader-cache", () => {
       // a hostOverride cookie sends one host and path to two routers.
       const keyFor = async (routerId: string) => {
         mockRequestCtx._routerId = routerId;
-        const store = createMockStore();
+        const store = spiedMemoryStore();
         await resolveLoaderData(
           createLoaderEntry(createMockLoader("shared-loader"), { store }),
           createMockCtx({ id: "1" }),
@@ -259,7 +258,7 @@ describe("loader-cache", () => {
     });
 
     it("priority 1: options.key overrides default", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("loader-custom-key");
       const entry = createLoaderEntry(loader, {
         store,
@@ -275,7 +274,7 @@ describe("loader-cache", () => {
     });
 
     it("priority 2: store.keyGenerator modifies default key", async () => {
-      const store = createMockStore({
+      const store = spiedMemoryStore({
         keyGenerator: vi.fn(
           async (_ctx, defaultKey) => `region:us:${defaultKey}`,
         ),
@@ -296,7 +295,7 @@ describe("loader-cache", () => {
     });
 
     it("options.key takes precedence over store.keyGenerator", async () => {
-      const store = createMockStore({
+      const store = spiedMemoryStore({
         keyGenerator: vi.fn(async () => "should-not-be-used"),
       });
       const loader = createMockLoader("loader-precedence");
@@ -369,7 +368,7 @@ describe("loader-cache", () => {
       });
 
       it("the result is URI-encoded after loader:<id>:key:", async () => {
-        const store = createMockStore();
+        const store = spiedMemoryStore();
         await resolveLoaderData(
           createLoaderEntry(createMockLoader("enc"), {
             store,
@@ -385,7 +384,7 @@ describe("loader-cache", () => {
     });
 
     it("throws when options.key throws (hard-fail, no silent fallback)", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("loader-fallback");
       const entry = createLoaderEntry(loader, {
         store,
@@ -402,7 +401,7 @@ describe("loader-cache", () => {
     });
 
     it("throws when store.keyGenerator throws (hard-fail, no silent fallback)", async () => {
-      const store = createMockStore({
+      const store = spiedMemoryStore({
         keyGenerator: vi.fn(async () => {
           throw new Error("keyGenerator failed");
         }),
@@ -425,13 +424,10 @@ describe("loader-cache", () => {
   describe("cache behavior", () => {
     it("returns cached data on hit (skips loader)", async () => {
       const cachedValue = { name: "cached product" };
-      const store = createMockStore({
-        getItem: vi.fn(
-          async (): Promise<CacheItemResult> => ({
-            value: JSON.stringify(cachedValue),
-            shouldRevalidate: false,
-          }),
-        ),
+      const store = spiedMemoryStore();
+      vi.spyOn(store, "getItem").mockResolvedValue({
+        value: JSON.stringify(cachedValue),
+        shouldRevalidate: false,
       });
       const loader = createMockLoader("hit-loader", {
         name: "fresh product",
@@ -448,7 +444,7 @@ describe("loader-cache", () => {
 
     it("executes loader and caches on miss", async () => {
       const freshData = { name: "fresh product" };
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("miss-loader", freshData);
       const entry = createLoaderEntry(loader, { ttl: 120, store });
       const ctx = createMockCtx();
@@ -485,13 +481,10 @@ describe("loader-cache", () => {
           });
         },
       });
-      const store = createMockStore({
-        getItem: vi.fn(
-          async (): Promise<CacheItemResult> => ({
-            value: JSON.stringify(staleData),
-            shouldRevalidate: true,
-          }),
-        ),
+      const store = spiedMemoryStore();
+      vi.spyOn(store, "getItem").mockResolvedValue({
+        value: JSON.stringify(staleData),
+        shouldRevalidate: true,
       });
       const loader = createMockLoader("swr-loader", freshData);
       const entry = createLoaderEntry(loader, { ttl: 60, swr: 300, store });
@@ -522,7 +515,7 @@ describe("loader-cache", () => {
 
   describe("null result caching", () => {
     it("caches null loader results (does not skip write)", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("null-loader", null);
       const entry = createLoaderEntry(loader, { ttl: 60, store });
       const ctx = createMockCtx();
@@ -542,13 +535,10 @@ describe("loader-cache", () => {
     });
 
     it("returns null from cache hit (round-trip)", async () => {
-      const store = createMockStore({
-        getItem: vi.fn(
-          async (): Promise<CacheItemResult> => ({
-            value: "null",
-            shouldRevalidate: false,
-          }),
-        ),
+      const store = spiedMemoryStore();
+      vi.spyOn(store, "getItem").mockResolvedValue({
+        value: "null",
+        shouldRevalidate: false,
       });
       const loader = createMockLoader("null-hit", "should-not-run");
       const entry = createLoaderEntry(loader, { store });
@@ -561,7 +551,7 @@ describe("loader-cache", () => {
     });
 
     it("skips cache write when serialization fails (returns null)", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("fail-serialize", { data: "test" });
       vi.mocked(serializeResult).mockResolvedValueOnce(null);
       const entry = createLoaderEntry(loader, { ttl: 60, store });
@@ -579,7 +569,7 @@ describe("loader-cache", () => {
 
   describe("tags", () => {
     it("passes static tags to store.setItem", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("tags-loader");
       const entry = createLoaderEntry(loader, {
         ttl: 60,
@@ -598,7 +588,7 @@ describe("loader-cache", () => {
     });
 
     it("resolves function-based tags with request context", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("dynamic-tags");
       const entry = createLoaderEntry(loader, {
         ttl: 60,
@@ -620,7 +610,7 @@ describe("loader-cache", () => {
       const consoleError = vi
         .spyOn(console, "error")
         .mockImplementation(() => {});
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("tags-fail");
       const entry = createLoaderEntry(loader, {
         ttl: 60,
@@ -653,7 +643,7 @@ describe("loader-cache", () => {
 
   describe("TTL and SWR resolution", () => {
     it("uses route-level ttl when specified", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("ttl-route");
       const entry = createLoaderEntry(loader, { ttl: 300, store });
       const ctx = createMockCtx();
@@ -668,7 +658,7 @@ describe("loader-cache", () => {
     });
 
     it("falls back to store defaults when no route-level ttl", async () => {
-      const store = createMockStore({ defaults: { ttl: 180 } });
+      const store = spiedMemoryStore({ defaults: { ttl: 180 } });
       const loader = createMockLoader("ttl-default");
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx();
@@ -683,7 +673,7 @@ describe("loader-cache", () => {
     });
 
     it("uses default 60s TTL when neither route nor store specify", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("ttl-fallback");
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx();
@@ -698,7 +688,7 @@ describe("loader-cache", () => {
     });
 
     it("passes swr from route options", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("swr-route");
       const entry = createLoaderEntry(loader, { ttl: 60, swr: 300, store });
       const ctx = createMockCtx();
@@ -719,7 +709,7 @@ describe("loader-cache", () => {
 
   describe("runtime condition", () => {
     it("skips cache when condition returns false", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("cond-skip");
       const entry = createLoaderEntry(loader, {
         ttl: 60,
@@ -735,7 +725,7 @@ describe("loader-cache", () => {
     });
 
     it("uses cache when condition returns true", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("cond-use");
       const entry = createLoaderEntry(loader, {
         ttl: 60,
@@ -756,7 +746,7 @@ describe("loader-cache", () => {
 
   describe("store resolution", () => {
     it("uses store from cache options", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("store-opts");
       const entry = createLoaderEntry(loader, { ttl: 60, store });
       const ctx = createMockCtx();
@@ -767,7 +757,7 @@ describe("loader-cache", () => {
     });
 
     it("falls back to app-level store from request context", async () => {
-      const appStore = createMockStore();
+      const appStore = spiedMemoryStore();
       mockRequestCtx._cacheStore = appStore;
       const loader = createMockLoader("store-app");
       const entry = createLoaderEntry(loader, { ttl: 60 });
@@ -797,13 +787,10 @@ describe("loader-cache", () => {
   describe("ctx.use wrapping", () => {
     it("wraps ctx.use so handler gets cached data", async () => {
       const cachedValue = { name: "cached" };
-      const store = createMockStore({
-        getItem: vi.fn(
-          async (): Promise<CacheItemResult> => ({
-            value: JSON.stringify(cachedValue),
-            shouldRevalidate: false,
-          }),
-        ),
+      const store = spiedMemoryStore();
+      vi.spyOn(store, "getItem").mockResolvedValue({
+        value: JSON.stringify(cachedValue),
+        shouldRevalidate: false,
       });
       const loader = createMockLoader("wrap-test");
       const entry = createLoaderEntry(loader, { store });
@@ -824,7 +811,7 @@ describe("loader-cache", () => {
     });
 
     it("does not intercept ctx.use for other loaders", async () => {
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader1 = createMockLoader("loader-1");
       const loader2 = createMockLoader("loader-2", { other: true });
       const entry = createLoaderEntry(loader1, { store });
@@ -845,7 +832,7 @@ describe("loader-cache", () => {
       // a different shortCode -> resolveLoaderData runs twice for the SAME
       // loaderId. Without dedup, getItem/setItem (e.g. a KV round-trip) would
       // run twice for one logical cached loader.
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("orphan-inherited", { data: "shared" });
       const entry = createLoaderEntry(loader, { ttl: 60, store });
       const ctx = createMockCtx();
@@ -872,7 +859,7 @@ describe("loader-cache", () => {
       // re-resolution path calls resolveLoaderData twice for the same loaderId,
       // and a tags() callback doing real work must not fire a second time for one
       // logical cached loader.
-      const store = createMockStore();
+      const store = spiedMemoryStore();
       const loader = createMockLoader("tags-dedup", { data: "x" });
       const tags = vi.fn(() => ["t1"]);
       const entry = createLoaderEntry(loader, { ttl: 60, store, tags });
@@ -892,8 +879,8 @@ describe("loader-cache", () => {
       const loaderA = createMockLoader("loader-a", { data: "A" });
       const loaderB = createMockLoader("loader-b", { data: "B" });
       const loaderC = createMockLoader("loader-c", { data: "C" }); // not cached
-      const entryA = createLoaderEntry(loaderA, { store: createMockStore() });
-      const entryB = createLoaderEntry(loaderB, { store: createMockStore() });
+      const entryA = createLoaderEntry(loaderA, { store: spiedMemoryStore() });
+      const entryB = createLoaderEntry(loaderB, { store: spiedMemoryStore() });
       const ctx = createMockCtx();
       const originalUse = ctx.use;
 

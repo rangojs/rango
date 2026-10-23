@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { RscPayload } from "../browser/types";
+import type {
+  ActionHandle,
+  EventController,
+} from "../browser/event-controller";
 
 // Mock react.startTransition to run synchronously
 vi.mock("react", async () => {
@@ -38,6 +42,7 @@ import {
   isActionFenceActive,
   __resetActionFence,
 } from "../browser/action-fence";
+import { makeEventController, makeNavigationStore } from "./kit/index.js";
 
 // Flush all microtasks (a macrotask tick). The simple-redirect terminal calls
 // finalizeAction() and then returns a never-settling promise, so the action
@@ -100,92 +105,35 @@ function setupWindow() {
 }
 
 // ---------------------------------------------------------------------------
-// Mock factories
+// Kit objects and mock deps
 // ---------------------------------------------------------------------------
 
-function createMockStore() {
-  return {
-    getSegmentState: vi.fn(() => ({
-      path: "/",
-      currentUrl: "http://localhost:3000/",
-      currentSegmentIds: ["root"],
-    })),
-    markCacheAsStaleAndBroadcast: vi.fn(),
-    getInterceptSourceUrl: vi.fn(() => null),
-    getHistoryEntryMemory: vi.fn(() => undefined),
-    getHistoryKey: vi.fn(() => "/"),
-    setHistoryKey: vi.fn(),
-    getCachedSegments: vi.fn(),
-    setInterceptSourceUrl: vi.fn(),
-    getState: vi.fn(() => ({ state: "idle" })),
-    setState: vi.fn(),
-    subscribe: vi.fn(),
-    cacheSegmentsForHistory: vi.fn(),
-    hasHistoryCache: vi.fn(() => false),
-    setPath: vi.fn(),
-    setCurrentUrl: vi.fn(),
-    setSegmentIds: vi.fn(),
-    markCacheAsStale: vi.fn(),
-    clearHistoryCache: vi.fn(),
-    setCrossTabRefreshCallback: vi.fn(),
-    addInflightAction: vi.fn(),
-    removeInflightAction: vi.fn(),
-    isActionInProgress: vi.fn(() => false),
-    setActionInProgress: vi.fn(),
-    updateCacheHandleData: vi.fn(),
-    onUpdate: vi.fn(),
-    emitUpdate: vi.fn(),
-    getActionState: vi.fn(),
-    setActionState: vi.fn(),
-    subscribeToAction: vi.fn(),
-  };
-}
+/** The page on screen: the root route at "/", under history entry "/". */
+const HOME = {
+  location: "http://localhost:3000/",
+  segmentIds: ["root"],
+  historyKey: "/",
+};
 
-function createMockEventController() {
-  const completeFn = vi.fn();
-  const failFn = vi.fn();
-  const abortCtrl = new AbortController();
-  return {
-    controller: {
-      startAction: vi.fn(() => ({
-        id: "test-action-1",
-        abort: abortCtrl,
-        signal: abortCtrl.signal,
-        startStreaming: vi.fn(() => ({ end: vi.fn() })),
-        recordRevalidatedSegments: vi.fn(),
-        complete: completeFn,
-        fail: failFn,
-        settled: false,
-        hadConcurrentActions: false,
-        getRevalidatedSegments: vi.fn(() => new Set<string>()),
-        clearConsolidation: vi.fn(),
-        [Symbol.dispose]: vi.fn(),
-      })),
-      abortAllActions: vi.fn(),
-      getCurrentNavigation: vi.fn(() => null),
-      getUnsettledNavigation: vi.fn(() => null),
-      getState: vi.fn(() => ({
-        navState: "idle",
-        isStreaming: false,
-        hasInflightActions: false,
-      })),
-      getActionState: vi.fn(),
-      getLocation: vi.fn(() => ({
-        pathname: "/",
-        search: "",
-        hash: "",
-        key: "/",
-      })),
-      setLocation: vi.fn(),
-      getHandleState: vi.fn(() => ({ data: undefined })),
-      subscribe: vi.fn(),
-      startNavigation: vi.fn(),
-      abortNavigation: vi.fn(),
-    },
-    completeFn,
-    failFn,
-    abortCtrl,
-  };
+/**
+ * Spies on the actions `controller` starts: their real handles, and the
+ * complete() calls they receive.
+ */
+function spyOnActions(controller: EventController) {
+  const complete = vi.fn();
+  const handles: ActionHandle[] = [];
+  const startAction = controller.startAction;
+  vi.spyOn(controller, "startAction").mockImplementation((...args) => {
+    const handle = startAction(...args);
+    const settle = handle.complete;
+    handle.complete = (...result) => {
+      complete(...result);
+      settle(...result);
+    };
+    handles.push(handle);
+    return handle;
+  });
+  return { complete, handles };
 }
 
 /**
@@ -265,8 +213,9 @@ describe("server-action-bridge payload redirect origin validation", () => {
   it("blocks cross-origin payload redirect and does not call onNavigate", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const store = createMockStore();
-    const { controller, completeFn } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    const controller = makeEventController({ location: HOME.location });
+    const { complete: completeFn } = spyOnActions(controller);
     const onNavigate = vi.fn();
 
     const payload: RscPayload = {
@@ -300,8 +249,9 @@ describe("server-action-bridge payload redirect origin validation", () => {
   it("blocks cross-origin payload redirect via window.location.href fallback", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const store = createMockStore();
-    const { controller, completeFn } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    const controller = makeEventController({ location: HOME.location });
+    const { complete: completeFn } = spyOnActions(controller);
 
     const payload: RscPayload = {
       metadata: {
@@ -330,8 +280,9 @@ describe("server-action-bridge payload redirect origin validation", () => {
   });
 
   it("allows same-origin payload redirect and calls onNavigate", async () => {
-    const store = createMockStore();
-    const { controller, completeFn } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    const controller = makeEventController({ location: HOME.location });
+    const { complete: completeFn } = spyOnActions(controller);
     const onNavigate = vi.fn(() => Promise.resolve());
 
     const payload: RscPayload = {
@@ -367,8 +318,9 @@ describe("server-action-bridge payload redirect origin validation", () => {
   });
 
   it("hard-navigates an external:true payload redirect via location.assign (bypasses same-origin check)", async () => {
-    const store = createMockStore();
-    const { controller, completeFn } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    const controller = makeEventController({ location: HOME.location });
+    const { complete: completeFn } = spyOnActions(controller);
     const onNavigate = vi.fn(() => Promise.resolve());
 
     // redirect(url, { external: true }) arrives as metadata.redirect.external.
@@ -413,8 +365,9 @@ describe("server-action-bridge payload redirect origin validation", () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
-    const store = createMockStore();
-    const { controller, completeFn } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    const controller = makeEventController({ location: HOME.location });
+    const { complete: completeFn } = spyOnActions(controller);
     const onNavigate = vi.fn(() => Promise.resolve());
 
     const payload: RscPayload = {
@@ -452,8 +405,9 @@ describe("server-action-bridge payload redirect origin validation", () => {
   });
 
   it("hard-nav fallback (no onNavigate) re-validates and follows a same-origin redirect", async () => {
-    const store = createMockStore();
-    const { controller, completeFn } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    const controller = makeEventController({ location: HOME.location });
+    const { complete: completeFn } = spyOnActions(controller);
 
     const payload: RscPayload = {
       metadata: { redirect: { url: "/dashboard" } },
@@ -483,8 +437,11 @@ describe("server-action-bridge payload redirect origin validation", () => {
   });
 
   it("bails out of post-payload mutations when action is aborted", async () => {
-    const store = createMockStore();
-    const { controller, completeFn, abortCtrl } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    vi.spyOn(store, "setSegmentIds");
+    vi.spyOn(store, "cacheSegmentsForHistory");
+    const controller = makeEventController({ location: HOME.location });
+    const { complete: completeFn, handles } = spyOnActions(controller);
     const onUpdate = vi.fn();
     const renderSegments = vi.fn();
 
@@ -506,7 +463,7 @@ describe("server-action-bridge payload redirect origin validation", () => {
     const { deps, getActionCallback } = createMockDeps(payload, {
       sideEffect: async () => {
         await Promise.resolve();
-        abortCtrl.abort();
+        handles[0]!.abort.abort();
       },
     });
 
@@ -544,8 +501,10 @@ describe("server-action-bridge error path race guard", () => {
 
   it("skips UI/store mutations when user navigates during error renderSegments", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const store = createMockStore();
-    const { controller } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    vi.spyOn(store, "setSegmentIds");
+    vi.spyOn(store, "cacheSegmentsForHistory");
+    const controller = makeEventController({ location: HOME.location });
     const onUpdate = vi.fn();
 
     // Mock reconcileErrorSegments to return a minimal result
@@ -600,8 +559,10 @@ describe("server-action-bridge error path race guard", () => {
 
   it("skips UI/store mutations when history key changes during error renderSegments", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const store = createMockStore();
-    const { controller } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    vi.spyOn(store, "setSegmentIds");
+    vi.spyOn(store, "cacheSegmentsForHistory");
+    const controller = makeEventController({ location: HOME.location });
     const onUpdate = vi.fn();
 
     vi.mocked(reconcileErrorSegments).mockReturnValue({
@@ -612,7 +573,7 @@ describe("server-action-bridge error path race guard", () => {
 
     // renderSegments simulates history key change during async render
     const renderSegments = vi.fn(async () => {
-      store.getHistoryKey.mockReturnValue("/new-key");
+      store.setHistoryKey("/new-key");
       return "error-tree";
     });
 
@@ -664,8 +625,9 @@ describe("server-action-bridge header redirect abort safety", () => {
   });
 
   it("does not navigate on X-RSC-Redirect when handle is aborted", async () => {
-    const store = createMockStore();
-    const { controller, completeFn, abortCtrl } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    const controller = makeEventController({ location: HOME.location });
+    const { complete: completeFn, handles } = spyOnActions(controller);
     const onNavigate = vi.fn();
 
     // Payload has no redirect — the redirect comes via response header.
@@ -680,7 +642,7 @@ describe("server-action-bridge header redirect abort safety", () => {
     // fetch .then() microtask runs, handle.signal.aborted is already true.
     const { deps, getActionCallback } = createMockDeps(payload, {
       sideEffect: () => {
-        abortCtrl.abort();
+        handles[0]!.abort.abort();
       },
       responseHeaders: { "X-RSC-Redirect": "/should-not-navigate" },
     });
@@ -725,8 +687,9 @@ describe("server-action-bridge simple-redirect finalization (latch)", () => {
   // the action fence permanently. It must now invalidate exactly once and
   // release the fence.
   it("invalidates exactly once and releases the fence on a successful simple redirect", async () => {
-    const store = createMockStore();
-    const { controller } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    vi.spyOn(store, "markCacheAsStaleAndBroadcast");
+    const controller = makeEventController({ location: HOME.location });
     const onNavigate = vi.fn(() => Promise.resolve());
 
     const payload: RscPayload = {
@@ -762,8 +725,9 @@ describe("server-action-bridge simple-redirect finalization (latch)", () => {
   // invalidation; the fence release must still happen, even on the
   // never-settling simple-redirect terminal.
   it("suppresses invalidation but still releases the fence when keepCache is set", async () => {
-    const store = createMockStore();
-    const { controller } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    vi.spyOn(store, "markCacheAsStaleAndBroadcast");
+    const controller = makeEventController({ location: HOME.location });
     const onNavigate = vi.fn(() => Promise.resolve());
 
     const payload: RscPayload = {
@@ -802,8 +766,9 @@ describe("server-action-bridge simple-redirect finalization (latch)", () => {
   // finalizeAction() it leaked the fence for the whole session if the reload
   // was cancelled (a beforeunload "Stay").
   it("releases the fence on a version-mismatch reload terminal", async () => {
-    const store = createMockStore();
-    const { controller } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    vi.spyOn(store, "markCacheAsStaleAndBroadcast");
+    const controller = makeEventController({ location: HOME.location });
 
     const payload: RscPayload = {
       metadata: { isPartial: true, matched: ["root"], diff: [], segments: [] },
@@ -866,8 +831,9 @@ describe("server-action-bridge pre-dispatch failure finalization", () => {
   } as any;
 
   it("does NOT invalidate or broadcast when arg serialization throws (never reached server)", async () => {
-    const store = createMockStore();
-    const { controller } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    vi.spyOn(store, "markCacheAsStaleAndBroadcast");
+    const controller = makeEventController({ location: HOME.location });
 
     const { deps, getActionCallback } = createMockDeps(payload);
     // encodeReply runs before fetch — a throw here means nothing was sent.
@@ -894,8 +860,9 @@ describe("server-action-bridge pre-dispatch failure finalization", () => {
   });
 
   it("does NOT invalidate or broadcast when the fetch rejects (server unreachable)", async () => {
-    const store = createMockStore();
-    const { controller } = createMockEventController();
+    const store = makeNavigationStore(HOME);
+    vi.spyOn(store, "markCacheAsStaleAndBroadcast");
+    const controller = makeEventController({ location: HOME.location });
 
     // createMockDeps stubs fetch to resolve; awaitResponse makes the mock
     // decoder await responsePromise so the rejection surfaces into the bridge.

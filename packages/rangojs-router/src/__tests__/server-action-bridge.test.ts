@@ -2,22 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEventController } from "../browser/event-controller";
 import { createServerActionBridge } from "../browser/server-action-bridge";
 import { renderSegments } from "../segment-system";
-import { LoaderStore } from "../loader-store";
 import { Defer } from "../browser/defer";
 import { __resetActionFence } from "../browser/action-fence";
-
-function createMockStore() {
-  return {
-    getSegmentState: vi.fn(() => ({
-      path: "/",
-      currentUrl: "http://localhost/",
-      currentSegmentIds: ["R0"],
-    })),
-    markCacheAsStaleAndBroadcast: vi.fn(),
-    getInterceptSourceUrl: vi.fn(() => null),
-    getHistoryEntryMemory: vi.fn(() => undefined),
-  };
-}
+import { makeNavigationStore } from "./kit/index.js";
 
 function stubWindow() {
   vi.stubGlobal("window", {
@@ -37,7 +24,7 @@ function stubWindow() {
 function setupBridge(
   payload: unknown,
   onNavigate = vi.fn(async () => {}),
-  store = createMockStore(),
+  store = makeNavigationStore({ segmentIds: ["R0"] }),
 ) {
   const eventController = createEventController();
   const setServerCallback = vi.fn();
@@ -119,15 +106,9 @@ describe("server-action-bridge partial invariant", () => {
       returnValue: { ok: true, data: "result" },
     });
 
-    // The partial payload passes the isPartial guard. It will fail later
-    // on store.getHistoryKey (not mocked), but the invariant error is
-    // distinct — verify we do NOT get the isPartial rejection.
-    await expect(callback("hash#save", [])).rejects.toThrow(
-      /getHistoryKey is not a function/,
-    );
-    await expect(callback("hash#save", [])).rejects.not.toThrow(
-      /Action response missing isPartial/,
-    );
+    // The partial payload passes the isPartial guard: the action resolves
+    // with its return value.
+    await expect(callback("hash#save", [])).resolves.toBe("result");
   });
 });
 
@@ -137,8 +118,8 @@ describe("server-action-bridge rewrite target", () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const store = createMockStore();
-    store.getHistoryEntryMemory.mockReturnValue({
+    const store = makeNavigationStore({ segmentIds: ["R0"] });
+    vi.spyOn(store, "getHistoryEntryMemory").mockReturnValue({
       routeName: "item",
       rewriteTarget: "/item/1?sort=a",
       state: null,
@@ -173,16 +154,11 @@ describe("server-action-bridge location state", () => {
       vi.fn(async () => new Response(null, { status: 200 })),
     );
     const segment = { id: "R0", type: "route", component: "div" };
-    const store = {
-      ...createMockStore(),
-      getHistoryKey: vi.fn(() => "/"),
-      getCachedSegments: vi.fn(() => ({ segments: [segment], stale: false })),
-      setSegmentIds: vi.fn(),
-      cacheSegmentsForHistory: vi.fn(),
-      rememberDisplayedEntry: vi.fn(),
-      getHistoryEntryMemory: vi.fn(() => undefined),
-      getRouterId: vi.fn(() => undefined),
-    };
+    const store = makeNavigationStore({
+      segmentIds: ["R0"],
+      historyKey: "/",
+      segments: [segment] as any[],
+    });
     const eventController = createEventController();
     // A flash value on screen: committed with the entry, cleared from
     // history since (window.history.state above holds no slot).
@@ -305,16 +281,11 @@ describe("server-action-bridge revalidation render failure", () => {
       vi.fn(async () => new Response(null, { status: 200 })),
     );
     const segment = { id: "R0", type: "route", component: "div" };
-    const store = {
-      ...createMockStore(),
-      getHistoryKey: vi.fn(() => "/"),
-      getCachedSegments: vi.fn(() => ({ segments: [segment], stale: false })),
-      setSegmentIds: vi.fn(),
-      cacheSegmentsForHistory: vi.fn(),
-      rememberDisplayedEntry: vi.fn(),
-      getHistoryEntryMemory: vi.fn(() => undefined),
-      getRouterId: vi.fn(() => undefined),
-    };
+    const store = makeNavigationStore({
+      segmentIds: ["R0"],
+      historyKey: "/",
+      segments: [segment] as any[],
+    });
     const eventController = createEventController();
     const setServerCallback = vi.fn();
     const renderError = new Error("stock service unavailable");
@@ -389,19 +360,13 @@ describe("server-action-bridge loader that fails on its rerun", () => {
         fallback: null,
       }),
     };
-    const store = {
-      ...createMockStore(),
-      getHistoryKey: vi.fn(() => "/"),
-      getCachedSegments: vi.fn(() => ({
-        segments: [route, held],
-        stale: false,
-      })),
-      setSegmentIds: vi.fn(),
-      cacheSegmentsForHistory: vi.fn(),
-      rememberDisplayedEntry: vi.fn(),
-      getHistoryEntryMemory: vi.fn(() => undefined),
-      getRouterId: vi.fn(() => undefined),
-    };
+    const store = makeNavigationStore({
+      segmentIds: ["R0"],
+      historyKey: "/",
+      segments: [route, held] as any[],
+    });
+    const cacheSegmentsForHistory = vi.spyOn(store, "cacheSegmentsForHistory");
+    vi.spyOn(store, "setSegmentIds");
     const eventController = createEventController();
     const setServerCallback = vi.fn();
     const rendered: unknown[][] = [];
@@ -438,7 +403,7 @@ describe("server-action-bridge loader that fails on its rerun", () => {
     ).resolves.toBe("saved");
 
     expect(rendered[0]![1]).toBe(failed);
-    expect(store.cacheSegmentsForHistory.mock.calls[0]![1][1]).toBe(failed);
+    expect(cacheSegmentsForHistory.mock.calls[0]![1][1]).toBe(failed);
     expect(store.setSegmentIds).toHaveBeenCalledWith(["R0", "R0D0.stock"]);
     expect(onUpdate).toHaveBeenCalledTimes(1);
     await vi.waitFor(() =>
@@ -477,16 +442,11 @@ describe("server-action-bridge loader that fails on its rerun", () => {
         fallback: null,
       }),
     ];
-    const store = {
-      ...createMockStore(),
-      getHistoryKey: vi.fn(() => "/"),
-      getCachedSegments: vi.fn(() => ({ segments, stale: false })),
-      setSegmentIds: vi.fn(),
-      cacheSegmentsForHistory: vi.fn(),
-      rememberDisplayedEntry: vi.fn(),
-      getHistoryEntryMemory: vi.fn(() => undefined),
-      getRouterId: vi.fn(() => undefined),
-    };
+    const store = makeNavigationStore({
+      segmentIds: ["R0"],
+      historyKey: "/",
+      segments: segments as any[],
+    });
     const eventController = createEventController();
     const setServerCallback = vi.fn();
     createServerActionBridge({
@@ -564,20 +524,12 @@ describe("server-action-bridge action on a page with a prefetch: false hole", ()
         fallback: null,
       }),
     };
-    const store = {
-      ...createMockStore(),
-      loaders: new LoaderStore(),
-      getHistoryKey: vi.fn(() => "/"),
-      getCachedSegments: vi.fn(() => ({
-        segments: [route, held, hole],
-        stale: false,
-      })),
-      setSegmentIds: vi.fn(),
-      cacheSegmentsForHistory: vi.fn(),
-      rememberDisplayedEntry: vi.fn(),
-      getHistoryEntryMemory: vi.fn(() => undefined),
-      getRouterId: vi.fn(() => undefined),
-    };
+    const store = makeNavigationStore({
+      segmentIds: ["R0"],
+      historyKey: "/",
+      segments: [route, held, hole] as any[],
+    });
+    const cacheSegmentsForHistory = vi.spyOn(store, "cacheSegmentsForHistory");
     const eventController = createEventController();
     const setServerCallback = vi.fn();
     const onUpdate = vi.fn();
@@ -610,7 +562,7 @@ describe("server-action-bridge action on a page with a prefetch: false hole", ()
     ).resolves.toBe("saved");
     expect(hole.loaderData.status).toBe("pending");
     expect(onUpdate).toHaveBeenCalledTimes(1);
-    const committed = store.cacheSegmentsForHistory.mock.calls[0]![1];
+    const committed = cacheSegmentsForHistory.mock.calls[0]![1];
     expect(committed[1]).toBe(failed);
     expect(committed[2]).toBe(hole);
     await vi.waitFor(() =>
@@ -680,34 +632,12 @@ describe("server-action-bridge concurrent actions whose loader fails on its reru
       { metadata: answer(3), returnValue: { ok: true, data: "slow" } },
     ];
     const refetched = { ...answer(4), diff: ["R0D0.stock"] };
-    let segmentIds = ["R0", "R0D0.stock"];
-    const cache = new Map<string, { segments: unknown[]; stale: boolean }>([
-      ["/", { segments: [route, held], stale: false }],
-    ]);
-    const store = {
-      ...createMockStore(),
-      loaders: new LoaderStore(),
-      getSegmentState: vi.fn(() => ({
-        path: "/",
-        currentUrl: "http://localhost/",
-        currentSegmentIds: segmentIds,
-      })),
-      getHistoryKey: vi.fn(() => "/"),
-      setHistoryKey: vi.fn(),
-      getCachedSegments: vi.fn((key: string) => cache.get(key)),
-      cacheSegmentsForHistory: vi.fn((key: string, segments: unknown[]) => {
-        cache.set(key, { segments, stale: false });
-      }),
-      setSegmentIds: vi.fn((ids: string[]) => {
-        segmentIds = ids;
-      }),
-      setCurrentUrl: vi.fn(),
-      setPath: vi.fn(),
-      setInterceptSourceUrl: vi.fn(),
-      rememberDisplayedEntry: vi.fn(),
-      getHistoryEntryMemory: vi.fn(() => undefined),
-      getRouterId: vi.fn(() => undefined),
-    };
+    const store = makeNavigationStore({
+      segmentIds: ["R0", "R0D0.stock"],
+      historyKey: "/",
+      segments: [route, held] as any[],
+    });
+    vi.spyOn(store, "cacheSegmentsForHistory");
     const fetchPartial = vi.fn(async () => ({
       payload: { metadata: refetched },
       streamComplete: Promise.resolve(),
@@ -745,7 +675,7 @@ describe("server-action-bridge concurrent actions whose loader fails on its reru
       slow: call("hash#slow", []),
       releaseSlow,
       refetched,
-      cache,
+      store,
       cacheSegmentsForHistory: store.cacheSegmentsForHistory,
       fetchPartial,
       rendered,
@@ -797,7 +727,9 @@ describe("server-action-bridge concurrent actions whose loader fails on its reru
 
     t.releaseSlow();
     await expect(t.slow).resolves.toBe("slow");
-    expect(t.cache.get("/")!.segments[1]).toBe(t.refetched.segments[1]);
+    expect(t.store.getCachedSegments("/")!.segments[1]).toBe(
+      t.refetched.segments[1],
+    );
   });
 });
 
@@ -835,16 +767,11 @@ describe("server-action-bridge navigation committed during the action's render",
       }),
     );
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const store = {
-      ...createMockStore(),
-      loaders: new LoaderStore(),
-      getHistoryKey: vi.fn(() => "/"),
-      getCachedSegments: vi.fn(() => ({ segments: [route], stale: false })),
-      setSegmentIds: vi.fn(),
-      cacheSegmentsForHistory: vi.fn(),
-      rememberDisplayedEntry: vi.fn(),
-      getRouterId: vi.fn(() => undefined),
-    };
+    const store = makeNavigationStore({
+      segmentIds: ["R0"],
+      historyKey: "/",
+      segments: [route] as any[],
+    });
     const fetchPartial = vi.fn(() => new Promise(() => {}));
     const onUpdate = vi.fn();
     const setServerCallback = vi.fn();
@@ -968,25 +895,11 @@ describe("server-action-bridge refetch follows the screen", () => {
         return new Response(null, { status: 200 });
       }),
     );
-    let historyKey = "/";
-    const cache = new Map<string, { segments: unknown[]; stale: boolean }>([
-      ["/", { segments: [route], stale: false }],
-    ]);
-    const store = {
-      ...createMockStore(),
-      loaders: new LoaderStore(),
-      getHistoryKey: vi.fn(() => historyKey),
-      setHistoryKey: vi.fn((key: string) => (historyKey = key)),
-      getCachedSegments: vi.fn((key: string) => cache.get(key)),
-      cacheSegmentsForHistory: vi.fn((key: string, segments: unknown[]) => {
-        cache.set(key, { segments, stale: false });
-      }),
-      setSegmentIds: vi.fn(),
-      setCurrentUrl: vi.fn(),
-      setPath: vi.fn(),
-      rememberDisplayedEntry: vi.fn(),
-      getRouterId: vi.fn(() => undefined),
-    };
+    const store = makeNavigationStore({
+      segmentIds: ["R0"],
+      historyKey: "/",
+      segments: [route] as any[],
+    });
     const answers: Array<(value: unknown) => void> = [];
     const fetchPartial = vi.fn(
       () => new Promise((resolve) => answers.push(resolve)),
@@ -1026,8 +939,8 @@ describe("server-action-bridge refetch follows the screen", () => {
             pathname,
           });
           window.history.state.key = pathname;
-          historyKey = pathname;
-          cache.set(pathname, { segments: [route], stale: false });
+          store.setHistoryKey(pathname);
+          store.cacheSegmentsForHistory(pathname, [route] as any[]);
           handle.complete(new URL(`http://localhost${pathname}`));
           handle[Symbol.dispose]();
         },
@@ -1214,35 +1127,11 @@ describe("server-action-bridge follow-up", () => {
     stubWindow();
     window.history.state.key = "/";
     const eventController = createEventController();
-    let historyKey = "/";
-    let interceptSource: string | null = null;
-    const cache = new Map<string, { segments: unknown[]; stale: boolean }>([
-      ["/", { segments: [layout, route], stale: false }],
-    ]);
-    const store = {
-      ...createMockStore(),
-      loaders: new LoaderStore(),
-      getSegmentState: vi.fn(() => ({
-        path: window.location.pathname,
-        currentUrl: window.location.href,
-        currentSegmentIds: ["L0", "R0"],
-      })),
-      getInterceptSourceUrl: vi.fn(() => interceptSource),
-      setInterceptSourceUrl: vi.fn((url: string | null) => {
-        interceptSource = url;
-      }),
-      getHistoryKey: vi.fn(() => historyKey),
-      setHistoryKey: vi.fn((key: string) => (historyKey = key)),
-      getCachedSegments: vi.fn((key: string) => cache.get(key)),
-      cacheSegmentsForHistory: vi.fn((key: string, segments: unknown[]) => {
-        cache.set(key, { segments, stale: false });
-      }),
-      setSegmentIds: vi.fn(),
-      setCurrentUrl: vi.fn(),
-      setPath: vi.fn(),
-      rememberDisplayedEntry: vi.fn(),
-      getRouterId: vi.fn(() => undefined),
-    };
+    const store = makeNavigationStore({
+      segmentIds: ["L0", "R0"],
+      historyKey: "/",
+      segments: [layout, route] as any[],
+    });
     const sent: Sent[] = [];
     const answered = new Map<
       string,
@@ -1326,9 +1215,11 @@ describe("server-action-bridge follow-up", () => {
         pathname,
       });
       window.history.state.key = pathname;
-      historyKey = pathname;
-      interceptSource = source;
-      cache.set(pathname, { segments: [layout, route], stale: false });
+      store.setPath(pathname);
+      store.setCurrentUrl(`http://localhost${pathname}`);
+      store.setHistoryKey(pathname);
+      store.setInterceptSourceUrl(source);
+      store.cacheSegmentsForHistory(pathname, [layout, route] as any[]);
     };
     /** A navigation the user started, and its commit or failure. */
     const navigate = (
@@ -1845,6 +1736,15 @@ describe("server-action-bridge follow-up", () => {
       },
     ]) {
       const t = setup();
+      const cacheSegmentsForHistory = vi.spyOn(
+        t.store,
+        "cacheSegmentsForHistory",
+      );
+      const setSegmentIds = vi.spyOn(t.store, "setSegmentIds");
+      const rememberDisplayedEntry = vi.spyOn(
+        t.store,
+        "rememberDisplayedEntry",
+      );
       t.show("/item", "http://localhost/");
       const call = t.act();
       // Back out of the intercept before the response: the action keeps running.
@@ -1852,9 +1752,13 @@ describe("server-action-bridge follow-up", () => {
       const state = t.eventController.getLocationState();
       await t.respond(0, late.payload);
       await late.settles(call);
-      expect(t.store.cacheSegmentsForHistory).not.toHaveBeenCalled();
-      expect(t.store.setSegmentIds).not.toHaveBeenCalled();
-      expect(t.store.rememberDisplayedEntry).not.toHaveBeenCalled();
+      // Only the two pages the test put on screen were written.
+      expect(cacheSegmentsForHistory.mock.calls.map(([key]) => key)).toEqual([
+        "/item",
+        "/",
+      ]);
+      expect(setSegmentIds).not.toHaveBeenCalled();
+      expect(rememberDisplayedEntry).not.toHaveBeenCalled();
       expect(window.history.replaceState).not.toHaveBeenCalled();
       expect(t.eventController.getLocationState()).toBe(state);
       expect(t.onUpdate).not.toHaveBeenCalled();

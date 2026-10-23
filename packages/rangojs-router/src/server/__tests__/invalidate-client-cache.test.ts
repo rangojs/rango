@@ -4,10 +4,8 @@
  * guarded inside a cache boundary.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  createRequestContext,
-  runWithRequestContext,
-} from "../request-context.js";
+import { runWithRequestContext } from "../request-context.js";
+import { makeRequestContext } from "../../__tests__/kit/index.js";
 import { invalidateClientCache } from "../cookie-store.js";
 import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
 import { uniformVersions } from "../../router-versions.js";
@@ -23,11 +21,8 @@ function makeCtx(
   const headers: Record<string, string> = {};
   if (opts.inbound !== undefined) headers["X-Rango-State"] = opts.inbound;
   if (opts.cookie) headers["Cookie"] = opts.cookie;
-  return createRequestContext({
-    env: {},
-    request: new Request("https://example.com", { headers }),
-    url: new URL("https://example.com"),
-    variables: {},
+  return makeRequestContext({
+    requestInit: { headers },
     stateCookieName: opts.stateCookieName,
     versions:
       opts.version === undefined ? undefined : uniformVersions(opts.version),
