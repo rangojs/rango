@@ -88,6 +88,59 @@ test("object-create: a same-file helper that returns or is annotated RequestCont
   );
 });
 
+test("object-create: the test kit's makeRequestContext, imported by name or alias", () => {
+  const src = [
+    'import { makeRequestContext } from "../../__tests__/kit/request-context.js";',
+    'import { makeRequestContext as mk } from "../../__tests__/kit/request-context";',
+    "it('derives', () => {",
+    "  const ctx = makeRequestContext({ url: '/a' });",
+    "  const derived = Object.create(ctx) as typeof ctx;",
+    "  Object.create(mk());",
+    "});",
+  ];
+  assert.deepEqual(
+    lines(`${SRC}cache/__tests__/a.test.ts`, RULE_OBJECT_CREATE, src),
+    [5, 6],
+  );
+  const nested = [
+    'import { makeRequestContext } from "../../../__tests__/kit/request-context.js";',
+    "Object.create(makeRequestContext());",
+  ];
+  assert.deepEqual(
+    lines(`${SRC}cache/cf/__tests__/b.test.ts`, RULE_OBJECT_CREATE, nested),
+    [2],
+  );
+});
+
+test("object-create: a makeRequestContext that is not the test kit's is not reported", () => {
+  const src = [
+    'import { makeRequestContext } from "./helpers.js";',
+    'import { makeRequestContext as other } from "./kit/request-context.js";',
+    'import { makeRequestContext as kit } from "../../__tests__/kit/request-context.js";',
+    "Object.create(makeRequestContext());",
+    "Object.create(other());",
+    "Object.create(fixtures.makeRequestContext());",
+    "it('shadows', () => {",
+    "  const kit = () => ({});",
+    "  Object.create(kit());",
+    "});",
+  ];
+  assert.deepEqual(
+    lines(`${SRC}cache/__tests__/a.test.ts`, RULE_OBJECT_CREATE, src),
+    [],
+  );
+  const local = [
+    "function makeRequestContext(search: string) {",
+    "  return { url: new URL(search, 'http://x') };",
+    "}",
+    "Object.create(makeRequestContext('?a'));",
+  ];
+  assert.deepEqual(
+    lines(`${SRC}cache/__tests__/c.test.ts`, RULE_OBJECT_CREATE, local),
+    [],
+  );
+});
+
 test("object-create: the result typed RequestContext, and casts either way", () => {
   const src = [
     "export function a(other: unknown) {",

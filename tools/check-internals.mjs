@@ -47,13 +47,16 @@
 // RequestContext" from declarations in the same file, up to MAX_DEPTH hops:
 // an argument or result typed `RequestContext` (in a union or intersection,
 // or through an `as` cast), a parameter or variable so annotated, a call to
-// getRequestContext / _getRequestContext / createRequestContext, a context
-// derived from one (Object.create / Object.assign), and a call to a same-file
-// function whose return type or returned value is one of those.
+// getRequestContext / _getRequestContext / createRequestContext, a call to the
+// test kit's makeRequestContext through a named import of
+// src/__tests__/kit/request-context, a context derived from one
+// (Object.create / Object.assign), and a call to a same-file function whose
+// return type or returned value is one of those.
 //
 // Known misses: rule 1 does not see a context reached through a property
 // (`this.ctx`, `opts.reqCtx`), a destructured or caught binding, a helper
-// imported from another file, a value behind `??`, `||` or `?:`, an
+// imported from another file (the kit's makeRequestContext aside, and it too
+// through a namespace import), a value behind `??`, `||` or `?:`, an
 // assignment to an annotated `let`, or another prototype API
 // (`Object.setPrototypeOf`, `__proto__`); rule 2 does not see a computed
 // specifier, a renamed `vi`, or a path into the router source by an alias,
@@ -126,6 +129,13 @@ const REQUEST_CONTEXT_FACTORIES = new Set([
   "_getRequestContext",
   "createRequestContext",
 ]);
+/**
+ * The internal test kit's factory, matched through the importing file's named
+ * import of KIT_REQUEST_CONTEXT_MODULE, so a same-named function from another
+ * module is not taken for it.
+ */
+const KIT_REQUEST_CONTEXT_FACTORY = "makeRequestContext";
+const KIT_REQUEST_CONTEXT_MODULE = `${SRC}__tests__/kit/request-context`;
 /** Declaration hops rule 1 follows (variable -> helper -> return -> ...). */
 const MAX_DEPTH = 4;
 
@@ -136,6 +146,16 @@ const VI_MOCK_TEXT = /\bvi\s*\.\s*(?:mock|doMock)\b/;
 
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const withoutExt = (p) => p.replace(/\.[cm]?[jt]sx?$/, "");
+
+/** The repo path a relative `specifier` names from `importer`, extension stripped; undefined for a bare one. */
+function resolveRelative(importer, specifier) {
+  if (!specifier.startsWith(".")) return undefined;
+  return withoutExt(
+    path.posix.normalize(
+      path.posix.join(path.posix.dirname(importer), specifier),
+    ),
+  );
+}
 
 function scriptKindFor(file) {
   if (file.endsWith(".tsx")) return ts.ScriptKind.TSX;
@@ -325,8 +345,33 @@ function callIsRequestContext(call, depth) {
   if (REQUEST_CONTEXT_FACTORIES.has(name)) return true;
   if (!ts.isIdentifier(callee)) return false;
   const decl = findDeclaration(callee, name);
-  const fn = decl && functionOf(decl);
+  if (!decl) return importsKitFactoryAs(callee.getSourceFile(), name);
+  const fn = functionOf(decl);
   return fn !== undefined && functionReturnsRequestContext(fn, depth + 1);
+}
+
+/** `sf` binds `local` with `import { makeRequestContext [as local] }` from the test kit. */
+function importsKitFactoryAs(sf, local) {
+  return sf.statements.some((stmt) => {
+    if (
+      !ts.isImportDeclaration(stmt) ||
+      !isStringLike(stmt.moduleSpecifier) ||
+      resolveRelative(sf.fileName, stmt.moduleSpecifier.text) !==
+        KIT_REQUEST_CONTEXT_MODULE
+    ) {
+      return false;
+    }
+    const named = stmt.importClause?.namedBindings;
+    return (
+      named !== undefined &&
+      ts.isNamedImports(named) &&
+      named.elements.some(
+        (el) =>
+          el.name.text === local &&
+          (el.propertyName ?? el.name).text === KIT_REQUEST_CONTEXT_FACTORY,
+      )
+    );
+  });
 }
 
 function expressionIsRequestContext(expr, depth) {
@@ -454,13 +499,12 @@ function mocksRouterCode(importer, specifier) {
 
 /** True when `specifier`, imported from `importer`, is browser/ beyond the L0 helpers. */
 function importsBrowser(importer, specifier) {
-  if (!specifier.startsWith(".")) return false;
-  const target = withoutExt(
-    path.posix.normalize(
-      path.posix.join(path.posix.dirname(importer), specifier),
-    ),
+  const target = resolveRelative(importer, specifier);
+  return (
+    target !== undefined &&
+    `${target}/`.startsWith(BROWSER_DIR) &&
+    !BROWSER_L0.has(target)
   );
-  return `${target}/`.startsWith(BROWSER_DIR) && !BROWSER_L0.has(target);
 }
 
 /** Erased by the build: `import type`, `export type`, or a non-empty list of `type` specifiers only. */

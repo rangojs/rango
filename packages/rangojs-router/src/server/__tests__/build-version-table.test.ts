@@ -9,10 +9,7 @@ import {
   resolveRouterVersions,
   versionKeyPrefix,
 } from "../build-version-table.js";
-import {
-  runWithRequestContext,
-  type RequestContext,
-} from "../request-context.js";
+import { runWithRequestContext } from "../request-context.js";
 import { makeRequestContext } from "../../__tests__/kit/request-context.js";
 import {
   resolveVersionsFrom,
@@ -101,8 +98,7 @@ describe("getCacheVersions", () => {
   });
 
   it("is inherited by a context derived from the request's", () => {
-    // Typed so check-internals counts the Object.create below.
-    const ctx: RequestContext = makeRequestContext({
+    const ctx = makeRequestContext({
       url: EXAMPLE_URL,
       versions: { data: "d1", document: "h1" },
     });

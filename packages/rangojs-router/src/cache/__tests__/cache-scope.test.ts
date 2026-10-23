@@ -692,8 +692,7 @@ describe("CacheScope - router.prerender() warm", () => {
     const scope = new CacheScope({ ttl: 60, store });
     await seed(scope, store);
 
-    // Typed so check-internals counts the Object.create below.
-    const foreground: RequestContext = makeRequestContext({
+    const foreground = makeRequestContext({
       url: PRODUCTS_URL,
       cacheStore: store,
     });
