@@ -229,9 +229,10 @@ function responseCacheSuite(f: Fixture) {
   test("HEAD does not poison a subsequent GET cache entry", async ({
     request,
   }) => {
-    // Unique query key so earlier suite GETs cannot leave a warm entry.
+    // Per-run key: a retry or a reused server starts cold, so the HEAD runs
+    // before any GET of this entry.
     const url = f.url(
-      `/response-cache/cached-json-query?q=head-isolate-${f.mode === "build" ? "prod" : "dev"}`,
+      `/response-cache/cached-json-query?q=head-isolate-${crypto.randomUUID()}`,
     );
     const head = await request.fetch(url, { method: "HEAD" });
     expect(head.status()).toBe(200);
