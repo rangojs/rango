@@ -156,7 +156,7 @@ ctx.isAction(CartActions); // any action in the module
 ctx.isAction(); // no args: any action at all
 ```
 
-`ctx.isAction()` returns a raw boolean, so wrap it by what the segment's default already does. On a parent layout, which is skipped after actions, `ctx.isAction(X) || undefined` adds a re-render after `X` and defers otherwise. On a loader or route segment, which already re-run after every action, `|| undefined` changes nothing, so narrow with the ternary above. Avoid a bare `ctx.isAction(X)`: it is a hard `false` on navigation too, so a loader stops refetching when params change. See [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate). `actionId` stays available as the raw string for advanced cases.
+`ctx.isAction()` returns a raw boolean, so wrap it by what the segment's default already does. On a parent layout, which is skipped after actions, `ctx.isAction(X) || ctx.stale || undefined` adds a re-render after `X` and on Back after an action, and defers otherwise. On a loader or route segment, which already re-run after every action, `|| undefined` changes nothing, so narrow with the ternary above. Avoid a bare `ctx.isAction(X)`: it is a hard `false` on navigation too, so a loader stops refetching when params change. See [Caching & Revalidation](/docs/rango/features/caching#axis-2-revalidate). `actionId` stays available as the raw string for advanced cases.
 
 ## Response payloads: Rango.PathResponse
 

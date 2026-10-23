@@ -1463,6 +1463,11 @@ async function matchPartialWithPprReplay<TEnv>(
   if (!getNavigationContextHeader(request, url.origin)) {
     return runMatch({ outcome: "BYPASS", reason: "no-navigation-context" });
   }
+  // A stale partial renders live, as an action does (rendersLive,
+  // router/match-context.ts): the record may predate the action's write.
+  if (url.searchParams.get(STALE_PARAM) === "true") {
+    return runMatch({ outcome: "BYPASS", reason: "stale" });
+  }
   // Fragment passthrough (#700), extended to partial replay. Navigation
   // context proves the request can be matched; the separate capability header
   // proves its payload consumer can expand envelopes. Older clients and the

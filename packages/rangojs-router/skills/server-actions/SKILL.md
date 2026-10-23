@@ -428,8 +428,9 @@ several actions, or a namespace import (`import * as CartActions`). Wrap it by
 what the segment's default already does:
 
 - **Add a signal** where the default skips (a parent layout or layout-level
-  parallel): `ctx.isAction(CartActions) || undefined` re-renders it after cart
-  actions and defers otherwise. On a loader or route segment it changes nothing.
+  parallel): `ctx.isAction(CartActions) || ctx.stale || undefined` re-renders it
+  after cart actions and on Back after an action, and defers otherwise. On a
+  loader or route segment it changes nothing.
 - **Narrow after actions** where the default re-runs (loaders, the route, and
   segments inside the `path()`):
   `ctx.isAction() ? ctx.isAction(CartActions) : undefined` re-runs only for cart
@@ -508,8 +509,10 @@ consumer:
 import type { Revalidate } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
 
+// True on a stale Back/Forward too: it re-runs CartPage, and a producer that
+// sits it out leaves the page reading undefined.
 const revalidateCart: Revalidate = (ctx) =>
-  ctx.isAction(CartActions) || undefined;
+  ctx.stale || ctx.isAction(CartActions) || undefined;
 
 urls(({ path, layout, loader, revalidate }) => [
   layout(CartLayout, () => [

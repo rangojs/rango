@@ -631,7 +631,7 @@ Behaviour per request:
 | JS action POST                    | `method: "POST"`, `actionId`, `actionResult` (the return value), `formData` (the last `FormData` argument), `actionUrl` | true                               |
 | In-group navigation GET           | the two URLs and param sets                                                                                             | true when params or search changed |
 | Prefetch partial                  | as a navigation: a prefetched in-group navigation honours the predicate                                                 | as a navigation                    |
-| Stale back/forward revalidation   | `stale: true`                                                                                                           | as a navigation                    |
+| Stale back/forward revalidation   | `stale: true`                                                                                                           | as an action                       |
 | Action-triggered refetch GET      | `isAction()` is false on that GET, as for `urls()`                                                                      | as a navigation                    |
 | Document request, no-JS form post | not called: these hold no segments, so every loader renders (first-render guarantee)                                    | renders                            |
 

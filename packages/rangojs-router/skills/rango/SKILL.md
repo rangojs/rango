@@ -87,10 +87,12 @@ are immune to partial-revalidation staleness by construction.
    the entry's children too — a hard `false` on one side of a
    producer/consumer pair desyncs it.
 4. **Cross-entry sharing** — an outer `layout()` entry feeding descendants.
-   Outer entries do NOT revalidate on actions by default (the revalidation
-   trace calls this `action:parent-chain-skip`), so this rung always requires
-   a shared revalidation contract: the same named `revalidate()` function on
-   the producer and every consumer. See `/layout` → "Revalidation Contracts".
+   Outer entries do NOT revalidate on actions, or on Back/Forward onto a page
+   an action made stale, by default (the revalidation trace calls this
+   `action:parent-chain-skip` / `stale:parent-chain-skip`), so this rung always
+   requires a shared revalidation contract: the same named `revalidate()`
+   function on the producer and every consumer, returning `true` on `stale`
+   as well as on its actions. See `/layout` → "Revalidation Contracts".
    Before writing one, check whether the producer can move down a rung.
 
 The failure mode this ladder prevents: a consumer re-runs, its producer
@@ -249,7 +251,9 @@ _which_ action with `ctx.isAction(addToCart)` (rename-safe); branch on _what it
 returned_ with `ctx.actionResult` — the value your `"use server"` function
 returned, for outcome-conditional revalidation. The arg also exposes `actionId`
 (raw `path#export`), `actionUrl`, `formData` (form-based actions only), `method`,
-and `stale` (the `_rsc_stale` signal that an action ran in this or another tab).
+and `stale` (the `_rsc_stale` signal that an action ran in this or another tab;
+that Back/Forward revalidation takes an action's defaults, but `isAction()` is
+false on it).
 `actionId`, `actionUrl`, `actionResult`, and `formData` are `undefined` on plain
 navigation; `method` is `"GET"` there and `"POST"` for an action. Call
 `ctx.isAction()` with no arguments to ask "was this any action?".
@@ -258,9 +262,10 @@ navigation; `method` is `"GET"` there and `"POST"` for an action. Call
 default already does: after an action, loaders, the route, and segments inside
 the `path()` re-run; layouts and parallels above the route are skipped.
 
-- **Add a signal** where the default skips: `ctx.isAction(CartActions) || undefined`
-  on a parent layout re-renders it after cart actions and defers otherwise. On a
-  loader or route segment it changes nothing.
+- **Add a signal** where the default skips:
+  `ctx.isAction(CartActions) || ctx.stale || undefined` on a parent layout
+  re-renders it after cart actions and on Back after an action, and defers
+  otherwise. On a loader or route segment it changes nothing.
 - **Narrow after actions** where the default re-runs:
   `ctx.isAction() ? ctx.isAction(CartActions) : undefined` re-runs only for cart
   actions and keeps the navigation default (params or search changed).
@@ -270,8 +275,11 @@ the `path()` re-run; layouts and parallels above the route are skipped.
 
 ```ts
 // on a parent layout (skipped after actions by default): also re-render when
-// checkout succeeded; defer to the default otherwise
-revalidate((ctx) => (ctx.isAction(checkout) && ctx.actionResult?.ok) || undefined),
+// checkout succeeded, and on Back after an action; defer to the default otherwise
+revalidate(
+  (ctx) =>
+    (ctx.isAction(checkout) && ctx.actionResult?.ok) || ctx.stale || undefined,
+),
 ```
 
 The same `actionResult` idiom works in a `clientUrls()` group's loader

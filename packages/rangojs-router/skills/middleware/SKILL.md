@@ -90,7 +90,7 @@ import type { Revalidate } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
 
 export const revalidateCartData: Revalidate = (ctx) =>
-  ctx.isAction(CartActions) || undefined;
+  ctx.stale || ctx.isAction(CartActions) || undefined;
 
 layout(CartLayout, () => [
   middleware(cartRenderMiddleware),

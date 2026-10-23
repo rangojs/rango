@@ -304,7 +304,7 @@ What the predicate sees on each request:
 
 - **A JS action call** runs it with `method: "POST"`, `actionId`, `actionResult` (the action's return value), `formData` (the last `FormData` argument), and `actionUrl`. The default is to re-run.
 - **A navigation inside the group** re-runs by default when the params or the search changed. A prefetched navigation runs the predicate too, so it honours it.
-- **A stale back/forward revalidation** sees `stale: true`.
+- **A stale back/forward revalidation** sees `stale: true`. The default is to re-run, as after an action.
 - **Document requests and no-JS form posts** hold no segments, so every loader renders whatever a predicate says.
 - **The refetch that follows an action** is a GET on which `isAction()` is false, as in `urls()`.
 

@@ -408,6 +408,38 @@ For each segment:
 Compose cached + fresh segments into single RSC stream
 ```
 
+A stale partial (`_rsc_stale`) skips the segment cache and the PPR navigation
+replay, as an action does (`rendersLive` in `src/router/match-context.ts`, the
+gates in `match-middleware/cache-lookup.ts` and `cache-store.ts`,
+`BYPASS; reason=stale` in `rsc/rsc-rendering.ts`): it renders live and stores
+nothing. The browser marks stale (`browser/partial-update.ts`
+`staleRevalidation`: mode `stale-revalidation`, or a request that holds no
+segments):
+
+- Back/Forward onto a history entry marked stale: by an action, by
+  `invalidateClientCache()` (`browser/invalidate-client-cache.ts`), or by a
+  rotated state cookie (the jar-divergence observer,
+  `browser/navigation-store-handle.ts`, and the cross-tab receive in
+  `browser/navigation-store.ts`), and any Back/Forward during an action's
+  flight;
+- `refresh()` and the cross-tab refresh (`browser/navigation-bridge.ts`
+  `refresh()`): after an action, each open tab that shares a segment with the
+  page refreshes and renders at the origin;
+- the follow-up revalidation after an action (`refetchRoute`,
+  `browser/server-action-bridge.ts`), an action's redirect navigation and the
+  HMR repair refetch;
+- the request that holds no segments after a prefetch and the page's own
+  answer disagree (`browser/partial-update.ts`).
+
+An action's render is never stored, so after one the record can be older than
+the page the client holds; a stale request that hit it would put the pre-write
+page back on screen. A route-cache entry past its TTL is not a stale request:
+its SWR is the cache's own (`cacheStale` reaches a cached segment's predicate
+as `stale`) and never applies the action defaults. A `"use cache"` entry is
+served by its own profile on a stale request, as on an action within its TTL
+(`foregroundOnAction` keys on `_inActionRevalidation`, which a stale request
+does not set): `updateTag()` on its tags is what refreshes it after a write.
+
 ## Cache Key Structure
 
 Cache keys combine request type prefix, the serving router's id, host, pathname, sorted route params, and sorted user-facing search params:

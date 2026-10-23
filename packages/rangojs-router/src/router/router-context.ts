@@ -20,6 +20,7 @@ import type {
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { TelemetrySink } from "./telemetry.js";
 import type { ResolveSegmentOptions } from "./segment-resolution.js";
+import type { EvaluateRevalidationOptions } from "./revalidation.js";
 
 /**
  * Revalidation context passed to segment resolution
@@ -166,28 +167,9 @@ export interface RouterContext<TEnv = any> {
     gen: AsyncGenerator<T | { __type: "id"; id: string }>,
   ) => Promise<{ items: T[]; matchedIds: string[] }>;
 
-  evaluateRevalidation: (params: {
-    segment: ResolvedSegment;
-    prevParams: Record<string, string>;
-    getPrevSegment: (() => Promise<ResolvedSegment | undefined>) | null;
-    request: Request;
-    prevUrl: URL;
-    nextUrl: URL;
-    revalidations: Array<{ name: string; fn: any }>;
-    routeKey: string;
-    context: HandlerContext<any, TEnv>;
-    actionContext?: any;
-    stale?: boolean;
-    traceSource?:
-      | "segment-resolution"
-      | "cache-hit"
-      | "loader"
-      | "parallel"
-      | "orphan-layout"
-      | "route-handler"
-      | "layout-handler"
-      | "intercept-loader";
-  }) => Promise<boolean>;
+  evaluateRevalidation: (
+    params: EvaluateRevalidationOptions<TEnv>,
+  ) => Promise<boolean>;
 
   getRequestContext: () =>
     | {

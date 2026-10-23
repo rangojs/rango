@@ -16,7 +16,11 @@ import {
   assertPprReplayStatus,
   assertShellStatus,
 } from "@rangojs/router/testing/e2e";
-import { expectConsole, warmShellRequestToHit } from "@shared/e2e";
+import {
+  expectBackOntoAStalePageShowsTheWrite,
+  expectConsole,
+  warmShellRequestToHit,
+} from "@shared/e2e";
 
 type BuildAxis = "dev" | "prod";
 type TransportAxis = "js" | "pe" | "request";
@@ -24,6 +28,7 @@ type ExecutionAxis =
   | "full-render"
   | "partial-render"
   | "action-followup"
+  | "stale-revalidation"
   | "shell-capture";
 type ScopeAxis =
   | "in-scope-child"
@@ -371,6 +376,18 @@ const matrixRows: SemanticMatrixRow[] = [
       await expect(testId(page, "sle-ok")).toBeVisible();
       await page.goBack();
       await expectInPlace();
+    },
+  },
+  {
+    id: "R5",
+    contract:
+      "a stale revalidation (Back onto an entry an action marked stale) applies an action's revalidation defaults: a layout loader with no revalidate() and the route segment re-run, the layout above the route does not",
+    transport: "js",
+    execution: "stale-revalidation",
+    scope: "in-scope-child",
+    url: "/stale-defaults",
+    assert: async ({ baseUrl, page }) => {
+      await expectBackOntoAStalePageShowsTheWrite(page, baseUrl);
     },
   },
   {

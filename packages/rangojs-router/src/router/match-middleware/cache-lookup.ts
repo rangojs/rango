@@ -93,7 +93,11 @@
  */
 import type { InternalHandlerContext, ResolvedSegment } from "../../types.js";
 import { isPprEntry, type EntryData } from "../../server/context.js";
-import type { MatchContext, MatchPipelineState } from "../match-context.js";
+import {
+  rendersLive,
+  type MatchContext,
+  type MatchPipelineState,
+} from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
 import { observeEvent } from "../instrument.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
@@ -280,9 +284,9 @@ async function* yieldFromStore<TEnv>(
   /**
    * The entry may be newer than the client's copy: an on-demand overlay entry
    * that a refresh (possibly inside this very action) replaced. On an action
-   * the route's own segments are then re-sent, as a live action re-render
-   * re-sends them (revalidation.ts "action:route-segment"); the immutable
-   * bundled manifest keeps the client's copy.
+   * or a stale request the route's own segments are then re-sent, as a live
+   * action re-render re-sends them (revalidation.ts "action:route-segment");
+   * the immutable bundled manifest keeps the client's copy.
    */
   replaceable?: boolean,
 ): AsyncGenerator<ResolvedSegment> {
@@ -348,7 +352,9 @@ async function* yieldFromStore<TEnv>(
   // different content, so we must NOT nullify.
   const paramsChanged =
     !ctx.isFullMatch && !paramsEqual(ctx.matched.params, ctx.prevParams);
-  const resendRouteSegments = replaceable === true && ctx.isAction;
+  // The action defaults' route segment (revalidation.ts), not a cache skip.
+  const resendRouteSegments =
+    replaceable === true && (ctx.isAction || ctx.stale);
   for (const segment of segments) {
     if (interceptFillSkips(ctx, segment)) continue;
     if (!ctx.isFullMatch && ctx.clientSegmentSet.has(segment.id)) {
@@ -679,8 +685,9 @@ export function withCacheLookup<TEnv>(
       // its result is applied client-side via useActionState). A plain on-demand
       // route is the same case, served from the overlay first (an overlay entry
       // is newer than the build one, and may be the only one). Passthrough
-      // routes keep a liveHandler, so they still re-render fresh on actions.
-      if (!ctx.isAction || !isPassthroughPrerenderRoute) {
+      // routes keep a liveHandler, so a live render (rendersLive) re-renders
+      // them fresh.
+      if (!rendersLive(ctx) || !isPassthroughPrerenderRoute) {
         await ensurePrerenderDeps();
         if (prerenderStoreInstance || prerenderOverlay) {
           const served = yield* tryPrerenderLookup(
@@ -698,7 +705,11 @@ export function withCacheLookup<TEnv>(
       }
     }
 
-    if (!ctx.isAction && !ctx.matched.pr && globalThis.__PRERENDER_DEV_URL) {
+    if (
+      !rendersLive(ctx) &&
+      !ctx.matched.pr &&
+      globalThis.__PRERENDER_DEV_URL
+    ) {
       const hasStatic = ctx.entries.some(
         (e) =>
           (e.type === "layout" ||
@@ -737,7 +748,7 @@ export function withCacheLookup<TEnv>(
     // pushes of segments the response does not carry. withCacheStore skips
     // the write for the same request.
     if (
-      ctx.isAction ||
+      rendersLive(ctx) ||
       !ctx.cacheScope?.enabled ||
       !recordUse(ctx.handlerContext).read
     ) {
@@ -1004,7 +1015,7 @@ export function withCacheLookup<TEnv>(
         routeKey: ctx.routeKey,
         context: ctx.handlerContext,
         actionContext: ctx.actionContext,
-        stale: cacheResult.shouldRevalidate || ctx.stale || undefined,
+        cacheStale: cacheResult.shouldRevalidate,
         traceSource: "cache-hit",
       });
 

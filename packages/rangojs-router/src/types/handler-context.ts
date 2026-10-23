@@ -637,10 +637,10 @@ export type IsActionFn = (...actions: ActionRef[]) => boolean;
  * ```ts
  * import * as CartActions from "./actions/cart";
  *
- * // Idiom A — "mine, else defer": re-render on my actions, otherwise return
- * // undefined so the segment's default decision still applies (and downstream
- * // revalidators get a say).
- * revalidate((ctx) => ctx.isAction(CartActions) || undefined)
+ * // Idiom A — "mine, else defer": re-render on my actions and on Back after
+ * // an action, otherwise return undefined so the segment's default decision
+ * // still applies (and downstream revalidators get a say).
+ * revalidate((ctx) => ctx.isAction(CartActions) || ctx.stale || undefined)
  *
  * // Idiom B — "mine only": re-render on my actions and suppress everything
  * // else (isAction returns a raw boolean, so an unrelated action yields false).

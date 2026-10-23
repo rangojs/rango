@@ -228,8 +228,9 @@ them right:
 
 - A boolean is a hard answer, `undefined` defers to the default. Pick by the
   default you are changing: the ternary narrows a loader that re-runs after
-  every action; `isAction(X) || undefined` adds a re-run where the default
-  skips (a server layout's own handler).
+  every action; `isAction(X) || stale || undefined` adds a re-run, after `X`
+  and on Back after an action, where the default skips (a server layout's own
+  handler).
 - `revalidate(true)` and `revalidate(false)` are shorthands for `() => true`
   and `() => false`.
 - Never `revalidate(false)` on data keyed by a param: product to product then

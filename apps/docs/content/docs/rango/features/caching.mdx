@@ -65,12 +65,14 @@ A `"use cache"` call's tags also ride on every entry that holds its value: the e
 
 `revalidate()` decides which segments re-run and stream to the client on a navigation or after a server action. Without any `revalidate()`, the defaults are:
 
-| Segment                                                    | After an action | On navigation                        |
-| ---------------------------------------------------------- | --------------- | ------------------------------------ |
-| The route (`path()`)                                       | re-runs         | re-runs when params or search change |
-| Owned by the route (loaders, layouts, parallels inside it) | re-runs         | re-runs when params or search change |
-| Loader above the route (on a parent `layout()`)            | re-runs         | kept                                 |
-| Layout or parallel above the route                         | kept            | kept, even when params change        |
+| Segment                                                    | After an action, or Back onto a page it made stale | On navigation                        |
+| ---------------------------------------------------------- | -------------------------------------------------- | ------------------------------------ |
+| The route (`path()`)                                       | re-runs                                            | re-runs when params or search change |
+| Owned by the route (loaders, layouts, parallels inside it) | re-runs                                            | re-runs when params or search change |
+| Loader above the route (on a parent `layout()`)            | re-runs                                            | kept                                 |
+| Layout or parallel above the route                         | kept                                               | kept, even when params change        |
+
+After an action the browser marks every page in its history stale, and Back or Forward onto one revalidates it with `ctx.stale` true. That request renders live, as the action does: no `cache()` record or PPR replay answers it, and it stores nothing. The same holds for every request the browser marks stale: `router.refresh()` and the cross-tab refresh (after an action, each open tab showing a page that shares a segment with it refreshes and renders at the origin), Back or Forward after `invalidateClientCache()` or after the state cookie rotated, the follow-up revalidation after an action you navigated away from, and the request that holds no segments after a prefetch and the page disagree. A `"use cache"` function keeps its own profile on these requests, as on an action within its TTL; tag it and call `updateTag()` to refresh it after a write.
 
 A segment the client doesn't hold yet always renders. [Execution Model](/docs/rango/concepts/execution-model#partial-revalidation-briefly) explains why the route entry re-runs as a unit.
 
@@ -85,8 +87,11 @@ import { revalidate } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
 
 loader(CartLoader, () => [
-  // after an action, re-run only for cart actions; on navigation, keep the default
-  revalidate((ctx) => (ctx.isAction() ? ctx.isAction(CartActions) : undefined)),
+  // after an action, re-run only for cart actions; on Back after one, re-run;
+  // on navigation, keep the default
+  revalidate((ctx) =>
+    ctx.stale || (ctx.isAction() ? ctx.isAction(CartActions) : undefined),
+  ),
 ]),
 ```
 
@@ -94,16 +99,19 @@ loader(CartLoader, () => [
 import { checkout } from "./actions/checkout";
 
 // on a parent layout (skipped after actions by default): also re-render when
-// checkout succeeded; defer to the default otherwise
-revalidate((ctx) => (ctx.isAction(checkout) && ctx.actionResult?.ok) || undefined),
+// checkout succeeded, and on Back after an action; defer to the default otherwise
+revalidate(
+  (ctx) =>
+    (ctx.isAction(checkout) && ctx.actionResult?.ok) || ctx.stale || undefined,
+),
 ```
 
 `ctx.isAction(ref)` matches by reference: one action, several (`ctx.isAction(a, b)`), or a whole module (`import * as CartActions`). Called with no arguments, `ctx.isAction()` answers "was this any action?". It returns `false` on a plain navigation. The same context also carries `actionId`, `formData`, `currentParams`/`nextParams`, `currentUrl`/`nextUrl`, and `defaultShouldRevalidate`.
 
 Pick the idiom by what the default already does. After an action, loaders and the route's own segments re-run by default, and parent layouts are skipped:
 
-- **Add a signal** where the default skips: `ctx.isAction(X) || undefined` on a parent layout re-renders it after `X` and defers otherwise. On a loader or route segment it changes nothing, because they already re-run after every action.
-- **Narrow after actions** where the default re-runs: `ctx.isAction() ? ctx.isAction(X) : undefined` re-runs only for `X`'s actions and keeps the navigation default (params or search changed).
+- **Add a signal** where the default skips: `ctx.isAction(X) || ctx.stale || undefined` on a parent layout re-renders it after `X` and on Back after an action, and defers otherwise. On a loader or route segment it changes nothing, because they already re-run after every action and on that Back. Keep `ctx.stale` on a layout whose `ctx.set()` the page reads: Back re-runs the page, and without its layout the page reads `undefined`.
+- **Narrow after actions** where the default re-runs: `ctx.stale || (ctx.isAction() ? ctx.isAction(X) : undefined)` re-runs only for `X`'s actions, re-runs on Back after an action, and keeps the navigation default (params or search changed).
 - **Avoid bare `ctx.isAction(X)`.** It returns a hard `false` on navigation too, so a loader stops refetching when params change, and when several revalidators share a segment, the first hard `false` means the rest never run.
 
 A loader in a [`clientUrls()` group](/docs/rango/guides/client-urls#revalidation-runs-on-the-server) takes the same predicate: the build moves it out of the `"use client"` module, and the server runs it with these arguments, so the idioms above apply unchanged.
