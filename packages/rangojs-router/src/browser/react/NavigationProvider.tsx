@@ -78,7 +78,8 @@ async function processHandles(
 
   // This nav's instance token, captured before any await — processHandles runs
   // right after its own commit, so this is that commit's token. generateHistoryKey
-  // is URL-only, so an A->B->A revisit reuses the key; the token lets a late
+  // is the URL (plus the source page for an intercept), so an A->B->A revisit
+  // reuses the key; the token lets a late
   // resolution tell its own visit apart from a newer same-URL visit, so a stale
   // nav can never clobber a fresher one's live state or cache (P1).
   const myInstance = store.getNavInstance();

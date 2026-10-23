@@ -316,7 +316,7 @@ describe("navigation-bridge transition({ when })", () => {
         currentSegmentIds: ["L0", "L0R0"],
       })),
       getHistoryEntryMemory: vi.fn(() => ({ routeName: "shop.item" })),
-      hasHistoryCache: vi.fn(() => false),
+      hasInterceptCache: vi.fn(() => false),
       updateCacheHandleData: vi.fn(),
       setInterceptSourceUrl: vi.fn(),
     };
@@ -378,7 +378,7 @@ describe("navigation-bridge transition({ when })", () => {
     const store = {
       getHistoryKey: vi.fn(() => "/items/one"),
       getCachedSegments: vi.fn(() => undefined),
-      hasHistoryCache: vi.fn(() => false),
+      hasInterceptCache: vi.fn(() => false),
       getSegmentState: vi.fn(() => ({
         path: "/items/one",
         currentUrl: "http://localhost/items/one",
@@ -451,7 +451,7 @@ describe("navigation-bridge transition({ when })", () => {
         currentSegmentIds: ["L0"],
       })),
       getHistoryEntryMemory: vi.fn(() => ({ routeName: "item" })),
-      hasHistoryCache: vi.fn(() => false),
+      hasInterceptCache: vi.fn(() => false),
       updateCacheHandleData: vi.fn(),
       setInterceptSourceUrl: vi.fn(),
     };
@@ -490,7 +490,7 @@ describe("navigation-bridge transition({ when })", () => {
     const store = {
       getHistoryKey: vi.fn(() => "/a"),
       getCachedSegments: vi.fn(() => undefined),
-      hasHistoryCache: vi.fn(() => false),
+      hasInterceptCache: vi.fn(() => false),
       getSegmentState: vi.fn(() => ({
         path: "/a",
         currentUrl: "http://localhost/a",

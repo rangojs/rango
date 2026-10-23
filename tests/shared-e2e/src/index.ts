@@ -4008,3 +4008,5 @@ export async function expectDeclinedBakedParamServedLive(
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
 }
+export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
+export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
