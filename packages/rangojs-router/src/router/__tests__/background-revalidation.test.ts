@@ -224,7 +224,7 @@ describe("withBackgroundRevalidation", () => {
 
       expect(mockRouterCtx.resolveInterceptEntry).toHaveBeenCalledTimes(1);
       const call = mockRouterCtx.resolveInterceptEntry.mock.calls[0] as any[];
-      expect(call[0]).toBe(interceptResult.intercept);
+      expect(call[1]).toBe(interceptResult.intercept);
       expect(call.at(-1)).toEqual({ background: true });
     });
   });

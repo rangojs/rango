@@ -243,17 +243,19 @@ describe("streamed handler telemetry (handler.error emission)", () => {
 
       await runWithRouterContext(minimalRouterCtx(sink), async () => {
         const result = await resolveParallelSegmentsWithRevalidation(
+          {
+            context: ctx,
+            client: new Set<string>(),
+            params: { slug: "hello" },
+            prevParams: {},
+            request: ctx.request,
+            prevUrl: ctx.url,
+            nextUrl: ctx.url,
+            routeKey: "blog",
+            deps,
+          },
           layoutEntry,
-          { slug: "hello" },
-          ctx,
           false,
-          new Set<string>(),
-          {},
-          ctx.request,
-          ctx.url,
-          ctx.url,
-          "blog",
-          deps,
         );
 
         const parallelSeg = result.segments.find((s) => s.type === "parallel");
@@ -299,17 +301,19 @@ describe("streamed handler telemetry (handler.error emission)", () => {
 
       await runWithRouterContext(minimalRouterCtx(sink), async () => {
         const result = await resolveOrphanLayoutWithRevalidation(
+          {
+            context: ctx,
+            client: new Set<string>(),
+            params: { slug: "hello" },
+            prevParams: {},
+            request: ctx.request,
+            prevUrl: ctx.url,
+            nextUrl: ctx.url,
+            routeKey: "blog",
+            deps,
+          },
           orphan,
-          { slug: "hello" },
-          ctx,
-          new Set<string>(),
-          {},
-          ctx.request,
-          ctx.url,
-          ctx.url,
-          "blog",
           false,
-          deps,
         );
 
         const parallelSeg = result.segments.find((s) => s.type === "parallel");

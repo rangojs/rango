@@ -192,15 +192,18 @@ describe("cache-boundary shared loader dedup", () => {
     mockEvaluateRevalidation.mockClear();
 
     const result = await resolveLoadersOnlyWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(["C0D0.src/loaders/cart.ts#Cart"]),
+        params: {},
+        prevParams: {},
+        request: new Request("http://localhost/shop"),
+        prevUrl: new URL("http://localhost/"),
+        nextUrl: new URL("http://localhost/shop"),
+        routeKey: "shop.category",
+        deps: makeDeps(),
+      },
       [makeCacheBoundaryWithSharedLoader()],
-      makeContext(),
-      new Set(["C0D0.src/loaders/cart.ts#Cart"]),
-      {},
-      new Request("http://localhost/shop"),
-      new URL("http://localhost/"),
-      new URL("http://localhost/shop"),
-      "shop.category",
-      makeDeps(),
     );
 
     const cartSegments = result.segments.filter((s) =>
@@ -226,15 +229,18 @@ describe("cache-hit parallel loaders", () => {
     mockEvaluateRevalidation.mockClear();
 
     const result = await resolveLoadersOnlyWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(["L0D0.parallel-loader"]),
+        params: {},
+        prevParams: {},
+        request: new Request("http://localhost/blog"),
+        prevUrl: new URL("http://localhost/blog"),
+        nextUrl: new URL("http://localhost/blog?page=2"),
+        routeKey: "blog",
+        deps: makeDeps(),
+      },
       [makeParallelLoaderEntry()],
-      makeContext(),
-      new Set(["L0D0.parallel-loader"]),
-      {},
-      new Request("http://localhost/blog"),
-      new URL("http://localhost/blog"),
-      new URL("http://localhost/blog?page=2"),
-      "blog",
-      makeDeps(),
     );
 
     expect(result.segments).toHaveLength(1);
@@ -252,15 +258,18 @@ describe("cache-hit parallel loaders", () => {
     mockEvaluateRevalidation.mockReturnValueOnce(false); // loader revalidate -> skip
 
     const result = await resolveLoadersOnlyWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(["L0D0.parallel-loader"]), // loader IS in the client set
+        params: {},
+        prevParams: {},
+        request: new Request("http://localhost/blog"),
+        prevUrl: new URL("http://localhost/blog"),
+        nextUrl: new URL("http://localhost/blog?page=2"),
+        routeKey: "blog",
+        deps: makeDeps(),
+      },
       [makeParallelLoaderEntry()],
-      makeContext(),
-      new Set(["L0D0.parallel-loader"]), // loader IS in the client set
-      {},
-      new Request("http://localhost/blog"),
-      new URL("http://localhost/blog"),
-      new URL("http://localhost/blog?page=2"),
-      "blog",
-      makeDeps(),
     );
 
     expect(result.segments).toHaveLength(0); // not re-fetched

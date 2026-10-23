@@ -192,17 +192,19 @@ describe("parallel slot handlers (revalidation main path)", () => {
     });
 
     await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(["L0", "L0.@panel"]),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false,
-      new Set(["L0", "L0.@panel"]),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(observedSegmentId).toBe("L0.@panel");
@@ -221,17 +223,19 @@ describe("parallel slot handlers (revalidation main path)", () => {
     );
 
     await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(["L0", "L0.@panel"]),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false,
-      new Set(["L0", "L0.@panel"]),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(observedSegmentId).toBe("L0.@panel");
@@ -254,17 +258,19 @@ describe("parallel slot handlers (revalidation orphan path)", () => {
     });
 
     await resolveOrphanLayoutWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(["O0", "O0.@panel"]),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       orphan,
-      params,
-      makeContext(),
-      new Set(["O0", "O0.@panel"]),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
       true,
-      makeDeps(),
     );
 
     expect(observedSegmentId).toBe("O0.@panel");

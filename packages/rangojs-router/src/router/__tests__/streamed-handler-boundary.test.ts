@@ -242,17 +242,19 @@ describe("parallel slots resolve the boundary from the owning entry", () => {
     const result = await runWithRequestContext(newRequestContext(ctx), () =>
       runWithRouterContext(routerCtx, () =>
         resolveParallelSegmentsWithRevalidation(
+          {
+            context: ctx,
+            client: new Set<string>(),
+            params: {},
+            prevParams: {},
+            request: ctx.request,
+            prevUrl: ctx.url,
+            nextUrl: ctx.url,
+            routeKey: "r",
+            deps,
+          },
           slotOwner,
-          {},
-          ctx,
           false,
-          new Set<string>(),
-          {},
-          ctx.request,
-          ctx.url,
-          ctx.url,
-          "r",
-          deps,
         ),
       ),
     );
@@ -266,17 +268,19 @@ describe("parallel slots resolve the boundary from the owning entry", () => {
     const result = await runWithRequestContext(newRequestContext(ctx), () =>
       runWithRouterContext(routerCtx, () =>
         resolveEntryHandlerWithRevalidation(
+          {
+            context: ctx,
+            client: new Set<string>(),
+            params: {},
+            prevParams: {},
+            request: ctx.request,
+            prevUrl: ctx.url,
+            nextUrl: ctx.url,
+            routeKey: "r",
+            deps,
+          },
           reject(new Error("boom")),
-          {},
-          ctx,
           true,
-          new Set<string>(),
-          {},
-          ctx.request,
-          ctx.url,
-          ctx.url,
-          "r",
-          deps,
         ),
       ),
     );

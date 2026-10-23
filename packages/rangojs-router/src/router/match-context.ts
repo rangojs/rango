@@ -118,6 +118,7 @@ import type {
 import type { HandlerContext, ResolvedSegment } from "../types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { InterceptResult } from "./router-context.js";
+import type { ResolutionPassInput } from "./segment-resolution/resolution-pass.js";
 
 /**
  * Action context passed to matchPartial
@@ -212,6 +213,24 @@ export function rendersLive(
   ctx: Pick<MatchContext, "isAction" | "stale">,
 ): boolean {
   return ctx.isAction || ctx.stale;
+}
+
+/** This match as the input of a revalidating resolution pass (resolution-pass.ts). */
+export function resolutionPassInput<TEnv>(
+  ctx: MatchContext<TEnv>,
+): ResolutionPassInput<TEnv> {
+  return {
+    context: ctx.handlerContext,
+    client: ctx.clientSegmentSet,
+    params: ctx.matched.params,
+    prevParams: ctx.prevParams,
+    request: ctx.request,
+    prevUrl: ctx.prevUrl,
+    nextUrl: ctx.url,
+    routeKey: ctx.routeKey,
+    actionContext: ctx.actionContext,
+    stale: ctx.stale,
+  };
 }
 
 /**

@@ -115,6 +115,7 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import { recordUse } from "../segment-resolution/prefetch-deferral.js";
+import { heldNothingPassInput } from "../segment-resolution/resolution-pass.js";
 
 /**
  * Re-render a cached route in the background and write it with
@@ -224,12 +225,15 @@ export async function rerenderAndCacheRoute<TEnv>(
       segments.push(
         ...(await runInStore(() =>
           routerCtx.resolveInterceptEntry(
+            // Nothing held: render fresh.
+            heldNothingPassInput(
+              handlerContext,
+              ctx.interceptResult!.intercept.routeName,
+              ctx.matched.params,
+            ),
             ctx.interceptResult!.intercept,
             ctx.interceptResult!.entry,
-            ctx.matched.params,
-            handlerContext,
             true, // belongsToRoute
-            undefined, // no revalidationContext: render fresh
             // A handler error rejects, so the failure is never cached.
             { background: true },
           ),

@@ -132,21 +132,23 @@ describe("segment-resolution parallel loading", () => {
     } as any;
 
     const result = await resolveSegmentWithRevalidation(
-      layoutEntry,
-      "/blog",
-      {},
-      context,
-      new Set(),
-      {},
-      context.request,
-      context.url,
-      context.url,
       {
-        trackHandler: (p: any) => p,
-        findNearestErrorBoundary: () => null,
-        findNearestNotFoundBoundary: () => null,
-        wrapLoaderPromise: (p: Promise<any>) => p,
-      } as any,
+        context,
+        client: new Set(),
+        params: {},
+        prevParams: {},
+        request: context.request,
+        prevUrl: context.url,
+        nextUrl: context.url,
+        routeKey: "/blog",
+        deps: {
+          trackHandler: (p: any) => p,
+          findNearestErrorBoundary: () => null,
+          findNearestNotFoundBoundary: () => null,
+          wrapLoaderPromise: (p: Promise<any>) => p,
+        } as any,
+      },
+      layoutEntry,
     );
 
     const parallelSegment = result.segments.find((s) => s.type === "parallel");
@@ -174,21 +176,23 @@ describe("segment-resolution parallel loading", () => {
     } as any;
 
     const resultPromise = resolveParallelSegmentsWithRevalidation(
-      entry,
-      {},
-      context,
-      false,
-      new Set(),
-      {},
-      context.request,
-      context.url,
-      context.url,
-      "/blog",
       {
-        trackHandler: (p: any) => p,
-        findNearestErrorBoundary: () => null,
-        findNearestNotFoundBoundary: () => null,
-      } as any,
+        context,
+        client: new Set(),
+        params: {},
+        prevParams: {},
+        request: context.request,
+        prevUrl: context.url,
+        nextUrl: context.url,
+        routeKey: "/blog",
+        deps: {
+          trackHandler: (p: any) => p,
+          findNearestErrorBoundary: () => null,
+          findNearestNotFoundBoundary: () => null,
+        } as any,
+      },
+      entry,
+      false,
     );
 
     const quickResult = await Promise.race([
@@ -230,21 +234,23 @@ describe("segment-resolution parallel loading", () => {
     } as any;
 
     const resultPromise = resolveOrphanLayoutWithRevalidation(
-      orphan,
-      {},
-      context,
-      new Set(),
-      {},
-      context.request,
-      context.url,
-      context.url,
-      "/blog",
-      false,
       {
-        trackHandler: (p: any) => p,
-        findNearestErrorBoundary: () => null,
-        findNearestNotFoundBoundary: () => null,
-      } as any,
+        context,
+        client: new Set(),
+        params: {},
+        prevParams: {},
+        request: context.request,
+        prevUrl: context.url,
+        nextUrl: context.url,
+        routeKey: "/blog",
+        deps: {
+          trackHandler: (p: any) => p,
+          findNearestErrorBoundary: () => null,
+          findNearestNotFoundBoundary: () => null,
+        } as any,
+      },
+      orphan,
+      false,
     );
 
     const quickResult = await Promise.race([
@@ -290,21 +296,23 @@ describe("segment-resolution parallel loading", () => {
     } as any;
 
     const resultPromise = resolveParallelSegmentsWithRevalidation(
-      entry,
-      {},
-      context,
-      false,
-      new Set(),
-      {},
-      context.request,
-      context.url,
-      context.url,
-      "/blog",
       {
-        trackHandler: (p: any) => p,
-        findNearestErrorBoundary: () => null,
-        findNearestNotFoundBoundary: () => null,
-      } as any,
+        context,
+        client: new Set(),
+        params: {},
+        prevParams: {},
+        request: context.request,
+        prevUrl: context.url,
+        nextUrl: context.url,
+        routeKey: "/blog",
+        deps: {
+          trackHandler: (p: any) => p,
+          findNearestErrorBoundary: () => null,
+          findNearestNotFoundBoundary: () => null,
+        } as any,
+      },
+      entry,
+      false,
     );
 
     const quickResult = await Promise.race([
@@ -373,20 +381,22 @@ describe("segment-resolution parallel loading", () => {
     } as any;
 
     const result = await resolveParallelSegmentsWithRevalidation(
-      entry,
-      {},
-      context,
-      false,
-      new Set<string>(),
-      {},
-      context.request,
-      context.url,
-      context.url,
-      "/blog",
       {
-        wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
-        trackHandler: vi.fn((p: any) => p),
-      } as any,
+        context,
+        client: new Set<string>(),
+        params: {},
+        prevParams: {},
+        request: context.request,
+        prevUrl: context.url,
+        nextUrl: context.url,
+        routeKey: "/blog",
+        deps: {
+          wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
+          trackHandler: vi.fn((p: any) => p),
+        } as any,
+      },
+      entry,
+      false,
     );
 
     expect(result.segments.map((segment) => segment.type)).toEqual([
@@ -419,20 +429,22 @@ describe("segment-resolution parallel loading", () => {
     } as any;
 
     const result = await resolveOrphanLayoutWithRevalidation(
-      orphan,
-      {},
-      context,
-      new Set<string>(),
-      {},
-      context.request,
-      context.url,
-      context.url,
-      "/shop",
-      false,
       {
-        wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
-        trackHandler: vi.fn((p: any) => p),
-      } as any,
+        context,
+        client: new Set<string>(),
+        params: {},
+        prevParams: {},
+        request: context.request,
+        prevUrl: context.url,
+        nextUrl: context.url,
+        routeKey: "/shop",
+        deps: {
+          wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
+          trackHandler: vi.fn((p: any) => p),
+        } as any,
+      },
+      orphan,
+      false,
     );
 
     const loaderSegment = result.segments.find((s) => s.type === "loader");
