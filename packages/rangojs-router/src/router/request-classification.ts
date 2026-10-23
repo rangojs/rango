@@ -75,6 +75,11 @@ interface FullRenderPlan<TEnv = any> {
   mode: "full-render";
   route: RouteSnapshot<TEnv>;
   negotiated: boolean;
+  /**
+   * No route matched: the render path renders the 404 (match() re-throws
+   * RouteNotFoundError). Set by rsc/request-stages.ts classify.
+   */
+  unmatched?: true;
 }
 
 interface PartialRenderPlan<TEnv = any> {
