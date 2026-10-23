@@ -24,7 +24,7 @@ import { execSync } from "node:child_process";
  *    createRouter) is never evicted and the worker keeps serving the stale
  *    router. The rango plugin closes this gap: after discovery completes it
  *    sends a `full-reload` to the `rsc` (workerd) environment
- *    (`forceCloudflareWorkerReload` in src/vite/router-discovery.ts), which
+ *    (`forceCloudflareWorkerReload` in src/vite/discovery/dev-server-phase.ts), which
  *    clears the runner's evaluatedModules so the next request re-runs
  *    createRouter() with the new routes. This is the scoped, programmatic
  *    equivalent of the dev-server `r`+enter restart.
