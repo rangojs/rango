@@ -134,6 +134,22 @@ function InterceptHeldAway({ n }: { n: number }) {
   );
 }
 
+// A second page whose link opens the /handler intercept: the intercept's
+// source page differs from the index (intercept-source-key-scenario).
+function InterceptHeldSearch() {
+  return (
+    <div data-testid="ih-search">
+      <Link
+        to="/intercept-held/handler/1"
+        prefetch="none"
+        data-testid="ih-search-open-handler"
+      >
+        Open handler-push modal
+      </Link>
+    </div>
+  );
+}
+
 function InterceptHeldHandlerPage() {
   return (
     <div data-testid="ih-handler-page" style={TALL}>
@@ -282,6 +298,8 @@ export const interceptHeldPatterns = urls(
           { name: "away" },
         ),
 
+        path("/search", InterceptHeldSearch, { name: "search" }),
+
         path("/handler/:id", InterceptHeldHandlerPage, {
           name: "handlerItem",
         }),
@@ -303,6 +321,13 @@ export const interceptHeldPatterns = urls(
                 data-testid="ih-handler-intercept-away"
               >
                 Away
+              </Link>
+              <Link
+                to="/intercept-held/search"
+                prefetch="none"
+                data-testid="ih-handler-intercept-search"
+              >
+                Search
               </Link>
             </div>
           );

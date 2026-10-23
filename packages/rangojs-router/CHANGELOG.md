@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: Back/Forward onto an intercept entry restores it over its own source page
+
+**Before.** The browser's history cache kept one entry per intercepted URL,
+whatever page the intercept was opened over. Open `/item/1` as an intercept
+from `/list`, follow a link in it to `/search`, and open `/item/1` again from
+there: the second entry's tree replaced the first's. Going Back twice then
+showed the intercept over `/search` instead of `/list`, with no request, so
+nothing corrected it.
+
+**Now.** An intercept entry is cached per source page, so each restores over
+the page it was opened from, still with no request. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

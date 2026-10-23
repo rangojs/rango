@@ -145,6 +145,7 @@ export const NamedRoutes = {
   "interceptHeld.pushHeldItem": "/intercept-held/push-held/:id",
   "interceptHeld.pushItem": "/intercept-held/push/:id",
   "interceptHeld.rerunItem": "/intercept-held/rerun/:id",
+  "interceptHeld.search": "/intercept-held/search",
   "interceptWhenShape.item": "/intercept-when-shape/item/:id",
   "interceptWhenShape.list": "/intercept-when-shape/list/:section",
   itemDetail: "/item/:itemId/detail",

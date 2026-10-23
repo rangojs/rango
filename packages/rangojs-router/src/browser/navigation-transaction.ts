@@ -180,7 +180,10 @@ export function createNavigationTransaction(
 
     const parsedUrl = new URL(url, window.location.origin);
 
-    const historyKey = generateHistoryKey(url, { intercept });
+    const historyKey = generateHistoryKey(url, {
+      intercept,
+      interceptSource: interceptSourceUrl,
+    });
 
     if (cacheOnly) {
       const currentHandleData = eventController.getHandleState().data;
