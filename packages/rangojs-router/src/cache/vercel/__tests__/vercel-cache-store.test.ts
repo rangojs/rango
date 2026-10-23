@@ -450,6 +450,33 @@ describe("VercelCacheStore", () => {
   });
 
   describe("response cache (getResponse/putResponse)", () => {
+    it("evicts a response past its envelope expiry before the request mask and the rebuild", async () => {
+      const { cache, store, failExpireTag } = makeFakeCache();
+      // expireTag would delete the entry before the read.
+      failExpireTag(() => {
+        throw new Error("expireTag down");
+      });
+      const events: VercelCacheReadDebugEvent[] = [];
+      const s = new VercelCacheStore({ cache, debug: (e) => events.push(e) });
+      await s.putResponse("doc:k", new Response("hello"), 60, 300, ["home"]);
+      const entry = store.get("rg:r:doc:k")!;
+      const env = JSON.parse(entry.value as string);
+      // The platform still returns it: its ttl is rounded up to whole seconds.
+      env.e = T0 + 1_000;
+      // Rebuilt first, it would read as corrupt.
+      env.b = "%%%not-base64%%%";
+      entry.value = JSON.stringify(env);
+      vi.setSystemTime(new Date(T0 + 2_000));
+
+      await runWithRequestContext(requestFor(s), async () => {
+        // Masked first, it would read as a miss and stay stored.
+        revalidateTag("home");
+        expect(await s.getResponse("doc:k")).toBeNull();
+      });
+      expect(events.map((e) => e.outcome)).toEqual(["expired"]);
+      expect(store.has("rg:r:doc:k")).toBe(false);
+    });
+
     it("round-trips status, headers, and body", async () => {
       const { cache } = makeFakeCache();
       const s = new VercelCacheStore({ cache });
