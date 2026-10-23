@@ -19,7 +19,7 @@
  *   +---------------------+
  *   | Should skip cache?  |
  *   | - !cacheScope       |──yes──> return
- *   | - isAction          |
+ *   | - rendersLive       |
  *   | - cacheHit          |
  *   | - method !== GET    |
  *   +---------------------+
@@ -105,7 +105,11 @@ import {
   getRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
-import type { MatchContext, MatchPipelineState } from "../match-context.js";
+import {
+  rendersLive,
+  type MatchContext,
+  type MatchPipelineState,
+} from "../match-context.js";
 import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
 import { recordSegmentTags } from "../../cache/cache-tag.js";
 import { executionStart } from "../../cache/tag-invalidation.js";
@@ -155,7 +159,7 @@ export function withCacheStore<TEnv>(
     // and could only write an incomplete one.
     if (
       !ctx.cacheScope?.enabled ||
-      ctx.isAction ||
+      rendersLive(ctx) ||
       state.cacheHit ||
       ctx.request.method !== "GET" ||
       !recordUse(ctx.handlerContext).write
@@ -355,7 +359,9 @@ function recordShellCaptureDocRecord<TEnv>(
   if (!marker?.store) return;
   const scope = ctx.cacheScope;
   if (!scope || scope.isShellImplicitDocScope) return;
-  if (ctx.isAction || ctx.isIntercept || ctx.request.method !== "GET") return;
+  if (rendersLive(ctx) || ctx.isIntercept || ctx.request.method !== "GET") {
+    return;
+  }
   if (state.cacheSource === "prerender") return;
   if (!scope.allowsCache("write")) return;
 

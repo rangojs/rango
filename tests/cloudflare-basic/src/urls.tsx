@@ -345,6 +345,7 @@ import { handlesAfterAwaitPatterns } from "./pages/handles-after-await.js";
 import { heldHandlesPatterns } from "./pages/held-handles.js";
 import { historyHandlesPatterns } from "./pages/history-handles.js";
 import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
+import { staleDefaultsPatterns } from "./pages/stale-defaults.js";
 import actionFailureClientPatterns from "./pages/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -3194,6 +3195,11 @@ export const urlpatterns = urls(
             name: "actionFailureBounded",
           }),
         ]),
+        // A layout loader with no revalidate(), Back onto a page an action
+        // made stale, and an intercept (e2e/stale-defaults.test.ts).
+        include("/stale-defaults", staleDefaultsPatterns, {
+          name: "staleDefaults",
+        }),
         // A link to a page the history cache holds keeps that page's handle
         // pushes when the response re-renders part of it.
         include("/", historyHandlesPatterns, { name: "" }),

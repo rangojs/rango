@@ -164,9 +164,9 @@ Opt a standalone layout in with `revalidate()`. Return `true` to re-render, or `
 ```tsx
 import * as CartActions from "./actions/cart";
 
-// Re-render after any cart action
+// Re-render after any cart action, and on Back after an action
 layout(<CartLayout />, () => [
-  revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+  revalidate((ctx) => ctx.isAction(CartActions) || ctx.stale || undefined),
   path("/cart", CartPage, { name: "cart" }),
 ]);
 
@@ -194,7 +194,7 @@ import type { Revalidate } from "@rangojs/router";
 import { addToCart } from "./actions/cart";
 
 export const revalidateCartData: Revalidate = (ctx) =>
-  ctx.isAction(addToCart) || undefined;
+  ctx.stale || ctx.isAction(addToCart) || undefined;
 ```
 
 ```tsx

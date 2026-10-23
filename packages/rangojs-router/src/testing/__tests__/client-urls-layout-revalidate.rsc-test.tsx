@@ -161,6 +161,22 @@ describe("clientUrls() layout() loader on a navigation between the layout's rout
     expect(count("default")).toBe(1);
   });
 
+  it("with no revalidate() re-runs on a stale revalidation, as on an action", async () => {
+    const { serve, standingOn } = setup();
+    const held = await standingOn("/shop/items/a");
+
+    // Back/Forward onto an entry an action made stale
+    // (browser/navigation-client.ts).
+    await serve("/shop/items/a", {
+      partial: { from: "/shop/items/a", segments: held, stale: true },
+    });
+    expect(count("default")).toBe(1);
+    // A predicate is handed that default, and still decides: HeldLoader's
+    // answers false.
+    expect(seenDefaults).toEqual([true]);
+    expect(count("held")).toBe(0);
+  });
+
   it("a revalidate() hands its predicate that default and decides", async () => {
     const { serve, navigate, standingOn } = setup();
 

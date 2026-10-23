@@ -108,7 +108,7 @@ One rule keeps this rung safe: if you narrow the entry's revalidation with a `re
 
 ## Rung 4: cross-entry sharing, with named revalidation contracts
 
-The bottom rung: an **outer** `layout()` entry feeding descendants below its own entry. Outer entries do not revalidate on actions by default — the revalidation trace calls this `action:parent-chain-skip` — so nothing structural keeps producer and consumer in step. This rung therefore always requires a shared revalidation contract: the same named `revalidate()` function on the producer and on every consumer.
+The bottom rung: an **outer** `layout()` entry feeding descendants below its own entry. Outer entries do not revalidate on actions by default, nor on Back or Forward onto a page an action made stale — the revalidation trace calls this `action:parent-chain-skip` and `stale:parent-chain-skip` — so nothing structural keeps producer and consumer in step. This rung therefore always requires a shared revalidation contract: the same named `revalidate()` function on the producer and on every consumer.
 
 Before writing one, check whether the producer can move down a rung — into the consumer's own entry as an orphan layout, into middleware, or into a loader. When the data genuinely must flow from an outer entry, name the contract:
 
@@ -118,7 +118,7 @@ import type { Revalidate } from "@rangojs/router";
 import { addToCart } from "./actions/cart";
 
 export const revalidateCartData: Revalidate = (ctx) =>
-  ctx.isAction(addToCart) || undefined;
+  ctx.stale || ctx.isAction(addToCart) || undefined;
 ```
 
 ```tsx
@@ -131,7 +131,7 @@ layout(<CartLayout />, () => [
 ]);
 ```
 
-Two details carry weight here. `ctx.isAction(addToCart)` matches the action **by reference**, so a rename or a moved file becomes a compile error at the import instead of a silent miss. And the `|| undefined` makes the contract add a signal without taking one away: on the layout, which the default skips after actions, it adds a re-render after `addToCart` and defers otherwise. The route segment already re-runs after every action, so there it changes nothing by default; the shared name documents the dependency. A bare `ctx.isAction(addToCart)` would return a hard `false` for unrelated actions and on navigation too, which is rarely what a shared contract should do.
+Two details carry weight here. `ctx.isAction(addToCart)` matches the action **by reference**, so a rename or a moved file becomes a compile error at the import instead of a silent miss. And the `|| undefined` makes the contract add a signal without taking one away: on the layout, which the default skips after actions, it adds a re-render after `addToCart` and defers otherwise. `ctx.stale` re-renders the layout on Back or Forward onto a page an action made stale: that request re-runs the route by default, and a layout that sat it out would leave the page reading `undefined`. The route segment already re-runs after every action, so there it changes nothing by default; the shared name documents the dependency. A bare `ctx.isAction(addToCart)` would return a hard `false` for unrelated actions and on navigation too, which is rarely what a shared contract should do.
 
 Because the contract is one named function used at every site, the dependency is greppable: search for `revalidateCartData` and you see the producer and every consumer. To avoid repeating `revalidate(...)` at each callsite, package contracts as handoff helpers that spread into any segment:
 
@@ -142,7 +142,7 @@ import type { Revalidate } from "@rangojs/router";
 import * as AuthActions from "./actions/auth";
 
 export const revalidateAuthData: Revalidate = (ctx) =>
-  ctx.isAction(AuthActions) || undefined;
+  ctx.stale || ctx.isAction(AuthActions) || undefined;
 export const revalidateAuth = () => [revalidate(revalidateAuthData)];
 ```
 

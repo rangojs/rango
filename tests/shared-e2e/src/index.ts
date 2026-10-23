@@ -61,6 +61,11 @@ export { runHandlesAfterAwaitTests } from "./handles-after-await-scenario.js";
 export type { HandlesAfterAwaitScenarioOptions } from "./handles-after-await-scenario.js";
 export { runActionFailureTests } from "./action-failure-scenario.js";
 export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
+export {
+  expectBackOntoAStalePageShowsTheWrite,
+  runStaleDefaultsTests,
+} from "./stale-defaults-scenario.js";
+export type { StaleDefaultsScenarioOptions } from "./stale-defaults-scenario.js";
 export { runSettledLaneErrorTests } from "./settled-lane-errors-scenario.js";
 export type { SettledLaneErrorsScenarioOptions } from "./settled-lane-errors-scenario.js";
 export { runPrefetchRenderErrorTests } from "./prefetch-render-errors-scenario.js";

@@ -396,12 +396,26 @@ Segment defaults when no revalidator decides (from
 `src/router/revalidation.ts`). A segment the client does not hold yet always
 renders.
 
-| Segment                                                              | After an action (POST) | Navigation                          |
-| -------------------------------------------------------------------- | ---------------------- | ----------------------------------- |
-| Route (`path()`)                                                     | `true`                 | `true` when params or search change |
-| Owned by the route (loaders, layouts, parallels inside the `path()`) | `true`                 | `true` when params or search change |
-| Loader above the route (e.g. on a parent `layout()`)                 | `true`                 | `false`                             |
-| Layout or parallel above the route                                   | `false`                | `false`                             |
+| Segment                                                              | After an action (POST), or a stale Back/Forward | Navigation                          |
+| -------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------- |
+| Route (`path()`)                                                     | `true`                                          | `true` when params or search change |
+| Owned by the route (loaders, layouts, parallels inside the `path()`) | `true`                                          | `true` when params or search change |
+| Loader above the route (e.g. on a parent `layout()`)                 | `true`                                          | `false`                             |
+| Layout or parallel above the route                                   | `false`                                         | `false`                             |
+
+A stale Back/Forward is the background revalidation of a page a server action
+(in this tab or another) marked stale: Back renders the cached page, then
+revalidates it with `stale: true`. It takes an action's defaults, so a layout's
+cart count shows the write with no opt-in. It renders live, as an action does:
+no route-cache record or PPR replay answers it. It is not an action:
+`isAction()` is false and `actionId` is undefined. To keep a loader as it was
+on that request:
+
+```typescript
+loader(RecommendationsLoader, () => [
+  revalidate(({ stale }) => (stale ? false : undefined)),
+]);
+```
 
 #### `|| undefined` (defer) vs `?? false` (hard) — pick deliberately
 
@@ -421,9 +435,10 @@ Pick the idiom by what the segment's default already does (table above). After
 an action, loaders, the route, and segments inside the `path()` already re-run;
 layouts and parallels above the route are skipped:
 
-- **Add a signal where the default skips.** `ctx.isAction(X) || undefined` on a
-  parent layout or a layout-level parallel re-renders it after `X` and defers
-  otherwise. On a loader, the route, or a segment inside the `path()` it
+- **Add a signal where the default skips.**
+  `ctx.isAction(X) || ctx.stale || undefined` on a parent layout or a
+  layout-level parallel re-renders it after `X` and on Back after an action,
+  and defers otherwise. On a loader, the route, or a segment inside the `path()` it
   changes nothing: they already re-run after every action, and on navigation it
   defers.
 - **Narrow after actions where the default re-runs.**
@@ -487,10 +502,12 @@ the same named revalidation contract across producer and consumer segments.
 import type { Revalidate } from "@rangojs/router";
 import * as AccountActions from "./actions/account";
 
-// Match by reference with ctx.isAction() (rename-safe), and defer (|| undefined)
-// so these contracts compose — a hard `false` would short-circuit the rest.
+// Match by reference with ctx.isAction() (rename-safe), true on a stale
+// Back/Forward (the page re-runs, so its producer must), and defer
+// (|| undefined) so these contracts compose — a hard `false` would
+// short-circuit the rest.
 export const revalidateAccountScope: Revalidate = (ctx) =>
-  ctx.isAction(AccountActions) || undefined;
+  ctx.stale || ctx.isAction(AccountActions) || undefined;
 
 // urls.tsx
 layout(AccountLayout, () => [
@@ -955,7 +972,7 @@ function ProductPage() {
 
 A skeleton that has appeared stays on screen for at least about 300 ms before React replaces it with what it was waiting for: React does not replace a fallback sooner than 300 ms after the last fallback committed ([#1078](https://github.com/rangojs/rango/issues/1078)). On a cold click that mounts the `loading()` boundary, a loader that finishes sooner than that still shows its skeleton for about 300 ms, while a slower loader is not delayed. The router leaves this to React: an early skeleton is preferred to holding the click, and a fully prefetched click commits complete and shows none. A nested `loading()` whose data lands after the outer one has been revealed shows its own fallback, and the 300 ms starts again. The loaders feature page on the docs site has the measured figures. Under `transition()` a related cost applies; see [view-transitions](../view-transitions/SKILL.md).
 
-A loader that throws (anything but `notFound()` or `redirect()`) throws at its `useLoader` read on every client lane: a plain or fully prefetched click, Back/Forward restored from the history cache, and the rerun after a server action. A prefetch in which a loader threw is never used, in memory or from the browser's HTTP cache: the click asks the server again, so a loader that has recovered shows its data. The nearest boundary to the read catches it (your React error boundary around the read, else the route's `errorBoundary()`, else the router's root one), and the layouts above keep their instance. The background refresh after Back/Forward onto a stale page is the exception: a loader that fails there leaves the page on screen and logs `[Browser] Background revalidation failed`. Not covered: an `intercept()`'s loaders, and a parallel slot's loaders under its own `loading()`, which are decoded above the slot's content.
+A loader that throws (anything but `notFound()` or `redirect()`) throws at its `useLoader` read on every client lane: a plain or fully prefetched click, Back/Forward restored from the history cache, and the rerun after a server action. A prefetch in which a loader threw is never used, in memory or from the browser's HTTP cache: the click asks the server again, so a loader that has recovered shows its data. The nearest boundary to the read catches it (your React error boundary around the read, else the route's `errorBoundary()`, else the router's root one), and the layouts above keep their instance. The background refresh after Back/Forward onto a stale page is the exception: it re-runs every loader on the defaults (see the defaults table), and a loader that fails there leaves the page on screen as it was and logs `[Browser] Background revalidation failed`. Not covered: an `intercept()`'s loaders, and a parallel slot's loaders under its own `loading()`, which are decoded above the slot's content.
 
 ## Loader Authority: notFound() and redirect()
 

@@ -110,7 +110,11 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * `from` carried when middleware rewrote it (`_rsc_rt`), as the browser
    * does: the server then diffs against the route that rendered that page.
    * `stale: true` sends a stale request (`_rsc_stale`), as the browser sends
-   * it: every `revalidate()` sees `stale: true` (see `revalidate()`'s `stale`).
+   * it: every `revalidate()` sees `stale: true` (see `revalidate()`'s `stale`)
+   * and segments take an action's revalidation defaults; it renders live, as
+   * an action does, so neither the route cache nor the document cache answers
+   * or stores it, and a `ppr` route's `replayStatus` is
+   * `{ outcome: "BYPASS", reason: "stale" }`.
    */
   partial?:
     | true

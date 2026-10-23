@@ -238,7 +238,8 @@ A standalone `layout()` renders when it is first mounted and is then kept as-is:
   params auto-filled) keep the old params too; render param-dependent nav in a
   client component with `useReverse(routes)` (`/links`).
 - **Actions** skip it too (the revalidation trace calls this
-  `action:parent-chain-skip`).
+  `action:parent-chain-skip`), and so does Back/Forward onto a page an action
+  made stale (`stale:parent-chain-skip`).
 
 Orphan layouts inside a `path()` are the opposite: they belong to the route
 entry and re-render with it (on param/search changes and on every action).
@@ -249,9 +250,9 @@ or `undefined` to defer to the default:
 ```typescript
 import * as CartActions from "./actions/cart";
 
-// Re-render after any cart action
+// Re-render after any cart action, and on Back after an action
 layout(<CartLayout />, () => [
-  revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+  revalidate((ctx) => ctx.isAction(CartActions) || ctx.stale || undefined),
 
   path("/cart", CartPage, { name: "cart" }),
 ])
@@ -292,7 +293,7 @@ import type { Revalidate } from "@rangojs/router";
 import { addToCart } from "./actions/cart";
 
 export const revalidateCartData: Revalidate = (ctx) =>
-  ctx.isAction(addToCart) || undefined;
+  ctx.stale || ctx.isAction(addToCart) || undefined;
 ```
 
 ```typescript
@@ -305,8 +306,11 @@ layout(<CartLayout />, () => [
 ```
 
 On the layout the contract adds the re-render the default skips after an
-action. The route segment already re-runs after every action, so there it
-changes nothing by default; the shared name documents the dependency.
+action, and on Back/Forward onto a page an action made stale (`ctx.stale`).
+The route segment already re-runs on both, so there it changes nothing by
+default; the shared name documents the dependency. Leave out `ctx.stale` and
+Back after any action re-runs the page without its layout: the page reads
+`undefined`.
 
 If a segment depends on multiple upstream domains, compose multiple
 contracts (`revalidateAuthData`, `revalidateCartData`, and so on).
@@ -319,7 +323,7 @@ import { revalidate, type Revalidate } from "@rangojs/router";
 import * as AuthActions from "./actions/auth";
 
 export const revalidateAuthData: Revalidate = (ctx) =>
-  ctx.isAction(AuthActions) || undefined;
+  ctx.stale || ctx.isAction(AuthActions) || undefined;
 export const revalidateAuth = () => [revalidate(revalidateAuthData)];
 ```
 

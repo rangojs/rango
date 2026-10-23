@@ -1,8 +1,93 @@
 # Changelog
 
-## Unreleased
+## 0.27.0 (2026-10-23)
 
-### Fixed: the page under an intercept stays when a redirect opens the intercept, or on Back/Forward over an intercept left early
+### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
+
+**Before.** After a server action, the browser marks every page in its history
+stale: Back renders the cached page at once, then revalidates it in the
+background. That revalidation took a navigation's defaults: it kept a layout's
+loader, and a route whose params did not change. So after Back, a cart count a
+layout's loader reads still showed its count from before the action, and
+leaving an intercept with Back after an action in it put the count back to its
+value from before the action. Only a loader that declared
+`revalidate(({ stale }) => stale)` re-ran.
+
+**After.** That revalidation takes the defaults of an action's own
+revalidation: the route, every loader (a layout's included) and the route's own
+children re-render; the layouts above the route keep their content. Back shows
+the write with no opt-in. It renders live, as the action does: no `cache()`
+record or PPR navigation replay answers it, and it stores nothing (an action's
+render is never stored, so a record can predate the write). `revalidate()`
+still decides: `revalidate(false)`, or a predicate that returns `false`, keeps
+a loader as it was. On that request `stale` is `true`, `isAction()` is `false`
+and `actionId` is `undefined`.
+
+**Every stale request renders live.** The browser marks a partial request
+stale (`_rsc_stale`) in more places than Back after an action, and each one now
+skips the route's `cache()` records (no read, no store) and the PPR navigation
+replay:
+
+- `router.refresh()`, and the cross-tab refresh: after an action, every open
+  tab showing a page that shares a segment with it refreshes, and each of those
+  refreshes renders at the origin;
+- Back or Forward after `invalidateClientCache()`, or after the router's state
+  cookie rotated (a sibling tab, a server `Set-Cookie`);
+- the follow-up revalidation after an action the user navigated away from;
+- the request that holds no segments after a prefetch and the page's own
+  answer disagree, an action's redirect navigation, and the HMR repair
+  refetch.
+
+A ppr route answers such a request with `x-rango-ppr-replay: BYPASS;
+reason=stale`, and `PprReplayBypassReason` (from `@rangojs/router/testing`)
+gains `"stale"`. A `"use cache"` function is served by its own profile on these
+requests, as on an action within its TTL: tag it and call `updateTag()` to
+refresh it after a write.
+
+```ts
+// Before: the layout's count showed the write after Back only with an opt-in.
+layout(ShopLayout, () => [
+  loader(CartCountLoader, () => [revalidate(({ stale }) => stale)]),
+  path("/products/:id", ProductPage, { name: "product" }),
+  path("/cart", CartPage, { name: "cart" }),
+]);
+
+// After: the default re-runs it.
+layout(ShopLayout, () => [
+  loader(CartCountLoader),
+  path("/products/:id", ProductPage, { name: "product" }),
+  path("/cart", CartPage, { name: "cart" }),
+]);
+
+// To keep an expensive loader as it was on Back after an action:
+loader(RecommendationsLoader, () => [
+  revalidate(({ stale }) => (stale ? false : undefined)),
+]);
+```
+
+**Migration.** A page handler or loader that reads a value its parent layout's
+handler set with `ctx.set()` now re-runs on that Back without the layout, as it
+already does after an action on its own page, and reads `undefined`. Get the
+value from middleware, or make the layout's `revalidate()` contract return
+`true` on `stale` as well as on its actions:
+
+```ts
+// Before
+export const revalidateCartData: Revalidate = (ctx) =>
+  ctx.isAction(addToCart) || undefined;
+
+// After
+export const revalidateCartData: Revalidate = (ctx) =>
+  ctx.stale || ctx.isAction(addToCart) || undefined;
+```
+
+It costs one live render of the page you go back to, the work the action's
+response does for its own page, once per page after each action. An action
+that calls `keepClientCache()` marks nothing stale. A loader that fails on that
+background revalidation leaves the page as it was and logs
+`[Browser] Background revalidation failed`.
+
+### Fixed: the page under an intercept stays when a redirect opens the intercept, or on Back/Forward over an intercept left early ([#1227](https://github.com/rangojs/rango/pull/1227))
 
 **Before.** Under an intercept the server never renders the page under it:
 that page comes from the segments the browser says it holds. A few requests
@@ -25,7 +110,7 @@ it shows its pre-action data until the intercept closes, as it does after an
 action submitted from inside an open intercept. The layouts and the
 intercept are rendered fresh. No change in your code.
 
-### Fixed: an action's write shows on the page the user navigated to while it ran
+### Fixed: an action's write shows on the page the user navigated to while it ran ([#1228](https://github.com/rangojs/rango/pull/1228))
 
 **Before.** A user clicks "Add to cart" and then a link, or goes Back, before
 the action lands. The action's revalidation was dropped, so the new page kept
@@ -46,13 +131,13 @@ could not reach it:
   when the action lands reads `"loading"` until its page commits.
 - Several actions share one revalidation, and a `redirect()` replaces it.
 - Nothing runs while an intercept is on screen. Leaving it with Back sends a
-  stale revalidation, which re-runs the loaders that opt in with
-  `revalidate(({ stale }) => stale)`, as before.
+  stale revalidation, which re-runs the page underneath as the Breaking entry
+  above describes.
 - A user who stayed on the page gets no extra request.
 
 No change in your code. `keepClientCache()` turns this off for that action.
 
-### Fixed: the document cache never answers a stale request
+### Fixed: the document cache never answers a stale request ([#1228](https://github.com/rangojs/rango/pull/1228))
 
 **Before.** On a route with `s-maxage`, `createDocumentCacheMiddleware()` could
 answer Back's revalidation after an action from a body cached before the write.
@@ -65,18 +150,7 @@ stored in the document cache, and the server answers it with
 stale, the background revalidation after an action, and `refresh()`. For a
 shared entry refreshed after a write, tag it and call `updateTag()`.
 
-### Changed: going Back or Forward out of an intercept no longer aborts its actions
-
-**Before.** Back or Forward into or out of an intercept aborted every
-action in flight, although the server had already received it and ran it.
-`useAction()` went back to idle with no result, and the caller's `await`
-resolved with `undefined`.
-
-**Now.** The action keeps running. `useAction()` and the caller's `await` get
-its real result, and the page underneath gets the background revalidation
-above. This matches what already happened when a link left the intercept.
-
-### Fixed: Back/Forward onto an intercept entry the client no longer holds no longer opens the intercept over another page
+### Fixed: Back/Forward onto an intercept entry the client no longer holds no longer opens the intercept over another page ([#1229](https://github.com/rangojs/rango/pull/1229))
 
 **Before.** After a reload, or once the history cache (`initBrowserApp`'s
 `storeOptions.cacheSize`, 20 by default) evicted it, Back/Forward onto an
@@ -89,6 +163,17 @@ intercept opens over it as before; from any other page the entry loads as a
 document (a full page load, from the top) and renders its URL's full page. A
 document load never leaves an entry marked as an intercept, a reload on an
 open intercept included. No change in your code.
+
+### Changed: going Back or Forward out of an intercept no longer aborts its actions ([#1228](https://github.com/rangojs/rango/pull/1228))
+
+**Before.** Back or Forward into or out of an intercept aborted every
+action in flight, although the server had already received it and ran it.
+`useAction()` went back to idle with no result, and the caller's `await`
+resolved with `undefined`.
+
+**Now.** The action keeps running. `useAction()` and the caller's `await` get
+its real result, and the page underneath gets the background revalidation
+above. This matches what already happened when a link left the intercept.
 
 ## 0.26.6 (2026-10-21)
 

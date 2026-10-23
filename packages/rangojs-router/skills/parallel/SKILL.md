@@ -392,8 +392,9 @@ parallel(
   () => [
     loader(CartLoader),
     // Layout-level slot (kept after actions by default): also re-render after
-    // cart actions. Under a path() the slot re-renders after every action anyway.
-    revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+    // cart actions and on Back after an action. Under a path() the slot
+    // re-renders after every action anyway.
+    revalidate((ctx) => ctx.isAction(CartActions) || ctx.stale || undefined),
   ]
 )
 ```
@@ -456,7 +457,7 @@ import type { Revalidate } from "@rangojs/router";
 import * as CartActions from "./actions/cart";
 
 export const revalidateCartData: Revalidate = (ctx) =>
-  ctx.isAction(CartActions) || undefined;
+  ctx.stale || ctx.isAction(CartActions) || undefined;
 
 layout(CartLayout, () => [
   revalidate(revalidateCartData), // producer reruns
@@ -575,7 +576,7 @@ export const shopPatterns = urls(({
       () => [
         loader(CartLoader),
         loading(<CartSkeleton />),
-        revalidate((ctx) => ctx.isAction(CartActions) || undefined),
+        revalidate((ctx) => ctx.isAction(CartActions) || ctx.stale || undefined),
       ]
     ),
 

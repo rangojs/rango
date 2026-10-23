@@ -152,6 +152,7 @@ import { clientUrlsVarsMiddleware } from "./urls/client-urls-vars-shared.js";
 import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
 import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
+import { staleDefaultsPatterns } from "./urls/stale-defaults.js";
 import actionFailureClientPatterns from "./urls/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -1128,6 +1129,11 @@ export const urlpatterns = urls(
           name: "actionFailureBounded",
         }),
       ]),
+      // A layout loader with no revalidate(), Back onto a page an action made
+      // stale, and an intercept (stale-defaults.test.ts).
+      include("/stale-defaults", staleDefaultsPatterns, {
+        name: "staleDefaults",
+      }),
       // A no-script document whose inline <Suspense> draws a client component
       // from a loader's answer (client-urls-loader-element.test.ts).
       include("/client-urls-loader-element", clientUrlsLoaderElementPatterns, {

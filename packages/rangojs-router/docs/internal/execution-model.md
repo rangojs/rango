@@ -709,6 +709,7 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
   into the shell snapshot IN ADDITION to the scope's normal store write
   (snapshot-only — never the real store), and stamps its key on the entry
   (`ShellCacheEntry.docKey`); replay eligibility requires that exact record.
+  A stale partial (`_rsc_stale`) bypasses as an action does (`stale`; R7).
   Three decisions bypass before any shell-store read: a partial without
   navigation context (`no-navigation-context`: no `X-RSC-Router-Client-Path`
   and no same-origin `Referer`, the predicate `getNavigationContextHeader`
@@ -1837,11 +1838,10 @@ change (see Contract Change Process).
   when it would run, the debt is dropped. A request that holds no segments gets
   only the layouts and the slot back (`router/match-result.ts`
   `buildMatchResult`). Leaving the intercept with Back restores the page
-  underneath and sends it a stale revalidation (R1 marked the entry stale). As
-  on main, that re-runs only the segments that opt in with
-  `revalidate(({ stale }) => stale)`; by default a held layout loader is
-  skipped on a navigation (`nav:non-route-skip`, `router/revalidation.ts`).
-  Leaving it with a link sends no stale revalidation.
+  underneath and sends it a stale revalidation (R1 marked the entry stale),
+  which takes an action's defaults ("Revalidation Contract" below), so the
+  layout loaders above the intercept show the write. Leaving it with a link
+  sends no stale revalidation.
 - **R5. A redirect** navigates. It owes nothing, and it clears the batch's
   debt. An action still in flight owes again at its own exit if the page moved
   under it.
@@ -1856,6 +1856,13 @@ change (see Contract Change Process).
   the HTTP cache. Back restores from the history cache and revalidates; while
   an action is in flight that revalidation is stale
   (`navigation-bridge.ts` `handlePopstate`, `isActionFenceActive()`).
+  A stale request renders live, as an action does (`rendersLive`,
+  `router/match-context.ts`): it reads no route-cache record and stores none
+  (`match-middleware/cache-lookup.ts`, `cache-store.ts`), skips the prerender
+  store where the route has a live handler, and bypasses the PPR navigation
+  replay (`BYPASS; reason=stale`, `rsc/rsc-rendering.ts`). An action's render
+  is never stored, so a record can predate the copy the client holds after
+  it: a hit would put the pre-write page back on screen.
 
 Why only one follow-up, and why whole? One per batch, because three actions
 used to mean three refetches, each superseding the user's click. Whole,
@@ -2119,25 +2126,51 @@ should not be treated as equivalent.
   input is a non-route segment (`isLayoutLoaderCopy`,
   `router/segment-resolution/revalidation.ts`), so a navigation holds it
   (`nav:non-route-skip`, params and search changes included) and an action
-  re-runs it (`action:loader-segment`). The page's copy under another route of
+  or a stale revalidation re-runs it (`action:loader-segment`,
+  `stale:loader-segment`). The page's copy under another route of
   the layout counts as the destination's (`client-urls/layout-loader-copies.ts`).
   Pinned by `src/testing/__tests__/client-urls-layout-revalidate.rsc-test.tsx`.
-- Default decisions during action revalidation (no `revalidate()` configured;
-  seeds for user predicates — see `evaluateRevalidation` in
-  `router/revalidation.ts`):
+- Default decisions during an action's revalidation and a stale
+  revalidation (no `revalidate()` configured; seeds for user predicates — see
+  `evaluateRevalidation` in `router/revalidation.ts`):
 
-  | Segment                                                | Default | Trace reason               |
-  | ------------------------------------------------------ | ------- | -------------------------- |
-  | route segment                                          | `true`  | `action:route-segment`     |
-  | loader segment                                         | `true`  | `action:loader-segment`    |
-  | `belongsToRoute` child (orphan layout, entry parallel) | `true`  | `action:belongs-to-route`  |
-  | parent-chain segment (outer layout, its parallels)     | `false` | `action:parent-chain-skip` |
+  | Segment                                                | Default | Action trace reason        | Stale trace reason        |
+  | ------------------------------------------------------ | ------- | -------------------------- | ------------------------- |
+  | route segment                                          | `true`  | `action:route-segment`     | `stale:route-segment`     |
+  | loader segment                                         | `true`  | `action:loader-segment`    | `stale:loader-segment`    |
+  | `belongsToRoute` child (orphan layout, entry parallel) | `true`  | `action:belongs-to-route`  | `stale:belongs-to-route`  |
+  | parent-chain segment (outer layout, its parallels)     | `false` | `action:parent-chain-skip` | `stale:parent-chain-skip` |
 
-  Consequence: a route entry re-runs as a unit on actions (handler-first
-  preserved), so handler `ctx.set()` data consumed by the entry's own
-  children needs no contract. Producer/consumer contracts are required only
-  when narrowing with a hard `false` predicate or when the producer is an
-  outer entry. The consumer-facing ladder is documented in
+  A stale revalidation is a partial GET carrying `_rsc_stale`: the
+  background revalidation after Back/Forward onto a history entry marked
+  stale, by an action in this tab or another, by `invalidateClientCache()`
+  or by a rotated state cookie (`handlePopstate` in
+  `browser/navigation-bridge.ts`), and the same revalidation during an
+  action's flight. Why the action's defaults: the entry was cached before the
+  write, and a navigation's defaults would keep a layout's loader and the
+  route on their pre-write values, so Back showed the page as it was before
+  the action (a layout's cart count, or the page under an intercept after an
+  action inside it). It is not an action: no `actionContext` is built,
+  `isAction()` is false and `actionId` undefined. It renders live (R7 above):
+  no route-cache record or PPR replay answers it. An on-demand prerender
+  entry is re-sent as on an action. A route-cache entry past its TTL is not a
+  stale request: it reaches a cached segment's predicate as `stale`
+  (`cacheStale`) and never seeds the action defaults. A request that holds
+  no segments (`refresh()`, the cross-tab refresh, an action's refetch or
+  redirect) renders every segment by the first-render guarantee below, so the
+  seed changes nothing for it. Pinned by semantic-matrix row R5,
+  `src/testing/__tests__/stale-revalidation-defaults.rsc-test.tsx` (a cache()
+  route and a ppr route included), `src/router/__tests__/revalidation-stale-defaults.test.ts`
+  and the `stale-defaults` e2e (both apps, dev and production).
+
+  Consequence: a route entry re-runs as a unit on actions and stale
+  revalidations (handler-first preserved), so handler `ctx.set()` data
+  consumed by the entry's own children needs no contract. Producer/consumer
+  contracts are required only when narrowing with a hard `false` predicate or
+  when the producer is an outer entry: an outer layout's handler does not run
+  on either, so a route handler or loader that reads its `ctx.set()` value
+  re-runs without it, on Back after any action as on an action on its own
+  page. The consumer-facing ladder is documented in
   `skills/rango/SKILL.md` ("Passing data down the tree").
 
 - **First-render guarantee (client-knowledge seed).** A segment absent from the
@@ -2279,12 +2312,19 @@ should not be treated as equivalent.
 ### Revalidation Contracts Pattern
 
 For shared `ctx.set()` data, prefer named revalidation contracts and reuse
-them on both producer and consumer segments.
+them on both producer and consumer segments. A contract returns `true` on
+`stale` too: Back after any action re-runs the route by default, and a
+producer that sits it out leaves the consumer reading `undefined`.
 
 ```ts
 // revalidation-contracts.ts
-export const revalidateCartData = ({ actionId }: { actionId?: string }) =>
-  actionId?.includes("src/actions/cart.ts#addToCart") ?? false;
+export const revalidateCartData = ({
+  actionId,
+  stale,
+}: {
+  actionId?: string;
+  stale?: boolean;
+}) => stale || (actionId?.includes("src/actions/cart.ts#addToCart") ?? false);
 ```
 
 ```ts
@@ -2319,11 +2359,11 @@ as reusable DSL helpers that can be imported and spread into any segment.
 // revalidation-contracts.ts
 import { revalidate } from "@rangojs/router";
 
-export const revalidateAuthData = ({ actionId }) =>
-  actionId?.includes("src/actions/auth.ts#") ?? false;
+export const revalidateAuthData = ({ actionId, stale }) =>
+  stale || (actionId?.includes("src/actions/auth.ts#") ?? false);
 
-export const revalidateCartData = ({ actionId }) =>
-  actionId?.includes("src/actions/cart.ts#") ?? false;
+export const revalidateCartData = ({ actionId, stale }) =>
+  stale || (actionId?.includes("src/actions/cart.ts#") ?? false);
 
 export const revalidateAuth = () => [revalidate(revalidateAuthData)];
 
