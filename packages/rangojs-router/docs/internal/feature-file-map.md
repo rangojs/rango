@@ -300,6 +300,23 @@ The public DOM seam is
   (`visitorShellKey`), [testing/shell-status.ts](../../src/testing/shell-status.ts)
   (`visitorShellCacheKey`),
   [testing/**tests**/rewrite-ppr-shell.rsc-test.tsx](../../src/testing/__tests__/rewrite-ppr-shell.rsc-test.tsx).
+- Characterisation tests for the internals' seams: each pins what a change
+  to that seam must keep as it is.
+  [`browser/__tests__/wire-urls.test.ts`](../../src/browser/__tests__/wire-urls.test.ts)
+  (the navigation, prefetch and action URLs and the prefetch cache keys),
+  [`cache/__tests__/record-read-sequence.test.ts`](../../src/cache/__tests__/record-read-sequence.test.ts)
+  (a record read per store, family and outcome: return value, debug events,
+  reported errors),
+  [`server/__tests__/derived-context-shape.rsc-test.tsx`](../../src/server/__tests__/derived-context-shape.rsc-test.tsx)
+  (the shell capture, PPR tail and background re-render contexts, and the
+  rewrite rebase),
+  [`__tests__/tree/structure.test.tsx`](../../src/__tests__/tree/structure.test.tsx)
+  (the tree `renderSegments` builds per `loading` variant),
+  [`router/segment-resolution/__tests__/walker-differential.test.ts`](../../src/router/segment-resolution/__tests__/walker-differential.test.ts)
+  (the fresh and revalidating walkers and their named differences),
+  [`router/match-middleware/__tests__/stored-source.rsc-test.tsx`](../../src/router/match-middleware/__tests__/stored-source.rsc-test.tsx)
+  (one entry served from a `cache()` record, a Prerender artifact and an
+  on-demand overlay).
 - Dev+build: [vite/rango.ts](../../src/vite/rango.ts), [build/route-types/\*](../../src/build/route-types/), [build/generate-route-types.ts](../../src/build/generate-route-types.ts).
 - Package type publishing: [package.json](../../package.json) maps public
   type conditions to declarations emitted by
