@@ -1316,7 +1316,7 @@ guards run on that re-render, as on a direct visit; they never guarded the
 action itself, since route middleware never wraps action execution. Only
 the action and PE branches render from the outcome, so after the action the
 target must be a page route: a response route, a redirect or no match on
-pass 2 is an error (`guardRequest` in `rsc/request-stages.ts`), not a fresh POST that a response
+pass 2 is an error (`terminalPlanResponse` in `rsc/request-stages.ts`), not a fresh POST that a response
 route's handler would serve as a second mutation. Before the action no
 outcome exists, so pass 2 is classified as any request: a response route
 target serves a plain POST with its body, as a direct post to it would. A JS

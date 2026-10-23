@@ -78,6 +78,10 @@ import {
   type ActionContinuation,
 } from "./server-action.js";
 import { handleLoaderFetch, renderLoaderError } from "./loader-fetch.js";
+import {
+  checkRequestOrigin,
+  ORIGIN_CHECK_PHASE_BY_MODE,
+} from "./origin-guard.js";
 import { handleRscRendering } from "./rsc-rendering.js";
 import { withoutShellMissMarker } from "./shell-serve.js";
 import { readWarmMark } from "../prerender/warm-request.js";
@@ -103,11 +107,12 @@ import {
   classify,
   createErrorReporter,
   finalizeRequestResponse,
-  guardRequest,
+  originRejectedResponse,
   reportBackgroundErrors,
   responseRouteMatch,
   runRequestPasses,
   serveResponseRoute,
+  terminalPlanResponse,
   timeoutResponse,
 } from "./request-stages.js";
 
@@ -692,11 +697,34 @@ export function createRSCHandler<
     // "middleware-short-circuit").
     getRequestContext()._requestMode = plan.mode;
 
-    // ---- 2. Terminal plans and the origin guard ----
-    const guarded = await guardRequest(plan, request, env, url, handlerCtx);
-    if (guarded) return guarded;
+    // ---- 2. Terminal plans (no execution needed) ----
+    const terminal = terminalPlanResponse(plan, url, handlerCtx);
+    if (terminal) return terminal;
 
-    // ---- 3. Execute ----
+    // ---- 3. Origin guard (gate for action/loader/PE modes) ----
+    const originPhase = ORIGIN_CHECK_PHASE_BY_MODE[plan.mode];
+    if (originPhase) {
+      const rejection = await checkRequestOrigin(
+        request,
+        url,
+        router.originCheck,
+        env,
+        router.id,
+        originPhase,
+      );
+      if (rejection) {
+        return originRejectedResponse(
+          rejection,
+          originPhase,
+          request,
+          env,
+          url,
+          handlerCtx,
+        );
+      }
+    }
+
+    // ---- 4. Execute ----
     return executeRequest(
       plan as ExecutableRequestPlan<TEnv>,
       request,

@@ -727,7 +727,7 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   site error: a rewrite after `next()`, a disallowed mutation's rewrite in
   global middleware (before the action), a mutation whose body middleware
   read before the action, an action whose rewrite reaches a response route
-  or a redirect (`guardRequest` in `rsc/request-stages.ts`: after it ran, or
+  or a redirect (`terminalPlanResponse` in `rsc/request-stages.ts`: after it ran, or
   a JS action before);
   a loader fetch
   answers with the `loaderError` `load()` rejects with; a handler's, loader's or server action's throw is its own error

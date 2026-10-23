@@ -53,11 +53,7 @@ import {
   type InvokeOnErrorContext,
 } from "../router/error-handling.js";
 import { createReverseFunction } from "../router/handler-context.js";
-import {
-  checkRequestOrigin,
-  ORIGIN_CHECK_PHASE_BY_MODE,
-  type OriginCheckConfig,
-} from "./origin-guard.js";
+import type { OriginCheckPhase } from "./origin-guard.js";
 import { applyStreamIdleTimeout } from "./stream-idle.js";
 import {
   withTimeout,
@@ -133,12 +129,11 @@ export interface RequestStageContext<TEnv = unknown> {
   ) => void;
 }
 
-/** What classify and guardRequest read beyond the stage context. */
+/** What classify and the terminal plans read beyond the stage context. */
 export interface ClassifyContext<TEnv = unknown> {
   router: {
     readonly id: string;
     readonly findMatch: ClassifyRequestDeps<TEnv>["findMatch"];
-    readonly originCheck?: OriginCheckConfig<TEnv>;
   };
   /** The router's DOCUMENT version: the `_rsc_v` reload check. */
   version: string;
@@ -227,18 +222,21 @@ export async function classify<TEnv>(
 }
 
 /**
- * The checks between classification and execution. Returns the response of a
- * terminal plan (a partial request's redirect, a version or app-switch
- * reload) or of a rejected origin, null to run the plan. Throws for a
- * rewritten action whose target is not a page route.
+ * The checks between classification and execution that need no await.
+ * Returns the response of a terminal plan (a partial request's redirect, a
+ * version or app-switch reload), null to go on. Throws for a rewritten
+ * action whose target is not a page route.
+ *
+ * Synchronous, and the origin guard is a separate step: the caller awaits
+ * checkRequestOrigin only for the modes ORIGIN_CHECK_PHASE_BY_MODE gates, so
+ * a full, partial or response plan reaches execution without an added
+ * microtask (rsc/__tests__/request-microtasks.rsc-test.tsx).
  */
-export async function guardRequest<TEnv>(
+export function terminalPlanResponse<TEnv>(
   plan: RequestPlan<TEnv>,
-  request: Request,
-  env: TEnv,
   url: URL,
   ctx: RequestStageContext<TEnv> & ClassifyContext<TEnv>,
-): Promise<Response | null> {
+): Response | null {
   // A rewritten pass of an action must reach the branch that runs it: the
   // one that ran it re-renders from its outcome, and a JS action a global
   // rewrite moved before it ran runs only on the action branch. Any other
@@ -265,7 +263,6 @@ export async function guardRequest<TEnv>(
     );
   }
 
-  // ---- Terminal plans (no execution needed) ----
   if (plan.mode === "redirect") {
     const redirected = partialRedirectResponse(plan.redirectUrl, url, ctx);
     if (redirected) return redirected;
@@ -286,52 +283,53 @@ export async function guardRequest<TEnv>(
     return createReloadResponse(getRequestContext(), plan.reloadUrl);
   }
 
-  // ---- Origin guard (gate for action/loader/PE modes) ----
-  const originPhase = ORIGIN_CHECK_PHASE_BY_MODE[plan.mode];
-  if (originPhase) {
-    const router = ctx.router;
-    const originResult = await checkRequestOrigin(
-      request,
-      url,
-      router.originCheck,
-      env,
-      router.id,
-      originPhase,
-    );
-    if (originResult) {
-      const origin = requestHeaders(request).get("origin");
-      const host = requestHeaders(request).get("host");
-      const originError = new Error(
-        `Origin check rejected: ${origin ?? "none"} vs ${host ?? "none"}`,
-      );
-      originError.name = "OriginCheckError";
+  return null;
+}
 
-      ctx.callOnError(originError, "origin", {
-        request,
-        url,
-        env,
-        handledByBoundary: false,
-        metadata: { phase: originPhase, origin, host },
-      });
+/**
+ * The origin guard's rejection: reports it through onError and telemetry,
+ * and returns the response checkRequestOrigin rejected the request with. The
+ * caller awaits checkRequestOrigin itself, for the modes
+ * ORIGIN_CHECK_PHASE_BY_MODE gates (action, loader, PE form), so the guard
+ * adds no microtask over that await.
+ */
+export function originRejectedResponse<TEnv>(
+  rejection: Response,
+  phase: OriginCheckPhase,
+  request: Request,
+  env: TEnv,
+  url: URL,
+  ctx: RequestStageContext<TEnv>,
+): Response {
+  const origin = requestHeaders(request).get("origin");
+  const host = requestHeaders(request).get("host");
+  const originError = new Error(
+    `Origin check rejected: ${origin ?? "none"} vs ${host ?? "none"}`,
+  );
+  originError.name = "OriginCheckError";
 
-      if (router.telemetry) {
-        safeEmit(resolveSink(router.telemetry), {
-          type: "request.origin-rejected",
-          timestamp: performance.now(),
-          requestId: getRequestId(request),
-          method: request.method,
-          pathname: url.pathname,
-          phase: originPhase,
-          origin,
-          host,
-        });
-      }
+  ctx.callOnError(originError, "origin", {
+    request,
+    url,
+    env,
+    handledByBoundary: false,
+    metadata: { phase, origin, host },
+  });
 
-      return originResult;
-    }
+  if (ctx.router.telemetry) {
+    safeEmit(resolveSink(ctx.router.telemetry), {
+      type: "request.origin-rejected",
+      timestamp: performance.now(),
+      requestId: getRequestId(request),
+      method: request.method,
+      pathname: url.pathname,
+      phase,
+      origin,
+      host,
+    });
   }
 
-  return null;
+  return rejection;
 }
 
 /**
