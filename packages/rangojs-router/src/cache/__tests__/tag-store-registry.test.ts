@@ -143,23 +143,33 @@ describe("explicit tagged-store registry (resolveCacheStore)", () => {
     expect(explicitTaggedStores.has(stores[0])).toBe(false);
   });
 
-  it("keeps a re-resolved (live) store reachable despite per-request churn (LRU touch)", async () => {
+  it("moves a re-resolved store to the most-recent end, so eviction takes the least recently resolved (LRU touch)", async () => {
     const explicitTaggedStores = new Set<SegmentCacheStore>();
-    const liveStore = new MemorySegmentCacheStore();
-    const churn = Array.from(
-      { length: 200 },
+    // EXPLICIT_STORE_REGISTRY_CAP in cache-policy.ts.
+    const stores = Array.from(
+      { length: 64 },
       () => new MemorySegmentCacheStore(),
     );
+    const newcomer = new MemorySegmentCacheStore();
+    // Stores are compared by identity: distinct empty stores are deep-equal.
+    const names = new Map<SegmentCacheStore, string>(
+      stores.map((s, i) => [s, `s${i}`]),
+    );
+    names.set(newcomer, "newcomer");
     await runWithRequestContext(
       makeRequestContext({ url: EXAMPLE_URL, explicitTaggedStores }),
       async () => {
-        for (const s of churn) {
-          // A module-singleton store is re-resolved on every request.
-          resolveCacheStore(liveStore);
-          resolveCacheStore(s);
-        }
+        for (const s of stores) resolveCacheStore(s);
+        // A module-singleton store is re-resolved on a later request.
+        resolveCacheStore(stores[0]);
+        resolveCacheStore(newcomer);
       },
     );
-    expect(explicitTaggedStores.has(liveStore)).toBe(true);
+    // s0 moved behind s63, so the newcomer evicted s1, not s0.
+    expect([...explicitTaggedStores].map((s) => names.get(s))).toEqual([
+      ...stores.slice(2).map((s) => names.get(s)),
+      "s0",
+      "newcomer",
+    ]);
   });
 });
