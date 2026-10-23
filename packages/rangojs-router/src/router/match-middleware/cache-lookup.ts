@@ -95,6 +95,7 @@ import type { InternalHandlerContext, ResolvedSegment } from "../../types.js";
 import { isPprEntry, type EntryData } from "../../server/context.js";
 import {
   rendersLive,
+  resolutionPassInput,
   type MatchContext,
   type MatchPipelineState,
 } from "../match-context.js";
@@ -231,18 +232,14 @@ async function* resolveFreshLoadersAndYield<TEnv>(
     if (resolveLoadersOnlyWithRevalidation) {
       const loaderResult = await ctx.Store.run(() =>
         resolveLoadersOnlyWithRevalidation(
+          {
+            ...resolutionPassInput(ctx),
+            // Loaders are never cached in the segment cache, so segment
+            // staleness must not propagate; browser-sent staleness (ctx.stale)
+            // still must.
+            stale: ctx.stale || undefined,
+          },
           entries,
-          ctx.handlerContext,
-          ctx.clientSegmentSet,
-          ctx.prevParams,
-          ctx.request,
-          ctx.prevUrl,
-          ctx.url,
-          ctx.routeKey,
-          ctx.actionContext,
-          // Loaders are never cached in the segment cache, so segment staleness
-          // must not propagate; browser-sent staleness (ctx.stale) still must.
-          ctx.stale || undefined,
         ),
       );
       state.matchedIds = [
@@ -867,21 +864,14 @@ export function withCacheLookup<TEnv>(
         await ctx.Store.run(async () => {
           if (!ctx.isFullMatch) {
             return resolveAllSegmentsWithRevalidation(
+              resolutionPassInput(ctx),
               liveEntries,
-              ctx.routeKey,
-              ctx.matched.params,
-              ctx.handlerContext,
-              ctx.clientSegmentSet,
-              ctx.prevParams,
-              ctx.request,
-              ctx.prevUrl,
-              ctx.url,
-              ctx.actionContext,
-              ctx.interceptResult,
-              ctx.localRouteName,
-              ctx.pathname,
-              ctx.stale,
-              ctx.entries,
+              {
+                interceptResult: ctx.interceptResult,
+                localRouteName: ctx.localRouteName,
+                pathname: ctx.pathname,
+                chain: ctx.entries,
+              },
             );
           }
           // The full chain keeps a bare cache() marker, which also sits in

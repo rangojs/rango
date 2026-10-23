@@ -1,12 +1,9 @@
-import type { EntryData, InterceptEntry } from "../server/context";
-import type {
-  HandlerContext,
-  ResolvedSegment,
-  ShouldRevalidateFn,
-} from "../types";
 import type { SegmentResolutionDeps } from "./types.js";
-import type { ResolveSegmentOptions } from "./segment-resolution.js";
-import type { RevalidationContext } from "./router-context.js";
+import type { RouterContext } from "./router-context.js";
+import type {
+  ResolutionPass,
+  ResolutionPassInput,
+} from "./segment-resolution/resolution-pass.js";
 
 import {
   resolveAllSegments as _resolveAllSegments,
@@ -22,270 +19,79 @@ import {
   resolveInterceptLoadersOnly as _resolveInterceptLoadersOnly,
 } from "./intercept-resolution.js";
 
-import type { InterceptSelectorContext } from "../server/context";
-
-export interface SegmentWrappers<TEnv = any> {
-  resolveAllSegments: (
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>,
-    options?: ResolveSegmentOptions,
-  ) => Promise<ResolvedSegment[]>;
-  resolveLoadersOnly: (
-    entries: EntryData[],
-    context: HandlerContext<any, TEnv>,
-  ) => Promise<ResolvedSegment[]>;
-  resolveLoadersOnlyWithRevalidation: (
-    entries: EntryData[],
-    context: HandlerContext<any, TEnv>,
-    clientSegmentIds: Set<string>,
-    prevParams: Record<string, string>,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    routeKey: string,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    },
-    stale?: boolean,
-  ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
-  buildEntryRevalidateMap: (
-    entries: EntryData[],
-  ) => Map<
-    string,
-    { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }
-  >;
-  resolveAllSegmentsWithRevalidation: (
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    clientSegmentSet: Set<string>,
-    prevParams: Record<string, string>,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    actionContext:
-      | {
-          actionId?: string;
-          actionUrl?: URL;
-          actionResult?: any;
-          formData?: FormData;
-        }
-      | undefined,
-    interceptResult: { intercept: InterceptEntry; entry: EntryData } | null,
-    localRouteName: string,
-    pathname: string,
-    stale?: boolean,
-    chain?: readonly EntryData[],
-  ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
-  findInterceptForRoute: (
-    targetRouteKey: string,
-    fromEntry: EntryData | null,
-    selectorContext?: InterceptSelectorContext | null,
-    isAction?: boolean,
-  ) => { intercept: InterceptEntry; entry: EntryData } | null;
-  resolveInterceptEntry: (
-    interceptEntry: InterceptEntry,
-    parentEntry: EntryData,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    belongsToRoute?: boolean,
-    revalidationContext?: any,
-    options?: { background?: boolean },
-  ) => Promise<ResolvedSegment[]>;
-  resolveInterceptLoadersOnly: (
-    interceptEntry: InterceptEntry,
-    parentEntry: EntryData,
-    context: HandlerContext<any, TEnv>,
-    belongsToRoute: boolean,
-    revalidationContext: RevalidationContext,
-  ) => Promise<ResolvedSegment[]>;
-}
+/** The resolvers RouterContext exposes, with the router's deps bound. */
+export type SegmentWrappers<TEnv = any> = Pick<
+  RouterContext<TEnv>,
+  | "resolveAllSegments"
+  | "resolveAllSegmentsWithRevalidation"
+  | "resolveInterceptEntry"
+> &
+  Required<
+    Pick<
+      RouterContext<TEnv>,
+      | "resolveLoadersOnly"
+      | "resolveLoadersOnlyWithRevalidation"
+      | "buildEntryRevalidateMap"
+      | "resolveInterceptLoadersOnly"
+    >
+  > & {
+    /** Its own signature: a null selector context, isAction defaulting to false. */
+    findInterceptForRoute: typeof _findInterceptForRoute;
+  };
 
 /**
- * Create thin wrapper functions that bind segmentDeps to extracted
- * segment resolution and intercept resolution functions.
- *
- * These maintain the same signatures as the original inline functions
- * so that RouterContext and call sites don't need to change.
+ * Bind the router's segment deps into the extracted segment and intercept
+ * resolvers. A revalidating resolver gets a ResolutionPass: the caller's
+ * request-side input with the deps added here, once per call.
  */
 export function createSegmentWrappers<TEnv = any>(
-  segmentDeps: SegmentResolutionDeps<TEnv>,
+  deps: SegmentResolutionDeps<TEnv>,
 ): SegmentWrappers<TEnv> {
-  function resolveAllSegments(
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>,
-    options?: ResolveSegmentOptions,
-  ): ReturnType<typeof _resolveAllSegments> {
-    return _resolveAllSegments(
+  const pass = (input: ResolutionPassInput<TEnv>): ResolutionPass<TEnv> => ({
+    ...input,
+    deps,
+  });
+
+  return {
+    resolveAllSegments: (
       entries,
       routeKey,
       params,
       context,
       loaderPromises,
-      segmentDeps,
       options,
-    );
-  }
-
-  function resolveLoadersOnly(
-    entries: EntryData[],
-    context: HandlerContext<any, TEnv>,
-  ): ReturnType<typeof _resolveLoadersOnly> {
-    return _resolveLoadersOnly(entries, context, segmentDeps);
-  }
-
-  function resolveLoadersOnlyWithRevalidation(
-    entries: EntryData[],
-    context: HandlerContext<any, TEnv>,
-    clientSegmentIds: Set<string>,
-    prevParams: Record<string, string>,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    routeKey: string,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    },
-    stale?: boolean,
-  ): ReturnType<typeof _resolveLoadersOnlyWithRevalidation> {
-    return _resolveLoadersOnlyWithRevalidation(
-      entries,
-      context,
-      clientSegmentIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      routeKey,
-      segmentDeps,
-      actionContext,
-      stale,
-    );
-  }
-
-  function buildEntryRevalidateMap(
-    entries: EntryData[],
-  ): ReturnType<typeof _buildEntryRevalidateMap> {
-    return _buildEntryRevalidateMap(entries);
-  }
-
-  function resolveAllSegmentsWithRevalidation(
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    clientSegmentSet: Set<string>,
-    prevParams: Record<string, string>,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    actionContext:
-      | {
-          actionId?: string;
-          actionUrl?: URL;
-          actionResult?: any;
-          formData?: FormData;
-        }
-      | undefined,
-    interceptResult: { intercept: InterceptEntry; entry: EntryData } | null,
-    localRouteName: string,
-    pathname: string,
-    stale?: boolean,
-    chain?: readonly EntryData[],
-  ): ReturnType<typeof _resolveAllSegmentsWithRevalidation> {
-    return _resolveAllSegmentsWithRevalidation(
-      entries,
-      routeKey,
-      params,
-      context,
-      clientSegmentSet,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      actionContext,
-      interceptResult,
-      localRouteName,
-      pathname,
-      segmentDeps,
-      stale,
-      chain,
-    );
-  }
-
-  function findInterceptForRoute(
-    targetRouteKey: string,
-    fromEntry: EntryData | null,
-    selectorContext: InterceptSelectorContext | null = null,
-    isAction: boolean = false,
-  ): ReturnType<typeof _findInterceptForRoute> {
-    return _findInterceptForRoute(
-      targetRouteKey,
-      fromEntry,
-      selectorContext,
-      isAction,
-    );
-  }
-
-  function resolveInterceptEntry(
-    interceptEntry: InterceptEntry,
-    parentEntry: EntryData,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    belongsToRoute: boolean = true,
-    revalidationContext?: any,
-    options?: { background?: boolean },
-  ): ReturnType<typeof _resolveInterceptEntry> {
-    return _resolveInterceptEntry(
-      interceptEntry,
-      parentEntry,
-      params,
-      context,
-      belongsToRoute,
-      segmentDeps,
-      revalidationContext,
-      options,
-    );
-  }
-
-  function resolveInterceptLoadersOnly(
-    interceptEntry: InterceptEntry,
-    parentEntry: EntryData,
-    context: HandlerContext<any, TEnv>,
-    belongsToRoute: boolean,
-    revalidationContext: RevalidationContext,
-  ): ReturnType<typeof _resolveInterceptLoadersOnly> {
-    return _resolveInterceptLoadersOnly(
-      interceptEntry,
-      parentEntry,
-      context,
-      belongsToRoute,
-      segmentDeps,
-      revalidationContext,
-    );
-  }
-
-  return {
-    resolveAllSegments: resolveAllSegments,
-    resolveLoadersOnly: resolveLoadersOnly,
-    resolveLoadersOnlyWithRevalidation: resolveLoadersOnlyWithRevalidation,
-    buildEntryRevalidateMap: buildEntryRevalidateMap,
-    resolveAllSegmentsWithRevalidation: resolveAllSegmentsWithRevalidation,
-    findInterceptForRoute: findInterceptForRoute,
-    resolveInterceptEntry: resolveInterceptEntry,
-    resolveInterceptLoadersOnly: resolveInterceptLoadersOnly,
+    ) =>
+      _resolveAllSegments(
+        entries,
+        routeKey,
+        params,
+        context,
+        loaderPromises,
+        deps,
+        options,
+      ),
+    resolveLoadersOnly: (entries, context) =>
+      _resolveLoadersOnly(entries, context, deps),
+    resolveLoadersOnlyWithRevalidation: (input, entries) =>
+      _resolveLoadersOnlyWithRevalidation(pass(input), entries),
+    buildEntryRevalidateMap: _buildEntryRevalidateMap,
+    resolveAllSegmentsWithRevalidation: (input, entries, walk) =>
+      _resolveAllSegmentsWithRevalidation(pass(input), entries, walk),
+    findInterceptForRoute: _findInterceptForRoute,
+    resolveInterceptEntry: (input, intercept, entry, belongsToRoute, options) =>
+      _resolveInterceptEntry(
+        pass(input),
+        intercept,
+        entry,
+        belongsToRoute,
+        options,
+      ),
+    resolveInterceptLoadersOnly: (input, intercept, entry, belongsToRoute) =>
+      _resolveInterceptLoadersOnly(
+        pass(input),
+        intercept,
+        entry,
+        belongsToRoute,
+      ),
   };
 }

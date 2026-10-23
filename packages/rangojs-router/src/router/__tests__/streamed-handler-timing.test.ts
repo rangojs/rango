@@ -289,17 +289,19 @@ describe("streamed handler timing — revalidation path", () => {
     await runWithMetrics(metrics, () =>
       runWithRouterContext(minimalRouterCtx(), async () => {
         const result = await resolveEntryHandlerWithRevalidation(
+          {
+            context: ctx,
+            client: new Set<string>(), // empty = new segment, always revalidate
+            params: {},
+            prevParams: {},
+            request: ctx.request,
+            prevUrl: ctx.url,
+            nextUrl: ctx.url,
+            routeKey: "blog.post",
+            deps,
+          },
           entry,
-          {},
-          ctx,
           true,
-          new Set<string>(), // empty = new segment, always revalidate
-          {},
-          ctx.request,
-          ctx.url,
-          ctx.url,
-          "blog.post",
-          deps,
         );
 
         // Component should be a Promise (streamed)
@@ -354,17 +356,19 @@ describe("streamed handler timing — revalidation path", () => {
     await runWithMetrics(metrics, () =>
       runWithRouterContext(minimalRouterCtx(), async () => {
         const result = await resolveEntryHandlerWithRevalidation(
+          {
+            context: ctx,
+            client: new Set<string>(),
+            params: {},
+            prevParams: {},
+            request: ctx.request,
+            prevUrl: ctx.url,
+            nextUrl: ctx.url,
+            routeKey: "blog.post",
+            deps,
+          },
           entry,
-          {},
-          ctx,
           true,
-          new Set<string>(),
-          {},
-          ctx.request,
-          ctx.url,
-          ctx.url,
-          "blog.post",
-          deps,
         );
 
         expect(result.segment.component).toBeInstanceOf(Promise);

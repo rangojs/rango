@@ -174,17 +174,19 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     const clientIds = new Set(["L0", "L0.@panel"]);
 
     await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false, // belongsToRoute
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(fn1).toHaveBeenCalledTimes(1);
@@ -200,17 +202,19 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     const layout = makeLayoutWithParallelSlot(fn1, fn2);
 
     const result = await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false,
-      new Set(),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(fn1).toHaveBeenCalledTimes(0);
@@ -226,17 +230,19 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     const clientIds = new Set(["someOtherSegment"]);
 
     await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false,
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(fn1).toHaveBeenCalledTimes(1);
@@ -251,17 +257,19 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     const clientIds = new Set(["L0"]);
 
     await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       true, // belongsToRoute
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(fn1).toHaveBeenCalledTimes(1);
@@ -278,17 +286,19 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     const clientIds = new Set(["L0"]);
 
     const result = await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false, // not part of route — pure parent-chain parallel
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(fn1).toHaveBeenCalledTimes(1);
@@ -307,17 +317,19 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     const clientIds = new Set(["L0"]);
 
     await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false,
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(fn1).toHaveBeenCalledTimes(1);
@@ -382,17 +394,19 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     const clientIds = new Set(["L0", "L0.@panel"]);
 
     await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false,
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(voidReturn).toHaveBeenCalledTimes(1);
@@ -461,17 +475,19 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const clientIds = new Set(["L0"]);
 
     const result = await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       true, // belongsToRoute -> seed true ("new-segment")
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     // #482's contract survives: the fn is still consulted.
@@ -491,17 +507,19 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const clientIds = new Set(["someOtherSegment"]);
 
     const result = await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false, // belongsToRoute=false; isNewParent=true carries the seed
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(hardFalse).toHaveBeenCalledTimes(1);
@@ -519,17 +537,19 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const layout = layoutWithSentinelSlot("L0", [softFalse], handler);
 
     const result = await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(["L0"]),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       true,
-      new Set(["L0"]),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(softFalse).toHaveBeenCalledTimes(1);
@@ -544,17 +564,19 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const orphan = layoutWithSentinelSlot("O0", [hardFalse], handler);
 
     const result = await resolveOrphanLayoutWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(["O0"]),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       orphan,
-      params,
-      makeContext(),
-      new Set(["O0"]),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
       false, // orphan seeds true REGARDLESS (the #482 blank-slot guard)
-      makeDeps(),
     );
 
     expect(hardFalse).toHaveBeenCalledTimes(1);
@@ -574,17 +596,19 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const layout = layoutWithSentinelSlot("L0", [hardFalse], handler);
 
     const result = await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(["L0", "L0.@panel"]),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       true, // belongsToRoute — but the slot IS on the client
-      new Set(["L0", "L0.@panel"]),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(hardFalse).toHaveBeenCalledTimes(1);
@@ -601,17 +625,19 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const layout = layoutWithSentinelSlot("L0", [hardFalse], handler);
 
     const result = await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(["L0"]),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false,
-      new Set(["L0"]),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(hardFalse).toHaveBeenCalledTimes(1);
@@ -635,17 +661,19 @@ describe("parallel revalidate() fns invocation matrix (orphan layout path)", () 
     const clientIds = new Set(["O0", "O0.@panel"]);
 
     await resolveOrphanLayoutWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       orphan,
-      params,
-      makeContext(),
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
       true, // belongsToRoute
-      makeDeps(),
     );
 
     expect(fn1).toHaveBeenCalledTimes(1);
@@ -658,17 +686,19 @@ describe("parallel revalidate() fns invocation matrix (orphan layout path)", () 
     const orphan = makeOrphanLayoutWithParallelSlot(fn1, fn2);
 
     await resolveOrphanLayoutWithRevalidation(
+      {
+        context: makeContext(),
+        client: new Set(),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       orphan,
-      params,
-      makeContext(),
-      new Set(),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
       true,
-      makeDeps(),
     );
 
     expect(fn1).toHaveBeenCalledTimes(0);
@@ -683,17 +713,19 @@ describe("parallel revalidate() fns invocation matrix (orphan layout path)", () 
     const clientIds = new Set(["O0"]);
 
     await resolveOrphanLayoutWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       orphan,
-      params,
-      makeContext(),
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
       true,
-      makeDeps(),
     );
 
     expect(fn1).toHaveBeenCalledTimes(1);
@@ -766,17 +798,19 @@ describe("parallel parent-chain seed divergence (zero revalidate fns)", () => {
     const clientIds = new Set(["L0"]);
 
     const result = await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false, // belongsToRoute
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     // Seed false -> slot not resolved: handler never runs, component nulled.
@@ -796,17 +830,19 @@ describe("parallel parent-chain seed divergence (zero revalidate fns)", () => {
     const clientIds = new Set(["O0"]);
 
     const result = await resolveOrphanLayoutWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       orphan,
-      params,
-      makeContext(),
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
       false, // belongsToRoute -- orphan seeds true REGARDLESS
-      makeDeps(),
     );
 
     // Unconditional seed true -> slot resolved: handler runs, component is the sentinel.
@@ -872,33 +908,35 @@ describe("parallel loaderOrder emission order (orphan 'before' vs main 'after')"
     const clientIds = new Set(["L0", "L0.@panel"]);
 
     const afterResult = await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layoutWithSlotLoader(),
-      params,
-      makeContext(),
       false,
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     const beforeResult = await resolveParallelSegmentsWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layoutWithSlotLoader(),
-      params,
-      makeContext(),
       false,
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
-      undefined,
-      undefined,
       { loaderOrder: "before" },
     );
 
@@ -956,17 +994,19 @@ describe("parallel loaderOrder emission order (orphan 'before' vs main 'after')"
     const clientIds = new Set(["O0", "O0.@panel"]);
 
     const result = await resolveOrphanLayoutWithRevalidation(
+      {
+        context: makeContext(),
+        client: clientIds,
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       orphan,
-      params,
-      makeContext(),
-      clientIds,
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
       true,
-      makeDeps(),
     );
 
     // The slot's loader segment precedes the slot segment (loaderOrder "before").
