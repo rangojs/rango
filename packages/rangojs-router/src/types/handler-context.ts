@@ -462,7 +462,7 @@ export type InternalHandlerContext<
   _reverseScope?: import("../server/context.js").ReverseScope;
   /**
    * @internal The on-demand overlay holds a "removed" marker for this request
-   * (tryPrerenderLookup, cache-lookup.ts); gateOnDemandProducer reads it. On
+   * (readPrerenderSource, cache-lookup.ts); gateOnDemandProducer reads it. On
    * this context, not the request's: withCacheLookup documents that the
    * request ALS can be lost mid-pipeline on workerd.
    */

@@ -160,6 +160,37 @@ export function createPrerenderStore(): PrerenderStore | null {
 }
 
 /**
+ * The manifest entries ([key, PrerenderEntry JSON]) one prerendered URL
+ * bakes, keyed as the production store's get() reads them. The intercept
+ * variant (`/i`) holds main + intercept segments with the MERGED handle
+ * string the producer encoded. Written by the build
+ * (vite/discovery/prerender-collection.ts) and serveShellRequest.
+ */
+export function prerenderManifestEntries(
+  result: PrerenderEntry & {
+    routeName: string;
+    interceptSegments?: SerializedSegmentData[];
+    interceptHandles?: string;
+  },
+  paramHash: string,
+): Array<[key: string, value: string]> {
+  const { segments, handles, interceptSegments } = result;
+  const key = `${result.routeName}/${paramHash}`;
+  const entries: Array<[string, string]> = [
+    [key, JSON.stringify({ segments, handles })],
+  ];
+  if (interceptSegments?.length) {
+    const intercept = [...segments, ...interceptSegments];
+    const interceptHandles = result.interceptHandles ?? "";
+    entries.push([
+      `${key}/i`,
+      JSON.stringify({ segments: intercept, handles: interceptHandles }),
+    ]);
+  }
+  return entries;
+}
+
+/**
  * Create a static segment store.
  * Production only: backed by globalThis.__STATIC_MANIFEST injected at build time.
  * Returns null if no static data is available (dev mode or no Static handlers).

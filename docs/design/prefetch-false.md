@@ -548,12 +548,14 @@ In a fill, every one of those decision points answers
 `fillSends()` in `prefetch-deferral.ts`. `revalidation.ts` asks it through
 `revalidateHeld()` for a held loader, entry or orphan layout, and directly
 for a slot, where the fill decides a slot the client lacks as well. The two
-store paths in `src/router/match-middleware/cache-lookup.ts` (the `cache()`
-HIT loop and `yieldFromStore`) ask it too, so they keep a held segment
-without consulting predicates or the params comparison. Each path keeps its
-own rule for every other request, and the two differ: `yieldFromStore`
-ignores a search change, re-sends every held segment when the params
-changed and the route's own segments on an action, while the HIT loop re-sends a route's own segments when the params
+store sources in `src/router/match-middleware/cache-lookup.ts` (a `cache()`
+record's `cachedSegmentSends` and a prerender entry's `storedEntrySends`, both
+asked by `serveStoredSegments`) ask it too, so they keep a held segment
+without consulting predicates or the params comparison. Each source keeps its
+own rule for every other request, and the two differ: a prerender entry
+ignores a search change and re-sends every held segment when the params
+changed (an on-demand overlay entry also re-sends the route's own segments
+on an action or a stale request), while a `cache()` record re-sends a route's own segments when the params
 or the search changed and asks `revalidate()` where a segment declares one.
 
 A fill also leaves a stale `cache()` record alone. A stale hit normally

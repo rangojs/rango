@@ -104,7 +104,7 @@ route was pre-rendered.
   |    |    +----+----+
   |    |    | miss    | hit
   |    |    |         v
-  |    |    |    yieldFromStore (intercept variant)
+  |    |    |    serveStoredSegments (intercept variant)
   |    |    |    return
   |    |    |
   |    |    v
@@ -117,7 +117,7 @@ route was pre-rendered.
   |    +----+----+
   |    | miss    | hit
   |    |         v
-  |    |    yieldFromStore (main variant)
+  |    |    serveStoredSegments (main variant)
   |    |    return
   |    |
   |    v
@@ -128,22 +128,31 @@ route was pre-rendered.
   Normal segment resolution
 ```
 
-### yieldFromStore
+### serveStoredSegments
 
-When a prerender store entry is found:
+`readPrerenderSource` returns the entry it found as a `StoredSegmentSource`
+(`prerender-overlay` or `prerender-build`), and `serveStoredSegments` serves it.
+That is the same function that serves a runtime `cache()` record (the
+`segment-cache` source):
 
-1. Deserialize segments from serialized Flight payloads
+1. Deserialize segments from serialized Flight payloads (`decodeStoredEntry`;
+   a `cache()` record arrives decoded from its scope's lookup)
 2. Replay handle data into the request's HandleStore. On a `Prerender` + `ppr`
    shell HIT, then restore the shell entry's `handles` record (see
    [Handle pushes on a shell HIT](#handle-pushes-on-a-shell-hit))
 3. Set `state.cacheHit = true` and `state.cachedMatchedIds`
 4. For partial navigation: nullify components the client already has
-5. Yield cached segments
+5. Yield cached segments, then resolve the render barrier
 6. Resolve loaders fresh (loaders are NEVER pre-rendered)
 7. Yield loader segments
 
-This is identical to the runtime cache hit path, which is the point: pre-rendering
-IS caching, just at build time instead of runtime.
+What differs by source: a prerender entry is decoded here; a `cache()` record
+also resolves the entries above its boundary live and sets
+`state.shouldRevalidate`; and each decides which held segments are sent
+again. A prerender entry re-sends them when the params changed (and an
+overlay entry, which can be newer than the client's copy, re-sends the
+route's own segments on an action or a stale request); a `cache()` record
+asks its `revalidate()` rules. Pre-rendering IS caching, just at build time instead of runtime.
 
 ---
 
@@ -436,7 +445,7 @@ that hold a loader-owned push, each whole, in the doc record's format
 (`ShellSnapshotHandlesValue`, built by `captureOwnedHandles`). It is written
 even when it is empty, and it is exempt from `ppr.maxSnapshotBytes`, like the
 doc record it stands in for. `serveShellHit` passes it on the tail's marker
-(`prerenderHandles`), and `yieldFromStore` restores it right after the
+(`prerenderHandles`), and `decodeStoredEntry` restores it right after the
 prerender store's handles, the way `CacheScope.lookupRouteDetailed` restores a
 doc record's: `setRecordAuthority(loaderPins(...))`, then `restoreHandles`
 with the owners. A pinned loader's copy stands, a loader without a pin gets a
@@ -608,7 +617,7 @@ at runtime by the intercept-resolution middleware.
 In `cache-lookup.ts`, when `ctx.isIntercept` is true:
 
 1. Look up `paramHash + "/i"` from prerender store
-2. If found: `yieldFromStore()` yields the combined entry. Downstream
+2. If found: `serveStoredSegments()` yields the combined entry. Downstream
    `handleCacheHitIntercept()` filters segments by `namespace?.startsWith("intercept:")`
    and sets up `state.slots[slotName]`
 3. If not found: fall through to normal pipeline (skip non-intercept prerender
@@ -633,7 +642,7 @@ in the cached data.
 
 Loaders are NEVER pre-rendered. They run fresh at request time on every
 request. The `resolveLoadersOnlyWithRevalidation`
-function handles this (on a FRESH pass or a partial one) after `yieldFromStore` yields cached segments.
+function handles this (on a FRESH pass or a partial one) after `serveStoredSegments` yields the stored segments.
 
 ### Runtime Cache (`cache()`)
 
@@ -654,7 +663,7 @@ entry). To make a tag-invalidatable route, serve it from the runtime cache (a
 `Passthrough()` route, or a non-prerendered route with `cache()` / `cacheTag`)
 rather than pre-rendering it.
 
-By the same rule the prerender serve path (`yieldFromStore`) records no
+By the same rule the prerender serve path (`serveStoredSegments`) records no
 `cache({ tags })` into the request-scoped document tag union (`ctx._requestTags`)
 on a hit — so if a pre-rendered route is also wrapped in document caching, its
 document-cache entry carries an empty tag union and is not reached by
@@ -770,8 +779,8 @@ At runtime, the cache-lookup middleware uses these flags:
 | File                                                                                                                                                                 | Role                                                                                                                                                     |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/router/prerender-match.ts` (`matchForPrerender`, `renderStaticSegment`)                                                                                         | Build-time segment resolution + intercept resolution (`src/router.ts` re-exposes `matchForPrerender` as a router method)                                 |
-| `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup                                                                                                                           |
-| `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations                                                                                                      |
+| `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup (`readPrerenderSource`) and the one stored-segment serve path (`serveStoredSegments`)                                     |
+| `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations, and the manifest entry writer (`prerenderManifestEntries`)                                          |
 | `src/prerender/param-hash.ts`                                                                                                                                        | Deterministic param hashing for store keys                                                                                                               |
 | `src/cache/segment-codec.ts` (`serializeSegments`, `deserializeSegments`)                                                                                            | RSC serialize/deserialize for segments                                                                                                                   |
 | `src/vite/router-discovery.ts` (`closeBundle`) + `src/vite/discovery/prerender-collection.ts` (`expandPrerenderRoutes`) + `src/vite/discovery/bundle-postprocess.ts` | Collects prerender data, stages assets, writes manifest + injects `__loadPrerenderManifestModule` (`src/vite/index.ts` is only the public-API barrel)    |

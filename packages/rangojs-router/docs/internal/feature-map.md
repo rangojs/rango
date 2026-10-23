@@ -969,7 +969,7 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   in place of the page, rendering nothing. Result status `removed`; a route
   that is not on-demand is `skipped-not-on-demand`; a `PrerenderError` names
   the call (`operation`). A request that finds the marker is not served from
-  any prerender store (`tryPrerenderLookup` returns ahead of the bundled
+  any prerender store (`readPrerenderSource` returns ahead of the bundled
   manifest): a plain route's gated producer answers 404, in dev too
   (`InternalHandlerContext._prerenderRemoved`, read by `gateOnDemandProducer`
   in `urls/path-helper.ts`), a Passthrough route runs its live handler. The

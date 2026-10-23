@@ -54,6 +54,10 @@ import type { HandlerCacheConfig, SSRModule } from "../rsc/types.js";
 import type { createRSCHandler } from "../rsc/handler.js";
 import { setDefaultSSRModuleLoaderForTests } from "../rsc/ssr-module-loader.js";
 import {
+  createPrerenderStore,
+  prerenderManifestEntries,
+} from "../prerender/store.js";
+import {
   POST_QUIESCE_TASK_HOPS,
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
@@ -483,29 +487,14 @@ async function servePrerenderArtifacts(
     const { hashParams } = await import("../prerender/param-hash.js");
     baked.add(pathname);
     if (result && !result.passthrough) {
-      const key = `${result.routeName}/${hashParams(result.params)}`;
-      payloads.set(
-        key,
-        JSON.stringify({ segments: result.segments, handles: result.handles }),
-      );
-      // The intercept variant, keyed and shaped as the build writes it
-      // (vite/discovery/prerender-collection.ts).
-      if (result.interceptSegments?.length) {
-        payloads.set(
-          `${key}/i`,
-          JSON.stringify({
-            segments: [...result.segments, ...result.interceptSegments],
-            handles: result.interceptHandles ?? "",
-          }),
-        );
+      const paramHash = hashParams(result.params);
+      for (const [key, value] of prerenderManifestEntries(result, paramHash)) {
+        payloads.set(key, value);
       }
     }
   }
-  const [{ createPrerenderStore }, { setPrerenderStoreForTests }] =
-    await Promise.all([
-      import("../prerender/store.js"),
-      import("../router/match-middleware/cache-lookup.js"),
-    ]);
+  const { setPrerenderStoreForTests } =
+    await import("../router/match-middleware/cache-lookup.js");
   const previousLoader = globalThis.__loadPrerenderManifestModule;
   globalThis.__loadPrerenderManifestModule = async () => ({
     default: Object.fromEntries([...payloads.keys()].map((key) => [key, key])),

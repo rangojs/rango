@@ -706,14 +706,14 @@ await, failed on `origin/main` too and is clean now (rule 4).
 | The same route, the loader also pushes a promise (B, #1057)                                      | HTML: the settled push. Hydration: **without it**. After: the HIT run's settled and promise pushes                                                 | HTML, hydration: the record, the promise's value included (#1182). After: nothing         |
 
 A HIT of a `Prerender` route with `ppr` freezes at the same point: its tail
-replays the prerender store's handles in `yieldFromStore`, then resolves the
+replays the prerender store's handles in `decodeStoredEntry`, then resolves the
 render barrier. That store's entry is written at build time, when no loader
 runs, and the capture of a `Prerender` route writes no doc record (the
 prerender store supplies its handler layer), so before #1057 the loader-owned
 pushes the prelude rendered were stored nowhere, and a pinned loader does not
 run on the HIT to push them again. Now the capture stores them in a `handles`
 snapshot record, in the doc record's format (`ShellSnapshotHandlesValue`,
-`rsc/shell-capture.ts` `captureAndStoreShell`), and `yieldFromStore` restores
+`rsc/shell-capture.ts` `captureAndStoreShell`), and `decodeStoredEntry` restores
 it after the prerender store's handles with the same rule as a doc record:
 `setRecordAuthority(loaderPins(...))`, then `restoreHandles` with the owners.
 So the last two rows follow the record rows above them exactly; only where
@@ -760,10 +760,9 @@ the view follows the tag.
   comes after the document stream was first read cannot reach that stream;
   in development the store reports it through `onError`.
 - `serveShellHit` (`rsc/rsc-rendering.ts:1756`) freezes when the tail's
-  render barrier resolves. That is the one point both hit paths share
-  (`withCacheLookup` for a runtime record, `yieldFromStore` for the
-  prerender store): the record is replayed and no loader has started. Match
-  code is untouched.
+  render barrier resolves. That is the one point every stored source shares
+  (`serveStoredSegments`, for a runtime record and for the prerender store):
+  the record is replayed and no loader has started. Match code is untouched.
 
 Nothing in the second half knows what a deferred push is. It does not ask
 who pushed or why: whatever changes the store after the freeze is late. The

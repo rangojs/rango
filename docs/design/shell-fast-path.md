@@ -382,7 +382,7 @@ never-emitting masked-loader rows, so raw byte reuse means row-id surgery):
   context flagged `_shellFragmentPayload` (rsc-rendering.ts). Under that flag,
   the tail's segment sources — `CacheScope.lookupRoute` (the seeded doc
   record / any route-scoped cache() hit) and the prerender-store path
-  (`yieldFromStore` in cache-lookup.ts, the Prerender+ppr / producer B lane)
+  (`decodeStoredEntry` in cache-lookup.ts, the Prerender+ppr / producer B lane)
   — build segments via `fragmentSegments` (segment-codec.ts): the STORED
   per-segment Flight strings ride the `ResolvedSegment` ReactNode fields
   verbatim as `{ __rangoFragment: 1, f }` envelopes; nothing is decoded.

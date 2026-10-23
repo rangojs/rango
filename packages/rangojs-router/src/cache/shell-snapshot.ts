@@ -462,7 +462,7 @@ export const SHELL_HANDLES_RECORD_KEY = "handles";
 
 /**
  * The `handles` record of a prerender-served entry, which a HIT tail restores
- * after the prerender store's handles (cache-lookup.ts yieldFromStore), or
+ * after the prerender store's handles (cache-lookup.ts decodeStoredEntry), or
  * undefined: an entry with a doc record, or one written before the record
  * existed (v0.21), which serves as it did.
  */

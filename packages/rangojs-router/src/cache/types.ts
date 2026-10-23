@@ -659,7 +659,7 @@ export type ShellSnapshotFamily = "segment" | "loader" | "handles";
  * format (CachedEntryData `handles` + `handleOwners`). A Prerender + ppr
  * route's handler layer comes from the prerender store, whose build-time
  * entry has no loader push, so the entry keeps these for the HIT to restore
- * as a doc record's (issue #1057, yieldFromStore in cache-lookup.ts). An
+ * as a doc record's (issue #1057, decodeStoredEntry in cache-lookup.ts). An
  * entry written before it (v0.21) has none and serves as it did.
  */
 export type ShellSnapshotHandlesValue = Pick<

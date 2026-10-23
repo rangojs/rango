@@ -1264,7 +1264,7 @@ export function createShellImplicitDocScope(
  * normal partial navigation replay), substitute an implicit doc-level scope
  * so withCacheLookup/withCacheStore treat the WHOLE matched route as a
  * cache() boundary — the shell entry IS a cache() of the handler layer, with
- * loaders as the live carve-outs (resolveFreshLoadersAndYield).
+ * loaders as the live carve-outs (serveStoredSegments).
  *
  * A document HIT tail (`docTail`) always gets the implicit scope: it replays
  * the shell's own record and never consults a route-derived scope, whose
