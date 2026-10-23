@@ -6,23 +6,18 @@ import {
 } from "../browser/rsc-router.js";
 import type { RscBrowserDependencies, RscPayload } from "../browser/types.js";
 
-// The order initBrowserApp guarantees for `clearOnReload`: the entry's stale
-// slots are gone before the document's Flight payload is decoded, which is
-// before any reader hydrates and before a navigation or action payload can
-// deliver server-set state. What is removed is history-state.test.ts's
-// contract; this pins when.
+// The order initBrowserApp guarantees for `clearOnReload` slots and intercept
+// marks: they are gone from the entry before the document's Flight payload is
+// decoded, which is before any reader hydrates and before a navigation or
+// action payload can deliver server-set state. What is removed is
+// history-state.test.ts's contract; this pins when.
 
 afterEach(() => {
   resetBrowserAppContext();
   window.history.replaceState(null, "");
 });
 
-it("initBrowserApp removes clearOnReload slots before it decodes the payload", async () => {
-  const kept = { "__rsc_ls_a1b2c3d4#Sort": { order: "asc" }, idx: 3 };
-  window.history.replaceState(
-    { ...kept, "__rsc_ls_a1b2c3d4#Carried~r": ["p4", "p5"] },
-    "",
-  );
+async function bootReadingStateAtDecode(): Promise<unknown[]> {
   const payload = {
     metadata: { pathname: "/", segments: [], matched: [], params: {} },
   } as unknown as RscPayload;
@@ -42,6 +37,32 @@ it("initBrowserApp removes clearOnReload slots before it decodes the payload", a
     } as unknown as RscBrowserDependencies,
     linkInterception: false,
   });
+  return atDecode;
+}
 
-  expect(atDecode).toEqual([kept]);
+it("initBrowserApp removes clearOnReload slots before it decodes the payload", async () => {
+  const kept = { "__rsc_ls_a1b2c3d4#Sort": { order: "asc" }, idx: 3 };
+  window.history.replaceState(
+    { ...kept, "__rsc_ls_a1b2c3d4#Carried~r": ["p4", "p5"] },
+    "",
+  );
+
+  expect(await bootReadingStateAtDecode()).toEqual([kept]);
+});
+
+// A document request never renders an intercept, so the entry a document
+// load starts on (a reload, a Back that loaded a document) is a full page for
+// later Back/Forward.
+it("initBrowserApp drops the entry's intercept marks before it decodes the payload, keeping key, idx and location state", async () => {
+  const kept = {
+    "__rsc_ls_a1b2c3d4#Sort": { order: "asc" },
+    idx: 2,
+    key: "entry-key",
+  };
+  window.history.replaceState(
+    { ...kept, intercept: true, sourceUrl: "http://localhost/list" },
+    "",
+  );
+
+  expect(await bootReadingStateAtDecode()).toEqual([kept]);
 });

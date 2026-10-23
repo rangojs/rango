@@ -169,13 +169,21 @@ export function stripShellMissMarker(): void {
  *
  * A slot is recognised by its key alone (the `~r` suffix): at start-up the
  * module that defines it may not be loaded.
+ *
+ * The same pass drops the entry's intercept marks (`intercept`,
+ * `sourceUrl`): a document request never renders an intercept, so the entry
+ * is a full page for later Back/Forward.
  */
 export function clearLocationStateOnDocumentLoad(): void {
   const state: unknown = window.history.state;
   if (state === null || typeof state !== "object") return;
   let next: Record<string, unknown> | undefined;
   for (const key in state) {
-    if (isLocationStateKey(key) && key.endsWith(CLEAR_ON_RELOAD_KEY_SUFFIX)) {
+    if (
+      (isLocationStateKey(key) && key.endsWith(CLEAR_ON_RELOAD_KEY_SUFFIX)) ||
+      key === "intercept" ||
+      key === "sourceUrl"
+    ) {
       next ??= { ...state };
       delete next[key];
     }

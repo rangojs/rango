@@ -223,6 +223,13 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // action's exit, and the action bridge is not split (AGENTS.md Bundle
 // hygiene). Rounded up to 50KB, the owner's call (rango-t108 D4, then the
 // review fixes).
+//
+// Within 50KB for rango-t127, measured on cloudflare-basic from main
+// d824ba672 50517B -> 50581B (+64B gzip): a Back/Forward onto an intercept
+// entry the client no longer holds loads it as a document (navigation-bridge.ts
+// handlePopstate), and a document load drops the entry's intercept marks
+// (history-state.ts clearLocationStateOnDocumentLoad). Both run on every
+// popstate and every boot, so neither can load lazily.
 const ROUTER_CHUNK_GZIP_MAX = 50 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 

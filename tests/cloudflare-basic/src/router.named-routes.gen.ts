@@ -136,6 +136,7 @@ export const NamedRoutes = {
   inlineDocs: "/inline/docs",
   inlineIndex: "/inline",
   inlinePricing: "/inline/pricing",
+  "interceptHeld.away": "/intercept-held/away",
   "interceptHeld.deferredItem": "/intercept-held/deferred/:id",
   "interceptHeld.handlerItem": "/intercept-held/handler/:id",
   "interceptHeld.index": "/intercept-held",

@@ -863,6 +863,227 @@ describe("navigation-bridge handlePopstate intercept exit", () => {
   });
 });
 
+// Only a client navigation from the source page shows an intercept. A
+// Back/Forward onto an intercept entry that must be fetched fetches it from
+// its source page, and loads as a document from any other page.
+describe("navigation-bridge handlePopstate onto an intercept entry", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  const SOURCE = "http://localhost/list";
+
+  function setup(opts: {
+    intercept?: boolean;
+    /** The page on screen; an open intercept's URL with `openSource`. */
+    onScreen?: string;
+    openSource?: string;
+    cached?: { stale?: boolean; placeholder?: boolean };
+    renderThrows?: boolean;
+  }) {
+    const reload = vi.fn();
+    const scrollTo = vi.fn();
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/item/1",
+        origin: "http://localhost",
+        reload,
+      },
+      history: {
+        state:
+          opts.intercept === false
+            ? { key: "entry-key" }
+            : { intercept: true, sourceUrl: SOURCE, key: "entry-key" },
+        replaceState: vi.fn(),
+      },
+      scrollTo,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    let historyKey = "http://localhost/away";
+    const store = {
+      ...createStore(),
+      getHistoryKey: vi.fn(() => historyKey),
+      setHistoryKey: vi.fn((key: string) => {
+        historyKey = key;
+      }),
+      getSegmentState: vi.fn(() => ({
+        currentUrl: opts.onScreen ?? "http://localhost/away",
+        currentSegmentIds: [],
+      })),
+      setSegmentIds: vi.fn(),
+      setPath: vi.fn(),
+    };
+    store.getInterceptSourceUrl.mockReturnValue(opts.openSource ?? null);
+    store.getCachedSegments.mockReturnValue(
+      opts.cached
+        ? {
+            segments: [
+              {
+                id: "L0",
+                type: "layout",
+                ...(opts.cached.placeholder && { deferred: true }),
+              },
+            ] as any,
+            stale: opts.cached.stale ?? false,
+          }
+        : undefined,
+    );
+    const eventController = {
+      ...createEventController(),
+      setLocation: vi.fn(),
+      abortAllActions: vi.fn(),
+      getState: vi.fn(() => ({ isStreaming: false })),
+      setParams: vi.fn(),
+    };
+    const onUpdate = vi.fn();
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: eventController as any,
+      onUpdate,
+      renderSegments: vi.fn(async () => {
+        if (opts.renderThrows) throw new Error("render failed");
+        return "tree";
+      }),
+    });
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: new AbortController().signal },
+      with: (overrides: Record<string, unknown>) => ({ ...overrides }),
+      [Symbol.dispose]: vi.fn(),
+    });
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+    return { bridge, store, eventController, reload, scrollTo, onUpdate };
+  }
+
+  const fetchedIntercept = (): void => {
+    expect(fetchPartialUpdateMock).toHaveBeenCalledOnce();
+    expect(fetchPartialUpdateMock.mock.calls[0][5]).toEqual({
+      type: "navigate",
+      interceptSourceUrl: SOURCE,
+    });
+  };
+
+  it("with no cached copy, from another page, loads the entry as a document from the top, before it touches the store", async () => {
+    const { bridge, store, eventController, reload, scrollTo } = setup({});
+
+    await bridge.handlePopstate();
+
+    expect(reload).toHaveBeenCalledOnce();
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "instant" });
+    expect(scrollTo.mock.invocationCallOrder[0]).toBeLessThan(
+      reload.mock.invocationCallOrder[0],
+    );
+    // A beforeunload that cancels the reload leaves the page on screen and
+    // a store that still describes it.
+    expect(store.setInterceptSourceUrl).not.toHaveBeenCalled();
+    expect(eventController.abortAllActions).not.toHaveBeenCalled();
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("with no cached copy, from its source page, fetches the intercept", async () => {
+    const { bridge, reload } = setup({ onScreen: SOURCE });
+
+    await bridge.handlePopstate();
+
+    expect(reload).not.toHaveBeenCalled();
+    fetchedIntercept();
+  });
+
+  it("with no cached copy, from an intercept open over its source page, fetches the intercept", async () => {
+    const { bridge, reload } = setup({
+      onScreen: "http://localhost/item/9",
+      openSource: SOURCE,
+    });
+
+    await bridge.handlePopstate();
+
+    expect(reload).not.toHaveBeenCalled();
+    fetchedIntercept();
+  });
+
+  it("with a cached copy that holds a prefetch: false placeholder, fetches from its source page", async () => {
+    const { bridge, reload } = setup({
+      onScreen: SOURCE,
+      cached: { placeholder: true },
+    });
+
+    await bridge.handlePopstate();
+
+    expect(reload).not.toHaveBeenCalled();
+    fetchedIntercept();
+  });
+
+  it("with a cached copy that holds a prefetch: false placeholder, loads as a document from another page", async () => {
+    const { bridge, reload } = setup({ cached: { placeholder: true } });
+
+    await bridge.handlePopstate();
+
+    expect(reload).toHaveBeenCalledOnce();
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("a cached copy that fails to render follows the same rule", async () => {
+    const away = setup({ cached: {}, renderThrows: true });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await away.bridge.handlePopstate();
+    expect(away.reload).toHaveBeenCalledOnce();
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+
+    const source = setup({
+      onScreen: SOURCE,
+      cached: {},
+      renderThrows: true,
+    });
+    await source.bridge.handlePopstate();
+    expect(source.reload).not.toHaveBeenCalled();
+    fetchedIntercept();
+  });
+
+  it("a non-intercept entry with no cached copy fetches as before", async () => {
+    const { bridge, reload } = setup({ intercept: false });
+
+    await bridge.handlePopstate();
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(fetchPartialUpdateMock).toHaveBeenCalledOnce();
+  });
+
+  it("a cache hit re-opens the intercept with no request, from any page", async () => {
+    const { bridge, store, reload, onUpdate } = setup({ cached: {} });
+
+    await bridge.handlePopstate();
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+    expect(onUpdate).toHaveBeenCalledOnce();
+    expect(store.setHistoryKey).toHaveBeenCalledWith("/item/1:intercept");
+    expect(store.setInterceptSourceUrl).toHaveBeenLastCalledWith(SOURCE);
+  });
+
+  it("a stale cache hit revalidates the intercept in the background, from its source", async () => {
+    const { bridge, reload } = setup({ cached: { stale: true } });
+
+    await bridge.handlePopstate();
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(fetchPartialUpdateMock).toHaveBeenCalledOnce();
+    const [, , , , tx, mode] = fetchPartialUpdateMock.mock.calls[0];
+    expect(tx).toMatchObject({
+      intercept: true,
+      interceptSourceUrl: SOURCE,
+      cacheOnly: true,
+    });
+    expect(mode).toEqual({
+      type: "stale-revalidation",
+      interceptSourceUrl: SOURCE,
+    });
+  });
+});
+
 describe("navigation-bridge bfcache pageshow", () => {
   afterEach(() => {
     vi.restoreAllMocks();

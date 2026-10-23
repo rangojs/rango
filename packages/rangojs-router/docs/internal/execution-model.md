@@ -107,6 +107,23 @@ render: after an action's redirect into an intercept, it shows its
 pre-action data until the intercept closes, as after an action submitted
 from inside the intercept.
 
+Only a client navigation from the source page shows an intercept, and the
+browser keeps it that way on Back/Forward (`navigation-bridge.ts`
+`handlePopstate`). An intercept entry the history cache restores re-opens the
+intercept (a stale one revalidates in the background, from its source). One
+it must fetch (no cached copy, a `prefetch: false` placeholder, or a cached
+copy that failed to render) is fetched as an intercept only while its source
+page is on screen, under an open intercept or not. From any other page it
+loads as a document: `location.reload()`, scrolled to the top first so the
+position `pagehide` saves under the entry is 0. The server renders the full
+page, the load drops `clearOnReload` slots as any document load does, and
+start-up's `clearLocationStateOnDocumentLoad` (`browser/history-state.ts`)
+drops the entry's `intercept`/`sourceUrl` marks, so the entry is a full page
+from then on. The decision precedes every store write, so a `beforeunload`
+that cancels the reload leaves the store describing the page on screen. In
+dev, an edit that changes the version clears the history cache, so a
+Back/Forward onto an intercept entry after it takes the same path.
+
 ### 5) Prefetch, then fill (`prefetch: false`)
 
 A prefetch is a partial request sent early (`X-Rango-Prefetch`). Without the

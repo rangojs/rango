@@ -76,6 +76,20 @@ resolved with `undefined`.
 its real result, and the page underneath gets the background revalidation
 above. This matches what already happened when a link left the intercept.
 
+### Fixed: Back/Forward onto an intercept entry the client no longer holds no longer opens the intercept over another page
+
+**Before.** After a reload, or once the history cache (`initBrowserApp`'s
+`storeOptions.cacheSize`, 20 by default) evicted it, Back/Forward onto an
+entry that showed an intercept opened the intercept over whatever page was on
+screen.
+
+**Now.** Only a client navigation from the source page shows an intercept.
+When such an entry must be fetched and its source page is on screen, the
+intercept opens over it as before; from any other page the entry loads as a
+document (a full page load, from the top) and renders its URL's full page. A
+document load never leaves an entry marked as an intercept, a reload on an
+open intercept included. No change in your code.
+
 ## 0.26.6 (2026-10-21)
 
 ### Fixed: an inline `"use server"` action rendered by `Static()` or `Prerender()` runs on plugin-rsc 0.5.37+ ([#1223](https://github.com/rangojs/rango/pull/1223))
