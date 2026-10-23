@@ -109,8 +109,72 @@ export function runActionBoundaryTests(
     await expect(page).toHaveURL(options.url(PAGE));
     await (await revalidated).finished();
 
-    // rango-t124: Back shows the count from before the write.
-    test.fail();
+    // rango-t124: green on main since the stale-defaults work; the same-page
+    // case above is still red.
     await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
+  });
+
+  test("a late boundary response for the page the user left keeps the useAction() of an action started on the page they moved to", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+
+    // X (throws into the boundary after 1 s) is sent; the user moves to
+    // /other and sends Y (3.5 s), still in flight when X's response lands.
+    await page.getByTestId("ab-fail-late").click();
+    await page.getByTestId("ab-to-other").click();
+    await expect(page.getByTestId("ab-other")).toBeVisible();
+    // X's exit owes /other the follow-up (R3): one stale refetch once Y,
+    // the batch's last action, exits.
+    const followUp = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return (
+        url.pathname.endsWith("/action-boundary/other") &&
+        url.searchParams.get("_rsc_stale") === "true"
+      );
+    });
+    await page.getByTestId("ab-slow").click();
+    await expect(page.getByTestId("ab-slow-state")).not.toHaveText("idle");
+
+    // rango-t125: X's boundary is dropped and aborts nothing: Y's
+    // useAction() reaches its result and its call resolves with it.
+    await expect(page.getByTestId("ab-slow-result")).toHaveText("y-done", {
+      timeout: 10_000,
+    });
+    await expect(page.getByTestId("ab-slow-state")).toHaveText("idle");
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-ab-result",
+      "y-done",
+    );
+    // X failed: the layout's useAction(X) reader records its error.
+    await expect(page.getByTestId("ab-late-error")).toHaveText("error");
+    await followUp;
+  });
+
+  test("an action that throws into its route's errorBoundary() reports its error to useAction() above the boundary", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+
+    await page.getByTestId("ab-fail-late").click();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-ab-result",
+      "error",
+    );
+    await expect(page.getByTestId("ab-boundary")).toBeVisible();
+
+    // rango-t125: the boundary's response still streams (its Suspense tail)
+    // when it aborts the other actions; the action's own entry keeps its
+    // error for the layout's reader, and counts as in flight until the
+    // stream ends, as a successful action does.
+    await expect(page.getByTestId("ab-nav-state")).toHaveText("loading");
+    await expect(page.getByTestId("ab-late-error")).toHaveText("error", {
+      timeout: 3000,
+    });
+    await expect(page.getByTestId("ab-nav-state")).toHaveText("idle");
   });
 }

@@ -1,9 +1,11 @@
+import { Suspense } from "react";
 import { urls } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import { ActionBoundaryCartLoader } from "./action-boundary.defs.js";
 import {
   ActionBoundaryBar,
   ActionBoundaryControls,
+  ActionBoundarySlowControls,
 } from "./action-boundary.client.js";
 
 // An action that throws on a route with its own errorBoundary(), under a
@@ -26,8 +28,22 @@ function ActionBoundaryLayout() {
   );
 }
 
+// Keeps the error response's Flight stream open after its first rows, so the
+// action is still "streaming" when its response is processed (rango-t125).
+async function ActionBoundaryTail() {
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  return <span data-testid="ab-boundary-tail">done</span>;
+}
+
 function ActionBoundaryFallback() {
-  return <p data-testid="ab-boundary">The page failed</p>;
+  return (
+    <div>
+      <p data-testid="ab-boundary">The page failed</p>
+      <Suspense fallback={null}>
+        <ActionBoundaryTail />
+      </Suspense>
+    </div>
+  );
 }
 
 export const actionBoundaryPatterns = urls(
@@ -44,9 +60,15 @@ export const actionBoundaryPatterns = urls(
         { name: "page" },
         () => [errorBoundary(ActionBoundaryFallback)],
       ),
-      path("/other", () => <div data-testid="ab-other">Other page</div>, {
-        name: "other",
-      }),
+      path(
+        "/other",
+        () => (
+          <div data-testid="ab-other">
+            <ActionBoundarySlowControls />
+          </div>
+        ),
+        { name: "other" },
+      ),
     ]),
   ],
 );
