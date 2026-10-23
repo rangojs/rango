@@ -63,7 +63,6 @@
  *
  * Handler Context:
  *   - handlerContext: Context passed to loaders
- *   - loaderPromises: Memoized loader promises
  *
  * Intercepts:
  *   - interceptResult: Detected intercept (if soft navigation)
@@ -161,7 +160,6 @@ export interface MatchContext<TEnv = any> {
 
   // Handler context (for loaders)
   handlerContext: HandlerContext<any, TEnv>;
-  loaderPromises: Map<string, Promise<any>>;
 
   // Route map for server-side ctx.reverse() resolution
   routeMap: Record<string, string>;

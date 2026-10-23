@@ -79,7 +79,6 @@ function makeCtx(overrides: Partial<MatchContext> = {}): MatchContext {
     request: new Request("http://localhost/test"),
     env: {},
     routeMap: {},
-    loaderPromises: new Map([["existing-loader", Promise.resolve("stale")]]),
     handlerContext: { id: "original-handler-context" } as any,
     interceptResult: null,
     isIntercept: false,
@@ -125,11 +124,8 @@ describe("withBackgroundRevalidation", () => {
   });
 
   describe("loader isolation (regression: stale memoization map)", () => {
-    it("creates fresh loaderPromises instead of reusing foreground map", async () => {
-      const foregroundLoaderPromises = new Map([
-        ["loader-a", Promise.resolve("stale-data")],
-      ]);
-      const ctx = makeCtx({ loaderPromises: foregroundLoaderPromises });
+    it("gives the background re-render a new, empty loader map", async () => {
+      const ctx = makeCtx();
       const state = makeState();
 
       const freshSegments: ResolvedSegment[] = [
@@ -145,13 +141,13 @@ describe("withBackgroundRevalidation", () => {
       expect(waitUntilFns).toHaveLength(1);
       await waitUntilFns[0]();
 
-      // setupLoaderAccess must be called with a fresh (empty) Map,
-      // not the foreground's populated map
+      // A new, empty Map on the background handler context.
       expect(mockRouterCtx.setupLoaderAccess).toHaveBeenCalledTimes(1);
-      const [, loaderMap] = mockRouterCtx.setupLoaderAccess.mock.calls[0];
+      const [handlerCtx, loaderMap] =
+        mockRouterCtx.setupLoaderAccess.mock.calls[0];
+      expect(handlerCtx).not.toBe(ctx.handlerContext);
       expect(loaderMap).toBeInstanceOf(Map);
       expect(loaderMap.size).toBe(0);
-      expect(loaderMap).not.toBe(foregroundLoaderPromises);
     });
 
     it("creates fresh handlerContext instead of reusing foreground context", async () => {

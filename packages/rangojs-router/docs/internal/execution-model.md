@@ -924,7 +924,7 @@ or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
 
 The same non-awaited promise carries failures. `trackStreamedHandler`
 (`segment-resolution/streamed-handler-boundary.ts`) is the one entry for every
-streamed handler (fresh and revalidation route handlers, parallel slots,
+streamed handler (route handlers on a full or partial match, parallel slots,
 intercept slots): it runs `trackHandler`, `observeStreamedHandler`, and, when a
 boundary exists, derives a promise that resolves to the nearest
 `errorBoundary()` / `notFoundBoundary()` fallback. Layouts and nav stay on the

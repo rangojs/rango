@@ -92,7 +92,6 @@ function makeCtx(
     routeKey: "test.route",
     localRouteName: "test",
     handlerContext: {},
-    loaderPromises: new Map(),
     routeMap: {},
     metricsStore: undefined,
     Store: { run: (fn: any) => fn() },
