@@ -147,17 +147,6 @@ type StoredSegmentSource =
   | { kind: "prerender-build" | "prerender-overlay"; entry: PrerenderEntry };
 
 /**
- * What serveStoredSegments needs from the pipeline, captured before its first
- * await: getRouterContext() is ALS-backed, and in workerd dynamic imports and
- * fetch() inside the pipeline can disrupt ALS.
- */
-interface StoredServeIO<TEnv> {
-  pipelineStart: number;
-  reqCtx: RequestContext<TEnv> | undefined;
-  router: RouterContext<TEnv>;
-}
-
-/**
  * Decode a prerender entry's segments and replay its handle data into the
  * request's HandleStore, as the cache scope's lookup does for a record.
  */
@@ -205,12 +194,14 @@ async function decodeStoredEntry<TEnv>(
  * Whether a cache() record's segment is sent: one the client lacks, an
  * intercept's, or one its revalidate rules re-render. Without rules, the
  * route's own segments are re-rendered when the search or the route params
- * changed.
+ * changed. A segment with rules answers with their pending decision, which
+ * serveStoredSegments awaits and observes.
  */
 function cachedSegmentSends<TEnv>(
   ctx: MatchContext<TEnv>,
   cacheStale: boolean,
-  { reqCtx, router }: StoredServeIO<TEnv>,
+  reqCtx: RequestContext<TEnv> | undefined,
+  router: RouterContext<TEnv>,
 ): (segment: ResolvedSegment) => boolean | Promise<boolean> {
   const entryRevalidateMap =
     !ctx.isFullMatch &&
@@ -271,35 +262,23 @@ function cachedSegmentSends<TEnv>(
       );
     }
 
-    return router
-      .evaluateRevalidation({
-        segment,
-        prevParams: ctx.prevParams,
-        getPrevSegment: null,
-        request: ctx.request,
-        prevUrl: ctx.prevUrl,
-        nextUrl: ctx.url,
-        revalidations: entryInfo.revalidate.map((fn, i) => ({
-          name: `revalidate${i}`,
-          fn,
-        })),
-        routeKey: ctx.routeKey,
-        context: ctx.handlerContext,
-        actionContext: ctx.actionContext,
-        cacheStale,
-        traceSource: "cache-hit",
-      })
-      .then((shouldRevalidate) => {
-        observeEvent({
-          type: "revalidation.decision",
-          timestamp: performance.now(),
-          segmentId: segment.id,
-          pathname: ctx.pathname,
-          routeKey: ctx.routeKey,
-          shouldRevalidate,
-        });
-        return shouldRevalidate;
-      });
+    return router.evaluateRevalidation({
+      segment,
+      prevParams: ctx.prevParams,
+      getPrevSegment: null,
+      request: ctx.request,
+      prevUrl: ctx.prevUrl,
+      nextUrl: ctx.url,
+      revalidations: entryInfo.revalidate.map((fn, i) => ({
+        name: `revalidate${i}`,
+        fn,
+      })),
+      routeKey: ctx.routeKey,
+      context: ctx.handlerContext,
+      actionContext: ctx.actionContext,
+      cacheStale,
+      traceSource: "cache-hit",
+    });
   };
 }
 
@@ -332,20 +311,110 @@ function storedEntrySends<TEnv>(
 }
 
 /**
- * Serve a stored match: the stored segments, minus the ones the client keeps,
- * then the loaders resolved fresh (loaders are never cached or
- * pre-rendered). Every StoredSegmentSource serves through here. By source:
- * a prerender entry is decoded here, a cache() record also resolves the
- * entries above its boundary live and sets state.shouldRevalidate, and each
- * decides which held segments are sent again.
+ * Serve a stored match from the first source that answers (the order is in
+ * the module header), or pass `upstream` through when none does. Every
+ * StoredSegmentSource serves here: the stored segments, minus the ones the
+ * client keeps, then the loaders resolved fresh (loaders are never cached or
+ * pre-rendered). By source: a prerender entry is decoded here, a cache()
+ * record also resolves the entries above its boundary live and sets
+ * state.shouldRevalidate, and each decides which held segments are sent
+ * again.
+ *
+ * The reads and the serve share this generator: a HIT is the request hot
+ * path, and serving from a second generator behind `yield*` adds a microtask
+ * turn and two promises for each segment it yields, and once more at its end.
  */
 async function* serveStoredSegments<TEnv>(
-  source: StoredSegmentSource,
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
-  io: StoredServeIO<TEnv>,
+  upstream: AsyncGenerator<ResolvedSegment>,
 ): AsyncGenerator<ResolvedSegment> {
-  const { reqCtx, router } = io;
+  const pipelineStart = performance.now();
+
+  // Eagerly capture the HandleStore before any async operations.
+  // In workerd/Cloudflare, dynamic imports and fetch() inside the pipeline
+  // can disrupt AsyncLocalStorage, causing getRequestContext() to return
+  // undefined afterward. Capturing the reference early ensures handle replay
+  // and handler handle-push work regardless of ALS state.
+  const reqCtx = _getRequestContext<TEnv>();
+  // Only the match can determine interception; the source header proves
+  // nothing in either direction. Clear a stale reason on normal matches.
+  if (reqCtx) {
+    reqCtx._pprReplayPostMatchReason = ctx.isIntercept
+      ? "intercept"
+      : undefined;
+  }
+  // ALS-backed: captured before the first await, like reqCtx.
+  const router = getRouterContext<TEnv>();
+  let stored: StoredSegmentSource | null = null;
+
+  // An on-demand route may have no build-baked entry yet still needs a
+  // writable-overlay lookup, so od joins pr in the gate. The retained producer
+  // is NEVER run by this pipeline: a miss falls through like pr + miss.
+  const isPassthroughPrerenderRoute = ctx.entries.some(
+    (entry) => entry.type === "route" && entry.isPassthrough === true,
+  );
+  const overlayEligible =
+    ctx.matched.od === true && !requestHeaders(ctx.request).get("X-RSC-HMR");
+  // Actions normally re-render fresh and skip the prerender store. But a pure
+  // Prerender route's handler is evicted at build, so there is no fresh
+  // handler to run on an action re-render -- without the fallback the
+  // re-render falls through to the evicted handler and throws "No prerender
+  // data found". Serve the prerendered entry instead (the action ran already;
+  // its result is applied client-side via useActionState). A plain on-demand
+  // route is the same case, served from the overlay first (an overlay entry
+  // is newer than the build one, and may be the only one). Passthrough
+  // routes keep a liveHandler, so a live render (rendersLive) re-renders
+  // them fresh.
+  if (
+    (prerenderStoreShortCircuits(ctx.matched.pr, ctx.request) ||
+      overlayEligible) &&
+    (!rendersLive(ctx) || !isPassthroughPrerenderRoute)
+  ) {
+    await ensurePrerenderDeps();
+    stored = await readPrerenderSource(
+      ctx,
+      reqCtx,
+      isPassthroughPrerenderRoute,
+      // Per-request writable prerender overlay (durable), resolved by the handler.
+      reqCtx?._prerender,
+    );
+  }
+
+  if (
+    !stored &&
+    !rendersLive(ctx) &&
+    !ctx.matched.pr &&
+    globalThis.__PRERENDER_DEV_URL &&
+    ctx.entries.some(
+      (e) =>
+        (e.type === "layout" || e.type === "route" || e.type === "parallel") &&
+        e.isStaticPrerender,
+    )
+  ) {
+    await ensurePrerenderDeps();
+    stored = await readPrerenderSource(
+      ctx,
+      reqCtx,
+      isPassthroughPrerenderRoute,
+    );
+  }
+
+  stored ??= await readSegmentCacheSource(ctx, reqCtx);
+  if (!stored) {
+    yield* upstream;
+    const ms = ctx.metricsStore;
+    if (ms) {
+      ms.metrics.push({
+        label: "pipeline:cache-miss",
+        duration: performance.now() - pipelineStart,
+        startTime: pipelineStart - ms.requestStart,
+      });
+    }
+    return;
+  }
+  const source: StoredSegmentSource = stored;
+
   const fromCache = source.kind === "segment-cache";
   const segments = fromCache
     ? source.segments
@@ -409,7 +478,7 @@ async function* serveStoredSegments<TEnv>(
   state.cachedMatchedIds = cachedMatchedIds;
 
   const sends = fromCache
-    ? cachedSegmentSends(ctx, source.shouldRevalidate, io)
+    ? cachedSegmentSends(ctx, source.shouldRevalidate, reqCtx, router)
     : storedEntrySends(ctx, source.kind === "prerender-overlay");
 
   yield* liveSegments;
@@ -417,7 +486,20 @@ async function* serveStoredSegments<TEnv>(
   for (const segment of segments) {
     if (interceptFillSkips(ctx, segment)) continue;
     let send = sends(segment);
-    if (typeof send !== "boolean") send = await send;
+    if (typeof send !== "boolean") {
+      // A cache() record segment's revalidate() rules decided. Awaited here,
+      // not chained in cachedSegmentSends: a .then() costs a turn and a
+      // promise per segment.
+      send = await send;
+      observeEvent({
+        type: "revalidation.decision",
+        timestamp: performance.now(),
+        segmentId: segment.id,
+        pathname: ctx.pathname,
+        routeKey: ctx.routeKey,
+        shouldRevalidate: send,
+      });
+    }
     if (!send) keepClientSegment(segment);
     yield segment;
   }
@@ -474,8 +556,8 @@ async function* serveStoredSegments<TEnv>(
     });
     ms.metrics.push({
       label: "pipeline:cache-hit",
-      duration: loaderEnd - io.pipelineStart,
-      startTime: io.pipelineStart - ms.requestStart,
+      duration: loaderEnd - pipelineStart,
+      startTime: pipelineStart - ms.requestStart,
     });
   }
 }
@@ -807,12 +889,12 @@ export type GeneratorMiddleware<T> = (
 /**
  * Creates cache lookup middleware
  *
- * Serves a stored match when one answers, in this order: the prerender
- * overlay and build store (Prerender and on-demand routes), the dev Static
- * store, then the route's cache() record. Each serves through
- * serveStoredSegments, which yields the stored segments and the loaders
- * resolved fresh and sets state.cacheHit (and state.shouldRevalidate for a
- * cache() record, for background SWR).
+ * The middleware is serveStoredSegments. It serves a stored match when one
+ * answers, in this order: the prerender overlay and build store (Prerender
+ * and on-demand routes), the dev Static store, then the route's cache()
+ * record. It yields the stored segments and the loaders resolved fresh and
+ * sets state.cacheHit (and state.shouldRevalidate for a cache() record, for
+ * background SWR).
  *
  * If nothing answers, passes through to the next middleware.
  */
@@ -820,99 +902,5 @@ export function withCacheLookup<TEnv>(
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
 ): GeneratorMiddleware<ResolvedSegment> {
-  return async function* (
-    source: AsyncGenerator<ResolvedSegment>,
-  ): AsyncGenerator<ResolvedSegment> {
-    const pipelineStart = performance.now();
-
-    // Eagerly capture the HandleStore before any async operations.
-    // In workerd/Cloudflare, dynamic imports and fetch() inside the pipeline
-    // can disrupt AsyncLocalStorage, causing getRequestContext() to return
-    // undefined afterward. Capturing the reference early ensures handle replay
-    // and handler handle-push work regardless of ALS state.
-    const reqCtx = _getRequestContext<TEnv>();
-    // Only the match can determine interception; the source header proves
-    // nothing in either direction. Clear a stale reason on normal matches.
-    if (reqCtx) {
-      reqCtx._pprReplayPostMatchReason = ctx.isIntercept
-        ? "intercept"
-        : undefined;
-    }
-    const io: StoredServeIO<TEnv> = {
-      pipelineStart,
-      reqCtx,
-      router: getRouterContext<TEnv>(),
-    };
-    let stored: StoredSegmentSource | null = null;
-
-    // An on-demand route may have no build-baked entry yet still needs a
-    // writable-overlay lookup, so od joins pr in the gate. The retained producer
-    // is NEVER run by this pipeline: a miss falls through like pr + miss.
-    const isPassthroughPrerenderRoute = ctx.entries.some(
-      (entry) => entry.type === "route" && entry.isPassthrough === true,
-    );
-    const overlayEligible =
-      ctx.matched.od === true && !requestHeaders(ctx.request).get("X-RSC-HMR");
-    // Actions normally re-render fresh and skip the prerender store. But a pure
-    // Prerender route's handler is evicted at build, so there is no fresh
-    // handler to run on an action re-render -- without the fallback the
-    // re-render falls through to the evicted handler and throws "No prerender
-    // data found". Serve the prerendered entry instead (the action ran already;
-    // its result is applied client-side via useActionState). A plain on-demand
-    // route is the same case, served from the overlay first (an overlay entry
-    // is newer than the build one, and may be the only one). Passthrough
-    // routes keep a liveHandler, so a live render (rendersLive) re-renders
-    // them fresh.
-    if (
-      (prerenderStoreShortCircuits(ctx.matched.pr, ctx.request) ||
-        overlayEligible) &&
-      (!rendersLive(ctx) || !isPassthroughPrerenderRoute)
-    ) {
-      await ensurePrerenderDeps();
-      stored = await readPrerenderSource(
-        ctx,
-        reqCtx,
-        isPassthroughPrerenderRoute,
-        // Per-request writable prerender overlay (durable), resolved by the handler.
-        reqCtx?._prerender,
-      );
-    }
-
-    if (
-      !stored &&
-      !rendersLive(ctx) &&
-      !ctx.matched.pr &&
-      globalThis.__PRERENDER_DEV_URL &&
-      ctx.entries.some(
-        (e) =>
-          (e.type === "layout" ||
-            e.type === "route" ||
-            e.type === "parallel") &&
-          e.isStaticPrerender,
-      )
-    ) {
-      await ensurePrerenderDeps();
-      stored = await readPrerenderSource(
-        ctx,
-        reqCtx,
-        isPassthroughPrerenderRoute,
-      );
-    }
-
-    stored ??= await readSegmentCacheSource(ctx, reqCtx);
-    if (stored) {
-      yield* serveStoredSegments(stored, ctx, state, io);
-      return;
-    }
-
-    yield* source;
-    const ms = ctx.metricsStore;
-    if (ms) {
-      ms.metrics.push({
-        label: "pipeline:cache-miss",
-        duration: performance.now() - pipelineStart,
-        startTime: pipelineStart - ms.requestStart,
-      });
-    }
-  };
+  return (upstream) => serveStoredSegments(ctx, state, upstream);
 }

@@ -154,6 +154,12 @@ overlay entry, which can be newer than the client's copy, re-sends the
 route's own segments on an action or a stale request); a `cache()` record
 asks its `revalidate()` rules. Pre-rendering IS caching, just at build time instead of runtime.
 
+`serveStoredSegments` is also the middleware itself: `withCacheLookup` returns
+it, and it reads the sources in gate order before it serves. A cache HIT is
+the request hot path, and serving from a second generator behind `yield*`
+would add a microtask turn and two promises for each segment it yields, and
+once more at its end.
+
 ---
 
 ## Prerender Store
