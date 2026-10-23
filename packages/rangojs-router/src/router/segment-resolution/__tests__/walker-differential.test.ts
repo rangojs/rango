@@ -35,6 +35,7 @@ import {
 import { resolveRoute, type RouteSnapshot } from "../../route-snapshot.js";
 import { createPrerenderContext } from "../../handler-context.js";
 import { setupBuildUse } from "../../loader-resolution.js";
+import type { ResolutionPassInput } from "../resolution-pass.js";
 import type { HandlerContext, ResolvedSegment } from "../../../types.js";
 
 const DataLoader = (createLoader as Function)(
@@ -311,20 +312,26 @@ function walkRevalidating(
       )
     : null;
   if (pass.intercept) expect(interceptResult).not.toBeNull();
+  // Field by field, not heldNothingPassInput: that reads context.request,
+  // which the build-time prerender context's getter throws on.
+  const input: ResolutionPassInput = {
+    context: pass.context,
+    client: new Set(),
+    params: pass.snapshot.params,
+    prevParams: {},
+    request: pass.request,
+    prevUrl: pass.url,
+    nextUrl: pass.url,
+    routeKey: pass.snapshot.routeKey,
+  };
   return routerCtx.resolveAllSegmentsWithRevalidation(
+    input,
     pass.snapshot.entries,
-    pass.snapshot.routeKey,
-    pass.snapshot.params,
-    pass.context,
-    new Set(),
-    {},
-    pass.request,
-    pass.url,
-    pass.url,
-    undefined,
-    interceptResult,
-    pass.snapshot.localRouteName,
-    pass.pathname,
+    {
+      interceptResult,
+      localRouteName: pass.snapshot.localRouteName,
+      pathname: pass.pathname,
+    },
   );
 }
 
