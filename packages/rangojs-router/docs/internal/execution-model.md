@@ -1996,12 +1996,15 @@ Limits:
   child inherits.
 - A `loading()` route's ctx is a prototype child too ("A streamed handler
   keeps its segment" below), but it owns copies of the route ctx's public
-  fields and its `NOCACHE_SYMBOL` brand, so `{ ...ctx }` there copies the same
-  public fields as in an awaited route, and a `"use cache"` call given the
-  copy keys it as a ctx. The `_` fields other than `_currentSegmentId` stay
-  on the prototype and are not copied. A `loading()` slot's ctx is the slot's
-  scoped child over that one, so `{ ...ctx }` there still copies only
-  `reverse` and `_reverseScope`.
+  fields, so `{ ...ctx }` there copies the same public fields as in an
+  awaited route. It does not copy the `_` fields other than
+  `_currentSegmentId`, or the `NOCACHE_SYMBOL` brand: `"use cache"` keys a
+  ctx argument by `_routeName` and `_responseType` and replays its loader
+  pushes through `_claimLoaderPushes`, so a copy without them must not pass
+  for a ctx. A `"use cache"` call given the copy runs uncached, as one given a
+  layout's or slot's copy does; pass `ctx` itself. A `loading()` slot's ctx is
+  the slot's scoped child over that one, so `{ ...ctx }` there still copies
+  only `reverse` and `_reverseScope`.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a

@@ -351,7 +351,8 @@ describe("{ ...ctx } in a loading() route", () => {
     expect(streamed.reverse("q", { id: "9" })).toBe("/q/9");
   });
 
-  it('a "use cache" call given the copy keys it as the ctx and pushes under the route', async () => {
+  // The copy has no _routeName or _claimLoaderPushes: not a ctx to "use cache".
+  it('a "use cache" call given the copy runs uncached and pushes under the route', async () => {
     const router = spreadRoutes({} as Record<"streamed" | "awaited", Copy>);
     const cacheStore = new MemorySegmentCacheStore();
     const options = { handle: CachedCrumbs, cacheStore };
@@ -360,10 +361,9 @@ describe("{ ...ctx } in a loading() route", () => {
       buckets: { M0L0R2: ["route"] },
       collected: ["route"],
     };
-    // A miss runs the body, the second request replays its record.
     expect(await serve(router, "/u/7", "document", options)).toEqual(expected);
     expect(await serve(router, "/u/7", "document", options)).toEqual(expected);
-    expect(cachedCrumbRuns.count - runs).toBe(1);
+    expect(cachedCrumbRuns.count - runs).toBe(2);
   });
 });
 

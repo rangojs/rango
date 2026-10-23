@@ -652,7 +652,7 @@ describe("createReverseFunction", () => {
       expect(ctx._currentSegmentId).toBe("R0.@side");
     });
 
-    it("owns the parent's public fields and brand; the _ fields read through", () => {
+    it("owns the parent's public fields; the _ fields and brand read through", () => {
       const ctx = buildContext(new URLSearchParams("q=1"));
       ctx._currentSegmentId = "R0";
       const pinned = withSegmentPin(ctx);
@@ -664,7 +664,9 @@ describe("createReverseFunction", () => {
           ctx[key as keyof typeof ctx],
         );
       }
-      expect(isTainted({ ...pinned })).toBe(true);
+      expect(isTainted(pinned)).toBe(true);
+      // A copy lacks the _ fields "use cache" keys and replays a ctx by.
+      expect(isTainted({ ...pinned })).toBe(false);
       expect(Object.hasOwn(pinned, "_variables")).toBe(false);
       // Written on the parent after the child was made (loader-cache.ts).
       const overrides = new Map();

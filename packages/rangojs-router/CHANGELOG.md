@@ -111,8 +111,13 @@ path(
 the `await` sits, on the document and on a navigation. No change in your
 code. A handler without `loading()` and a push function bound before the
 `await` (`const push = ctx.use(Handle)`) were filed right before, and are
-unchanged. `{ ...ctx }` in a `loading()` route copies the same fields as
-before.
+unchanged.
+
+One limit: `{ ...ctx }` in a `loading()` route copies the same public fields
+as before (`params`, `pathname`, `url`, `get`, `set`, `reverse`, …), but not
+the router's internal `_` fields. A `"use cache"` function given that copy
+instead of `ctx` runs uncached, as it does for a layout's or slot's copy.
+Pass `ctx` itself.
 
 ## 0.27.0 (2026-10-23)
 

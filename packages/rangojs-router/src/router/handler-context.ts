@@ -242,15 +242,16 @@ export function withReverseScope<C>(
  * that one synchronous call and puts the walker's back before any other code
  * runs.
  *
- * The child owns copies of the parent's public fields and its NOCACHE_SYMBOL
- * brand, so `{ ...ctx }` in a `loading()` route copies them as in any route,
- * and a "use cache" call given the copy still keys it as a ctx. The parent
- * reassigns no public field but `use`, which the child replaces below. The
- * `_` fields stay on the prototype, where writes the parent gets later
- * (loader-cache.ts `_loaderCacheOverrides`) stay visible. Copied with
- * defineProperty: a build ctx's unavailable fields are getters that throw
- * (createPrerenderContext), and keyed assignment of this many fields puts
- * the child in V8 dictionary mode.
+ * The child owns copies of the parent's public fields, so `{ ...ctx }` in a
+ * `loading()` route copies them as in any route. The parent reassigns no
+ * public field but `use`, which the child replaces below. The `_` fields and
+ * the NOCACHE_SYMBOL brand stay on the prototype: writes the parent gets
+ * later (loader-cache.ts `_loaderCacheOverrides`) stay visible, and a copy
+ * without `_routeName` or `_claimLoaderPushes` is not keyed or replayed as a
+ * ctx by "use cache" (cache-runtime.ts). Copied with defineProperty: a build
+ * ctx's unavailable fields are getters that throw (createPrerenderContext),
+ * and keyed assignment of this many fields puts the child in V8 dictionary
+ * mode.
  */
 export function withSegmentPin<C>(ctx: C): C {
   const parent = ctx as InternalHandlerContext<any, any>;
@@ -264,9 +265,6 @@ export function withSegmentPin<C>(ctx: C): C {
         Object.getOwnPropertyDescriptor(parent, key)!,
       );
     }
-  }
-  if (Object.hasOwn(parent, NOCACHE_SYMBOL)) {
-    (pinned as any)[NOCACHE_SYMBOL] = true;
   }
   pinned._currentSegmentId = segmentId;
   pinned.use = ((item: any) => {
