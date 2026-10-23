@@ -11,11 +11,15 @@ export const CachedCrumbs: Handle<string, string[]> = createHandle<
   string[]
 >((segments) => segments.flat());
 
+/** Runs of cachedCrumb's body: a HIT does not add one. */
+export const cachedCrumbRuns = { count: 0 };
+
 export async function cachedCrumb(
-  ctx: HandlerContext,
+  ctx: HandlerContext<any>,
   label: string,
 ): Promise<string> {
   "use cache";
+  cachedCrumbRuns.count++;
   ctx.use(CachedCrumbs)(label);
   return label;
 }

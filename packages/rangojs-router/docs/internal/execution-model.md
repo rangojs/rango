@@ -1991,12 +1991,17 @@ Limits:
   resolves from the matched route everywhere, a layout included.
 - A layout's or slot's ctx is a different object from the route's. Its own
   fields are `reverse` and `_reverseScope`, so `{ ...ctx }` there copies only
-  those. A `loading()` route's or slot's ctx is a prototype child too ("A
-  streamed handler keeps its segment" below): `{ ...ctx }` there copies only
-  that child's own `_currentSegmentId` and `use`, or, for a slot with a scope,
-  the `reverse` and `_reverseScope` of the scope's child above it. A getter keyed by its holder resolves through the prototype chain
+  those. A getter keyed by its holder resolves through the prototype chain
   (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
   child inherits.
+- A `loading()` route's ctx is a prototype child too ("A streamed handler
+  keeps its segment" below), but it owns copies of the route ctx's public
+  fields and its `NOCACHE_SYMBOL` brand, so `{ ...ctx }` there copies the same
+  public fields as in an awaited route, and a `"use cache"` call given the
+  copy keys it as a ctx. The `_` fields other than `_currentSegmentId` stay
+  on the prototype and are not copied. A `loading()` slot's ctx is the slot's
+  scoped child over that one, so `{ ...ctx }` there still copies only
+  `reverse` and `_reverseScope`.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a
@@ -2030,7 +2035,11 @@ the parent's `use` for the one synchronous call, where the push's segment and
 a started loader's owning segment are read, and restores the walker's pin
 after it. The child's own `_currentSegmentId` is what `cache-runtime.ts` reads
 from a ctx argument, so a `"use cache"` call given it records and replays its
-pushes under the handler's segment too.
+pushes under the handler's segment too. The child also owns copies of the
+public fields, so `{ ...ctx }` keeps them (the limits above). They are copied
+with `defineProperty`: a build ctx's unavailable fields are getters that
+throw, and keyed assignment of that many fields leaves the child in V8
+dictionary mode.
 
 Not changed: an awaited handler (a layout, a route or slot without
 `loading()`, an action's route) runs on the shared ctx, and an orphan layout,
@@ -2041,8 +2050,10 @@ ctx.use(Handle)`) was always filed right.
 
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader
-the handler starts, a `"use cache"` call) and the `withSegmentPin` cases in
-`router/__tests__/handler-context.test.ts`.
+the handler starts, a `"use cache"` call; `{ ...ctx }` in a `loading()`
+route), the `withSegmentPin` cases in
+`router/__tests__/handler-context.test.ts`, and the streamed handler ctx case
+in `server/__tests__/context-fast-properties.test.ts`.
 
 ### Cache-safety contract for context variables
 

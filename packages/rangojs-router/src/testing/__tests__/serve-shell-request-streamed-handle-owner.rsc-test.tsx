@@ -12,7 +12,8 @@
  * them out of order. A streamed route or slot handler gets
  * withSegmentPin(ctx) (router/handler-context.ts), which keeps its own pin.
  * An intercept handler resolves after the main walk, on the shared ctx; the
- * intercept case guards that order.
+ * intercept case guards that order. `{ ...ctx }` in a loading() route copies
+ * the fields it copies in an awaited route.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -40,6 +41,7 @@ import { collectHandleData } from "../../handle.js";
 import {
   CachedCrumbs,
   cachedCrumb,
+  cachedCrumbRuns,
 } from "./fixtures/streamed-handle-owner-data.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
@@ -202,6 +204,47 @@ function orphanLayout() {
 
 type Mode = "document" | "navigation";
 
+type Copy = Record<string, any>;
+
+/**
+ * A loading() route and an awaited one that spread their ctx; `/u/:id` hands
+ * its copy to a "use cache" call.
+ */
+function spreadRoutes(copies: Record<"streamed" | "awaited", Copy>) {
+  return createRouter({}).routes(
+    urls(({ path, loading }) => [
+      path(
+        "/p/:id",
+        async (ctx) => {
+          ctx.set("from-ctx", "p");
+          copies.streamed = { ...ctx };
+          await wait("a timer");
+          return <article>p</article>;
+        },
+        { name: "p" },
+        () => [loading(<p>p-loading</p>)],
+      ),
+      path(
+        "/q/:id",
+        (ctx) => {
+          copies.awaited = { ...ctx };
+          return <article>q</article>;
+        },
+        { name: "q" },
+      ),
+      path(
+        "/u/:id",
+        async (ctx) => {
+          await wait("a timer");
+          return <article>{await cachedCrumb({ ...ctx }, "route")}</article>;
+        },
+        { name: "u" },
+        () => [loading(<p>u-loading</p>)],
+      ),
+    ]),
+  );
+}
+
 /** A loading() intercept handler that pushes after `w`, beside a layout slot. */
 function streamedIntercept(w: Wait) {
   return createRouter({}).routes(
@@ -286,6 +329,42 @@ describe("a streamed intercept handler's push after an await", () => {
       expect(hydration[Crumbs.$$id]).toEqual({ "M0L0L0.@modal": ["modal"] });
     });
   }
+});
+
+describe("{ ...ctx } in a loading() route", () => {
+  it("copies the public fields an awaited route's copy has", async () => {
+    const copies = {} as Record<"streamed" | "awaited", Copy>;
+    const router = spreadRoutes(copies);
+    await serve(router, "/p/7", "document");
+    await serve(router, "/q/7", "document");
+    const { streamed, awaited } = copies;
+    const publicKeys = (copy: Copy) =>
+      Object.keys(copy).filter((key) => key[0] !== "_");
+    expect(publicKeys(streamed)).toEqual(publicKeys(awaited));
+    expect(streamed.params).toEqual({ id: "7" });
+    expect(streamed.pathname).toBe("/p/7");
+    expect((streamed.url as URL).pathname).toBe("/p/7");
+    expect(streamed.get("from-ctx")).toBe("p");
+    streamed.set("from-copy", "q");
+    expect(streamed.get("from-copy")).toBe("q");
+    expect(streamed.reverse("p", { id: "8" })).toBe("/p/8");
+    expect(streamed.reverse("q", { id: "9" })).toBe("/q/9");
+  });
+
+  it('a "use cache" call given the copy keys it as the ctx and pushes under the route', async () => {
+    const router = spreadRoutes({} as Record<"streamed" | "awaited", Copy>);
+    const cacheStore = new MemorySegmentCacheStore();
+    const options = { handle: CachedCrumbs, cacheStore };
+    const runs = cachedCrumbRuns.count;
+    const expected = {
+      buckets: { M0L0R2: ["route"] },
+      collected: ["route"],
+    };
+    // A miss runs the body, the second request replays its record.
+    expect(await serve(router, "/u/7", "document", options)).toEqual(expected);
+    expect(await serve(router, "/u/7", "document", options)).toEqual(expected);
+    expect(cachedCrumbRuns.count - runs).toBe(1);
+  });
 });
 
 for (const mode of ["document", "navigation"] as const) {

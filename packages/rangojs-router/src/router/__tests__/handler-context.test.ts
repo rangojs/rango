@@ -26,6 +26,7 @@ import {
   withSegmentPin,
 } from "../handler-context";
 import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import { isTainted } from "../../cache/taint.js";
 import type { InternalHandlerContext } from "../../types.js";
 
 beforeEach(() => {
@@ -649,6 +650,40 @@ describe("createReverseFunction", () => {
       }) as typeof ctx.use;
       expect(() => pinned.use({} as any)).toThrow("as R0");
       expect(ctx._currentSegmentId).toBe("R0.@side");
+    });
+
+    it("owns the parent's public fields and brand; the _ fields read through", () => {
+      const ctx = buildContext(new URLSearchParams("q=1"));
+      ctx._currentSegmentId = "R0";
+      const pinned = withSegmentPin(ctx);
+      const publicKeys = Object.keys(ctx).filter((key) => key[0] !== "_");
+      expect(publicKeys).toContain("params");
+      expect(Object.keys(pinned)).toEqual([...publicKeys, "_currentSegmentId"]);
+      for (const key of publicKeys.filter((key) => key !== "use")) {
+        expect(pinned[key as keyof typeof pinned]).toBe(
+          ctx[key as keyof typeof ctx],
+        );
+      }
+      expect(isTainted({ ...pinned })).toBe(true);
+      expect(Object.hasOwn(pinned, "_variables")).toBe(false);
+      // Written on the parent after the child was made (loader-cache.ts).
+      const overrides = new Map();
+      ctx._loaderCacheOverrides = overrides;
+      expect(pinned._loaderCacheOverrides).toBe(overrides);
+    });
+
+    it("copies a build ctx's throwing getters without calling them", () => {
+      const ctx = createPrerenderContext(
+        { slug: "hello" },
+        "/blog/hello",
+        { "blog.post": "/blog/:slug" },
+        "blog.post",
+      );
+      const pinned = withSegmentPin(ctx);
+      expect(pinned.params).toEqual({ slug: "hello" });
+      expect(() => pinned.request).toThrow(
+        "not available during pre-rendering",
+      );
     });
 
     it("composes under withReverseScope", () => {
