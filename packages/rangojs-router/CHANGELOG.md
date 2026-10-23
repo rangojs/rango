@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.27.0 (2026-10-23)
 
-### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live
+### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
 
 **Before.** After a server action, the browser marks every page in its history
 stale: Back renders the cached page at once, then revalidates it in the
@@ -87,7 +87,7 @@ that calls `keepClientCache()` marks nothing stale. A loader that fails on that
 background revalidation leaves the page as it was and logs
 `[Browser] Background revalidation failed`.
 
-### Fixed: the page under an intercept stays when a redirect opens the intercept, or on Back/Forward over an intercept left early
+### Fixed: the page under an intercept stays when a redirect opens the intercept, or on Back/Forward over an intercept left early ([#1227](https://github.com/rangojs/rango/pull/1227))
 
 **Before.** Under an intercept the server never renders the page under it:
 that page comes from the segments the browser says it holds. A few requests
@@ -110,7 +110,7 @@ it shows its pre-action data until the intercept closes, as it does after an
 action submitted from inside an open intercept. The layouts and the
 intercept are rendered fresh. No change in your code.
 
-### Fixed: an action's write shows on the page the user navigated to while it ran
+### Fixed: an action's write shows on the page the user navigated to while it ran ([#1228](https://github.com/rangojs/rango/pull/1228))
 
 **Before.** A user clicks "Add to cart" and then a link, or goes Back, before
 the action lands. The action's revalidation was dropped, so the new page kept
@@ -137,7 +137,7 @@ could not reach it:
 
 No change in your code. `keepClientCache()` turns this off for that action.
 
-### Fixed: the document cache never answers a stale request
+### Fixed: the document cache never answers a stale request ([#1228](https://github.com/rangojs/rango/pull/1228))
 
 **Before.** On a route with `s-maxage`, `createDocumentCacheMiddleware()` could
 answer Back's revalidation after an action from a body cached before the write.
@@ -150,18 +150,7 @@ stored in the document cache, and the server answers it with
 stale, the background revalidation after an action, and `refresh()`. For a
 shared entry refreshed after a write, tag it and call `updateTag()`.
 
-### Changed: going Back or Forward out of an intercept no longer aborts its actions
-
-**Before.** Back or Forward into or out of an intercept aborted every
-action in flight, although the server had already received it and ran it.
-`useAction()` went back to idle with no result, and the caller's `await`
-resolved with `undefined`.
-
-**Now.** The action keeps running. `useAction()` and the caller's `await` get
-its real result, and the page underneath gets the background revalidation
-above. This matches what already happened when a link left the intercept.
-
-### Fixed: Back/Forward onto an intercept entry the client no longer holds no longer opens the intercept over another page
+### Fixed: Back/Forward onto an intercept entry the client no longer holds no longer opens the intercept over another page ([#1229](https://github.com/rangojs/rango/pull/1229))
 
 **Before.** After a reload, or once the history cache (`initBrowserApp`'s
 `storeOptions.cacheSize`, 20 by default) evicted it, Back/Forward onto an
@@ -174,6 +163,17 @@ intercept opens over it as before; from any other page the entry loads as a
 document (a full page load, from the top) and renders its URL's full page. A
 document load never leaves an entry marked as an intercept, a reload on an
 open intercept included. No change in your code.
+
+### Changed: going Back or Forward out of an intercept no longer aborts its actions ([#1228](https://github.com/rangojs/rango/pull/1228))
+
+**Before.** Back or Forward into or out of an intercept aborted every
+action in flight, although the server had already received it and ran it.
+`useAction()` went back to idle with no result, and the caller's `await`
+resolved with `undefined`.
+
+**Now.** The action keeps running. `useAction()` and the caller's `await` get
+its real result, and the page underneath gets the background revalidation
+above. This matches what already happened when a link left the intercept.
 
 ## 0.26.6 (2026-10-21)
 
