@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import {
+  blockPrefetch,
+  expectNoPageError,
+  expectNoReload,
+  waitForHydration,
+} from "./helper";
 
 function handlerFirstSuite(f: Fixture) {
   test("route handler ctx.set() is visible to layout via ctx.get()", async ({
@@ -74,23 +79,37 @@ function revalidateCacheMixSuite(f: Fixture) {
     page,
   }) => {
     using _ = expectNoPageError(page);
+    // Each click makes its own request. Production prefetches links in the
+    // viewport, and a prefetch renders the route fresh without revalidate.
+    await blockPrefetch(page);
 
     // SSR load — get initial timestamp
     await page.goto(f.url("/handler-first"));
     await waitForHydration(page);
+    await using __ = await expectNoReload(page);
 
-    const ts1 = await page.getByTestId("handler-first-timestamp").textContent();
+    const timestamp = page.getByTestId("handler-first-timestamp");
+    const ts0 = await timestamp.textContent();
+    expect(ts0).toBeTruthy();
+
+    // Same URL: params and search are unchanged and the route stays on
+    // screen, so the default holds it. Only revalidate(() => true) re-renders.
+    await page.getByTestId("link-to-self").click();
+    await expect(timestamp).not.toHaveText(ts0!);
+
+    const ts1 = await timestamp.textContent();
     expect(ts1).toBeTruthy();
 
     // SPA navigate away to cached route
     await page.getByTestId("link-to-cached").click();
     await expect(page.getByTestId("cache-scope-title")).toBeVisible();
 
-    // SPA navigate back — revalidate(() => true) forces fresh render
+    // SPA navigate back — the browser still holds this route's segment and
+    // the default reuses it; revalidate(() => true) forces fresh render
     await page.getByTestId("link-to-uncached").click();
     await expect(page.getByTestId("handler-first-title")).toBeVisible();
 
-    const ts2 = await page.getByTestId("handler-first-timestamp").textContent();
+    const ts2 = await timestamp.textContent();
 
     // Timestamp must change — revalidate forced a fresh server render
     expect(ts2).not.toBe(ts1);
