@@ -15,6 +15,7 @@ import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import type { ContextVar } from "../context-var.js";
 import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
+import type { ShellCaptureState } from "../rsc/shell-capture.js";
 import {
   noteWarmIdentityRead,
   type WarmContext,
@@ -1133,7 +1134,7 @@ export interface IdentityReadWording {
  *    only observed; it is never rendered. A cached body, loader body or
  *    funnel they start is guarded again.
  * 1. A PPR shell capture (`ctx` is the capture's derived context,
- *    `_shellCaptureRun`) trips first: the capture context is flagged (so a
+ *    `_shellCaptureState`) trips first: the capture context is flagged (so a
  *    caught throw still refuses the capture) and the read throws. The shell is
  *    shared per host+URL, and every HIT replays what the capture read. There
  *    is no loader-body exemption here: a bake-lane loader and a loader a
@@ -1219,7 +1220,7 @@ export function requestReadCaptureFix(
 
 /**
  * True when `ctx` is the active capture render: the derived request context
- * shell-capture.ts builds (`_shellCaptureRun`), which only the capture sets,
+ * shell-capture.ts builds (`_shellCaptureState`), which only the capture has,
  * so the foreground render reads identity normally to serve the real user.
  * On true the capture context is flagged with the read (`surface`, e.g.
  * "cookies()", "ctx.theme"), the fix the refusal warning gives, and the loader
@@ -1230,21 +1231,15 @@ function tripShellCaptureGuard(
   surface: string,
   fix: string,
 ): boolean {
-  if (
-    ctx === null ||
-    typeof ctx !== "object" ||
-    (ctx as { _shellCaptureRun?: unknown })._shellCaptureRun !== true
-  ) {
-    return false;
-  }
+  const captureState =
+    ctx !== null && typeof ctx === "object"
+      ? (ctx as { _shellCaptureState?: ShellCaptureState })._shellCaptureState
+      : undefined;
+  if (captureState?.run !== true) return false;
   // Record WHICH loader body (if any) made the read, so the refusal warning
   // can name the real source instead of hardcoding a lane (issue #672).
-  const flagged = ctx as {
-    _shellCaptureGuardTripped?: { surface: string; fix: string };
-    _shellCaptureGuardTrippedLoaderId?: string;
-  };
-  flagged._shellCaptureGuardTripped = { surface, fix };
-  flagged._shellCaptureGuardTrippedLoaderId = getCurrentLoaderBodyId();
+  captureState.guardTripped = { surface, fix };
+  captureState.guardTrippedLoaderId = getCurrentLoaderBodyId();
   return true;
 }
 

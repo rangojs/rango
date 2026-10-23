@@ -120,7 +120,7 @@ describe("shell capture: a deferred loader push", () => {
       "settled",
       "deferred",
     ]);
-    expect(derivedCtx._shellCaptureUnrecordedLoaderPush).toBe(true);
+    expect(derivedCtx._shellCaptureState?.unrecordedLoaderPush).toBe(true);
   });
 
   it("leaves out a promise that settles to a value holding one, and asks the loader records for a run", async () => {
@@ -140,7 +140,7 @@ describe("shell capture: a deferred loader push", () => {
     expect(freshHandleStore.getDataForSegment("seg1", true).notes).toEqual([
       slot,
     ]);
-    expect(derivedCtx._shellCaptureUnrecordedLoaderPush).toBeFalsy();
+    expect(derivedCtx._shellCaptureState?.unrecordedLoaderPush).toBeFalsy();
 
     await slot;
 
@@ -148,7 +148,7 @@ describe("shell capture: a deferred loader push", () => {
       undefined,
     );
     expect(freshHandleStore.getRecordOwners("seg1")).toBeUndefined();
-    expect(derivedCtx._shellCaptureUnrecordedLoaderPush).toBe(true);
+    expect(derivedCtx._shellCaptureState?.unrecordedLoaderPush).toBe(true);
     expect(loaderPromisePushes).toEqual([
       { loaderId: "Loader", handleName: "notes", state: "fulfilled" },
     ]);

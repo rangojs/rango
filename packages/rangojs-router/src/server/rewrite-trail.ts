@@ -89,17 +89,19 @@ export function rewriteShellAudience(
 
 type AudienceContext = Pick<
   RequestContext<any>,
-  "_shellCaptureRun" | "_documentCacheRender" | "res"
+  "_shellCaptureState" | "_documentCacheRender" | "res"
 >;
 
 /**
  * A render other visitors may be served: a PPR shell capture, or a render
  * the document cache stores (its response opted in before next()). It shows
  * no visitor theme, and no visitor URL unless it is a visitor-keyed shell
- * capture (`_shellCaptureForVisitor`).
+ * capture (`_shellCaptureState.forVisitor`).
  */
 export function rendersForSharedAudience(reqCtx: AudienceContext): boolean {
-  return reqCtx._shellCaptureRun === true || documentCacheStoresRender(reqCtx);
+  return (
+    reqCtx._shellCaptureState?.run === true || documentCacheStoresRender(reqCtx)
+  );
 }
 
 /**
@@ -150,7 +152,7 @@ function readRewrittenFrom(
 ): string | undefined {
   if (!reqCtx) return undefined;
   if (reader === "render" && rendersForSharedAudience(reqCtx)) {
-    if (!reqCtx._shellCaptureForVisitor) return undefined;
+    if (!reqCtx._shellCaptureState?.forVisitor) return undefined;
     // guardIdentityRead minus the capture guard: a cache() boundary, a "use
     // cache" body or a loader's own cache() inside the capture is keyed
     // without the URL.

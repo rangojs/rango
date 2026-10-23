@@ -178,12 +178,13 @@ request"), and one predicate:
 // src/prerender/warm-request.ts
 export function isWarmReplace(ctx: RequestContext | undefined): boolean {
   return (
-    ctx?._prerenderWarm?.mode === "replace" && ctx._shellCaptureRun !== true
+    ctx?._prerenderWarm?.mode === "replace" &&
+    ctx._shellCaptureState?.run !== true
   );
 }
 ```
 
-The `_shellCaptureRun` exclusion is invariant 10: the capture's derived
+The `_shellCaptureState` exclusion is invariant 10: the capture's derived
 context (`deriveShellCaptureContext`, `Object.create(reqCtx)`) inherits the
 record through the prototype, and must read normally. The predicate is read at
 six points, all before a store read that already exists. None of them needs a
@@ -290,7 +291,7 @@ MISS. `scheduleShellCapture` with `force`:
   `caches.shell: "skipped-capacity" | "skipped-queue-timeout"`.
 
 The capture's derived context reads normally (the predicate excludes
-`_shellCaptureRun`). That is load-bearing: the write barrier in `attemptCapture`
+`_shellCaptureState.run`). That is load-bearing: the write barrier in `attemptCapture`
 settles the warm's foreground writes first, so the capture replays the record
 and the `"use cache"` items the warm just wrote (#957), and the shell, its doc
 record and the stores agree on one generation. A forced miss there would render
@@ -321,7 +322,7 @@ into a new shell is exactly what a warm must not produce.
 - **Refusal reasons:** the capture's attempt event
   (`ShellCaptureDebugEvent`) gains an optional `refusal` field, additive, set
   at the existing refuse exits from what they already know
-  (`_shellCaptureGuardTripped`, `_dynamic`, the warning they emit). Its values
+  (`_shellCaptureState.guardTripped`, `_dynamic`, the warning they emit). Its values
   are `ShellCaptureRefusal` (`rsc/shell-capture-constants.ts`), listed under
   `PrerenderWarmCaches.refusal` in "Result shape".
 - **The write count:** `noteWarmWrite(reqCtx, "shell")` after a `putShell`
@@ -944,7 +945,7 @@ version once, as a production isolate does, so a test that moves versions with
   `throwOnError` on a refusal, the follow-up warm only after `rendered` /
   `skipped-passthrough` and only on a shared store with an origin).
 - `src/prerender/__tests__/warm-request.test.ts`: the mark is per `Request`
-  object, `isWarmReplace` is false under `_shellCaptureRun` and in fill mode,
+  object, `isWarmReplace` is false under `_shellCaptureState.run` and in fill mode,
   the record's writers, `noteWarmShellEvent`.
 - `src/prerender/__tests__/warm.test.ts`: the request (a GET, `accept:
 text/html` only, marked), the collecting context, the drain, the wait for

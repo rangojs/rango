@@ -16,6 +16,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../request-context.js";
+import { makeShellCaptureState } from "../../__tests__/kit/request-context.js";
 import { invalidateClientCache } from "../cookie-store.js";
 import { requestHeaders, shadowRequestHeaders } from "../request-headers.js";
 import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
@@ -74,17 +75,17 @@ describe("ctx.request stays a real Request (#976)", () => {
   describe.each(REFUSING)("in %s", (_label, capture, enter) => {
     function run<T>(fn: (request: Request) => T, init?: RequestInit): T {
       const reqCtx = requestContext(init);
-      if (capture) reqCtx._shellCaptureRun = true;
+      if (capture) reqCtx._shellCaptureState = makeShellCaptureState();
       const result = runWithRequestContext(reqCtx, () =>
         enter(() => fn(reqCtx.request)),
       );
-      expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+      expect(reqCtx._shellCaptureState?.guardTripped).toBeUndefined();
       return result;
     }
 
     it("a header read throws", () => {
       const reqCtx = requestContext();
-      if (capture) reqCtx._shellCaptureRun = true;
+      if (capture) reqCtx._shellCaptureState = makeShellCaptureState();
       runWithRequestContext(reqCtx, () =>
         enter(() => {
           expect(() => reqCtx.request.headers).toThrow(/ctx\.request\.headers/);
@@ -122,7 +123,7 @@ describe("ctx.request stays a real Request (#976)", () => {
 
     it("a clone's headers are guarded like ctx.request.headers", () => {
       const reqCtx = requestContext();
-      if (capture) reqCtx._shellCaptureRun = true;
+      if (capture) reqCtx._shellCaptureState = makeShellCaptureState();
       runWithRequestContext(reqCtx, () =>
         enter(() => {
           const clone = reqCtx.request.clone();
@@ -259,7 +260,7 @@ describe("ctx.request stays a real Request (#976)", () => {
           url: new URL(facade.url),
           variables: {},
         });
-        reqCtx._shellCaptureRun = true;
+        reqCtx._shellCaptureState = makeShellCaptureState();
         try {
           await runWithRequestContext(reqCtx, async () => {
             const clone = reqCtx.request.clone();
@@ -277,7 +278,9 @@ describe("ctx.request stays a real Request (#976)", () => {
         } catch (error) {
           return new Response(String(error), { status: 500 });
         }
-        seen.push(`tripped:${reqCtx._shellCaptureGuardTripped?.surface}`);
+        seen.push(
+          `tripped:${reqCtx._shellCaptureState?.guardTripped?.surface}`,
+        );
         return new Response("done");
       }),
     );

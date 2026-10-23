@@ -220,6 +220,33 @@ describe("derived render pass", () => {
     },
   );
 
+  itFast(
+    "a shell capture's state keeps fast properties through the capture's writes",
+    () => {
+      const pass = deriveRenderPass(makeRequestContext(), "shell-capture", {
+        handleStore: createHandleStore(),
+        identity: undefined,
+        recording: undefined,
+      });
+      const state = pass._shellCaptureState!;
+      expect(hasFastProperties!(state)).toBe(true);
+      state.forVisitor = true;
+      state.loaderLanes = new Map([["L", "live"]]);
+      state.unrecordedLoaderPush = true;
+      state.guardTripped = { surface: "cookies()", fix: "f" };
+      state.guardTrippedLoaderId = "L";
+      state.routeRecordWindow = {
+        freshUntil: 1,
+        staleUntil: 2,
+        ttl: 1,
+        swr: 1,
+        written: false,
+      };
+      expect(hasFastProperties!(state)).toBe(true);
+      expect(hasFastProperties!(pass)).toBe(true);
+    },
+  );
+
   itFast("a PPR tail keeps fast properties", () => {
     const base = makeRequestContext();
     const pass = deriveRenderPass(base, "ppr-tail", {
@@ -240,6 +267,24 @@ describe("derived render pass", () => {
     expect(Object.getPrototypeOf(pass)).toBe(base);
     expect(hasFastProperties!(pass)).toBe(true);
   });
+
+  itFast(
+    "a background re-render a shell capture starts keeps fast properties",
+    () => {
+      const capture = deriveRenderPass(makeRequestContext(), "shell-capture", {
+        handleStore: createHandleStore(),
+        identity: undefined,
+        recording: undefined,
+      });
+      const pass = deriveRenderPass(capture, "background-revalidation", {
+        handleStore: createHandleStore(),
+        sink: makeRequestContext(),
+      });
+      expect(Object.getPrototypeOf(pass)).toBe(capture);
+      expect(hasFastProperties!(pass)).toBe(true);
+      expect(hasFastProperties!(pass._shellCaptureState!)).toBe(true);
+    },
+  );
 });
 
 describe("middleware ctx", () => {

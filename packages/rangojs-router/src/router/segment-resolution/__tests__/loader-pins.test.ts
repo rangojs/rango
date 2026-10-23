@@ -8,7 +8,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 const mockRequestCtx: any = {
-  _shellCaptureRun: undefined,
+  _shellCaptureState: undefined,
   _shellLoaderSeed: undefined,
   executionContext: undefined,
   params: {},
@@ -78,7 +78,7 @@ function request(
   capture = false,
 ): RequestContext<any> {
   return {
-    _shellCaptureRun: capture || undefined,
+    _shellCaptureState: capture ? { run: true } : undefined,
     _shellLoaderSeed: pins ? new Map(Object.entries(pins)) : undefined,
   } as any;
 }

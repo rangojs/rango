@@ -384,7 +384,9 @@ async function captureShell(pathname: string): Promise<{
   const recorded = Object.values(handles ?? {}).flatMap(
     (segHandles) => segHandles[Crumbs.$$id] ?? [],
   );
-  const pinKeys = [...(derivedCtx._shellCaptureLoaderRecords?.keys() ?? [])];
+  const pinKeys = [
+    ...(derivedCtx._shellCaptureState?.loaderRecords.keys() ?? []),
+  ];
   return { snapshot, recorded, pinKeys };
 }
 

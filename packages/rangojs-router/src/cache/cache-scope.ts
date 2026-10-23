@@ -58,12 +58,13 @@ import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
 import { WIRE } from "../wire-params.js";
 
 /**
- * Narrow the request's route-record window (RequestContext._routeRecordWindow)
- * to a record this request read or wrote: fresh until `freshUntil` (the
- * record's `expiresAt`), then stale for `swr` seconds. A shell capture starts
- * with no window of its own (shell-capture.ts deriveShellCaptureContext sets
- * it undefined), so it narrows only to the records the capture itself read
- * or wrote.
+ * Narrow a shell capture's route-record window
+ * (ShellCaptureState.routeRecordWindow) to a record the capture read or
+ * wrote: fresh until `freshUntil` (the record's `expiresAt`), then stale for
+ * `swr` seconds. A capture starts with no window of its own
+ * (RENDER_PASS_FIELDS["shell-capture"] creates it undefined), so it narrows
+ * only to the records the capture itself read or wrote. Only a capture reads
+ * the window (shell-capture.ts capShellWindow): another render notes nothing.
  */
 function noteRouteRecordWindow(
   requestCtx: RequestContext,
@@ -72,6 +73,8 @@ function noteRouteRecordWindow(
   swr: number,
   written: boolean,
 ): void {
+  const captureState = requestCtx._shellCaptureState;
+  if (!captureState) return;
   const next = {
     freshUntil,
     staleUntil: freshUntil + swr * 1000,
@@ -79,9 +82,9 @@ function noteRouteRecordWindow(
     swr,
     written,
   };
-  const current = requestCtx._routeRecordWindow;
+  const current = captureState.routeRecordWindow;
   // The record that runs out first names the config; freshness is the least.
-  requestCtx._routeRecordWindow = current
+  captureState.routeRecordWindow = current
     ? {
         ...(current.staleUntil <= next.staleUntil ? current : next),
         freshUntil: Math.min(current.freshUntil, freshUntil),

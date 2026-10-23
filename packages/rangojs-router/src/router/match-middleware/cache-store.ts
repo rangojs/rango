@@ -354,7 +354,7 @@ function recordShellCaptureDocRecord<TEnv>(
   segments: ResolvedSegment[],
 ): void {
   const requestCtx = getRequestContext();
-  if (!requestCtx?._shellCaptureRun) return;
+  if (!requestCtx?._shellCaptureState?.run) return;
   const marker = requestCtx._shellImplicitCache;
   if (!marker?.store) return;
   const scope = ctx.cacheScope;

@@ -8,7 +8,7 @@ shape, and a boundary-less masked read refuses the capture. The flag's
 document promise ("this loader's data is in the HTML before first flush")
 maps to the frozen prelude under ppr, so flagged loaders re-engage the
 UNCHANGED machinery below: execute at capture, nested-thenable mask (shape
-is liveness), `_shellCaptureLoaderRecords` registration (capture gate hold,
+is liveness), `_shellCaptureState.loaderRecords` registration (capture gate hold,
 bounded by `ppr.captureTimeout`), snapshot pinning, HIT-tail seed overlay
 (pin-first when hole-free). A route whose loaders are ALL flagged needs no
 loading() and captures a complete shell. Pinned by the "ssr:false loader
@@ -46,7 +46,7 @@ Implementation notes (deltas from the sketch below, all deliberate):
   segment key rides as the bake/seed key, which is inert at capture.
 - **Guard refusal is flag-based**: the capture guard (today the first step
   of `guardIdentityRead`, `src/server/context.ts`) stamps
-  `_shellCaptureGuardTripped` on the capture context BEFORE throwing, because
+  `_shellCaptureState.guardTripped` on the capture context BEFORE throwing, because
   the throw is swallowed by wrapLoaderPromise (boundary UI) or rejects the
   prerender promise itself (boundary-less segment) — both paths check the
   flag and return the new deterministic `"refused"` outcome (no retry,
@@ -262,7 +262,7 @@ Two sub-edges:
   HIT reads identity freely (it always did).
 
 > _Superseded (see the implementation notes, "Guard refusal is flag-based"):_
-> the shipped guard stamps `_shellCaptureGuardTripped` before throwing, and
+> the shipped guard stamps `_shellCaptureState.guardTripped` before throwing, and
 > the capture refuses whenever the flag is set, so an identity read inside a
 > nested promise that runs during capture refuses too; the first sub-edge does
 > not hold. The shipped refusal warning (`refuseOnCaptureGuard` in

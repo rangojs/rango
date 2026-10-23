@@ -1246,7 +1246,7 @@ Guarantees, each pinned by a semantic matrix row:
   (`visitorShellKey`: the visitor's URL partitioned by
   `rw:<target path+search>`, the route's own partition after it), captured
   with the visitor's location and `ctx.rewrittenFrom`
-  (`_shellCaptureForVisitor`); the target's own shell stays its own.
+  (`_shellCaptureState.forVisitor`); the target's own shell stays its own.
   `.shell("target")` reads and captures the target's shared shell, as before
   #1146. `[RW8]`
 - A navigation, prefetch or action from a page middleware rewrote diffs
@@ -1436,7 +1436,7 @@ Where the old and the new URL show:
   function it throws, and a loader's own `cache()` fill records it. A render
   other visitors may be served (`rendersForSharedAudience`: a PPR shell
   capture, a render the document cache stores) reads `undefined`, as a direct
-  visit would, except a visitor-keyed shell capture (`_shellCaptureForVisitor`),
+  visit would, except a visitor-keyed shell capture (`_shellCaptureState.forVisitor`),
   whose key covers the URL; any other render that reads the visitor's URL is
   not stored by the document cache (`_payloadVisitorLocation`). A middleware
   ctx reads it plainly: middleware runs per request and is never stored.

@@ -73,8 +73,6 @@ export const RENDER_PASS_FIELDS: {
     own(pass, { handleStore, identity, recording }, base) {
       // Fresh: the foreground's is drained and throws LateHandlePushError.
       pass._handleStore = handleStore;
-      // The capture notes its own route records, not the foreground's.
-      pass._routeRecordWindow = undefined;
       if (identity) {
         pass.request = identity.request;
         pass.url = identity.url;
@@ -90,8 +88,22 @@ export const RENDER_PASS_FIELDS: {
       // The capture's render errors refuse the capture only.
       pass._renderErrors = [];
       pass._recoveredHandlerErrors = undefined;
-      // Read by the loader, cookies() and headers() capture guards.
-      pass._shellCaptureRun = true;
+      // `run` is read by the loader, cookies() and headers() capture guards.
+      // Every field is present from here on: one shape while the capture
+      // writes it.
+      pass._shellCaptureState = {
+        run: true,
+        forVisitor: undefined,
+        // Bake-lane loader containers: settleCaptureRecord awaits them, the
+        // drain pins them into the snapshot.
+        loaderRecords: new Map(),
+        unrecordedLoaderPush: undefined,
+        loaderLanes: undefined,
+        guardTripped: undefined,
+        guardTrippedLoaderId: undefined,
+        // The capture notes its own route records, not the foreground's.
+        routeRecordWindow: undefined,
+      };
       // The inherited dynamic() writes the foreground, which already served;
       // settleCaptureRecord and captureAndStoreShell read this latch.
       pass._dynamic = false;
@@ -103,9 +115,6 @@ export const RENDER_PASS_FIELDS: {
       // Metrics and spans are foreground surfaces, already ended.
       pass._metricsStore = undefined;
       pass._tracing = undefined;
-      // Bake-lane loader containers: settleCaptureRecord awaits them, the
-      // drain pins them into the snapshot.
-      pass._shellCaptureLoaderRecords = new Map();
       // Fired by settleCaptureRecord: the capture builds no Response, and the
       // doc record's write is gated on onResponse.
       pass._onResponseCallbacks = [];
@@ -152,7 +161,7 @@ export const RENDER_PASS_FIELDS: {
   "background-revalidation": {
     // The request's barrier; whether this pass needs its own is rango-t160.
     renderBarrier: "inherited",
-    own(pass, { handleStore, sink }) {
+    own(pass, { handleStore, sink }, base) {
       // Read late by loader pushes and cache-scope.ts; setupLoaderAccess
       // binds it at setup, so that also runs inside this pass.
       pass._handleStore = handleStore;
@@ -160,6 +169,16 @@ export const RENDER_PASS_FIELDS: {
       pass._metricsStore = undefined;
       pass._renderErrors = [];
       pass._recoveredHandlerErrors = undefined;
+      // A capture's stale route cache() read re-renders under the capture.
+      // Derived like the pass: it reads the capture's state live, and its
+      // field writes (a guard trip, a record window) stay its own; the
+      // loaderRecords Map is the capture's.
+      const captureState = base._shellCaptureState;
+      if (captureState) {
+        pass._shellCaptureState = Object.create(
+          captureState,
+        ) as typeof captureState;
+      }
       // Response writes go to the sink: a layout above the cache() boundary
       // or an error boundary's status would otherwise reach the live response.
       pass._onResponseCallbacks = [];
