@@ -318,27 +318,22 @@ function stampAwaitBeforeFlush(
   return loaderEntry.awaitBeforeFlush === true ? AWAIT_BEFORE_FLUSH : undefined;
 }
 
-interface OwnedLoader {
-  readonly loaderEntry: LoaderEntry;
-  readonly segmentId: string;
-  readonly index: number;
-}
-
 /**
- * The loaders of a partial pass that run: each one the client lacks, and
- * each held one whose revalidate() rules ask for it (kept outright in a fill,
- * fillSends). Every decision is traced and observed.
+ * The loaders of a partial pass that run, as indices into `owner.loaders`:
+ * each one the client lacks, and each held one whose revalidate() rules ask
+ * for it (kept outright in a fill, fillSends). Every decision is traced and
+ * observed. `segmentIds` are the loaders' segment ids, by index.
  */
 async function loadersToRerun<TEnv>(
   pass: ResolutionPass<TEnv>,
   owner: LoaderOwner,
   belongsToRoute: boolean,
-  owned: readonly OwnedLoader[],
-): Promise<OwnedLoader[]> {
+  segmentIds: readonly string[],
+): Promise<number[]> {
   const ctx = pass.context;
   const checks = await Promise.all(
-    owned.map(async (loader) => {
-      const { loaderEntry, segmentId, index } = loader;
+    owner.loaders.map(async (loaderEntry, index) => {
+      const segmentId = segmentIds[index]!;
       const shouldRun = await revalidate(
         async () => {
           if (!pass.client.has(segmentId)) {
@@ -391,7 +386,9 @@ async function loadersToRerun<TEnv>(
       return shouldRun;
     }),
   );
-  return owned.filter((_, i) => checks[i]);
+  const indices: number[] = [];
+  for (let i = 0; i < checks.length; i++) if (checks[i]) indices.push(i);
+  return indices;
 }
 
 /**
@@ -429,17 +426,15 @@ export async function resolveOwnerLoaders<TEnv>(
   // pushes silently vanished).
   (ctx as InternalHandlerContext<any, TEnv>)._currentSegmentId = shortCode;
 
-  const owned: OwnedLoader[] = loaderEntries.map((loaderEntry, i) => ({
-    loaderEntry,
-    segmentId: `${shortCode}D${i}.${loaderEntry.loader.$$id}`,
-    index: i,
-  }));
-  const matchedIds = owned.map((o) => o.segmentId);
+  const matchedIds: string[] = [];
+  for (let i = 0; i < loaderEntries.length; i++) {
+    matchedIds.push(`${shortCode}D${i}.${loaderEntries[i]!.loader.$$id}`);
+  }
 
   // FRESH: every loader is new; no decision is asked, traced or observed.
   const toRun = fresh
-    ? owned
-    : await loadersToRerun(pass, owner, belongsToRoute, owned);
+    ? undefined
+    : await loadersToRerun(pass, owner, belongsToRoute, matchedIds);
 
   // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
   // fires createRouter({ onError }) (phase "loader") nor emits the loader.error
@@ -507,31 +502,21 @@ export async function resolveOwnerLoaders<TEnv>(
       fresh ? loaderEntry.awaitBeforeFlush : undefined,
     );
 
-  const segments: ResolvedSegment[] = toRun.map(
-    ({ loaderEntry, segmentId, index }) => {
-      const { loader } = loaderEntry;
-      // Only a loader on a segment the client lacks (defersLoader). It
-      // would have run. Registered, not started: it runs, and reads its
-      // cache(), only if a reader starts it (startDeferredLoader).
-      if (defersLoader(ctx, loaderEntry, segmentId)) {
-        registerDeferredLoader(ctx, loader.$$id, shortCode, () =>
-          kickoff(loaderEntry, segmentId),
-        );
-        const deferred: ResolvedSegment = {
-          id: segmentId,
-          namespace: owner.namespace,
-          type: "loader",
-          index,
-          component: null,
-          params: ctx.params,
-          loaderId: loader.$$id,
-          belongsToRoute,
-          deferred: true,
-        };
-        deferredLoaderRuns.set(deferred, () => start(loaderEntry, segmentId));
-        return deferred;
-      }
-      return {
+  const segments: ResolvedSegment[] = [];
+  const count = toRun === undefined ? loaderEntries.length : toRun.length;
+  for (let k = 0; k < count; k++) {
+    const index = toRun === undefined ? k : toRun[k]!;
+    const loaderEntry = loaderEntries[index]!;
+    const segmentId = matchedIds[index]!;
+    const { loader } = loaderEntry;
+    // Only a loader on a segment the client lacks (defersLoader). It
+    // would have run. Registered, not started: it runs, and reads its
+    // cache(), only if a reader starts it (startDeferredLoader).
+    if (defersLoader(ctx, loaderEntry, segmentId)) {
+      registerDeferredLoader(ctx, loader.$$id, shortCode, () =>
+        kickoff(loaderEntry, segmentId),
+      );
+      const deferred: ResolvedSegment = {
         id: segmentId,
         namespace: owner.namespace,
         type: "loader",
@@ -539,14 +524,28 @@ export async function resolveOwnerLoaders<TEnv>(
         component: null,
         params: ctx.params,
         loaderId: loader.$$id,
-        // FRESH, document AND capture renders: segment-system's value-delivery
-        // await and the dev SSR-suspension diagnostic both key off it.
-        ...(fresh ? stampAwaitBeforeFlush(loaderEntry) : undefined),
-        loaderData: start(loaderEntry, segmentId),
         belongsToRoute,
+        deferred: true,
       };
-    },
-  );
+      deferredLoaderRuns.set(deferred, () => start(loaderEntry, segmentId));
+      segments.push(deferred);
+      continue;
+    }
+    segments.push({
+      id: segmentId,
+      namespace: owner.namespace,
+      type: "loader",
+      index,
+      component: null,
+      params: ctx.params,
+      loaderId: loader.$$id,
+      // FRESH, document AND capture renders: segment-system's value-delivery
+      // await and the dev SSR-suspension diagnostic both key off it.
+      ...(fresh ? stampAwaitBeforeFlush(loaderEntry) : undefined),
+      loaderData: start(loaderEntry, segmentId),
+      belongsToRoute,
+    });
+  }
 
   if (fresh) {
     // loading(false): every loader settles before the handler runs, so the
