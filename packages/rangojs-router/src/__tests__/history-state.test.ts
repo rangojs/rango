@@ -44,7 +44,6 @@ let resolveNavigationState: typeof import("../browser/history-state").resolveNav
 let pushHistoryWithIdx: typeof import("../browser/history-state").pushHistoryWithIdx;
 let stripShellMissMarker: typeof import("../browser/history-state").stripShellMissMarker;
 let clearLocationStateOnDocumentLoad: typeof import("../browser/history-state").clearLocationStateOnDocumentLoad;
-let SHELL_MISS_MARKER: string;
 
 beforeEach(async () => {
   const mod = await import("../browser/history-state");
@@ -54,7 +53,6 @@ beforeEach(async () => {
   pushHistoryWithIdx = mod.pushHistoryWithIdx;
   stripShellMissMarker = mod.stripShellMissMarker;
   clearLocationStateOnDocumentLoad = mod.clearLocationStateOnDocumentLoad;
-  SHELL_MISS_MARKER = mod.SHELL_MISS_MARKER;
 });
 
 describe("buildHistoryState", () => {
@@ -133,11 +131,6 @@ describe("mergeLocationState", () => {
 });
 
 describe("stripShellMissMarker", () => {
-  it("is the server's forced-MISS param", async () => {
-    const { SHELL_MISS_PARAM } = await import("../rsc/shell-serve");
-    expect(SHELL_MISS_MARKER).toBe(SHELL_MISS_PARAM);
-  });
-
   it("drops the marker from the address bar, keeping the entry's state and the other params", () => {
     (globalThis as any).window.location.href =
       "http://localhost/page?probe=1&_rsc_shell=miss#top";

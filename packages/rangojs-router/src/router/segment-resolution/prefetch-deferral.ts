@@ -36,7 +36,8 @@ import {
 import { requestHeaders } from "../../server/request-headers.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
-import { FILL_PARAM, PREFETCH_HEADER } from "../../prefetch-markers.js";
+import { PREFETCH_HEADER } from "../../prefetch-markers.js";
+import { WIRE } from "../../wire-params.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
 
 /**
@@ -50,7 +51,7 @@ export function requestKind(
   request: Request,
   rawUrl: URL,
 ): "prefetch" | "fill" | undefined {
-  if (rawUrl.searchParams.has(FILL_PARAM)) return "fill";
+  if (rawUrl.searchParams.has(WIRE.fill)) return "fill";
   return requestHeaders(request).has(PREFETCH_HEADER) ? "prefetch" : undefined;
 }
 

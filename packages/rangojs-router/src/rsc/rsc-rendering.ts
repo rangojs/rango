@@ -99,7 +99,8 @@ import {
 import { contextGet } from "../context-var.js";
 import { rewriteShellAudience, rewriteTrail } from "../server/rewrite-trail.js";
 import { visitorShellKey } from "./shell-capture-constants.js";
-import { PREFETCH_HEADER, STALE_PARAM } from "../prefetch-markers.js";
+import { PREFETCH_HEADER } from "../prefetch-markers.js";
+import { WIRE } from "../wire-params.js";
 import {
   isWarmReplace,
   noteWarmShellEvent,
@@ -1275,7 +1276,7 @@ function renderPreparedRscResponse<TEnv>(
     reqCtx._payloadDeferred ||
     (isPartial &&
       (reqCtx._requestKind === "fill" ||
-        url.searchParams.get(STALE_PARAM) === "true"))
+        url.searchParams.get(WIRE.stale) === "true"))
   ) {
     rscHeaders["cache-control"] = NOT_REUSED;
   }
@@ -1465,7 +1466,7 @@ async function matchPartialWithPprReplay<TEnv>(
   }
   // A stale partial renders live, as an action does (rendersLive,
   // router/match-context.ts): the record may predate the action's write.
-  if (url.searchParams.get(STALE_PARAM) === "true") {
+  if (url.searchParams.get(WIRE.stale) === "true") {
     return runMatch({ outcome: "BYPASS", reason: "stale" });
   }
   // Fragment passthrough (#700), extended to partial replay. Navigation

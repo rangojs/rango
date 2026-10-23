@@ -1,7 +1,7 @@
 import { isLoaderSegmentId } from "../browser/react/filter-segment-order.js";
 import { requestHeaders } from "../server/request-headers.js";
-import { STALE_PARAM } from "../prefetch-markers.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
+import { WIRE } from "../wire-params.js";
 
 export interface NavigationSnapshot {
   prevUrl: URL;
@@ -106,7 +106,7 @@ export function getInterceptSourceHeader(request: Request): string | null {
  * left, never what renders, so a forged value runs or skips no middleware.
  */
 function getShownRouteUrl(url: URL): URL | null {
-  const shown = url.searchParams.get("_rsc_rt");
+  const shown = url.searchParams.get(WIRE.rewriteTarget);
   if (!shown) return null;
   try {
     const parsed = new URL(shown, url.origin);
@@ -134,8 +134,8 @@ export async function resolveNavigation(
   deps: ResolveNavigationDeps,
 ): Promise<NavigationSnapshot | null> {
   const clientSegmentIds =
-    url.searchParams.get("_rsc_segments")?.split(",").filter(Boolean) || [];
-  const stale = url.searchParams.get(STALE_PARAM) === "true";
+    url.searchParams.get(WIRE.segments)?.split(",").filter(Boolean) || [];
+  const stale = url.searchParams.get(WIRE.stale) === "true";
   const previousUrl = getNavigationContextHeader(request, url.origin);
   const interceptSourceUrl = getInterceptSourceHeader(request);
   const isHmr = !!requestHeaders(request).get("X-RSC-HMR");

@@ -129,6 +129,7 @@ import {
   type ExecutableRequestPlan,
 } from "../router/request-classification.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
+import { WIRE } from "../wire-params.js";
 
 /**
  * Create an RSC request handler.
@@ -413,7 +414,7 @@ export function createRSCHandler<
           env: reqCtx.env,
           payload: redirectPayload,
           tracking: {
-            mode: reqCtx.url.searchParams.has("_rsc_action")
+            mode: reqCtx.url.searchParams.has(WIRE.action)
               ? "action-revalidation"
               : "partial",
             routeKey: reqCtx._routeName,
@@ -476,7 +477,7 @@ export function createRSCHandler<
     // Connection warmup: return 204 immediately before any processing
     if (router?.warmupEnabled && request.method === "HEAD") {
       const warmupUrl = new URL(request.url);
-      if (warmupUrl.searchParams.has("_rsc_warmup")) {
+      if (warmupUrl.searchParams.has(WIRE.warmup)) {
         return new Response(null, { status: 204 });
       }
     }
@@ -743,7 +744,7 @@ export function createRSCHandler<
           },
           // A loader fetch answers with the error `load()` rejects with.
           refuse: (error) =>
-            url.searchParams.has("_rsc_loader")
+            url.searchParams.has(WIRE.loader)
               ? renderLoaderError(
                   handlerCtx,
                   { message: (error as Error).message, name: "Error" },
@@ -752,7 +753,7 @@ export function createRSCHandler<
                     request,
                     url,
                     env,
-                    loaderId: url.searchParams.get("_rsc_loader") ?? "",
+                    loaderId: url.searchParams.get(WIRE.loader) ?? "",
                   },
                 )
               : undefined,
@@ -770,8 +771,8 @@ export function createRSCHandler<
           let response: Response;
           if (hasMiddleware) {
             if (
-              url.searchParams.has("_rsc_partial") ||
-              url.searchParams.has("_rsc_action")
+              url.searchParams.has(WIRE.partial) ||
+              url.searchParams.has(WIRE.action)
             ) {
               const intercepted = interceptRedirectForPartial(
                 downstream,
@@ -987,7 +988,7 @@ export function createRSCHandler<
       ? actionRan.kind === "action"
         ? "action"
         : "pe-render"
-      : url.searchParams.has("_rsc_action") && rewriteTrail(passCtx)
+      : url.searchParams.has(WIRE.action) && rewriteTrail(passCtx)
         ? "action"
         : undefined;
     if (
@@ -1006,7 +1007,7 @@ export function createRSCHandler<
     if (plan.mode === "redirect") {
       // Redirects are handled by the pipeline (match/matchPartial),
       // but for partial requests we short-circuit with a Flight redirect.
-      if (url.searchParams.has("_rsc_partial")) {
+      if (url.searchParams.has(WIRE.partial)) {
         return createRedirectFlightResponse(plan.redirectUrl);
       }
       // Full requests: let the pipeline handle the redirect via match()
@@ -1016,7 +1017,7 @@ export function createRSCHandler<
     // A reload points at the visitor's URL, never a rewrite target's.
     if (plan.mode === "version-mismatch") {
       console.log(
-        `[RSC] Version mismatch: client=${url.searchParams.get("_rsc_v")}, server=${version}. Forcing reload.`,
+        `[RSC] Version mismatch: client=${url.searchParams.get(WIRE.version)}, server=${version}. Forcing reload.`,
       );
       return createReloadResponse(getRequestContext(), plan.reloadUrl);
     }
@@ -1325,7 +1326,7 @@ export function createRSCHandler<
       // Actions from client-side navigation include _rsc_partial — preserve
       // the partial flag so the revalidation returns a Flight stream, not HTML.
       // App-switch is already excluded by classifyRequest (would be full-render).
-      const isPartialAction = url.searchParams.has("_rsc_partial");
+      const isPartialAction = url.searchParams.has(WIRE.partial);
       return executeRenderWithMiddleware(
         plan.route.routeMiddleware,
         plan.negotiated,
