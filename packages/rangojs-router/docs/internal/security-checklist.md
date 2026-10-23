@@ -83,8 +83,9 @@ present but no `Host` header can establish the expected origin, the guard now
 a browser always sends `Host` alongside `Origin`, so a missing `Host` here is
 anomalous.
 
-Implementation: `src/rsc/origin-guard.ts`, integrated in `src/rsc/handler.ts`
-in `coreRequestHandler()` after request classification and the
+Implementation: `src/rsc/origin-guard.ts`, integrated in `src/rsc/request-stages.ts`
+`guardRequest()` (called by `coreRequestHandler()` in `src/rsc/handler.ts`)
+after request classification and the
 redirect/version-mismatch/app-switch terminal short-circuits, gated to
 action/loader/PE-form modes via `ORIGIN_CHECK_PHASE_BY_MODE` (`origin-guard.ts`).
 

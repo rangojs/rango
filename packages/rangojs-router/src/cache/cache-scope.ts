@@ -33,8 +33,9 @@ import {
 // pulls @vitejs/plugin-rsc (a virtual: module the plain node/vitest runner cannot
 // resolve). It is imported LAZILY at the two call sites below (deserializeSegments
 // in lookupRoute, serializeSegments in cacheRoute) so that requiring cache-scope —
-// e.g. dispatch's lazy `import("../cache/cache-scope.js")` for the response-route
-// cache path — does not crash a consumer test that never mocks plugin-rsc. Behavior
+// e.g. through the request stages dispatch loads for a response route
+// (rsc/request-stages.ts) — does not crash a consumer test that never mocks
+// plugin-rsc. Behavior
 // is unchanged: both methods are async and already awaited the codec.
 import {
   captureHandles,

@@ -24,7 +24,7 @@ import {
   assertNonCacheableReadAllowed,
   type EntryData,
 } from "../server/context.js";
-import type { HandlerContext } from "./handler-context.js";
+import type { RequestStageContext } from "./request-stages.js";
 import { createProblemDetails } from "./response-error.js";
 import {
   createReloadResponse,
@@ -57,7 +57,10 @@ export interface ResponseRouteMatch {
  * so the browser triggers a hard navigation to the response route URL.
  */
 export async function handleResponseRoute<TEnv>(
-  handlerCtx: HandlerContext<TEnv>,
+  handlerCtx: Pick<
+    RequestStageContext<TEnv>,
+    "callOnError" | "getRequiredRouteMap" | "reportResponseRouteError"
+  >,
   preview: ResponseRouteMatch,
   request: Request,
   env: TEnv,
@@ -122,7 +125,7 @@ export async function handleResponseRoute<TEnv>(
         // Runtime guard: the json() return type rejects nested Promises at
         // compile time, but an `as`-cast or untyped (JS) handler can still slip
         // one through. stringifyJsonRouteResult throws a clear error instead of
-        // shipping empty data (shared with dispatch() so the two cannot drift).
+        // shipping empty data.
         const body = stringifyJsonRouteResult(result);
         return createResponseWithMergedHeaders(body, {
           status: 200,
@@ -145,7 +148,11 @@ export async function handleResponseRoute<TEnv>(
         `Response route handler for "${preview.responseType}" must return a Response object, got ${typeof result}`,
       );
     } catch (error) {
-      handlerCtx.callOnError(error, "handler", errorCtx);
+      if (handlerCtx.reportResponseRouteError) {
+        handlerCtx.reportResponseRouteError(error, errorCtx);
+      } else {
+        handlerCtx.callOnError(error, "handler", errorCtx);
+      }
       const isDev = process.env.NODE_ENV !== "production";
       const derivedStatus = error instanceof RouterError ? error.status : 500;
       // Resolve the effective status the same way createResponseWithMergedHeaders

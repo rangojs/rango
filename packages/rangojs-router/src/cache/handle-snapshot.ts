@@ -14,7 +14,7 @@ import type { HandleOwners, SegmentHandleData } from "./types.js";
 // in plain node/vitest). It is imported LAZILY inside the two async encode/decode
 // helpers below so that modules which import handle-snapshot only for the
 // plugin-rsc-free captureHandles/restoreHandles (e.g. cache-scope, on dispatch's
-// lazy response-route cache path) do not pull plugin-rsc at module load. Behavior
+// response-route path) do not pull plugin-rsc at module load. Behavior
 // is unchanged: both helpers are async and already awaited the codec.
 
 const HANDLE_ENCODE_TIMEOUT_MS = 5000;
