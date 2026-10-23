@@ -1204,6 +1204,174 @@ describe("partial-update", () => {
     });
   });
 
+  /**
+   * rango-t126: an intercept answer to a request that held no segments lists
+   * the layouts and the slot only; the server never renders the page under
+   * the intercept. The browser keeps the page the answer lands over, as the
+   * server lists it for a request that holds it (intercept-utils.ts
+   * wholeInterceptMatched): its segments from the browser's copy, the
+   * layouts and the slot fresh, and `matched` with it, so the commit's
+   * handle cleanup keeps that page's pushes (react/NavigationProvider.tsx).
+   */
+  describe("an intercept answer to a request that held nothing", () => {
+    const interceptSlot = (component: string) =>
+      seg("L0.@modal", {
+        type: "parallel",
+        namespace: "intercept:item",
+        slot: "@modal",
+        component,
+      });
+    const interceptLoader = (loaderData: string) =>
+      seg("L0.@modalD0.item", {
+        type: "loader",
+        namespace: "intercept:item",
+        loaderId: "item",
+        loaderData,
+      } as Partial<ResolvedSegment>);
+
+    async function run(opts: {
+      onScreen: ResolvedSegment[];
+      answer: ResolvedSegment[];
+      matched: string[];
+      sent?: string[];
+      slots?: Record<string, { active: boolean }>;
+      mode?: { type: "stale-revalidation" } | { type: "navigate" };
+    }) {
+      const store = createMockStore({
+        cachedSegments: opts.onScreen,
+        segmentIds: opts.onScreen.map((s) => s.id),
+      });
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: opts.answer,
+          matched: opts.matched,
+          diff: opts.answer.map((s) => s.id),
+          slots: opts.slots ?? { "@modal": { active: true } },
+        },
+      });
+      const renderSegments = vi.fn(async () => "tree");
+      const onUpdate = vi.fn();
+      const tx = createMockTx("http://localhost/list");
+      const updater = createPartialUpdater({
+        getVersion: () => undefined,
+        store: store as any,
+        client: client as any,
+        onUpdate,
+        renderSegments,
+      });
+      await updater(
+        "http://localhost/item/1",
+        opts.sent ?? [],
+        false,
+        undefined,
+        tx,
+        opts.mode ?? { type: "navigate" },
+      );
+      const [main, renderOptions] = (renderSegments.mock.calls as any[][])[0];
+      return {
+        committed: (tx.commit.mock.calls as any[][])[0][0] as string[],
+        main: main as ResolvedSegment[],
+        slot: (renderOptions as { interceptSegments?: ResolvedSegment[] })
+          .interceptSegments,
+        matched: onUpdate.mock.calls[0][0].metadata.matched as string[],
+      };
+    }
+
+    it("an action's redirect keeps the page under the intercept, its handles, and its render from before the action", async () => {
+      const result = await run({
+        onScreen: [
+          seg("L0", { type: "layout", component: "layout-before" }),
+          seg("L0R0", { component: "list-before" }),
+        ],
+        answer: [
+          seg("L0", { type: "layout", component: "layout-after" }),
+          interceptSlot("slot"),
+        ],
+        matched: ["L0", "L0.@modal"],
+      });
+
+      expect(result.committed).toEqual(["L0", "L0R0", "L0.@modal"]);
+      expect(result.matched).toEqual(["L0", "L0R0", "L0.@modal"]);
+      expect(result.main.map((s) => [s.id, s.component])).toEqual([
+        ["L0", "layout-after"],
+        ["L0R0", "list-before"],
+      ]);
+      expect(result.slot?.map((s) => s.id)).toEqual(["L0.@modal"]);
+    });
+
+    it("a Back/Forward revalidation keeps the restored entry's page and replaces its slot", async () => {
+      const result = await run({
+        mode: { type: "stale-revalidation" },
+        onScreen: [
+          seg("L0", { type: "layout", component: "layout-before" }),
+          seg("L0R0", { component: "list-before" }),
+          interceptSlot("slot-before"),
+          interceptLoader("loader-before"),
+        ],
+        answer: [
+          seg("L0", { type: "layout", component: "layout-after" }),
+          interceptSlot("slot-after"),
+          interceptLoader("loader-after"),
+        ],
+        matched: ["L0", "L0.@modal", "L0.@modalD0.item"],
+      });
+
+      expect(result.committed).toEqual([
+        "L0",
+        "L0R0",
+        "L0.@modal",
+        "L0.@modalD0.item",
+      ]);
+      expect(result.matched).toEqual(result.committed);
+      expect(result.main.map((s) => [s.id, s.component])).toEqual([
+        ["L0", "layout-after"],
+        ["L0R0", "list-before"],
+      ]);
+      expect(
+        result.slot?.map((s) => [
+          s.id,
+          s.type === "loader" ? s.loaderData : s.component,
+        ]),
+      ).toEqual([
+        ["L0.@modal", "slot-after"],
+        ["L0.@modalD0.item", "loader-after"],
+      ]);
+    });
+
+    it("control: a request that held the page keeps the server's matched", async () => {
+      const result = await run({
+        onScreen: [
+          seg("L0", { type: "layout" }),
+          seg("L0R0", { component: "list-before" }),
+        ],
+        sent: ["L0", "L0R0"],
+        answer: [interceptSlot("slot")],
+        matched: ["L0", "L0R0", "L0.@modal"],
+      });
+
+      expect(result.committed).toEqual(["L0", "L0R0", "L0.@modal"]);
+    });
+
+    it("control: an answer that is not an intercept's keeps the server's matched", async () => {
+      const result = await run({
+        onScreen: [
+          seg("L0", { type: "layout" }),
+          seg("L0R0", { component: "list-before" }),
+        ],
+        answer: [
+          seg("L0", { type: "layout" }),
+          seg("L0R1", { component: "item-page" }),
+        ],
+        matched: ["L0", "L0R1"],
+        slots: {},
+      });
+
+      expect(result.committed).toEqual(["L0", "L0R1"]);
+      expect(result.main.map((s) => s.id)).toEqual(["L0", "L0R1"]);
+    });
+  });
+
   describe("stale navigation detection", () => {
     it("returns early when signal is aborted before processing", async () => {
       const store = createMockStore();

@@ -32,3 +32,14 @@ export const InterceptHeldPushLoader = createLoader(async (ctx) => {
   ctx.use(InterceptHeldCrumbs)(`held-loader:${ctx.params.id}`);
   return { id: ctx.params.id };
 });
+
+// Writes of the index page's redirecting action (rango-t126). The index
+// renders the count: the page under the intercept the redirect opens shows
+// whether it was rendered again after the action.
+let redirectWrites = 0;
+export function bumpRedirectWrites(): void {
+  redirectWrites += 1;
+}
+export function readRedirectWrites(): number {
+  return redirectWrites;
+}
