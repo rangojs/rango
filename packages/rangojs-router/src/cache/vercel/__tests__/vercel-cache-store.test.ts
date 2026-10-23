@@ -541,6 +541,21 @@ describe("VercelCacheStore", () => {
       expect(await s.getResponse("doc:k")).toBeNull();
     });
 
+    it("evicts a stale response that does not rebuild without claiming its revalidation", async () => {
+      const { cache, store } = makeFakeCache();
+      const s = new VercelCacheStore({ cache, waitUntil: () => {} });
+      await s.putResponse("doc:k", new Response("hello"), 60, 300);
+      const env = JSON.parse(store.get("rg:r:doc:k")!.value as string);
+      env.b = "%%%not-base64%%%";
+      store.get("rg:r:doc:k")!.value = JSON.stringify(env);
+      vi.setSystemTime(new Date(T0 + 120_000));
+
+      await expect(s.getResponse("doc:k")).resolves.toBeNull();
+      expect(store.has("rg:r:doc:k")).toBe(false);
+      // A lock here would hold off the key's next revalidation.
+      expect(store.has("rg:r:doc:k:lock")).toBe(false);
+    });
+
     it("emits a getResponse debug event on every read", async () => {
       const { cache } = makeFakeCache();
       const events: VercelCacheReadDebugEvent[] = [];
