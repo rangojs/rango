@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { MemorySegmentCacheStore } from "../memory-segment-store.js";
 import { resolveCacheStore } from "../cache-policy.js";
 import type { SegmentCacheStore } from "../types.js";
-import {
-  createRequestContext,
-  runWithRequestContext,
-} from "../../server/request-context.js";
+import { runWithRequestContext } from "../../server/request-context.js";
+import { makeRequestContext } from "../../__tests__/kit/request-context.js";
+
+const EXAMPLE_URL = "https://example.com/";
 
 /**
  * The explicit-store registry is how updateTag()/revalidateTag() reach stores
@@ -16,20 +16,6 @@ import {
  * each request context, so it accumulates every explicit store the handler
  * resolves regardless of which request resolved it.
  */
-function makeCtx(opts: {
-  cacheStore?: SegmentCacheStore;
-  explicitTaggedStores?: Set<SegmentCacheStore>;
-}) {
-  return createRequestContext({
-    env: {},
-    request: new Request("https://example.com/"),
-    url: new URL("https://example.com/"),
-    variables: {},
-    cacheStore: opts.cacheStore,
-    explicitTaggedStores: opts.explicitTaggedStores,
-  });
-}
-
 describe("explicit tagged-store registry (resolveCacheStore)", () => {
   beforeEach(() => {
     MemorySegmentCacheStore.resetGlobalCache();
@@ -39,7 +25,11 @@ describe("explicit tagged-store registry (resolveCacheStore)", () => {
     const appStore = new MemorySegmentCacheStore();
     const customStore = new MemorySegmentCacheStore();
     const explicitTaggedStores = new Set<SegmentCacheStore>();
-    const ctx = makeCtx({ cacheStore: appStore, explicitTaggedStores });
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
+      cacheStore: appStore,
+      explicitTaggedStores,
+    });
 
     await runWithRequestContext(ctx, async () => {
       const resolved = resolveCacheStore(customStore);
@@ -55,7 +45,11 @@ describe("explicit tagged-store registry (resolveCacheStore)", () => {
   it("does not register the app-level store (resolved via _cacheStore)", async () => {
     const appStore = new MemorySegmentCacheStore();
     const explicitTaggedStores = new Set<SegmentCacheStore>();
-    const ctx = makeCtx({ cacheStore: appStore, explicitTaggedStores });
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
+      cacheStore: appStore,
+      explicitTaggedStores,
+    });
 
     await runWithRequestContext(ctx, async () => {
       const resolved = resolveCacheStore(undefined);
@@ -71,12 +65,18 @@ describe("explicit tagged-store registry (resolveCacheStore)", () => {
     const store1 = new MemorySegmentCacheStore();
     const store2 = new MemorySegmentCacheStore();
 
-    await runWithRequestContext(makeCtx({ explicitTaggedStores }), async () => {
-      resolveCacheStore(store1);
-    });
-    await runWithRequestContext(makeCtx({ explicitTaggedStores }), async () => {
-      resolveCacheStore(store2);
-    });
+    await runWithRequestContext(
+      makeRequestContext({ url: EXAMPLE_URL, explicitTaggedStores }),
+      async () => {
+        resolveCacheStore(store1);
+      },
+    );
+    await runWithRequestContext(
+      makeRequestContext({ url: EXAMPLE_URL, explicitTaggedStores }),
+      async () => {
+        resolveCacheStore(store2);
+      },
+    );
 
     expect(explicitTaggedStores.has(store1)).toBe(true);
     expect(explicitTaggedStores.has(store2)).toBe(true);
@@ -90,13 +90,13 @@ describe("explicit tagged-store registry (resolveCacheStore)", () => {
     const storeB = new MemorySegmentCacheStore();
 
     await runWithRequestContext(
-      makeCtx({ explicitTaggedStores: setA }),
+      makeRequestContext({ url: EXAMPLE_URL, explicitTaggedStores: setA }),
       async () => {
         resolveCacheStore(storeA);
       },
     );
     await runWithRequestContext(
-      makeCtx({ explicitTaggedStores: setB }),
+      makeRequestContext({ url: EXAMPLE_URL, explicitTaggedStores: setB }),
       async () => {
         resolveCacheStore(storeB);
       },
@@ -111,9 +111,12 @@ describe("explicit tagged-store registry (resolveCacheStore)", () => {
   it("dedupes when the same explicit store is resolved many times", async () => {
     const explicitTaggedStores = new Set<SegmentCacheStore>();
     const store = new MemorySegmentCacheStore();
-    await runWithRequestContext(makeCtx({ explicitTaggedStores }), async () => {
-      for (let i = 0; i < 50; i++) resolveCacheStore(store);
-    });
+    await runWithRequestContext(
+      makeRequestContext({ url: EXAMPLE_URL, explicitTaggedStores }),
+      async () => {
+        for (let i = 0; i < 50; i++) resolveCacheStore(store);
+      },
+    );
     expect(explicitTaggedStores.size).toBe(1);
   });
 
@@ -128,9 +131,12 @@ describe("explicit tagged-store registry (resolveCacheStore)", () => {
       { length: 200 },
       () => new MemorySegmentCacheStore(),
     );
-    await runWithRequestContext(makeCtx({ explicitTaggedStores }), async () => {
-      for (const s of stores) resolveCacheStore(s);
-    });
+    await runWithRequestContext(
+      makeRequestContext({ url: EXAMPLE_URL, explicitTaggedStores }),
+      async () => {
+        for (const s of stores) resolveCacheStore(s);
+      },
+    );
     // Growth is bounded (not 200), and the most-recent stores win over the oldest.
     expect(explicitTaggedStores.size).toBeLessThanOrEqual(64);
     expect(explicitTaggedStores.has(stores[199])).toBe(true);
@@ -144,13 +150,16 @@ describe("explicit tagged-store registry (resolveCacheStore)", () => {
       { length: 200 },
       () => new MemorySegmentCacheStore(),
     );
-    await runWithRequestContext(makeCtx({ explicitTaggedStores }), async () => {
-      for (const s of churn) {
-        // A module-singleton store is re-resolved on every request.
-        resolveCacheStore(liveStore);
-        resolveCacheStore(s);
-      }
-    });
+    await runWithRequestContext(
+      makeRequestContext({ url: EXAMPLE_URL, explicitTaggedStores }),
+      async () => {
+        for (const s of churn) {
+          // A module-singleton store is re-resolved on every request.
+          resolveCacheStore(liveStore);
+          resolveCacheStore(s);
+        }
+      },
+    );
     expect(explicitTaggedStores.has(liveStore)).toBe(true);
   });
 });

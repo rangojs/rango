@@ -13,10 +13,8 @@ import { createErrorInfo } from "../error-handling.js";
 import { DataNotFoundError } from "../../errors.js";
 import { redirect } from "../../route-definition/redirect.js";
 import { rewrite } from "../../route-definition/rewrite.js";
-import {
-  createRequestContext,
-  runWithRequestContext,
-} from "../../server/request-context.js";
+import { runWithRequestContext } from "../../server/request-context.js";
+import { makeRequestContext } from "../../__tests__/kit/request-context.js";
 import { renderRscFlightStage } from "../../rsc/render-pipeline.js";
 import type { EntryData } from "../../server/context.js";
 
@@ -24,15 +22,6 @@ const PAGE = "https://shop.example/product/1";
 const LOADER_SEGMENT = "M0L0R1D0.src/loaders.ts#ProductLoader";
 
 const entry = { shortCode: "M0L0R1", type: "route" } as unknown as EntryData;
-
-function makeCtx(signal?: AbortSignal) {
-  return createRequestContext({
-    env: {},
-    request: new Request(PAGE, signal ? { signal } : undefined),
-    url: new URL(PAGE),
-    variables: {},
-  });
-}
 
 function abortError(): Error {
   return Object.assign(new Error("The operation was aborted."), {
@@ -98,8 +87,9 @@ describe("a loader that throws prints the original error once, whatever handles 
   ])("%s", async (_label, options) => {
     const error = new Error("product service down");
 
-    const result: any = await runWithRequestContext(makeCtx(), () =>
-      wrapLoader(error, options),
+    const result: any = await runWithRequestContext(
+      makeRequestContext({ url: PAGE }),
+      () => wrapLoader(error, options),
     );
 
     // The client still gets the masked rebuild.
@@ -112,7 +102,7 @@ describe("a loader that throws prints the original error once, whatever handles 
   });
 
   it("prints nothing for notFound() or a redirect(): control flow", async () => {
-    await runWithRequestContext(makeCtx(), async () => {
+    await runWithRequestContext(makeRequestContext({ url: PAGE }), async () => {
       await wrapLoader(new DataNotFoundError("gone"));
       await wrapLoader(redirect("/elsewhere"));
     });
@@ -123,7 +113,9 @@ describe("a loader that throws prints the original error once, whatever handles 
   it("a loader's own fetch timeout (an AbortError while the request is live) prints", async () => {
     const error = abortError();
 
-    await runWithRequestContext(makeCtx(), () => wrapLoader(error));
+    await runWithRequestContext(makeRequestContext({ url: PAGE }), () =>
+      wrapLoader(error),
+    );
 
     expect(consoleError.mock.calls).toEqual([
       ["[RSC] Loader error (ProductLoader) /product/1:", error],
@@ -134,8 +126,9 @@ describe("a loader that throws prints the original error once, whatever handles 
     const controller = new AbortController();
     controller.abort();
 
-    await runWithRequestContext(makeCtx(controller.signal), () =>
-      wrapLoader(abortError()),
+    await runWithRequestContext(
+      makeRequestContext({ url: PAGE, init: { signal: controller.signal } }),
+      () => wrapLoader(abortError()),
     );
 
     expect(consoleError).not.toHaveBeenCalled();
@@ -144,7 +137,7 @@ describe("a loader that throws prints the original error once, whatever handles 
   it("the same error seen again in the request prints nothing more (a handler's ctx.use of the loader)", async () => {
     const error = new Error("product service down");
 
-    await runWithRequestContext(makeCtx(), async () => {
+    await runWithRequestContext(makeRequestContext({ url: PAGE }), async () => {
       await wrapLoader(error);
       catchSegmentError(error, entry, {}, segmentDeps, undefined, "/product/1");
     });
@@ -157,8 +150,12 @@ describe("a loader that throws prints the original error once, whatever handles 
   it("each request prints its own failure, even for one shared error object", async () => {
     const shared = new Error("module-level rejection");
 
-    await runWithRequestContext(makeCtx(), () => wrapLoader(shared));
-    await runWithRequestContext(makeCtx(), () => wrapLoader(shared));
+    await runWithRequestContext(makeRequestContext({ url: PAGE }), () =>
+      wrapLoader(shared),
+    );
+    await runWithRequestContext(makeRequestContext({ url: PAGE }), () =>
+      wrapLoader(shared),
+    );
 
     expect(printsOf(shared)).toHaveLength(2);
   });
@@ -168,7 +165,7 @@ describe("a handler that throws, caught by a boundary, prints the original error
   it("prints the segment and the pathname with the error", async () => {
     const error = new Error("handler failed");
 
-    runWithRequestContext(makeCtx(), () =>
+    runWithRequestContext(makeRequestContext({ url: PAGE }), () =>
       catchSegmentError(error, entry, {}, segmentDeps, undefined, "/product/1"),
     );
 
@@ -182,7 +179,7 @@ describe("a handler that throws, caught by a boundary, prints the original error
   it("prints a rewrite() a handler threw: a misuse that renders a 500", () => {
     const thrown = rewrite("/elsewhere");
 
-    runWithRequestContext(makeCtx(), () =>
+    runWithRequestContext(makeRequestContext({ url: PAGE }), () =>
       catchSegmentError(
         thrown,
         entry,
@@ -199,7 +196,7 @@ describe("a handler that throws, caught by a boundary, prints the original error
   });
 
   it("prints nothing for notFound(): control flow", () => {
-    runWithRequestContext(makeCtx(), () =>
+    runWithRequestContext(makeRequestContext({ url: PAGE }), () =>
       catchSegmentError(
         new DataNotFoundError("gone"),
         entry,
@@ -216,7 +213,10 @@ describe("a handler that throws, caught by a boundary, prints the original error
 
 describe("a server component that throws in the Flight render prints the original error once", () => {
   function renderFlight(reported: unknown[], signal?: AbortSignal) {
-    const ctx = makeCtx(signal);
+    const ctx = makeRequestContext({
+      url: PAGE,
+      init: signal ? { signal } : undefined,
+    });
     return runWithRequestContext(ctx, () =>
       renderRscFlightStage({
         ctx: {
