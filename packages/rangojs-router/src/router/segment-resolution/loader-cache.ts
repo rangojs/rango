@@ -458,8 +458,8 @@ function recordOwnerKey(cachedLoaderId: string): () => string {
  * PPR loader lane rule — the canonical source statement; other sites point
  * here (consumer docs: skills/ppr/SKILL.md "The loader lane rule";
  * docs/design/loader-container-bake.md). This is the single funnel every
- * loader segment path routes through (fresh resolveLoaders, cache-hit
- * resolveLoadersOnly, revalidation resolveLoadersOnlyWithRevalidation, and
+ * loader segment path routes through (resolveOwnerLoaders: the full match's
+ * FRESH pass, cache-hit and revalidation resolveLoadersOnlyWithRevalidation, and
  * intercept loaders in intercept-resolution.ts, which pass no bake key and
  * never run under a shell capture), so the lane is decided here, per LOADER,
  * never by the entry's loading():
@@ -629,14 +629,14 @@ function executeLoaderData<TEnv>(
 
   // Dedup the cache read-through across repeated resolutions of the SAME
   // loaderId in one request. An orphan layout with parallel slots inherits its
-  // parent route's loaders, so resolveOrphanLayout (fresh.ts) re-resolves the
+  // parent route's loaders, so resolveOrphanLayoutWithRevalidation re-resolves the
   // parent's loaders under a different shortCode — calling resolveLoaderData
   // again for the same loaderId. The cache key (loader:{loaderId}:{host}
   // {pathname}:{sortedParams}) does not include the shortCode and ctx/params
   // are identical, so both resolutions produce the same data. Reuse the already
   // in-flight dataPromise instead of issuing a second getItem/setItem (e.g. a
   // second KV round-trip) for one logical cached loader. The shortCode only
-  // affects the emitted segmentId in resolveLoaders, not the cached value.
+  // affects the emitted segmentId in resolveOwnerLoaders, not the cached value.
   const existing = overrides.get(loaderId);
   if (existing) return existing;
 

@@ -316,8 +316,8 @@ describe("a streamed handler that rejects after resolution is not written to the
     let callsBefore = calls.route;
     const nav = await serve("/product", { clientSegments: layoutIds });
     // The client has the layout, so the write is the proactive re-render's:
-    // the handler ran in the foreground (revalidation.ts) and in the
-    // re-render (fresh.ts).
+    // the handler ran in the foreground (a partial pass) and in the
+    // re-render (a FRESH pass).
     expect(calls.route).toBe(callsBefore + 2);
     expect(nav.status).toBe(200);
     expect(nav.writes).toEqual([]);

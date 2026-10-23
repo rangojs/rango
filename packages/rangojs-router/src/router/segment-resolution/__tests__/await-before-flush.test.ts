@@ -1,5 +1,6 @@
 /**
- * awaitBeforeFlush (loader(Def, { ssr: false })) in resolveLoaders.
+ * awaitBeforeFlush (loader(Def, { ssr: false })) in a FRESH pass's loader
+ * funnel (revalidation.ts resolveOwnerLoaders).
  *
  * Document renders await flagged loaders before segment resolution returns:
  * the render barrier (and Response construction behind it) cannot happen
@@ -27,7 +28,8 @@ vi.mock("../../../server/request-context.js", () => ({
   runWithRequestContext: <T>(_c: unknown, fn: () => T): T => fn(),
 }));
 
-import { resolveLoaders } from "../fresh";
+import { ownerOf, resolveOwnerLoaders } from "../revalidation.js";
+import { makeFreshPass } from "../../../__tests__/kit/resolution-pass.js";
 import { wrapLoaderWithErrorHandling } from "../../loader-resolution";
 import { redirect } from "../../../route-definition/redirect";
 
@@ -81,6 +83,21 @@ function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
 }
 
 const deps = { wrapLoaderPromise: (p: Promise<unknown>) => p } as never;
+
+/** A full match's loader funnel: a FRESH pass of resolveOwnerLoaders. */
+async function resolveLoaders(
+  entry: EntryData,
+  ctx: any,
+  belongsToRoute: boolean,
+  segmentDeps: never,
+) {
+  const { segments } = await resolveOwnerLoaders(
+    makeFreshPass(ctx, segmentDeps),
+    ownerOf(entry),
+    belongsToRoute,
+  );
+  return segments;
+}
 
 /**
  * resolveLoaders over the router's own loader lane

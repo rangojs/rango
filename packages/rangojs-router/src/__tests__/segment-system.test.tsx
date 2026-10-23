@@ -739,7 +739,7 @@ describe("segment-system", () => {
 
     describe("segment ordering", () => {
       it("renders segments in root-to-leaf order as emitted by producers", async () => {
-        // Segments arrive in root-to-leaf order from resolveSegment/resolveSegmentWithRevalidation
+        // Segments arrive in root-to-leaf order from resolveSegmentWithRevalidation
         const segments: ResolvedSegment[] = [
           seg({ id: "L0", type: "layout" }),
           seg({ id: "L0L0", type: "layout" }),

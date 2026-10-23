@@ -1,12 +1,11 @@
 import { createLoader } from "../../loader.js";
 import { describe, it, expect, vi } from "vitest";
 import {
-  resolveSegment,
   resolveOrphanLayoutWithRevalidation,
-  resolveParallelEntry,
   resolveParallelSegmentsWithRevalidation,
   resolveSegmentWithRevalidation,
 } from "../segment-resolution";
+import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -69,7 +68,7 @@ const TestParallelLoader = (createLoader as Function)(
 );
 
 describe("segment-resolution parallel loading", () => {
-  it("executes parent layout handler before parallel handlers in fresh resolution", async () => {
+  it("executes parent layout handler before parallel handlers in a FRESH pass", async () => {
     const context = createContext();
     const layoutEntry = {
       id: "blog.layout",
@@ -91,18 +90,18 @@ describe("segment-resolution parallel loading", () => {
       notFoundBoundary: [],
     } as any;
 
-    const result = await resolveSegment(
+    const { segments: result } = await resolveSegmentWithRevalidation(
+      makeFreshPass(
+        context,
+        {
+          trackHandler: (p: any) => p,
+          findNearestErrorBoundary: () => null,
+          findNearestNotFoundBoundary: () => null,
+          wrapLoaderPromise: (p: Promise<any>) => p,
+        } as any,
+        { routeKey: "/blog", params: {} },
+      ),
       layoutEntry,
-      "/blog",
-      {},
-      context,
-      new Map(),
-      {
-        trackHandler: (p: any) => p,
-        findNearestErrorBoundary: () => null,
-        findNearestNotFoundBoundary: () => null,
-        wrapLoaderPromise: (p: Promise<any>) => p,
-      } as any,
     );
 
     const parallelSegment = result.find((s) => s.type === "parallel");
@@ -339,16 +338,22 @@ describe("segment-resolution parallel loading", () => {
       loader: [{ loader: TestParallelLoader, revalidate: [] }],
     } as any;
 
-    const segments = await resolveParallelEntry(
-      entry,
-      {},
-      context,
-      false,
-      "L0",
+    const { segments } = await resolveParallelSegmentsWithRevalidation(
+      makeFreshPass(
+        context,
+        {
+          wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
+          trackHandler: vi.fn((p: any) => p),
+        } as any,
+        { params: {} },
+      ),
       {
-        wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
-        trackHandler: vi.fn((p: any) => p),
+        id: "blog.layout",
+        type: "layout",
+        shortCode: "L0",
+        parallel: [entry],
       } as any,
+      false,
     );
 
     expect(segments.map((segment) => segment.type)).toEqual([

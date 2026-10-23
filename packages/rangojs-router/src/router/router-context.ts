@@ -19,7 +19,6 @@ import type {
 } from "../types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { TelemetrySink } from "./telemetry.js";
-import type { ResolveSegmentOptions } from "./segment-resolution.js";
 import type { EvaluateRevalidationOptions } from "./revalidation.js";
 import type { ResolutionPassInput } from "./segment-resolution/resolution-pass.js";
 import type { RevalidatingWalkOptions } from "./segment-resolution/revalidation.js";
@@ -101,6 +100,7 @@ export interface RouterContext<TEnv = any> {
     isAction: boolean,
   ) => InterceptResult | null;
 
+  /** The segment walker; a full match passes freshPassInput (FRESH). */
   resolveAllSegmentsWithRevalidation: (
     pass: ResolutionPassInput<TEnv>,
     entries: EntryData[],
@@ -146,15 +146,6 @@ export interface RouterContext<TEnv = any> {
       }
     | undefined;
 
-  resolveAllSegments: (
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    handlerContext: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>,
-    options?: ResolveSegmentOptions,
-  ) => Promise<ResolvedSegment[]>;
-
   resolveAllSegmentsGenerator?: (
     entries: EntryData[],
     routeKey: string,
@@ -168,11 +159,6 @@ export interface RouterContext<TEnv = any> {
   ) => Promise<T[]>;
 
   createHandleStore: () => any;
-
-  resolveLoadersOnly?: (
-    entries: EntryData[],
-    handlerContext: HandlerContext<any, TEnv>,
-  ) => Promise<ResolvedSegment[]>;
 
   resolveLoadersOnlyWithRevalidation?: (
     pass: ResolutionPassInput<TEnv>,

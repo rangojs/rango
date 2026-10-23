@@ -59,7 +59,7 @@ import {
 // only producer. Handler pushes (and handler-invoked ctx.use(Loader) pushes,
 // the consumption lane) are skipped on a HIT and must replay from the record. Drives the real
 // write (cacheRoute -> captureHandles) and HIT (lookupRoute -> restoreHandles
-// -> resolveLoadersOnly) paths through router.match.
+// -> resolveLoadersOnlyWithRevalidation) paths through router.match.
 
 const Crumbs = createHandle<unknown>(undefined, "test#CacheRecordCrumbs");
 

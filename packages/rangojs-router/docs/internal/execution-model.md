@@ -397,19 +397,19 @@ See "Rewrite" below for what moves and what stays.
   config (`cache()` in `dsl-helpers.ts`), so the route is its boundary: the
   route segment and its own layouts and parallels are stored and replayed, and
   every entry above the route stays live. The header and non-cacheable-var
-  guards latch at the route (`entry.cache` in `resolveAllSegments` and
+  guards latch at the route (`entry.cache` in
   `resolveAllSegmentsWithRevalidation`). Pinned by
   `match-middleware/__tests__/cache-path-children.test.ts` and
   `e2e/cache-path-children.test.ts`. A `cache()` inside a routeless
   `layout()`/`middleware()`/`transition()` wrapper in a path configures that
   path the same way (`enclosingRoute()` in `dsl-helpers.ts`).
 - An orphan renders the routeless entries in its own `layout[]` after its
-  handler and parallels (`resolveOrphanLayout`,
-  `resolveOrphanLayoutWithRevalidation`), so a `layout()` after a bare
+  handler and parallels
+  (`resolveOrphanLayoutWithRevalidation`), so a `layout()` after a bare
   `cache()` marker wraps every route of the enclosing layout. The marker is
   also the chain parent of the routes after it; for those routes it is
   resolved and its middleware collected once, at its chain position, never as
-  its layout's orphan (`ResolveSegmentOptions.chain`, `collectRouteMiddleware`).
+  its layout's orphan (the `chain` walk option, `collectRouteMiddleware`).
   A hit's live pass gets the full chain, so the marker's subtree comes only
   from the record. Pinned by
   `match-middleware/__tests__/orphan-nested-layouts.test.ts` and
@@ -906,7 +906,8 @@ the resolution boundary, so the thrown `Response` propagates out to `match()`
 and becomes a 302/308.
 
 On a route that declares `loading()`, the handler result is **streamed** — it is
-not awaited at the resolution boundary (`segment-resolution/fresh.ts`). So an
+not awaited at the resolution boundary (`resolveEntryHandlerWithRevalidation` in
+`segment-resolution/revalidation.ts`). So an
 **async** handler that returns a `Response` has that `Response` surface only
 during RSC serialization, where it is rendered into the stream via React's
 error boundary instead of becoming an HTTP redirect. A **synchronous** `Response`
@@ -928,8 +929,8 @@ intercept slots): it runs `trackHandler`, `observeStreamedHandler`, and, when a
 boundary exists, derives a promise that resolves to the nearest
 `errorBoundary()` / `notFoundBoundary()` fallback. Layouts and nav stay on the
 document and on a client navigation. The boundary is looked up from the matched
-chain entry being resolved (`ResolveSegmentOptions.boundaryEntry`, threaded
-explicitly through `fresh.ts` / `revalidation.ts`; no mutable field): the entry
+chain entry being resolved (the `boundaryEntry` argument, threaded
+explicitly through `segment-resolution/revalidation.ts`; no mutable field): the entry
 the sync path catches at, whatever
 routeless layout owns a slot (parallel entries have `parent: null`). Intercept
 slots use their declaring entry.
@@ -1972,7 +1973,7 @@ holds after an `await` and in a server component the handler hands the ctx
 to, which React renders after the handler returned.
 
 Loaders take it from their DSL kickoff: `runInsideLoaderScope` (the loader
-scope fresh.ts and revalidation.ts already open per kickoff) carries
+scope revalidation.ts already opens per kickoff) carries
 `loaderEntry.reverseScope`, and the loader executor (`loader-resolution.ts`)
 builds the loader ctx's `reverse` in `getLoaderReverseScope()`. A layout
 handler's `ctx.use(RouteLoader)` runs outside any kickoff, so the route's
@@ -2282,7 +2283,7 @@ should not be treated as equivalent.
   `defaultErrorBoundary`) gets the router's default error boundary on the
   server (`useDefaultErrorBoundary` in
   `router/loader-resolution.ts` `wrapLoaderWithErrorHandling`, passed by
-  `segment-resolution/fresh.ts` for `awaitBeforeFlush` loaders, dc-t92), and
+  `resolveOwnerLoaders` in `segment-resolution/revalidation.ts` for `awaitBeforeFlush` loaders, dc-t92), and
   every flagged loader error answers 500, declared boundary included
   (dc-q61), pinned by `e2e/flagged-loader-default-boundary.test.ts` (both
   apps, dev + production).

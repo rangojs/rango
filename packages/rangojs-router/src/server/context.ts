@@ -155,7 +155,7 @@ export type LoaderEntry = {
    * thrown notFound()/redirect() deterministically precede first flush.
    * Resolved at DSL-evaluation time from ctx.isSSR — entries are cached
    * per-isSSR (router/manifest.ts cache key), so the flag is already
-   * request-mode-correct when resolveLoaders (fresh.ts) reads it and never
+   * request-mode-correct when resolveOwnerLoaders reads it and never
    * appears on navigation-lane entries. Set by documentModeLoader, which
    * getDocumentModeEntry also applies to a lazy include's captured ancestors.
    */
@@ -1083,7 +1083,7 @@ const loaderBodyScopeALS: AsyncLocalStorage<LoaderBodyScope> = ((
 export function isInsideCacheScope(): boolean {
   if (RangoContext.getStore()?.insideCacheScope !== true) return false;
   // Request-scoped READS are exempt in any loader body — DSL loaders re-run on
-  // every request (including cache() HITs via resolveLoadersOnly), and a
+  // every request (including cache() HITs via resolveLoadersOnlyWithRevalidation), and a
   // handler-invoked loader body, though skipped with its handler on a HIT,
   // yields a BAKED shared copy in the cached artifact — an accepted
   // consumption-lane tradeoff (#672/#674). This is deliberately BROADER than
@@ -1530,12 +1530,13 @@ export function latchPprHeaderScopeForEntries(
  * ONLY the ppr (shell) axis is dropped — dynamic() does NOT opt off the CACHE
  * axis. Two cases:
  * - Pure ppr funnel (no cache() boundary): clear the latch → writes re-permit.
- * - ppr route nested under a cache() boundary: fresh.ts latches "ppr" at the
- *   funnel top (first-wins), which MASKS the positional cache() latch, but the
- *   handler still runs inside the cache scope (`insideCacheScope`). A cache()
- *   HIT skips that handler, so the write is still non-deterministic — UNMASK to
- *   "cache" instead of clearing, so the guard keeps throwing (accurate cache()
- *   wording). This is why the check keys off `insideCacheScope`, not just kind.
+ * - ppr route nested under a cache() boundary: resolveAllSegmentsWithRevalidation
+ *   latches "ppr" at the funnel top (first-wins), which MASKS the positional
+ *   cache() latch, but the handler still runs inside the cache scope
+ *   (`insideCacheScope`). A cache() HIT skips that handler, so the write is
+ *   still non-deterministic — UNMASK to "cache" instead of clearing, so the
+ *   guard keeps throwing (accurate cache() wording). This is why the check keys
+ *   off `insideCacheScope`, not just kind.
  *
  * A subsequent cache() entered AFTER dynamic() on a pure-ppr funnel re-latches
  * "cache" via latchCachedHeaderScope's `!store.cachedHeaderScope` guard (the
@@ -1568,9 +1569,10 @@ export function assertCachedHeaderWriteAllowed(
   const scope = RangoContext.getStore()?.cachedHeaderScope;
   if (!scope) return;
   // Exempt DSL loaders (loaderScopeALS) ONLY. A registered loader re-runs on
-  // every cache HIT (fresh.ts runInsideLoaderScope -> cache-lookup.ts
-  // resolveLoadersOnly), so its header/cookie writes merge into every response
-  // with no MISS/HIT divergence. A handler-invoked loader body has
+  // every cache HIT (resolveOwnerLoaders runInsideLoaderScope, reached from
+  // cache-lookup.ts resolveLoadersOnlyWithRevalidation), so its header/cookie
+  // writes merge into every response with no MISS/HIT divergence. A
+  // handler-invoked loader body has
   // loaderBodyScopeALS active but loaderScopeALS unset (loader-resolution.ts
   // derives isDslLoader from isInsideLoaderScope()); on a HIT the handler is
   // skipped so that loader never re-runs and its write would land only on the

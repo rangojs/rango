@@ -132,7 +132,7 @@ Four facts, each checkable against the tables above.
    holds two values for one loader, and the claim pairs the entry's data with
    the other run's push (#1002). "Already registered" depends on declaration
    order, on whether the reader awaits before it reads, and on the entry: the
-   route loop kicks off synchronously (`fresh.ts:151-186`), the intercept
+   route loop kicks off synchronously (`resolveOwnerLoaders` on a FRESH pass), the intercept
    loop awaits between kickoffs (`intercept-resolution.ts:267-344`), and a
    parent layout resolves long before its child route.
 
@@ -658,7 +658,7 @@ route `/ppr-push/deferred`, with every step logged in dev and in production
 
 | Step                                                                                                                                                                                                                     | Where                                                          | Logged                                                                                                                 |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **MISS.** The document render awaits an `ssr: false` loader, so both pushes are in the store before the handler barrier                                                                                                  | `segment-resolution/fresh.ts:194`                              | both pushes stored with `handlerBarrierResolved=false`                                                                 |
+| **MISS.** The document render awaits an `ssr: false` loader, so both pushes are in the store before the handler barrier                                                                                                  | `segment-resolution/revalidation.ts` `resolveOwnerLoaders`     | both pushes stored with `handlerBarrierResolved=false`                                                                 |
 | The document stream reads the store after the barrier and awaits every top-level thenable: SSR and the client get the same resolved snapshot                                                                             | `handles/deferred-resolution.ts:109-112`                       | `metadata.handles` = `[settled-note@g1, deferred-note@g1]`; SSR reads the same                                         |
 | **Capture.** The loader's `cache()` entry, written by the MISS, hits: the body does not run, the entry's pushes are replayed, the deferred one as the thenable Flight decoded                                            | `loader-cache.ts:840` (`replayLoaderHandles`)                  | `loader cache() entry HIT`, blob `["settled-note@g1","$@1"]`                                                           |
 | The push funnel calls `value.then(mask)`. React's decoded promise has a `then()` that returns nothing, so the slot is `undefined`, tagged as a loader push                                                               | `rsc/shell-capture.ts:2051`, `:2076`                           | `value.then(mask) returned=undefined`; stored `undefined`, `loaderTag=true`                                            |
@@ -1222,8 +1222,8 @@ breadcrumb. Ordinary `urls()` routes had the same bug.
 
 ### Why it broke
 
-A loader pushes under its owning segment's id: `fresh.ts` and
-`revalidation.ts` pin `_currentSegmentId` to the entry's shortCode before
+A loader pushes under its owning segment's id: `revalidation.ts`
+(`resolveOwnerLoaders`) pins `_currentSegmentId` to the entry's shortCode before
 the kickoffs, so the route's handler and every loader registered on it share
 one bucket per handle. The browser merged a partial response bucket by
 bucket (`browser/event-controller.ts` `setHandleData`): a bucket in the
@@ -1247,8 +1247,8 @@ which run made each one.
    push time the store records the loader whose run makes it:
    `getHandlePushOwner()` (`server/context.ts`) answers the DSL loader the
    scope resolves (`runInsideLoaderScope` now takes the loader's id at the
-   five kickoff sites in `fresh.ts`, `revalidation.ts` and
-   `intercept-resolution.ts`), else the outermost loader body around the
+   kickoff site in `resolveOwnerLoaders`, `revalidation.ts`, which
+   `intercept-resolution.ts` also uses), else the outermost loader body around the
    push (a loader a handler reads with `ctx.use`). A copy names the loader
    it stands for (`replayOf`, `restoredOf`, `placeholderOf`, or the record
    `owner`). A handler's own push names nothing.

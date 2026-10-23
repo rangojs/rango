@@ -391,7 +391,10 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
         return {};
       },
       setupLoaderAccess: () => {},
-      resolveAllSegments: async () => [],
+      resolveAllSegmentsWithRevalidation: async () => ({
+        segments: [],
+        matchedIds: [],
+      }),
     } as unknown as RouterContext;
     const match = {
       env: {},

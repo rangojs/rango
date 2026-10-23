@@ -337,7 +337,7 @@ export interface RequestContext<
    * @internal PPR shell-capture ACTIVE marker. True ONLY inside the background
    * capture task's derived request context (built by shell-capture.ts). This is
    * the switch every capture-specific behavior reads: loader masking
-   * (loader-mask.ts isShellCaptureActive / fresh.ts emitStreaming) and the
+   * (loader-mask.ts isShellCaptureActive / resolveOwnerLoaders) and the
    * identity-read capture guard (server/context.ts guardIdentityRead). The
    * foreground render never sets it, so the
    * served response is byte-identical to axis 1. The capture descriptor itself
@@ -882,8 +882,8 @@ export interface RequestContext<
    * (loader(Def, { ssr: false })): segment resolution awaits these
    * before returning, so the render barrier cannot resolve until they settle.
    * rendered() checks this set to fail fast — a flagged loader awaiting the
-   * barrier is a guaranteed cycle, not a race. Registered by resolveLoaders
-   * (fresh.ts) before loader kickoff; only ever populated on document renders
+   * barrier is a guaranteed cycle, not a race. Registered by resolveOwnerLoaders
+   * before loader kickoff; only ever populated on document renders
    * (the flag is stamped per-isSSR at DSL evaluation).
    */
   _awaitBeforeFlushLoaderIds?: Set<string>;

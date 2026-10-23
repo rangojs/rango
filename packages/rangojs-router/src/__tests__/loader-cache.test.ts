@@ -837,7 +837,7 @@ describe("loader-cache", () => {
 
     it("dedups the cache read-through when the same loaderId resolves twice in one request", async () => {
       // An orphan layout with parallel slots inherits its parent route's
-      // loaders, so resolveOrphanLayout re-resolves the parent's loaders under
+      // loaders, so resolveOrphanLayoutWithRevalidation re-resolves the parent's loaders under
       // a different shortCode -> resolveLoaderData runs twice for the SAME
       // loaderId. Without dedup, getItem/setItem (e.g. a KV round-trip) would
       // run twice for one logical cached loader.

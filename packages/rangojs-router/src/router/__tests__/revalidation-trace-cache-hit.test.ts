@@ -34,7 +34,6 @@ vi.mock("../router-context.js", () => ({
       return new Map();
     },
     resolveLoadersOnlyWithRevalidation: mockResolveLoadersOnlyWithRevalidation,
-    resolveLoadersOnly: vi.fn(async () => []),
   }),
   runWithRouterContext: (_ctx: any, fn: any) => fn(),
 }));

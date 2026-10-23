@@ -11,7 +11,7 @@
  * the derived request context of the background capture task (shell-capture.ts);
  * the foreground render never sets it. This module is the single home for the
  * mask so every loader execution site gates the same way (loader-cache.ts
- * `resolveLoaderData`, fresh.ts `resolveLoaders`).
+ * `resolveLoaderData`, revalidation.ts `resolveOwnerLoaders`).
  */
 
 import {

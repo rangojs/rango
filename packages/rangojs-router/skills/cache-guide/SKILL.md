@@ -632,7 +632,7 @@ where the boundary's UI segments are served from cache, loaders are re-resolved
 fresh on every request. This is enforced at two levels:
 
 1. **Storage**: `cacheRoute()` filters out loader segments before serialization.
-2. **Retrieval**: On cache hit, `resolveLoadersOnly()` runs the boundary's
+2. **Retrieval**: On cache hit, `resolveLoadersOnlyWithRevalidation()` runs the boundary's
    loaders after yielding its cached UI segments (the loaders above the boundary
    run with their live segments), ensuring fresh data regardless of cache state.
 

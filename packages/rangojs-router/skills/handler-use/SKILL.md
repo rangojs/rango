@@ -368,7 +368,7 @@ Per-slot merge order is **handler.use → shared use → slot-local use**. Slot-
 
 Other things to keep in mind about `loading()`:
 
-- Any `loading()` (regardless of source) makes the segment a streaming unit. A handler that includes `loading()` in its `.use` opts every mount site into streaming by default. To opt back out, pass `loading(false)` at the mount site (`loading === false` handling in [segment-resolution/fresh.ts](../../src/router/segment-resolution/fresh.ts)) — use the slot descriptor form for parallel slots so the opt-out doesn't broadcast.
+- Any `loading()` (regardless of source) makes the segment a streaming unit. A handler that includes `loading()` in its `.use` opts every mount site into streaming by default. To opt back out, pass `loading(false)` at the mount site (`loading === false` handling in [segment-resolution/revalidation.ts](../../src/router/segment-resolution/revalidation.ts)) — use the slot descriptor form for parallel slots so the opt-out doesn't broadcast.
 
 Rule of thumb: only put `loading()` in `handler.use` if you genuinely want every mount site to stream by default. Use the slot descriptor's `use` for any per-slot intent at a `parallel()` call.
 

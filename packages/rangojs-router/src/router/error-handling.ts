@@ -111,10 +111,10 @@ export function invokeOnError<TEnv = any>(
 /**
  * First non-undefined `pick(orphan)` over the routeless entries in
  * `entry.layout` and, recursively, in theirs: depth-first in render order
- * (resolveOrphanLayout in segment-resolution/fresh.ts). Since #922 a routeless
- * entry nested in another renders (a layout() after a bare cache() marker, a
- * layout() in a routeless wrapper); a one-level scan missed the boundaries and
- * intercepts it declares (#926).
+ * (resolveOrphanLayoutWithRevalidation in segment-resolution/revalidation.ts).
+ * Since #922 a routeless entry nested in another renders (a layout() after a
+ * bare cache() marker, a layout() in a routeless wrapper); a one-level scan
+ * missed the boundaries and intercepts it declares (#926).
  *
  * `skip` is the entry an upward walk came from. Only a bare cache() marker is
  * both in its layout's layout[] and in the chain, and its subtree was already

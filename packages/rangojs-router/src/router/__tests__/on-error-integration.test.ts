@@ -1,21 +1,23 @@
 /**
  * onError Integration Tests
  *
- * Exercises the real segment resolution code paths (resolveSegment,
- * resolveParallelEntry) with deps wired to match router.ts's trackHandler
+ * Exercises the real segment resolution code paths (a FRESH pass of
+ * resolveSegmentWithRevalidation and resolveParallelSegmentsWithRevalidation)
+ * with deps wired to match router.ts's trackHandler
  * implementation. Verifies that streaming handler and parallel-slot errors
  * are reported to callOnError through the production code path.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
-  resolveSegment,
-  resolveParallelEntry,
-} from "../segment-resolution/fresh.js";
+  resolveParallelSegmentsWithRevalidation,
+  resolveSegmentWithRevalidation,
+} from "../segment-resolution/revalidation.js";
+import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import type { SegmentResolutionDeps } from "../types.js";
 import type { EntryData } from "../../server/context.js";
 import type { ResolvedSegment } from "../../types.js";
 
-// Mock leaf dependencies used by fresh.ts
+// Mock leaf dependencies used by the segment walker
 vi.mock("../segment-resolution/loader-cache.js", () => ({
   resolveLoaderData: vi.fn(() => Promise.resolve({ data: "test" })),
 }));
@@ -70,16 +72,19 @@ function makeContext(): any {
   };
 }
 
-function makeRouteEntry(handler: any, opts?: { loading?: any }): EntryData {
+function makeRouteEntry(
+  handler: any,
+  opts?: { loading?: any; shortCode?: string; parallel?: object },
+): Exclude<EntryData, { type: "parallel" }> {
   return {
     type: "route",
-    shortCode: "M1R0",
+    shortCode: opts?.shortCode ?? "M1R0",
     id: "test-route",
     handler,
     loading: opts?.loading,
     loader: [],
     layout: [],
-    parallel: {},
+    parallel: opts?.parallel ?? {},
     intercept: [],
     revalidate: [],
     errorBoundary: [],
@@ -111,8 +116,21 @@ function makeParallelEntry(
   } as any;
 }
 
+/** A route entry `shortCode` whose slots are the parallel entry's. */
+function makeSlotOwner(parallelEntry: EntryData, shortCode: string): EntryData {
+  return makeRouteEntry(() => null, {
+    shortCode,
+    parallel: Object.fromEntries(
+      Object.keys(parallelEntry.handler as object).map((slot) => [
+        slot,
+        parallelEntry,
+      ]),
+    ),
+  });
+}
+
 // ---------------------------------------------------------------------------
-// Tests: Streaming route handler via resolveSegment
+// Tests: Streaming route handler via a FRESH segment pass
 // ---------------------------------------------------------------------------
 describe("Streaming route handler onError (production path)", () => {
   let callOnError: ReturnType<typeof vi.fn>;
@@ -158,13 +176,9 @@ describe("Streaming route handler onError (production path)", () => {
     });
     const context = makeContext();
 
-    await resolveSegment(
+    await resolveSegmentWithRevalidation(
+      makeFreshPass(context, deps, { routeKey: "test-route" }),
       entry,
-      "test-route",
-      context.params,
-      context,
-      new Map(),
-      deps,
     );
 
     expect(deps.trackHandler).toHaveBeenCalledWith(handlerPromise, {
@@ -177,13 +191,9 @@ describe("Streaming route handler onError (production path)", () => {
     const entry = makeRouteEntry(async () => "sync content");
     const context = makeContext();
 
-    await resolveSegment(
+    await resolveSegmentWithRevalidation(
+      makeFreshPass(context, deps, { routeKey: "test-route" }),
       entry,
-      "test-route",
-      context.params,
-      context,
-      new Map(),
-      deps,
     );
 
     expect(deps.trackHandler).not.toHaveBeenCalled();
@@ -197,13 +207,9 @@ describe("Streaming route handler onError (production path)", () => {
     });
     const context = makeContext();
 
-    await resolveSegment(
+    await resolveSegmentWithRevalidation(
+      makeFreshPass(context, deps, { routeKey: "test-route" }),
       entry,
-      "test-route",
-      context.params,
-      context,
-      new Map(),
-      deps,
     );
 
     // Wait for the side-effect .catch() to fire
@@ -222,7 +228,7 @@ describe("Streaming route handler onError (production path)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: Streaming parallel-slot handler via resolveParallelEntry
+// Tests: Streaming parallel-slot handler via a FRESH slot pass
 // ---------------------------------------------------------------------------
 describe("Streaming parallel-slot handler onError (production path)", () => {
   let callOnError: ReturnType<typeof vi.fn>;
@@ -267,13 +273,10 @@ describe("Streaming parallel-slot handler onError (production path)", () => {
     );
     const context = makeContext();
 
-    await resolveParallelEntry(
-      entry,
-      context.params,
-      context,
+    await resolveParallelSegmentsWithRevalidation(
+      makeFreshPass(context, deps, { routeKey: "test-route" }),
+      makeSlotOwner(entry, "M1R0"),
       true,
-      "M1R0",
-      deps,
     );
 
     expect(deps.trackHandler).toHaveBeenCalledWith(slotPromise, {
@@ -289,13 +292,10 @@ describe("Streaming parallel-slot handler onError (production path)", () => {
     );
     const context = makeContext();
 
-    await resolveParallelEntry(
-      entry,
-      context.params,
-      context,
+    await resolveParallelSegmentsWithRevalidation(
+      makeFreshPass(context, deps, { routeKey: "test-route" }),
+      makeSlotOwner(entry, "M1R0"),
       true,
-      "M1R0",
-      deps,
     );
 
     expect(deps.trackHandler).not.toHaveBeenCalled();
@@ -310,13 +310,10 @@ describe("Streaming parallel-slot handler onError (production path)", () => {
     );
     const context = makeContext();
 
-    await resolveParallelEntry(
-      entry,
-      context.params,
-      context,
+    await resolveParallelSegmentsWithRevalidation(
+      makeFreshPass(context, deps, { routeKey: "test-route" }),
+      makeSlotOwner(entry, "M1R0"),
       true,
-      "M1R0",
-      deps,
     );
 
     // Wait for the side-effect .catch() to fire
@@ -344,13 +341,10 @@ describe("Streaming parallel-slot handler onError (production path)", () => {
     );
     const context = makeContext();
 
-    await resolveParallelEntry(
-      entry,
-      context.params,
-      context,
+    await resolveParallelSegmentsWithRevalidation(
+      makeFreshPass(context, deps, { routeKey: "test-route" }),
+      makeSlotOwner(entry, "M1R0"),
       true,
-      "M1R0",
-      deps,
     );
 
     await new Promise((resolve) => setTimeout(resolve, 0));

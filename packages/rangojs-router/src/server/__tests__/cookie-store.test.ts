@@ -676,7 +676,8 @@ describe("cache() DSL scope guards", () => {
   /**
    * Run `fn` inside a request context AND a cache() DSL boundary — i.e. with
    * the RangoContext render-store flag `insideCacheScope = true`, mirroring
-   * what segment resolution sets for a `type: "cache"` entry (fresh.ts:636).
+   * what segment resolution sets for a `type: "cache"` entry
+   * (resolveAllSegmentsWithRevalidation).
    * This is a different ALS from the request context, so both are entered.
    */
   function withCacheScope(fn: () => void) {

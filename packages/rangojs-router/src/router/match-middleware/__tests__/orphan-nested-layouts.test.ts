@@ -5,7 +5,7 @@
  * A bare cache() in a layout's children is registered twice: as a routeless
  * wrapper in the layout's layout[] (so the siblings after it wrap every route
  * of the layout) and as the chain parent of the routes after it. Before the
- * fix, resolveOrphanLayout rendered one orphan level only, so a layout after
+ * fix, resolveOrphanLayoutWithRevalidation rendered one orphan level only, so a layout after
  * the marker was dropped on the routes outside the marker's scope; and a
  * marker in the matched chain was also resolved as its layout's orphan, so a
  * parallel after it ran twice on a MISS and once, discarded, on a HIT, and a

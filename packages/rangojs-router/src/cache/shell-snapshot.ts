@@ -383,7 +383,7 @@ export interface ShellLoaderSeedEntry {
 
 /**
  * A pin's loader. A pin is stored under its loader segment id,
- * `${shortCode}D${index}.${loaderId}` (fresh.ts resolveLoaders), and a
+ * `${shortCode}D${index}.${loaderId}` (resolveOwnerLoaders), and a
  * shortCode holds no "D" and no "." (server/context.ts getShortCode: M, L, P,
  * R, C, I and digits), so the first `D<index>.` ends it. A loader id can hold
  * both.

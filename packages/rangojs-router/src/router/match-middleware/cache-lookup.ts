@@ -100,6 +100,7 @@ import {
   type MatchPipelineState,
 } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
+import { freshPassInput } from "../segment-resolution/resolution-pass.js";
 import { observeEvent } from "../instrument.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
@@ -210,48 +211,34 @@ async function* resolveFreshLoadersAndYield<TEnv>(
   state: MatchPipelineState,
   pipelineStart: number,
   ms: MatchContext<TEnv>["metricsStore"],
-  resolveLoadersOnly: RouterContext<TEnv>["resolveLoadersOnly"],
   resolveLoadersOnlyWithRevalidation: RouterContext<TEnv>["resolveLoadersOnlyWithRevalidation"],
 ): AsyncGenerator<ResolvedSegment> {
   const loaderStart = performance.now();
   entries = entries.filter((e) => !interceptFillSkips(ctx, e.shortCode));
 
-  if (ctx.isFullMatch) {
-    if (resolveLoadersOnly) {
-      const loaderSegments = await ctx.Store.run(() =>
-        resolveLoadersOnly(entries, ctx.handlerContext),
-      );
-      state.matchedIds = state.cachedMatchedIds!;
-      for (const segment of loaderSegments) {
-        yield segment;
-      }
-    } else {
-      state.matchedIds = state.cachedMatchedIds!;
+  if (resolveLoadersOnlyWithRevalidation) {
+    const loaderResult = await ctx.Store.run(() =>
+      resolveLoadersOnlyWithRevalidation(
+        ctx.isFullMatch
+          ? freshPassInput(ctx.handlerContext, ctx.routeKey, ctx.matched.params)
+          : {
+              ...resolutionPassInput(ctx),
+              // Loaders are never cached in the segment cache, so segment
+              // staleness must not propagate; browser-sent staleness
+              // (ctx.stale) still must.
+              stale: ctx.stale || undefined,
+            },
+        entries,
+      ),
+    );
+    state.matchedIds = ctx.isFullMatch
+      ? state.cachedMatchedIds!
+      : [...state.cachedMatchedIds!, ...loaderResult.matchedIds];
+    for (const segment of loaderResult.segments) {
+      yield segment;
     }
   } else {
-    if (resolveLoadersOnlyWithRevalidation) {
-      const loaderResult = await ctx.Store.run(() =>
-        resolveLoadersOnlyWithRevalidation(
-          {
-            ...resolutionPassInput(ctx),
-            // Loaders are never cached in the segment cache, so segment
-            // staleness must not propagate; browser-sent staleness (ctx.stale)
-            // still must.
-            stale: ctx.stale || undefined,
-          },
-          entries,
-        ),
-      );
-      state.matchedIds = [
-        ...state.cachedMatchedIds!,
-        ...loaderResult.matchedIds,
-      ];
-      for (const segment of loaderResult.segments) {
-        yield segment;
-      }
-    } else {
-      state.matchedIds = state.cachedMatchedIds!;
-    }
+    state.matchedIds = state.cachedMatchedIds!;
   }
 
   if (ms) {
@@ -276,7 +263,6 @@ async function* yieldFromStore<TEnv>(
   state: MatchPipelineState,
   pipelineStart: number,
   reqCtx: RequestContext<TEnv> | undefined,
-  resolveLoadersOnly: RouterContext<TEnv>["resolveLoadersOnly"],
   resolveLoadersOnlyWithRevalidation: RouterContext<TEnv>["resolveLoadersOnlyWithRevalidation"],
   /**
    * The entry may be newer than the client's copy: an on-demand overlay entry
@@ -374,7 +360,6 @@ async function* yieldFromStore<TEnv>(
     state,
     pipelineStart,
     ctx.metricsStore,
-    resolveLoadersOnly,
     resolveLoadersOnlyWithRevalidation,
   );
 }
@@ -495,7 +480,6 @@ async function* tryPrerenderLookup<TEnv>(
   state: MatchPipelineState,
   pipelineStart: number,
   reqCtx: RequestContext<TEnv> | undefined,
-  resolveLoadersOnly: RouterContext<TEnv>["resolveLoadersOnly"],
   resolveLoadersOnlyWithRevalidation: RouterContext<TEnv>["resolveLoadersOnlyWithRevalidation"],
   isPassthroughPrerenderRoute: boolean,
   overlay?: ResolvedPrerender,
@@ -556,7 +540,6 @@ async function* tryPrerenderLookup<TEnv>(
         state,
         pipelineStart,
         reqCtx,
-        resolveLoadersOnly,
         resolveLoadersOnlyWithRevalidation,
         true,
       );
@@ -582,7 +565,6 @@ async function* tryPrerenderLookup<TEnv>(
         state,
         pipelineStart,
         reqCtx,
-        resolveLoadersOnly,
         resolveLoadersOnlyWithRevalidation,
       );
       return true;
@@ -657,8 +639,6 @@ export function withCacheLookup<TEnv>(
       evaluateRevalidation,
       buildEntryRevalidateMap,
       resolveLoadersOnlyWithRevalidation,
-      resolveLoadersOnly,
-      resolveAllSegments,
       resolveAllSegmentsWithRevalidation,
     } = getRouterContext<TEnv>();
 
@@ -692,7 +672,6 @@ export function withCacheLookup<TEnv>(
             state,
             pipelineStart,
             pipelineReqCtx,
-            resolveLoadersOnly,
             resolveLoadersOnlyWithRevalidation,
             isPassthroughPrerenderRoute,
             prerenderOverlay,
@@ -722,7 +701,6 @@ export function withCacheLookup<TEnv>(
             state,
             pipelineStart,
             pipelineReqCtx,
-            resolveLoadersOnly,
             resolveLoadersOnlyWithRevalidation,
             isPassthroughPrerenderRoute,
           );
@@ -862,30 +840,31 @@ export function withCacheLookup<TEnv>(
       const liveEntries = ctx.entries.slice(0, boundaryIndex);
       const live: { segments: ResolvedSegment[]; matchedIds: string[] } =
         await ctx.Store.run(async () => {
-          if (!ctx.isFullMatch) {
-            return resolveAllSegmentsWithRevalidation(
-              resolutionPassInput(ctx),
-              liveEntries,
-              {
-                interceptResult: ctx.interceptResult,
-                localRouteName: ctx.localRouteName,
-                pathname: ctx.pathname,
-                chain: ctx.entries,
-              },
-            );
-          }
           // The full chain keeps a bare cache() marker, which also sits in
           // its layout's orphan list, out of the live pass: the record
           // supplies it and its subtree (issue #918).
-          const segments = await resolveAllSegments(
+          const result = await resolveAllSegmentsWithRevalidation(
+            ctx.isFullMatch
+              ? freshPassInput(
+                  ctx.handlerContext,
+                  ctx.routeKey,
+                  ctx.matched.params,
+                )
+              : resolutionPassInput(ctx),
             liveEntries,
-            ctx.routeKey,
-            ctx.matched.params,
-            ctx.handlerContext,
-            ctx.loaderPromises,
-            { chain: ctx.entries },
+            {
+              interceptResult: ctx.interceptResult,
+              localRouteName: ctx.localRouteName,
+              pathname: ctx.pathname,
+              chain: ctx.entries,
+            },
           );
-          return { segments, matchedIds: segments.map((s) => s.id) };
+          return ctx.isFullMatch
+            ? {
+                segments: result.segments,
+                matchedIds: result.segments.map((s) => s.id),
+              }
+            : result;
         });
       // The record supplies every covered segment.
       liveSegments = live.segments.filter(
@@ -1044,7 +1023,6 @@ export function withCacheLookup<TEnv>(
       state,
       pipelineStart,
       ms,
-      resolveLoadersOnly,
       resolveLoadersOnlyWithRevalidation,
     );
   };

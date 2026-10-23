@@ -20,15 +20,11 @@ import { interceptSlotId } from "./intercept-resolution.js";
 import { loadManifest } from "./manifest.js";
 import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
-import type { ResolveSegmentOptions } from "./segment-resolution.js";
+import { freshPassInput } from "./segment-resolution/resolution-pass.js";
 import { runWithRouterContext } from "./router-context.js";
 import type { EntryData, InterceptEntry } from "../server/context";
 import type { PartialPrerenderProps } from "../urls/pattern-types.js";
-import type {
-  HandlerContext,
-  InternalHandlerContext,
-  ResolvedSegment,
-} from "../types";
+import type { InternalHandlerContext, ResolvedSegment } from "../types";
 import type {
   SerializedSegmentData,
   SegmentHandleData,
@@ -55,14 +51,7 @@ export interface PrerenderMatchDeps<TEnv = any> {
   ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   buildRouterContext: () => RouterContext<TEnv>;
   mergedRouteMap: Record<string, string>;
-  resolveAllSegments: (
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>,
-    options?: ResolveSegmentOptions,
-  ) => Promise<ResolvedSegment[]>;
+  resolveAllSegmentsWithRevalidation: RouterContext<TEnv>["resolveAllSegmentsWithRevalidation"];
 }
 
 /**
@@ -340,17 +329,18 @@ export async function matchForPrerender<TEnv = any>(
         setupBuildUse(buildCtx);
 
         // 8. Resolve all segments with skipLoaders
-        const loaderPromises = new Map<string, Promise<any>>();
-        const allSegments = await deps.resolveAllSegments(
-          entries,
-          matched.routeKey,
-          matchedParams,
-          buildCtx,
-          loaderPromises,
-          // throwOnError: a render failure (or `throw new Skip()`) must reach the
-          // build/dev caller, not be baked into a frozen error page (issue #587).
-          { skipLoaders: true, throwOnError: true },
-        );
+        const { segments: allSegments } =
+          await deps.resolveAllSegmentsWithRevalidation(
+            freshPassInput(buildCtx, matched.routeKey, matchedParams, {
+              skipLoaders: true,
+              // A render failure (or `throw new Skip()`) must reach the
+              // build/dev caller, not be baked into a frozen error page
+              // (issue #587).
+              throwOnError: true,
+            }),
+            entries,
+            { pathname: buildCtx.pathname },
+          );
 
         // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
         // When the route declares loading(), the handler result is deferred so the
@@ -375,7 +365,7 @@ export async function matchForPrerender<TEnv = any>(
         // the tree) as an error row and completes normally. Rethrown below like
         // a handler throw, so the caller's policy decides instead of baking the
         // error (#914). On-demand refresh: a deep async child calling
-        // cookies()/headers() throws here, not in resolveAllSegments; a
+        // cookies()/headers() throws here, not in segment resolution; a
         // personalization error is thrown in preference to any other so the
         // trigger maps it to skipped-personalized and keeps the old entry.
         const { serializeSegments } = await import("../cache/segment-codec.js");
@@ -481,13 +471,13 @@ export async function matchForPrerender<TEnv = any>(
 
           for (const { intercept, entry: parentEntry } of foundIntercepts) {
             // setupBuildUse keys handle pushes by ctx._currentSegmentId. The main
-            // resolveAllSegments pass left it on the route's segment id, so pin it
+            // segment pass left it on the route's segment id, so pin it
             // to THIS intercept's slot id before resolving the handler/layout --
             // otherwise the intercept's ctx.use() handle pushes land in the wrong
             // bucket and getDataForSegment(seg.id) below drops them from the baked
             // artifact. Re-pinned per iteration so multiple intercepts targeting
-            // the same route each get their own id (mirrors fresh.ts parallel-slot
-            // pinning).
+            // the same route each get their own id (mirrors the walker's
+            // parallel-slot pinning, revalidation.ts).
             const interceptSegmentId = interceptSlotId(parentEntry, intercept);
             (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
               interceptSegmentId;
