@@ -331,6 +331,67 @@ describe("segment-resolution parallel loading", () => {
     expect(result.segments[0]?.type).toBe("parallel");
   });
 
+  describe("static slot value with loading false", () => {
+    // A non-function slot value is the slot's content as declared: a
+    // Promise (a React 19 ReactNode) goes to render as is, never awaited by
+    // the walk.
+    function staticSlotLayout(value: unknown) {
+      return {
+        id: "blog.layout",
+        type: "layout",
+        shortCode: "L0",
+        handler: "layout",
+        loader: [],
+        layout: [],
+        parallel: [{ ...createParallelEntry(value), loading: false }],
+        intercept: [],
+        middleware: [],
+        revalidate: [],
+        errorBoundary: [],
+        notFoundBoundary: [],
+      } as any;
+    }
+    const deps = {
+      trackHandler: (p: any) => p,
+      findNearestErrorBoundary: () => null,
+      findNearestNotFoundBoundary: () => null,
+    } as any;
+
+    it("hands a Promise slot value to render unawaited in a FRESH pass", async () => {
+      const value = Promise.resolve("slot-content");
+      const context = createContext();
+      const result = await resolveParallelSegmentsWithRevalidation(
+        makeFreshPass(context, deps, { routeKey: "/blog", params: {} }),
+        staticSlotLayout(value),
+        false,
+      );
+      expect(result.segments).toHaveLength(1);
+      expect(result.segments[0]?.component).toBe(value);
+    });
+
+    it("hands a Promise slot value to render unawaited in a partial pass", async () => {
+      const value = Promise.resolve("slot-content");
+      const context = createContext();
+      const result = await resolveParallelSegmentsWithRevalidation(
+        {
+          context,
+          client: new Set(),
+          params: {},
+          prevParams: {},
+          request: context.request,
+          prevUrl: context.url,
+          nextUrl: context.url,
+          routeKey: "/blog",
+          deps,
+        },
+        staticSlotLayout(value),
+        false,
+      );
+      expect(result.segments).toHaveLength(1);
+      expect(result.segments[0]?.component).toBe(value);
+    });
+  });
+
   it("resolves parallel loaders even when loading is set", async () => {
     const context = createContext();
     const entry = {

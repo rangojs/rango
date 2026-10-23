@@ -778,7 +778,8 @@ async function resolveParallelSlotComponent<TEnv>(
           component = result as ReactNode;
         }
       } else {
-        component = await run();
+        // A static value (a Promise included) goes to render as is.
+        component = typeof handler === "function" ? await run() : handler;
         doneHandler?.();
       }
     }
