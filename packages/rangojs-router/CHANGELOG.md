@@ -31,9 +31,9 @@ answer as production does:
 - A throwing `onTimeout` logs `[RSC] onTimeout callback error:` instead of
   `[dispatch] onTimeout callback error:`.
 - A response-route timeout on a rewritten pass: `onError`, `onTimeout` and
-  the `request.timeout` event carry the rewrite target's request and URL.
-  Without a request-id header, that event's `requestId` then differs from the
-  one on `dispatch`'s own `request.start` and `request.end`.
+  the `request.timeout` event carry the rewrite target's request and URL. The
+  event keeps the `requestId` of `dispatch`'s own `request.start` and
+  `request.end`.
 - A stream-idle timeout's `onError` call and `request.timeout` event carry
   `routeKey`.
 - The same timeout, stream-idle or rewrite error reaches `onError` once per
@@ -41,6 +41,36 @@ answer as production does:
 
 No change in your code. A test that pinned one of the old answers now gets
 production's.
+
+### Changed: `dispatch()` classifies a request as production does
+
+**Before.** `dispatch()` matched each URL with a lookup of its own before the
+global middleware ran, and set the route's params and name there. It never
+answered a reload, and it served an action that a rewrite moved to a response
+route.
+
+**After.** It classifies each pass with the production handler's classify
+stage and answers its terminal plans inside the global middleware chain:
+
+- A request whose `_rsc_v` names another deploy's document version (see
+  `setBuildVersions`) gets the `X-RSC-Reload` production sends, on any route.
+  On a component route `dispatch()` threw, on an unmatched path it answered
+  404, and on a response route a request that was not a partial got the
+  route's response.
+- A partial request (`?_rsc_partial`) whose `_rsc_rid` names another router (a
+  navigation from another app) gets the `X-RSC-Reload` too, where a component
+  route threw and an unmatched path answered 404.
+- An action request (`?_rsc_action`) that a rewrite moved to a response route,
+  a redirect or an unmatched path rejects with production's error, `A rewrite
+of a server action or form post must target a page route; …`, instead of
+  serving the target.
+- Global middleware sees the route in `ctx.routeName` and the request
+  context's `params` after `await next()`, not before it. A trailing-slash
+  redirect sets neither.
+
+The error a component route throws, and when it throws (before any
+middleware), is unchanged. A test that read `ctx.routeName` before `next()`
+in global middleware reads it after `next()`, or from route middleware.
 
 ## 0.27.0 (2026-10-23)
 

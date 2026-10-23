@@ -194,11 +194,8 @@ export interface MatchHandlers<TEnv = any> {
       handler: MiddlewareFn;
       params: Record<string, string>;
     }>;
-    responseType?: string;
-    handler?: Function;
     params?: Record<string, string>;
-    negotiated?: boolean;
-    manifestEntry?: EntryData;
+    routeKey?: string;
   } | null>;
 }
 
