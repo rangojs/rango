@@ -1246,14 +1246,16 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     ),
     params,
     belongsToRoute,
-    ...(entry.clientGroup ? { clientGroup: entry.clientGroup } : {}),
-    ...(entry.type === "layout" || entry.type === "cache"
-      ? { layoutName: entry.id }
-      : {}),
-    ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
-    _handlerRan: handlerRan,
-    ...deferred,
   };
+  // Assigned, not spread: a conditional spread costs a temporary object and a
+  // property copy on every chain entry. The keys keep this order.
+  if (entry.clientGroup) segment.clientGroup = entry.clientGroup;
+  if (entry.type === "layout" || entry.type === "cache") {
+    segment.layoutName = entry.id;
+  }
+  if (entry.mountPath) segment.mountPath = entry.mountPath;
+  segment._handlerRan = handlerRan;
+  if (deferred) segment.deferred = deferred.deferred;
 
   return { segment, matchedId };
 }
@@ -1438,7 +1440,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     `Expected orphan to be a layout or cache, got: ${orphan.type}`,
   );
 
-  const { context, params, routeKey } = pass;
+  const { context, params } = pass;
   const fresh = pass.client === FRESH;
   const segments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
