@@ -109,11 +109,11 @@ import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { getContext } from "../../server/context.js";
 import { executionStart } from "../../cache/tag-invalidation.js";
 import {
-  bindRes,
   createRequestContext,
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { deriveRenderPass } from "../../server/render-pass.js";
 import { recordUse } from "../segment-resolution/prefetch-deferral.js";
 import { heldNothingPassInput } from "../segment-resolution/resolution-pass.js";
 
@@ -130,23 +130,11 @@ import { heldNothingPassInput } from "../segment-resolution/resolution-pass.js";
  * MAX_REVALIDATION_INTERVAL, as after a refresh that throws.
  *
  * Runs on a DERIVED request context that owns the per-render state the
- * foreground reads while it is still producing the page (a stale HIT re-runs
- * its loaders; a proactive render starts once the Response exists, while its
- * body streams):
- *   - _handleStore: read late (loader pushes and aux-lane tracking in
- *     loader-resolution.ts, nested cache restores and captures in
- *     cache-scope.ts), so a swap sent live pushes into this render.
- *     setupLoaderAccess binds the store at setup, so it runs inside the
- *     derived context too.
- *   - _metricsStore: undefined, and the DSL store below has `metrics` unset
- *     (track() reads that one), so nothing lands on the foreground's perf
- *     timeline. ctx.Store.run closes over ctx.Store, so the derived store
- *     needs its own run.
- *   - response writes (headers, cookies, status, onResponse callbacks) go to
- *     a throwaway context (whose status gates the write, above) and are
- *     dropped: a layout above the cache() boundary is outside the header
- *     guard and an error boundary sets a status, so they would otherwise
- *     reach the live response.
+ * foreground reads while it is still producing the page:
+ * RENDER_PASS_FIELDS["background-revalidation"] (server/render-pass.ts) lists
+ * each field and why. The DSL store below has `metrics` unset too (track()
+ * reads that one), so nothing lands on the foreground's perf timeline;
+ * ctx.Store.run closes over ctx.Store, so the derived store needs its own run.
  * runWithRequestContext also re-establishes the request ALS, which a waitUntil
  * task on workerd loses; the DSL store is a different ALS (build context).
  */
@@ -158,8 +146,7 @@ export async function rerenderAndCacheRoute<TEnv>(
 ): Promise<number> {
   const start = executionStart();
   const handleStore = routerCtx.createHandleStore();
-  // Response writes land in a throwaway context nothing merges or drains. Its
-  // mutators are closures over its own stub, and they keep the same guards.
+  // Response writes land in a throwaway context nothing merges or drains.
   const sink = createRequestContext({
     env: ctx.env,
     request: ctx.request,
@@ -167,26 +154,10 @@ export async function rerenderAndCacheRoute<TEnv>(
     variables: {},
     themeConfig: requestCtx._themeConfig,
   });
-  const renderCtx: RequestContext<TEnv> = Object.assign(
-    Object.create(requestCtx),
-    {
-      _handleStore: handleStore,
-      _metricsStore: undefined,
-      _renderErrors: [],
-      _recoveredHandlerErrors: undefined,
-      _onResponseCallbacks: [],
-      header: sink.header,
-      setCookie: sink.setCookie,
-      deleteCookie: sink.deleteCookie,
-      setStatus: sink.setStatus,
-      _setStatus: sink._setStatus,
-      setTheme: sink.setTheme,
-      _rotateStateCookie: sink._rotateStateCookie,
-      _setKeepCacheDirective: sink._setKeepCacheDirective,
-    },
-  );
-  // ctx.res reads the sink's stub, not the live request's.
-  bindRes(renderCtx, () => sink.res);
+  const renderCtx = deriveRenderPass(requestCtx, "background-revalidation", {
+    handleStore,
+    sink,
+  });
   const store = Object.assign(Object.create(ctx.Store), { metrics: undefined });
   const runInStore = <T>(fn: () => T): T =>
     getContext().runWithStore(
