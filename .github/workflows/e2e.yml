@@ -112,6 +112,9 @@ jobs:
       - name: Check no external stores (useSyncExternalStore, store libraries, render-time store reads)
         run: pnpm check:no-external-store
 
+      - name: Check internals ratchet (derived contexts, internal vi.mock, _rsc_ literals, browser imports into the server graph)
+        run: pnpm check:internals
+
       - name: Test repo check tools
         run: pnpm test:tools
 
