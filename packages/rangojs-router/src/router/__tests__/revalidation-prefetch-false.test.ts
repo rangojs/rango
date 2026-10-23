@@ -127,20 +127,23 @@ async function resolve(
     _loaderStarted: (id: string) => options.started?.includes(id) ?? false,
   };
   const result = await resolveAllSegmentsWithRevalidation(
+    {
+      context,
+      client: new Set(clientIds),
+      params: { id: "1" },
+      prevParams: { id: "1" },
+      request: new Request(URL_PAGE),
+      prevUrl: new URL(URL_PAGE),
+      nextUrl: new URL(URL_PAGE),
+      routeKey: "product",
+      deps: makeDeps(),
+    },
     chain,
-    "product",
-    { id: "1" },
-    context,
-    new Set(clientIds),
-    { id: "1" },
-    new Request(URL_PAGE),
-    new URL(URL_PAGE),
-    new URL(URL_PAGE),
-    undefined,
-    null,
-    "product",
-    "/product/1",
-    makeDeps(),
+    {
+      interceptResult: null,
+      localRouteName: "product",
+      pathname: "/product/1",
+    },
   );
   const byId = new Map<string, ResolvedSegment>(
     result.segments.map((s) => [s.id, s]),

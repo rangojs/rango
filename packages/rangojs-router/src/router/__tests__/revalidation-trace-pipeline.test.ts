@@ -161,16 +161,19 @@ describe("revalidation trace through segment resolution pipeline", () => {
         const entry = makeEntry("loader-1");
         // Empty client set = segment not on client = early return with "new-segment"
         await resolveOwnerLoaders(
+          {
+            context: makeContext(),
+            client: new Set(), // empty clientSegmentIds
+            params: {},
+            prevParams: { id: "0" },
+            request: new Request("http://localhost/b"),
+            prevUrl: new URL("http://localhost/a"),
+            nextUrl: new URL("http://localhost/b"),
+            routeKey: "test.route",
+            deps: makeDeps(),
+          },
           ownerOf(entry),
-          makeContext(),
           true, // belongsToRoute
-          new Set(), // empty clientSegmentIds
-          { id: "0" },
-          new Request("http://localhost/b"),
-          new URL("http://localhost/a"),
-          new URL("http://localhost/b"),
-          "test.route",
-          makeDeps(),
         );
 
         return flushRevalidationTrace();
@@ -209,17 +212,20 @@ describe("revalidation trace through segment resolution pipeline", () => {
         const entry = makeEntry("loader-1");
         // Segment IS in client set, so it flows through evaluateRevalidation
         await resolveOwnerLoaders(
+          {
+            context: makeContext(),
+            client: new Set([segmentId]),
+            params: {},
+            prevParams: { id: "1" },
+            request: new Request("http://localhost/b", { method: "POST" }),
+            prevUrl: new URL("http://localhost/b"),
+            nextUrl: new URL("http://localhost/b"),
+            routeKey: "test.route",
+            deps: makeDeps(),
+            actionContext: { actionId: "test-action" },
+          },
           ownerOf(entry),
-          makeContext(),
           true,
-          new Set([segmentId]),
-          { id: "1" },
-          new Request("http://localhost/b", { method: "POST" }),
-          new URL("http://localhost/b"),
-          new URL("http://localhost/b"),
-          "test.route",
-          makeDeps(),
-          { actionId: "test-action" },
         );
 
         return flushRevalidationTrace();
@@ -274,16 +280,19 @@ describe("revalidation trace through segment resolution pipeline", () => {
 
         // Only loader-B is in client set; loader-A will be "new-segment"
         await resolveOwnerLoaders(
+          {
+            context: makeContext(),
+            client: new Set(["L0R0D1.loader-B"]),
+            params: {},
+            prevParams: { id: "1" },
+            request: new Request("http://localhost/b"),
+            prevUrl: new URL("http://localhost/a"),
+            nextUrl: new URL("http://localhost/b"),
+            routeKey: "test.route",
+            deps: makeDeps(),
+          },
           ownerOf(entry),
-          makeContext(),
           true,
-          new Set(["L0R0D1.loader-B"]),
-          { id: "1" },
-          new Request("http://localhost/b"),
-          new URL("http://localhost/a"),
-          new URL("http://localhost/b"),
-          "test.route",
-          makeDeps(),
         );
 
         return flushRevalidationTrace();
@@ -326,17 +335,19 @@ describe("revalidation trace through segment resolution pipeline", () => {
 
         // Parent on the client, slot not, belongsToRoute -> floored seed.
         await resolveParallelSegmentsWithRevalidation(
+          {
+            context: makeContext(),
+            client: new Set(["L0"]),
+            params: { id: "1" },
+            prevParams: { id: "1" },
+            request: new Request("http://localhost/b"),
+            prevUrl: new URL("http://localhost/a"),
+            nextUrl: new URL("http://localhost/b"),
+            routeKey: "test.route",
+            deps: makeDeps(),
+          },
           makeLayoutWithSlot([() => false]),
-          { id: "1" },
-          makeContext(),
           true,
-          new Set(["L0"]),
-          { id: "1" },
-          new Request("http://localhost/b"),
-          new URL("http://localhost/a"),
-          new URL("http://localhost/b"),
-          "test.route",
-          makeDeps(),
         );
 
         return flushRevalidationTrace();
@@ -368,17 +379,19 @@ describe("revalidation trace through segment resolution pipeline", () => {
 
         // Same shape but belongsToRoute=false -> seed false, no floor.
         await resolveParallelSegmentsWithRevalidation(
+          {
+            context: makeContext(),
+            client: new Set(["L0"]),
+            params: { id: "1" },
+            prevParams: { id: "1" },
+            request: new Request("http://localhost/b"),
+            prevUrl: new URL("http://localhost/a"),
+            nextUrl: new URL("http://localhost/b"),
+            routeKey: "test.route",
+            deps: makeDeps(),
+          },
           makeLayoutWithSlot([() => false]),
-          { id: "1" },
-          makeContext(),
           false,
-          new Set(["L0"]),
-          { id: "1" },
-          new Request("http://localhost/b"),
-          new URL("http://localhost/a"),
-          new URL("http://localhost/b"),
-          "test.route",
-          makeDeps(),
         );
 
         return flushRevalidationTrace();

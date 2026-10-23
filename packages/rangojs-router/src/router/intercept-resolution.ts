@@ -11,11 +11,7 @@ import type {
   InterceptEntry,
   InterceptSelectorContext,
 } from "../server/context";
-import type {
-  HandlerContext,
-  InternalHandlerContext,
-  ResolvedSegment,
-} from "../types";
+import type { InternalHandlerContext, ResolvedSegment } from "../types";
 import {
   handleHandlerResult,
   warnOnStreamedResponse,
@@ -28,13 +24,9 @@ import {
   deliverStartedLoaders,
   resolveOwnerLoaders,
 } from "./segment-resolution/revalidation.js";
-import {
-  fillSends,
-  NOTHING_HELD,
-} from "./segment-resolution/prefetch-deferral.js";
-import type { SegmentResolutionDeps } from "./types.js";
+import { fillSends } from "./segment-resolution/prefetch-deferral.js";
+import type { ResolutionPass } from "./segment-resolution/resolution-pass.js";
 import { getRouterContext } from "./router-context.js";
-import type { RevalidationContext } from "./router-context.js";
 import { runInSegmentTagScope } from "../cache/cache-tag.js";
 import {
   RangoContext,
@@ -176,25 +168,23 @@ export function findInterceptForRoute(
  * re-render aborts its cache write instead of storing the fallback.
  */
 function renderInterceptHandlerError<TEnv>(
+  pass: ResolutionPass<TEnv>,
   error: unknown,
   parentEntry: EntryData,
-  params: Record<string, string>,
-  context: HandlerContext<any, TEnv>,
-  deps: SegmentResolutionDeps<TEnv>,
   background: boolean | undefined,
 ): ReactNode {
   if (error instanceof Response || background) throw error;
   return catchSegmentError(
     error,
     parentEntry,
-    params,
-    deps,
+    pass.params,
+    pass.deps,
     {
-      ...buildLoaderErrorContext(context),
+      ...buildLoaderErrorContext(pass.context),
       isPartial: true,
       telemetry: getRouterContext()?.telemetry,
     },
-    context.pathname,
+    pass.context.pathname,
   ).component;
 }
 
@@ -228,14 +218,13 @@ export function interceptSegmentIds(
  * revalidated on its own, kept in a fill, deferred by a prefetch when flagged.
  */
 function resolveInterceptLoaders<TEnv>(
+  pass: ResolutionPass<TEnv>,
   interceptEntry: InterceptEntry,
   parentEntry: EntryData,
-  context: HandlerContext<any, TEnv>,
   belongsToRoute: boolean,
-  deps: SegmentResolutionDeps<TEnv>,
-  rc: RevalidationContext,
 ): Promise<{ segments: ResolvedSegment[] }> {
   return resolveOwnerLoaders(
+    pass,
     {
       loaders: interceptEntry.loader,
       namespace: `intercept:${interceptEntry.routeName}`,
@@ -244,17 +233,7 @@ function resolveInterceptLoaders<TEnv>(
       bakeLane: false,
       traceSource: "intercept-loader",
     },
-    context,
     belongsToRoute,
-    rc.clientSegmentIds,
-    rc.prevParams,
-    rc.request,
-    rc.prevUrl,
-    rc.nextUrl,
-    rc.routeKey,
-    deps,
-    rc.actionContext,
-    rc.stale,
   );
 }
 
@@ -271,24 +250,15 @@ async function settleLoaderSegments(
 }
 
 /**
- * Resolve an intercept entry: its slot segment, then its loader segments.
+ * Resolve an intercept entry: its slot segment, then its loader segments. The
+ * background re-render resolves with a pass that holds nothing
+ * (heldNothingPassInput, resolution-pass.ts): every segment renders fresh.
  */
 export async function resolveInterceptEntry<TEnv>(
+  pass: ResolutionPass<TEnv>,
   interceptEntry: InterceptEntry,
   parentEntry: EntryData,
-  params: Record<string, string>,
-  context: HandlerContext<any, TEnv>,
   belongsToRoute: boolean,
-  deps: SegmentResolutionDeps<TEnv>,
-  // The background re-render passes none: nothing held, rendered fresh.
-  revalidationContext: RevalidationContext = {
-    clientSegmentIds: NOTHING_HELD,
-    prevParams: {},
-    request: context.request,
-    prevUrl: context.url,
-    nextUrl: context.url,
-    routeKey: interceptEntry.routeName,
-  },
   options?: {
     /**
      * Set ONLY by the post-response background re-render (stale background
@@ -302,14 +272,13 @@ export async function resolveInterceptEntry<TEnv>(
 ): Promise<ResolvedSegment[]> {
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
+  const { context, params } = pass;
   const slotSegmentId = interceptSlotId(parentEntry, interceptEntry);
   const { segments: loaderSegments } = await resolveInterceptLoaders(
+    pass,
     interceptEntry,
     parentEntry,
-    context,
     belongsToRoute,
-    deps,
-    revalidationContext,
   );
   // The slot's tag scope (#957, cache-tag.ts runInSegmentTagScope) and the
   // owner of its handler's handle pushes (a handler's ctx.use(Handle) reads
@@ -337,10 +306,7 @@ export async function resolveInterceptEntry<TEnv>(
   // A fill keeps a slot the client holds: neither its handler nor its layout
   // runs, only the loaders the client lacks (match-result.ts leaves the null
   // slot out of the response).
-  if (
-    fillSends(context, slotSegmentId, revalidationContext.clientSegmentIds) ===
-    false
-  ) {
+  if (fillSends(context, slotSegmentId, pass.client) === false) {
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
@@ -355,11 +321,9 @@ export async function resolveInterceptEntry<TEnv>(
         : handler;
   } catch (error) {
     handlerResult = renderInterceptHandlerError(
+      pass,
       error,
       parentEntry,
-      params,
-      context,
-      deps,
       options?.background,
     );
   }
@@ -392,7 +356,7 @@ export async function resolveInterceptEntry<TEnv>(
   // recovered into the declared boundary, except on the background
   // re-render, which must reject so a failure is never cached.
   const streamedComponent = (promise: Promise<unknown>): ReactNode =>
-    trackStreamedHandler(deps, promise, {
+    trackStreamedHandler(pass.deps, promise, {
       boundaryEntry: parentEntry,
       segmentId: slotSegmentId,
       segmentType: "parallel",
@@ -423,11 +387,9 @@ export async function resolveInterceptEntry<TEnv>(
         component = await handlerResult;
       } catch (error) {
         component = renderInterceptHandlerError(
+          pass,
           error,
           parentEntry,
-          params,
-          context,
-          deps,
           options?.background,
         );
       }
@@ -445,23 +407,19 @@ export async function resolveInterceptEntry<TEnv>(
  * keeps its cached component and layout, its loaders are never cached.
  */
 export async function resolveInterceptLoadersOnly<TEnv>(
+  pass: ResolutionPass<TEnv>,
   interceptEntry: InterceptEntry,
   parentEntry: EntryData,
-  context: HandlerContext<any, TEnv>,
   belongsToRoute: boolean,
-  deps: SegmentResolutionDeps<TEnv>,
-  revalidationContext: RevalidationContext,
 ): Promise<ResolvedSegment[]> {
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
   const { segments } = await resolveInterceptLoaders(
+    pass,
     interceptEntry,
     parentEntry,
-    context,
     belongsToRoute,
-    deps,
-    revalidationContext,
   );
   if (!interceptEntry.loading) await settleLoaderSegments(segments);
-  deliverStartedLoaders(context, segments);
+  deliverStartedLoaders(pass.context, segments);
   return segments;
 }
