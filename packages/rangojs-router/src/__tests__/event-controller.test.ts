@@ -1015,6 +1015,36 @@ describe("createEventController", () => {
       expect(ctrl.getInflightActions().size).toBe(0);
     });
 
+    it("abortAllActions(except) spares that action: it settles with its error once its stream ends", () => {
+      const ctrl = createController();
+      const sibling = ctrl.startAction("hash#sibling", []);
+      const failing = ctrl.startAction("hash#failing", []);
+      const stream = failing.startStreaming();
+      const error = new Error("boundary");
+
+      // fail() waits for the stream; the entry is not settling yet.
+      failing.fail(error);
+      ctrl.abortAllActions(failing.id);
+
+      expect(sibling.signal.aborted).toBe(true);
+      expect(failing.signal.aborted).toBe(false);
+      expect(ctrl.getActionState("hash#sibling").state).toBe("idle");
+      expect(ctrl.getActionState("hash#failing")).toMatchObject({
+        state: "streaming",
+        error: null,
+      });
+      expect(ctrl.getState().state).toBe("loading");
+
+      stream.end();
+      expect(ctrl.getActionState("hash#failing")).toMatchObject({
+        state: "idle",
+        error,
+      });
+      expect(ctrl.getState().state).toBe("idle");
+      vi.advanceTimersByTime(100);
+      expect(ctrl.getInflightActions().size).toBe(0);
+    });
+
     it("fail() after abortAllActions() is a no-op (entry already removed)", () => {
       const ctrl = createController();
       const handle = ctrl.startAction("hash#save", []);

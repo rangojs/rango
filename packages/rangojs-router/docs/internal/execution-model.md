@@ -1814,7 +1814,16 @@ change (see Contract Change Process).
   An action that throws on a matched route gets an error-boundary response
   instead. It holds the nearest `errorBoundary()`, or the router's default
   error boundary at the root when the app declares none (`matchError` in
-  `router/match-api.ts`). It commits on the same terms.
+  `router/match-api.ts`). It commits on the same terms. When it commits, it
+  aborts the other actions in flight, so none completes over it, and the
+  failing action keeps its error for `useAction()`
+  (`abortAllActions(except)` in `browser/event-controller.ts`). One that
+  arrives after the user left its page is dropped before it aborts anything:
+  its call rejects with the error, `useAction()` records it, and its exit owes
+  the follow-up (R3). One the user leaves while its error tree renders has
+  already aborted the other actions (the abort runs before the render) and is
+  dropped the same way. Only a boundary dropped at the early check aborts
+  nothing, so a live `useAction()` result survives it (rango-t125).
 - **R3. A follow-up is owed.** At its exit, an action that R1 applies to, and
   that did not redirect, owes the follow-up in two cases: the page on screen
   is not the page it was sent from, or a navigation the user started has not
@@ -1885,7 +1894,7 @@ action, and the follow-up, with a body cached before the write.
 What a hook reader sees: the follow-up is a background revalidation, like
 Back's. `useNavigation()` keeps `state: "idle"`. `isNavigating` and
 `isStreaming` are true for one round trip, and then one held commit brings the
-write. Two cases changed in kind, both decided by the owner:
+write. Three cases changed in kind:
 
 - A click still in flight when the last action lands is no longer superseded,
   so `useNavigation()` reads `loading` until that click commits, and then the
@@ -1896,13 +1905,22 @@ write. Two cases changed in kind, both decided by the owner:
   underneath gets the follow-up. Until it lands, `useAction()` stays pending
   and `useNavigation().state` reads `loading`, as for any action in flight;
   main went `idle` at once because it dropped the action.
+- An error-boundary response for a page the user already left no longer
+  aborts the other actions in flight, such as one sent from the page on
+  screen: their `useAction()` and `await` get their real result. The failing
+  action's own `useAction()` holds its error, whether its boundary shows or
+  is dropped; main's abort deleted its entry while its response still
+  streamed. Until that stream ends the action counts as in flight, as a
+  successful one does, so `useNavigation().state` reads `loading` until then;
+  main went `idle` at the abort.
 
 Pinned by `src/__tests__/server-action-bridge.test.ts` (the follow-up cases),
-`src/__tests__/event-controller.test.ts` (`settled`), the shared scenarios
-`action-follow-up`, `action-stale-navigation` and `action-held-segments` in
-`tests/shared-e2e/src/`, and `e2e/pending-actions.test.ts`, all in both
-apps, dev and production. The case table that maps every case to its pin is in
-the PR that set these rules.
+`src/__tests__/event-controller.test.ts` (`settled`, `abortAllActions(except)`),
+the shared scenarios `action-follow-up`, `action-stale-navigation`,
+`action-held-segments` and `action-boundary` in `tests/shared-e2e/src/` (both
+apps), and `e2e/pending-actions.test.ts` (the router app), each in dev and
+production. The case table that maps every case to its pin is in the PR that
+set these rules.
 
 ## Non-Guarantees
 
