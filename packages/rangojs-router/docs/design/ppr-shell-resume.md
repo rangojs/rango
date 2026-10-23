@@ -1398,7 +1398,7 @@ never blocked on the capture
 (`runBackground` = `waitUntil` on workerd, fire-and-forget in Node dev).
 
 `_shellCaptureState.run` on the derived context is the single ACTIVE marker: loader
-masking (`loader-mask.ts`), the `emitStreaming` guard (`fresh.ts`), and the
+masking (`loader-mask.ts`), the `loadingDisabled && !isShellCaptureActive()` settle guard (`resolveOwnerLoaders`), and the
 capture guard (`guardIdentityRead`, `src/server/context.ts`, behind
 `cookies()`, `headers()`, the theme reads and `{ cache: false }` variable
 reads) all key off it. The
@@ -1995,8 +1995,8 @@ response (`createResponseWithMergedHeaders` -> `applyStubHeaders`,
 `src/rsc/helpers.ts`). One deliberate asymmetry survives, and it is loader-KIND
 specific (#725): a DSL (registered) loader's writes inside a plain `cache()`
 boundary stay ALLOWED — a registered loader re-runs on every HIT
-(`runInsideLoaderScope` in `fresh.ts` -> `resolveLoadersOnly` on the cache-hit
-path) and merges into every response, so no divergence exists (pinned by the
+(`runInsideLoaderScope` in `resolveOwnerLoaders`, reached from
+`resolveLoadersOnlyWithRevalidation` on the cache-hit path) and merges into every response, so no divergence exists (pinned by the
 `/loader-cookie-allowed` cache-scope-guard e2e and vite-rsc-demo's shop cart).
 A **handler-invoked** loader body (`await ctx.use(Loader)` from a handler,
 never registered with `loader()`) does NOT get the exemption: on a HIT the
@@ -2026,7 +2026,7 @@ axis, never the CACHE axis:
   is undefined again, so `latchCachedHeaderScope`'s `!store.cachedHeaderScope`
   guard sets), so a handler write inside that cache() still throws.
 - A ppr route NESTED under a `cache()` boundary latches `"ppr"` at the funnel
-  top (`fresh.ts`, first-wins), which masks the positional `cache()` latch — but
+  top (`resolveAllSegmentsWithRevalidation`, first-wins), which masks the positional `cache()` latch — but
   the handler still runs inside the cache scope (`insideCacheScope`). A
   `cache()` HIT skips that handler, so the write is still non-deterministic:
   `clearPprHeaderScope` UNMASKS to `"cache"` there instead of clearing, so the

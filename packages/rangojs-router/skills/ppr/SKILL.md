@@ -1177,7 +1177,7 @@ their data should bake vs stay live. Your levers, in order of preference:
 3. **Guaranteed-fresh widgets: live loaders with a widget-sized boundary.**
    An unflagged loader read under an inline `<Suspense>` in the widget is
    enough. Alternatively, a parallel slot with its OWN `loading()`:
-   parallel-owned loaders get their own per-slot boundary (`fresh.ts` tags
+   parallel-owned loaders get their own per-slot boundary (`resolveParallelSegmentsWithRevalidation` tags
    them with the slot's loading; `segment-system.tsx` builds a per-slot
    LoaderBoundary), so the chrome bakes into the shell and each widget is an
    independent, widget-sized hole:

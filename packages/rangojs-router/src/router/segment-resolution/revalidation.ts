@@ -1,9 +1,14 @@
 /**
- * Revalidation Path Segment Resolution
+ * The segment walker.
  *
- * Functions for resolving segments during partial (revalidation) requests.
- * Mirrors the fresh path but adds revalidation awareness: only re-resolves
- * segments whose revalidate() predicate returns true.
+ * Resolves a matched chain's segments (loaders, layouts, routes, parallels,
+ * orphan layouts, error boundaries) in handler-first order. A partial request
+ * re-resolves only what the client lacks and what a held segment's
+ * revalidate() rules ask for. A full match (a document, the background
+ * re-render of a route record, a build-time prerender) walks the same code
+ * with `pass.client === FRESH` (resolution-pass.ts): every segment is new,
+ * and the branches marked FRESH keep what the full match has always done
+ * differently.
  */
 
 import type { ReactNode } from "react";
@@ -18,6 +23,7 @@ import {
   getParallelSlotEntries,
   type EntryData,
   type LoaderEntry,
+  type ParallelEntries,
   type ParallelEntryData,
 } from "../../server/context";
 import type {
@@ -28,14 +34,18 @@ import type {
 } from "../../types";
 import type { SegmentRevalidationResult } from "../types.js";
 import type { InterceptResult } from "../router-context.js";
-import type { ResolutionPass } from "./resolution-pass.js";
+import { FRESH, type ResolutionPass } from "./resolution-pass.js";
 import {
   debugLog,
   pushRevalidationTraceEntry,
   isTraceActive,
 } from "../logging.js";
 import { resolveLoaderData } from "./loader-cache.js";
-import { entryLoadingMasksLoaders } from "./loader-mask.js";
+import {
+  entryLoadingMasksLoaders,
+  isShellCaptureActive,
+} from "./loader-mask.js";
+import { _getRequestContext } from "../../server/request-context.js";
 import {
   defersLoader,
   deferUnit,
@@ -132,7 +142,8 @@ function revalidationInputOf<TEnv>(
   return {
     prevParams: pass.prevParams,
     getPrevSegment: null,
-    request: pass.request,
+    // Only a build-time FRESH pass lacks a request, and it decides nothing.
+    request: pass.request!,
     prevUrl: pass.prevUrl,
     nextUrl: pass.nextUrl,
     routeKey: pass.routeKey,
@@ -211,7 +222,7 @@ export function deliverStartedLoaders<TEnv>(
 }
 
 // ---------------------------------------------------------------------------
-// Revalidation path (partial match)
+// Loaders
 // ---------------------------------------------------------------------------
 
 /**
@@ -232,6 +243,11 @@ export interface LoaderOwner {
    * False for an intercept: never a document.
    */
   readonly bakeLane: boolean;
+  /**
+   * The owner declares loading(false). A FRESH pass then settles every loader
+   * before the handler runs (resolveOwnerLoaders). Unset for an intercept.
+   */
+  readonly loadingDisabled?: boolean;
   readonly traceSource: "loader" | "intercept-loader";
 }
 
@@ -246,14 +262,144 @@ export function ownerOf(
     segmentPrefix: shortCodeOverride ?? entry.shortCode,
     boundary: entry,
     bakeLane: !entryLoadingMasksLoaders(entry.loading),
+    loadingDisabled: entry.loading === false,
     traceSource: "loader",
   };
 }
 
 /**
- * The partial lane's one loader funnel: each loader is a segment, run when
- * the client lacks it, asked its revalidate() when held, kept outright in a
- * fill (fillSends), deferred in a prefetch that defers it (defersLoader).
+ * resolveOwnerLoaders has something to resolve for `entry`'s loaders. The
+ * walker checks before the call: most entries own none, and the async call
+ * would cost a promise and microtask ticks for an empty result.
+ */
+function ownsLoaders(pass: ResolutionPass<any>, entry: EntryData): boolean {
+  return !pass.skipLoaders && (entry.loader?.length ?? 0) > 0;
+}
+
+/** getParallelSlotEntries(parallels) lists a slot. */
+function declaresSlot(parallels: ParallelEntries): boolean {
+  for (const slot in parallels) {
+    if (parallels[slot as `@${string}`]) return true;
+  }
+  return false;
+}
+
+/**
+ * Register flagged loader $$ids on the request context and return their
+ * indices. Must run BEFORE kickoff: rendered() checks the set to fail
+ * fast on the barrier cycle (resolution awaits the loader, the barrier
+ * awaits resolution).
+ */
+function registerAwaitBeforeFlushIds(
+  loaderEntries: readonly LoaderEntry[],
+): number[] {
+  const awaitedIndices: number[] = [];
+  for (let i = 0; i < loaderEntries.length; i++) {
+    if (loaderEntries[i]!.awaitBeforeFlush) awaitedIndices.push(i);
+  }
+  if (awaitedIndices.length > 0) {
+    const reqCtx = _getRequestContext();
+    if (reqCtx) {
+      reqCtx._awaitBeforeFlushLoaderIds ??= new Set();
+      for (const i of awaitedIndices) {
+        reqCtx._awaitBeforeFlushLoaderIds.add(loaderEntries[i]!.loader.$$id);
+      }
+    }
+  }
+  return awaitedIndices;
+}
+
+const AWAIT_BEFORE_FLUSH = { awaitBeforeFlush: true } as const;
+
+/** Spread into a FRESH loader segment: the flag, or nothing. */
+function stampAwaitBeforeFlush(
+  loaderEntry: LoaderEntry,
+): typeof AWAIT_BEFORE_FLUSH | undefined {
+  return loaderEntry.awaitBeforeFlush === true ? AWAIT_BEFORE_FLUSH : undefined;
+}
+
+/**
+ * The loaders of a partial pass that run, as indices into `owner.loaders`:
+ * each one the client lacks, and each held one whose revalidate() rules ask
+ * for it (kept outright in a fill, fillSends). Every decision is traced and
+ * observed. `segmentIds` are the loaders' segment ids, by index.
+ */
+async function loadersToRerun<TEnv>(
+  pass: ResolutionPass<TEnv>,
+  owner: LoaderOwner,
+  belongsToRoute: boolean,
+  segmentIds: readonly string[],
+): Promise<number[]> {
+  const ctx = pass.context;
+  const checks = await Promise.all(
+    owner.loaders.map(async (loaderEntry, index) => {
+      const segmentId = segmentIds[index]!;
+      const shouldRun = await revalidate(
+        async () => {
+          if (!pass.client.has(segmentId)) {
+            if (isTraceActive()) {
+              pushRevalidationTraceEntry({
+                segmentId,
+                segmentType: "loader",
+                belongsToRoute,
+                source: owner.traceSource,
+                defaultShouldRevalidate: true,
+                finalShouldRevalidate: true,
+                reason: "new-segment",
+              });
+            }
+            return true;
+          }
+
+          const dummySegment: ResolvedSegment = {
+            id: segmentId,
+            namespace: owner.namespace,
+            type: "loader",
+            index,
+            component: null,
+            params: ctx.params,
+            loaderId: loaderEntry.loader.$$id,
+            // A clientUrls() layout() loader's copy is projected onto the
+            // route but owned by a layout: it takes a layout's default.
+            belongsToRoute:
+              belongsToRoute && !isLayoutLoaderCopy(loaderEntry.loader),
+          };
+
+          return await revalidateHeld(pass, {
+            segment: dummySegment,
+            revalidations: loaderEntry.revalidate.map((fn, j) => ({
+              name: `${owner.traceSource}-revalidate${j}`,
+              fn,
+            })),
+            traceSource: owner.traceSource,
+          });
+        },
+        async () => true,
+        () => false,
+      );
+      emitRevalidationDecision(
+        segmentId,
+        ctx.pathname,
+        pass.routeKey,
+        shouldRun,
+      );
+      return shouldRun;
+    }),
+  );
+  const indices: number[] = [];
+  for (let i = 0; i < checks.length; i++) if (checks[i]) indices.push(i);
+  return indices;
+}
+
+/**
+ * The walker's one loader funnel: each loader is a segment, run when the
+ * client lacks it, asked its revalidate() when held, kept outright in a fill
+ * (fillSends), deferred in a prefetch that defers it (defersLoader).
+ *
+ * Loaders run lazily via ctx.use() and are memoized, so they run in
+ * parallel. A FRESH pass kicks every loader off without an await, in the
+ * tick the call starts: a reader's ctx.use(Loader) finds the binding only if
+ * it registered first (docs/design/handle-push-ownership.md).
  */
 export async function resolveOwnerLoaders<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -261,104 +407,70 @@ export async function resolveOwnerLoaders<TEnv>(
   belongsToRoute: boolean,
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const loaderEntries = owner.loaders;
-  if (loaderEntries.length === 0) return { segments: [], matchedIds: [] };
+  if (loaderEntries.length === 0 || pass.skipLoaders) {
+    return { segments: [], matchedIds: [] };
+  }
 
-  const { context: ctx, routeKey } = pass;
+  const ctx = pass.context;
   const shortCode = owner.segmentPrefix;
+  const fresh = pass.client === FRESH;
 
-  // Pin `_currentSegmentId` to the OWNING entry before the kickoffs below —
-  // createLoaderExecutor captures it synchronously for ctx.use(Handle) push
-  // attribution. Same pin as resolveLoaders (fresh.ts); this REVALIDATION
-  // funnel is the navigation/action lane's kickoff site, where nothing else
-  // assigns the id first (pushes silently vanished: an id outside
-  // matched/segmentOrder is dropped by collectHandleData).
+  // Pin `_currentSegmentId` to the OWNING entry BEFORE the loader kickoffs:
+  // createLoaderExecutor captures it synchronously at kickoff for
+  // ctx.use(Handle) push attribution (loader writes land in the same bucket
+  // as the entry's handler pushes — shortCode is in matched/segmentOrder, so
+  // collectHandleData keeps them; an id outside the order is silently
+  // dropped). Loaders resolve BEFORE the handler-resolution sites assign
+  // this (handler-first ordering), so without the pin the captured value is
+  // a stale sibling's id (document lane) or undefined (navigation lane —
+  // pushes silently vanished).
   (ctx as InternalHandlerContext<any, TEnv>)._currentSegmentId = shortCode;
 
-  const loaderMeta = loaderEntries.map((loaderEntry, i) => ({
-    loaderEntry,
-    loader: loaderEntry.loader,
-    loaderRevalidateFns: loaderEntry.revalidate,
-    segmentId: `${shortCode}D${i}.${loaderEntry.loader.$$id}`,
-    index: i,
-  }));
+  const matchedIds: string[] = [];
+  for (let i = 0; i < loaderEntries.length; i++) {
+    matchedIds.push(`${shortCode}D${i}.${loaderEntries[i]!.loader.$$id}`);
+  }
 
-  const matchedIds = loaderMeta.map((m) => m.segmentId);
+  // FRESH: every loader is new; no decision is asked, traced or observed.
+  const toRun = fresh
+    ? undefined
+    : await loadersToRerun(pass, owner, belongsToRoute, matchedIds);
 
-  const revalidationChecks = await Promise.all(
-    loaderMeta.map(
-      async ({
-        loaderEntry,
-        loader,
-        loaderRevalidateFns,
-        segmentId,
-        index,
-      }) => {
-        const shouldRun = await revalidate(
-          async () => {
-            if (!pass.client.has(segmentId)) {
-              if (isTraceActive()) {
-                pushRevalidationTraceEntry({
-                  segmentId,
-                  segmentType: "loader",
-                  belongsToRoute,
-                  source: owner.traceSource,
-                  defaultShouldRevalidate: true,
-                  finalShouldRevalidate: true,
-                  reason: "new-segment",
-                });
-              }
-              return true;
-            }
+  // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
+  // fires createRouter({ onError }) (phase "loader") nor emits the loader.error
+  // telemetry event. A partial pass reports with isPartial.
+  const errorContext = fresh
+    ? buildLoaderErrorContext(ctx)
+    : { ...buildLoaderErrorContext(ctx), isPartial: true };
 
-            const dummySegment: ResolvedSegment = {
-              id: segmentId,
-              namespace: owner.namespace,
-              type: "loader",
-              index,
-              component: null,
-              params: ctx.params,
-              loaderId: loader.$$id,
-              // A clientUrls() layout() loader's copy is projected onto the
-              // route but owned by a layout: it takes a layout's default.
-              belongsToRoute: belongsToRoute && !isLayoutLoaderCopy(loader),
-            };
+  // FRESH: awaitBeforeFlush (loader(Def, { ssr: false })). A document render
+  // awaits these loaders before returning, so their data is settled, their
+  // handle pushes beat the barrier snapshot, and a thrown notFound()'s status
+  // write deterministically precedes Response construction. The ids must
+  // register on the request context BEFORE kickoff — rendered() checks the
+  // set to fail fast on the barrier cycle (segment resolution awaits the
+  // loader, the barrier awaits segment resolution, rendered() awaits the
+  // barrier), and the loader body can call rendered() before the await below
+  // is reached. Shell-capture renders await too: flagged loaders execute at
+  // capture (lane rule: see resolveLoaderData, loader-cache.ts), so their
+  // handle pushes must land in the prelude. A navigation evaluation never
+  // carries awaitBeforeFlush.
+  const awaitedIndices = fresh
+    ? registerAwaitBeforeFlushIds(loaderEntries)
+    : [];
 
-            return await revalidateHeld(pass, {
-              segment: dummySegment,
-              revalidations: loaderRevalidateFns.map((fn, j) => ({
-                name: `${owner.traceSource}-revalidate${j}`,
-                fn,
-              })),
-              traceSource: owner.traceSource,
-            });
-          },
-          async () => true,
-          () => false,
-        );
-        emitRevalidationDecision(segmentId, ctx.pathname, routeKey, shouldRun);
-        return { shouldRun, loaderEntry, loader, segmentId, index };
-      },
-    ),
-  );
-
-  // Partial (revalidation) render path: a throwing DSL loader must still fire
-  // onError/loader.error. isPartial flags the reporting phase accordingly.
-  const errorContext = { ...buildLoaderErrorContext(ctx), isPartial: true };
-
-  // PPR bake/seed key, same as fresh.ts (lane rule: see resolveLoaderData,
-  // loader-cache.ts). The key must thread through EVERY resolveLoaderData
-  // funnel — omitting it here made a capture-active context
-  // whole-container-mask every loader on this path (a never-settling promise
-  // for a loader that should have executed).
-  // Outside capture the key only activates the _shellLoaderSeed overlay,
-  // which serveShellHit seeds for a document HIT and the PPR partial replay
-  // (matchPartialWithPprReplay) seeds once its doc record hits.
+  // PPR bake/seed key (lane rule: see resolveLoaderData, loader-cache.ts).
+  // The key must thread through EVERY resolveLoaderData funnel — omitting it
+  // made a capture-active context whole-container-mask every loader on the
+  // partial path (a never-settling promise for a loader that should have
+  // executed). Outside capture the key only activates the _shellLoaderSeed
+  // overlay, which serveShellHit seeds for a document HIT and the PPR
+  // partial replay (matchPartialWithPprReplay) seeds once its doc record hits.
   const bakeLane = owner.bakeLane;
 
   const kickoff = (
     loaderEntry: LoaderEntry,
     segmentId: string,
-    loaderId: string,
   ): Promise<unknown> =>
     runInsideLoaderScope(
       () =>
@@ -366,69 +478,100 @@ export async function resolveOwnerLoaders<TEnv>(
           loaderEntry,
           ctx,
           ctx.pathname,
-          // `bake`, not awaitBeforeFlush: a navigation evaluation never
-          // carries awaitBeforeFlush, and an ssr: false loader must pin
-          // here exactly as on the document HIT.
+          // The bake key rides for flagged loaders too (`bake`): ssr: false
+          // bakes at capture regardless of the entry's loading() lane
+          // (loader-cache.ts capture branch), its HIT-tail seed overlay needs
+          // the same key, and on a navigation it pins exactly as on the
+          // document HIT.
           bakeLane || loaderEntry.bake === true ? segmentId : null,
         ),
-      loaderId,
+      loaderEntry.loader.$$id,
       loaderEntry.reverseScope,
     );
-  const start = (
-    loaderEntry: LoaderEntry,
-    segmentId: string,
-    loaderId: string,
-  ) =>
+  // The wrapped promise is contracted to never reject (wrapLoaderPromise): a
+  // failed loader resolves with its error envelope and renders its own
+  // per-loader boundary.
+  const start = (loaderEntry: LoaderEntry, segmentId: string) =>
     pass.deps.wrapLoaderPromise(
-      kickoff(loaderEntry, segmentId, loaderId),
+      kickoff(loaderEntry, segmentId),
       owner.boundary,
       segmentId,
       ctx.pathname,
       errorContext,
+      // FRESH: a flagged loader's failure falls back to the default boundary.
+      fresh ? loaderEntry.awaitBeforeFlush : undefined,
     );
 
-  const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
-  const segments: ResolvedSegment[] = loadersToRun.map(
-    ({ loaderEntry, loader, segmentId, index }) => {
-      const base = {
+  const segments: ResolvedSegment[] = [];
+  const count = toRun === undefined ? loaderEntries.length : toRun.length;
+  for (let k = 0; k < count; k++) {
+    const index = toRun === undefined ? k : toRun[k]!;
+    const loaderEntry = loaderEntries[index]!;
+    const segmentId = matchedIds[index]!;
+    const { loader } = loaderEntry;
+    // Only a loader on a segment the client lacks (defersLoader). It
+    // would have run. Registered, not started: it runs, and reads its
+    // cache(), only if a reader starts it (startDeferredLoader).
+    if (defersLoader(ctx, loaderEntry, segmentId)) {
+      registerDeferredLoader(ctx, loader.$$id, shortCode, () =>
+        kickoff(loaderEntry, segmentId),
+      );
+      const deferred: ResolvedSegment = {
         id: segmentId,
         namespace: owner.namespace,
-        type: "loader" as const,
+        type: "loader",
         index,
         component: null,
         params: ctx.params,
         loaderId: loader.$$id,
-      };
-      // Only a loader on a segment the client lacks (defersLoader). It
-      // would have run. Registered, not started: it runs, and reads its
-      // cache(), only if a reader starts it (startDeferredLoader).
-      if (defersLoader(ctx, loaderEntry, segmentId)) {
-        registerDeferredLoader(ctx, loader.$$id, shortCode, () =>
-          kickoff(loaderEntry, segmentId, loader.$$id),
-        );
-        const deferred: ResolvedSegment = {
-          ...base,
-          belongsToRoute,
-          deferred: true,
-        };
-        deferredLoaderRuns.set(deferred, () =>
-          start(loaderEntry, segmentId, loader.$$id),
-        );
-        return deferred;
-      }
-      return {
-        ...base,
-        loaderData: start(loaderEntry, segmentId, loader.$$id),
         belongsToRoute,
+        deferred: true,
       };
-    },
-  );
+      deferredLoaderRuns.set(deferred, () => start(loaderEntry, segmentId));
+      segments.push(deferred);
+      continue;
+    }
+    segments.push({
+      id: segmentId,
+      namespace: owner.namespace,
+      type: "loader",
+      index,
+      component: null,
+      params: ctx.params,
+      loaderId: loader.$$id,
+      // FRESH, document AND capture renders: segment-system's value-delivery
+      // await and the dev SSR-suspension diagnostic both key off it.
+      ...(fresh ? stampAwaitBeforeFlush(loaderEntry) : undefined),
+      loaderData: start(loaderEntry, segmentId),
+      belongsToRoute,
+    });
+  }
+
+  if (fresh) {
+    // loading(false): every loader settles before the handler runs, so the
+    // handler streams no loading placeholder. A PPR shell capture keeps the
+    // streaming shape: it masks LIVE-lane loaders with never-resolving
+    // promises (loader-mask.ts), and awaiting them would hang the capture
+    // render's match() forever. The `loadingDisabled` short-circuit keeps the
+    // ALS check off the hot path. Otherwise only the flagged loaders are
+    // awaited; unflagged siblings keep streaming.
+    const settled =
+      owner.loadingDisabled && !isShellCaptureActive()
+        ? segments
+        : awaitedIndices.length > 0
+          ? awaitedIndices.map((i) => segments[i]!)
+          : undefined;
+    if (settled !== undefined && settled.length > 0) {
+      await Promise.all(settled.map((s) => s.loaderData));
+    }
+  }
 
   return { segments, matchedIds };
 }
 
 /**
- * Resolve only loader segments for all entries with revalidation logic.
+ * Resolve only loader segments for all entries: a cache() or prerender HIT
+ * serves the cached non-loader segments, and loaders are never cached.
  */
 export async function resolveLoadersOnlyWithRevalidation<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -438,7 +581,11 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
   const allMatchedIds: string[] = [];
   const seenIds = new Set<string>();
 
-  // ppr header-write guard latch — see resolveAllSegments (fresh.ts).
+  // Loader-only serves still run loaders live — on a ppr route their header
+  // writes are dead letters (headers flushed with the shell), so the guard
+  // latches here too (see resolveAllSegmentsWithRevalidation). cache() needs
+  // no latch: loader writes are exempt under cache()
+  // (assertCachedHeaderWriteAllowed).
   latchPprHeaderScopeForEntries(entries, pass.routeKey);
 
   async function collectEntryLoaders(
@@ -455,7 +602,7 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
       loaderEntries.every((le, i) =>
         seenIds.has(`${sc}D${i}.${le.loader.$$id}`),
       );
-    if (!allAlreadySeen) {
+    if (!allAlreadySeen && ownsLoaders(pass, entry)) {
       const { segments, matchedIds } = await resolveOwnerLoaders(
         pass,
         ownerOf(entry, shortCodeOverride),
@@ -557,15 +704,16 @@ export function buildEntryRevalidateMap(
 }
 
 /**
- * Resolve the component for a single parallel slot on the revalidation path.
- * Pure component resolution shared verbatim by
- * resolveParallelSegmentsWithRevalidation and the orphan-inlined loop in
- * resolveOrphanLayoutWithRevalidation: try the static slot cache, else run the
- * slot handler (pinning _currentSegmentId to the slot id so handle pushes land
- * in the slot's own bucket, and wrapping a streamed handler). Returns the
- * resolved component and whether the handler actually ran. Does NOT touch the
- * revalidate-default policy (the caller decides shouldResolve, including the
- * orphan-vs-main defaultOverride divergence) or loader-resolution ordering.
+ * Resolve the component for a single parallel slot. Pure component resolution
+ * shared by the main path and the orphan path of
+ * resolveParallelSegmentsWithRevalidation: try the static slot cache, else run
+ * the slot handler (pinning _currentSegmentId to the slot id so handle pushes
+ * land in the slot's own bucket, and wrapping a streamed handler). Returns the
+ * resolved component and whether the handler actually ran, or undefined when
+ * there is nothing to render: the handler was evicted (production static
+ * slot) and the static lookup missed. Does NOT touch the revalidate-default
+ * policy (the caller decides shouldResolve, including the orphan-vs-main
+ * defaultOverride divergence) or loader-resolution ordering.
  */
 async function resolveParallelSlotComponent<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -581,7 +729,9 @@ async function resolveParallelSlotComponent<TEnv>(
     /** Matched chain entry (where the sync path catches), else the slot's owner. */
     boundaryEntry: EntryData;
   },
-): Promise<{ component: ReactNode | undefined; handlerRan: boolean }> {
+): Promise<
+  { component: ReactNode | undefined; handlerRan: boolean } | undefined
+> {
   const {
     shouldResolve,
     parallelEntry,
@@ -591,6 +741,7 @@ async function resolveParallelSlotComponent<TEnv>(
     boundaryEntry,
   } = args;
   const { context, deps, routeKey, params } = pass;
+  const fresh = pass.client === FRESH;
 
   let component: ReactNode | undefined;
   let handlerRan = false;
@@ -605,9 +756,7 @@ async function resolveParallelSlotComponent<TEnv>(
     if (!shouldResolve) {
       component = null;
     } else if (handler === undefined) {
-      // Handler evicted (production static slot) but static lookup missed.
-      // Nothing to render — use null so the client keeps its cached version.
-      component = null;
+      return undefined;
     } else {
       // Slot-keyed pushes — slot owns its own bucket, parent layout owns its
       // own. On slot-only revalidations the partial merge updates only the
@@ -616,13 +765,28 @@ async function resolveParallelSlotComponent<TEnv>(
         parallelId;
       handlerRan = true;
       const slotContext = withReverseScope(context, parallelEntry.reverseScope);
+      // FRESH meters the slot handler (its perf metric) and runs it inside its
+      // rango.handler span; a partial pass runs it in the slot's tag scope.
+      const doneHandler = fresh
+        ? track(`handler:${parallelEntry.id}.${slot}`, 2)
+        : undefined;
+      const run = () =>
+        typeof handler !== "function"
+          ? handler
+          : fresh
+            ? observeSegmentHandler(
+                parallelId,
+                `${parallelEntry.id}.${slot}`,
+                handler,
+                slotContext,
+              )
+            : runInSegmentTagScope(parallelId, handler, slotContext);
       if (hasLoadingFallback) {
-        const result =
-          typeof handler === "function"
-            ? runInSegmentTagScope(parallelId, handler, slotContext)
-            : handler;
+        const result = run();
         if (result instanceof Promise) {
-          warnOnStreamedResponse(result, parallelId);
+          // FRESH: no streamed-Response warning for a slot.
+          if (!fresh) warnOnStreamedResponse(result, parallelId);
+          if (doneHandler) result.finally(doneHandler).catch(() => {});
           component = trackStreamedHandler(deps, result, {
             boundaryEntry,
             segmentId: parallelId,
@@ -630,16 +794,16 @@ async function resolveParallelSlotComponent<TEnv>(
             context,
             routeKey,
             params,
-            recover: true,
+            recover: !pass.throwOnError,
           });
         } else {
+          doneHandler?.();
           component = result as ReactNode;
         }
       } else {
-        component =
-          typeof handler === "function"
-            ? await runInSegmentTagScope(parallelId, handler, slotContext)
-            : handler;
+        // A static value (a Promise included) goes to render as is.
+        component = typeof handler === "function" ? await run() : handler;
+        doneHandler?.();
       }
     }
   }
@@ -672,11 +836,16 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
      * to it: loader sub-ids are filtered out and slots are re-grouped by parent).
      */
     loaderOrder?: "after" | "before";
-    /** Matched chain entry being resolved; see ResolveSegmentOptions.boundaryEntry. */
+    /**
+     * The matched chain entry being resolved: where the sync path catches a
+     * handler error, so a streamed slot handler (or a slot owned by a
+     * routeless layout) recovers into the same boundary. Defaults to `entry`.
+     */
     boundaryEntry?: EntryData;
   },
 ): Promise<SegmentRevalidationResult> {
   const { context, client: clientSegmentIds, params, routeKey } = pass;
+  const fresh = clientSegmentIds === FRESH;
   const segments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
   const parentChainDefault = options?.parentChainDefault ?? "type-derived";
@@ -708,19 +877,31 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
 
     // A slot's loaders (never cached) are deduped per parallel entry and
     // emitted either before or after the slot segment per loaderOrder.
-    const resolveSlotLoaders = async () => {
-      if (resolvedParallelEntries.has(parallelEntry.id)) return;
-      const loaderResult = await resolveOwnerLoaders(
-        pass,
-        ownerOf(parallelEntry, entry.shortCode),
-        belongsToRoute,
-      );
-      segments.push(...loaderResult.segments);
-      matchedIds.push(...loaderResult.matchedIds);
-      resolvedParallelEntries.add(parallelEntry.id);
-    };
+    const resolveSlotLoaders =
+      resolvedParallelEntries.has(parallelEntry.id) ||
+      !ownsLoaders(pass, parallelEntry)
+        ? undefined
+        : async () => {
+            const loaderResult = await resolveOwnerLoaders(
+              pass,
+              ownerOf(parallelEntry, entry.shortCode),
+              belongsToRoute,
+            );
+            // FRESH tags a slot's loaders with the slot's loading(), so
+            // renderSegments streams them under it instead of awaiting them
+            // on the layout. A partial pass's are tagged on render
+            // (restoreParallelLoaderMarkers, segment-system.tsx).
+            if (fresh && parallelEntry.loading) {
+              for (const seg of loaderResult.segments) {
+                seg.parallelLoading = parallelEntry.loading;
+              }
+            }
+            segments.push(...loaderResult.segments);
+            matchedIds.push(...loaderResult.matchedIds);
+            resolvedParallelEntries.add(parallelEntry.id);
+          };
 
-    if (loaderOrder === "before") {
+    if (resolveSlotLoaders && loaderOrder === "before") {
       await resolveSlotLoaders();
     }
     // Always announce the slot in matchedIds — it's unconditionally appended
@@ -737,7 +918,10 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
     // below (fillSends).
     const fill = fillSends(context, parallelId, clientSegmentIds);
     let shouldResolve: boolean;
-    if (fill !== undefined) {
+    if (fresh) {
+      // FRESH: the slot is new; no trace entry, no decision event.
+      shouldResolve = true;
+    } else if (fill !== undefined) {
       shouldResolve = fill;
     } else if (deferred) {
       shouldResolve = true;
@@ -800,16 +984,18 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         defaultOverride,
       });
     }
-    emitRevalidationDecision(
-      parallelId,
-      context.pathname,
-      routeKey,
-      shouldResolve,
-    );
+    if (!fresh) {
+      emitRevalidationDecision(
+        parallelId,
+        context.pathname,
+        routeKey,
+        shouldResolve,
+      );
+    }
 
     // A slot with its own flagged loading() is its own unit.
     if (shouldResolve) deferred ??= deferUnit(context, parallelId, "slot");
-    const { component, handlerRan } = deferred
+    const resolved = deferred
       ? { component: null, handlerRan: false }
       : await resolveParallelSlotComponent(pass, {
           shouldResolve,
@@ -819,6 +1005,20 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
           handler,
           boundaryEntry: options?.boundaryEntry ?? entry,
         });
+    if (resolved === undefined && fresh) {
+      // FRESH: an evicted slot handler whose static lookup missed renders no
+      // slot segment; its loaders still resolve.
+      if (resolveSlotLoaders && loaderOrder === "after") {
+        await resolveSlotLoaders();
+      }
+      continue;
+    }
+    // Nothing to render on a partial pass: null, so the client keeps its
+    // cached version.
+    const { component, handlerRan } = resolved ?? {
+      component: null,
+      handlerRan: false,
+    };
 
     segments.push({
       id: parallelId,
@@ -842,12 +1042,148 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       ...deferred,
     });
 
-    if (loaderOrder === "after") {
+    if (resolveSlotLoaders && loaderOrder === "after") {
       await resolveSlotLoaders();
     }
   }
 
   return { segments, matchedIds };
+}
+
+/**
+ * Whether a partial pass re-renders a chain entry: one the client lacks, or a
+ * held one whose revalidate() rules ask for it (revalidateHeld).
+ */
+async function entryRevalidates<TEnv>(
+  pass: ResolutionPass<TEnv>,
+  entry: Exclude<EntryData, { type: "parallel" }>,
+  belongsToRoute: boolean,
+): Promise<boolean> {
+  const { context, params, routeKey } = pass;
+  const hasSegment = pass.client.has(entry.shortCode);
+  debugLog("segment.revalidate", "entry presence check", {
+    segmentId: entry.shortCode,
+    entryType: entry.type,
+    clientHasSegment: hasSegment,
+    belongsToRoute,
+  });
+  if (!hasSegment) {
+    if (isTraceActive()) {
+      const segType =
+        entry.type === "cache" ? "layout" : (entry.type as "layout" | "route");
+      pushRevalidationTraceEntry({
+        segmentId: entry.shortCode,
+        segmentType: segType,
+        belongsToRoute,
+        source: "segment-resolution",
+        defaultShouldRevalidate: true,
+        finalShouldRevalidate: true,
+        reason: "new-segment",
+      });
+    }
+    return true;
+  }
+
+  const dummySegment: ResolvedSegment = {
+    id: entry.shortCode,
+    namespace: entry.id,
+    type:
+      entry.type === "cache" ? "layout" : (entry.type as "layout" | "route"),
+    index: 0,
+    component: null as any,
+    params,
+    belongsToRoute,
+    ...(entry.type === "layout" || entry.type === "cache"
+      ? { layoutName: entry.id }
+      : {}),
+    ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
+  };
+
+  return revalidateHeld(pass, {
+    segment: dummySegment,
+    revalidations: entry.revalidate.map((fn, i) => ({
+      name: `revalidate${i}`,
+      fn,
+    })),
+    traceSource: entry.type === "route" ? "route-handler" : "layout-handler",
+    onEvaluated: (shouldRevalidate) => {
+      emitRevalidationDecision(
+        entry.shortCode,
+        context.pathname,
+        routeKey,
+        shouldRevalidate,
+      );
+      debugLog("segment.revalidate", "entry revalidation decision", {
+        segmentId: entry.shortCode,
+        shouldRevalidate,
+      });
+    },
+  });
+}
+
+/**
+ * Run a route entry's handler: a static store hit, else the handler, streamed
+ * under the route's loading() unless an action awaits it.
+ */
+async function resolveRouteComponent<TEnv>(
+  pass: ResolutionPass<TEnv>,
+  entry: Extract<EntryData, { type: "route" }>,
+  fresh: boolean,
+): Promise<ReactNode | { content: ReactNode }> {
+  const { context, params, routeKey, actionContext } = pass;
+  // A partial pass meters a static hit as a handler run; FRESH meters a
+  // route's handler only when it runs.
+  let doneHandler = fresh ? undefined : track(`handler:${entry.id}`, 2);
+  const staticComponent = await tryStaticHandler(entry, entry.shortCode);
+  if (staticComponent !== undefined) {
+    doneHandler?.();
+    return staticComponent;
+  }
+  doneHandler ??= track(`handler:${entry.id}`, 2);
+  // For Passthrough routes at runtime, use the live handler instead of
+  // the build handler. At build time (context.build === true), always
+  // use the build handler from entry.handler.
+  const handler =
+    !context.build && entry.liveHandler ? entry.liveHandler : entry.handler;
+  if (!entry.loading) {
+    const result = handleHandlerResult(
+      await observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+    );
+    doneHandler();
+    return result;
+  }
+  if (!actionContext) {
+    const result = handleHandlerResult(
+      observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+    );
+    if (result instanceof Promise) {
+      warnOnStreamedResponse(result, entry.id);
+      result.finally(doneHandler).catch(() => {});
+      return {
+        content: trackStreamedHandler(pass.deps, result, {
+          boundaryEntry: entry,
+          segmentId: entry.shortCode,
+          segmentType: entry.type,
+          context,
+          routeKey,
+          params,
+          recover: !pass.throwOnError,
+        }),
+      };
+    }
+    doneHandler();
+    return { content: result };
+  }
+  debugLog("segment.action", "resolving action route with awaited value", {
+    entryId: entry.id,
+  });
+  const actionResult = handleHandlerResult(
+    await observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+  );
+  doneHandler();
+  return {
+    content: Promise.resolve(actionResult),
+  };
 }
 
 /**
@@ -858,164 +1194,42 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
   entry: Exclude<EntryData, { type: "parallel" }>,
   belongsToRoute: boolean,
 ): Promise<{ segment: ResolvedSegment; matchedId: string }> {
-  const { context, params, routeKey, actionContext } = pass;
+  const { context, params } = pass;
+  const fresh = pass.client === FRESH;
   const matchedId = entry.shortCode;
 
   let handlerRan = false;
   let deferred: { readonly deferred: true } | undefined;
-  const component = await revalidate(
-    async () => {
-      const hasSegment = pass.client.has(entry.shortCode);
-      debugLog("segment.revalidate", "entry presence check", {
-        segmentId: entry.shortCode,
-        entryType: entry.type,
-        clientHasSegment: hasSegment,
-        belongsToRoute,
-      });
-      if (!hasSegment) {
-        if (isTraceActive()) {
-          const segType =
-            entry.type === "cache"
-              ? "layout"
-              : (entry.type as "layout" | "route");
-          pushRevalidationTraceEntry({
-            segmentId: entry.shortCode,
-            segmentType: segType,
-            belongsToRoute,
-            source: "segment-resolution",
-            defaultShouldRevalidate: true,
-            finalShouldRevalidate: true,
-            reason: "new-segment",
-          });
-        }
-        return true;
-      }
-
-      const dummySegment: ResolvedSegment = {
-        id: entry.shortCode,
-        namespace: entry.id,
-        type:
-          entry.type === "cache"
-            ? "layout"
-            : (entry.type as "layout" | "route"),
-        index: 0,
-        component: null as any,
-        params,
-        belongsToRoute,
-        ...(entry.type === "layout" || entry.type === "cache"
-          ? { layoutName: entry.id }
-          : {}),
-        ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
-      };
-
-      return revalidateHeld(pass, {
-        segment: dummySegment,
-        revalidations: entry.revalidate.map((fn, i) => ({
-          name: `revalidate${i}`,
-          fn,
-        })),
-        traceSource:
-          entry.type === "route" ? "route-handler" : "layout-handler",
-        onEvaluated: (shouldRevalidate) => {
-          emitRevalidationDecision(
-            entry.shortCode,
-            context.pathname,
-            routeKey,
-            shouldRevalidate,
-          );
-          debugLog("segment.revalidate", "entry revalidation decision", {
-            segmentId: entry.shortCode,
-            shouldRevalidate,
-          });
-        },
-      });
-    },
-    async () => {
-      // Only an entry the client lacks (defersUnit). Its handler would
-      // have run, and a prefetch sends the entry's fallback in its place.
-      deferred = deferUnit(context, entry.shortCode, "chain");
-      if (deferred) return null;
+  let component: ReactNode | { content: ReactNode } = null;
+  // FRESH: the entry is new; no decision is asked, traced or observed.
+  if (fresh || (await entryRevalidates(pass, entry, belongsToRoute))) {
+    // Only an entry the client lacks (defersUnit). Its handler would
+    // have run, and a prefetch sends the entry's fallback in its place.
+    deferred = deferUnit(context, entry.shortCode, "chain");
+    if (!deferred) {
       handlerRan = true;
-      const doneHandler = track(`handler:${entry.id}`, 2);
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         entry.shortCode;
-      if (entry.type === "layout" || entry.type === "cache") {
-        const layoutComponent = await resolveLayoutComponent(entry, context);
+      if (entry.type === "route") {
+        component = await resolveRouteComponent(pass, entry, fresh);
+      } else {
+        const doneHandler = track(`handler:${entry.id}`, 2);
+        component = await resolveLayoutComponent(entry, context);
         doneHandler();
-        return layoutComponent;
       }
-      const staticComponent = await tryStaticHandler(entry, entry.shortCode);
-      if (staticComponent !== undefined) {
-        doneHandler();
-        return staticComponent;
-      }
-      const routeEntry = entry as Extract<EntryData, { type: "route" }>;
-      // For Passthrough routes at runtime, use the live handler instead of
-      // the build handler. At build time (context.build === true), always
-      // use the build handler from routeEntry.handler.
-      const handler =
-        !context.build && routeEntry.liveHandler
-          ? routeEntry.liveHandler
-          : routeEntry.handler;
-      if (!routeEntry.loading) {
-        const result = handleHandlerResult(
-          await observeSegmentHandler(
-            entry.shortCode,
-            entry.id,
-            handler,
-            context,
-          ),
-        );
-        doneHandler();
-        return result;
-      }
-      if (!actionContext) {
-        const result = handleHandlerResult(
-          observeSegmentHandler(entry.shortCode, entry.id, handler, context),
-        );
-        if (result instanceof Promise) {
-          warnOnStreamedResponse(result, routeEntry.id);
-          result.finally(doneHandler).catch(() => {});
-          return {
-            content: trackStreamedHandler(pass.deps, result, {
-              boundaryEntry: entry,
-              segmentId: entry.shortCode,
-              segmentType: entry.type,
-              context,
-              routeKey,
-              params,
-              recover: true,
-            }),
-          };
-        }
-        doneHandler();
-        return { content: result };
-      }
-      debugLog("segment.action", "resolving action route with awaited value", {
-        entryId: entry.id,
-      });
-      const actionResult = handleHandlerResult(
-        await observeSegmentHandler(
-          entry.shortCode,
-          entry.id,
-          handler,
-          context,
-        ),
-      );
-      doneHandler();
-      return {
-        content: Promise.resolve(actionResult),
-      };
-    },
-    () => null,
-  );
+    }
+  }
 
   // Normalize void handlers (undefined) to null so the reconciler's
-  // component === null checks work consistently for both void and explicit null.
+  // component === null checks work consistently for both void and explicit
+  // null. FRESH keeps a void layout's undefined: cache-scope.ts refuses a
+  // document record whose layout component is null.
   const resolvedComponent =
     component && typeof component === "object" && "content" in component
       ? ((component as { content: ReactNode }).content ?? null)
-      : (component ?? null);
+      : fresh && entry.type !== "route"
+        ? (component as ReactNode)
+        : (component ?? null);
 
   const segment: ResolvedSegment = {
     id: entry.shortCode,
@@ -1031,25 +1245,28 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     ),
     params,
     belongsToRoute,
-    ...(entry.clientGroup ? { clientGroup: entry.clientGroup } : {}),
-    ...(entry.type === "layout" || entry.type === "cache"
-      ? { layoutName: entry.id }
-      : {}),
-    ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
-    _handlerRan: handlerRan,
-    ...deferred,
   };
+  // Assigned, not spread: a conditional spread costs a temporary object and a
+  // property copy on every chain entry. The keys keep this order.
+  if (entry.clientGroup) segment.clientGroup = entry.clientGroup;
+  if (entry.type === "layout" || entry.type === "cache") {
+    segment.layoutName = entry.id;
+  }
+  if (entry.mountPath) segment.mountPath = entry.mountPath;
+  segment._handlerRan = handlerRan;
+  if (deferred) segment.deferred = deferred.deferred;
 
   return { segment, matchedId };
 }
 
 /**
- * Resolve segments with revalidation awareness (for partial rendering).
+ * Resolve one chain entry's segments: its loaders, its handler, its orphan
+ * layouts and its parallels, handler first.
  */
 export async function resolveSegmentWithRevalidation<TEnv>(
   pass: ResolutionPass<TEnv>,
   entry: Exclude<EntryData, { type: "parallel" }>,
-  /** The matched route's full chain; see ResolveSegmentOptions.chain (fresh.ts). */
+  /** The matched route's full chain; see RevalidatingWalkOptions.chain. */
   chain?: readonly EntryData[],
 ): Promise<SegmentRevalidationResult> {
   const segments: ResolvedSegment[] = [];
@@ -1057,13 +1274,15 @@ export async function resolveSegmentWithRevalidation<TEnv>(
 
   const belongsToRoute = entry.type === "route";
 
-  const loaderResult = await resolveOwnerLoaders(
-    pass,
-    ownerOf(entry),
-    belongsToRoute,
-  );
-  segments.push(...loaderResult.segments);
-  matchedIds.push(...loaderResult.matchedIds);
+  if (ownsLoaders(pass, entry)) {
+    const loaderResult = await resolveOwnerLoaders(
+      pass,
+      ownerOf(entry),
+      belongsToRoute,
+    );
+    segments.push(...loaderResult.segments);
+    matchedIds.push(...loaderResult.matchedIds);
+  }
 
   // For route entries, execute the handler BEFORE orphan layouts and parallels
   // so ctx.set() data is available to them via ctx.get(). The handler's
@@ -1090,15 +1309,20 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     }
   }
 
-  const resolveSlots = () =>
-    resolveParallelSegmentsWithRevalidation(pass, entry, belongsToRoute);
+  const slotted = declaresSlot(entry.parallel);
 
   if (routeHandlerResult) {
     // Route entry: handler already executed above; resolve parallels
     // (handler data visible) then push handler segment last for tree order.
-    const parallelResult = await resolveSlots();
-    segments.push(...parallelResult.segments);
-    matchedIds.push(...parallelResult.matchedIds);
+    if (slotted) {
+      const parallelResult = await resolveParallelSegmentsWithRevalidation(
+        pass,
+        entry,
+        belongsToRoute,
+      );
+      segments.push(...parallelResult.segments);
+      matchedIds.push(...parallelResult.matchedIds);
+    }
 
     segments.push(routeHandlerResult.segment);
     matchedIds.push(routeHandlerResult.matchedId);
@@ -1113,9 +1337,15 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     segments.push(handlerResult.segment);
     matchedIds.push(handlerResult.matchedId);
 
-    const parallelResult = await resolveSlots();
-    segments.push(...parallelResult.segments);
-    matchedIds.push(...parallelResult.matchedIds);
+    if (slotted) {
+      const parallelResult = await resolveParallelSegmentsWithRevalidation(
+        pass,
+        entry,
+        belongsToRoute,
+      );
+      segments.push(...parallelResult.segments);
+      matchedIds.push(...parallelResult.matchedIds);
+    }
 
     for (const orphan of entry.layout) {
       if (chain?.includes(orphan)) continue;
@@ -1135,6 +1365,60 @@ export async function resolveSegmentWithRevalidation<TEnv>(
 }
 
 /**
+ * Whether a partial pass re-renders an orphan layout: one the client lacks,
+ * or a held one whose revalidate() rules ask for it (revalidateHeld).
+ */
+async function orphanRevalidates<TEnv>(
+  pass: ResolutionPass<TEnv>,
+  orphan: EntryData,
+  belongsToRoute: boolean,
+): Promise<boolean> {
+  const { context, params, routeKey } = pass;
+  if (!pass.client.has(orphan.shortCode)) {
+    if (isTraceActive()) {
+      pushRevalidationTraceEntry({
+        segmentId: orphan.shortCode,
+        segmentType: "layout",
+        belongsToRoute,
+        source: "orphan-layout",
+        defaultShouldRevalidate: true,
+        finalShouldRevalidate: true,
+        reason: "new-segment",
+      });
+    }
+    return true;
+  }
+
+  const dummySegment: ResolvedSegment = {
+    id: orphan.shortCode,
+    namespace: orphan.id,
+    type: "layout",
+    index: 0,
+    component: null as any,
+    params,
+    belongsToRoute,
+    layoutName: orphan.id,
+    ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
+  };
+
+  return revalidateHeld(pass, {
+    segment: dummySegment,
+    revalidations: orphan.revalidate.map((fn, i) => ({
+      name: `revalidate${i}`,
+      fn,
+    })),
+    traceSource: "orphan-layout",
+    onEvaluated: (shouldRevalidate) =>
+      emitRevalidationDecision(
+        orphan.shortCode,
+        context.pathname,
+        routeKey,
+        shouldRevalidate,
+      ),
+  });
+}
+
+/**
  * Resolve orphan layout with revalidation.
  */
 export async function resolveOrphanLayoutWithRevalidation<TEnv>(
@@ -1143,7 +1427,11 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   belongsToRoute: boolean,
   /** Parent route entry — its loaders are inherited so parallel slots can access them. */
   parentRouteEntry?: EntryData,
-  /** Matched chain entry being resolved (see ResolveSegmentOptions.boundaryEntry); defaults to parentRouteEntry. */
+  /**
+   * Matched chain entry being resolved (see
+   * resolveParallelSegmentsWithRevalidation's boundaryEntry); defaults to
+   * parentRouteEntry.
+   */
   boundaryEntry: EntryData | undefined = parentRouteEntry,
 ): Promise<SegmentRevalidationResult> {
   invariant(
@@ -1151,20 +1439,25 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     `Expected orphan to be a layout or cache, got: ${orphan.type}`,
   );
 
-  const { context, params, routeKey } = pass;
+  const { context, params } = pass;
+  const fresh = pass.client === FRESH;
   const segments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
 
-  const loaderResult = await resolveOwnerLoaders(
-    pass,
-    ownerOf(orphan),
-    belongsToRoute,
-  );
-  segments.push(...loaderResult.segments);
-  matchedIds.push(...loaderResult.matchedIds);
+  if (ownsLoaders(pass, orphan)) {
+    const loaderResult = await resolveOwnerLoaders(
+      pass,
+      ownerOf(orphan),
+      belongsToRoute,
+    );
+    segments.push(...loaderResult.segments);
+    matchedIds.push(...loaderResult.matchedIds);
+  }
 
   // Inherit parent route's loaders so parallel slots inside this layout
-  // can access them via useLoader(). See resolveOrphanLayout in fresh.ts.
+  // can access them via useLoader(). Without this, the route's loaders are
+  // only in the route's OutletProvider (rendered as <Outlet /> content),
+  // which is a child — not a parent — of the layout's context.
   if (
     parentRouteEntry &&
     parentRouteEntry.loader &&
@@ -1189,59 +1482,22 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   matchedIds.push(orphan.shortCode);
 
   let deferred: { readonly deferred: true } | undefined;
-  const component = await revalidate(
-    async () => {
-      if (!pass.client.has(orphan.shortCode)) {
-        if (isTraceActive()) {
-          pushRevalidationTraceEntry({
-            segmentId: orphan.shortCode,
-            segmentType: "layout",
-            belongsToRoute,
-            source: "orphan-layout",
-            defaultShouldRevalidate: true,
-            finalShouldRevalidate: true,
-            reason: "new-segment",
-          });
-        }
-        return true;
+  let component: ReactNode = null;
+  // FRESH: the orphan is new; no decision is asked, traced or observed.
+  if (fresh || (await orphanRevalidates(pass, orphan, belongsToRoute))) {
+    // Below a unit a prefetch skipped: the orphan goes with it.
+    deferred = deferUnit(context, orphan.shortCode, "below");
+    if (!deferred) {
+      if (!fresh) {
+        component = await resolveLayoutComponent(orphan, context);
+      } else {
+        // FRESH meters the orphan's handler; a partial pass does not.
+        const doneHandler = track(`handler:${orphan.id}`, 2);
+        component = await resolveLayoutComponent(orphan, context);
+        doneHandler();
       }
-
-      const dummySegment: ResolvedSegment = {
-        id: orphan.shortCode,
-        namespace: orphan.id,
-        type: "layout",
-        index: 0,
-        component: null as any,
-        params,
-        belongsToRoute,
-        layoutName: orphan.id,
-        ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
-      };
-
-      return revalidateHeld(pass, {
-        segment: dummySegment,
-        revalidations: orphan.revalidate.map((fn, i) => ({
-          name: `revalidate${i}`,
-          fn,
-        })),
-        traceSource: "orphan-layout",
-        onEvaluated: (shouldRevalidate) =>
-          emitRevalidationDecision(
-            orphan.shortCode,
-            context.pathname,
-            routeKey,
-            shouldRevalidate,
-          ),
-      });
-    },
-    async () => {
-      // Below a unit a prefetch skipped: the orphan goes with it.
-      deferred = deferUnit(context, orphan.shortCode, "below");
-      if (deferred) return null;
-      return resolveLayoutComponent(orphan, context);
-    },
-    () => null,
-  );
+    }
+  }
 
   segments.push({
     id: orphan.shortCode,
@@ -1267,23 +1523,30 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   //     `true` (orphan parallels always belong to the route — the #482 guard),
   //     where the main path would seed `belongsToRoute || isNewParent`.
   //   - loaderOrder "before": a slot's loaders are emitted before the slot
-  //     segment, matching the prior inlined order.
+  //     segment, matching the prior inlined order. FRESH emits them after it,
+  //     as on the main path.
   // `entry.shortCode` inside the helper is `orphan.shortCode` (orphan is passed
   // as `entry`), so the parallel ids + loader shortCodeOverride are unchanged.
-  const parallelResult = await resolveParallelSegmentsWithRevalidation(
-    pass,
-    orphan,
-    belongsToRoute,
-    {
-      parentChainDefault: "force-render",
-      loaderOrder: "before",
-      boundaryEntry,
-    },
-  );
-  segments.push(...parallelResult.segments);
-  matchedIds.push(...parallelResult.matchedIds);
+  if (declaresSlot(orphan.parallel)) {
+    const parallelResult = await resolveParallelSegmentsWithRevalidation(
+      pass,
+      orphan,
+      belongsToRoute,
+      {
+        parentChainDefault: "force-render",
+        loaderOrder: fresh ? "after" : "before",
+        boundaryEntry,
+      },
+    );
+    segments.push(...parallelResult.segments);
+    matchedIds.push(...parallelResult.matchedIds);
+  }
 
-  // Nested routeless entries; see resolveOrphanLayout (fresh.ts).
+  // Routeless entries nested in this one (a layout() after a bare cache()
+  // marker, a wrapper inside a routeless wrapper) wrap the same content one
+  // level deeper. Issue #918: they were never rendered. None is in the
+  // matched chain: that would put this orphan in it, and
+  // resolveSegmentWithRevalidation skips those.
   for (const nested of orphan.layout) {
     const nestedResult = await resolveOrphanLayoutWithRevalidation(
       pass,
@@ -1301,17 +1564,35 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
 
 /** What resolveAllSegmentsWithRevalidation needs beyond its pass. */
 export interface RevalidatingWalkOptions {
-  /** The intercept the request resolves: the route handler is skipped. */
-  readonly interceptResult: InterceptResult | null;
-  readonly localRouteName: string;
+  /**
+   * The intercept the request resolves: the route's entry (its handler and
+   * loaders) is skipped and only its id is matched. None on a FRESH pass.
+   */
+  readonly interceptResult?: InterceptResult | null;
+  /** For the intercept skip's debug log. */
+  readonly localRouteName?: string;
   /** Where an entry's error boundary reports (resolveWithErrorBoundary). */
   readonly pathname: string;
-  /** The matched route's full chain; see ResolveSegmentOptions.chain (fresh.ts). Defaults to `entries`. */
+  /**
+   * The matched route's full entry chain. Defaults to `entries`;
+   * withCacheLookup passes it when it resolves only the entries above a
+   * cache() boundary. An orphan list can hold an entry of the chain: a bare
+   * cache() marker sits in its layout's layout[] (it wraps that layout's
+   * routes) and is the parent of the routes after it. For those routes it
+   * resolves once, as a chain entry, below the cache() header latch (issue
+   * #918: resolved twice on a MISS, once and discarded on a HIT).
+   */
   readonly chain?: readonly EntryData[];
 }
 
+/** An entry's error or not-found segment, as its whole result. */
+function boundaryResult(seg: ResolvedSegment): SegmentRevalidationResult {
+  return { segments: [seg], matchedIds: [seg.id] };
+}
+
 /**
- * Resolve all segments for a route with revalidation logic (for matchPartial).
+ * Resolve all segments for a route: a partial match (matchPartial), or a
+ * full match with a FRESH pass.
  */
 export async function resolveAllSegmentsWithRevalidation<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -1326,10 +1607,26 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
   const seenSegIds = new Set<string>();
   const seenMatchIds = new Set<string>();
 
-  // ppr header-write guard latch — see resolveAllSegments (fresh.ts).
+  // ppr routes are document-scoped cached territory: the whole chain (root
+  // layout down to the page) bakes into the shared shell, so the header-write
+  // guard latches BEFORE any entry resolves (unlike the positional cache()
+  // latch below). See assertCachedHeaderWriteAllowed (server/context.ts).
   latchPprHeaderScopeForEntries(entries, routeKey);
 
-  const telemetry = getRouterContext()?.telemetry;
+  // No router context at build time (prerender-match.ts): no telemetry sink.
+  let telemetry;
+  try {
+    telemetry = getRouterContext()?.telemetry;
+  } catch {}
+  // FRESH: a full match reports an entry's error without isPartial, and a
+  // build-time pass rethrows it (throwOnError).
+  const report = {
+    request,
+    url: context.url,
+    routeKey,
+    isPartial: pass.client === FRESH ? undefined : true,
+    telemetry,
+  };
   const fillMatch = {
     handlerContext: context,
     isIntercept: !!interceptResult,
@@ -1355,7 +1652,11 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     if (interceptFillSkips(fillMatch, entry.shortCode)) continue;
 
     const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
-    // Same latch as resolveAllSegments (fresh.ts), route-level cache() included.
+    // Set ALS flag when entering a cache() boundary so that ctx.get()
+    // can guard non-cacheable variable reads. Also latch the header-write
+    // scope (response-level side effects — headers/cookies/status).
+    // Persists for all descendant entries. A route entry carries `cache` when
+    // cache() is among its own children (dsl-helpers.ts cache()).
     if (entry.cache) {
       const store = RangoContext.getStore();
       if (store) store.insideCacheScope = true;
@@ -1366,16 +1667,18 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
       nonParallelEntry,
       params,
       () => resolveSegmentWithRevalidation(pass, nonParallelEntry, chain),
-      (seg) => ({ segments: [seg], matchedIds: [seg.id] }),
+      boundaryResult,
       pass.deps,
-      { request, url: context.url, routeKey, isPartial: true, telemetry },
+      report,
       pathname,
+      pass.throwOnError,
     );
     doneEntry();
 
-    // Deduplicate segments and matchedIds by ID, matching resolveAllSegments.
-    // include() scopes can produce entries that resolve the same shared
-    // layout/loader segment. Duplicates cause React tree depth changes.
+    // Deduplicate segments and matchedIds by ID. include() scopes can produce
+    // entries that resolve the same shared layout/loader segment. Duplicates
+    // in the segment array propagate to the client's matched[] and change
+    // the React tree depth.
     for (const seg of resolved.segments) {
       if (!seenSegIds.has(seg.id)) {
         seenSegIds.add(seg.id);

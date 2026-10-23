@@ -30,7 +30,7 @@ import { resolveLoaderData } from "../loader-cache";
 import { LOADER_HOLE_KEY } from "../loader-snapshot";
 
 // The seed is keyed by loader id (buildShellLoaderSeed); the segment key is
-// the caller's opt-in to the pin (fresh.ts resolveLoaders).
+// the caller's opt-in to the pin (revalidation.ts resolveOwnerLoaders).
 const LOADER_ID = "L";
 const SEGMENT_KEY = `R0D0.${LOADER_ID}`;
 

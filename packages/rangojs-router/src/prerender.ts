@@ -490,8 +490,8 @@ export function isPrerenderPassthrough(
  * A build handler signals passthrough by returning `ctx.passthrough()` (the
  * PRERENDER_PASSTHROUGH sentinel), which lands on the segment's `component`.
  * But when the route declares `loading()`, the handler result is deferred
- * upstream (segment-resolution/fresh.ts), so `component` is a thenable resolving
- * to the sentinel rather than the sentinel itself — a synchronous
+ * upstream (resolveEntryHandlerWithRevalidation), so `component` is a thenable
+ * resolving to the sentinel rather than the sentinel itself — a synchronous
  * `isPrerenderPassthrough(component)` on the Promise returns false and the build
  * bakes a corrupt artifact instead of deferring. Resolve thenables first.
  *

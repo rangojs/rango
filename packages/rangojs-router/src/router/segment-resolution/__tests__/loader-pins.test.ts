@@ -244,8 +244,8 @@ describe("the pin a loader's value is served from is the pin its pushes follow",
     expect(await served(bake, pins, "L7D3.x")).toBe("pin");
   });
 
-  // An entry without loading() passes its key for every loader (fresh.ts
-  // resolveLoaders); only the `ssr: false` registration is on the bake lane.
+  // An entry without loading() passes its key for every loader (revalidation.ts
+  // resolveOwnerLoaders); only the `ssr: false` registration is on the bake lane.
   it("a loader registered without ssr: false runs, pin or no pin, and is a hole", async () => {
     const stale = { "Live#L": PIN };
 

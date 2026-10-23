@@ -1,12 +1,11 @@
 import { createLoader } from "../../loader.js";
 import { describe, it, expect, vi } from "vitest";
 import {
-  resolveSegment,
   resolveOrphanLayoutWithRevalidation,
-  resolveParallelEntry,
   resolveParallelSegmentsWithRevalidation,
   resolveSegmentWithRevalidation,
 } from "../segment-resolution";
+import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -69,7 +68,7 @@ const TestParallelLoader = (createLoader as Function)(
 );
 
 describe("segment-resolution parallel loading", () => {
-  it("executes parent layout handler before parallel handlers in fresh resolution", async () => {
+  it("executes parent layout handler before parallel handlers in a FRESH pass", async () => {
     const context = createContext();
     const layoutEntry = {
       id: "blog.layout",
@@ -91,18 +90,18 @@ describe("segment-resolution parallel loading", () => {
       notFoundBoundary: [],
     } as any;
 
-    const result = await resolveSegment(
+    const { segments: result } = await resolveSegmentWithRevalidation(
+      makeFreshPass(
+        context,
+        {
+          trackHandler: (p: any) => p,
+          findNearestErrorBoundary: () => null,
+          findNearestNotFoundBoundary: () => null,
+          wrapLoaderPromise: (p: Promise<any>) => p,
+        } as any,
+        { routeKey: "/blog", params: {} },
+      ),
       layoutEntry,
-      "/blog",
-      {},
-      context,
-      new Map(),
-      {
-        trackHandler: (p: any) => p,
-        findNearestErrorBoundary: () => null,
-        findNearestNotFoundBoundary: () => null,
-        wrapLoaderPromise: (p: Promise<any>) => p,
-      } as any,
     );
 
     const parallelSegment = result.find((s) => s.type === "parallel");
@@ -332,6 +331,67 @@ describe("segment-resolution parallel loading", () => {
     expect(result.segments[0]?.type).toBe("parallel");
   });
 
+  describe("static slot value with loading false", () => {
+    // A non-function slot value is the slot's content as declared: a
+    // Promise (a React 19 ReactNode) goes to render as is, never awaited by
+    // the walk.
+    function staticSlotLayout(value: unknown) {
+      return {
+        id: "blog.layout",
+        type: "layout",
+        shortCode: "L0",
+        handler: "layout",
+        loader: [],
+        layout: [],
+        parallel: [{ ...createParallelEntry(value), loading: false }],
+        intercept: [],
+        middleware: [],
+        revalidate: [],
+        errorBoundary: [],
+        notFoundBoundary: [],
+      } as any;
+    }
+    const deps = {
+      trackHandler: (p: any) => p,
+      findNearestErrorBoundary: () => null,
+      findNearestNotFoundBoundary: () => null,
+    } as any;
+
+    it("hands a Promise slot value to render unawaited in a FRESH pass", async () => {
+      const value = Promise.resolve("slot-content");
+      const context = createContext();
+      const result = await resolveParallelSegmentsWithRevalidation(
+        makeFreshPass(context, deps, { routeKey: "/blog", params: {} }),
+        staticSlotLayout(value),
+        false,
+      );
+      expect(result.segments).toHaveLength(1);
+      expect(result.segments[0]?.component).toBe(value);
+    });
+
+    it("hands a Promise slot value to render unawaited in a partial pass", async () => {
+      const value = Promise.resolve("slot-content");
+      const context = createContext();
+      const result = await resolveParallelSegmentsWithRevalidation(
+        {
+          context,
+          client: new Set(),
+          params: {},
+          prevParams: {},
+          request: context.request,
+          prevUrl: context.url,
+          nextUrl: context.url,
+          routeKey: "/blog",
+          deps,
+        },
+        staticSlotLayout(value),
+        false,
+      );
+      expect(result.segments).toHaveLength(1);
+      expect(result.segments[0]?.component).toBe(value);
+    });
+  });
+
   it("resolves parallel loaders even when loading is set", async () => {
     const context = createContext();
     const entry = {
@@ -339,16 +399,22 @@ describe("segment-resolution parallel loading", () => {
       loader: [{ loader: TestParallelLoader, revalidate: [] }],
     } as any;
 
-    const segments = await resolveParallelEntry(
-      entry,
-      {},
-      context,
-      false,
-      "L0",
+    const { segments } = await resolveParallelSegmentsWithRevalidation(
+      makeFreshPass(
+        context,
+        {
+          wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
+          trackHandler: vi.fn((p: any) => p),
+        } as any,
+        { params: {} },
+      ),
       {
-        wrapLoaderPromise: vi.fn((promise: Promise<any>) => promise),
-        trackHandler: vi.fn((p: any) => p),
+        id: "blog.layout",
+        type: "layout",
+        shortCode: "L0",
+        parallel: [entry],
       } as any,
+      false,
     );
 
     expect(segments.map((segment) => segment.type)).toEqual([

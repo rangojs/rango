@@ -43,7 +43,6 @@ const mockMatchContext = {
   manifestEntry: {},
   localRouteName: "test",
   handlerContext: {},
-  loaderPromises: new Map(),
   routeMap: {},
   env: {},
   metricsStore: undefined,

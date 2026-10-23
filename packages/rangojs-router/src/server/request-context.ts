@@ -806,8 +806,8 @@ export interface RequestContext<
    * (loader(Def, { ssr: false })): segment resolution awaits these
    * before returning, so the render barrier cannot resolve until they settle.
    * rendered() checks this set to fail fast — a flagged loader awaiting the
-   * barrier is a guaranteed cycle, not a race. Registered by resolveLoaders
-   * (fresh.ts) before loader kickoff; only ever populated on document renders
+   * barrier is a guaranteed cycle, not a race. Registered by resolveOwnerLoaders
+   * before loader kickoff; only ever populated on document renders
    * (the flag is stamped per-isSSR at DSL evaluation).
    */
   _awaitBeforeFlushLoaderIds?: Set<string>;

@@ -501,7 +501,7 @@ prefetch.
 ### Where the decisions are made
 
 All of it is in `src/router/segment-resolution/revalidation.ts`, the partial
-path. The document path (`fresh.ts`) never defers.
+path. A FRESH pass (the document path) never defers.
 
 - `resolveOwnerLoaders` is the one place a navigation kicks a DSL
   loader off. A loader `defersLoader()` says yes to (R14) is registered

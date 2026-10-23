@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EntryData } from "../../server/context.js";
-import { resolveLoadersOnly } from "../segment-resolution/fresh.js";
+import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import {
   buildEntryRevalidateMap,
   resolveLoadersOnlyWithRevalidation,
@@ -130,7 +130,7 @@ function makeParallelLoaderEntry(): EntryData {
 /**
  * In the real DSL, when a cache boundary wraps a layout that has a loader,
  * the loader entry ends up on both the cache entry and the layout entry
- * with the SAME shortCode (the layout's). This causes resolveLoaders to
+ * with the SAME shortCode (the layout's). This causes the loader funnel to
  * produce two segments with identical IDs.
  */
 function makeCacheBoundaryWithSharedLoader(): EntryData {
@@ -175,11 +175,10 @@ function makeCacheBoundaryWithSharedLoader(): EntryData {
 }
 
 describe("cache-boundary shared loader dedup", () => {
-  it("resolveLoadersOnly emits shared loader only once when cache wraps layout", async () => {
-    const segments = await resolveLoadersOnly(
+  it("a FRESH pass emits shared loader only once when cache wraps layout", async () => {
+    const { segments } = await resolveLoadersOnlyWithRevalidation(
+      makeFreshPass(makeContext(), makeDeps()),
       [makeCacheBoundaryWithSharedLoader()],
-      makeContext(),
-      makeDeps(),
     );
 
     const cartSegments = segments.filter((s) =>
@@ -214,11 +213,10 @@ describe("cache-boundary shared loader dedup", () => {
 });
 
 describe("cache-hit parallel loaders", () => {
-  it("resolveLoadersOnly includes loaders from parallel entries using the parent shortCode", async () => {
-    const segments = await resolveLoadersOnly(
+  it("a FRESH pass includes loaders from parallel entries using the parent shortCode", async () => {
+    const { segments } = await resolveLoadersOnlyWithRevalidation(
+      makeFreshPass(makeContext(), makeDeps()),
       [makeParallelLoaderEntry()],
-      makeContext(),
-      makeDeps(),
     );
 
     expect(segments).toHaveLength(1);
@@ -249,7 +247,7 @@ describe("cache-hit parallel loaders", () => {
   });
 
   it("resolveLoadersOnlyWithRevalidation keeps a SKIPPED loader in matchedIds but drops it from segments", async () => {
-    // The reval-only divergence vs the fresh path: when a loader's gate says
+    // The reval-only divergence vs a FRESH pass: when a loader's gate says
     // skip (it's already in the client set and revalidate() returned false), the
     // loader is NOT re-fetched (absent from segments) but its id STAYS in
     // matchedIds so the client keeps advertising it and it stays eligible for

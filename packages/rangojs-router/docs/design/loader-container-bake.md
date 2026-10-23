@@ -230,8 +230,9 @@ of shell material.
 
 ### 1. Capture: unmask no-`loading()` loaders
 
-`fresh.ts` masks all loaders during capture and forces the streaming emit shape
-(`emitStreaming = !loadingDisabled || isShellCaptureActive()`) so the
+`resolveOwnerLoaders` (`segment-resolution/revalidation.ts`) masks all loaders during
+capture and forces the streaming emit shape (the `owner.loadingDisabled &&
+!isShellCaptureActive()` settle guard) so the
 loading-disabled await cannot hang on masked promises. Change: during capture,
 loaders on no-`loading()` entries are NOT masked — the tree-build await runs
 the real loader and settles the container, exactly like axis 1. The capture

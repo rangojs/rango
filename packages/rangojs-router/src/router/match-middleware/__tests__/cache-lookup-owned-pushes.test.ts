@@ -232,7 +232,6 @@ async function lookup(options: {
     evaluateRevalidation: vi.fn(),
     buildEntryRevalidateMap: undefined,
     resolveLoadersOnlyWithRevalidation: undefined,
-    resolveLoadersOnly: undefined,
   } as any;
   await runWithRouterContext(routerContext, () =>
     runWithRequestContext(reqCtx, async () => {

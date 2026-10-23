@@ -1,5 +1,5 @@
 // Issue #587: when a Prerender route's render throws at build time, the router's
-// error boundary (in resolveAllSegments) used to catch it and turn it into a
+// error boundary (in resolveAllSegmentsWithRevalidation) used to catch it and turn it into a
 // `type: "error"` segment. matchForPrerender then serialized that error page as a
 // normal prerender artifact (the build logged OK and the frozen error page was
 // served as an HTTP 200). The failure was silent: status/CI checks saw a 200.

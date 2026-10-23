@@ -442,7 +442,7 @@ const SSR_FALSE_FIRST_FLUSH_TURNS = 3;
 
 /**
  * True when the matched chain has a `loader(Def, { ssr: false })` entry: its
- * payload segments carry `awaitBeforeFlush` (fresh.ts).
+ * payload segments carry `awaitBeforeFlush` (resolveOwnerLoaders).
  */
 function hasAwaitBeforeFlush(payload: {
   metadata?: { segments?: readonly { awaitBeforeFlush?: true }[] };

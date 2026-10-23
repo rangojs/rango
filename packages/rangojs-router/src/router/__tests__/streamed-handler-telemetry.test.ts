@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { runWithRouterContext } from "../router-context";
 import {
-  resolveSegment,
-  resolveParallelEntry,
+  resolveSegmentWithRevalidation,
   resolveParallelSegmentsWithRevalidation,
   resolveOrphanLayoutWithRevalidation,
 } from "../segment-resolution";
+import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import type { TelemetrySink, TelemetryEvent } from "../telemetry";
 
 // ---------------------------------------------------------------------------
@@ -108,7 +108,6 @@ function collectEvents(events: TelemetryEvent[]): TelemetrySink {
 function minimalRouterCtx(telemetry?: TelemetrySink) {
   return {
     telemetry,
-    resolveAllSegments: vi.fn(),
     resolveAllSegmentsWithRevalidation: vi.fn(),
     findInterceptForRoute: () => null,
   } as any;
@@ -123,7 +122,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
     vi.restoreAllMocks();
   });
 
-  describe("fresh path — resolveSegment", () => {
+  describe("FRESH pass — resolveSegmentWithRevalidation", () => {
     it("emits handler.error when a streamed route handler rejects", async () => {
       const events: TelemetryEvent[] = [];
       const sink = collectEvents(events);
@@ -133,13 +132,12 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       const entry = createRouteEntry(() => Promise.reject(handlerError));
 
       await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        const segments = await resolveSegment(
+        const { segments } = await resolveSegmentWithRevalidation(
+          makeFreshPass(ctx, deps, {
+            routeKey: "blog",
+            params: { slug: "hello" },
+          }),
           entry,
-          "blog",
-          { slug: "hello" },
-          ctx,
-          new Map(),
-          deps,
         );
 
         // The component is the rejecting promise (streamed, not awaited)
@@ -169,13 +167,9 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       const entry = createRouteEntry(() => Promise.reject(new Error("boom")));
 
       await runWithRouterContext(minimalRouterCtx(undefined), async () => {
-        const segments = await resolveSegment(
+        const { segments } = await resolveSegmentWithRevalidation(
+          makeFreshPass(ctx, deps, { routeKey: "blog", params: {} }),
           entry,
-          "blog",
-          {},
-          ctx,
-          new Map(),
-          deps,
         );
         const routeSeg = segments.find((s) => s.type === "route");
         expect(routeSeg).toBeDefined();
@@ -186,7 +180,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
     });
   });
 
-  describe("fresh path — resolveParallelEntry", () => {
+  describe("FRESH pass — resolveParallelSegmentsWithRevalidation", () => {
     it("emits handler.error when a streamed parallel slot handler rejects", async () => {
       const events: TelemetryEvent[] = [];
       const sink = collectEvents(events);
@@ -198,15 +192,13 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       );
 
       await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        const segments = await resolveParallelEntry(
-          parallelEntry,
-          { slug: "hello" },
-          ctx,
+        const { segments } = await resolveParallelSegmentsWithRevalidation(
+          makeFreshPass(ctx, deps, {
+            routeKey: "blog",
+            params: { slug: "hello" },
+          }),
+          createLayoutEntry([parallelEntry]),
           false,
-          "L0",
-          deps,
-          undefined,
-          "blog",
         );
 
         const parallelSeg = segments.find((s) => s.type === "parallel");
@@ -346,13 +338,12 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       );
 
       await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        await resolveSegment(
+        await resolveSegmentWithRevalidation(
+          makeFreshPass(ctx, deps, {
+            routeKey: "products.detail",
+            params: { id: "42" },
+          }),
           entry,
-          "products.detail",
-          { id: "42" },
-          ctx,
-          new Map(),
-          deps,
         );
         await new Promise((r) => setTimeout(r, 10));
       });

@@ -5,15 +5,6 @@ export {
   buildLoaderErrorContext,
 } from "./segment-resolution/helpers.js";
 export {
-  resolveLoaders,
-  type ResolveSegmentOptions,
-  resolveSegment,
-  resolveOrphanLayout,
-  resolveParallelEntry,
-  resolveAllSegments,
-  resolveLoadersOnly,
-} from "./segment-resolution/fresh.js";
-export {
   resolveLoadersOnlyWithRevalidation,
   buildEntryRevalidateMap,
   resolveParallelSegmentsWithRevalidation,

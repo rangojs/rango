@@ -1,32 +1,31 @@
 /**
- * The fresh walker (fresh.ts resolveAllSegments) against the revalidating
- * walker (revalidation.ts resolveAllSegmentsWithRevalidation) when the
- * client holds nothing: the same route, one pass each, each with a handler
- * context built the same way. They agree segment for segment except for the
- * differences named below. When the fresh walk becomes a pass of the
- * revalidating walker, each named difference becomes an explicit branch of
- * that pass, and this file stays green with the same list. Two of them are
- * internal-only (`INTERNAL_ONLY`): the walks may stop differing there, and
- * they must not differ in what the payload and the render read.
+ * The segment walker (revalidation.ts resolveAllSegmentsWithRevalidation) on
+ * a full match's FRESH pass (resolution-pass.ts freshPassInput) against a
+ * partial pass whose client holds nothing (an empty set): the same route,
+ * one pass each, each with a handler context built the same way. They agree
+ * segment for segment except for the differences named below; each one is a
+ * branch of the walker, named in its entry. Two of them are internal-only
+ * (`INTERNAL_ONLY`): the passes may stop differing there, and they must not
+ * differ in what the payload and the render read.
  *
- * Each case also pins the fresh walk's own output (segment id, type, the
- * component's text and the loader data), so a change both walkers share
+ * Each case also pins the FRESH pass's own output (segment id, type, the
+ * component's text and the loader data), so a change both passes share
  * shows too.
  *
- * Besides a request's walk, the passes that call the fresh walker with
- * options: build time (prerender-match.ts), the background re-render of a
- * stale route record (background-revalidation.ts, `skipLoaders`) and the
- * live pass above a cache() HIT (cache-lookup.ts, the entries above the
- * marker with the full `chain`).
+ * Besides a request's walk, the FRESH passes with options: build time
+ * (prerender-match.ts, `skipLoaders` and `throwOnError`), the background
+ * re-render of a stale route record (background-revalidation.ts,
+ * `skipLoaders`) and the live pass above a cache() HIT (cache-lookup.ts, the
+ * entries above the marker with the full `chain`).
  *
- * Both walkers run as the router runs them: a router built from the DSL, the
+ * Both passes run as the router runs them: a router built from the DSL, the
  * RouterContext its match builds (its deps, findMatch, handler contexts and
  * loader access), entries from resolveRoute, and the DSL store around the
  * walk. Each case runs on both manifest partitions (document, isSSR true,
  * and navigation, isSSR false), which differ for `loading(..., { ssr: false })`.
  *
- * walkFresh() and walkRevalidating() are the only calls of the two walkers:
- * a change to either signature lands there.
+ * walkFresh() and walkRevalidating() are the only calls of the walker: a
+ * change to its signature lands there.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { createElement, isValidElement, type ReactNode } from "react";
@@ -50,7 +49,10 @@ import { setupBuildUse } from "../../loader-resolution.js";
 import { buildMatchResult } from "../../match-result.js";
 import type { MatchContext, MatchPipelineState } from "../../match-context.js";
 import { restoreParallelLoaderMarkers } from "../../../segment-system.js";
-import type { ResolutionPassInput } from "../resolution-pass.js";
+import {
+  freshPassInput,
+  type ResolutionPassInput,
+} from "../resolution-pass.js";
 import type { HandlerContext, ResolvedSegment } from "../../../types.js";
 
 const DataLoader = (createLoader as Function)(
@@ -324,25 +326,26 @@ function passEntries(pass: Pass): {
   return { entries: entries.slice(0, marker), chain: entries };
 }
 
-function walkFresh(pass: Pass): Promise<ResolvedSegment[]> {
+async function walkFresh(pass: Pass): Promise<ResolvedSegment[]> {
   const { entries, chain } = passEntries(pass);
-  return routerCtx.resolveAllSegments(
-    entries,
-    pass.snapshot.routeKey,
-    pass.snapshot.params,
-    pass.context,
-    new Map(),
-    pass.build
-      ? // prerender-match.ts
-        { skipLoaders: true, throwOnError: true }
-      : pass.skipLoaders
-        ? // background-revalidation.ts rerenderAndCacheRoute
-          { skipLoaders: true }
-        : chain
-          ? // cache-lookup.ts, the live pass of a full match
-            { chain }
+  const { segments } = await routerCtx.resolveAllSegmentsWithRevalidation(
+    freshPassInput(
+      pass.context,
+      pass.snapshot.routeKey,
+      pass.snapshot.params,
+      pass.build
+        ? // prerender-match.ts
+          { skipLoaders: true, throwOnError: true }
+        : pass.skipLoaders
+          ? // background-revalidation.ts rerenderAndCacheRoute
+            { skipLoaders: true }
           : undefined,
+    ),
+    entries,
+    // cache-lookup.ts passes `chain` on the live pass of a full match.
+    { pathname: pass.pathname, ...(chain && { chain }) },
   );
+  return segments;
 }
 
 function walkRevalidating(
@@ -370,7 +373,9 @@ function walkRevalidating(
     : null;
   if (pass.intercept) expect(interceptResult).not.toBeNull();
   // Field by field, not heldNothingPassInput: that reads context.request,
-  // which the build-time prerender context's getter throws on.
+  // which the build-time prerender context's getter throws on. The set is a
+  // fresh empty one, never FRESH: compared by identity, FRESH would make
+  // this a full match's pass.
   const input: ResolutionPassInput = {
     context: pass.context,
     client: new Set(),
@@ -416,9 +421,9 @@ async function line(segment: ResolvedSegment): Promise<string> {
 
 /**
  * The segments as they leave the server and reach the tree: the match
- * result of the request kind each walker serves (a full match for the fresh
- * walk, a partial one with nothing held for the revalidating walk), then
- * the render's marker restore.
+ * result of the request kind each pass serves (a full match for the FRESH
+ * pass, a partial one with nothing held for the other), then the render's
+ * marker restore.
  */
 function delivered(
   walker: "fresh" | "revalidating",
@@ -559,50 +564,58 @@ type Differences = Partial<Record<Exception | "unnamed", string[]>>;
 
 type Exception =
   /**
-   * Internal-only. The revalidating walker marks a segment whose handler it
-   * ran (`_handlerRan`); the fresh walker never sets it. Neither marks an
-   * orphan layout or an error segment. buildMatchResult (match-result.ts)
-   * strips it from the segments it returns. Only a partial match reads it
-   * before that, for `resolvedIds` (the revalidating side, pinned byte for
-   * byte by prefetch-false-unflagged.rsc-test.tsx); a full match never does.
+   * Internal-only. A segment whose handler ran is marked (`_handlerRan`,
+   * resolveEntryHandlerWithRevalidation and the slot loop). Both passes
+   * mark it now, so the difference is gone; it was the fresh walker's
+   * absent marker. Neither marks an orphan layout or an error segment.
+   * buildMatchResult (match-result.ts) strips it from the segments it
+   * returns. Only a partial match reads it before that, for `resolvedIds`
+   * (pinned byte for byte by prefetch-false-unflagged.rsc-test.tsx); a full
+   * match never does.
    */
   | "handler ran marker"
   /**
-   * Internal-only. The fresh walker tags a slot's loaders with the slot's
-   * loading() (`parallelLoading`); the revalidating walker does not.
+   * Internal-only. The FRESH branch of the slot loop
+   * (resolveParallelSegmentsWithRevalidation) tags a slot's loaders with the
+   * slot's loading() (`parallelLoading`); a partial pass does not.
    * renderSegments restores the tag on every render
    * (restoreParallelLoaderMarkers, segment-system.tsx).
    */
   | "slot loading tag"
   /**
-   * Under an intercept the revalidating walker skips the intercepted
+   * The intercept branch of resolveAllSegmentsWithRevalidation
+   * (`interceptResult`): under an intercept the walker skips the intercepted
    * route's entry (its handler and loaders) and lists only the route's id
-   * as matched.
+   * as matched. A FRESH pass has no intercept.
    */
   | "skipped under intercept"
   /**
-   * At build time the fresh walker skips loaders (skipLoaders); the
-   * revalidating walker has no such option, so a route with a loader runs
-   * the loader path, whose error context reads the prerender context's
-   * throwing `request` getter (helpers.ts buildLoaderErrorContext), and the
-   * route becomes an error segment.
+   * The `skipLoaders` branch (resolveOwnerLoaders), which the build-time
+   * FRESH pass sets (prerender-match.ts). The partial pass does not set it,
+   * so a route with a loader runs the loader path, whose error context reads
+   * the prerender context's throwing `request` getter (helpers.ts
+   * buildLoaderErrorContext), and the route becomes an error segment. The
+   * FRESH pass itself never reads that getter: freshPassInput reads it
+   * guarded and carries `request: undefined`.
    */
   | "build-time loaders"
   /**
-   * At build time the fresh walker rethrows a handler error (throwOnError);
-   * the revalidating walker renders the route's error segment.
+   * The `throwOnError` branch (resolveAllSegmentsWithRevalidation, and a
+   * streamed handler's `recover`), which the build-time FRESH pass sets: a
+   * handler error rethrows. The partial pass renders the route's error
+   * segment.
    */
   | "build-time handler error"
   /**
-   * The background re-render of a stale route record walks fresh with
-   * skipLoaders (background-revalidation.ts rerenderAndCacheRoute): the
-   * fresh walk has no loader segments, which the revalidating walk returns
+   * The `skipLoaders` branch, which the background re-render of a stale
+   * route record sets (background-revalidation.ts rerenderAndCacheRoute):
+   * the FRESH pass has no loader segments, which the partial pass returns
    * and lists as matched.
    */
   | "skipped loaders";
 
 /**
- * The differences that stay inside the server or the render: the walks may
+ * The differences that stay inside the server or the render: the passes may
  * stop differing there, and the segments delivered (`Walk.delivered`) never
  * differ there.
  */
@@ -714,7 +727,7 @@ function differences(
 interface Case extends Partial<PassKind> {
   name: string;
   pathname: string;
-  /** The fresh walk, one `line()` per segment, the same on both partitions. */
+  /** The FRESH pass, one `line()` per segment, the same on both partitions. */
   fresh: string[];
   expected: Differences;
 }

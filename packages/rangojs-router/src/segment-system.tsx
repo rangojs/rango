@@ -295,7 +295,7 @@ function wrapDefaultOutletContent(
 
 /**
  * Per-loader stream map for read-site suspension. { ssr: false } loaders were
- * awaited before flush (fresh.ts), so deliver the SETTLED result, not the
+ * awaited before flush (resolveOwnerLoaders), so deliver the SETTLED result, not the
  * settled promise: the read site decodes synchronously instead of use()ing a
  * Flight chunk whose fulfilled-at-read-time status is a scheduling race the
  * SSR-completeness contract must not depend on. Unflagged siblings keep the
@@ -1063,8 +1063,8 @@ function* segmentTreeWalk(
     }
   }
 
-  // Segments arrive in root-to-leaf order from the server (resolveSegment
-  // and resolveSegmentWithRevalidation push segments in this order).
+  // Segments arrive in root-to-leaf order from the server
+  // (resolveSegmentWithRevalidation pushes segments in this order).
   // All consumers (reconcileSegments, cache) preserve this order.
   // No sorting needed — iterate bottom-to-top to process leaf segments first.
   // This processes route/leaf layouts first, then parent layouts

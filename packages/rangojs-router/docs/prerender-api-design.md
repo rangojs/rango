@@ -300,8 +300,8 @@ the route's error boundary _inside_ segment resolution, turned into a normal
 Status/CI checks saw a valid 200, so a fully broken page looked fine.
 
 The fix: pre-rendering resolves segments with a build-only `throwOnError` flag
-(`matchForPrerender` → `resolveAllSegments` → `resolveWithErrorBoundary`, threaded
-through `ResolveSegmentOptions`). With it set, a thrown render error is re-thrown
+(`matchForPrerender` → `resolveAllSegmentsWithRevalidation` → `resolveWithErrorBoundary`,
+threaded through the pass's `throwOnError`). With it set, a thrown render error is re-thrown
 instead of converted into an error segment, so it reaches the build loop
 (`expandPrerenderRoutes`). The live request path leaves the flag unset, so runtime
 error boundaries are unchanged.
@@ -632,8 +632,8 @@ in the cached data.
 ### Loaders
 
 Loaders are NEVER pre-rendered. They run fresh at request time on every
-request. The `resolveLoadersOnly` / `resolveLoadersOnlyWithRevalidation`
-functions handle this after `yieldFromStore` yields cached segments.
+request. The `resolveLoadersOnlyWithRevalidation`
+function handles this (on a FRESH pass or a partial one) after `yieldFromStore` yields cached segments.
 
 ### Runtime Cache (`cache()`)
 
