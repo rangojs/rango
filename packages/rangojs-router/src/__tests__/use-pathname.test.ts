@@ -43,6 +43,7 @@ vi.mock("react", async () => {
 import { useContext } from "react";
 import { NavigationStoreContext } from "../browser/react/context.js";
 import { usePathname } from "../browser/react/use-pathname.js";
+import { makeEventController } from "./kit/event-controller.js";
 
 const mockedUseContext = vi.mocked(useContext);
 
@@ -53,15 +54,6 @@ function mockNavigationContext(value: unknown): void {
   mockedUseContext.mockImplementation((ctx: unknown) =>
     ctx === NavigationStoreContext ? value : null,
   );
-}
-
-function createMockEventController(pathname = "/products/123") {
-  const location = new URL(`http://localhost${pathname}`);
-  return {
-    getState: vi.fn(() => ({ location })),
-    getHydrationSnapshot: vi.fn(() => undefined),
-    subscribe: vi.fn((_cb: () => void) => vi.fn()),
-  };
 }
 
 describe("usePathname", () => {
@@ -76,7 +68,7 @@ describe("usePathname", () => {
   });
 
   it("initializes pathname from event controller", () => {
-    const ec = createMockEventController("/shop/items");
+    const ec = makeEventController({ url: "/shop/items" });
     mockNavigationContext({ eventController: ec } as any);
 
     const result = usePathname();
@@ -90,21 +82,22 @@ describe("usePathname", () => {
   });
 
   it("subscribes with empty dependency array", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController({ url: "/products/123" });
+    const subscribe = vi.spyOn(ec, "subscribe");
     mockNavigationContext({ eventController: ec } as any);
 
     usePathname();
 
     capturedEffectFn!();
 
-    expect(ec.subscribe).toHaveBeenCalledOnce();
+    expect(subscribe).toHaveBeenCalledOnce();
     expect(capturedEffectDeps).toEqual([]);
   });
 
   it("effect cleanup unsubscribes", () => {
     const unsub = vi.fn();
-    const ec = createMockEventController();
-    ec.subscribe.mockReturnValue(unsub);
+    const ec = makeEventController({ url: "/products/123" });
+    vi.spyOn(ec, "subscribe").mockReturnValue(unsub);
     mockNavigationContext({ eventController: ec } as any);
 
     usePathname();
@@ -116,7 +109,8 @@ describe("usePathname", () => {
   });
 
   it("does not call setPathname when pathname is unchanged", () => {
-    const ec = createMockEventController("/products/123");
+    const ec = makeEventController({ url: "/products/123" });
+    const subscribe = vi.spyOn(ec, "subscribe");
     mockNavigationContext({ eventController: ec } as any);
 
     usePathname();
@@ -124,7 +118,7 @@ describe("usePathname", () => {
 
     // Run effect (includes initial sync)
     capturedEffectFn!();
-    const subscribeCallback = ec.subscribe.mock.calls[0][0];
+    const subscribeCallback = subscribe.mock.calls[0][0];
 
     // Clear any initial-sync calls
     setPathname.mockClear();
@@ -138,22 +132,21 @@ describe("usePathname", () => {
   });
 
   it("calls setPathname when pathname changes", () => {
-    const ec = createMockEventController("/products/123");
+    const ec = makeEventController({ url: "/products/123" });
     mockNavigationContext({ eventController: ec } as any);
 
     usePathname();
     const setPathname = stateSlots[0][1];
 
     capturedEffectFn!();
-    const subscribeCallback = ec.subscribe.mock.calls[0][0];
 
     setPathname.mockClear();
     refSlots[0].current = "/products/123";
 
-    // Simulate navigation to new pathname
+    // Navigate to a new pathname; the controller notifies the hook.
     const newLocation = new URL("http://localhost/about");
-    ec.getState.mockReturnValue({ location: newLocation });
-    subscribeCallback();
+    ec.setLocation(newLocation);
+    ec.flushRouteState();
 
     expect(setPathname).toHaveBeenCalledWith("/about");
   });

@@ -5,36 +5,17 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  createRequestContext,
   runWithRequestContext,
+  type RequestContext,
 } from "../request-context.js";
+import { makeRequestContext } from "../../__tests__/kit/request-context.js";
 import { invalidateClientCache } from "../cookie-store.js";
 import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
 import { uniformVersions } from "../../router-versions.js";
 
-function makeCtx(
-  opts: {
-    stateCookieName?: string;
-    version?: string;
-    inbound?: string;
-    cookie?: string;
-  } = {},
-) {
-  const headers: Record<string, string> = {};
-  if (opts.inbound !== undefined) headers["X-Rango-State"] = opts.inbound;
-  if (opts.cookie) headers["Cookie"] = opts.cookie;
-  return createRequestContext({
-    env: {},
-    request: new Request("https://example.com", { headers }),
-    url: new URL("https://example.com"),
-    variables: {},
-    stateCookieName: opts.stateCookieName,
-    versions:
-      opts.version === undefined ? undefined : uniformVersions(opts.version),
-  });
-}
+const EXAMPLE_URL = "https://example.com";
 
-const setCookies = (ctx: ReturnType<typeof makeCtx>): string[] =>
+const setCookies = (ctx: RequestContext): string[] =>
   ctx.res.headers.getSetCookie();
 
 describe("invalidateClientCache() (server seat)", () => {
@@ -45,9 +26,10 @@ describe("invalidateClientCache() (server seat)", () => {
   });
 
   it("writes one rotated Set-Cookie with a literal-colon value", () => {
-    const ctx = makeCtx({
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
       stateCookieName: "rango-state_router_0",
-      version: "v1",
+      versions: uniformVersions("v1"),
     });
     vi.spyOn(Date, "now").mockReturnValue(1234);
     runWithRequestContext(ctx, () => invalidateClientCache());
@@ -58,9 +40,10 @@ describe("invalidateClientCache() (server seat)", () => {
   });
 
   it("is idempotent within a request (one Set-Cookie regardless of call count)", () => {
-    const ctx = makeCtx({
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
       stateCookieName: "rango-state_router_0",
-      version: "v1",
+      versions: uniformVersions("v1"),
     });
     runWithRequestContext(ctx, () => {
       invalidateClientCache();
@@ -72,10 +55,11 @@ describe("invalidateClientCache() (server seat)", () => {
   });
 
   it("mints a timestamp strictly greater than the inbound client value", () => {
-    const ctx = makeCtx({
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
       stateCookieName: "rango-state_router_0",
-      version: "v1",
-      inbound: "v1:1000",
+      versions: uniformVersions("v1"),
+      init: { headers: { "X-Rango-State": "v1:1000" } },
     });
     vi.spyOn(Date, "now").mockReturnValue(500); // server clock behind the client
     runWithRequestContext(ctx, () => invalidateClientCache());
@@ -88,10 +72,11 @@ describe("invalidateClientCache() (server seat)", () => {
   it("mints from the request cookie when the X-Rango-State header is absent", () => {
     // Action POSTs and plain app fetch()s carry no router header but DO send the
     // cookie; the monotonic guard must read it so the rotation can't collide.
-    const ctx = makeCtx({
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
       stateCookieName: "rango-state_router_0",
-      version: "v1",
-      cookie: "rango-state_router_0=v1:1000",
+      versions: uniformVersions("v1"),
+      init: { headers: { Cookie: "rango-state_router_0=v1:1000" } },
     });
     vi.spyOn(Date, "now").mockReturnValue(500); // behind the client
     runWithRequestContext(ctx, () => invalidateClientCache());
@@ -105,11 +90,16 @@ describe("invalidateClientCache() (server seat)", () => {
     // Proxy normalization (or a client bug) can send an empty header. '' is not
     // nullish, so it must not short-circuit the cookie fallback — otherwise
     // prevTs falls to 0 on exactly the requests the fallback exists for.
-    const ctx = makeCtx({
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
       stateCookieName: "rango-state_router_0",
-      version: "v1",
-      inbound: "",
-      cookie: "rango-state_router_0=v1:1000",
+      versions: uniformVersions("v1"),
+      init: {
+        headers: {
+          "X-Rango-State": "",
+          Cookie: "rango-state_router_0=v1:1000",
+        },
+      },
     });
     vi.spyOn(Date, "now").mockReturnValue(500); // behind the client
     runWithRequestContext(ctx, () => invalidateClientCache());
@@ -120,10 +110,11 @@ describe("invalidateClientCache() (server seat)", () => {
   });
 
   it("treats an empty rango-state cookie as absent (no usable prior value)", () => {
-    const ctx = makeCtx({
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
       stateCookieName: "rango-state_router_0",
-      version: "v1",
-      cookie: "rango-state_router_0=",
+      versions: uniformVersions("v1"),
+      init: { headers: { Cookie: "rango-state_router_0=" } },
     });
     vi.spyOn(Date, "now").mockReturnValue(777);
     runWithRequestContext(ctx, () => invalidateClientCache());
@@ -141,10 +132,11 @@ describe("invalidateClientCache() (server seat)", () => {
     // decoding cookie parser: decoding "a%3Ab:1000" to "a:b:1000" makes
     // decodeStateValue split on the wrong colon, prevTs falls to 0, and a server
     // clock behind the client mints a colliding timestamp the observer can't see.
-    const ctx = makeCtx({
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
       stateCookieName: "rango-state_router_0",
-      version: "a:b",
-      cookie: "rango-state_router_0=a%3Ab:1000",
+      versions: uniformVersions("a:b"),
+      init: { headers: { Cookie: "rango-state_router_0=a%3Ab:1000" } },
     });
     vi.spyOn(Date, "now").mockReturnValue(500); // behind the client
     runWithRequestContext(ctx, () => invalidateClientCache());
@@ -155,16 +147,20 @@ describe("invalidateClientCache() (server seat)", () => {
   });
 
   it("does nothing when no resolved cookie name is available", () => {
-    const ctx = makeCtx({ version: "v1" });
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
+      versions: uniformVersions("v1"),
+    });
     runWithRequestContext(ctx, () => invalidateClientCache());
 
     expect(setCookies(ctx)).toHaveLength(0);
   });
 
   it("throws inside a cache-exec boundary (the cookies() guard)", () => {
-    const ctx = makeCtx({
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
       stateCookieName: "rango-state_router_0",
-      version: "v1",
+      versions: uniformVersions("v1"),
     });
     runWithRequestContext(ctx, () =>
       runWithCacheExecScope(() => {

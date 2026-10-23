@@ -50,25 +50,11 @@ vi.mock("react", async () => {
 
 import { useContext } from "react";
 import { useSegments } from "../browser/react/use-segments.js";
+import { makeEventController } from "./kit/event-controller.js";
 
 const mockedUseContext = vi.mocked(useContext);
 
-function createMockEventController() {
-  const location = new URL("http://localhost/shop/products");
-  // Stable references — real controller only swaps these on setHandleData.
-  // useSegments() reads `routeSegmentIds`; `segmentOrder` is exposed for the
-  // handle-collection consumer and may include parallel slot ids.
-  const segmentOrder = ["L0", "L0L1"];
-  const routeSegmentIds = ["L0", "L0L1"];
-  return {
-    getState: () => ({ location }),
-    getLocation: vi.fn(() => location),
-    getHandleState: vi.fn(() => ({ segmentOrder, routeSegmentIds })),
-    getHydrationSnapshot: vi.fn(() => undefined),
-    subscribe: vi.fn((_listener: () => void) => vi.fn()),
-    subscribeToHandles: vi.fn((_listener: () => void) => vi.fn()),
-  };
-}
+const SHOP = { url: "/shop/products", matched: ["L0", "L0L1"] };
 
 describe("useSegments", () => {
   beforeEach(() => {
@@ -82,23 +68,25 @@ describe("useSegments", () => {
   });
 
   it("subscribes to event controller when context is available", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(SHOP);
+    const subscribe = vi.spyOn(ec, "subscribe");
+    const subscribeToHandles = vi.spyOn(ec, "subscribeToHandles");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSegments((s) => s.path);
 
     capturedEffectFn!();
 
-    expect(ec.subscribe).toHaveBeenCalledOnce();
-    expect(ec.subscribeToHandles).toHaveBeenCalledOnce();
+    expect(subscribe).toHaveBeenCalledOnce();
+    expect(subscribeToHandles).toHaveBeenCalledOnce();
   });
 
   it("effect cleanup unsubscribes from both sources", () => {
     const unsubNav = vi.fn();
     const unsubHandles = vi.fn();
-    const ec = createMockEventController();
-    ec.subscribe.mockReturnValue(unsubNav);
-    ec.subscribeToHandles.mockReturnValue(unsubHandles);
+    const ec = makeEventController(SHOP);
+    vi.spyOn(ec, "subscribe").mockReturnValue(unsubNav);
+    vi.spyOn(ec, "subscribeToHandles").mockReturnValue(unsubHandles);
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSegments();
@@ -123,7 +111,7 @@ describe("useSegments", () => {
   });
 
   it("useEffect has empty dependency array (stable subscription)", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(SHOP);
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSegments((s) => s.path);
@@ -132,24 +120,27 @@ describe("useSegments", () => {
   });
 
   it("a re-render with a new selector reads nothing from the store", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(SHOP);
+    const getLocation = vi.spyOn(ec, "getLocation");
+    const getHandleState = vi.spyOn(ec, "getHandleState");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSegments((s) => s.path);
     const setState = stateSlots[0][1];
-    ec.getLocation.mockClear();
-    ec.getHandleState.mockClear();
+    getLocation.mockClear();
+    getHandleState.mockClear();
 
     resetHookIndices();
     useSegments((s) => s.segmentIds);
 
-    expect(ec.getLocation).not.toHaveBeenCalled();
-    expect(ec.getHandleState).not.toHaveBeenCalled();
+    expect(getLocation).not.toHaveBeenCalled();
+    expect(getHandleState).not.toHaveBeenCalled();
     expect(setState).not.toHaveBeenCalled();
   });
 
   it("the next store change applies the current selector", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(SHOP);
+    const subscribe = vi.spyOn(ec, "subscribe");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSegments((s) => s.path);
@@ -159,7 +150,7 @@ describe("useSegments", () => {
 
     resetHookIndices();
     useSegments((s) => s.segmentIds);
-    const onStoreChange = ec.subscribe.mock.calls[0][0];
+    const onStoreChange = subscribe.mock.calls[0][0];
     onStoreChange();
 
     expect(setState).toHaveBeenCalledOnce();
@@ -168,7 +159,8 @@ describe("useSegments", () => {
   });
 
   it("the next store change applies a removed selector as the full state", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(SHOP);
+    const subscribeToHandles = vi.spyOn(ec, "subscribeToHandles");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSegments((s) => s.path);
@@ -178,7 +170,7 @@ describe("useSegments", () => {
 
     resetHookIndices();
     useSegments();
-    const onStoreChange = ec.subscribeToHandles.mock.calls[0][0];
+    const onStoreChange = subscribeToHandles.mock.calls[0][0];
     onStoreChange();
 
     expect(setState).toHaveBeenCalledOnce();
@@ -198,18 +190,10 @@ describe("useSegments", () => {
    * to consumers — its contract is unchanged.
    */
   it("segmentIds excludes parallel slot ids and loader sub-ids", () => {
-    const location = new URL("http://localhost/inbox/email-1");
-    const ec = {
-      getState: () => ({ location }),
-      getLocation: () => location,
-      getHandleState: () => ({
-        segmentOrder: ["L0", "L0.@panel", "R0", "R0.@meta"],
-        routeSegmentIds: ["L0", "R0"],
-      }),
-      getHydrationSnapshot: vi.fn(() => undefined),
-      subscribe: vi.fn(() => vi.fn()),
-      subscribeToHandles: vi.fn(() => vi.fn()),
-    };
+    const ec = makeEventController({
+      url: "/inbox/email-1",
+      matched: ["L0", "L0.@panel", "R0", "R0.@meta", "R0D0.product"],
+    });
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     const state = useSegments() as { segmentIds: readonly string[] };
@@ -218,7 +202,8 @@ describe("useSegments", () => {
   });
 
   it("a store change with an unchanged selection does not set state", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(SHOP);
+    const subscribe = vi.spyOn(ec, "subscribe");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     // A composite selector returns a new object each call; the cached
@@ -228,7 +213,7 @@ describe("useSegments", () => {
     capturedEffectFn!();
     setState.mockClear();
 
-    const onStoreChange = ec.subscribe.mock.calls[0][0];
+    const onStoreChange = subscribe.mock.calls[0][0];
     onStoreChange();
 
     expect(setState).not.toHaveBeenCalled();

@@ -44,19 +44,12 @@ vi.mock("react", async () => {
 
 import { useContext } from "react";
 import { useSearchParams } from "../browser/react/use-search-params.js";
+import type { EventController } from "../browser/event-controller.js";
+import { makeEventController } from "./kit/event-controller.js";
 
 const mockedUseContext = vi.mocked(useContext);
 
-function createMockEventController(search = "?q=react&page=2") {
-  const location = new URL(`http://localhost/products${search}`);
-  return {
-    getState: vi.fn(() => ({ location })),
-    getHydrationSnapshot: vi.fn(() => undefined),
-    subscribe: vi.fn((_cb: () => void) => vi.fn()),
-  };
-}
-
-function mockCtx(ec: ReturnType<typeof createMockEventController>) {
+function mockCtx(ec: EventController) {
   const navigate = vi.fn(() => Promise.resolve());
   mockedUseContext.mockReturnValue({ eventController: ec, navigate } as any);
   return { navigate };
@@ -81,7 +74,7 @@ describe("useSearchParams", () => {
    * agree; the old SSR-empty seed (and its post-hydration flicker) is gone.
    */
   it("seeds from the store location on the initial render", () => {
-    const ec = createMockEventController("?q=react&page=2");
+    const ec = makeEventController({ url: "/products?q=react&page=2" });
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     const [params] = useSearchParams();
@@ -95,7 +88,8 @@ describe("useSearchParams", () => {
    * location (prevSearch is initialized from the seed, not "").
    */
   it("does not re-enqueue on mount when the seed matches the location", () => {
-    const ec = createMockEventController("?q=react&page=2");
+    const ec = makeEventController({ url: "/products?q=react&page=2" });
+    const subscribe = vi.spyOn(ec, "subscribe");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSearchParams();
@@ -104,11 +98,12 @@ describe("useSearchParams", () => {
     capturedEffectFn!();
 
     expect(setSearchParams).not.toHaveBeenCalled();
-    expect(ec.subscribe).toHaveBeenCalledOnce();
+    expect(subscribe).toHaveBeenCalledOnce();
   });
 
   it("does not enqueue on mount when the query string is empty (matches seed)", () => {
-    const ec = createMockEventController("");
+    const ec = makeEventController({ url: "/products" });
+    const subscribe = vi.spyOn(ec, "subscribe");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSearchParams();
@@ -118,11 +113,12 @@ describe("useSearchParams", () => {
 
     // Seed is "" and the location query is also "" — no change, no enqueue.
     expect(setSearchParams).not.toHaveBeenCalled();
-    expect(ec.subscribe).toHaveBeenCalledOnce();
+    expect(subscribe).toHaveBeenCalledOnce();
   });
 
   it("enqueues on a subscribed change and not again when unchanged", () => {
-    const ec = createMockEventController("?q=a");
+    const ec = makeEventController({ url: "/products?q=a" });
+    const subscribe = vi.spyOn(ec, "subscribe");
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSearchParams();
@@ -131,17 +127,15 @@ describe("useSearchParams", () => {
     // Seed already matches "?q=a" — no mount enqueue.
     capturedEffectFn!();
     expect(setSearchParams).not.toHaveBeenCalled();
-    const subscribeCallback = ec.subscribe.mock.calls[0][0];
+    const subscribeCallback = subscribe.mock.calls[0][0];
 
     // A change event with the same query must NOT re-enqueue (prevSearch guard).
     subscribeCallback();
     expect(setSearchParams).not.toHaveBeenCalled();
 
     // A change event with a new query enqueues the new params.
-    ec.getState.mockReturnValue({
-      location: new URL("http://localhost/products?q=b&sort=asc"),
-    } as any);
-    subscribeCallback();
+    ec.setLocation(new URL("http://localhost/products?q=b&sort=asc"));
+    ec.flushRouteState();
     expect(setSearchParams).toHaveBeenCalledTimes(1);
     const next = setSearchParams.mock.calls[0][0] as URLSearchParams;
     expect(next.get("q")).toBe("b");
@@ -150,8 +144,8 @@ describe("useSearchParams", () => {
 
   it("effect cleanup unsubscribes", () => {
     const unsub = vi.fn();
-    const ec = createMockEventController("?q=a");
-    ec.subscribe.mockReturnValue(unsub);
+    const ec = makeEventController({ url: "/products?q=a" });
+    vi.spyOn(ec, "subscribe").mockReturnValue(unsub);
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useSearchParams();
@@ -177,7 +171,7 @@ describe("useSearchParams", () => {
 
   describe("setter", () => {
     it("replaces the whole search string and pushes by default", async () => {
-      const ec = createMockEventController("?q=react&page=2");
+      const ec = makeEventController({ url: "/products?q=react&page=2" });
       const { navigate } = mockCtx(ec);
 
       const [, setSearch] = useSearchParams();
@@ -190,15 +184,13 @@ describe("useSearchParams", () => {
     });
 
     it("functional init merges against params read at CALL time", async () => {
-      const ec = createMockEventController("?q=a");
+      const ec = makeEventController({ url: "/products?q=a" });
       const { navigate } = mockCtx(ec);
 
       const [, setSearch] = useSearchParams();
 
       // Location changes AFTER render: the functional form must see it.
-      ec.getState.mockReturnValue({
-        location: new URL("http://localhost/products?q=b"),
-      } as any);
+      ec.setLocation(new URL("http://localhost/products?q=b"));
 
       await setSearch((prev) => {
         expect(prev.get("q")).toBe("b");
@@ -212,7 +204,7 @@ describe("useSearchParams", () => {
     });
 
     it("normalizes record inits: stringifies, appends arrays, skips null/undefined", async () => {
-      const ec = createMockEventController("");
+      const ec = makeEventController({ url: "/products" });
       const { navigate } = mockCtx(ec);
 
       const [, setSearch] = useSearchParams();
@@ -231,7 +223,7 @@ describe("useSearchParams", () => {
     });
 
     it("navigates to the bare pathname when the result is empty", async () => {
-      const ec = createMockEventController("?q=react");
+      const ec = makeEventController({ url: "/products?q=react" });
       const { navigate } = mockCtx(ec);
 
       const [, setSearch] = useSearchParams();
@@ -241,7 +233,7 @@ describe("useSearchParams", () => {
     });
 
     it("forwards replace, scroll, and revalidate options", async () => {
-      const ec = createMockEventController("");
+      const ec = makeEventController({ url: "/products" });
       const { navigate } = mockCtx(ec);
 
       const [, setSearch] = useSearchParams();
