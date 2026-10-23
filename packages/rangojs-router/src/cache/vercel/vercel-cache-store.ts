@@ -108,6 +108,15 @@ import {
   type MarkerMemoOutcome,
 } from "../isolate-tag-memo.js";
 import { responseStartedAt, taggedStamp } from "../invalidation-order.js";
+import {
+  readRecord,
+  type FamilyPolicy,
+  type RecordBackend,
+  type RecordEnv,
+  type RecordFamily,
+  type RecordMeta,
+  type RecordReadEvent,
+} from "../record-core.js";
 
 /**
  * Minimal structural shape of the Vercel Runtime Cache returned by `getCache()`
@@ -457,6 +466,189 @@ function tagStamp(tags: string[], startedAt?: number): { ta?: number } {
 }
 
 /**
+ * Normalize a value read back from the cache. Entries written by this store
+ * are pre-serialized JSON strings (see write()); legacy entries (written
+ * before that change, or by a client that deserializes for us) come back as
+ * objects. Parse strings, pass objects through, and treat a non-JSON string
+ * as corrupt (returns undefined, so the caller reports + evicts).
+ */
+function decodeRaw(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+function asSegmentEnvelope(raw: unknown): VercelSegmentEnvelope | null {
+  if (!isRecord(raw)) return null;
+  const { d, s, e, ta } = raw;
+  if (!isRecord(d) || !Array.isArray((d as Record<string, unknown>).segments)) {
+    return null;
+  }
+  if (typeof s !== "number" || typeof e !== "number") return null;
+  return {
+    d: d as unknown as CachedEntryData,
+    s,
+    e,
+    ta: typeof ta === "number" ? ta : undefined,
+  };
+}
+
+function asItemEnvelope(raw: unknown): VercelItemEnvelope | null {
+  if (!isRecord(raw)) return null;
+  const { v, h, s, e, t, ta } = raw;
+  if (typeof v !== "string") return null;
+  if (typeof s !== "number" || typeof e !== "number") return null;
+  return {
+    v,
+    h: typeof h === "string" ? h : undefined,
+    s,
+    e,
+    ta: typeof ta === "number" ? ta : undefined,
+    t: Array.isArray(t) ? (t as string[]) : undefined,
+  };
+}
+
+function asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
+  if (!isRecord(raw)) return null;
+  const { p, po, rv, bv, c, s, e, t, i, lp, sn, dk, pr, no } = raw;
+  if (typeof rv !== "string" || typeof bv !== "string") return null;
+  // Document half: required unless navigationOnly (`no`), which stores
+  // neither field. Tolerate a legacy navigationOnly envelope that still
+  // carries them.
+  if (p === undefined ? no !== true : typeof p !== "string") return null;
+  if (po === undefined ? no !== true : po !== null && typeof po !== "string") {
+    return null;
+  }
+  if (typeof c !== "number") return null;
+  if (typeof s !== "number" || typeof e !== "number") return null;
+  return {
+    ...(typeof p === "string" ? { p } : {}),
+    ...(po !== undefined ? { po: po as string | null } : {}),
+    rv,
+    bv,
+    c,
+    s,
+    e,
+    t: Array.isArray(t) ? (t as string[]) : undefined,
+    i: typeof i === "string" ? i : undefined,
+    lp: typeof lp === "string" ? lp : undefined,
+    // A non-array field reads as no records.
+    sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : [],
+    dk: typeof dk === "string" ? dk : undefined,
+    pr: typeof pr === "string" ? pr : undefined,
+    no: no === true ? true : undefined,
+  };
+}
+
+function asResponseEnvelope(raw: unknown): VercelResponseEnvelope | null {
+  if (!isRecord(raw)) return null;
+  const { b, st, hd, s, e, t, ta } = raw;
+  if (typeof b !== "string" || typeof st !== "number") return null;
+  if (!Array.isArray(hd)) return null;
+  if (typeof s !== "number" || typeof e !== "number") return null;
+  return {
+    b,
+    st,
+    hd: hd as [string, string][],
+    s,
+    e,
+    t: Array.isArray(t) ? (t as string[]) : undefined,
+    ta: typeof ta === "number" ? ta : undefined,
+  };
+}
+
+/** The key family of each record family (toStoreKey). */
+const RECORD_FAMILY: Record<RecordFamily, CacheFamily> = {
+  segment: "s",
+  item: "i",
+  response: "r",
+  shell: "h",
+};
+
+type VercelReadOp = VercelCacheReadDebugEvent["op"];
+
+function dataMeta(env: {
+  s: number;
+  e: number;
+  t?: string[];
+  ta?: number;
+}): RecordMeta {
+  return { staleAt: env.s, expiresAt: env.e, tags: env.t, taggedAt: env.ta };
+}
+
+const SEGMENT_READ: FamilyPolicy<
+  VercelSegmentEnvelope,
+  VercelSegmentEnvelope,
+  "get",
+  "read-error"
+> = {
+  debugOp: "get",
+  label: "[VercelCacheStore] get",
+  onReadError: "read-error",
+  decode: (raw) => asSegmentEnvelope(decodeRaw(raw)),
+  meta: (env) => ({
+    staleAt: env.s,
+    expiresAt: env.e,
+    tags: env.d.tags,
+    taggedAt: env.ta,
+  }),
+};
+
+const ITEM_READ: FamilyPolicy<
+  VercelItemEnvelope,
+  VercelItemEnvelope,
+  "getItem",
+  "miss"
+> = {
+  debugOp: "getItem",
+  label: "[VercelCacheStore] getItem",
+  onReadError: "miss",
+  decode: (raw) => asItemEnvelope(decodeRaw(raw)),
+  meta: dataMeta,
+};
+
+const RESPONSE_READ: FamilyPolicy<
+  VercelResponseEnvelope,
+  Response,
+  "getResponse",
+  "miss"
+> = {
+  debugOp: "getResponse",
+  label: "[VercelCacheStore] getResponse",
+  onReadError: "miss",
+  decode: (raw) => asResponseEnvelope(decodeRaw(raw)),
+  meta: dataMeta,
+  // Reconstructed before the stale claim. A corrupt body (invalid base64, bad
+  // header entries) would otherwise throw out of getResponse, breaking the
+  // fail-open contract, and a stale read would take the lock of an entry it
+  // then evicts. A reconstruction failure is a corrupt entry: reported,
+  // evicted, missed.
+  open: (env) =>
+    new Response(base64ToBuffer(env.b), {
+      status: env.st,
+      headers: new Headers(env.hd),
+    }),
+};
+
+const SHELL_READ: FamilyPolicy<
+  VercelShellEnvelope,
+  VercelShellEnvelope,
+  "getShell",
+  "miss"
+> = {
+  debugOp: "getShell",
+  label: "[VercelCacheStore] getShell",
+  onReadError: "miss",
+  decode: (raw) => asShellEnvelope(decodeRaw(raw)),
+  meta: (env) => ({ staleAt: env.s, expiresAt: env.e }),
+  // A shell the tag-marker check rejects is evicted.
+  removeInvalidated: true,
+};
+
+/**
  * Vercel Runtime Cache-backed segment cache store.
  *
  * Suitable for production deployments on Vercel Functions (Node runtime). The
@@ -537,6 +729,10 @@ export class VercelCacheStore<
   readonly maxShellEntryBytes: number;
   private readonly name?: string;
   private readonly debug?: VercelCacheDebug;
+  /** The runtime cache as the record core's backend: keys and I/O. */
+  private readonly backend: RecordBackend;
+  /** Every family's debug sink; the data families' request tag mask. */
+  private readonly reads: RecordEnv<unknown, VercelReadOp>;
 
   constructor(options: VercelCacheStoreOptions<TEnv>) {
     if (!options || !options.cache) {
@@ -558,72 +754,38 @@ export class VercelCacheStore<
     this.freshReadsWindowMs = freshReadsWindowMs(this.memo, true);
     this.name = options.name;
     this.debug = options.debug;
+    const recordKey = (key: string, family: RecordFamily): string =>
+      this.toStoreKey(key, RECORD_FAMILY[family]);
+    this.backend = {
+      // Always a promise: a handle that answers synchronously still settles
+      // the read a tick later, as the awaited cache.get() did.
+      read: (key, family) =>
+        Promise.resolve(this.cache.get(recordKey(key, family))),
+      write: (key, family, record, { ttlSeconds, tags, label }) =>
+        this.write(recordKey(key, family), record, ttlSeconds, tags, label),
+      remove: (key, family) => this.safeDelete(recordKey(key, family)),
+      claimRevalidation: (key, family, expiresAt, label) =>
+        this.claimRevalidation(recordKey(key, family), expiresAt, label),
+    };
+    this.reads = {
+      emit: this.debug ? (event) => this.emitRead(event) : undefined,
+      invalidated: (_record, { tags, taggedAt }) =>
+        this.maskedForRequest(tags, taggedAt),
+    };
   }
 
   // --- Segment family (get/set/delete) ---
 
   async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
-    const storeKey = this.toStoreKey(key, "s");
-    const started = Date.now();
-    let raw: unknown;
-    try {
-      raw = await this.cache.get(storeKey);
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[VercelCacheStore] get");
-      this.emitDebug({ op: "get", key, outcome: "error" });
-      // Distinct from a miss so the PPR replay composition renders uncached
-      // instead of substituting the seeded doc record (CACHE_READ_ERROR).
-      return CACHE_READ_ERROR;
-    }
-    const readMs = Date.now() - started;
-
-    if (raw == null) {
-      this.emitDebug({ op: "get", key, outcome: "miss", readMs });
-      return null;
-    }
-    const env = this.asSegmentEnvelope(this.decodeRaw(raw));
-    if (!env) {
-      reportCacheError(
-        new Error("malformed segment envelope"),
-        "cache-corrupt",
-        "[VercelCacheStore] get",
-      );
-      void this.safeDelete(storeKey);
-      this.emitDebug({ op: "get", key, outcome: "corrupt", readMs });
-      return null;
-    }
-
-    const now = Date.now();
-    if (now > env.e) {
-      void this.safeDelete(storeKey);
-      this.emitDebug({
-        op: "get",
-        key,
-        outcome: "expired",
-        staleAt: env.s,
-        expiresAt: env.e,
-        readMs,
-      });
-      return null;
-    }
-    if (this.maskedMiss("get", key, { t: env.d.tags, ta: env.ta }, readMs)) {
-      return null;
-    }
-
-    const isStale = env.s > 0 && now > env.s;
-    const shouldRevalidate = isStale
-      ? await this.claimRevalidation(storeKey, env.e, "[VercelCacheStore] get")
-      : false;
-    this.emitDebug({
-      op: "get",
+    const read = await readRecord(
+      this.backend,
+      "segment",
       key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
-      staleAt: env.s,
-      expiresAt: env.e,
-      readMs,
-    });
-    return { data: env.d, shouldRevalidate };
+      SEGMENT_READ,
+      this.reads,
+    );
+    if (read === null || read === CACHE_READ_ERROR) return read;
+    return { data: read.record.d, shouldRevalidate: read.shouldRevalidate };
   }
 
   async set(
@@ -651,13 +813,11 @@ export class VercelCacheStore<
         e: expiresAt,
         ...tagStamp(safeTags, data.taggedAt),
       };
-      await this.write(
-        this.toStoreKey(key, "s"),
-        env,
-        ttl + swrWindow,
-        safeTags,
-        "[VercelCacheStore] set",
-      );
+      await this.backend.write(key, "segment", env, {
+        ttlSeconds: ttl + swrWindow,
+        tags: safeTags,
+        label: "[VercelCacheStore] set",
+      });
     } catch (error) {
       reportCacheError(error, "cache-write", "[VercelCacheStore] set");
     }
@@ -680,89 +840,16 @@ export class VercelCacheStore<
   async getResponse(
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
-    const storeKey = this.toStoreKey(key, "r");
-    const started = Date.now();
-    let raw: unknown;
-    try {
-      raw = await this.cache.get(storeKey);
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[VercelCacheStore] getResponse");
-      this.emitDebug({ op: "getResponse", key, outcome: "error" });
-      return null;
-    }
-    const readMs = Date.now() - started;
-
-    if (raw == null) {
-      this.emitDebug({ op: "getResponse", key, outcome: "miss", readMs });
-      return null;
-    }
-    const env = this.asResponseEnvelope(this.decodeRaw(raw));
-    if (!env) {
-      reportCacheError(
-        new Error("malformed response envelope"),
-        "cache-corrupt",
-        "[VercelCacheStore] getResponse",
-      );
-      void this.safeDelete(storeKey);
-      this.emitDebug({ op: "getResponse", key, outcome: "corrupt", readMs });
-      return null;
-    }
-
-    const now = Date.now();
-    if (now > env.e) {
-      void this.safeDelete(storeKey);
-      this.emitDebug({
-        op: "getResponse",
-        key,
-        outcome: "expired",
-        staleAt: env.s,
-        expiresAt: env.e,
-        readMs,
-      });
-      return null;
-    }
-    if (this.maskedMiss("getResponse", key, env, readMs)) return null;
-
-    // Reconstruct the Response BEFORE claiming revalidation. A corrupt body
-    // (e.g. invalid base64 from base64ToBuffer, or bad header entries) would
-    // otherwise throw out of getResponse — breaking the fail-open contract — and
-    // a stale read would have written a lock for an entry it then evicts. Treat a
-    // reconstruction failure as a corrupt entry: report, evict, and miss.
-    let response: Response;
-    try {
-      response = new Response(base64ToBuffer(env.b), {
-        status: env.st,
-        headers: new Headers(env.hd),
-      });
-    } catch (error) {
-      reportCacheError(
-        error,
-        "cache-corrupt",
-        "[VercelCacheStore] getResponse",
-      );
-      void this.safeDelete(storeKey);
-      this.emitDebug({ op: "getResponse", key, outcome: "corrupt", readMs });
-      return null;
-    }
-
-    const isStale = env.s > 0 && now > env.s;
-    const shouldRevalidate = isStale
-      ? await this.claimRevalidation(
-          storeKey,
-          env.e,
-          "[VercelCacheStore] getResponse",
-        )
-      : false;
-    this.emitDebug({
-      op: "getResponse",
+    const read = await readRecord(
+      this.backend,
+      "response",
       key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
-      staleAt: env.s,
-      expiresAt: env.e,
-      readMs,
-    });
-    return { response, shouldRevalidate };
+      RESPONSE_READ,
+      this.reads,
+    );
+    return (
+      read && { response: read.value, shouldRevalidate: read.shouldRevalidate }
+    );
   }
 
   async putResponse(
@@ -799,13 +886,11 @@ export class VercelCacheStore<
         t: safeTags.length > 0 ? safeTags : undefined,
         ...tagStamp(safeTags, responseStartedAt(response)),
       };
-      await this.write(
-        this.toStoreKey(key, "r"),
-        env,
-        ttl + swrWindow,
-        safeTags,
-        "[VercelCacheStore] putResponse",
-      );
+      await this.backend.write(key, "response", env, {
+        ttlSeconds: ttl + swrWindow,
+        tags: safeTags,
+        label: "[VercelCacheStore] putResponse",
+      });
     } catch (error) {
       reportCacheError(error, "cache-write", "[VercelCacheStore] putResponse");
     }
@@ -814,66 +899,15 @@ export class VercelCacheStore<
   // --- Item family ("use cache" - getItem/setItem) ---
 
   async getItem(key: string): Promise<CacheItemResult | null> {
-    const storeKey = this.toStoreKey(key, "i");
-    const started = Date.now();
-    let raw: unknown;
-    try {
-      raw = await this.cache.get(storeKey);
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[VercelCacheStore] getItem");
-      this.emitDebug({ op: "getItem", key, outcome: "error" });
-      return null;
-    }
-    const readMs = Date.now() - started;
-
-    if (raw == null) {
-      this.emitDebug({ op: "getItem", key, outcome: "miss", readMs });
-      return null;
-    }
-    const env = this.asItemEnvelope(this.decodeRaw(raw));
-    if (!env) {
-      reportCacheError(
-        new Error("malformed item envelope"),
-        "cache-corrupt",
-        "[VercelCacheStore] getItem",
-      );
-      void this.safeDelete(storeKey);
-      this.emitDebug({ op: "getItem", key, outcome: "corrupt", readMs });
-      return null;
-    }
-
-    const now = Date.now();
-    if (now > env.e) {
-      void this.safeDelete(storeKey);
-      this.emitDebug({
-        op: "getItem",
-        key,
-        outcome: "expired",
-        staleAt: env.s,
-        expiresAt: env.e,
-        readMs,
-      });
-      return null;
-    }
-    if (this.maskedMiss("getItem", key, env, readMs)) return null;
-
-    const isStale = env.s > 0 && now > env.s;
-    const shouldRevalidate = isStale
-      ? await this.claimRevalidation(
-          storeKey,
-          env.e,
-          "[VercelCacheStore] getItem",
-        )
-      : false;
-    this.emitDebug({
-      op: "getItem",
+    const read = await readRecord(
+      this.backend,
+      "item",
       key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
-      staleAt: env.s,
-      expiresAt: env.e,
-      readMs,
-    });
+      ITEM_READ,
+      this.reads,
+    );
+    if (!read) return null;
+    const { record: env, shouldRevalidate } = read;
     return {
       value: env.v,
       handles: env.h,
@@ -905,13 +939,11 @@ export class VercelCacheStore<
         t: safeTags.length > 0 ? safeTags : undefined,
         ...tagStamp(safeTags, options?.startedAt),
       };
-      await this.write(
-        this.toStoreKey(key, "i"),
-        env,
-        ttl + swrWindow,
-        safeTags,
-        "[VercelCacheStore] setItem",
-      );
+      await this.backend.write(key, "item", env, {
+        ttlSeconds: ttl + swrWindow,
+        tags: safeTags,
+        label: "[VercelCacheStore] setItem",
+      });
     } catch (error) {
       reportCacheError(error, "cache-write", "[VercelCacheStore] setItem");
     }
@@ -1055,89 +1087,37 @@ export class VercelCacheStore<
     if (stats && this.memo.shellMs > 0) {
       stats.memo = { hit: false, bytes: memo.size };
     }
-    const started = Date.now();
     const readStartedAt = stats ? performance.now() : 0;
-    let raw: unknown;
-    try {
-      raw = await this.cache.get(storeKey);
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[VercelCacheStore] getShell");
-      this.emitDebug({ op: "getShell", key, outcome: "error" });
-      return null;
-    }
-    const readMs = Date.now() - started;
-
-    if (raw == null) {
-      this.emitDebug({ op: "getShell", key, outcome: "miss", readMs });
-      return null;
-    }
-    const env = this.asShellEnvelope(this.decodeRaw(raw));
-    if (stats) {
-      const readAt = performance.now();
-      stats.matchMs = readAt - readStartedAt;
-      if (stats.markerHintStartedAt !== undefined) {
-        stats.markerLeadMs = readAt - stats.markerHintStartedAt;
-      }
-    }
-    if (!env) {
-      reportCacheError(
-        new Error("malformed shell envelope"),
-        "cache-corrupt",
-        "[VercelCacheStore] getShell",
-      );
-      void this.safeDelete(storeKey);
-      this.emitDebug({ op: "getShell", key, outcome: "corrupt", readMs });
-      return null;
-    }
-
-    const now = Date.now();
-    if (now > env.e) {
-      void this.safeDelete(storeKey);
-      this.emitDebug({
-        op: "getShell",
-        key,
-        outcome: "expired",
-        staleAt: env.s,
-        expiresAt: env.e,
-        readMs,
-      });
-      return null;
-    }
-
-    this.handleMemos.hints.remember(storeKey, env.t);
-    if (
-      await this.shellTagsInvalidated(env.t, env.c, stats, prefetched, outcomes)
-    ) {
-      void this.safeDelete(storeKey);
-      this.emitDebug({ op: "getShell", key, outcome: "miss", readMs });
-      return null;
-    }
-
-    const isStale = env.s > 0 && now > env.s;
-    let shouldRevalidate = isStale;
-    // Inside the recapture floor the serve path schedules nothing, so the
-    // lock is left for the first stale read past it: claimed here, it held
-    // the shell REVALIDATION_LOCK_MS without a recapture.
-    if (
-      isStale &&
-      options?.claimRevalidation !== false &&
-      staleShellRecaptureDue({ createdAt: env.c }, now)
-    ) {
-      shouldRevalidate = await this.claimRevalidation(
-        storeKey,
-        env.e,
-        "[VercelCacheStore] getShell",
-      );
-    }
-    this.emitDebug({
-      op: "getShell",
-      key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
-      staleAt: env.s,
-      expiresAt: env.e,
-      readMs,
+    const read = await readRecord(this.backend, "shell", key, SHELL_READ, {
+      emit: this.reads.emit,
+      afterDecode: stats
+        ? () => {
+            const readAt = performance.now();
+            stats.matchMs = readAt - readStartedAt;
+            if (stats.markerHintStartedAt !== undefined) {
+              stats.markerLeadMs = readAt - stats.markerHintStartedAt;
+            }
+          }
+        : undefined,
+      invalidated: (env) => {
+        this.handleMemos.hints.remember(storeKey, env.t);
+        return this.shellTagsInvalidated(
+          env.t,
+          env.c,
+          stats,
+          prefetched,
+          outcomes,
+        );
+      },
+      // Inside the recapture floor the serve path schedules nothing, so the
+      // lock is left for the first stale read past it: claimed here, it held
+      // the shell REVALIDATION_LOCK_MS without a recapture.
+      claims: (env, now) =>
+        options?.claimRevalidation !== false &&
+        staleShellRecaptureDue({ createdAt: env.c }, now),
     });
+    if (!read) return null;
+    const { record: env, raw, stale, shouldRevalidate } = read;
     const entry: ShellCacheEntry = {
       prelude: env.p,
       postponed: env.po,
@@ -1151,7 +1131,7 @@ export class VercelCacheStore<
       navigationOnly: env.no,
       createdAt: env.c,
     };
-    if (isStale) return { entry, shouldRevalidate };
+    if (stale) return { entry, shouldRevalidate };
     const value: VercelShellMemoValue = {
       entry,
       tags: env.t,
@@ -1252,7 +1232,7 @@ export class VercelCacheStore<
     const read = async (): Promise<MarkerFetch> => {
       const raw = await this.cache.get(key);
       const decoded =
-        raw == null ? null : (this.decodeRaw(raw) as { at?: unknown } | null);
+        raw == null ? null : (decodeRaw(raw) as { at?: unknown } | null);
       const value =
         decoded && typeof decoded.at === "number" ? decoded.at : null;
       return { value, memoize: true };
@@ -1289,7 +1269,6 @@ export class VercelCacheStore<
         tags,
         "[VercelCacheStore] putShell",
       );
-      const storeKey = this.toStoreKey(key, "h");
       if (
         safeTags.length > 0 &&
         (await this.isTagsInvalidatedSince(safeTags, entry.createdAt))
@@ -1322,13 +1301,11 @@ export class VercelCacheStore<
       // write() enforces the 2 MB per-item ceiling (withinSizeLimit): an
       // oversized shell prelude is reported and skipped (fail-open to a full
       // render), never silently no-op'd on the platform.
-      await this.write(
-        storeKey,
-        env,
-        retentionTtl,
-        safeTags,
-        "[VercelCacheStore] putShell",
-      );
+      await this.backend.write(key, "shell", env, {
+        ttlSeconds: retentionTtl,
+        tags: safeTags,
+        label: "[VercelCacheStore] putShell",
+      });
       return "stored";
     } catch (error) {
       reportCacheError(error, "cache-write", "[VercelCacheStore] putShell");
@@ -1479,16 +1456,10 @@ export class VercelCacheStore<
     return maskedForRequest(_getRequestContext(), this, tags, taggedAt ?? 0);
   }
 
-  /** A data read's mask check: reports the miss and returns true when masked. */
-  private maskedMiss(
-    op: "get" | "getItem" | "getResponse",
-    key: string,
-    env: { t?: string[]; ta?: number },
-    readMs: number,
-  ): boolean {
-    if (!this.maskedForRequest(env.t, env.ta)) return false;
-    this.emitDebug({ op, key, outcome: "miss", readMs });
-    return true;
+  /** A record read's debug event; an invalidated record reads as a miss. */
+  private emitRead(event: RecordReadEvent<VercelReadOp>): void {
+    const outcome = event.outcome === "invalidated" ? "miss" : event.outcome;
+    this.emitDebug({ ...event, outcome });
   }
 
   // --- Internals ---
@@ -1535,22 +1506,6 @@ export class VercelCacheStore<
     if (safeTags.length > 0) options.tags = safeTags;
     if (this.name) options.name = this.name;
     await this.cache.set(storeKey, serialized ?? value, options);
-  }
-
-  /**
-   * Normalize a value read back from the cache. Entries written by this store
-   * are pre-serialized JSON strings (see write()); legacy entries (written
-   * before that change, or by a client that deserializes for us) come back as
-   * objects. Parse strings, pass objects through, and treat a non-JSON string
-   * as corrupt (returns undefined, so the caller reports + evicts).
-   */
-  private decodeRaw(raw: unknown): unknown {
-    if (typeof raw !== "string") return raw;
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return undefined;
-    }
   }
 
   /**
@@ -1694,89 +1649,5 @@ export class VercelCacheStore<
     } catch {
       // The debug sink must never break the cache path.
     }
-  }
-
-  private asSegmentEnvelope(raw: unknown): VercelSegmentEnvelope | null {
-    if (!isRecord(raw)) return null;
-    const { d, s, e, ta } = raw;
-    if (
-      !isRecord(d) ||
-      !Array.isArray((d as Record<string, unknown>).segments)
-    ) {
-      return null;
-    }
-    if (typeof s !== "number" || typeof e !== "number") return null;
-    return {
-      d: d as unknown as CachedEntryData,
-      s,
-      e,
-      ta: typeof ta === "number" ? ta : undefined,
-    };
-  }
-
-  private asItemEnvelope(raw: unknown): VercelItemEnvelope | null {
-    if (!isRecord(raw)) return null;
-    const { v, h, s, e, t, ta } = raw;
-    if (typeof v !== "string") return null;
-    if (typeof s !== "number" || typeof e !== "number") return null;
-    return {
-      v,
-      h: typeof h === "string" ? h : undefined,
-      s,
-      e,
-      ta: typeof ta === "number" ? ta : undefined,
-      t: Array.isArray(t) ? (t as string[]) : undefined,
-    };
-  }
-
-  private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
-    if (!isRecord(raw)) return null;
-    const { p, po, rv, bv, c, s, e, t, i, lp, sn, dk, pr, no } = raw;
-    if (typeof rv !== "string" || typeof bv !== "string") return null;
-    // Document half: required unless navigationOnly (`no`), which stores
-    // neither field. Tolerate a legacy navigationOnly envelope that still
-    // carries them.
-    if (p === undefined ? no !== true : typeof p !== "string") return null;
-    if (
-      po === undefined ? no !== true : po !== null && typeof po !== "string"
-    ) {
-      return null;
-    }
-    if (typeof c !== "number") return null;
-    if (typeof s !== "number" || typeof e !== "number") return null;
-    return {
-      ...(typeof p === "string" ? { p } : {}),
-      ...(po !== undefined ? { po: po as string | null } : {}),
-      rv,
-      bv,
-      c,
-      s,
-      e,
-      t: Array.isArray(t) ? (t as string[]) : undefined,
-      i: typeof i === "string" ? i : undefined,
-      lp: typeof lp === "string" ? lp : undefined,
-      // A non-array field reads as no records.
-      sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : [],
-      dk: typeof dk === "string" ? dk : undefined,
-      pr: typeof pr === "string" ? pr : undefined,
-      no: no === true ? true : undefined,
-    };
-  }
-
-  private asResponseEnvelope(raw: unknown): VercelResponseEnvelope | null {
-    if (!isRecord(raw)) return null;
-    const { b, st, hd, s, e, t, ta } = raw;
-    if (typeof b !== "string" || typeof st !== "number") return null;
-    if (!Array.isArray(hd)) return null;
-    if (typeof s !== "number" || typeof e !== "number") return null;
-    return {
-      b,
-      st,
-      hd: hd as [string, string][],
-      s,
-      e,
-      t: Array.isArray(t) ? (t as string[]) : undefined,
-      ta: typeof ta === "number" ? ta : undefined,
-    };
   }
 }

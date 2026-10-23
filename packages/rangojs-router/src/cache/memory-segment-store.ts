@@ -25,6 +25,14 @@ import {
 } from "./cache-policy.js";
 import { reportCacheError } from "./cache-error.js";
 import { responseStartedAt } from "./invalidation-order.js";
+import {
+  readRecord,
+  type FamilyPolicy,
+  type RecordBackend,
+  type RecordEnv,
+  type RecordFamily,
+  type RecordMeta,
+} from "./record-core.js";
 
 const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
 const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
@@ -77,6 +85,48 @@ interface CachedShellEntry {
   staleAt: number;
   tags?: string[];
 }
+
+/** The tag-index prefix of each family's keys (`seg:key`, ...). */
+const FAMILY_PREFIX: Record<RecordFamily, string> = {
+  segment: "seg",
+  response: "res",
+  item: "item",
+  shell: "shell",
+};
+
+/**
+ * The record reads of the maps. They hold live objects: no decode, no
+ * corrupt record, no backend read to fail. A segment entry has no stale
+ * window (`set` ignores swr), so it never revalidates; the other families
+ * revalidate once stale, with no claim.
+ */
+function liveRead<T>(
+  debugOp: string,
+  meta: (entry: T) => RecordMeta,
+): FamilyPolicy<T, T, string, "miss"> {
+  return {
+    debugOp,
+    label: `[MemorySegmentCacheStore] ${debugOp}`,
+    onReadError: "miss",
+    decode: (raw) => raw as T,
+    meta,
+  };
+}
+
+function swrMeta(entry: { staleAt: number; expiresAt: number }): RecordMeta {
+  return { staleAt: entry.staleAt, expiresAt: entry.expiresAt };
+}
+
+const SEGMENT_READ = liveRead<CachedEntryData>("get", (entry) => ({
+  staleAt: 0,
+  expiresAt: entry.expiresAt,
+}));
+const RESPONSE_READ = liveRead<CachedResponseEntry>("getResponse", swrMeta);
+const ITEM_READ = liveRead<CachedItemEntry>("getItem", swrMeta);
+const SHELL_READ = liveRead<CachedShellEntry>("getShell", swrMeta);
+
+/** No debug sink, no tag mask: invalidateTags deletes tagged entries. */
+const MEMORY_READS: RecordEnv = {};
 
 /**
  * Options for MemorySegmentCacheStore
@@ -239,6 +289,11 @@ export class MemorySegmentCacheStore<
   ) => string | Promise<string>;
   /** Per-family FIFO entry cap. */
   readonly maxEntries: number;
+  /**
+   * The maps as the record core's backend. Synchronous: a read settles and a
+   * write lands before the call returns.
+   */
+  private readonly backend: RecordBackend;
 
   constructor(options?: MemorySegmentCacheStoreOptions<TEnv>) {
     if (options?.name != null) {
@@ -283,6 +338,30 @@ export class MemorySegmentCacheStore<
     this.keyGenerator = options?.keyGenerator;
     this.maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES;
     this.scope = options?.scope ?? "local";
+    const maps: Record<RecordFamily, Map<string, unknown>> = {
+      segment: this.cache,
+      response: this.responseCache,
+      item: this.itemCache,
+      shell: this.shellCache,
+    };
+    this.backend = {
+      read: (key, family) => maps[family].get(key),
+      write: (key, family, record, { tags }) => {
+        const map = maps[family];
+        const prefix = FAMILY_PREFIX[family];
+        const prefixedKey = `${prefix}:${key}`;
+        this.unregisterTags(prefixedKey);
+        this.evictIfNeeded(map, key, prefix);
+        map.set(key, record);
+        if (tags && tags.length > 0) {
+          this.registerTags(tags, prefixedKey);
+        }
+      },
+      remove: (key, family) => {
+        this.unregisterTags(`${FAMILY_PREFIX[family]}:${key}`);
+        maps[family].delete(key);
+      },
+    };
   }
 
   /**
@@ -307,21 +386,15 @@ export class MemorySegmentCacheStore<
   }
 
   async get(key: string): Promise<CacheGetResult | null> {
-    const cached = this.cache.get(key);
-
-    if (!cached) {
-      return null;
-    }
-
-    // Check expiration
-    if (Date.now() > cached.expiresAt) {
-      this.unregisterTags(`seg:${key}`);
-      this.cache.delete(key);
-      return null;
-    }
-
+    const read = await readRecord(
+      this.backend,
+      "segment",
+      key,
+      SEGMENT_READ,
+      MEMORY_READS,
+    );
     // Memory store doesn't support SWR - never triggers revalidation
-    return { data: cached, shouldRevalidate: false };
+    return read && { data: read.record, shouldRevalidate: false };
   }
 
   async set(
@@ -335,13 +408,11 @@ export class MemorySegmentCacheStore<
       ...data,
       expiresAt: Date.now() + ttl * 1000,
     };
-    const prefixedKey = `seg:${key}`;
-    this.unregisterTags(prefixedKey);
-    this.evictIfNeeded(this.cache, key, "seg");
-    this.cache.set(key, entry);
-    if (data.tags && data.tags.length > 0) {
-      this.registerTags(data.tags, prefixedKey);
-    }
+    this.backend.write(key, "segment", entry, {
+      ttlSeconds: ttl,
+      tags: data.tags,
+      label: "[MemorySegmentCacheStore] set",
+    });
   }
 
   async delete(key: string): Promise<boolean> {
@@ -361,23 +432,22 @@ export class MemorySegmentCacheStore<
   async getResponse(
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
-    const cached = this.responseCache.get(key);
-    if (!cached) return null;
-
-    if (Date.now() > cached.expiresAt) {
-      this.unregisterTags(`res:${key}`);
-      this.responseCache.delete(key);
-      return null;
-    }
-
-    const isStale = cached.staleAt > 0 && Date.now() > cached.staleAt;
+    const read = await readRecord(
+      this.backend,
+      "response",
+      key,
+      RESPONSE_READ,
+      MEMORY_READS,
+    );
+    if (!read) return null;
+    const cached = read.record;
     const headers = new Headers(cached.headers);
     return {
       response: new Response(cached.body, {
         status: cached.status,
         headers,
       }),
-      shouldRevalidate: isStale,
+      shouldRevalidate: read.shouldRevalidate,
     };
   }
 
@@ -402,19 +472,18 @@ export class MemorySegmentCacheStore<
 
       // After the last await before the write.
       if (this.invalidatedAfter(tags, startedAt)) return;
-      const prefixedKey = `res:${key}`;
-      this.unregisterTags(prefixedKey);
-      this.evictIfNeeded(this.responseCache, key, "res");
-      this.responseCache.set(key, {
+      const entry: CachedResponseEntry = {
         body,
         status: response.status,
         headers,
         expiresAt,
         staleAt,
+      };
+      this.backend.write(key, "response", entry, {
+        ttlSeconds: ttl,
+        tags,
+        label: "[MemorySegmentCacheStore] putResponse",
       });
-      if (tags && tags.length > 0) {
-        this.registerTags(tags, prefixedKey);
-      }
     } catch (error) {
       reportCacheError(
         error,
@@ -425,21 +494,19 @@ export class MemorySegmentCacheStore<
   }
 
   async getItem(key: string): Promise<CacheItemResult | null> {
-    const cached = this.itemCache.get(key);
-    if (!cached) return null;
-
-    const now = Date.now();
-    if (now > cached.expiresAt) {
-      this.unregisterTags(`item:${key}`);
-      this.itemCache.delete(key);
-      return null;
-    }
-
-    const isStale = now > cached.staleAt;
+    const read = await readRecord(
+      this.backend,
+      "item",
+      key,
+      ITEM_READ,
+      MEMORY_READS,
+    );
+    if (!read) return null;
+    const cached = read.record;
     return {
       value: cached.value,
       handles: cached.handles,
-      shouldRevalidate: isStale,
+      shouldRevalidate: read.shouldRevalidate,
       tags: cached.tags,
     };
   }
@@ -453,38 +520,38 @@ export class MemorySegmentCacheStore<
     const ttl = resolveTtl(options?.ttl, this.defaults, DEFAULT_FUNCTION_TTL);
     const swrWindow = resolveSwrWindow(options?.swr, this.defaults);
     const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
-    const prefixedKey = `item:${key}`;
-    this.unregisterTags(prefixedKey);
-    this.evictIfNeeded(this.itemCache, key, "item");
-    this.itemCache.set(key, {
+    const entry: CachedItemEntry = {
       value,
       handles: options?.handles,
       expiresAt,
       staleAt,
       tags: options?.tags,
+    };
+    this.backend.write(key, "item", entry, {
+      ttlSeconds: ttl,
+      tags: options?.tags,
+      label: "[MemorySegmentCacheStore] setItem",
     });
-    if (options?.tags && options.tags.length > 0) {
-      this.registerTags(options.tags, prefixedKey);
-    }
   }
 
   async getShell(
     key: string,
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
-    const cached = this.shellCache.get(key);
-    if (!cached) return null;
-
-    const now = Date.now();
-    if (now > cached.expiresAt) {
-      this.unregisterTags(`shell:${key}`);
-      this.shellCache.delete(key);
-      return null;
-    }
-
+    const read = await readRecord(
+      this.backend,
+      "shell",
+      key,
+      SHELL_READ,
+      MEMORY_READS,
+    );
     // SWR mirrors the item family: stale within the swr window still serves, and
     // signals shouldRevalidate so the middleware schedules a background recapture.
-    const shouldRevalidate = cached.staleAt > 0 && now > cached.staleAt;
-    return { entry: cached.entry, shouldRevalidate };
+    return (
+      read && {
+        entry: read.record.entry,
+        shouldRevalidate: read.shouldRevalidate,
+      }
+    );
   }
 
   async putShell(
@@ -504,13 +571,12 @@ export class MemorySegmentCacheStore<
     const ttl = resolveTtl(ttlSeconds, this.defaults, DEFAULT_FUNCTION_TTL);
     const swrWindow = resolveSwrWindow(swrSeconds, this.defaults);
     const { staleAt, expiresAt } = computeExpiration(ttl, swrWindow);
-    const prefixedKey = `shell:${key}`;
-    this.unregisterTags(prefixedKey);
-    this.evictIfNeeded(this.shellCache, key, "shell");
-    this.shellCache.set(key, { entry, expiresAt, staleAt, tags });
-    if (tags && tags.length > 0) {
-      this.registerTags(tags, prefixedKey);
-    }
+    const record: CachedShellEntry = { entry, expiresAt, staleAt, tags };
+    this.backend.write(key, "shell", record, {
+      ttlSeconds: ttl,
+      tags,
+      label: "[MemorySegmentCacheStore] putShell",
+    });
     return "stored";
   }
 
