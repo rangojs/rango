@@ -211,7 +211,19 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // partial-update.ts unpacks every partial answer). It cannot load lazily: it
 // runs on every navigation and action response. One 128B step, the owner's
 // call.
-const ROUTER_CHUNK_GZIP_MAX = 49.5 * 1024;
+//
+// Raised 49.5KB -> 50KB on 2026-10-22 for rango-t108, measured on
+// cloudflare-basic with main d824ba672's browser source 50516B -> 50782B
+// (+266B gzip): an action that did not land on the page on screen owes it one
+// follow-up revalidation, which the batch's last exit runs after the
+// navigation the user started settles, its stream and fill included
+// (server-action-bridge.ts followUp, NavigationEntry.settled), never twice at
+// once and never over a newer action's commit; and a prefetch is served
+// during an action's flight. None of it can load lazily: it runs at every
+// action's exit, and the action bridge is not split (AGENTS.md Bundle
+// hygiene). Rounded up to 50KB, the owner's call (rango-t108 D4, then the
+// review fixes).
+const ROUTER_CHUNK_GZIP_MAX = 50 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

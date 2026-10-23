@@ -140,6 +140,7 @@ function createSsrEventController(opts: {
     },
     abortAllActions: () => {},
     getCurrentNavigation: () => null,
+    getUnsettledNavigation: () => null,
     getInflightActions: () => new Map(),
     hadAnyConcurrentActions: () => false,
   };

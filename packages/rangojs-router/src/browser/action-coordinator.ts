@@ -6,11 +6,7 @@ import type { ActionEntry } from "./event-controller.js";
  * reconciliation; this only covers successfully-reconciled partial responses.
  */
 type ActionScenario =
-  | {
-      type: "navigated-away";
-      historyKeyChanged: boolean;
-      onInterceptRoute: boolean;
-    }
+  | { type: "navigated-away" }
   | { type: "hmr-missing" }
   | { type: "consolidation-needed"; segmentIds: string[] }
   | { type: "concurrent-skip"; otherFetchingCount: number }
@@ -41,8 +37,6 @@ export interface ActionOutcomeInput {
   reconciledSegmentCount: number;
   /** Number of matched segment IDs from server */
   matchedCount: number;
-  /** Current intercept source URL (null when not on intercept route) */
-  currentInterceptSource: string | null;
 }
 
 // Segment IDs to re-fetch when concurrent actions each revalidated different
@@ -85,12 +79,7 @@ export function classifyActionOutcome(
     input.currentPathname !== input.actionStartPathname ||
     input.currentLocationKey !== input.actionStartLocationKey
   ) {
-    return {
-      type: "navigated-away",
-      historyKeyChanged:
-        input.currentLocationKey !== input.actionStartLocationKey,
-      onInterceptRoute: input.currentInterceptSource !== null,
-    };
+    return { type: "navigated-away" };
   }
 
   if (input.reconciledSegmentCount < input.matchedCount) {

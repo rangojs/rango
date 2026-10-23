@@ -768,8 +768,11 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   // ── Staleness signal ─────────────────────────────────────────────────
 
   /**
-   * `true` when the browser signals that data may be stale — typically because
-   * a server action was executed in this or another tab (`_rsc_stale` header).
+   * `true` on a revalidation of a page the browser marked stale (the
+   * `_rsc_stale` query param): Back/Forward onto a history entry after a
+   * server action in this or another tab, or while one is in flight. A request
+   * that holds no segments (the follow-up after an action, `refresh()`) is
+   * marked stale too, but there every segment renders and no predicate runs.
    *
    * This is NOT segment cache staleness (loaders are never segment-cached).
    * Use this to decide whether loader data should be re-fetched after an

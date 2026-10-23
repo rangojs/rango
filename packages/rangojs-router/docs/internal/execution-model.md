@@ -1763,6 +1763,119 @@ skipped. Pinned by `src/__tests__/popstate-cached-restore.test.tsx`,
 `src/__tests__/scroll-restoration.test.ts` and the `vt-back` e2e (both apps,
 dev and production).
 
+## After a Server Action: Which Page Gets the Write
+
+This contract is client-only too. It covers which page shows a server action's
+write, and which request brings it. When the user stays on the page, the answer
+is simple: the action's own response. But users rarely wait. They click "Add to
+cart" and then a link, so the action lands on a page it was not sent from. That
+action's revalidation used to be dropped. The page the user navigated to kept
+its pre-write data in every loader the navigation held, such as a layout's cart
+count, until something else re-ran it (rango-t108). Each repair refetch also
+superseded the click the user had in flight, which then never committed
+(dc-t114).
+
+Seven rules now decide every case. A case that seems to need an eighth rule is
+a design defect, not a branch to add. Changing one of them is a contract
+change (see Contract Change Process).
+
+- **R1. Invalidation.** An action whose response arrived, and that did not
+  call `keepClientCache()`, marks every history-cache entry stale and tells
+  other tabs (`finalizeAction` in `browser/server-action-bridge.ts`).
+  `keepClientCache()` turns R1 and R3 off for that action. An action with no
+  response (a network failure, or an abort before the response) invalidates
+  nothing.
+- **R2. The action's own response is its revalidation.** The server re-renders
+  the page the action was sent from (`rsc/server-action.ts`). The client
+  commits that render while the user is still on that page, meaning the same
+  pathname and history key. This covers a success and a returned error value.
+  An action that throws on a matched route gets an error-boundary response
+  instead. It holds the nearest `errorBoundary()`, or the router's default
+  error boundary at the root when the app declares none (`matchError` in
+  `router/match-api.ts`). It commits on the same terms.
+- **R3. A follow-up is owed.** At its exit, an action that R1 applies to, and
+  that did not redirect, owes the follow-up in two cases: the page on screen
+  is not the page it was sent from, or a navigation the user started has not
+  committed yet, so its request may predate the write. A navigation that has
+  committed and is only streaming or filling owes nothing: the action's own
+  response re-rendered its page, so a user who stayed gets no extra request.
+  A repair refetch (`hmr-missing`, `consolidation-needed`) that cannot start
+  because a user navigation is still open (R4) is owed at the batch's end
+  instead, whenever an action of the batch wrote: a `keepClientCache()`
+  action that lands last still discharges a directive-free sibling's
+  consolidation, and a lone `keepClientCache()` action owes nothing.
+- **R4. One per batch, after the user, never on an intercept.** The follow-up
+  runs once, when the last action in flight exits (the action fence drops,
+  `browser/action-fence.ts`). It waits for the navigation the user started to
+  settle: until it commits, and after its commit while its `prefetch: false`
+  fill or its Flight stream is still open (`NavigationEntry.settled`,
+  `EventController.getUnsettledNavigation()`). It never cancels that
+  navigation, and no repair refetch starts while one is open. It refetches the
+  page on screen
+  whole: it holds no segments, so every segment renders and no `revalidate()`
+  predicate runs (the first-render guarantee); `partial-update.ts` marks the
+  request `_rsc_stale`, which keeps it out of the document cache. It commits
+  with kind `action` (in a transition unless `transition({ when })` gates it
+  off), and `useNavigation().state` stays `idle`. If an intercept is on screen
+  when it would run, the debt is dropped. A request that holds no segments gets
+  only the layouts and the slot back (`router/match-result.ts`
+  `buildMatchResult`). Leaving the intercept with Back restores the page
+  underneath and sends it a stale revalidation (R1 marked the entry stale). As
+  on main, that re-runs only the segments that opt in with
+  `revalidate(({ stale }) => stale)`; by default a held layout loader is
+  skipped on a navigation (`nav:non-route-skip`, `router/revalidation.ts`).
+  Leaving it with a link sends no stale revalidation.
+- **R5. A redirect** navigates. It owes nothing, and it clears the batch's
+  debt. An action still in flight owes again at its own exit if the page moved
+  under it.
+- **R6. It runs again** when a user navigation or a Back/Forward supersedes it
+  before its commit, this time for the page that commits (R4 applies again). An
+  action that starts before it commits aborts it, because its request may
+  predate that action's write, and that batch's end owes it again. A
+  navigation it waited for that fails drops the debt, and the error stays on
+  screen.
+- **R7. A navigation during an action is ordinary.** Prefetches are served, and
+  a click's request carries no `_rsc_stale`. A click without a prefetch skips
+  the HTTP cache. Back restores from the history cache and revalidates; while
+  an action is in flight that revalidation is stale
+  (`navigation-bridge.ts` `handlePopstate`, `isActionFenceActive()`).
+
+Why only one follow-up, and why whole? One per batch, because three actions
+used to mean three refetches, each superseding the user's click. Whole,
+because the client cannot know which loaders on the page it navigated to read
+the action's write; `segments: []` is the only shape that re-runs all of them.
+It is the same request `refresh()` sends. A user who stayed gets no second
+request: the action's response already re-ran every loader on that page.
+
+The document cache never answers a stale request, so it never answers the
+follow-up either. Its key cannot see the write, so the cache neither stores nor
+serves a partial request carrying `_rsc_stale` (`cache/document-cache.ts`), and
+the server answers one with `private, no-cache` (`rsc/rsc-rendering.ts`).
+Without that, a route with `s-maxage` answers Back's revalidation after an
+action, and the follow-up, with a body cached before the write.
+
+What a hook reader sees: the follow-up is a background revalidation, like
+Back's. `useNavigation()` keeps `state: "idle"`. `isNavigating` and
+`isStreaming` are true for one round trip, and then one held commit brings the
+write. Two cases changed in kind, both decided by the owner:
+
+- A click still in flight when the last action lands is no longer superseded,
+  so `useNavigation()` reads `loading` until that click commits, and then the
+  follow-up runs.
+- Leaving an intercept with Back or Forward no longer aborts the actions in
+  flight. An action sent from the intercept is an ordinary navigate-away:
+  `useAction()` and the caller's `await` get its real result, and the page
+  underneath gets the follow-up. Until it lands, `useAction()` stays pending
+  and `useNavigation().state` reads `loading`, as for any action in flight;
+  main went `idle` at once because it dropped the action.
+
+Pinned by `src/__tests__/server-action-bridge.test.ts` (the follow-up cases),
+`src/__tests__/event-controller.test.ts` (`settled`), the shared scenarios
+`action-follow-up`, `action-stale-navigation` and `action-held-segments` in
+`tests/shared-e2e/src/`, and `e2e/pending-actions.test.ts`, all in both
+apps, dev and production. The case table that maps every case to its pin is in
+the PR that set these rules.
+
 ## Non-Guarantees
 
 - A loader cannot rewrite, by design (`ssr: false` included): `rewrite()` is

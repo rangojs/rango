@@ -162,6 +162,8 @@ function createMockEventController() {
         [Symbol.dispose]: vi.fn(),
       })),
       abortAllActions: vi.fn(),
+      getCurrentNavigation: vi.fn(() => null),
+      getUnsettledNavigation: vi.fn(() => null),
       getState: vi.fn(() => ({
         navState: "idle",
         isStreaming: false,

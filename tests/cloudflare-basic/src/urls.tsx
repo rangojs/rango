@@ -340,6 +340,7 @@ import { ActionLocationStatePage } from "./pages/action-location-state.js";
 import { renderedBarrierPatterns } from "./pages/rendered-barrier.js";
 import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { lateHistoryPatterns } from "./pages/late-history.js";
+import { actionStalePatterns } from "./pages/action-stale.js";
 import { handlesAfterAwaitPatterns } from "./pages/handles-after-await.js";
 import { heldHandlesPatterns } from "./pages/held-handles.js";
 import { historyHandlesPatterns } from "./pages/history-handles.js";
@@ -3159,6 +3160,10 @@ export const urlpatterns = urls(
         include("/", prefetchTransitionPatterns, { name: "" }),
         include("/", heldBoundaryPatterns, { name: "" }),
         include("/", lateHistoryPatterns, { name: "" }),
+        // An action that does not land on the page on screen: the follow-up
+        // revalidation (e2e/action-stale-navigation.test.ts,
+        // action-held-segments.test.ts, action-follow-up.test.ts).
+        include("/", actionStalePatterns),
         // Meta and Breadcrumbs pushed after an await from each place
         // (e2e/handles-after-await.test.ts).
         include("/", handlesAfterAwaitPatterns, { name: "" }),

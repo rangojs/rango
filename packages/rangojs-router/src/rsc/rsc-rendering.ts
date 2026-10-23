@@ -99,7 +99,7 @@ import {
 import { contextGet } from "../context-var.js";
 import { rewriteShellAudience, rewriteTrail } from "../server/rewrite-trail.js";
 import { visitorShellKey } from "./shell-capture-constants.js";
-import { PREFETCH_HEADER } from "../prefetch-markers.js";
+import { PREFETCH_HEADER, STALE_PARAM } from "../prefetch-markers.js";
 import {
   isWarmReplace,
   noteWarmShellEvent,
@@ -1268,11 +1268,14 @@ function renderPreparedRscResponse<TEnv>(
   // carries deferred units answers one page's prefetch, and a fill is the
   // second half of one adoption: neither is reused by a shared cache or the
   // document cache (which also refuses a payload marked `_payloadDeferred`),
-  // whatever Cache-Control the route set. A route with no flag keeps its
-  // headers.
+  // whatever Cache-Control the route set; so is a stale partial render, which
+  // a shared cache keyed by URL must not store or serve. A route with no flag
+  // keeps its headers.
   if (
     reqCtx._payloadDeferred ||
-    (isPartial && reqCtx._requestKind === "fill")
+    (isPartial &&
+      (reqCtx._requestKind === "fill" ||
+        url.searchParams.get(STALE_PARAM) === "true"))
   ) {
     rscHeaders["cache-control"] = NOT_REUSED;
   }

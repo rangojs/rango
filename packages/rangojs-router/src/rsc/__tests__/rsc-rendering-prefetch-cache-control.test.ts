@@ -87,3 +87,30 @@ describe("prefetch Cache-Control by status", () => {
     expect(res.headers.get("cache-control")).toBeNull();
   });
 });
+
+describe("stale partial Cache-Control", () => {
+  const partial = (search: string) =>
+    router.fetch(
+      new Request(
+        `http://localhost/ok?_rsc_partial=true&_rsc_segments=${search}`,
+        {
+          headers: {
+            accept: "text/x-component",
+            "X-RSC-Router-Client-Path": "http://localhost/",
+          },
+        },
+      ),
+      {},
+    );
+
+  it("is never reusable by a shared cache", async () => {
+    const res = await partial("&_rsc_stale=true");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("private, no-cache");
+  });
+
+  it("leaves a plain partial as it was", async () => {
+    const res = await partial("");
+    expect(res.headers.get("cache-control")).toBeNull();
+  });
+});
