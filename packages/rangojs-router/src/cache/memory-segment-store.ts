@@ -101,10 +101,12 @@ const FAMILY_PREFIX: Record<RecordFamily, string> = {
  * revalidate once stale, with no claim.
  */
 function liveRead<T>(
+  family: RecordFamily,
   debugOp: string,
   meta: (entry: T) => RecordMeta,
 ): FamilyPolicy<T, T, string, "miss"> {
   return {
+    family,
     debugOp,
     label: `[MemorySegmentCacheStore] ${debugOp}`,
     onReadError: "miss",
@@ -117,13 +119,17 @@ function swrMeta(entry: { staleAt: number; expiresAt: number }): RecordMeta {
   return { staleAt: entry.staleAt, expiresAt: entry.expiresAt };
 }
 
-const SEGMENT_READ = liveRead<CachedEntryData>("get", (entry) => ({
+const SEGMENT_READ = liveRead<CachedEntryData>("segment", "get", (entry) => ({
   staleAt: 0,
   expiresAt: entry.expiresAt,
 }));
-const RESPONSE_READ = liveRead<CachedResponseEntry>("getResponse", swrMeta);
-const ITEM_READ = liveRead<CachedItemEntry>("getItem", swrMeta);
-const SHELL_READ = liveRead<CachedShellEntry>("getShell", swrMeta);
+const RESPONSE_READ = liveRead<CachedResponseEntry>(
+  "response",
+  "getResponse",
+  swrMeta,
+);
+const ITEM_READ = liveRead<CachedItemEntry>("item", "getItem", swrMeta);
+const SHELL_READ = liveRead<CachedShellEntry>("shell", "getShell", swrMeta);
 
 /** No debug sink, no tag mask: invalidateTags deletes tagged entries. */
 const MEMORY_READS: RecordEnv = {};
@@ -388,7 +394,6 @@ export class MemorySegmentCacheStore<
   async get(key: string): Promise<CacheGetResult | null> {
     const read = await readRecord(
       this.backend,
-      "segment",
       key,
       SEGMENT_READ,
       MEMORY_READS,
@@ -434,7 +439,6 @@ export class MemorySegmentCacheStore<
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
     const read = await readRecord(
       this.backend,
-      "response",
       key,
       RESPONSE_READ,
       MEMORY_READS,
@@ -494,13 +498,7 @@ export class MemorySegmentCacheStore<
   }
 
   async getItem(key: string): Promise<CacheItemResult | null> {
-    const read = await readRecord(
-      this.backend,
-      "item",
-      key,
-      ITEM_READ,
-      MEMORY_READS,
-    );
+    const read = await readRecord(this.backend, key, ITEM_READ, MEMORY_READS);
     if (!read) return null;
     const cached = read.record;
     return {
@@ -537,13 +535,7 @@ export class MemorySegmentCacheStore<
   async getShell(
     key: string,
   ): Promise<{ entry: ShellCacheEntry; shouldRevalidate?: boolean } | null> {
-    const read = await readRecord(
-      this.backend,
-      "shell",
-      key,
-      SHELL_READ,
-      MEMORY_READS,
-    );
+    const read = await readRecord(this.backend, key, SHELL_READ, MEMORY_READS);
     // SWR mirrors the item family: stale within the swr window still serves, and
     // signals shouldRevalidate so the middleware schedules a background recapture.
     return (

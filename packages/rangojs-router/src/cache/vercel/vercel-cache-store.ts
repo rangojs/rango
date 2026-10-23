@@ -585,6 +585,7 @@ const SEGMENT_READ: FamilyPolicy<
   "get",
   "read-error"
 > = {
+  family: "segment",
   debugOp: "get",
   label: "[VercelCacheStore] get",
   onReadError: "read-error",
@@ -603,6 +604,7 @@ const ITEM_READ: FamilyPolicy<
   "getItem",
   "miss"
 > = {
+  family: "item",
   debugOp: "getItem",
   label: "[VercelCacheStore] getItem",
   onReadError: "miss",
@@ -616,6 +618,7 @@ const RESPONSE_READ: FamilyPolicy<
   "getResponse",
   "miss"
 > = {
+  family: "response",
   debugOp: "getResponse",
   label: "[VercelCacheStore] getResponse",
   onReadError: "miss",
@@ -639,6 +642,7 @@ const SHELL_READ: FamilyPolicy<
   "getShell",
   "miss"
 > = {
+  family: "shell",
   debugOp: "getShell",
   label: "[VercelCacheStore] getShell",
   onReadError: "miss",
@@ -757,10 +761,7 @@ export class VercelCacheStore<
     const recordKey = (key: string, family: RecordFamily): string =>
       this.toStoreKey(key, RECORD_FAMILY[family]);
     this.backend = {
-      // Always a promise: a handle that answers synchronously still settles
-      // the read a tick later, as the awaited cache.get() did.
-      read: (key, family) =>
-        Promise.resolve(this.cache.get(recordKey(key, family))),
+      read: (key, family) => this.cache.get(recordKey(key, family)),
       write: (key, family, record, { ttlSeconds, tags, label }) =>
         this.write(recordKey(key, family), record, ttlSeconds, tags, label),
       remove: (key, family) => this.safeDelete(recordKey(key, family)),
@@ -777,13 +778,7 @@ export class VercelCacheStore<
   // --- Segment family (get/set/delete) ---
 
   async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
-    const read = await readRecord(
-      this.backend,
-      "segment",
-      key,
-      SEGMENT_READ,
-      this.reads,
-    );
+    const read = await readRecord(this.backend, key, SEGMENT_READ, this.reads);
     if (read === null || read === CACHE_READ_ERROR) return read;
     return { data: read.record.d, shouldRevalidate: read.shouldRevalidate };
   }
@@ -840,13 +835,7 @@ export class VercelCacheStore<
   async getResponse(
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
-    const read = await readRecord(
-      this.backend,
-      "response",
-      key,
-      RESPONSE_READ,
-      this.reads,
-    );
+    const read = await readRecord(this.backend, key, RESPONSE_READ, this.reads);
     return (
       read && { response: read.value, shouldRevalidate: read.shouldRevalidate }
     );
@@ -899,13 +888,7 @@ export class VercelCacheStore<
   // --- Item family ("use cache" - getItem/setItem) ---
 
   async getItem(key: string): Promise<CacheItemResult | null> {
-    const read = await readRecord(
-      this.backend,
-      "item",
-      key,
-      ITEM_READ,
-      this.reads,
-    );
+    const read = await readRecord(this.backend, key, ITEM_READ, this.reads);
     if (!read) return null;
     const { record: env, shouldRevalidate } = read;
     return {
@@ -1088,7 +1071,7 @@ export class VercelCacheStore<
       stats.memo = { hit: false, bytes: memo.size };
     }
     const readStartedAt = stats ? performance.now() : 0;
-    const read = await readRecord(this.backend, "shell", key, SHELL_READ, {
+    const read = await readRecord(this.backend, key, SHELL_READ, {
       emit: this.reads.emit,
       afterDecode: stats
         ? () => {

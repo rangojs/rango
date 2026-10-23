@@ -32,9 +32,9 @@ describe("readRecord over a synchronous backend", () => {
     };
     void readRecord(
       backend,
-      "item",
       "k",
       {
+        family: "item",
         debugOp: "getItem",
         label: "test",
         onReadError: "miss",

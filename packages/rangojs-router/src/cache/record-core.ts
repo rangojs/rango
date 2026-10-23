@@ -13,16 +13,11 @@
 import { reportCacheError } from "./cache-error.js";
 import { CACHE_READ_ERROR, type CacheReadError } from "./types.js";
 
-/** The value families of SegmentCacheStore. */
 export type RecordFamily = "segment" | "item" | "response" | "shell";
 
-/** How a backend stores one record. */
 export interface RecordWriteOptions {
-  /** The backend lifetime, in seconds. */
   ttlSeconds: number;
-  /** The tags the backend indexes the record by. */
   tags?: string[];
-  /** The label a failed or skipped write is reported under. */
   label: string;
 }
 
@@ -61,11 +56,9 @@ export interface RecordBackend {
   ): Promise<boolean>;
 }
 
-/** What the core reads from a decoded record. */
 export interface RecordMeta {
   /** When the record goes stale (ms since epoch); 0: never. */
   staleAt: number;
-  /** When it expires (ms since epoch). */
   expiresAt: number;
   /** Its tags, for the invalidation check (RecordEnv.invalidated). */
   tags?: string[];
@@ -80,21 +73,18 @@ export interface RecordMeta {
  */
 export type ReadErrorPolicy = "read-error" | "miss";
 
-/** The result a failed read gives under `E`. */
 export type ReadErrorResult<E extends ReadErrorPolicy> = E extends "read-error"
   ? CacheReadError
   : null;
 
-/** One family's read rules. */
 export interface FamilyPolicy<
   R,
   V = R,
   Op extends string = string,
   E extends ReadErrorPolicy = ReadErrorPolicy,
 > {
-  /** The `op` of the read's debug event. */
+  family: RecordFamily;
   debugOp: Op;
-  /** The label errors are reported under. */
   label: string;
   onReadError: E;
   /** The record in a backend value; null when it is not one (corrupt). */
@@ -115,11 +105,9 @@ export type RecordReadOutcome =
   | "stale-revalidate"
   | "expired"
   | "corrupt"
-  /** The invalidation check rejected the record. */
   | "invalidated"
   | "error";
 
-/** The one debug event of a record read. */
 export interface RecordReadEvent<Op extends string = string> {
   op: Op;
   key: string;
@@ -127,7 +115,6 @@ export interface RecordReadEvent<Op extends string = string> {
   shouldRevalidate?: boolean;
   staleAt?: number;
   expiresAt?: number;
-  /** Wall-clock ms the backend read took. */
   readMs?: number;
 }
 
@@ -153,15 +140,12 @@ export interface RecordEnv<R = unknown, Op extends string = string> {
   claims?: (record: R, now: number) => boolean;
 }
 
-/** A served record. */
 export interface RecordRead<R, V = R> {
   record: R;
   value: V;
-  /** Past its stale time. */
   stale: boolean;
   /** Stale, and this read holds the revalidation (or needs no claim). */
   shouldRevalidate: boolean;
-  /** The backend's value before decoding. */
   raw: unknown;
 }
 
@@ -169,10 +153,8 @@ function isPromiseLike<T>(value: unknown): value is PromiseLike<T> {
   return typeof (value as PromiseLike<T> | null)?.then === "function";
 }
 
-/** Reports a corrupt record, removes it and emits its event. */
 function healCorrupt<R, V, Op extends string, E extends ReadErrorPolicy>(
   backend: RecordBackend,
-  family: RecordFamily,
   key: string,
   policy: FamilyPolicy<R, V, Op, E>,
   env: RecordEnv<R, Op>,
@@ -180,13 +162,13 @@ function healCorrupt<R, V, Op extends string, E extends ReadErrorPolicy>(
   error: unknown,
 ): null {
   reportCacheError(error, "cache-corrupt", policy.label);
-  void backend.remove(key, family);
+  void backend.remove(key, policy.family);
   env.emit?.({ op: policy.debugOp, key, outcome: "corrupt", readMs });
   return null;
 }
 
 /**
- * Reads one record of `family` under `key`: null on a miss (absent, corrupt,
+ * Reads the record of `policy.family` under `key`: null on a miss (absent, corrupt,
  * expired or invalidated), the policy's read-error result when the backend
  * fails, else the served record.
  */
@@ -197,12 +179,11 @@ export async function readRecord<
   E extends ReadErrorPolicy = ReadErrorPolicy,
 >(
   backend: RecordBackend,
-  family: RecordFamily,
   key: string,
   policy: FamilyPolicy<R, V, Op, E>,
   env: RecordEnv<R, Op>,
 ): Promise<RecordRead<R, V> | null | ReadErrorResult<E>> {
-  const op = policy.debugOp;
+  const { family, debugOp: op } = policy;
   const started = Date.now();
   let raw: unknown;
   try {
@@ -226,7 +207,6 @@ export async function readRecord<
   if (record === null) {
     return healCorrupt(
       backend,
-      family,
       key,
       policy,
       env,
@@ -257,7 +237,7 @@ export async function readRecord<
     try {
       value = policy.open(record);
     } catch (error) {
-      return healCorrupt(backend, family, key, policy, env, readMs, error);
+      return healCorrupt(backend, key, policy, env, readMs, error);
     }
   } else {
     value = record as unknown as V;
