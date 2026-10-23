@@ -18,6 +18,7 @@
     "check:e2e-console-baseline": "node tools/check-e2e-console-baseline.mjs",
     "check:suspense-contract": "node tools/check-suspense-contract.mjs",
     "check:no-external-store": "node tools/check-no-external-store.mjs",
+    "check:internals": "node tools/check-internals.mjs",
     "check:doc-links": "node tools/check-doc-links.mjs",
     "check:docs-api": "node tools/check-docs-api.mjs",
     "check:skills": "node tools/check-skills.mjs",
