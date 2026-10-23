@@ -473,7 +473,7 @@ credentials.
 ## Tag-marker read latency, and why there is no in-isolate marker cache
 
 The marker check is on the **serial path of every tagged hit**: a tagged read is
-`match → await marker → await body` (`cf-cache-store.ts`, `get`/`getItem`). A
+`match → await marker → await body` (`cf-cache-store.ts`, `readL1`). A
 degraded namespace can pin the marker read up to `kvReadTimeoutMs` (default
 170 ms) before it **fails open** — treats the marker as absent so the entry is
 served — so one slow tag never turns a hit into a wrongful invalidation.
