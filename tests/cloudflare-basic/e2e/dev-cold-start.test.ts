@@ -93,7 +93,7 @@ test.describe("dev cold start beside another app's router files", () => {
           `expected the watcher to skip ${NESTED_URLS} ("watcher: skip" in the ` +
           `DEBUG=rango:discovery log). "rediscovered": it re-ran discovery for ` +
           `the file. "none": neither line appeared, so check the message text ` +
-          `in router-discovery.ts.`,
+          `in dev-server-phase.ts.`,
       })
       .toBe("skipped");
   });

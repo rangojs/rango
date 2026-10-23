@@ -16,7 +16,7 @@ import { execSync } from "node:child_process";
  * discovery entry import, and the routes-manifest virtual module replayed
  * stale projection literals on rsc program reloads, clobbering the registry
  * as the realm's last write. Pinned by the watcher carve-out + importer-chain
- * invalidation in router-discovery.ts and
+ * invalidation in discovery/dev-server-phase.ts and
  * refreshRecordedClientUrlProjections in client-urls-projection.ts.
  *
  * Serial + isolated server: mutates a shared source file.
