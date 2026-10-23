@@ -134,6 +134,7 @@ import type { Rango } from "../router/router-interfaces.js";
 import { getRequestId, resolveSink, safeEmit } from "../router/telemetry.js";
 import type { TelemetrySink } from "../router/telemetry.js";
 import type { OnTimeoutCallback, ResolvedTimeouts } from "../router/timeout.js";
+import { WIRE } from "../wire-params.js";
 
 /**
  * The internal subset of the router surface dispatch depends on. The public
@@ -379,7 +380,7 @@ export async function dispatch<TEnv = any>(
   requestContext._basename = router.basename;
   requestContext._routerId = routerId;
 
-  const isPartial = url.searchParams.has("_rsc_partial");
+  const isPartial = url.searchParams.has(WIRE.partial);
 
   // Telemetry: mirror the router's match-transaction lifecycle onto the
   // configured sink so a consumer can unit-test createRouter({ telemetry })

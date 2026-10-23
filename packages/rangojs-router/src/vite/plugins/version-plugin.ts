@@ -115,7 +115,7 @@ function getClientModuleSignature(
  * Build: exports a placeholder for the per-router versions table. The module
  * holds nothing that varies between builds; the table is written into the
  * built chunk after the server output is hashed (the buildApp post hook in
- * router-discovery.ts). See docs/design/per-app-cache-version.md.
+ * discovery/build-discovery-phase.ts). See docs/design/per-app-cache-version.md.
  * @internal
  */
 export function createVersionPlugin(): Plugin {

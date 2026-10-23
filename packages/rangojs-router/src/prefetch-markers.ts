@@ -1,24 +1,13 @@
 /**
- * The wire markers of prefetches, of `prefetch: false`
- * (docs/design/prefetch-false.md) and of stale requests: shared by the browser
- * and the server (router/segment-resolution/prefetch-deferral.ts requestKind,
- * rsc/prefetch-render-error.ts, rsc/rsc-rendering.ts,
- * cache/document-cache.ts, router/navigation-snapshot.ts). Dependency free,
- * like segment-fragments.ts: the browser must not import the server modules
- * that use them.
+ * The wire markers of prefetches: shared by the browser and the server
+ * (router/segment-resolution/prefetch-deferral.ts requestKind,
+ * rsc/prefetch-render-error.ts, rsc/rsc-rendering.ts). Dependency free, like
+ * segment-fragments.ts: the browser must not import the server modules that
+ * use them.
  */
 
 /** Request header of a `<Link>` prefetch (browser/prefetch/fetch.ts). */
 export const PREFETCH_HEADER = "X-Rango-Prefetch";
-
-/** Query param of a fill request (browser/navigation-client.ts). */
-export const FILL_PARAM = "_rsc_fill";
-
-/**
- * Query param of a stale request (browser/navigation-client.ts): `revalidate()`
- * sees `stale: true` (router/navigation-snapshot.ts).
- */
-export const STALE_PARAM = "_rsc_stale";
 
 /**
  * The last row of a prefetch whose render reported an error

@@ -79,6 +79,7 @@ import {
 } from "../router/request-classification.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
+import { WIRE } from "../wire-params.js";
 
 /**
  * The router members the stages read. The handler's `RangoInternal` carries
@@ -248,7 +249,7 @@ export function terminalPlanResponse<TEnv>(
     ? actionRan.kind === "action"
       ? "action"
       : "pe-render"
-    : url.searchParams.has("_rsc_action") && rewriteTrail(passCtx)
+    : url.searchParams.has(WIRE.action) && rewriteTrail(passCtx)
       ? "action"
       : undefined;
   if (
@@ -271,7 +272,7 @@ export function terminalPlanResponse<TEnv>(
   // A reload points at the visitor's URL, never a rewrite target's.
   if (plan.mode === "version-mismatch") {
     console.log(
-      `[RSC] Version mismatch: client=${url.searchParams.get("_rsc_v")}, server=${ctx.version}. Forcing reload.`,
+      `[RSC] Version mismatch: client=${url.searchParams.get(WIRE.version)}, server=${ctx.version}. Forcing reload.`,
     );
     return createReloadResponse(getRequestContext(), plan.reloadUrl);
   }
@@ -344,7 +345,7 @@ export function partialRedirectResponse<TEnv>(
   url: URL,
   ctx: RequestStageContext<TEnv>,
 ): Response | null {
-  return url.searchParams.has("_rsc_partial")
+  return url.searchParams.has(WIRE.partial)
     ? ctx.createRedirectFlightResponse(redirectUrl)
     : null;
 }
@@ -651,8 +652,8 @@ export function finalizeRequestResponse<TEnv>(
   let response: Response;
   if (opts.hasMiddleware) {
     if (
-      url.searchParams.has("_rsc_partial") ||
-      url.searchParams.has("_rsc_action")
+      url.searchParams.has(WIRE.partial) ||
+      url.searchParams.has(WIRE.action)
     ) {
       const intercepted = interceptRedirectForPartial(
         downstream,

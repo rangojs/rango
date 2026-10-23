@@ -9,10 +9,8 @@ import {
   resolveRouterVersions,
   versionKeyPrefix,
 } from "../build-version-table.js";
-import {
-  createRequestContext,
-  runWithRequestContext,
-} from "../request-context.js";
+import { runWithRequestContext } from "../request-context.js";
+import { makeRequestContext } from "../../__tests__/kit/request-context.js";
 import {
   resolveVersionsFrom,
   uniformVersions,
@@ -25,15 +23,7 @@ const TABLE: RouterVersionsTable = {
   "*": ["data-all", "doc-all"],
 };
 
-function makeCtx(versions?: { data: string; document: string }) {
-  return createRequestContext({
-    env: {},
-    request: new Request("https://example.com/"),
-    url: new URL("https://example.com/"),
-    variables: {},
-    versions,
-  });
-}
+const EXAMPLE_URL = "https://example.com/";
 
 describe("resolveVersionsFrom", () => {
   const lookup = (
@@ -96,7 +86,10 @@ describe("getCacheVersions", () => {
   });
 
   it("returns the versions of the router serving the request", () => {
-    const ctx = makeCtx({ data: "d1", document: "h1" });
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
+      versions: { data: "d1", document: "h1" },
+    });
     expect(ctx._versions).toEqual({ data: "d1", document: "h1" });
     expect(runWithRequestContext(ctx, () => getCacheVersions())).toEqual({
       data: "d1",
@@ -105,7 +98,10 @@ describe("getCacheVersions", () => {
   });
 
   it("is inherited by a context derived from the request's", () => {
-    const ctx = makeCtx({ data: "d1", document: "h1" });
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
+      versions: { data: "d1", document: "h1" },
+    });
     const derived = Object.create(ctx) as typeof ctx;
     expect(runWithRequestContext(derived, () => getCacheVersions())).toEqual({
       data: "d1",
@@ -123,7 +119,11 @@ describe("getCacheVersions", () => {
 
   it("falls back to the whole-build pair on a context no router created", () => {
     installRouterVersionsTable(TABLE);
-    expect(runWithRequestContext(makeCtx(), () => getCacheVersions())).toEqual({
+    expect(
+      runWithRequestContext(makeRequestContext({ url: EXAMPLE_URL }), () =>
+        getCacheVersions(),
+      ),
+    ).toEqual({
       data: "data-all",
       document: "doc-all",
     });
@@ -143,7 +143,9 @@ describe("getCacheVersions", () => {
     installRouterVersionsTable(TABLE);
     getCacheVersions();
     getCacheVersions();
-    runWithRequestContext(makeCtx(), () => getCacheVersions());
+    runWithRequestContext(makeRequestContext({ url: EXAMPLE_URL }), () =>
+      getCacheVersions(),
+    );
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toMatch(
       /built outside a request.*whole-build cache version.*not read by a router with its own version/,
@@ -153,8 +155,12 @@ describe("getCacheVersions", () => {
   it("does not warn inside a request, or when every router has the same versions", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     installRouterVersionsTable(TABLE);
-    runWithRequestContext(makeCtx({ data: "d1", document: "h1" }), () =>
-      getCacheVersions(),
+    runWithRequestContext(
+      makeRequestContext({
+        url: EXAMPLE_URL,
+        versions: { data: "d1", document: "h1" },
+      }),
+      () => getCacheVersions(),
     );
     installRouterVersionsTable({ "*": ["d", "h"], "router-a": ["d", "h"] });
     getCacheVersions();
@@ -172,7 +178,13 @@ describe("getCacheVersions", () => {
 describe("versionKeyPrefix", () => {
   afterEach(() => installRouterVersionsTable(undefined));
   const inRequest = <T>(fn: () => T): T =>
-    runWithRequestContext(makeCtx({ data: "d1", document: "h1" }), fn);
+    runWithRequestContext(
+      makeRequestContext({
+        url: EXAMPLE_URL,
+        versions: { data: "d1", document: "h1" },
+      }),
+      fn,
+    );
 
   it("prefixes a key with the serving router's version of that kind", () => {
     expect(inRequest(() => versionKeyPrefix("data"))).toBe("v/d1/");
@@ -190,11 +202,8 @@ describe("versionKeyPrefix", () => {
 
 describe("the rango state value", () => {
   const rotated = (versions?: { data: string; document: string }) => {
-    const ctx = createRequestContext({
-      env: {},
-      request: new Request("https://example.com/"),
-      url: new URL("https://example.com/"),
-      variables: {},
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
       stateCookieName: "rango-state_r",
       versions,
     });

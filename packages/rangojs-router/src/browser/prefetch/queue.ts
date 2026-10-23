@@ -15,6 +15,7 @@
  */
 
 import { wait, waitForIdle, waitForViewportImages } from "./resource-ready.js";
+import { WIRE_PREFIX } from "../../wire-params.js";
 
 // Max prefetches executing at once. Mirrors DEFAULT_PREFETCH_CONCURRENCY
 // (router/prefetch-limits.ts); kept as a local literal so the client bundle
@@ -128,16 +129,15 @@ export function enqueuePrefetch(
 
 /**
  * Normalize a URL-like string for keep-alive matching: parse against a
- * placeholder origin and strip internal `_rsc_*` query params. Returns
+ * placeholder origin and strip every `WIRE_PREFIX` query param. Returns
  * `pathname + search` so comparisons ignore hash and the internal params
- * that prefetch appends to targets (`_rsc_partial`, `_rsc_segments`,
- * `_rsc_v`, `_rsc_rid`, `_rsc_stale`).
+ * that prefetch appends to targets.
  */
 function normalizeForMatch(urlish: string): string {
   try {
     const u = new URL(urlish, "http://placeholder");
     for (const k of [...u.searchParams.keys()]) {
-      if (k.startsWith("_rsc_")) u.searchParams.delete(k);
+      if (k.startsWith(WIRE_PREFIX)) u.searchParams.delete(k);
     }
     return u.pathname + u.search;
   } catch {

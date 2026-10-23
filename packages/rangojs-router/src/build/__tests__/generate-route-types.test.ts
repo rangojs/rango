@@ -1754,7 +1754,7 @@ describe("extractBasenameFromRouter", () => {
   );
 });
 
-// The dev route-file watcher skips files isInSkippedScanDir() flags (router-discovery.ts),
+// The dev route-file watcher skips files isInSkippedScanDir() flags (dev-server-phase.ts),
 // so it may only name files no discovery scan reaches: findTsFiles() skips
 // `build`, the router scans enter it, and each of the three skips the rest alike.
 describe("isInSkippedScanDir", () => {

@@ -58,11 +58,7 @@ import {
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../segment-fragments.js";
-import {
-  FILL_PARAM,
-  PREFETCH_HEADER,
-  STALE_PARAM,
-} from "../prefetch-markers.js";
+import { PREFETCH_HEADER } from "../prefetch-markers.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import { withoutPushedBy } from "../handles/pushed-by.js";
 import type { HandleData } from "../server/handle-store.js";
@@ -76,6 +72,8 @@ import {
   type PprReplayStatus,
   type ShellStatus,
 } from "./shell-status.js";
+import { WIRE } from "../wire-params.js";
+import { writePartialParams } from "../browser/wire-protocol.js";
 
 /** Options for {@link serveShellRequest}. */
 export interface ServeShellRequestOptions<TEnv = any> {
@@ -585,12 +583,12 @@ async function buildActionRequest(
   const { encodeReply } =
     await import("@vitejs/plugin-rsc/vendor/react-server-dom/client.edge");
   registerTestAction(action.ref, action.id, "serveShellRequest");
-  const target = new URL(url);
-  target.searchParams.set("_rsc_action", action.id);
-  target.searchParams.set("_rsc_segments", (action.segments ?? []).join(","));
-  if (action.rewriteTarget) {
-    target.searchParams.set("_rsc_rt", action.rewriteTarget);
-  }
+  const target = writePartialParams(new URL(url), {
+    action: action.id,
+    segmentIds: action.segments ?? [],
+    emptySegments: "send",
+    rewriteTarget: action.rewriteTarget,
+  });
   headers.set("rsc-action", action.id);
   if (!headers.has("X-RSC-Router-Client-Path")) {
     headers.set("X-RSC-Router-Client-Path", url.href);
@@ -647,13 +645,13 @@ async function buildRequest(
     );
   }
   const target = new URL(url);
-  target.searchParams.set("_rsc_partial", "true");
-  target.searchParams.set("_rsc_segments", segments.join(","));
-  if (rewriteTarget) target.searchParams.set("_rsc_rt", rewriteTarget);
+  target.searchParams.set(WIRE.partial, "true");
+  target.searchParams.set(WIRE.segments, segments.join(","));
+  if (rewriteTarget) target.searchParams.set(WIRE.rewriteTarget, rewriteTarget);
   // As the browser sends them: browser/navigation-client.ts (fill, stale) and
   // browser/prefetch/fetch.ts (prefetch).
-  if (fill) target.searchParams.set(FILL_PARAM, "1");
-  if (stale) target.searchParams.set(STALE_PARAM, "true");
+  if (fill) target.searchParams.set(WIRE.fill, "1");
+  if (stale) target.searchParams.set(WIRE.stale, "true");
   if (prefetch && !headers.has(PREFETCH_HEADER)) {
     headers.set(PREFETCH_HEADER, "1");
   }

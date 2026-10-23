@@ -115,6 +115,7 @@ import {
   terminalPlanResponse,
   timeoutResponse,
 } from "./request-stages.js";
+import { WIRE } from "../wire-params.js";
 
 /**
  * Create an RSC request handler.
@@ -273,7 +274,7 @@ export function createRSCHandler<
           env: reqCtx.env,
           payload: redirectPayload,
           tracking: {
-            mode: reqCtx.url.searchParams.has("_rsc_action")
+            mode: reqCtx.url.searchParams.has(WIRE.action)
               ? "action-revalidation"
               : "partial",
             routeKey: reqCtx._routeName,
@@ -336,7 +337,7 @@ export function createRSCHandler<
     // Connection warmup: return 204 immediately before any processing
     if (router?.warmupEnabled && request.method === "HEAD") {
       const warmupUrl = new URL(request.url);
-      if (warmupUrl.searchParams.has("_rsc_warmup")) {
+      if (warmupUrl.searchParams.has(WIRE.warmup)) {
         return new Response(null, { status: 204 });
       }
     }
@@ -564,7 +565,7 @@ export function createRSCHandler<
           },
           // A loader fetch answers with the error `load()` rejects with.
           refuse: (error) =>
-            url.searchParams.has("_rsc_loader")
+            url.searchParams.has(WIRE.loader)
               ? renderLoaderError(
                   handlerCtx,
                   { message: (error as Error).message, name: "Error" },
@@ -573,7 +574,7 @@ export function createRSCHandler<
                     request,
                     url,
                     env,
-                    loaderId: url.searchParams.get("_rsc_loader") ?? "",
+                    loaderId: url.searchParams.get(WIRE.loader) ?? "",
                   },
                 )
               : undefined,
@@ -947,7 +948,7 @@ export function createRSCHandler<
       // Actions from client-side navigation include _rsc_partial — preserve
       // the partial flag so the revalidation returns a Flight stream, not HTML.
       // App-switch is already excluded by classifyRequest (would be full-render).
-      const isPartialAction = url.searchParams.has("_rsc_partial");
+      const isPartialAction = url.searchParams.has(WIRE.partial);
       return executeRenderWithMiddleware(
         plan.route.routeMiddleware,
         plan.negotiated,

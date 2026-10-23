@@ -29,7 +29,7 @@ import { x } from "tinyexec";
  * must take the same policy path.
  *
  * Build-only by design (explicit gap): #587 is a build-time bug and prerender.onError
- * is build config. The dev `/__rsc_prerender` endpoint tweak (router-discovery.ts) is
+ * is build config. The dev `/__rsc_prerender` endpoint tweak (dev-server-phase.ts) is
  * a cosmetic log refinement (stay quiet on Skip) on a path that serves ONLY non-Node
  * runtimes — and the repo's only non-Node dev fixture (cloudflare-basic) uses
  * buildEnv:"auto", where ctx.env is available at build, so the render-error repro

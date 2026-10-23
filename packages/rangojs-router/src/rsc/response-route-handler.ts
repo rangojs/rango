@@ -36,6 +36,7 @@ import {
 } from "./helpers.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import { stringifyJsonRouteResult } from "./json-route-result.js";
+import { WIRE } from "../wire-params.js";
 
 export interface ResponseRouteMatch {
   responseType: string;
@@ -67,7 +68,7 @@ export async function handleResponseRoute<TEnv>(
   url: URL,
   variables: Record<string, any>,
 ): Promise<Response> {
-  const isPartial = url.searchParams.has("_rsc_partial");
+  const isPartial = url.searchParams.has(WIRE.partial);
 
   // Partial requests (client-side navigation) to response routes
   // get X-RSC-Reload to trigger hard navigation in the browser

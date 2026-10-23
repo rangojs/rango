@@ -175,7 +175,7 @@ describe("recovery after a failed cold discovery", () => {
     await expect(
       discoverRouters(state, createRscEnv(realms, Infinity).rscEnv, ssrEnv),
     ).rejects.toThrow(/did not settle/);
-    // router-discovery.ts records the cold failure (recovery mode); the
+    // dev-server-phase.ts records the cold failure (recovery mode); the
     // wiring is pinned by src/vite/__tests__/dev-discovery-recovery.test.ts.
     recordDiscoveryFailure(state, new Error("did not settle"));
 

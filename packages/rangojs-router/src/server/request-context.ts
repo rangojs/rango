@@ -273,8 +273,8 @@ export interface RequestContext<
 
   /**
    * @internal Handle store for tracking handle data across segments.
-   * Readonly: a background render that needs its own store derives a context
-   * (rerenderAndCacheRoute, shell-capture.ts) instead of swapping this field,
+   * Readonly: a render that needs its own store derives a render pass
+   * (deriveRenderPass, server/render-pass.ts) instead of swapping this field,
    * which the foreground still reads while it produces the page.
    */
   readonly _handleStore: HandleStore;
@@ -403,9 +403,9 @@ export interface RequestContext<
 
   /**
    * @internal The request carried the forced-MISS reload marker
-   * (shell-serve.ts SHELL_MISS_PARAM). The handler strips the marker from the
-   * request on entry and sets this; the shell gate renders the request like a
-   * cache miss.
+   * (`WIRE.shellMiss`). The handler strips the marker from the request on
+   * entry (shell-serve.ts withoutShellMissMarker) and sets this; the shell
+   * gate renders the request like a cache miss.
    */
   _shellForcedMiss?: true;
 
@@ -1926,8 +1926,8 @@ export function rebaseRequestContext(
 /**
  * Wire a fresh render barrier onto `ctx`, closure-bound to THIS ctx and THIS
  * handle store. Called by createRequestContext for every fresh context, and by
- * deriveShellCaptureContext (rsc/shell-capture.ts) for the PPR capture's
- * derived context.
+ * deriveRenderPass (server/render-pass.ts) for a derived pass whose
+ * RENDER_PASS_FIELDS row owns its barrier (the PPR capture and the HIT tail).
  *
  * The derived-context call is load-bearing (issue #684, plan 009): the capture
  * context is `Object.create(reqCtx)`, so without its own wiring every
