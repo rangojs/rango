@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+### Changed: `dispatch()` answers as production in a few edge cases
+
+**Before.** `dispatch()` from `@rangojs/router/testing` kept its own copy of
+the handler's steps around a response route: the global middleware passes,
+the response route's timeout, the redirect interception and the response's
+finalization. In a few cases its answer differed from the one `router.fetch`
+sends.
+
+**After.** It runs the production handler's request stages, so these cases
+answer as production does:
+
+- An action request (`?_rsc_action`, not a partial) whose final pass ran no
+  global middleware, answered with a 3xx (a trailing-slash redirect, or a
+  redirect from a response route or its route middleware): the 3xx, through
+  the open-redirect guard, instead of a `204` + `X-RSC-Redirect`.
+- A partial request (`?_rsc_partial`) to a trailing-slash path: a global
+  middleware that reads the response after `next()` sees the `204` +
+  `X-RSC-Redirect` instead of a `308`. The response is unchanged.
+- A response route's `renderStartMs` timeout with no global middleware:
+  `onResponse` callbacks the route registered before the deadline no longer
+  apply to the 504 or `onTimeout` response.
+- A content-negotiated response route whose route middleware short-circuits:
+  the response carries `Vary: Accept`.
+- A response route for a type with no MIME (image, stream, any) whose handler
+  returns a value that is not a `Response`: the 500 carries production's
+  message, `Response route handler for "…" must return a Response object`.
+- A throwing `onTimeout` logs `[RSC] onTimeout callback error:` instead of
+  `[dispatch] onTimeout callback error:`.
+- A response-route timeout on a rewritten pass: `onError`, `onTimeout` and
+  the `request.timeout` event carry the rewrite target's request and URL.
+  Without a request-id header, that event's `requestId` then differs from the
+  one on `dispatch`'s own `request.start` and `request.end`.
+- A stream-idle timeout's `onError` call and `request.timeout` event carry
+  `routeKey`.
+- The same timeout, stream-idle or rewrite error reaches `onError` once per
+  request.
+
+No change in your code. A test that pinned one of the old answers now gets
+production's.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

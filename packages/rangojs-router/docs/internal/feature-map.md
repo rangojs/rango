@@ -680,7 +680,8 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
 - `redirect()` with optional state and location state integration. Same-origin by
   default: every browser-followed redirect (no-JS PE, full-page GET, middleware
   short-circuit, response-route 3xx) is validated by the server open-redirect
-  guard at the single `handler.ts` chokepoint and cross-origin targets are
+  guard at the single finalization chokepoint (`rsc/request-stages.ts`
+  `finalizeRequestResponse`, run by `handler.ts` and `dispatch`) and cross-origin targets are
   neutralized to the basename root; soft SPA/Flight redirects (`X-RSC-Redirect` /
   Flight `metadata.redirect`) are resolved with the same rules at construction
   (`resolveSoftRedirectUrl`). `redirect(url, { external: true })` opts a single
@@ -696,8 +697,9 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   another route at the same URL: a path (basename-prefixed, kept under the
   basename) or a global route name with params and search. The `Rewrite`
   unwinds to one catch around the global middleware chain
-  (`rsc/rewrite-passes.ts` `runRewritePasses`, shared by `rsc/handler.ts` and
-  `dispatch`), which moves the same request context to the target
+  (`rsc/rewrite-passes.ts` `runRewritePasses`, which `rsc/request-stages.ts`
+  `runRequestPasses` runs for `rsc/handler.ts` and `dispatch`), which moves
+  the same request context to the target
   (`applyRewrite`, `rebaseRequestContext`) and runs the request again: global
   middleware on the target path, the target's route middleware and render.
   `ctx.rewrittenFrom` (the visitor URL from the trail in
@@ -726,7 +728,8 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   site error: a rewrite after `next()`, a disallowed mutation's rewrite in
   global middleware (before the action), a mutation whose body middleware
   read before the action, an action whose rewrite reaches a response route
-  or a redirect (`coreRequestHandler`: after it ran, or a JS action before);
+  or a redirect (`terminalPlanResponse` in `rsc/request-stages.ts`: after it ran, or
+  a JS action before);
   a loader fetch
   answers with the `loaderError` `load()` rejects with; a handler's, loader's or server action's throw is its own error
   (middleware only, by design: no loader rewrites).
@@ -1084,7 +1087,7 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
 - Default 504 response with `X-Rango-Timeout-Phase` header
 - `onError` receives timeout errors with `metadata: { timeout: true, phase, durationMs, render? }`; `render` is the foreground Flight/HTML/response cursor when a render-start timeout interrupts the stage driver
 - `onTimeout`, `request.timeout`, and `onError` each receive their OWN shallow copy of the `render` snapshot (`RenderTimeoutContext`: mode, phase, running/paused state, completed/total, partial phase duration) — value-equal, independent by reference, so a consumer mutating one surface's copy cannot corrupt the others
-- `dispatch()` mirrors response-route `renderStartMs`/`onTimeout`/timeout telemetry through the public testing entry; its timeout context deliberately has no `render` snapshot because dispatch does not run Flight/HTML
+- `dispatch()` runs the handler's response-route stage (`serveResponseRoute` and `timeoutResponse` in `rsc/request-stages.ts`), so `renderStartMs`/`onTimeout`/timeout telemetry match production through the public testing entry; its timeout context has no `render` snapshot because dispatch does not run Flight/HTML
 - Timeout phases: `"action"` (server action execution), `"render-start"` (RSC render / response routes), `"stream-idle"` (post-handoff body idle-flow watchdog; onTimeout does not apply — the trip errors the stream and reports via onError with `metadata: { timeout: true, phase: "stream-idle", durationMs }` + the request.timeout event)
 
 ### Telemetry and Observability

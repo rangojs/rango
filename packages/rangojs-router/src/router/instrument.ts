@@ -428,9 +428,10 @@ function observeInSegmentScope<C, R>(
  *     loop (request.start/end/error, cache.decision, ...).
  *   - segment-resolution/helpers.ts emits via a caller-provided report.telemetry
  *     sink rather than the ALS router context.
- *   - rsc/handler.ts handleTimeoutResponse (request.timeout), the origin guard
- *     (request.origin-rejected), and handleStore.onError (late-handle
- *     handler.error) emit via router.telemetry directly — they run outside the
+ *   - rsc/request-stages.ts timeoutResponse (request.timeout) and
+ *     originRejectedResponse (request.origin-rejected), and rsc/handler.ts
+ *     handleStore.onError (late-handle handler.error) emit via
+ *     router.telemetry directly — they run outside the
  *     RouterContext ALS (only match()/matchPartial() enter it), so a
  *     getRouterContext() read there throws and the event would vanish.
  */
