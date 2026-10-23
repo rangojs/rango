@@ -122,7 +122,7 @@ async function capture(
       onError: undefined,
       match: vi.fn(async () => {
         const captureCtx = getRequestContext();
-        captureCtx._shellCaptureLoaderRecords?.set(
+        captureCtx._shellCaptureState?.loaderRecords.set(
           SEGMENT_KEY,
           Promise.resolve(container),
         );

@@ -106,12 +106,21 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     "_recoveredHandlerErrors",
     "_renderErrors",
     "_requestTags",
-    "_routeRecordWindow",
-    "_shellCaptureLoaderRecords",
-    "_shellCaptureRun",
+    "_shellCaptureState",
     "_shellFragmentPayload",
     "_tracing",
     "dynamic",
+  ];
+  /** RENDER_PASS_FIELDS["shell-capture"] creates every field. */
+  const SHELL_CAPTURE_STATE = [
+    "forVisitor",
+    "guardTripped",
+    "guardTrippedLoaderId",
+    "loaderLanes",
+    "loaderRecords",
+    "routeRecordWindow",
+    "run",
+    "unrecordedLoaderPush",
   ];
   /** Only with a cache store on the request: the recording store and its scope. */
   const WITH_STORE = ["_cacheStore", "_shellImplicitCache", "waitUntil"];
@@ -146,7 +155,7 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     expect(capture._renderErrors).not.toBe(base._renderErrors);
     expect(capture._onResponseCallbacks).toEqual([]);
     expect(capture._onResponseCallbacks).not.toBe(base._onResponseCallbacks);
-    expect(capture._shellCaptureLoaderRecords).toEqual(new Map());
+    expect(capture._shellCaptureState?.loaderRecords).toEqual(new Map());
     expect(capture._cacheStore).not.toBe(baseStore);
     expect(capture.waitUntil).not.toBe(base.waitUntil);
     expect(capture._shellImplicitCache).toMatchObject({
@@ -154,21 +163,23 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
       swr: 300,
       keyPrefix: "doc",
     });
+    expect(ownKeys(capture._shellCaptureState!)).toEqual(SHELL_CAPTURE_STATE);
     expect({
-      _shellCaptureRun: capture._shellCaptureRun,
+      "_shellCaptureState.run": capture._shellCaptureState?.run,
       _dynamic: capture._dynamic,
       _shellFragmentPayload: capture._shellFragmentPayload,
       _metricsStore: capture._metricsStore,
       _tracing: capture._tracing,
-      _routeRecordWindow: capture._routeRecordWindow,
+      "_shellCaptureState.routeRecordWindow":
+        capture._shellCaptureState?.routeRecordWindow,
       _recoveredHandlerErrors: capture._recoveredHandlerErrors,
     }).toEqual({
-      _shellCaptureRun: true,
+      "_shellCaptureState.run": true,
       _dynamic: false,
       _shellFragmentPayload: false,
       _metricsStore: undefined,
       _tracing: undefined,
-      _routeRecordWindow: undefined,
+      "_shellCaptureState.routeRecordWindow": undefined,
       _recoveredHandlerErrors: undefined,
     });
     // Its dynamic() opts out the capture, not the request.
@@ -197,7 +208,7 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     Object.assign(base, {
       _metricsStore: { metrics: [] },
       _tracing: { tracer: {} },
-      _routeRecordWindow: { reads: [] },
+      _shellCaptureState: { routeRecordWindow: { reads: [] } },
       _recoveredHandlerErrors: new Map([["M0", new Error("recovered")]]),
       _shellFragmentPayload: true,
       _dynamic: true,
@@ -222,7 +233,8 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     expect({
       _metricsStore: capture._metricsStore,
       _tracing: capture._tracing,
-      _routeRecordWindow: capture._routeRecordWindow,
+      "_shellCaptureState.routeRecordWindow":
+        capture._shellCaptureState?.routeRecordWindow,
       _recoveredHandlerErrors: capture._recoveredHandlerErrors,
       _shellFragmentPayload: capture._shellFragmentPayload,
       _dynamic: capture._dynamic,
@@ -240,7 +252,7 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     }).toEqual({
       _metricsStore: undefined,
       _tracing: undefined,
-      _routeRecordWindow: undefined,
+      "_shellCaptureState.routeRecordWindow": undefined,
       _recoveredHandlerErrors: undefined,
       _shellFragmentPayload: false,
       _dynamic: false,
@@ -391,7 +403,10 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
         return {};
       },
       setupLoaderAccess: () => {},
-      resolveAllSegments: async () => [],
+      resolveAllSegmentsWithRevalidation: async () => ({
+        segments: [],
+        matchedIds: [],
+      }),
     } as unknown as RouterContext;
     const match = {
       env: {},

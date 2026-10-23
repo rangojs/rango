@@ -2,10 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import { createElement } from "react";
 import { runWithRouterContext } from "../router-context";
 import {
-  resolveSegment,
+  resolveSegmentWithRevalidation,
   resolveParallelSegmentsWithRevalidation,
   resolveEntryHandlerWithRevalidation,
 } from "../segment-resolution";
+import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import { DataNotFoundError } from "../../errors";
 import {
   createRequestContext,
@@ -44,15 +45,9 @@ async function resolveRoute(
   const reqCtx = newRequestContext(ctx);
   const box = await runWithRequestContext(reqCtx, () =>
     runWithRouterContext(routerCtx, async () => {
-      const segments = await resolveSegment(
+      const { segments } = await resolveSegmentWithRevalidation(
+        makeFreshPass(ctx, deps, { routeKey: "r", params: {}, ...options }),
         entry,
-        "r",
-        {},
-        ctx,
-        new Map(),
-        deps,
-        false,
-        options,
       );
       return { component: segments.find((s) => s.type === "route")!.component };
     }),
@@ -216,15 +211,18 @@ describe("parallel slots resolve the boundary from the owning entry", () => {
     });
   const failing = () => parallelEntry(() => Promise.reject(new Error("slot")));
 
-  it("fresh: an ancestor errorBoundary covers a slot with loading()", async () => {
+  it("FRESH: an ancestor errorBoundary covers a slot with loading()", async () => {
     const deps = createDeps({ real: true });
     const ctx = createContext();
     const slotOwner = owner();
     const reqCtx = newRequestContext(ctx);
     slotOwner.parallel = [failing()];
-    const segments = await runWithRequestContext(reqCtx, () =>
+    const { segments } = await runWithRequestContext(reqCtx, () =>
       runWithRouterContext(routerCtx, () =>
-        resolveSegment(slotOwner, "r", {}, ctx, new Map(), deps),
+        resolveSegmentWithRevalidation(
+          makeFreshPass(ctx, deps, { routeKey: "r", params: {} }),
+          slotOwner,
+        ),
       ),
     );
     const seg = segments.find((s) => s.type === "parallel")!;

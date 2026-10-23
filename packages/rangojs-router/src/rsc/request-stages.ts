@@ -5,10 +5,10 @@
  * guard, the global middleware passes, the response route, and the
  * response's finalization. The RSC handler (rsc/handler.ts createRSCHandler)
  * runs them all around its Flight executor. The dispatch testing primitive
- * (testing/dispatch.ts) runs the passes, the response route, the partial
- * redirect and the finalization, around its own matching (router.previewMatch)
- * and its throw on an RSC route. Sharing them keeps dispatch's responses
- * identical to production's; a hand-kept mirror drifted once (#1128).
+ * (testing/dispatch.ts) runs classify, the terminal plans, the passes, the
+ * response route and the finalization, and throws where a plan would render
+ * a component. Sharing them keeps dispatch's responses identical to
+ * production's; a hand-kept mirror drifted once (#1128).
  *
  * No import of @vitejs/plugin-rsc on this graph: dispatch loads it in a
  * plain Vitest project, where plugin-rsc's entries cannot load (they import
@@ -22,6 +22,7 @@ import type { MiddlewareEntry } from "../router/middleware-types.js";
 import {
   _getRequestContext,
   getRequestContext,
+  setRequestContextParams,
   type RequestContext,
 } from "../server/request-context.js";
 import {
@@ -74,6 +75,7 @@ import {
 import {
   classifyRequest,
   type ClassifyRequestDeps,
+  type ExecutableRequestPlan,
   type RequestPlan,
   type ResponseRoutePlan,
 } from "../router/request-classification.js";
@@ -218,8 +220,26 @@ export async function classify<TEnv>(
         isPassthrough: false,
       },
       negotiated: false,
+      unmatched: true,
     };
   }
+}
+
+/** The plan classify answers an unknown route with (the render path's 404). */
+export function isUnmatchedPlan(plan: RequestPlan<any>): boolean {
+  return plan.mode === "full-render" && plan.unmatched === true;
+}
+
+/**
+ * Record a plan's route on the request context: its params and name, and the
+ * classified snapshot match()/matchPartial() reuse instead of resolving the
+ * route again. Runs inside the global chain, so global middleware sees the
+ * route after next(). A redirect has none.
+ */
+export function recordPlanRoute<TEnv>(plan: ExecutableRequestPlan<TEnv>): void {
+  if (plan.mode === "redirect") return;
+  setRequestContextParams(plan.route.params, plan.route.routeKey);
+  getRequestContext()._classifiedRoute = plan.route;
 }
 
 /**
@@ -340,7 +360,7 @@ export function originRejectedResponse<TEnv>(
  * 3xx. Null on a full request, which the render path redirects (match()
  * returns { redirect: url }).
  */
-export function partialRedirectResponse<TEnv>(
+function partialRedirectResponse<TEnv>(
   redirectUrl: string,
   url: URL,
   ctx: RequestStageContext<TEnv>,

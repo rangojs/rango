@@ -95,7 +95,10 @@ const routerCtx = {
   createHandleStore: (): HandleStore => handleStore,
   createHandlerContext: () => ({}),
   setupLoaderAccess: () => {},
-  resolveAllSegments: async () => [],
+  resolveAllSegmentsWithRevalidation: async () => ({
+    segments: [],
+    matchedIds: [],
+  }),
 } as unknown as RouterContext;
 const match = {
   env: {},

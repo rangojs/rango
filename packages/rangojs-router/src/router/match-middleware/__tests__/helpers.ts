@@ -33,7 +33,7 @@ export function makeCacheStoreRouterContextStub(): any {
   return {
     createHandlerContext: vi.fn(),
     setupLoaderAccess: vi.fn(),
-    resolveAllSegments: vi.fn(),
+    resolveAllSegmentsWithRevalidation: vi.fn(),
     resolveInterceptEntry: vi.fn(),
     createHandleStore: vi.fn(),
   } as any;

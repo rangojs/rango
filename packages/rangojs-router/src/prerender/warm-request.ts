@@ -8,7 +8,10 @@
  */
 
 import type { HandlerCacheConfig } from "../rsc/types.js";
-import type { ShellCaptureDebugEvent } from "../rsc/shell-capture.js";
+import type {
+  ShellCaptureDebugEvent,
+  ShellCaptureState,
+} from "../rsc/shell-capture.js";
 import type { PrerenderWarmCaches } from "./on-demand.js";
 
 /** What one warm request did: written by the layers, read by the trigger. */
@@ -36,7 +39,7 @@ export interface PrerenderWarmRecord extends PrerenderWarmCaches {
 /** What the helpers read; a derived capture context inherits the record. */
 export interface WarmContext {
   _prerenderWarm?: PrerenderWarmRecord;
-  _shellCaptureRun?: boolean;
+  _shellCaptureState?: Pick<ShellCaptureState, "run">;
 }
 
 /**
@@ -79,14 +82,15 @@ export function readWarmMark(
  * "use cache" in-flight dedup lives outside the store, so a wrapper would
  * miss both.
  *
- * False in the warm's own shell capture (`_shellCaptureRun`): it runs after
+ * False in the warm's own shell capture (`_shellCaptureState`): it runs after
  * the warm's writes settled and must replay them, or it would render every
  * handler a second time and could bake another generation than the one just
  * written.
  */
 export function isWarmReplace(ctx: WarmContext | null | undefined): boolean {
   return (
-    ctx?._prerenderWarm?.mode === "replace" && ctx._shellCaptureRun !== true
+    ctx?._prerenderWarm?.mode === "replace" &&
+    ctx._shellCaptureState?.run !== true
   );
 }
 

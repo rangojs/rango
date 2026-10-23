@@ -8,7 +8,10 @@ const mockRouterCtx = {
   createHandleStore: vi.fn(() => ({ id: "fresh-handle-store", seal: vi.fn() })),
   createHandlerContext: vi.fn(() => ({ id: "fresh-handler-context" }) as any),
   setupLoaderAccess: vi.fn(),
-  resolveAllSegments: vi.fn(async () => [] as ResolvedSegment[]),
+  resolveAllSegmentsWithRevalidation: vi.fn(async () => ({
+    segments: [] as ResolvedSegment[],
+    matchedIds: [] as string[],
+  })),
   resolveInterceptEntry: vi.fn(async () => [] as ResolvedSegment[]),
 };
 
@@ -27,6 +30,13 @@ const { withBackgroundRevalidation } =
 const { _getRequestContext } = await import("../../server/request-context.js");
 const { planPrefetchDeferral } =
   await import("../segment-resolution/prefetch-deferral.js");
+const { FRESH } = await import("../segment-resolution/resolution-pass.js");
+
+/** The walk's result for `segments`. */
+const walked = (segments: ResolvedSegment[]) => ({
+  segments,
+  matchedIds: segments.map((s) => s.id),
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -69,7 +79,6 @@ function makeCtx(overrides: Partial<MatchContext> = {}): MatchContext {
     request: new Request("http://localhost/test"),
     env: {},
     routeMap: {},
-    loaderPromises: new Map([["existing-loader", Promise.resolve("stale")]]),
     handlerContext: { id: "original-handler-context" } as any,
     interceptResult: null,
     isIntercept: false,
@@ -115,17 +124,16 @@ describe("withBackgroundRevalidation", () => {
   });
 
   describe("loader isolation (regression: stale memoization map)", () => {
-    it("creates fresh loaderPromises instead of reusing foreground map", async () => {
-      const foregroundLoaderPromises = new Map([
-        ["loader-a", Promise.resolve("stale-data")],
-      ]);
-      const ctx = makeCtx({ loaderPromises: foregroundLoaderPromises });
+    it("gives the background re-render a new, empty loader map", async () => {
+      const ctx = makeCtx();
       const state = makeState();
 
       const freshSegments: ResolvedSegment[] = [
         makeSegment("L0", "fresh-component"),
       ];
-      mockRouterCtx.resolveAllSegments.mockResolvedValue(freshSegments);
+      mockRouterCtx.resolveAllSegmentsWithRevalidation.mockResolvedValue(
+        walked(freshSegments),
+      );
 
       const middleware = withBackgroundRevalidation(ctx, state);
       await drain(middleware(toAsyncGen([])));
@@ -133,21 +141,21 @@ describe("withBackgroundRevalidation", () => {
       expect(waitUntilFns).toHaveLength(1);
       await waitUntilFns[0]();
 
-      // setupLoaderAccess must be called with a fresh (empty) Map,
-      // not the foreground's populated map
+      // A new, empty Map on the background handler context.
       expect(mockRouterCtx.setupLoaderAccess).toHaveBeenCalledTimes(1);
-      const [, loaderMap] = mockRouterCtx.setupLoaderAccess.mock.calls[0];
+      const [handlerCtx, loaderMap] =
+        mockRouterCtx.setupLoaderAccess.mock.calls[0];
+      expect(handlerCtx).not.toBe(ctx.handlerContext);
       expect(loaderMap).toBeInstanceOf(Map);
       expect(loaderMap.size).toBe(0);
-      expect(loaderMap).not.toBe(foregroundLoaderPromises);
     });
 
     it("creates fresh handlerContext instead of reusing foreground context", async () => {
       const ctx = makeCtx();
       const state = makeState();
 
-      mockRouterCtx.resolveAllSegments.mockResolvedValue(
-        [] as ResolvedSegment[],
+      mockRouterCtx.resolveAllSegmentsWithRevalidation.mockResolvedValue(
+        walked([]),
       );
 
       const middleware = withBackgroundRevalidation(ctx, state);
@@ -157,17 +165,15 @@ describe("withBackgroundRevalidation", () => {
       // createHandlerContext must be called (fresh context)
       expect(mockRouterCtx.createHandlerContext).toHaveBeenCalledTimes(1);
 
-      // resolveAllSegments must receive the fresh context, not the original
-      const call = mockRouterCtx.resolveAllSegments.mock.calls[0] as any[];
-      const handlerCtx = call[3];
-      const loaderPromises = call[4] as Map<string, Promise<any>>;
-      expect(handlerCtx).toEqual({ id: "fresh-handler-context" });
-      expect(loaderPromises.size).toBe(0);
+      // The walk must receive the fresh context, not the original
+      const call = mockRouterCtx.resolveAllSegmentsWithRevalidation.mock
+        .calls[0] as any[];
+      expect(call[0].context).toEqual({ id: "fresh-handler-context" });
     });
   });
 
   describe("null component prevention (regression: partial caching nulls)", () => {
-    it("uses resolveAllSegments (not revalidation-aware) for partial requests", async () => {
+    it("re-renders with a FRESH pass (not revalidation-aware) for partial requests", async () => {
       const ctx = makeCtx({ isFullMatch: false });
       const state = makeState();
 
@@ -175,15 +181,21 @@ describe("withBackgroundRevalidation", () => {
         makeSegment("L0", "layout-component"),
         makeSegment("R0", "route-component"),
       ];
-      mockRouterCtx.resolveAllSegments.mockResolvedValue(completeSegments);
+      mockRouterCtx.resolveAllSegmentsWithRevalidation.mockResolvedValue(
+        walked(completeSegments),
+      );
 
       const middleware = withBackgroundRevalidation(ctx, state);
       await drain(middleware(toAsyncGen([])));
       await waitUntilFns[0]();
 
-      // Must call resolveAllSegments (fresh, no revalidation),
-      // NOT resolveAllSegmentsWithRevalidation
-      expect(mockRouterCtx.resolveAllSegments).toHaveBeenCalledTimes(1);
+      // Must walk a FRESH pass (no revalidation, no loaders), never the
+      // request's own pass
+      const calls = mockRouterCtx.resolveAllSegmentsWithRevalidation.mock
+        .calls as any[][];
+      expect(calls).toHaveLength(1);
+      expect(calls[0]![0].client).toBe(FRESH);
+      expect(calls[0]![0].skipLoaders).toBe(true);
 
       // Segments passed to cacheRoute must all have non-null components
       const cacheRoute = ctx.cacheScope!.cacheRoute as ReturnType<typeof vi.fn>;
@@ -194,19 +206,22 @@ describe("withBackgroundRevalidation", () => {
       }
     });
 
-    it("uses resolveAllSegments for full match requests too", async () => {
+    it("re-renders with a FRESH pass for full match requests too", async () => {
       const ctx = makeCtx({ isFullMatch: true });
       const state = makeState();
 
-      mockRouterCtx.resolveAllSegments.mockResolvedValue([
-        makeSegment("L0", "comp"),
-      ] as ResolvedSegment[]);
+      mockRouterCtx.resolveAllSegmentsWithRevalidation.mockResolvedValue(
+        walked([makeSegment("L0", "comp")]),
+      );
 
       const middleware = withBackgroundRevalidation(ctx, state);
       await drain(middleware(toAsyncGen([])));
       await waitUntilFns[0]();
 
-      expect(mockRouterCtx.resolveAllSegments).toHaveBeenCalledTimes(1);
+      const calls = mockRouterCtx.resolveAllSegmentsWithRevalidation.mock
+        .calls as any[][];
+      expect(calls).toHaveLength(1);
+      expect(calls[0]![0].client).toBe(FRESH);
     });
   });
 
@@ -236,11 +251,11 @@ describe("withBackgroundRevalidation", () => {
 
       let ambientStoreDuringResolution: any;
       let sharedStoreDuringResolution: any;
-      mockRouterCtx.resolveAllSegments.mockImplementation(
-        async (): Promise<ResolvedSegment[]> => {
+      mockRouterCtx.resolveAllSegmentsWithRevalidation.mockImplementation(
+        async () => {
           ambientStoreDuringResolution = _getRequestContext()?._handleStore;
           sharedStoreDuringResolution = mockRequestCtx._handleStore;
-          return [];
+          return walked([]);
         },
       );
 

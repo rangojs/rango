@@ -126,7 +126,7 @@ much smaller than fragment splicing: **the cache() hit lane already IS the
 fast path**, end to end, in production today — for routes wrapped in
 `cache()`. `withCacheLookup` (match-middleware/cache-lookup.ts) is the
 innermost pipeline phase; on a hit it deserializes the stored segments,
-replays handle data, and runs `resolveLoadersOnly` — loaders fresh, handlers
+replays handle data, and runs `resolveLoadersOnlyWithRevalidation` — loaders fresh, handlers
 never executed. The doc-level entry (`doc:{routerId}@{host}{pathname}…`, ALL non-loader
 segments in one `CachedEntryData`) is written by `cacheRoute`, and the shell
 snapshot machinery (PR #691) already records segment-family writes into the
@@ -306,7 +306,7 @@ the contract `cache()` has always had:
   `cookies()`, `headers()`, a `{ cache: false }` variable, and
   `ctx.dynamic()` refuse the capture from a handler promise, an async
   component, a handle push, or a loader a handler awaits. The guard flags the
-  capture context (`_shellCaptureGuardTripped`) before it throws, so code
+  capture context (`_shellCaptureState.guardTripped`) before it throws, so code
   that catches the throw still refuses the capture. The handler-invoked
   loader used to be exempt: its identity reads rendered per visitor on the
   re-running HIT. With no re-run, the exemption would bake the capturing

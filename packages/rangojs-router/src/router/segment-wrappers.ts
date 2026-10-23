@@ -6,8 +6,6 @@ import type {
 } from "./segment-resolution/resolution-pass.js";
 
 import {
-  resolveAllSegments as _resolveAllSegments,
-  resolveLoadersOnly as _resolveLoadersOnly,
   resolveLoadersOnlyWithRevalidation as _resolveLoadersOnlyWithRevalidation,
   buildEntryRevalidateMap as _buildEntryRevalidateMap,
   resolveAllSegmentsWithRevalidation as _resolveAllSegmentsWithRevalidation,
@@ -22,14 +20,11 @@ import {
 /** The resolvers RouterContext exposes, with the router's deps bound. */
 export type SegmentWrappers<TEnv = any> = Pick<
   RouterContext<TEnv>,
-  | "resolveAllSegments"
-  | "resolveAllSegmentsWithRevalidation"
-  | "resolveInterceptEntry"
+  "resolveAllSegmentsWithRevalidation" | "resolveInterceptEntry"
 > &
   Required<
     Pick<
       RouterContext<TEnv>,
-      | "resolveLoadersOnly"
       | "resolveLoadersOnlyWithRevalidation"
       | "buildEntryRevalidateMap"
       | "resolveInterceptLoadersOnly"
@@ -41,8 +36,8 @@ export type SegmentWrappers<TEnv = any> = Pick<
 
 /**
  * Bind the router's segment deps into the extracted segment and intercept
- * resolvers. A revalidating resolver gets a ResolutionPass: the caller's
- * request-side input with the deps added here, once per call.
+ * resolvers. Each gets a ResolutionPass: the caller's request-side input with
+ * the deps added here, once per call.
  */
 export function createSegmentWrappers<TEnv = any>(
   deps: SegmentResolutionDeps<TEnv>,
@@ -53,25 +48,6 @@ export function createSegmentWrappers<TEnv = any>(
   });
 
   return {
-    resolveAllSegments: (
-      entries,
-      routeKey,
-      params,
-      context,
-      loaderPromises,
-      options,
-    ) =>
-      _resolveAllSegments(
-        entries,
-        routeKey,
-        params,
-        context,
-        loaderPromises,
-        deps,
-        options,
-      ),
-    resolveLoadersOnly: (entries, context) =>
-      _resolveLoadersOnly(entries, context, deps),
     resolveLoadersOnlyWithRevalidation: (input, entries) =>
       _resolveLoadersOnlyWithRevalidation(pass(input), entries),
     buildEntryRevalidateMap: _buildEntryRevalidateMap,

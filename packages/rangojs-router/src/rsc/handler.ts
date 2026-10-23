@@ -10,7 +10,6 @@ import { isRouteNotFoundError } from "../errors.js";
 import { matchMiddleware, executeMiddleware } from "../router/middleware.js";
 import {
   runWithRequestContext,
-  setRequestContextParams,
   getRequestContext,
   _getRequestContext,
   createRequestContext,
@@ -108,6 +107,7 @@ import {
   createErrorReporter,
   finalizeRequestResponse,
   originRejectedResponse,
+  recordPlanRoute,
   reportBackgroundErrors,
   responseRouteMatch,
   runRequestPasses,
@@ -775,13 +775,8 @@ export function createRSCHandler<
       }
     };
 
-    // Set route params early so all execution paths can access ctx.params.
-    // Also store the classified snapshot so match/matchPartial can reuse it
-    // instead of calling resolveRoute again.
-    if (plan.mode !== "redirect") {
-      setRequestContextParams(plan.route.params, plan.route.routeKey);
-      getRequestContext()._classifiedRoute = plan.route;
-    }
+    // Before any execution path, so each can read ctx.params.
+    recordPlanRoute(plan);
 
     const routeReverse = createReverseFunction(getRequiredRouteMap());
 

@@ -36,7 +36,7 @@
  *         |
  *         v
  *   +---------------------------+
- *   | resolveAllSegments()    |  Fresh resolution (no revalidation)
+ *   | FRESH segment pass      |  Fresh resolution (no revalidation)
  *   | + resolveIntercepts()   |  Ensures complete components
  *   +---------------------------+
  *         |
@@ -94,7 +94,7 @@
  * FRESH RESOLUTION (NO REVALIDATION)
  * ===================================
  *
- * Both full and partial requests use resolveAllSegments() (without
+ * Both full and partial requests resolve with a FRESH pass (without
  * revalidation logic) to ensure all segments have complete components.
  * Using revalidation-aware resolution would produce null components
  * for skipped segments, which would corrupt the cache entry.
@@ -115,7 +115,10 @@ import {
 } from "../../server/request-context.js";
 import { deriveRenderPass } from "../../server/render-pass.js";
 import { recordUse } from "../segment-resolution/prefetch-deferral.js";
-import { heldNothingPassInput } from "../segment-resolution/resolution-pass.js";
+import {
+  freshPassInput,
+  heldNothingPassInput,
+} from "../segment-resolution/resolution-pass.js";
 
 /**
  * Re-render a cached route in the background and write it with
@@ -182,14 +185,13 @@ export async function rerenderAndCacheRoute<TEnv>(
     const loaderPromises = new Map<string, Promise<any>>();
     routerCtx.setupLoaderAccess(handlerContext, loaderPromises);
 
-    const segments = await runInStore(() =>
-      routerCtx.resolveAllSegments(
+    const { segments } = await runInStore(() =>
+      routerCtx.resolveAllSegmentsWithRevalidation(
+        freshPassInput(handlerContext, ctx.routeKey, ctx.matched.params, {
+          skipLoaders: true,
+        }),
         ctx.entries,
-        ctx.routeKey,
-        ctx.matched.params,
-        handlerContext,
-        loaderPromises,
-        { skipLoaders: true },
+        { pathname: handlerContext.pathname },
       ),
     );
     if (ctx.interceptResult) {

@@ -1,5 +1,6 @@
 /**
- * awaitBeforeFlush (loader(Def, { ssr: false })) in resolveLoaders.
+ * awaitBeforeFlush (loader(Def, { ssr: false })) in a FRESH pass's loader
+ * funnel (revalidation.ts resolveOwnerLoaders).
  *
  * Document renders await flagged loaders before segment resolution returns:
  * the render barrier (and Response construction behind it) cannot happen
@@ -16,7 +17,7 @@ import type { EntryData, LoaderEntry } from "../../../server/context";
 import type { LoaderDataResult } from "../../../types";
 
 const mockRequestCtx: any = {
-  _shellCaptureRun: undefined,
+  _shellCaptureState: undefined,
   params: {},
   _setStatus: vi.fn(),
 };
@@ -27,7 +28,8 @@ vi.mock("../../../server/request-context.js", () => ({
   runWithRequestContext: <T>(_c: unknown, fn: () => T): T => fn(),
 }));
 
-import { resolveLoaders } from "../fresh";
+import { ownerOf, resolveOwnerLoaders } from "../revalidation.js";
+import { makeFreshPass } from "../../../__tests__/kit/resolution-pass.js";
 import { wrapLoaderWithErrorHandling } from "../../loader-resolution";
 import { redirect } from "../../../route-definition/redirect";
 
@@ -82,6 +84,21 @@ function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
 
 const deps = { wrapLoaderPromise: (p: Promise<unknown>) => p } as never;
 
+/** A full match's loader funnel: a FRESH pass of resolveOwnerLoaders. */
+async function resolveLoaders(
+  entry: EntryData,
+  ctx: any,
+  belongsToRoute: boolean,
+  segmentDeps: never,
+) {
+  const { segments } = await resolveOwnerLoaders(
+    makeFreshPass(ctx, segmentDeps),
+    ownerOf(entry),
+    belongsToRoute,
+  );
+  return segments;
+}
+
 /**
  * resolveLoaders over the router's own loader lane
  * (wrapLoaderWithErrorHandling): `declared` is the nearest errorBoundary()
@@ -135,7 +152,7 @@ function fallbackOf(result: LoaderDataResult): ReactNode {
 describe("resolveLoaders awaitBeforeFlush", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRequestCtx._shellCaptureRun = undefined;
+    mockRequestCtx._shellCaptureState = undefined;
     mockRequestCtx._awaitBeforeFlushLoaderIds = undefined;
   });
 
@@ -200,8 +217,7 @@ describe("resolveLoaders awaitBeforeFlush", () => {
   });
 
   it("capture: stamps awaitBeforeFlush too (segment-system value delivery + diagnostics key off it)", async () => {
-    mockRequestCtx._shellCaptureRun = true;
-    mockRequestCtx._shellCaptureLoaderRecords = new Map();
+    mockRequestCtx._shellCaptureState = { run: true, loaderRecords: new Map() };
     const flagged = createMockLoader("flagged#L");
     const entry = createEntry([loaderEntry(flagged, true)]);
 
@@ -234,8 +250,7 @@ describe("resolveLoaders awaitBeforeFlush", () => {
   });
 
   it("capture: flagged loader BAKES and resolution awaits the bake; unflagged stays masked", async () => {
-    mockRequestCtx._shellCaptureRun = true;
-    mockRequestCtx._shellCaptureLoaderRecords = new Map();
+    mockRequestCtx._shellCaptureState = { run: true, loaderRecords: new Map() };
     // Flagged: executes at capture (bake lane) and resolution HOLDS on it
     // so bake-lane handle pushes beat the capture barrier. Unflagged
     // sibling is masked and never runs.
@@ -260,9 +275,9 @@ describe("resolveLoaders awaitBeforeFlush", () => {
     expect(segments).toHaveLength(2);
     // The masked-container record registered under the loader's segment key —
     // this is what holds the capture gate and pins the shell snapshot.
-    expect([...mockRequestCtx._shellCaptureLoaderRecords.keys()]).toEqual([
-      "R0D0.flagged#L",
-    ]);
+    expect([...mockRequestCtx._shellCaptureState.loaderRecords.keys()]).toEqual(
+      ["R0D0.flagged#L"],
+    );
     // The rendered() cycle guard registers during capture too: the await
     // creates the same cycle a live document render has.
     expect([...mockRequestCtx._awaitBeforeFlushLoaderIds]).toEqual([
@@ -282,7 +297,7 @@ describe("resolveLoaders: a flagged loader that throws with no errorBoundary()",
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRequestCtx._shellCaptureRun = undefined;
+    mockRequestCtx._shellCaptureState = undefined;
     mockRequestCtx._awaitBeforeFlushLoaderIds = undefined;
   });
 

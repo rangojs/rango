@@ -176,7 +176,7 @@ describe("rendered barrier", () => {
 
   describe("rendered() guard: awaitBeforeFlush (ssr: false)", () => {
     it("rejects rendered() from a loader the document render awaits before flush", async () => {
-      // Segment resolution awaits a flagged loader (fresh.ts resolveLoaders),
+      // Segment resolution awaits a flagged loader (revalidation.ts resolveOwnerLoaders),
       // the barrier awaits segment resolution, rendered() awaits the barrier —
       // a guaranteed cycle. The guard must fail fast, not hang the render.
       mockInsideLoaderScope = true;

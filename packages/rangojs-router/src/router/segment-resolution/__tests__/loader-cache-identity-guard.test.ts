@@ -1,7 +1,7 @@
 /**
  * A loader with its own cache() (`loader(Def, () => [cache({...})])`) whose
  * body reads request identity (#972), through the real segment funnel:
- * resolveLoaders -> resolveLoaderData -> executeLoaderData -> the real
+ * resolveOwnerLoaders -> resolveLoaderData -> executeLoaderData -> the real
  * setupLoaderAccess executor.
  *
  * The entry's default key is loader id, host, path and params, so it is
@@ -41,7 +41,9 @@ vi.mock(
   () => import("../../../testing/vitest-stubs/plugin-rsc.js"),
 );
 
-import { resolveLoaders } from "../fresh.js";
+import { ownerOf, resolveOwnerLoaders } from "../revalidation.js";
+import { makeFreshPass } from "../../../__tests__/kit/resolution-pass.js";
+import type { ResolvedSegment } from "../../../types.js";
 import { bindsLoaderCache, resolveLoaderData } from "../loader-cache.js";
 import { armLoaderTagSets } from "../../../cache/cache-tag.js";
 import { setupLoaderAccess } from "../../loader-resolution.js";
@@ -65,6 +67,21 @@ import type {
 } from "../../../types.js";
 import type { SegmentCacheStore } from "../../../cache/types.js";
 import type { SegmentResolutionDeps } from "../../types.js";
+
+/** A full match's loader funnel: a FRESH pass of resolveOwnerLoaders. */
+async function resolveLoaders(
+  entry: EntryData,
+  ctx: HandlerContext<any>,
+  belongsToRoute: boolean,
+  deps: SegmentResolutionDeps<any>,
+): Promise<ResolvedSegment[]> {
+  const { segments } = await resolveOwnerLoaders(
+    makeFreshPass(ctx, deps),
+    ownerOf(entry),
+    belongsToRoute,
+  );
+  return segments;
+}
 
 const deps = {
   wrapLoaderPromise: (p: Promise<unknown>) => p,
@@ -101,7 +118,7 @@ function entryWith(loaderEntries: LoaderEntry[]): EntryData {
     shortCode: "R0",
     type: "route",
     loader: loaderEntries,
-    // Loading-disabled: resolveLoaders awaits every loader before returning.
+    // Loading-disabled: a FRESH pass awaits every loader before returning.
     loading: false,
   } as unknown as EntryData;
 }

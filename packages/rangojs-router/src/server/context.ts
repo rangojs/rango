@@ -15,6 +15,7 @@ import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import type { ContextVar } from "../context-var.js";
 import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
+import type { ShellCaptureState } from "../rsc/shell-capture.js";
 import {
   noteWarmIdentityRead,
   type WarmContext,
@@ -155,7 +156,7 @@ export type LoaderEntry = {
    * thrown notFound()/redirect() deterministically precede first flush.
    * Resolved at DSL-evaluation time from ctx.isSSR — entries are cached
    * per-isSSR (router/manifest.ts cache key), so the flag is already
-   * request-mode-correct when resolveLoaders (fresh.ts) reads it and never
+   * request-mode-correct when resolveOwnerLoaders reads it and never
    * appears on navigation-lane entries. Set by documentModeLoader, which
    * getDocumentModeEntry also applies to a lazy include's captured ancestors.
    */
@@ -1083,7 +1084,7 @@ const loaderBodyScopeALS: AsyncLocalStorage<LoaderBodyScope> = ((
 export function isInsideCacheScope(): boolean {
   if (RangoContext.getStore()?.insideCacheScope !== true) return false;
   // Request-scoped READS are exempt in any loader body — DSL loaders re-run on
-  // every request (including cache() HITs via resolveLoadersOnly), and a
+  // every request (including cache() HITs via resolveLoadersOnlyWithRevalidation), and a
   // handler-invoked loader body, though skipped with its handler on a HIT,
   // yields a BAKED shared copy in the cached artifact — an accepted
   // consumption-lane tradeoff (#672/#674). This is deliberately BROADER than
@@ -1133,7 +1134,7 @@ export interface IdentityReadWording {
  *    only observed; it is never rendered. A cached body, loader body or
  *    funnel they start is guarded again.
  * 1. A PPR shell capture (`ctx` is the capture's derived context,
- *    `_shellCaptureRun`) trips first: the capture context is flagged (so a
+ *    `_shellCaptureState`) trips first: the capture context is flagged (so a
  *    caught throw still refuses the capture) and the read throws. The shell is
  *    shared per host+URL, and every HIT replays what the capture read. There
  *    is no loader-body exemption here: a bake-lane loader and a loader a
@@ -1219,7 +1220,7 @@ export function requestReadCaptureFix(
 
 /**
  * True when `ctx` is the active capture render: the derived request context
- * shell-capture.ts builds (`_shellCaptureRun`), which only the capture sets,
+ * shell-capture.ts builds (`_shellCaptureState`), which only the capture has,
  * so the foreground render reads identity normally to serve the real user.
  * On true the capture context is flagged with the read (`surface`, e.g.
  * "cookies()", "ctx.theme"), the fix the refusal warning gives, and the loader
@@ -1230,21 +1231,15 @@ function tripShellCaptureGuard(
   surface: string,
   fix: string,
 ): boolean {
-  if (
-    ctx === null ||
-    typeof ctx !== "object" ||
-    (ctx as { _shellCaptureRun?: unknown })._shellCaptureRun !== true
-  ) {
-    return false;
-  }
+  const captureState =
+    ctx !== null && typeof ctx === "object"
+      ? (ctx as { _shellCaptureState?: ShellCaptureState })._shellCaptureState
+      : undefined;
+  if (captureState?.run !== true) return false;
   // Record WHICH loader body (if any) made the read, so the refusal warning
   // can name the real source instead of hardcoding a lane (issue #672).
-  const flagged = ctx as {
-    _shellCaptureGuardTripped?: { surface: string; fix: string };
-    _shellCaptureGuardTrippedLoaderId?: string;
-  };
-  flagged._shellCaptureGuardTripped = { surface, fix };
-  flagged._shellCaptureGuardTrippedLoaderId = getCurrentLoaderBodyId();
+  captureState.guardTripped = { surface, fix };
+  captureState.guardTrippedLoaderId = getCurrentLoaderBodyId();
   return true;
 }
 
@@ -1530,12 +1525,13 @@ export function latchPprHeaderScopeForEntries(
  * ONLY the ppr (shell) axis is dropped — dynamic() does NOT opt off the CACHE
  * axis. Two cases:
  * - Pure ppr funnel (no cache() boundary): clear the latch → writes re-permit.
- * - ppr route nested under a cache() boundary: fresh.ts latches "ppr" at the
- *   funnel top (first-wins), which MASKS the positional cache() latch, but the
- *   handler still runs inside the cache scope (`insideCacheScope`). A cache()
- *   HIT skips that handler, so the write is still non-deterministic — UNMASK to
- *   "cache" instead of clearing, so the guard keeps throwing (accurate cache()
- *   wording). This is why the check keys off `insideCacheScope`, not just kind.
+ * - ppr route nested under a cache() boundary: resolveAllSegmentsWithRevalidation
+ *   latches "ppr" at the funnel top (first-wins), which MASKS the positional
+ *   cache() latch, but the handler still runs inside the cache scope
+ *   (`insideCacheScope`). A cache() HIT skips that handler, so the write is
+ *   still non-deterministic — UNMASK to "cache" instead of clearing, so the
+ *   guard keeps throwing (accurate cache() wording). This is why the check keys
+ *   off `insideCacheScope`, not just kind.
  *
  * A subsequent cache() entered AFTER dynamic() on a pure-ppr funnel re-latches
  * "cache" via latchCachedHeaderScope's `!store.cachedHeaderScope` guard (the
@@ -1568,9 +1564,10 @@ export function assertCachedHeaderWriteAllowed(
   const scope = RangoContext.getStore()?.cachedHeaderScope;
   if (!scope) return;
   // Exempt DSL loaders (loaderScopeALS) ONLY. A registered loader re-runs on
-  // every cache HIT (fresh.ts runInsideLoaderScope -> cache-lookup.ts
-  // resolveLoadersOnly), so its header/cookie writes merge into every response
-  // with no MISS/HIT divergence. A handler-invoked loader body has
+  // every cache HIT (resolveOwnerLoaders runInsideLoaderScope, reached from
+  // cache-lookup.ts resolveLoadersOnlyWithRevalidation), so its header/cookie
+  // writes merge into every response with no MISS/HIT divergence. A
+  // handler-invoked loader body has
   // loaderBodyScopeALS active but loaderScopeALS unset (loader-resolution.ts
   // derives isDslLoader from isInsideLoaderScope()); on a HIT the handler is
   // skipped so that loader never re-runs and its write would land only on the

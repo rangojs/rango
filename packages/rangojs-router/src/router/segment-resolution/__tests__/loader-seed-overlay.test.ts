@@ -14,7 +14,7 @@ import type { LoaderEntry } from "../../../server/context";
 // See loader-snapshot.ts and docs/design/ppr-shell-resume.md.
 
 const mockRequestCtx: any = {
-  _shellCaptureRun: undefined,
+  _shellCaptureState: undefined,
   _shellLoaderSeed: undefined,
   executionContext: undefined,
   params: {},
@@ -30,7 +30,7 @@ import { resolveLoaderData } from "../loader-cache";
 import { LOADER_HOLE_KEY } from "../loader-snapshot";
 
 // The seed is keyed by loader id (buildShellLoaderSeed); the segment key is
-// the caller's opt-in to the pin (fresh.ts resolveLoaders).
+// the caller's opt-in to the pin (revalidation.ts resolveOwnerLoaders).
 const LOADER_ID = "L";
 const SEGMENT_KEY = `R0D0.${LOADER_ID}`;
 
@@ -61,7 +61,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 describe("shell-HIT seed overlay lanes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRequestCtx._shellCaptureRun = undefined;
+    mockRequestCtx._shellCaptureState = undefined;
     mockRequestCtx._shellLoaderSeed = undefined;
     mockRequestCtx.executionContext = undefined;
   });

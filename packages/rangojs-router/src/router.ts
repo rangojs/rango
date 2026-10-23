@@ -663,8 +663,6 @@ export function createRouter<TEnv = any>(
 
   // Create segment resolution wrappers bound to segmentDeps
   const {
-    resolveAllSegments,
-    resolveLoadersOnly,
     resolveLoadersOnlyWithRevalidation,
     buildEntryRevalidateMap,
     resolveAllSegmentsWithRevalidation,
@@ -717,12 +715,10 @@ export function createRouter<TEnv = any>(
       resolveInterceptEntry,
       evaluateRevalidation,
       getRequestContext,
-      resolveAllSegments,
       createHandleStore,
       buildEntryRevalidateMap,
       resolveLoadersOnlyWithRevalidation,
       resolveInterceptLoadersOnly,
-      resolveLoadersOnly,
       telemetry: telemetrySink,
     };
   }
@@ -733,7 +729,7 @@ export function createRouter<TEnv = any>(
     findMatch,
     buildRouterContext,
     mergedRouteMap,
-    resolveAllSegments,
+    resolveAllSegmentsWithRevalidation,
   };
 
   async function matchForPrerender(
