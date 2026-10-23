@@ -1191,16 +1191,22 @@ describe("server-action-bridge follow-up", () => {
     metadata: answer,
     returnValue: { ok: true, data },
   });
+  const boundary = (failure: unknown) => ({
+    metadata: { ...answer, isError: true },
+    returnValue: { ok: false, data: failure },
+  });
 
   interface Sent {
     /**
      * Answer the action. `decoded` holds its Flight decode after the
-     * response arrived (the response counts as received).
+     * response arrived (the response counts as received); `body` keeps its
+     * stream open until the test closes it.
      */
     respond(
       payload: unknown,
       headers?: Record<string, string>,
       decoded?: Promise<void>,
+      body?: ReadableStream<Uint8Array>,
     ): void;
   }
 
@@ -1255,10 +1261,10 @@ describe("server-action-bridge follow-up", () => {
           new Promise<Response>((resolve) => {
             const index = String(sent.length);
             sent.push({
-              respond(payload, headers = {}, decoded) {
+              respond(payload, headers = {}, decoded, body) {
                 answered.set(index, { payload, decoded });
                 resolve(
-                  new Response(null, {
+                  new Response(body ?? null, {
                     status: 200,
                     headers: { ...headers, "x-test-call": index },
                   }),
@@ -1315,9 +1321,10 @@ describe("server-action-bridge follow-up", () => {
       payload: unknown,
       headers?: Record<string, string>,
       decoded?: Promise<void>,
+      body?: ReadableStream<Uint8Array>,
     ) => {
       while (!sent[index]) await flush();
-      sent[index]!.respond(payload, headers, decoded);
+      sent[index]!.respond(payload, headers, decoded, body);
     };
     /** A page is on screen: `pathname` under its own history entry. */
     const show = (pathname: string, source: string | null = null) => {
@@ -1574,6 +1581,66 @@ describe("server-action-bridge follow-up", () => {
     await t.flush();
     expect(t.onUpdate).toHaveBeenCalledTimes(1);
     expect(t.fetchPartial).not.toHaveBeenCalled();
+  });
+
+  it("drops a late error boundary for a page the user left: it aborts nothing, its call rejects, useAction() records the error, and the page on screen is followed up", async () => {
+    const t = setup();
+    const failure = new Error("out of stock");
+    const failing = t.act("hash#failing");
+    t.show("/other");
+    const sibling = t.act("hash#sibling");
+
+    await t.respond(0, boundary(failure));
+    await expect(failing).rejects.toBe(failure);
+    expect(t.eventController.getActionState("hash#failing").error).toBe(
+      failure,
+    );
+    expect(t.eventController.getActionState("hash#sibling").state).toBe(
+      "loading",
+    );
+    expect(t.onUpdate).not.toHaveBeenCalled();
+
+    await t.respond(1, saved("sibling"));
+    await expect(sibling).resolves.toBe("sibling");
+    expect(t.eventController.getActionState("hash#sibling").result).toBe(
+      "sibling",
+    );
+    await t.flush();
+    expect(t.onUpdate).toHaveBeenCalledTimes(1);
+    expect(t.followUps()).toEqual(["http://localhost/other"]);
+  });
+
+  it("an error boundary that shows aborts the other actions and keeps its own error for useAction() while its response streams", async () => {
+    const t = setup();
+    const failure = new Error("out of stock");
+    const sibling = t.act("hash#sibling");
+    const failing = t.act("hash#failing");
+    let end!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        end = () => controller.close();
+      },
+    });
+
+    await t.respond(1, boundary(failure), {}, undefined, body);
+    await expect(failing).rejects.toBe(failure);
+    expect(t.onUpdate).toHaveBeenCalledTimes(1);
+    expect(t.eventController.getActionState("hash#sibling").state).toBe("idle");
+    expect(t.eventController.getActionState("hash#failing")).toMatchObject({
+      state: "streaming",
+      error: null,
+    });
+
+    end();
+    await t.flush();
+    expect(t.eventController.getActionState("hash#failing")).toMatchObject({
+      state: "idle",
+      error: failure,
+    });
+
+    await t.respond(0, saved("sibling"));
+    await expect(sibling).resolves.toBeUndefined();
+    expect(t.onUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("owes the follow-up again when an action starts during it", async () => {

@@ -237,6 +237,32 @@ describe("createNavigationTransaction", () => {
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
+  describe("intercept commit key", () => {
+    it("stores the tree under the key built from the source it writes to history.state.sourceUrl", () => {
+      const { store, eventController } = createTestContext();
+      const tx = createNavigationTransaction(
+        store,
+        eventController,
+        "http://localhost/item/1",
+      );
+      const segments = [{ id: "modal" }] as any;
+      tx.commit({
+        url: "http://localhost/item/1",
+        segmentIds: ["modal"],
+        segments,
+        intercept: true,
+        interceptSourceUrl: "http://localhost/list",
+      });
+
+      expect(historyState.intercept).toBe(true);
+      expect(historyState.sourceUrl).toBe("http://localhost/list");
+      const key = "/item/1:intercept:/list";
+      expect(store.getHistoryKey()).toBe(key);
+      expect(store.getCachedSegments(key)?.segments).toBe(segments);
+      tx[Symbol.dispose]();
+    });
+  });
+
   // #1029: commit() hands the controller the entry state it pushed, restored
   // or merged, and notifies no reader. NavigationProvider takes the recorded
   // state in the update that renders the entry's payload; only a commit the

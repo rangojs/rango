@@ -89,7 +89,7 @@ function createMockStore(opts?: {
     setState: vi.fn(),
     subscribe: vi.fn(),
     cacheSegmentsForHistory: vi.fn(),
-    hasHistoryCache: vi.fn(() => false),
+    hasInterceptCache: vi.fn(() => false),
     setPath: vi.fn(),
     setCurrentUrl: vi.fn(),
     setSegmentIds: vi.fn(),

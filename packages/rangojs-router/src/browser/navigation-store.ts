@@ -34,7 +34,7 @@ const HISTORY_ENTRY_MEMORY_SIZE = 200;
 // stale=true means the data may be outdated and should be revalidated on access.
 // navInstance is the monotonic nav-instance token (see navInstance below): it
 // identifies the per-commit visit that owns this entry. generateHistoryKey is
-// URL-only, so A->B->A reuses the same key; the token lets a late async
+// the URL (plus the source page for an intercept), so A->B->A reuses the key; the token lets a late async
 // resolution tell its own visit's entry apart from a newer same-URL visit's, so
 // a stale nav can never clobber a fresher one.
 // handlesPending=true means the entry's handle data is INCOMPLETE (a deferred
@@ -124,36 +124,35 @@ function getCacheInvalidationChannel(): BroadcastChannel | null {
  * Options for generating a history key
  */
 export interface HistoryKeyOptions {
-  /** If true, append :intercept suffix to differentiate intercept entries */
+  /** Key an intercept entry (apart from the plain entry for the URL). */
   intercept?: boolean;
+  /** The page the intercept was opened over (history.state.sourceUrl). */
+  interceptSource?: string;
+}
+
+function urlKey(url: string): string {
+  const parsed = new URL(url, "http://localhost");
+  return parsed.pathname + parsed.search;
 }
 
 /**
- * Generate a cache key from a URL.
- * Uses pathname + search (query params) directly as the key.
- * Hash fragments (#) are excluded since they don't affect server data.
+ * Generate a cache key from a URL: pathname + search. Hash fragments (#) are
+ * excluded since they don't affect server data.
  *
- * For intercept routes, append `:intercept` suffix to cache them separately
- * from non-intercept versions of the same URL.
+ * An intercept entry is keyed `<url>:intercept:<source>`: its cached tree
+ * includes the page under the intercept. hasInterceptCache relies on the
+ * `:intercept:` separator.
  */
 export function generateHistoryKey(
   url?: string,
   options?: HistoryKeyOptions,
 ): string {
-  if (!url) {
-    url = typeof window !== "undefined" ? window.location.href : "/";
-  }
-
-  // Parse URL and use only pathname + search (exclude hash fragment)
-  const parsed = new URL(url, "http://localhost");
-  let key = parsed.pathname + parsed.search;
-
-  // Append intercept suffix for separate caching
-  if (options?.intercept) {
-    key += ":intercept";
-  }
-
-  return key;
+  const key = urlKey(
+    url || (typeof window !== "undefined" ? window.location.href : "/"),
+  );
+  if (!options?.intercept) return key;
+  const source = options.interceptSource;
+  return `${key}:intercept:${source ? urlKey(source) : ""}`;
 }
 
 /**
@@ -258,7 +257,8 @@ export function createNavigationStore(
 
   // Monotonic nav-instance token. Bumped each time a cache entry is created or
   // replaced in cacheSegmentsForHistory (i.e. once per commit). Because
-  // generateHistoryKey is URL-only, two visits to the same URL share a key; this
+  // generateHistoryKey is the URL (plus the source page for an intercept), two
+  // visits to the same URL share a key; this
   // token gives each visit a distinct identity so a late async handle resolution
   // can tell whether it still owns the live page / the target cache entry, and
   // never overwrite a newer same-URL visit's state.
@@ -580,11 +580,9 @@ export function createNavigationStore(
       };
     },
 
-    /**
-     * Check if segments are cached for a history entry
-     */
-    hasHistoryCache(historyKey: string): boolean {
-      return historyCache.some(([key]) => key === historyKey);
+    hasInterceptCache(historyKey: string): boolean {
+      const prefix = `${historyKey}:intercept:`;
+      return historyCache.some(([key]) => key.startsWith(prefix));
     },
 
     /**
