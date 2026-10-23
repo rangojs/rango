@@ -14,7 +14,7 @@ import type { LoaderEntry } from "../../../server/context";
 // See loader-snapshot.ts and docs/design/ppr-shell-resume.md.
 
 const mockRequestCtx: any = {
-  _shellCaptureRun: undefined,
+  _shellCaptureState: undefined,
   _shellLoaderSeed: undefined,
   executionContext: undefined,
   params: {},
@@ -61,7 +61,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 describe("shell-HIT seed overlay lanes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRequestCtx._shellCaptureRun = undefined;
+    mockRequestCtx._shellCaptureState = undefined;
     mockRequestCtx._shellLoaderSeed = undefined;
     mockRequestCtx.executionContext = undefined;
   });

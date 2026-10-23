@@ -40,6 +40,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { makeShellCaptureState } from "../../__tests__/kit/request-context.js";
 import { resolveTracing } from "../../router/tracing.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import { CacheScope } from "../../cache/cache-scope.js";
@@ -558,10 +559,12 @@ describe("captureAndStoreShell", () => {
     try {
       const putShell = makePutShell();
       const reqCtx = makeReqCtx(putShell);
-      reqCtx._shellCaptureGuardTripped = {
-        surface: "cookies()",
-        fix: "Read it in a live loader.",
-      };
+      reqCtx._shellCaptureState = makeShellCaptureState({
+        guardTripped: {
+          surface: "cookies()",
+          fix: "Read it in a live loader.",
+        },
+      });
 
       const outcome = await captureAndStoreShell(
         makeShellSsrModule(),
@@ -600,7 +603,9 @@ describe("captureAndStoreShell", () => {
       const loaderError = new Error("loader boom");
       const rejected = Promise.reject(loaderError);
       rejected.catch(() => {});
-      reqCtx._shellCaptureLoaderRecords = new Map([["M0D0.app/x#L", rejected]]);
+      reqCtx._shellCaptureState = makeShellCaptureState({
+        loaderRecords: new Map([["M0D0.app/x#L", rejected]]),
+      });
       // A render error recorded alongside does not preempt this refusal (#915).
       reqCtx._renderErrors = [loaderError];
 
@@ -632,18 +637,20 @@ describe("captureAndStoreShell", () => {
     try {
       const putShell = makePutShell();
       const reqCtx = makeReqCtx(putShell);
-      reqCtx._shellCaptureLoaderRecords = new Map([
-        [
-          "M0D0.app/x#L",
-          Promise.resolve({
-            __loaderResult: true,
-            ok: false,
-            redirect: { to: "/login" },
-            error: { message: "Loader redirected to /login", name: "Error" },
-            fallback: null,
-          }),
-        ],
-      ]);
+      reqCtx._shellCaptureState = makeShellCaptureState({
+        loaderRecords: new Map([
+          [
+            "M0D0.app/x#L",
+            Promise.resolve({
+              __loaderResult: true,
+              ok: false,
+              redirect: { to: "/login" },
+              error: { message: "Loader redirected to /login", name: "Error" },
+              fallback: null,
+            }),
+          ],
+        ]),
+      });
 
       const outcome = await captureAndStoreShell(
         makeShellSsrModule(),
@@ -674,10 +681,12 @@ describe("captureAndStoreShell", () => {
     const putShell = makePutShell();
     const reqCtx = makeReqCtx(putShell);
     const pending = new Promise(() => {});
-    reqCtx._shellCaptureLoaderRecords = new Map<string, Promise<unknown>>([
-      ["R0D0.app/x#Full", Promise.resolve({ price: 42 })],
-      ["R0D1.app/x#Holey", Promise.resolve({ price: 42, live: pending })],
-    ]);
+    reqCtx._shellCaptureState = makeShellCaptureState({
+      loaderRecords: new Map<string, Promise<unknown>>([
+        ["R0D0.app/x#Full", Promise.resolve({ price: 42 })],
+        ["R0D1.app/x#Holey", Promise.resolve({ price: 42, live: pending })],
+      ]),
+    });
 
     const outcome = await captureAndStoreShell(
       makeShellSsrModule(),
@@ -712,9 +721,9 @@ describe("captureAndStoreShell", () => {
   it("omits a still-pending bake-lane container without refusing", async () => {
     const putShell = makePutShell();
     const reqCtx = makeReqCtx(putShell);
-    reqCtx._shellCaptureLoaderRecords = new Map([
-      ["M0D0.app/x#L", new Promise(() => {})],
-    ]);
+    reqCtx._shellCaptureState = makeShellCaptureState({
+      loaderRecords: new Map([["M0D0.app/x#L", new Promise(() => {})]]),
+    });
 
     const outcome = await captureAndStoreShell(
       makeShellSsrModule(),
@@ -749,9 +758,11 @@ describe("captureAndStoreShell", () => {
       const reqCtx = makeReqCtx(putShell);
       // The derived capture context always seeds it (attemptCapture).
       reqCtx._renderErrors = [];
-      reqCtx._shellCaptureLoaderRecords = new Map([
-        ["M0D0.app/x#L", Promise.resolve({ price: 42 })],
-      ]);
+      reqCtx._shellCaptureState = makeShellCaptureState({
+        loaderRecords: new Map([
+          ["M0D0.app/x#L", Promise.resolve({ price: 42 })],
+        ]),
+      });
 
       await expect(
         captureAndStoreShell(
@@ -779,9 +790,11 @@ describe("captureAndStoreShell", () => {
         // Fresh capture context per capture (mirrors the per-capture derived
         // context); one bake-lane loader pin well over the 1 KiB cap.
         const reqCtx = makeReqCtx();
-        reqCtx._shellCaptureLoaderRecords = new Map([
-          ["M0L0D0.big", Promise.resolve({ big: "x".repeat(4096) })],
-        ]);
+        reqCtx._shellCaptureState = makeShellCaptureState({
+          loaderRecords: new Map([
+            ["M0L0D0.big", Promise.resolve({ big: "x".repeat(4096) })],
+          ]),
+        });
         return captureAndStoreShell(
           makeShellSsrModule(),
           emptyStream(),
@@ -830,9 +843,11 @@ describe("captureAndStoreShell", () => {
   it("keeps an under-cap snapshot intact (default cap)", async () => {
     const putShell = makePutShell();
     const reqCtx = makeReqCtx();
-    reqCtx._shellCaptureLoaderRecords = new Map([
-      ["M0L0D0.small", Promise.resolve({ small: "hello" })],
-    ]);
+    reqCtx._shellCaptureState = makeShellCaptureState({
+      loaderRecords: new Map([
+        ["M0L0D0.small", Promise.resolve({ small: "hello" })],
+      ]),
+    });
 
     const outcome = await captureAndStoreShell(
       makeShellSsrModule(),
@@ -952,7 +967,7 @@ describe("captureAndStoreShell", () => {
     // The derived capture context: buildFullPayload rendered with the default
     // (payloadInitialTheme), so the serve tail must replay the same value
     // (ShellCacheEntry.initialTheme). The capturing visitor's cookie is dark.
-    reqCtx._shellCaptureRun = true;
+    reqCtx._shellCaptureState = makeShellCaptureState();
     reqCtx._themeConfig = { defaultTheme: "light" };
     reqCtx._readTheme = () => "dark";
 
@@ -1211,9 +1226,11 @@ describe("captureAndStoreShell: snapshot pruning", () => {
       _reportBackgroundError: vi.fn(),
       _requestTags: new Set<string>(),
       _shellImplicitCache: { docKey: DOC_KEY },
-      _shellCaptureLoaderRecords: new Map([
-        ["M0L0D0.bake", Promise.resolve({ baked: 1 })],
-      ]),
+      _shellCaptureState: makeShellCaptureState({
+        loaderRecords: new Map([
+          ["M0L0D0.bake", Promise.resolve({ baked: 1 })],
+        ]),
+      }),
     };
     await adjust?.({ reqCtx, recording });
     const outcome = await captureAndStoreShell(
@@ -1347,7 +1364,7 @@ describe("captureAndStoreShell: snapshot pruning", () => {
     try {
       const entry = await capturePrunable(
         ({ reqCtx }) => {
-          reqCtx._shellCaptureLoaderRecords.set(
+          reqCtx._shellCaptureState.loaderRecords.set(
             "M0L0D1.big",
             Promise.resolve({ big: "x".repeat(4096) }),
           );
@@ -1455,9 +1472,11 @@ describe("captureAndStoreShell: a prerender-served capture's handles record", ()
       _reportBackgroundError: vi.fn(),
       _requestTags: new Set<string>(),
       _shellImplicitCache: {},
-      _shellCaptureLoaderRecords: new Map([
-        ["M0R0D0.Bake", Promise.resolve({ value: "settled" })],
-      ]),
+      _shellCaptureState: makeShellCaptureState({
+        loaderRecords: new Map([
+          ["M0R0D0.Bake", Promise.resolve({ value: "settled" })],
+        ]),
+      }),
     };
     const outcome = await captureAndStoreShell(
       {
@@ -1794,7 +1813,7 @@ describe("runShellCapture", () => {
         {
           tags: [],
           during: () => {
-            getRequestContext()._routeRecordWindow = {
+            getRequestContext()._shellCaptureState!.routeRecordWindow = {
               freshUntil: Date.now() - 1,
               staleUntil: Date.now() - 1,
               ttl: 300,
@@ -1847,7 +1866,7 @@ describe("runShellCapture", () => {
         })),
       );
       (ctx as any).renderToReadableStream = vi.fn(() => {
-        getRequestContext()._shellCaptureLoaderRecords?.set(
+        getRequestContext()._shellCaptureState?.loaderRecords.set(
           "M0D0.app/x#L",
           Promise.resolve({ data: 1 }),
         );
@@ -2146,7 +2165,7 @@ describe("runShellCapture", () => {
           // Only the retry's match reads a record already past its end.
           during: () => {
             if (++matches < 2) return;
-            getRequestContext()._routeRecordWindow = {
+            getRequestContext()._shellCaptureState!.routeRecordWindow = {
               freshUntil: Date.now() - 1,
               staleUntil: Date.now() - 1,
               ttl: 300,
@@ -3238,8 +3257,8 @@ describe("runShellCapture", () => {
     }
   });
 
-  it("does not mask via _shellCaptureRun on the caller's foreground context", async () => {
-    // runShellCapture sets _shellCaptureRun only on its DERIVED context; the
+  it("does not mask via _shellCaptureState on the caller's foreground context", async () => {
+    // runShellCapture sets _shellCaptureState only on its DERIVED context; the
     // passed foreground reqCtx must be left untouched.
     const putShell = makePutShell();
     const { ctx, ssrModule } = makeCtx(
@@ -3262,7 +3281,7 @@ describe("runShellCapture", () => {
       },
     );
 
-    expect((reqCtx as any)._shellCaptureRun).toBeUndefined();
+    expect((reqCtx as any)._shellCaptureState).toBeUndefined();
   });
 
   const storedShell = (body: string) =>
@@ -3783,7 +3802,7 @@ describe("runShellCapture", () => {
         refusal: "identity",
         when: "a capture guard tripped",
         during: () => {
-          getRequestContext()._shellCaptureGuardTripped = {
+          getRequestContext()._shellCaptureState!.guardTripped = {
             surface: "cookies()",
             fix: "Read it in a live loader.",
           };
@@ -3800,7 +3819,7 @@ describe("runShellCapture", () => {
         during: () => {
           const rejected = Promise.reject(new Error("loader boom"));
           rejected.catch(() => {});
-          getRequestContext()._shellCaptureLoaderRecords?.set(
+          getRequestContext()._shellCaptureState?.loaderRecords.set(
             "M0D0.app/x#L",
             rejected,
           );
@@ -3810,7 +3829,7 @@ describe("runShellCapture", () => {
         refusal: "loader",
         when: "a bake-lane loader settled with redirect()",
         during: () => {
-          getRequestContext()._shellCaptureLoaderRecords?.set(
+          getRequestContext()._shellCaptureState?.loaderRecords.set(
             "M0D0.app/x#L",
             Promise.resolve({
               __loaderResult: true,
@@ -3844,7 +3863,8 @@ describe("runShellCapture", () => {
         refusal: "record-expired",
         when: "the route cache() record the capture wrote ran out",
         during: () => {
-          getRequestContext()._routeRecordWindow = expiredWrittenRecord();
+          getRequestContext()._shellCaptureState!.routeRecordWindow =
+            expiredWrittenRecord();
         },
       },
       {

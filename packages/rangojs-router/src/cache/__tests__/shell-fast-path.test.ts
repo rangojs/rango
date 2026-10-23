@@ -19,6 +19,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { makeShellCaptureState } from "../../__tests__/kit/request-context.js";
 import type { CachedEntryData, SegmentCacheStore } from "../types.js";
 import {
   maskNestedContainerThenables,
@@ -365,7 +366,7 @@ describe("resolveShellPartition (request-partitioned ppr shells)", () => {
     );
     // shell-capture.ts derives the capture's context with Object.create.
     const capture = Object.assign(Object.create(foreground), {
-      _shellCaptureRun: true,
+      _shellCaptureState: makeShellCaptureState(),
     }) as RequestContext;
     await runWithRequestContext(capture, async () => {
       await expect(scope.resolveKeyFrom("doc:localhost/p")).resolves.toBe(

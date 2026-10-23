@@ -10,6 +10,7 @@ import {
   runWithRequestContext,
   getRequestContext,
 } from "../request-context.js";
+import { makeShellCaptureState } from "../../__tests__/kit/request-context.js";
 import {
   cookies,
   headers,
@@ -602,7 +603,7 @@ describe("shell-capture guards", () => {
 
     // The ACTIVE capture marker (only the background derived context sets it),
     // not the foreground descriptor _shellCapture.
-    (ctx as any)._shellCaptureRun = true;
+    ctx._shellCaptureState = makeShellCaptureState();
 
     runWithRequestContext(ctx, fn);
   }
@@ -628,7 +629,7 @@ describe("shell-capture guards", () => {
   it("records the read and the refusal warning's fix on the capture context", () => {
     withShellCaptureContext(() => {
       expect(() => headers()).toThrow();
-      expect(getRequestContext()._shellCaptureGuardTripped).toEqual({
+      expect(getRequestContext()._shellCaptureState?.guardTripped).toEqual({
         surface: "headers()",
         fix: expect.stringContaining("a loader without ssr: false"),
       });
@@ -654,7 +655,7 @@ describe("shell-capture guards", () => {
   it("cookies()/headers() work on the FOREGROUND render even when a capture is wanted", () => {
     // The _shellCapture descriptor means "a capture is wanted" and is present
     // during the foreground render, which must serve the real user — so it must
-    // NOT trip the guard. Only the background _shellCaptureRun does.
+    // NOT trip the guard. Only the background _shellCaptureState does.
     const ctx = createRequestContext({
       env: {},
       request: new Request("https://example.com", {
@@ -1101,15 +1102,17 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
         const reqCtx = themedRequestContext();
         reqCtx.set(Tenant, "t1");
         reqCtx.set("site", "s1", { cache: false });
-        if (capture) (reqCtx as any)._shellCaptureRun = true;
+        if (capture) reqCtx._shellCaptureState = makeShellCaptureState();
         runWithRequestContext(reqCtx, () =>
           enter(() => {
             for (const [, read] of reads) {
-              reqCtx._shellCaptureGuardTripped = undefined;
+              if (reqCtx._shellCaptureState) {
+                reqCtx._shellCaptureState.guardTripped = undefined;
+              }
               // The ctx is created inside the scope: creating it reads nothing.
               if (expected === "allowed") {
                 expect(read()).toBe(value);
-                expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+                expect(reqCtx._shellCaptureState?.guardTripped).toBeUndefined();
                 continue;
               }
               const outcome = readOutcome(read);
@@ -1118,11 +1121,13 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
                 expect((outcome as Error).message).toContain(part);
               }
               if (capture) {
-                expect(reqCtx._shellCaptureGuardTripped).toEqual({
+                expect(reqCtx._shellCaptureState?.guardTripped).toEqual({
                   surface,
                   fix: expect.stringContaining(fix),
                 });
-                expect(reqCtx._shellCaptureGuardTrippedLoaderId).toBe(loaderId);
+                expect(reqCtx._shellCaptureState?.guardTrippedLoaderId).toBe(
+                  loaderId,
+                );
               }
             }
           }),
@@ -1145,19 +1150,19 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
 
   it("a handler ctx read with no ambient request context is guarded by the ctx's own", () => {
     const reqCtx = themedRequestContext();
-    (reqCtx as any)._shellCaptureRun = true;
+    reqCtx._shellCaptureState = makeShellCaptureState();
     const ctx = runWithRequestContext(reqCtx, () => handlerCtx());
     expect(() => ctx.theme).toThrow(
       "ctx.theme cannot be read while capturing a shared shell",
     );
-    expect(reqCtx._shellCaptureGuardTripped?.surface).toBe("ctx.theme");
+    expect(reqCtx._shellCaptureState?.guardTripped?.surface).toBe("ctx.theme");
   });
 
   it("at capture, serializing a ctx does not read the theme; a derived ctx's read does", () => {
     // React's dev debug info JSON-stringifies server component props and
     // replayed console.log args; a ctx passed there is not a theme read.
     const reqCtx = themedRequestContext();
-    (reqCtx as any)._shellCaptureRun = true;
+    reqCtx._shellCaptureState = makeShellCaptureState();
     runWithRequestContext(reqCtx, () => {
       const ctx = handlerCtx();
       for (const serialized of [ctx, reqCtx]) {
@@ -1165,10 +1170,12 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
         expect(Object.keys(serialized)).not.toContain("theme");
         expect({ ...serialized }).not.toHaveProperty("theme");
       }
-      expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+      expect(reqCtx._shellCaptureState?.guardTripped).toBeUndefined();
       // cache-runtime.ts refreshView wraps the ctx with Object.create.
       expect(() => Object.create(ctx).theme).toThrow(/ctx\.theme/);
-      expect(reqCtx._shellCaptureGuardTripped?.surface).toBe("ctx.theme");
+      expect(reqCtx._shellCaptureState?.guardTripped?.surface).toBe(
+        "ctx.theme",
+      );
     });
   });
 
@@ -1190,13 +1197,13 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
 
   it("a spread of the request context (the fetchable-loader ctx) carries no unguarded theme read", () => {
     const reqCtx = themedRequestContext();
-    (reqCtx as any)._shellCaptureRun = true;
+    reqCtx._shellCaptureState = makeShellCaptureState();
     runWithRequestContext(reqCtx, () => {
       // loader-fetch.ts builds the fetchable-loader ctx as { ...reqCtx }.
       const copy = { ...reqCtx } as Record<string, unknown>;
       expect(copy).not.toHaveProperty("theme");
       expect(copy).not.toHaveProperty("_readTheme");
-      expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+      expect(reqCtx._shellCaptureState?.guardTripped).toBeUndefined();
       // The internal read itself still works for the router.
       expect(reqCtx._readTheme()).toBe("dark");
     });
@@ -1225,14 +1232,14 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
 
   it("without theme config every theme read is undefined and never throws", () => {
     const reqCtx = themedRequestContext(false);
-    (reqCtx as any)._shellCaptureRun = true;
+    reqCtx._shellCaptureState = makeShellCaptureState();
     runWithRequestContext(reqCtx, () => {
       for (const enter of [inCacheScope, runWithCacheExecScope] as Enter[]) {
         enter(() => {
           for (const [, read] of READS) expect(read()).toBeUndefined();
         });
       }
-      expect(reqCtx._shellCaptureGuardTripped).toBeUndefined();
+      expect(reqCtx._shellCaptureState?.guardTripped).toBeUndefined();
     });
   });
 
@@ -1245,10 +1252,10 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
       );
     });
     const derived = Object.create(reqCtx) as typeof reqCtx;
-    derived._shellCaptureRun = true;
+    derived._shellCaptureState = makeShellCaptureState();
     runWithRequestContext(derived, () => {
       expect(payloadInitialTheme(derived)).toBe("system");
-      expect(derived._shellCaptureGuardTripped).toBeUndefined();
+      expect(derived._shellCaptureState?.guardTripped).toBeUndefined();
     });
     expect(payloadInitialTheme(themedRequestContext(false))).toBeUndefined();
   });
@@ -1332,7 +1339,7 @@ describe("identity reads refused on a router.prerender() warm request", () => {
     [
       "a capture context",
       (ctx, fn) => {
-        (ctx as any)._shellCaptureRun = true;
+        (ctx as any)._shellCaptureState = makeShellCaptureState();
         runWithRequestContext(ctx as any, fn);
       },
     ],
@@ -1516,9 +1523,9 @@ describe("identity reads recorded for a loader cache() fill (#972)", () => {
   it("a shell-capture run keeps its own guard, which flags the capture", () => {
     recordedBy(() => {
       const ctx = getRequestContext() as any;
-      ctx._shellCaptureRun = true;
+      ctx._shellCaptureState = makeShellCaptureState();
       expect(() => cookies()).toThrow(/capturing a shared shell/i);
-      expect(ctx._shellCaptureGuardTripped).toMatchObject({
+      expect(ctx._shellCaptureState.guardTripped).toMatchObject({
         surface: "cookies()",
       });
     });

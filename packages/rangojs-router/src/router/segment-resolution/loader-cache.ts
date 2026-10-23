@@ -473,7 +473,7 @@ function recordOwnerKey(cachedLoaderId: string): () => string {
  *   plain objects, arrays and JSX props are masked (mask-nested.ts) and stay
  *   live holes at the consumer's own Suspense — per-request material must be
  *   promise-shaped (the #692 cross-session scar). The masked container
- *   registers on `_shellCaptureLoaderRecords`: it holds the capture gate
+ *   registers on `_shellCaptureState.loaderRecords`: it holds the capture gate
  *   (bounded by `ppr.captureTimeout`) and pins into the snapshot's loader
  *   family, and on a HIT the recorded container is overlaid onto the fresh
  *   run (below) so the payload matches the frozen prelude outside the holes.
@@ -511,7 +511,10 @@ export function resolveLoaderData<TEnv>(
         maskNestedContainerThenables(container),
       );
       maskedPromise.catch(() => {});
-      reqCtx?._shellCaptureLoaderRecords?.set(bakeSegmentKey, maskedPromise);
+      reqCtx?._shellCaptureState?.loaderRecords.set(
+        bakeSegmentKey,
+        maskedPromise,
+      );
       // Its data bakes into the shell, so its tags tag the shell.
       linkLoaderTagsTo(SHELL_BAKE_TAG_OWNER, loaderEntry.loader.$$id, reqCtx);
       return maskedPromise;
