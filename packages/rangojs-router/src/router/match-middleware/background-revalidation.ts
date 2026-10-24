@@ -191,6 +191,7 @@ export async function rerenderAndCacheRoute<TEnv>(
       routerCtx.resolveAllSegmentsWithRevalidation(
         freshPassInput(handlerContext, ctx.routeKey, ctx.matched.params, {
           skipLoaders: true,
+          partialRequest: !ctx.isFullMatch,
         }),
         ctx.entries,
         // Under an intercept the route's own entry is skipped, as on a MISS.

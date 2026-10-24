@@ -329,6 +329,21 @@ render does and writes the record a MISS writes: the record and its HITs no
 longer carry the route's page or its tags. What the intercept shows, and the
 page under it, are unchanged. No change in your code.
 
+### Fixed: `onError` reports `isPartial: true` for an error in the background re-render a navigation starts
+
+**Before.** When a handler threw in the background re-render of a `cache()`
+record (the refresh a stale HIT starts under `cache({ ttl, swr })`, and the
+re-render that writes the record of a client-side navigation that kept the
+layout mounted), `onError` received `isPartial` unset, even when a client
+navigation, an intercept included, started the re-render. The same error in
+the navigation's own render reports `isPartial: true`, so an `onError` that
+tells navigation failures from document failures filed these as document
+failures.
+
+**Now.** The re-render's errors carry the `isPartial` of the request that
+started it, as that request's own render reports it: `true` for a client
+navigation, unset for a document request. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

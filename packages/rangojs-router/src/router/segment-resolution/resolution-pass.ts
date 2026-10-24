@@ -67,6 +67,13 @@ export interface ResolutionPassInput<TEnv = any> {
    * into a frozen 200 (issue #587).
    */
   readonly throwOnError?: boolean;
+  /**
+   * The request is a navigation, though the pass is FRESH: the background
+   * re-render of a record a navigation read stale or wrote
+   * (background-revalidation.ts). An entry's error reports isPartial, as the
+   * navigation's own pass does.
+   */
+  readonly partialRequest?: boolean;
 }
 
 export interface ResolutionPass<TEnv = any> extends ResolutionPassInput<TEnv> {
@@ -82,7 +89,11 @@ export function freshPassInput<TEnv>(
   context: HandlerContext<any, TEnv>,
   routeKey: string,
   params: Record<string, string>,
-  options?: { skipLoaders?: boolean; throwOnError?: boolean },
+  options?: {
+    skipLoaders?: boolean;
+    throwOnError?: boolean;
+    partialRequest?: boolean;
+  },
 ): ResolutionPassInput<TEnv> {
   let request: Request | undefined;
   try {

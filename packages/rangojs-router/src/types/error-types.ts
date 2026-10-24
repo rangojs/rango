@@ -83,7 +83,13 @@ export interface OnErrorContext<TEnv = any> {
   env?: TEnv;
   /** Duration from request start to error (milliseconds) */
   duration?: number;
-  /** Whether this is a partial/navigation request */
+  /**
+   * Whether this is a partial/navigation request. An error in the background
+   * re-render of a `cache()` record (a stale HIT's refresh, the write of a
+   * navigation that kept a layout mounted) reports the request that started
+   * it: `true` for a navigation, unset for a document, as that request's own
+   * render reports it.
+   */
   isPartial?: boolean;
   /** Whether an error boundary caught the error */
   handledByBoundary?: boolean;

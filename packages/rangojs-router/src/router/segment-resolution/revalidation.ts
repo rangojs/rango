@@ -1634,12 +1634,13 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     telemetry = getRouterContext()?.telemetry;
   } catch {}
   // FRESH: a full match reports an entry's error without isPartial, and a
-  // build-time pass rethrows it (throwOnError).
+  // build-time pass rethrows it (throwOnError). A re-render a navigation
+  // started reports it with isPartial (partialRequest).
   const report = {
     request,
     url: context.url,
     routeKey,
-    isPartial: pass.client === FRESH ? undefined : true,
+    isPartial: pass.client !== FRESH || pass.partialRequest ? true : undefined,
     telemetry,
   };
   const fillMatch = {
