@@ -242,14 +242,22 @@ function memoizedKey(
 }
 
 /**
+ * A route record that answered. `restoreHandles` is set when the lookup left
+ * the handle restore to its caller (lookupRouteDetailed `deferHandles`),
+ * which names the segments it sends (handle-snapshot.ts restoreHandles).
+ */
+export interface CachedRouteHit {
+  segments: ResolvedSegment[];
+  shouldRevalidate: boolean;
+  restoreHandles?: (sentIds: ReadonlySet<string>) => Promise<void>;
+}
+
+/**
  * Discriminated outcome of a route cache lookup — see
  * {@link CacheScope.lookupRouteDetailed} for what each status licenses.
  */
 export type CacheRouteLookupOutcome =
-  | {
-      status: "hit";
-      result: { segments: ResolvedSegment[]; shouldRevalidate: boolean };
-    }
+  | { status: "hit"; result: CachedRouteHit }
   | { status: "miss" | "bypass" | "error" };
 
 /**
@@ -743,21 +751,22 @@ export class CacheScope {
    * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
    * @param ownedPushes - What the record is to each loader's handle pushes
    *   (withCacheLookup: loader-cache.ts loaderPins), called on a hit
+   * @param deferHandles - Restore no handle value here: the caller calls the
+   *   hit's `restoreHandles` once it decided which segments it sends
    */
   async lookupRoute(
     pathname: string,
     params: Record<string, string>,
     isIntercept?: boolean,
     ownedPushes?: () => OwnedPushDelivery,
-  ): Promise<{
-    segments: ResolvedSegment[];
-    shouldRevalidate: boolean;
-  } | null> {
+    deferHandles?: boolean,
+  ): Promise<CachedRouteHit | null> {
     const outcome = await this.lookupRouteDetailed(
       pathname,
       params,
       isIntercept,
       ownedPushes,
+      deferHandles,
     );
     return outcome.status === "hit" ? outcome.result : null;
   }
@@ -785,6 +794,7 @@ export class CacheScope {
     params: Record<string, string>,
     isIntercept?: boolean,
     ownedPushes?: () => OwnedPushDelivery,
+    deferHandles?: boolean,
   ): Promise<CacheRouteLookupOutcome> {
     if (!this.enabled) return { status: "bypass" };
     if (!this.conditionAllows("read")) return { status: "bypass" };
@@ -887,17 +897,23 @@ export class CacheScope {
       await this.onHit?.();
 
       const handleStore = _getRequestContext()?._handleStore;
+      let restoreHandles: CachedRouteHit["restoreHandles"];
       // An empty handles string means the route pushed none (the common
       // case); a decode failure skips the restore but keeps the segments.
       if (handleStore) {
-        await restoreRecordHandles(
-          handleStore,
-          cached,
-          ownedPushes?.(),
+        const owned = ownedPushes?.();
+        const keepIds =
           this.boundary !== undefined
             ? new Set(segments.map((s) => s.id))
-            : undefined,
-        );
+            : undefined;
+        if (deferHandles) {
+          // The authority holds from here, as with the restore below.
+          if (owned) handleStore.setRecordAuthority(owned);
+          restoreHandles = (sent) =>
+            restoreRecordHandles(handleStore, cached, owned, keepIds, sent);
+        } else {
+          await restoreRecordHandles(handleStore, cached, owned, keepIds);
+        }
       }
 
       if (INTERNAL_RANGO_DEBUG) {
@@ -912,7 +928,10 @@ export class CacheScope {
       if (ambientContext)
         this.noteRecordWindow(ambientContext, cached.expiresAt, false);
 
-      return { status: "hit", result: { segments, shouldRevalidate } };
+      return {
+        status: "hit",
+        result: { segments, shouldRevalidate, restoreHandles },
+      };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
       // (resolveKey). Either way degrade to an uncached render — reported as

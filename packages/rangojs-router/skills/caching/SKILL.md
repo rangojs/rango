@@ -102,7 +102,9 @@ tainted objects" below).
 
 Handle pushes follow the same split. Handler pushes (`ctx.use(Meta)`,
 `ctx.use(Breadcrumbs)`, custom handles) are stored with the segments and
-replayed on a hit. Pushes from a `loader()` body are not stored: the loader
+replayed on a hit. On a navigation the hit replays them only for the segments
+it sends: a layout the browser keeps keeps its values on screen, as on an
+uncached navigation. Pushes from a `loader()` body are not stored: the loader
 re-runs on the hit and pushes again, so each value appears once. A loader that
 runs only because a cached handler awaited it with `ctx.use(Loader)` does not
 re-run on a hit, so its pushes are stored with the handler's.

@@ -155,6 +155,12 @@ function StampLayout(ctx: HandlerContext): React.ReactNode {
   return <main>shell</main>;
 }
 
+/** A HIT sends the intercept's push; the held layout's stays the client's. */
+function StampModal(ctx: HandlerContext): React.ReactNode {
+  ctx.use(Stamp)(`stamp@g${generation}`);
+  return <dialog>modal</dialog>;
+}
+
 const routes = urls(({ path, cache, layout, intercept, loader }) => [
   // Stale from the start, servable for 60 s.
   cache({ ttl: 0, swr: 60 }, () => [
@@ -164,12 +170,7 @@ const routes = urls(({ path, cache, layout, intercept, loader }) => [
     layout(StampLayout, () => [
       path("/list", () => <ul>list</ul>, { name: "list" }),
       path("/item/:id", () => <article>item</article>, { name: "item" }),
-      intercept(
-        "@modal",
-        ".item",
-        () => <dialog>modal</dialog>,
-        () => [loader(ModalReader)],
-      ),
+      intercept("@modal", ".item", StampModal, () => [loader(ModalReader)]),
     ]),
   ]),
   cache({ ttl: 60 }, () => [
@@ -245,8 +246,9 @@ describe("a stale cache() record's background re-render", () => {
     expect(miss.shown).toEqual([expect.stringMatching(/^read:#\d+$/)]);
     expect(miss.ran).toContain(miss.shown![0]);
 
-    // The stale HIT replays stamp@g1 and refreshes the record at g2 without
-    // running the loader: the visitor's run reads the replayed handles.
+    // The stale HIT replays the intercept's stamp@g1, not the held layout's,
+    // and refreshes the record at g2 without running the loader: the
+    // visitor's run reads the replayed handles.
     generation = 2;
     clock.advance(1_100);
     const staleHit = await open();

@@ -940,6 +940,23 @@ On cache HIT:
 4. handleStore.stream() emits replayed data to client
 ```
 
+**A navigation's HIT replays the handler values of the segments it sends.**
+A live navigation runs no handler for a layout the client keeps, so the
+response carries none of its values and the client keeps the ones on screen.
+A `cache()` HIT decides the same per record segment (`cachedSegmentSends`),
+after the entries above the boundary resolved live, and only then restores:
+on a partial request `CacheScope.lookupRouteDetailed` (`deferHandles`) leaves
+the restore to `serveStoredSegments`, which calls the hit's `restoreHandles`
+with the ids it sent. A sent segment gets its bucket whole; a kept one gets
+only its loaders' copies, which follow their loader (below), and none of its
+handler's values (`restoreHandles`' `sent`). It used to restore every
+bucket, so a `/list` to `/item/1` navigation, an intercept's included,
+re-sent the held layout's crumbs from the record, and the browser's merge
+replaced the values on screen with them; a loader's `ctx.get(handle)` after
+`rendered()` read them too, which a live render does not (rango-t195). A
+document request restores everything in the lookup, as before. A
+`Prerender()` bake does the same in `decodeStoredEntry` (rango-t193).
+
 **Loader pushes are not recorded.** A DSL loader body can push handles too, and
 its pushes land in the owning route/layout segment's bucket. A HIT runs
 loaders exactly as an uncached render of the same request would (after the
@@ -960,7 +977,8 @@ loaders, then runs its handler, so a loader push made before its first
 `await` is ahead of the handler's in the segment, and one made after it is
 behind. A HIT restores the record before any loader starts, and each live
 push used to land after the record's values. `serveStoredSegments` now
-holds them, for a `Prerender()` entry too (`HandleStore.holdRecordedValues`):
+holds them once the restore is done, for a `Prerender()` entry too
+(`HandleStore.holdRecordedValues`):
 a push into a held segment goes in front of its stored values until the
 HIT's loaders-only walk reaches the place where the MISS ran that entry's
 handler (`releaseRecordedValues` in `resolveLoadersOnly`, after the entry's

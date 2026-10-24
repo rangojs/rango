@@ -557,6 +557,24 @@ route's own segments are sent as before. A layout whose `revalidate()` asks
 for a re-render when the params change gets the baked copy, as it gets a live
 render on a live route. No change in your code.
 
+### Fixed: a navigation served from a `cache()` record keeps the layout's handle values on screen
+
+**Before.** A client-side navigation served from a route's `cache()` record
+kept the layouts the browser held, but sent their handle values again from
+the record. A `/list` to `/item/1` navigation, or one that opens an intercept
+over `/item/1`, replaced the breadcrumbs a held layout pushed, read with
+`useHandle`, with the values the record stored, which differ from the ones on
+screen when a crumb carries render-time data. A loader that reads a handle
+with `ctx.get()` after `await ctx.rendered()` read those stored values too.
+An uncached navigation sends none of them.
+
+**Now.** A held layout keeps its handle values, as on an uncached navigation:
+the navigation replays the stored handler values of the segments it sends
+only. A layout whose `revalidate()` asks for a re-render is sent with its
+stored values, as before, and a `ppr` route's stored copies of a loader's
+pushes still follow the loader. A document request is unchanged. No change
+in your code.
+
 ### Fixed: a navigation reports parallel slot and orphan layout handlers in Server-Timing and traces, as the document does
 
 **Before.** A client navigation or an action's revalidation left out two
