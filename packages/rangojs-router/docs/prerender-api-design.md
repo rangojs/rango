@@ -634,8 +634,10 @@ only works with BuildContext (a file read, say) fails there, so the build says
 which ones: `matchForPrerender` returns them as `liveIntercepts`, and
 `warnLiveIntercepts` (`src/vite/utils/prerender-utils.ts`) prints one
 `[rango]` warning per router, route and slot (a route in an unnamed
-`include()` has an internal key, so the warning names its URL). There are
-three cases:
+`include()` has an internal key, so the warning names its URL). Each warning
+ends with what would pre-render the intercept, and the build-only e2e
+`e2e/prerender-onerror.test.ts` pins it through the compiled plugin. There
+are three cases:
 
 - two intercepts on one layout fill the same slot (step 3);
 - the intercept's build handler or layout returned a `Response`, for that URL;

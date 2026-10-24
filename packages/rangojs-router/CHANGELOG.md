@@ -591,13 +591,13 @@ with `BuildContext` (a file read, say) fails there. Until now nothing said so.
 `include()` is named by its URL):
 
 ```
-[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext.
+[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext. To pre-render it, give each intercept its own slot.
 ```
 
-What renders is unchanged. No change in your code; to silence the warning,
-give each intercept its own slot, return a node from its handler and layout,
-or target the route by its full name (name the `include()`, or declare the
-intercept inside it with `".item"`).
+Each warning ends with what pre-renders the intercept: give each intercept its
+own slot, return a node from its handler or layout at build time, or declare it
+inside the `include()` as `".item"`. What renders is unchanged, and no change
+in your code is needed.
 
 ## 0.27.0 (2026-10-23)
 

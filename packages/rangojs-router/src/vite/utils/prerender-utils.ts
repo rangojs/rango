@@ -236,15 +236,29 @@ export function warnLiveIntercepts(
     const key = `${routerId} ${routeName} ${slot}`;
     if (warned.has(key)) continue;
     warned.add(key);
-    const why = {
-      "same-slot": `two intercepts on one layout fill ${slot}`,
-      "handler-response": `its handler returned a Response for ${urlPath}`,
-      "layout-response": `its layout returned a Response for ${urlPath}`,
-      "local-name": `it targets "${localRouteName(routeName)}", the route's name inside its include()`,
+    const local = localRouteName(routeName);
+    const [why, fix] = {
+      "same-slot": [
+        `two intercepts on one layout fill ${slot}`,
+        "give each intercept its own slot",
+      ],
+      "handler-response": [
+        `its handler returned a Response for ${urlPath}`,
+        "return a node from its handler at build time",
+      ],
+      "layout-response": [
+        `its layout returned a Response for ${urlPath}`,
+        "return a node from its layout at build time",
+      ],
+      "local-name": [
+        `it targets "${local}", the route's name inside its include()`,
+        `declare it inside the include() as ".${local}"`,
+      ],
     }[reason];
     console.warn(
       `[rango] Prerender route "${publicRouteName(routeName) ?? urlPath}": intercept ${slot} is not pre-rendered: ${why}. ` +
-        `A navigation that selects it renders it live, and its handler runs per request without BuildContext.`,
+        `A navigation that selects it renders it live, and its handler runs per request without BuildContext. ` +
+        `To pre-render it, ${fix}.`,
     );
   }
 }

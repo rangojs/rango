@@ -180,7 +180,7 @@ describe("a Prerender() route's intercepts the build does not bake", () => {
       { slot: "@modal", reason: "same-slot" },
     ]);
     expect(buildWarnings([["/shop/item/1", result]])).toEqual([
-      `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. ${LIVE}`,
+      `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. ${LIVE} To pre-render it, give each intercept its own slot.`,
     ]);
   });
 
@@ -192,7 +192,7 @@ describe("a Prerender() route's intercepts the build does not bake", () => {
       { slot: "@modal", reason: "handler-response" },
     ]);
     expect(buildWarnings([["/shop/item/1", result]])).toEqual([
-      `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: its handler returned a Response for /shop/item/1. ${LIVE}`,
+      `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: its handler returned a Response for /shop/item/1. ${LIVE} To pre-render it, return a node from its handler at build time.`,
     ]);
   });
 
@@ -204,7 +204,7 @@ describe("a Prerender() route's intercepts the build does not bake", () => {
       { slot: "@modal", reason: "layout-response" },
     ]);
     expect(buildWarnings([["/shop/item/1", result]])).toEqual([
-      `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: its layout returned a Response for /shop/item/1. ${LIVE}`,
+      `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: its layout returned a Response for /shop/item/1. ${LIVE} To pre-render it, return a node from its layout at build time.`,
     ]);
   });
 
@@ -217,7 +217,7 @@ describe("a Prerender() route's intercepts the build does not bake", () => {
       { slot: "@modal", reason: "local-name" },
     ]);
     expect(buildWarnings([["/shop/item/1", result]])).toEqual([
-      `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: it targets "item", the route's name inside its include(). ${LIVE}`,
+      `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: it targets "item", the route's name inside its include(). ${LIVE} To pre-render it, declare it inside the include() as ".item".`,
     ]);
   });
 
@@ -230,7 +230,7 @@ describe("a Prerender() route's intercepts the build does not bake", () => {
       { slot: "@modal", reason: "local-name" },
     ]);
     expect(buildWarnings([["/shop/item/1", result]])).toEqual([
-      `[rango] Prerender route "/shop/item/1": intercept @modal is not pre-rendered: it targets "item", the route's name inside its include(). ${LIVE}`,
+      `[rango] Prerender route "/shop/item/1": intercept @modal is not pre-rendered: it targets "item", the route's name inside its include(). ${LIVE} To pre-render it, declare it inside the include() as ".item".`,
     ]);
   });
 
@@ -260,7 +260,7 @@ describe("a Prerender() route's intercepts the build does not bake", () => {
   test("the build warns once per router, route and slot across the route's URLs", async () => {
     const first = await bake("handler response", "/shop/item/1");
     const second = await bake("handler response", "/shop/item/2");
-    const warning = `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: its handler returned a Response for /shop/item/1. ${LIVE}`;
+    const warning = `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: its handler returned a Response for /shop/item/1. ${LIVE} To pre-render it, return a node from its handler at build time.`;
 
     expect(second.liveIntercepts).toEqual(first.liveIntercepts);
     expect(

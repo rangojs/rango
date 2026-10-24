@@ -1470,7 +1470,7 @@ it). That intercept renders live, and its handler runs per request without
 `BuildContext`; a route in an unnamed `include()` is named by its URL:
 
 ```
-[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext.
+[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext. To pre-render it, give each intercept its own slot.
 ```
 
 ### Example: Pre-rendered route with intercept
