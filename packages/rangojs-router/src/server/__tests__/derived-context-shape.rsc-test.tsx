@@ -78,6 +78,8 @@ function requestContext(
     cacheStore: withStore ? new MemorySegmentCacheStore() : undefined,
     // ctx.setTheme exists only with a theme config.
     themeConfig: resolveThemeConfig(true),
+    // The state and fresh-reads cookie writers write only with a name.
+    stateCookieName: "rango-state",
   });
 }
 
@@ -437,6 +439,7 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       "_recoveredHandlerErrors",
       "_renderErrors",
       "_rotateStateCookie",
+      "_setFreshReadsCookie",
       "_setKeepCacheDirective",
       "_setStatus",
       "deleteCookie",
@@ -469,6 +472,7 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       "setTheme",
       "_rotateStateCookie",
       "_setKeepCacheDirective",
+      "_setFreshReadsCookie",
     ] as const;
     expect(writers.filter((writer) => ctx[writer] === base[writer])).toEqual(
       [],
@@ -478,6 +482,8 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
     ctx.header("x-background", "1");
     ctx.setCookie("background", "1");
     ctx.deleteCookie("session");
+    ctx._rotateStateCookie();
+    ctx._setFreshReadsCookie(5_000);
     expect(base.res.status).toBe(200);
     expect(base.res.headers.get("x-background")).toBeNull();
     expect(base.res.headers.get("set-cookie")).toBeNull();
