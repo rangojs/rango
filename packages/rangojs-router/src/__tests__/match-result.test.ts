@@ -137,7 +137,7 @@ describe("buildMatchResult", () => {
       ];
 
       const state = makeState({
-        // matchedIds with duplicates (simulating unfixed resolveAllSegmentsWithRevalidation)
+        // matchedIds with duplicates (simulating unfixed resolveAllSegments)
         matchedIds: ["M0L0", "M0L0C0", "M0L0C0L0", "M0L0", "M0L0C0L0R0"],
       });
 

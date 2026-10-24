@@ -1,6 +1,6 @@
 /**
  * The document hot path's segment walk: one FRESH pass of the segment walker
- * (revalidation.ts resolveAllSegmentsWithRevalidation with freshPassInput)
+ * (revalidation.ts resolveAllSegments with freshPassInput)
  * per route of a fixed route set, as match middleware runs it for a full
  * match. Each walk gets its own handler context and loader map, as a request
  * does, so loader memoization never carries over between walks.
@@ -250,7 +250,7 @@ function walkFresh(
   context: HandlerContext<any>,
   pathname: string,
 ): Promise<unknown> {
-  return routerCtx.resolveAllSegmentsWithRevalidation(
+  return routerCtx.resolveAllSegments(
     freshPassInput(context, snapshot.routeKey, snapshot.params),
     snapshot.entries,
     { pathname },

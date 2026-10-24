@@ -151,11 +151,11 @@ false") and, through a real request, by
 
 The render barrier is a deferred promise on the request context:
 
-- **FRESH pass (non-streaming)**: Resolved after `resolveAllSegmentsWithRevalidation()`
+- **FRESH pass (non-streaming)**: Resolved after `resolveAllSegments()`
   returns. At that point all handlers have completed and all synchronous
   handle data has been pushed.
 - **FRESH pass (streaming, `loading()`)**: the barrier still resolves after
-  `resolveAllSegmentsWithRevalidation()`, but `loading()` handlers are still in flight then.
+  `resolveAllSegments()`, but `loading()` handlers are still in flight then.
   Their async execution is tracked in the handle store (`trackHandler` →
   `store.track`), so `rendered()` additionally seals the store and `await`s
   `handleStore.settled` before resolving — every tracked handler, streaming
@@ -260,7 +260,7 @@ Segment order for collection follows the segment resolution order
 ### How Streaming Works
 
 In a streaming tree, handlers behind `loading()` have not finished pushing
-when `resolveAllSegmentsWithRevalidation()` returns — only their _rendered output_ streams
+when `resolveAllSegments()` returns — only their _rendered output_ streams
 behind Suspense; the handler function itself runs eagerly and its async
 execution (including its `push()` calls) is tracked in the handle store
 (`revalidation.ts`: `trackStreamedHandler(…)` → `trackHandler` → `store.track`). So the signal
@@ -271,7 +271,7 @@ in-flight tracked promises).
 built when the barrier resolves (incomplete — the `loading()` handlers were
 still in flight); instead it seals the store and `await`s `handleStore.settled`,
 then `ctx.get(handle)` builds a fresh, complete snapshot. The seal is safe
-because every handler is tracked during `resolveAllSegmentsWithRevalidation`, so by barrier time
+because every handler is tracked during `resolveAllSegments`, so by barrier time
 none is unregistered; pushes happen _within_ those tracked promises (before
 `settled`); and the payload's later `stream()` auto-seal is idempotent.
 

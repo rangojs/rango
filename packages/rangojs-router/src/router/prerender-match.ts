@@ -51,7 +51,7 @@ export interface PrerenderMatchDeps<TEnv = any> {
   ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   buildRouterContext: () => RouterContext<TEnv>;
   mergedRouteMap: Record<string, string>;
-  resolveAllSegmentsWithRevalidation: RouterContext<TEnv>["resolveAllSegmentsWithRevalidation"];
+  resolveAllSegments: RouterContext<TEnv>["resolveAllSegments"];
 }
 
 /**
@@ -329,18 +329,17 @@ export async function matchForPrerender<TEnv = any>(
         setupBuildUse(buildCtx);
 
         // 8. Resolve all segments with skipLoaders
-        const { segments: allSegments } =
-          await deps.resolveAllSegmentsWithRevalidation(
-            freshPassInput(buildCtx, matched.routeKey, matchedParams, {
-              skipLoaders: true,
-              // A render failure (or `throw new Skip()`) must reach the
-              // build/dev caller, not be baked into a frozen error page
-              // (issue #587).
-              throwOnError: true,
-            }),
-            entries,
-            { pathname: buildCtx.pathname },
-          );
+        const { segments: allSegments } = await deps.resolveAllSegments(
+          freshPassInput(buildCtx, matched.routeKey, matchedParams, {
+            skipLoaders: true,
+            // A render failure (or `throw new Skip()`) must reach the
+            // build/dev caller, not be baked into a frozen error page
+            // (issue #587).
+            throwOnError: true,
+          }),
+          entries,
+          { pathname: buildCtx.pathname },
+        );
 
         // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
         // When the route declares loading(), the handler result is deferred so the

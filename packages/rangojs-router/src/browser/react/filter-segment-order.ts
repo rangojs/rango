@@ -33,7 +33,7 @@ export function loaderParentId(id: string): string {
  * 2. Place each parallel slot id (contains ".@") immediately after its
  *    parent layout/route id. Raw segment-resolution emission order does NOT
  *    guarantee this: route-mounted parallels are resolved/pushed BEFORE the
- *    route handler's segment is appended (see resolveSegmentWithRevalidation in
+ *    route handler's segment is appended (see resolveSegment in
  *    segment-resolution/revalidation.ts), so matched can read
  *    `[..., R0.@panel, R0]`. collectHandleData consumes segmentOrder verbatim
  *    with later-wins semantics, so without normalization the route handler's

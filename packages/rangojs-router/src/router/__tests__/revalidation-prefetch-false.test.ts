@@ -54,7 +54,7 @@ vi.mock("../../server/context.js", async () => {
   };
 });
 
-import { resolveAllSegmentsWithRevalidation } from "../segment-resolution/revalidation.js";
+import { resolveAllSegments } from "../segment-resolution/revalidation.js";
 import {
   planPrefetchDeferral,
   startDeferredLoader,
@@ -126,7 +126,7 @@ async function resolve(
     _prefetchDeferral: plan,
     _loaderStarted: (id: string) => options.started?.includes(id) ?? false,
   };
-  const result = await resolveAllSegmentsWithRevalidation(
+  const result = await resolveAllSegments(
     {
       context,
       client: new Set(clientIds),

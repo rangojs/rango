@@ -8,7 +8,7 @@ import { ParallelRevalClient } from "../components/ParallelRevalClient.js";
  * revalidate(() => true) should produce consistent segment IDs
  * across fresh and revalidation code paths.
  *
- * Bug: resolveOrphanLayoutWithRevalidation used the parallel entry's
+ * Bug: resolveOrphanLayout used the parallel entry's
  * own shortCode (e.g., M0L0P0) instead of the parent layout's
  * shortCode (M0L0) for loader segment IDs, causing a mismatch
  * between the ID the client knows and the ID the server returns.

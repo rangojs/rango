@@ -415,7 +415,7 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
         return {};
       },
       setupLoaderAccess: () => {},
-      resolveAllSegmentsWithRevalidation: async () => ({
+      resolveAllSegments: async () => ({
         segments: [],
         matchedIds: [],
       }),

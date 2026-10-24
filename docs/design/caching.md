@@ -417,7 +417,7 @@ That holds on a hit too. The route's entry stores only the boundary's subtree:
 `cacheRoute` drops every segment whose id does not extend the boundary entry's
 shortCode (`CacheScope.covers`; shortCodes are hierarchical). On a hit,
 `withCacheLookup` resolves the entries above the boundary as an uncached render
-would (`resolveAllSegmentsWithRevalidation`: a FRESH pass for a full match, a
+would (`resolveAllSegments`: a FRESH pass for a full match, a
 partial pass otherwise), then replays the record and runs the loaders below the boundary. So
 an outer layout's header write lands on every response, and the `ctx.set()`
 values it produces reach the loaders inside the boundary. Nested enabled
@@ -2060,7 +2060,7 @@ for (const entry of traverseBack(manifestEntry)) {
     }
   }
   // Cache miss - run handler normally
-  const resolved = await resolveSegmentWithRevalidation(...);
+  const resolved = await resolveSegment(...);
   // Queue for caching after handlers settle
 }
 ```

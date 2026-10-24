@@ -188,7 +188,7 @@ export async function rerenderAndCacheRoute<TEnv>(
     routerCtx.setupLoaderAccess(handlerContext, loaderPromises);
 
     const { segments } = await runInStore(() =>
-      routerCtx.resolveAllSegmentsWithRevalidation(
+      routerCtx.resolveAllSegments(
         freshPassInput(handlerContext, ctx.routeKey, ctx.matched.params, {
           skipLoaders: true,
         }),

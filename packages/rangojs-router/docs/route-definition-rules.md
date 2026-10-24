@@ -153,7 +153,7 @@ their parent's `layout[]` array.
    handled those errors. `parent` itself stays null: `matchError`'s
    matched-id stack (`router/match-api.ts`) starts at the entry that holds
    the boundary, which can be an orphan, and must stop there
-3. At runtime, `resolveOrphanLayoutWithRevalidation()` creates segments for each orphan layout,
+3. At runtime, `resolveOrphanLayout()` creates segments for each orphan layout,
    then for the routeless entries in its own `layout[]` (a `layout()` after a
    bare `cache()` marker, a wrapper inside a routeless wrapper). Before issue
    #918 it rendered one level only and dropped those
@@ -244,7 +244,7 @@ it. The route then carries its own cache scope with itself as the boundary
 segment and its own layouts and parallels are the cached unit. Before issue
 #912 it created an orphan cache entry here. That entry was never an ancestor
 of the route, so no scope was built, and a `layout()` declared after it nested
-under the entry, where `resolveOrphanLayoutWithRevalidation()` never rendered it.
+under the entry, where `resolveOrphanLayout()` never rendered it.
 
 The same holds for a `cache()` inside a routeless `layout()`, `middleware()`
 or `transition()` wrapper in a path (`enclosingRoute()` in

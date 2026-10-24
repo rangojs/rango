@@ -43,7 +43,7 @@ store is sealed and every _tracked handler promise_ has settled
 That barrier is narrower than "the tree is rendered." It covers handlers, because
 handlers are the only segment components the router owns and invokes
 (`src/router.ts:405-435` tracks them; the `trackStreamedHandler` calls in
-`resolveEntryHandlerWithRevalidation` and `resolveParallelSlotComponent`
+`resolveEntryHandler` and `resolveParallelSlotComponent`
 (`src/router/segment-resolution/revalidation.ts`) are the only `track()` sites). It does **not**
 cover an arbitrary async server component deeper in the user's tree that tries to
 push during streaming — that push lands after `completed` has flipped and throws

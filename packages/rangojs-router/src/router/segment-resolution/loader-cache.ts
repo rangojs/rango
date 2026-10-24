@@ -459,7 +459,7 @@ function recordOwnerKey(cachedLoaderId: string): () => string {
  * here (consumer docs: skills/ppr/SKILL.md "The loader lane rule";
  * docs/design/loader-container-bake.md). This is the single funnel every
  * loader segment path routes through (resolveOwnerLoaders: the full match's
- * FRESH pass, cache-hit and revalidation resolveLoadersOnlyWithRevalidation, and
+ * FRESH pass, cache-hit and revalidation resolveLoadersOnly, and
  * intercept loaders in intercept-resolution.ts, which pass no bake key and
  * never run under a shell capture), so the lane is decided here, per LOADER,
  * never by the entry's loading():
@@ -632,7 +632,7 @@ function executeLoaderData<TEnv>(
 
   // Dedup the cache read-through across repeated resolutions of the SAME
   // loaderId in one request. An orphan layout with parallel slots inherits its
-  // parent route's loaders, so resolveOrphanLayoutWithRevalidation re-resolves the
+  // parent route's loaders, so resolveOrphanLayout re-resolves the
   // parent's loaders under a different shortCode — calling resolveLoaderData
   // again for the same loaderId. The cache key (loader:{loaderId}:{host}
   // {pathname}:{sortedParams}) does not include the shortCode and ctx/params

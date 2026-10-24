@@ -48,8 +48,8 @@ vi.mock("../../server/context.js", async () => {
 });
 
 import {
-  resolveParallelSegmentsWithRevalidation,
-  resolveOrphanLayoutWithRevalidation,
+  resolveParallelSegments,
+  resolveOrphanLayout,
 } from "../segment-resolution/revalidation.js";
 import { createLoader } from "../../loader.js";
 import type { EntryData } from "../../server/context.js";
@@ -173,7 +173,7 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     const layout = makeLayoutWithParallelSlot(fn1, fn2);
     const clientIds = new Set(["L0", "L0.@panel"]);
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -201,7 +201,7 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     const fn2 = vi.fn(() => false);
     const layout = makeLayoutWithParallelSlot(fn1, fn2);
 
-    const result = await resolveParallelSegmentsWithRevalidation(
+    const result = await resolveParallelSegments(
       {
         context: makeContext(),
         client: new Set(),
@@ -229,7 +229,7 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     // Parent L0 NOT in clientSegmentIds → isNewParent=true
     const clientIds = new Set(["someOtherSegment"]);
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -256,7 +256,7 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     // Slot not in clientSegmentIds, parent IS — but belongsToRoute=true
     const clientIds = new Set(["L0"]);
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -285,7 +285,7 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     // Mirrors the user's scenario: parent (L0) known, panel (L0.@panel) not.
     const clientIds = new Set(["L0"]);
 
-    const result = await resolveParallelSegmentsWithRevalidation(
+    const result = await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -316,7 +316,7 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     const layout = makeLayoutWithParallelSlot(fn1, fn2);
     const clientIds = new Set(["L0"]);
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -393,7 +393,7 @@ describe("parallel revalidate() fns invocation matrix (main path)", () => {
     } as any;
     const clientIds = new Set(["L0", "L0.@panel"]);
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -474,7 +474,7 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const layout = layoutWithSentinelSlot("L0", [hardFalse], handler);
     const clientIds = new Set(["L0"]);
 
-    const result = await resolveParallelSegmentsWithRevalidation(
+    const result = await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -506,7 +506,7 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const layout = layoutWithSentinelSlot("L0", [hardFalse], handler);
     const clientIds = new Set(["someOtherSegment"]);
 
-    const result = await resolveParallelSegmentsWithRevalidation(
+    const result = await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -536,7 +536,7 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const handler = vi.fn(() => "PANEL_RESOLVED");
     const layout = layoutWithSentinelSlot("L0", [softFalse], handler);
 
-    const result = await resolveParallelSegmentsWithRevalidation(
+    const result = await resolveParallelSegments(
       {
         context: makeContext(),
         client: new Set(["L0"]),
@@ -563,7 +563,7 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const handler = vi.fn(() => "PANEL_RESOLVED");
     const orphan = layoutWithSentinelSlot("O0", [hardFalse], handler);
 
-    const result = await resolveOrphanLayoutWithRevalidation(
+    const result = await resolveOrphanLayout(
       {
         context: makeContext(),
         client: new Set(["O0"]),
@@ -595,7 +595,7 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const handler = vi.fn(() => "PANEL_RESOLVED");
     const layout = layoutWithSentinelSlot("L0", [hardFalse], handler);
 
-    const result = await resolveParallelSegmentsWithRevalidation(
+    const result = await resolveParallelSegments(
       {
         context: makeContext(),
         client: new Set(["L0", "L0.@panel"]),
@@ -624,7 +624,7 @@ describe("new-segment floor: a false revalidate cannot blank an unrendered slot"
     const handler = vi.fn(() => "PANEL_RESOLVED");
     const layout = layoutWithSentinelSlot("L0", [hardFalse], handler);
 
-    const result = await resolveParallelSegmentsWithRevalidation(
+    const result = await resolveParallelSegments(
       {
         context: makeContext(),
         client: new Set(["L0"]),
@@ -660,7 +660,7 @@ describe("parallel revalidate() fns invocation matrix (orphan layout path)", () 
     const orphan = makeOrphanLayoutWithParallelSlot(fn1, fn2);
     const clientIds = new Set(["O0", "O0.@panel"]);
 
-    await resolveOrphanLayoutWithRevalidation(
+    await resolveOrphanLayout(
       {
         context: makeContext(),
         client: clientIds,
@@ -685,7 +685,7 @@ describe("parallel revalidate() fns invocation matrix (orphan layout path)", () 
     const fn2 = vi.fn(() => false);
     const orphan = makeOrphanLayoutWithParallelSlot(fn1, fn2);
 
-    await resolveOrphanLayoutWithRevalidation(
+    await resolveOrphanLayout(
       {
         context: makeContext(),
         client: new Set(),
@@ -712,7 +712,7 @@ describe("parallel revalidate() fns invocation matrix (orphan layout path)", () 
     // Orphan known, panel slot not.
     const clientIds = new Set(["O0"]);
 
-    await resolveOrphanLayoutWithRevalidation(
+    await resolveOrphanLayout(
       {
         context: makeContext(),
         client: clientIds,
@@ -738,10 +738,10 @@ describe("parallel revalidate() fns invocation matrix (orphan layout path)", () 
 // client set, parent IS (isNewParent=false), belongsToRoute=false, and ZERO
 // revalidate fns — so the policy SEED is the final decision (no fn overrides it).
 //
-//   - main path  (resolveParallelSegmentsWithRevalidation): seed =
+//   - main path  (resolveParallelSegments): seed =
 //     belongsToRoute || isNewParent = false  -> slot SKIPPED (component null,
 //     handler not run).
-//   - orphan path (resolveOrphanLayoutWithRevalidation): seed = unconditional
+//   - orphan path (resolveOrphanLayout): seed = unconditional
 //     true -> slot FORCE-RENDERED (handler runs). This is the #482 blank-
 //     parent-chain-slot guard.
 //
@@ -797,7 +797,7 @@ describe("parallel parent-chain seed divergence (zero revalidate fns)", () => {
     // Parent L0 known, slot L0.@panel not -> isNewParent=false; belongsToRoute=false.
     const clientIds = new Set(["L0"]);
 
-    const result = await resolveParallelSegmentsWithRevalidation(
+    const result = await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -829,7 +829,7 @@ describe("parallel parent-chain seed divergence (zero revalidate fns)", () => {
     // the divergent case the suite above never exercised.
     const clientIds = new Set(["O0"]);
 
-    const result = await resolveOrphanLayoutWithRevalidation(
+    const result = await resolveOrphanLayout(
       {
         context: makeContext(),
         client: clientIds,
@@ -907,7 +907,7 @@ describe("parallel loaderOrder emission order (orphan 'before' vs main 'after')"
   it("'after' (main default) emits the slot first; 'before' (orphan) emits loaders first", async () => {
     const clientIds = new Set(["L0", "L0.@panel"]);
 
-    const afterResult = await resolveParallelSegmentsWithRevalidation(
+    const afterResult = await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -923,7 +923,7 @@ describe("parallel loaderOrder emission order (orphan 'before' vs main 'after')"
       false,
     );
 
-    const beforeResult = await resolveParallelSegmentsWithRevalidation(
+    const beforeResult = await resolveParallelSegments(
       {
         context: makeContext(),
         client: clientIds,
@@ -993,7 +993,7 @@ describe("parallel loaderOrder emission order (orphan 'before' vs main 'after')"
     } as any;
     const clientIds = new Set(["O0", "O0.@panel"]);
 
-    const result = await resolveOrphanLayoutWithRevalidation(
+    const result = await resolveOrphanLayout(
       {
         context: makeContext(),
         client: clientIds,

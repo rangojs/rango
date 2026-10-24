@@ -3,7 +3,7 @@ import type { EntryData } from "../../server/context.js";
 import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import {
   buildEntryRevalidateMap,
-  resolveLoadersOnlyWithRevalidation,
+  resolveLoadersOnly,
 } from "../segment-resolution/revalidation.js";
 import type { SegmentResolutionDeps } from "../types.js";
 
@@ -176,7 +176,7 @@ function makeCacheBoundaryWithSharedLoader(): EntryData {
 
 describe("cache-boundary shared loader dedup", () => {
   it("a FRESH pass emits shared loader only once when cache wraps layout", async () => {
-    const { segments } = await resolveLoadersOnlyWithRevalidation(
+    const { segments } = await resolveLoadersOnly(
       makeFreshPass(makeContext(), makeDeps()),
       [makeCacheBoundaryWithSharedLoader()],
     );
@@ -187,10 +187,10 @@ describe("cache-boundary shared loader dedup", () => {
     expect(cartSegments).toHaveLength(1);
   });
 
-  it("resolveLoadersOnlyWithRevalidation emits shared loader only once when cache wraps layout", async () => {
+  it("resolveLoadersOnly emits shared loader only once when cache wraps layout", async () => {
     mockEvaluateRevalidation.mockClear();
 
-    const result = await resolveLoadersOnlyWithRevalidation(
+    const result = await resolveLoadersOnly(
       {
         context: makeContext(),
         client: new Set(["C0D0.src/loaders/cart.ts#Cart"]),
@@ -214,7 +214,7 @@ describe("cache-boundary shared loader dedup", () => {
 
 describe("cache-hit parallel loaders", () => {
   it("a FRESH pass includes loaders from parallel entries using the parent shortCode", async () => {
-    const { segments } = await resolveLoadersOnlyWithRevalidation(
+    const { segments } = await resolveLoadersOnly(
       makeFreshPass(makeContext(), makeDeps()),
       [makeParallelLoaderEntry()],
     );
@@ -223,10 +223,10 @@ describe("cache-hit parallel loaders", () => {
     expect(segments[0]?.id).toBe("L0D0.parallel-loader");
   });
 
-  it("resolveLoadersOnlyWithRevalidation includes parallel loaders using the parent shortCode", async () => {
+  it("resolveLoadersOnly includes parallel loaders using the parent shortCode", async () => {
     mockEvaluateRevalidation.mockClear();
 
-    const result = await resolveLoadersOnlyWithRevalidation(
+    const result = await resolveLoadersOnly(
       {
         context: makeContext(),
         client: new Set(["L0D0.parallel-loader"]),
@@ -246,7 +246,7 @@ describe("cache-hit parallel loaders", () => {
     expect(result.matchedIds).toEqual(["L0D0.parallel-loader"]);
   });
 
-  it("resolveLoadersOnlyWithRevalidation keeps a SKIPPED loader in matchedIds but drops it from segments", async () => {
+  it("resolveLoadersOnly keeps a SKIPPED loader in matchedIds but drops it from segments", async () => {
     // The reval-only divergence vs a FRESH pass: when a loader's gate says
     // skip (it's already in the client set and revalidate() returned false), the
     // loader is NOT re-fetched (absent from segments) but its id STAYS in
@@ -255,7 +255,7 @@ describe("cache-hit parallel loaders", () => {
     mockEvaluateRevalidation.mockClear();
     mockEvaluateRevalidation.mockReturnValueOnce(false); // loader revalidate -> skip
 
-    const result = await resolveLoadersOnlyWithRevalidation(
+    const result = await resolveLoadersOnly(
       {
         context: makeContext(),
         client: new Set(["L0D0.parallel-loader"]), // loader IS in the client set
