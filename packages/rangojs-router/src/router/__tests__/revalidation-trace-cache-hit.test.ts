@@ -1,6 +1,7 @@
 /**
  * Tests that the cache-hit trace path in withCacheLookup emits
- * "new-segment" and "cached-no-rules" trace entries.
+ * "new-segment" and "cached-no-rules" trace entries, and that a held
+ * segment's revalidate() rules emit the revalidation.decision event.
  */
 import { describe, it, expect, vi } from "vitest";
 
@@ -13,11 +14,14 @@ vi.mock("../../internal-debug.js", () => ({
 const {
   mockEvaluateRevalidation,
   mockRevalidateRules,
+  mockTelemetry,
   mockResolveLoadersOnlyWithRevalidation,
 } = vi.hoisted(() => ({
   mockEvaluateRevalidation: vi.fn(async () => false),
   // When set, buildEntryRevalidateMap returns these rules for matching segments
   mockRevalidateRules: { value: null as Map<string, any> | null },
+  // When set, the router's telemetry sink (observeEvent emits to it)
+  mockTelemetry: { value: undefined as TelemetrySink | undefined },
   mockResolveLoadersOnlyWithRevalidation: vi.fn(async () => ({
     segments: [],
     matchedIds: [],
@@ -34,6 +38,7 @@ vi.mock("../router-context.js", () => ({
       return new Map();
     },
     resolveLoadersOnlyWithRevalidation: mockResolveLoadersOnlyWithRevalidation,
+    telemetry: mockTelemetry.value,
   }),
   runWithRouterContext: (_ctx: any, fn: any) => fn(),
 }));
@@ -51,6 +56,7 @@ import {
   flushRevalidationTrace,
 } from "../logging.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
+import type { TelemetryEvent, TelemetrySink } from "../telemetry.js";
 import type { ResolvedSegment } from "../../types.js";
 
 function makeSegment(
@@ -280,5 +286,66 @@ describe("cache-hit trace entries", () => {
     expect(options.stale).toBeUndefined();
 
     mockRevalidateRules.value = null;
+  });
+
+  it("emits revalidation.decision once per held segment with rules, in segment order, with each rule's decision", async () => {
+    // The decision is the segment's own rule's answer.
+    mockEvaluateRevalidation.mockClear();
+    mockEvaluateRevalidation.mockImplementation(async (...args: unknown[]) => {
+      const [{ revalidations }] = args as [
+        { revalidations: { fn: () => boolean }[] },
+      ];
+      return revalidations[0].fn();
+    });
+    const rules = new Map();
+    rules.set("L0", { revalidate: [() => true] });
+    rules.set("N0", { revalidate: [() => true] });
+    rules.set("R0", { revalidate: [() => false] });
+    mockRevalidateRules.value = rules;
+    const events: TelemetryEvent[] = [];
+    mockTelemetry.value = { emit: (event) => events.push(event) };
+
+    try {
+      // L0 and R0: held, with rules. L1: held, no rules. N0: rules, but the
+      // client lacks it, so it is sent without asking them.
+      const ctx = makeCtx(
+        ["L0", "L1", "R0"],
+        [
+          makeSegment("L0", "layout"),
+          makeSegment("L1", "layout"),
+          makeSegment("N0", "layout"),
+          makeSegment("R0", "route"),
+        ],
+      );
+
+      const segments = await collect(
+        withCacheLookup(ctx, makeState())(empty()),
+      );
+
+      expect(segments.map((s) => s.id)).toEqual(["L0", "L1", "N0", "R0"]);
+      expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(2);
+      const emitted = events.filter(
+        (event) => event.type === "revalidation.decision",
+      );
+      expect(emitted).toEqual([
+        expect.objectContaining({
+          segmentId: "L0",
+          pathname: "/b",
+          routeKey: "test.route",
+          shouldRevalidate: true,
+        }),
+        expect.objectContaining({
+          segmentId: "R0",
+          pathname: "/b",
+          routeKey: "test.route",
+          shouldRevalidate: false,
+        }),
+      ]);
+    } finally {
+      mockTelemetry.value = undefined;
+      mockRevalidateRules.value = null;
+      mockEvaluateRevalidation.mockReset();
+      mockEvaluateRevalidation.mockImplementation(async () => false);
+    }
   });
 });
