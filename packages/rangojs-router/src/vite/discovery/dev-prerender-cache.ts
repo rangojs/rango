@@ -23,6 +23,7 @@
  */
 
 import type { SerializedSegmentData } from "../../cache/types.js";
+import { interceptVariantSegments } from "../../prerender/store.js";
 
 /** Structural slice of `matchForPrerender`'s result the payload derivation needs. */
 export interface DevPrerenderMatchPayloadSource {
@@ -37,8 +38,9 @@ export interface DevPrerenderPayloadBodies {
   /** `intercept != 1` response: the route's own segments + handles. */
   main: string;
   /**
-   * `intercept=1` response: main + intercept segments with the MERGED handle
-   * string. Falls back to `main` byte-for-byte when the route has no
+   * `intercept=1` response: the build's intercept variant
+   * (interceptVariantSegments, prerender/store.ts) with the producer's handle
+   * string for it. Falls back to `main` byte-for-byte when the route has no
    * intercept segments — mirroring the endpoint's historical behavior.
    */
   intercept: string;
@@ -64,7 +66,10 @@ export function payloadBodiesFromResult(
   });
   const intercept = result.interceptSegments?.length
     ? JSON.stringify({
-        segments: [...result.segments, ...result.interceptSegments],
+        segments: interceptVariantSegments(
+          result.segments,
+          result.interceptSegments,
+        ),
         handles: result.interceptHandles ?? "",
       })
     : main;

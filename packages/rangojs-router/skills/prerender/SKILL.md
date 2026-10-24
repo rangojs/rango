@@ -309,16 +309,16 @@ layout(DocsNav, () => [
 
 ## Interaction with DSL Items
 
-| DSL item       | Behavior with Prerender                                                                                                                                                                                                                                                     |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching.                                                                                                                                                                                                               |
-| `revalidate()` | Without Passthrough: no effect on the prerendered segments (re-served from the build artifact); loader revalidation still works. With Passthrough: re-renders through the live handler.                                                                                     |
-| `cache()`      | Orthogonal -- prerendered segments bypass the runtime cache. Use `cache()` on parent layouts and loaders.                                                                                                                                                                   |
-| `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                        |
-| `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                                |
-| `middleware()` | Skipped while collecting build-time Flight payloads (no request). For `Prerender` + `ppr`, the build-shell step replays global and route middleware with `ctx.build === true`; `ctx.dynamic()` skips that shell. At request time middleware runs normally on every request. |
-| `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                                                                                                                                                      |
-| `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when` config conditions are skipped at build time (all intercepts are pre-rendered unconditionally).    |
+| DSL item       | Behavior with Prerender                                                                                                                                                                                                                                                                                     |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching.                                                                                                                                                                                                                                               |
+| `revalidate()` | Without Passthrough: no effect on the prerendered segments (re-served from the build artifact); loader revalidation still works. With Passthrough: re-renders through the live handler.                                                                                                                     |
+| `cache()`      | Orthogonal -- prerendered segments bypass the runtime cache. Use `cache()` on parent layouts and loaders.                                                                                                                                                                                                   |
+| `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                                                        |
+| `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                                                                |
+| `middleware()` | Skipped while collecting build-time Flight payloads (no request). For `Prerender` + `ppr`, the build-shell step replays global and route middleware with `ctx.build === true`; `ctx.dynamic()` skips that shell. At request time middleware runs normally on every request.                                 |
+| `loading()`    | Ignored without Passthrough. Works for live fallback with Passthrough.                                                                                                                                                                                                                                      |
+| `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside the main entry, without the route's own segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when` config conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
 
 When Passthrough revalidation is enabled, remember that revalidation is
 still partial: opting a child segment into revalidation does not
@@ -1426,19 +1426,22 @@ export const urlpatterns = urls(({ path, include }) => [
 ## Interaction with intercept()
 
 When a pre-rendered route is also the target of an `intercept()`, the build system
-resolves the intercept handler at build time and stores a combined entry (main
-segments + intercept segments) under an `/i`-suffixed key alongside the main entry:
+resolves the intercept handler at build time and stores an intercept variant
+under an `/i`-suffixed key alongside the main entry. The variant holds what an
+intercept navigation renders: the main segments without the route's own (its
+handler, layouts and slots, which a render under an intercept skips), then the
+intercept segments, with the handle values of exactly those segments:
 
 ```
 prerender store keys:
   "blog.post/a1b2c3"      -> main segments (full page)
-  "blog.post/a1b2c3/i"    -> main segments + intercept segments (modal variant)
+  "blog.post/a1b2c3/i"    -> main segments without the route's own + intercept segments
 ```
 
 At runtime, the cache-lookup middleware checks `ctx.isIntercept`:
 
 - **Intercept navigation**: looks up `paramHash/i` first. If found, yields
-  the combined entry. `handleCacheHitIntercept()` extracts intercept segments
+  the variant's segments. `handleCacheHitIntercept()` extracts intercept segments
   (filtered by `namespace?.startsWith("intercept:")`) and sets up slots.
 - **Direct navigation**: looks up `paramHash` (no suffix). Standard prerender path.
 - **Intercept miss (no `/i` entry)**: falls through to the normal pipeline so

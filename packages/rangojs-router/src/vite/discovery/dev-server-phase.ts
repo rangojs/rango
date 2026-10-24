@@ -862,7 +862,7 @@ export function devServerPhase(s: DiscoveryState, server: ViteDevServer): void {
         // This prevents returning the wrong entry when multiple routers
         // have prerenderable routes sharing the same pathname.
         if (wantRouteName && result.routeName !== wantRouteName) continue;
-        // Pre-encoded MERGED handle string in the intercept body comes
+        // The pre-encoded handle string in the intercept body comes
         // from the producer (handles are Flight-encoded so
         // Promise/ReactNode values survive the wire).
         const bodies = payloadBodiesFromResult(result);
