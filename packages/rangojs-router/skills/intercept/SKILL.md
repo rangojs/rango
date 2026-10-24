@@ -505,7 +505,7 @@ Build-time behavior:
 
 Runtime behavior:
 
-- Intercept navigation: prerender store serves the `/i` variant (frozen handler + fresh loaders)
+- Intercept navigation: prerender store serves the `/i` variant (frozen handler + fresh loaders). A layout the client holds (`ShopLayout`) stays as it is on screen, as on a live intercept, unless its `revalidate()` asks for it
 - Direct navigation: prerender store serves the main variant (full page)
 - If no intercept prerender entry exists, or it lacks the selected intercept, falls through to live intercept resolution
 
