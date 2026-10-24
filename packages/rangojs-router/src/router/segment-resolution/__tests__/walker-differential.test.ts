@@ -586,7 +586,9 @@ type Exception =
    * The intercept branch of resolveAllSegmentsWithRevalidation
    * (`interceptResult`): under an intercept the walker skips the intercepted
    * route's entry (its handler and loaders) and lists only the route's id
-   * as matched. A FRESH pass has no intercept.
+   * as matched. A full match's FRESH pass has no intercept; the background
+   * re-render of an intercept record passes it to its FRESH pass
+   * (rerenderAndCacheRoute), which is not modelled here.
    */
   | "skipped under intercept"
   /**

@@ -2134,6 +2134,8 @@ When `isIntercept` is true, cache operations use the `intercept:` prefix. Interc
 
 **Note**: Proactive caching for intercept routes follows the same pattern - it populates the appropriate intercept cache entry when null components are detected.
 
+The re-render behind it and behind a stale HIT's refresh (`rerenderAndCacheRoute`) writes the record a MISS writes: it passes the match's `interceptResult` to the walk, so the intercepted route's own entry is skipped (its id is matched, its handler and loaders do not run). An `intercept:` record holds the layouts and the intercept's slot, never the route's page or its `cacheTag()`s.
+
 #### 5. MemorySegmentCacheStore SWR Limitation
 
 The in-memory store doesn't support SWR - it always returns `shouldRevalidate: false`:

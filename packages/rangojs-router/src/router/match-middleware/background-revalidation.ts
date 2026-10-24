@@ -97,7 +97,9 @@
  * Both full and partial requests resolve with a FRESH pass (without
  * revalidation logic) to ensure all segments have complete components.
  * Using revalidation-aware resolution would produce null components
- * for skipped segments, which would corrupt the cache entry.
+ * for skipped segments, which would corrupt the cache entry. Under an
+ * intercept the walk still skips the intercepted route's entry, as the MISS
+ * does: an intercept: record never holds the route's page.
  */
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
@@ -191,7 +193,12 @@ export async function rerenderAndCacheRoute<TEnv>(
           skipLoaders: true,
         }),
         ctx.entries,
-        { pathname: handlerContext.pathname },
+        // Under an intercept the route's own entry is skipped, as on a MISS.
+        {
+          interceptResult: ctx.interceptResult,
+          localRouteName: ctx.localRouteName,
+          pathname: handlerContext.pathname,
+        },
       ),
     );
     if (ctx.interceptResult) {
