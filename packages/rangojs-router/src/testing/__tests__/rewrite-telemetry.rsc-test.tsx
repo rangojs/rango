@@ -36,13 +36,34 @@ const router = createRouter({
   timeouts: { streamIdleMs: 20 },
 })
   .use(async (ctx, next) => {
+    if (ctx.pathname === "/hop1") throw rewrite("/hop2");
     if (ctx.pathname === "/old-shop") throw rewrite("/shop");
     if (ctx.pathname === "/old-product") throw rewrite("/product");
     return next();
   })
   .routes(
-    urls(({ path }) => [
+    urls(({ path, middleware }) => [
       path("/shop", () => <p>shop page</p>, { name: "shop" }),
+      path(
+        "/hop2",
+        () => <p>hop2</p>,
+        { name: "hop2" },
+        () => [
+          middleware(() => {
+            throw rewrite("/hop3");
+          }),
+        ],
+      ),
+      path(
+        "/hop3",
+        () => <p>hop3</p>,
+        { name: "hop3" },
+        () => [
+          middleware(() => {
+            throw rewrite("/product");
+          }),
+        ],
+      ),
       path(
         "/product",
         () => (
@@ -78,6 +99,21 @@ describe("telemetry of a rewritten request", () => {
     expect(types).toContain("request.start");
     expect(types).toContain("request.end");
     expect(types.at(-1)).toBe("request.timeout");
+    const start = events.find((event) => event.type === "request.start")!;
+    expect(start.requestId).toMatch(/^t-/);
+    for (const [type, requestId] of eventIds()) {
+      expect([type, requestId]).toEqual([type, start.requestId]);
+    }
+  });
+
+  it("a chain of rewrites (global, then two route middleware) reports one requestId", async () => {
+    await expect(
+      serveShellRequest(router, "/hop1", {
+        cacheStore: new MemorySegmentCacheStore(),
+      }),
+    ).rejects.toMatchObject({ name: "RouterTimeoutError" });
+
+    expect(events.map((event) => event.type).at(-1)).toBe("request.timeout");
     const start = events.find((event) => event.type === "request.start")!;
     expect(start.requestId).toMatch(/^t-/);
     for (const [type, requestId] of eventIds()) {

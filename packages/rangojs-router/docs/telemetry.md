@@ -345,7 +345,9 @@ optional). The router takes it from the first non-empty header among
 otherwise generates an internal id of the form `t-{base36 counter}`. The same
 request always reports the same id, a request that middleware rewrote with
 `throw rewrite()` included: every pass's events and a stream-idle
-`request.timeout` carry the visitor's id.
+`request.timeout` carry the visitor's id. One exception: with no request-id
+header, the re-render after a no-JS form post (progressive enhancement) runs
+on a request of its own and reports that request's id on its events.
 
 | Event                     | Lifecycle                                             |
 | ------------------------- | ----------------------------------------------------- |

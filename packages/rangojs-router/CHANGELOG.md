@@ -84,9 +84,11 @@ request it cut off. `dispatch()` from `@rangojs/router/testing` already
 reported one id for a rewritten request, so the testing primitive and
 `router.fetch` disagreed.
 
-**Now.** Every event of the request carries the visitor's id, in
-`router.fetch` and `dispatch()` alike. A request that sends a request-id
-header reports that header's value, as before. No change in your code.
+**Now.** Every event of a rewritten request, through any number of rewrites,
+carries the visitor's id, in `router.fetch` and `dispatch()` alike. A request
+that sends a request-id header reports that header's value, as before. A
+no-JS form post's re-render still reports its own id on its events, as it did
+before this release. No change in your code.
 
 ### Fixed: a stale `cache()` HIT's background refresh sets no fresh-reads cookie on the visitor's response
 
