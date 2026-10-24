@@ -698,6 +698,47 @@ document's record (`BYPASS; reason=explicit-cache-hit`), as on a `ppr` route
 without a `key()`. The PPR shell partition and a response route's entry are
 unchanged. No change in your code.
 
+### Fixed: under a store `keyGenerator` that ignores `defaultKey`, a document request and a plain navigation never render an intercept's record
+
+**Before.** A store `keyGenerator`'s result was the record key as returned.
+The default key it receives starts with the request kind (`doc:`,
+`partial:`, `intercept:<intercept>:`), and a result that did not keep it
+gave a document request, a client navigation and every intercept navigation
+to the URL one record. So the defects above happened without any `key()`:
+after an intercept navigation stored its record, a reload of the item URL
+rendered the intercept and no page, and a layout's
+`loading(..., { ssr: false })` fallback showed on a navigation after a
+document load as it never does live, or streamed on a document load after a
+navigation.
+
+```ts
+const store = new MemorySegmentCacheStore({
+  // A tenant per host, ignoring defaultKey.
+  keyGenerator: (ctx) => `tenant:${ctx.url.host}${ctx.url.pathname}`,
+});
+// /list -> /item/1 stored the intercept's record under that key; a reload
+// of /item/1 then rendered the layout with ItemModal and no ItemPage.
+```
+
+**Now.** A route record keeps its request kind whatever the `keyGenerator`
+returns. A result that starts with its kind, which every result built on
+`defaultKey` (`` `${defaultKey}|${tenant}` ``) and the default key itself
+do, is the key as before, byte for byte. A result that does not gets the kind
+as a last part: `items` is stored as `items|doc`, `items|partial` or
+`items|intercept%3A…`, and `` `en:${defaultKey}` `` as
+`en%3Adoc%3A…|doc`. Records such a `keyGenerator` stored before this release
+are not read again: `CFCacheStore` and `VercelCacheStore` already miss them
+under the new router version; on `MemorySegmentCacheStore` or a custom store
+each request kind renders once and stores a new record, and the old one
+expires with its TTL. On a `ppr` route under a `cache()` whose store has
+such a `keyGenerator`, the first navigation after a document request is now
+answered from the PPR shell (`x-rango-ppr-replay: HIT`) instead of the
+document's record (`BYPASS`), as under a `keyGenerator` built on
+`defaultKey`. The PPR shell partition (the raw
+result), a loader's entry and a response route's entry are unchanged. The
+`keyGenerator` examples in the store JSDoc now build on `defaultKey`
+(`` `${defaultKey}|${locale}` ``). No change in your code.
+
 ### Added: the build warns when an intercept over a `Prerender()` route renders live
 
 An intercept a navigation selects over a `Prerender()` route is served from
