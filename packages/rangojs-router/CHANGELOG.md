@@ -111,6 +111,22 @@ invalidation the request itself makes (in a server action, or in a route
 handler, middleware or render outside a background refresh) sets the cookie
 as before. No change in your code.
 
+### Fixed: a stale `cache()` record a PPR shell recapture reads refreshes under `cache()` rules
+
+**Before.** When a `ppr` route's shell capture read a stale `cache()` record,
+the background refresh it started rendered under the capture's guard instead
+of the `cache()` rules. A loader that a cached handler awaits may read
+`headers()` or `cookies()` under `cache()`, but in that refresh the read threw,
+the refresh failed with `[RSC] Handler error … cannot be called while
+capturing a shared shell`, and the record was not rewritten. A document served
+from the shell does not read the record; its recapture does. So each
+recapture replayed the stale record, and the page showed the old content
+until the record expired or a request outside the shell refreshed it.
+
+**Now.** The refresh renders as any other background refresh of the record,
+under `cache()` rules, and the next recapture replays the refreshed record.
+The capture itself still refuses those reads. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

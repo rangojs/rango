@@ -317,6 +317,10 @@ The public DOM seam is
   rewrite rebase),
   [`server/__tests__/render-pass-capture-state.test.ts`](../../src/server/__tests__/render-pass-capture-state.test.ts)
   (which pass has a `ShellCaptureState`, and whose writes reach it),
+  [`testing/__tests__/background-revalidation-pass.rsc-test.tsx`](../../src/testing/__tests__/background-revalidation-pass.rsc-test.tsx)
+  (a stale `cache()` record's background re-render: the visitor's render
+  barrier, an open intercept's loaders included, and a refresh a shell
+  recapture starts),
   [`__tests__/tree/structure.test.tsx`](../../src/__tests__/tree/structure.test.tsx)
   (the tree `renderSegments` builds per `loading` variant),
   [`router/segment-resolution/__tests__/walker-differential.test.ts`](../../src/router/segment-resolution/__tests__/walker-differential.test.ts)

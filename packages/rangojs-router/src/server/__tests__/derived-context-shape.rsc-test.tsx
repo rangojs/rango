@@ -385,7 +385,7 @@ describe("PPR HIT tail context (createTailContext)", () => {
 });
 
 describe("background re-render context (rerenderAndCacheRoute)", () => {
-  it("owns its handle store, error lists and response writers; inherits the request's render barrier", async () => {
+  it("owns its handle store, error lists, response writers and an empty capture state; inherits the request's render barrier", async () => {
     const base = requestContext();
     // The foreground has rendered: it measured, recovered and reported.
     Object.assign(base, {
@@ -442,6 +442,7 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       "_setFreshReadsCookie",
       "_setKeepCacheDirective",
       "_setStatus",
+      "_shellCaptureState",
       "deleteCookie",
       "header",
       "res (accessor)",
@@ -450,6 +451,7 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       "setTheme",
     ]);
     expect(ctx._handleStore).toBe(handleStore);
+    expect(ctx._shellCaptureState).toBeUndefined();
     expect({
       _metricsStore: ctx._metricsStore,
       _recoveredHandlerErrors: ctx._recoveredHandlerErrors,
@@ -487,7 +489,9 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
     expect(base.res.status).toBe(200);
     expect(base.res.headers.get("x-background")).toBeNull();
     expect(base.res.headers.get("set-cookie")).toBeNull();
-    // No barrier of its own: the request's, as it is today.
+    // No barrier of its own: the request's resolved before the pass starts,
+    // so an open intercept's loader passes rendered() at once, and the
+    // record keeps nothing it reads.
     expect(Object.hasOwn(ctx, "_resolveRenderBarrier")).toBe(false);
     expect(ctx._resolveRenderBarrier).toBe(base._resolveRenderBarrier);
   });

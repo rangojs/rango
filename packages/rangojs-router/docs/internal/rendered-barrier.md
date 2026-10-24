@@ -172,7 +172,7 @@ The render barrier is a deferred promise on the request context:
   (`wireRenderBarrier` in `server/request-context.ts`, called by
   `deriveRenderPass` in `server/render-pass.ts` for the `shell-capture` and
   `ppr-tail` rows of `RENDER_PASS_FIELDS`; the background re-render's row
-  inherits the request's barrier). This is scar
+  inherits the request's barrier, see the next item). This is scar
   tissue (issue #684, plan 009): the derived context is
   `Object.create(reqCtx)`, and before the explicit wiring every
   `_renderBarrier*` read fell through the prototype to the foreground
@@ -185,6 +185,28 @@ The render barrier is a deferred promise on the request context:
   segment resolution, `_treeHasStreaming` is recomputed for the capture's
   tree, and the snapshot is built from the capture's store. Pinned by
   `router/__tests__/shell-capture-barrier-isolation.test.ts`.
+- **Background re-render of a stale route record**: the
+  `background-revalidation` row inherits the request's barrier, and its
+  loaders do call `rendered()` on it. The route's own pass skips loaders
+  (`skipLoaders`), but an open intercept resolves with `heldNothingPassInput`
+  (`background-revalidation.ts` `rerenderAndCacheRoute`), which runs the
+  intercept's DSL loaders. You might expect the inherited barrier to hang
+  them or leak into the record. It does neither:
+  - The barrier has already resolved when the pass starts. A stale HIT
+    resolves it in `cache-lookup.ts` before `withBackgroundRevalidation`
+    starts the refresh, and proactive caching (`cache-store.ts`) runs from
+    `onResponse`, after segment resolution resolved it. So `rendered()`
+    returns at once, and the loader reads the visitor's handle snapshot, not
+    the refresh's store.
+  - Nothing the loader produces reaches the record: `cacheRoute` drops
+    loader segments (`cache/cache-scope.ts`), and `captureHandles` drops
+    loader pushes (`cache/handle-snapshot.ts`).
+  - A shell capture never takes the intercept branch:
+    `createNavigationCaptureRequest` (`rsc/shell-capture.ts`) strips the
+    intercept source.
+
+  Pinned through `serveShellRequest` by
+  `testing/__tests__/background-revalidation-pass.rsc-test.tsx`.
 
 ### Loader `get(handle)` After Barrier
 

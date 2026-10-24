@@ -2018,8 +2018,8 @@ export interface RouteRecordWindow {
  * derived request context as `_shellCaptureState`.
  * RENDER_PASS_FIELDS["shell-capture"] (server/render-pass.ts) creates it with
  * every field present, so it keeps one shape while the capture writes it. A
- * background re-render the capture starts derives its own from it
- * (RENDER_PASS_FIELDS["background-revalidation"]).
+ * background re-render the capture starts has none: it writes a route
+ * record, under cache() rules (RENDER_PASS_FIELDS["background-revalidation"]).
  */
 export interface ShellCaptureState {
   /**
