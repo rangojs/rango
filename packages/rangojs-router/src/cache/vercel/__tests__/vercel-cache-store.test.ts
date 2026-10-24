@@ -1095,7 +1095,7 @@ describe("VercelCacheStore", () => {
 
   // The document serve path's read: the prelude decoded in the store, once
   // per memoized shell, and debugPerformance stats when the request collects
-  // them (rsc-rendering.ts recordShellReadStats).
+  // them (shell-serve.ts recordShellReadStats).
   describe("readShellDocument", () => {
     function withMetrics<T>(fn: () => Promise<T>): Promise<T> {
       const ctx = createRequestContext({

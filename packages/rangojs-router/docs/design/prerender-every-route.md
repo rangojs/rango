@@ -190,15 +190,15 @@ record through the prototype, and must read normally. The predicate is read at
 six points, all before a store read that already exists. None of them needs a
 store contract change.
 
-| Layer                | Hook point (file:function)                                                                                                                                                                                           | Reached through the normal pipeline?           |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Route `cache()`      | `cache/cache-scope.ts:CacheScope.lookupRouteDetailed`, before `store.get`                                                                                                                                            | yes, plus the predicate                        |
-| Loader `cache()`     | `router/segment-resolution/loader-cache.ts:executeLoaderData`, the `getItem` passed to `readThroughItem`                                                                                                             | yes, plus the predicate                        |
-| `"use cache"`        | `cache/cache-runtime.ts:registerCachedFunction` (the wrapper), `store.getItem` and the in-flight follower loop                                                                                                       | yes, plus the predicate                        |
-| PPR document shell   | `rsc/rsc-rendering.ts:shellServePlan` (`readShellEntry`, `lookupBuildShell`, `storedSeqAtRead`, the descriptor); `rsc/shell-capture.ts:scheduleShellCapture` and `attemptCapture` via `ShellCaptureDescriptor.force` | yes, plus the predicate and `descriptor.force` |
-| Navigation shell     | none                                                                                                                                                                                                                 | not warmed; see below                          |
-| Document cache       | `cache/document-cache.ts:createDocumentCacheMiddleware`, the `getResponse`                                                                                                                                           | yes, plus the predicate                        |
-| Response-route cache | `rsc/response-cache-serve.ts:serveResponseRouteWithCache`, the `getResponse`                                                                                                                                         | yes, plus the predicate                        |
+| Layer                | Hook point (file:function)                                                                                                                                                                                  | Reached through the normal pipeline?           |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Route `cache()`      | `cache/cache-scope.ts:CacheScope.lookupRouteDetailed`, before `store.get`                                                                                                                                   | yes, plus the predicate                        |
+| Loader `cache()`     | `router/segment-resolution/loader-cache.ts:executeLoaderData`, the `getItem` passed to `readThroughItem`                                                                                                    | yes, plus the predicate                        |
+| `"use cache"`        | `cache/cache-runtime.ts:registerCachedFunction` (the wrapper), `store.getItem` and the in-flight follower loop                                                                                              | yes, plus the predicate                        |
+| PPR document shell   | `rsc/rsc-rendering.ts:shellServePlan` (`readShell`, `lookupBuildShell`, `storedSeqAtRead`, the descriptor); `rsc/shell-capture.ts:planShellCapture` and `attemptCapture` via `ShellCaptureDescriptor.force` | yes, plus the predicate and `descriptor.force` |
+| Navigation shell     | none                                                                                                                                                                                                        | not warmed; see below                          |
+| Document cache       | `cache/document-cache.ts:createDocumentCacheMiddleware`, the `getResponse`                                                                                                                                  | yes, plus the predicate                        |
+| Response-route cache | `rsc/response-cache-serve.ts:serveResponseRouteWithCache`, the `getResponse`                                                                                                                                | yes, plus the predicate                        |
 
 ### Route `cache()`
 
@@ -260,7 +260,7 @@ In replace mode `shellServePlan` keeps every gate up to the key (`isPartial`,
 method, `_dynamic`, the nonce gate, the store's shell family, the route
 scope's `allowsCache("read")`, `resolveRequestShellKey`), then:
 
-- skips `readShellEntry` and the build-shell lookup, so the request is a MISS;
+- skips `readShell` and the build-shell lookup, so the request is a MISS;
 - leaves `storedSeqAtRead` unset, so a capture another request stored in
   between does not cancel the warm's own (`skip-stored`);
 - sets `descriptor.force = true` and chains the warm record's sink in front of
@@ -279,7 +279,7 @@ schedules an ordinary capture, and the runner still wants its outcome); the
 skipped reads, the unset sequence and `force` are replace mode only.
 
 The response renders and `requestRenderPlan` schedules the capture as on any
-MISS. `scheduleShellCapture` with `force`:
+MISS. `planShellCapture` with `force`:
 
 - does not return on an in-flight capture for the key; it installs its own
   token, so a visitor's capture started meanwhile coalesces onto the warm's. The

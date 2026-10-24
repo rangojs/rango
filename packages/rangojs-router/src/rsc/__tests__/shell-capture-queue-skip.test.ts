@@ -23,7 +23,7 @@ vi.mock("../../cache/segment-codec.js", () => ({
 }));
 
 import {
-  scheduleShellCapture,
+  planShellCapture,
   isCaptureBackedOff,
   type ShellCaptureDebugEvent,
 } from "../shell-capture.js";
@@ -36,7 +36,7 @@ import { resolveTracing } from "../../router/tracing.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { SSRModule } from "../types.js";
 
-describe("scheduleShellCapture queue-wait timeout", () => {
+describe("planShellCapture queue-wait timeout", () => {
   it("publishes skip-queue-timeout, tags the span, releases the key, and skips backoff", async () => {
     const key = "/queue-skip:shell";
     const events: ShellCaptureDebugEvent[] = [];
@@ -80,15 +80,15 @@ describe("scheduleShellCapture queue-wait timeout", () => {
       debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
     };
 
-    scheduleShellCapture(
+    planShellCapture({
       ctx,
-      new Request("http://localhost/q"),
-      {},
-      new URL("http://localhost/q"),
+      request: new Request("http://localhost/q"),
+      env: {},
+      url: new URL("http://localhost/q"),
       reqCtx,
-      ssrModule,
+      ssr: () => ssrModule,
       descriptor,
-    );
+    });
     expect(captured).toHaveLength(1);
     await runWithRequestContext(reqCtx as any, () => captured[0]!());
 
@@ -114,21 +114,21 @@ describe("scheduleShellCapture queue-wait timeout", () => {
     // No backoff, and the in-flight key was released: a later schedule for
     // the same key is admitted again (not skip-in-flight).
     expect(isCaptureBackedOff(key)).toBe(false);
-    scheduleShellCapture(
+    planShellCapture({
       ctx,
-      new Request("http://localhost/q"),
-      {},
-      new URL("http://localhost/q"),
+      request: new Request("http://localhost/q"),
+      env: {},
+      url: new URL("http://localhost/q"),
       reqCtx,
-      ssrModule,
+      ssr: () => ssrModule,
       descriptor,
-    );
+    });
     expect(captured).toHaveLength(2);
     await runWithRequestContext(reqCtx as any, () => captured[1]!());
   });
 });
 
-describe("scheduleShellCapture inert-store guard", () => {
+describe("planShellCapture inert-store guard", () => {
   function makeScheduleArgs() {
     const events: ShellCaptureDebugEvent[] = [];
     const captured: Array<() => Promise<void>> = [];
@@ -148,20 +148,20 @@ describe("scheduleShellCapture inert-store guard", () => {
       captureShellHTML: vi.fn(),
     } as unknown as SSRModule;
     const schedule = (store: unknown, key: string) =>
-      scheduleShellCapture(
+      planShellCapture({
         ctx,
-        new Request("http://localhost/inert"),
-        {},
-        new URL("http://localhost/inert"),
+        request: new Request("http://localhost/inert"),
+        env: {},
+        url: new URL("http://localhost/inert"),
         reqCtx,
-        ssrModule,
-        {
+        ssr: () => ssrModule,
+        descriptor: {
           key,
           buildVersion: "test-build",
           store: store as any,
           debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
         },
-      );
+      });
     return { events, captured, schedule };
   }
 
@@ -195,7 +195,7 @@ describe("scheduleShellCapture inert-store guard", () => {
 // the guards that shed a herd of visitors, not the queue's limits: the wait
 // budget still drops it unrun, which the warm reports as
 // caches.shell "skipped-queue-timeout" (prerender/warm-request.ts).
-describe("scheduleShellCapture queue-wait timeout: a forced capture", () => {
+describe("planShellCapture queue-wait timeout: a forced capture", () => {
   it("is still dropped unrun at the queue wait budget (skip-queue-timeout), without backoff", async () => {
     const key = "/queue-skip-forced:shell";
     const events: ShellCaptureDebugEvent[] = [];
@@ -216,21 +216,21 @@ describe("scheduleShellCapture queue-wait timeout: a forced capture", () => {
     } as unknown as SSRModule;
     const putShell = vi.fn();
 
-    scheduleShellCapture(
-      { version: "v-test" } as unknown as HandlerContext<any>,
-      new Request("http://localhost/q"),
-      {},
-      new URL("http://localhost/q"),
+    planShellCapture({
+      ctx: { version: "v-test" } as unknown as HandlerContext<any>,
+      request: new Request("http://localhost/q"),
+      env: {},
+      url: new URL("http://localhost/q"),
       reqCtx,
-      ssrModule,
-      {
+      ssr: () => ssrModule,
+      descriptor: {
         key,
         buildVersion: "test-build",
         store: { putShell } as any,
         debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
         force: true,
       },
-    );
+    });
     expect(captured).toHaveLength(1);
     await captured[0]!();
 

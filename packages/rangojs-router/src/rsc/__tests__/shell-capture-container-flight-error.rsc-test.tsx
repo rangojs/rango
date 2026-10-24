@@ -40,7 +40,7 @@ vi.mock("@vitejs/plugin-rsc/rsc/client", async () => {
 });
 
 import {
-  scheduleShellCapture,
+  planShellCapture,
   isCaptureBackedOff,
   clearCaptureBackoff,
 } from "../shell-capture.js";
@@ -175,11 +175,19 @@ async function capture(
     tasks.push(task);
   };
 
-  scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, {
-    key,
-    buildVersion: "test-build",
-    ttl: 300,
-    store,
+  planShellCapture({
+    ctx,
+    request,
+    env: {},
+    url,
+    reqCtx,
+    ssr: () => ssrModule,
+    descriptor: {
+      key,
+      buildVersion: "test-build",
+      ttl: 300,
+      store,
+    },
   });
   expect(tasks).toHaveLength(1);
   await tasks[0]!();

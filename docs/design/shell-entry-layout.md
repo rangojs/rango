@@ -292,7 +292,7 @@ on `CFCacheStore` reads the framed body and returns the same `ShellCacheEntry`
 it always did (the prelude re-encoded with `toBase64`, 0.05 ms). The first-byte
 path uses an `@internal` optional store method,
 `readShellDocument(key, { tagHints })`, that only built-in stores implement
-and the serve path (`readShellEntry` in `rsc-rendering.ts`) prefers when
+and the serve path (`readShell` in `shell-serve.ts`) prefers when
 present. `tagHints` is the route's `ppr.tags`, known before the entry is read:
 
 ```ts

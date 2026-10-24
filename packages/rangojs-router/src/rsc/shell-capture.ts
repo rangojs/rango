@@ -4,7 +4,7 @@
  * Capture does NOT flow through the HTTP middleware pipeline. The integrated PPR
  * serve path (rsc-rendering.ts + shell-serve.ts) builds a ShellCaptureDescriptor
  * from the route's `ppr` path option after the served response is built and calls
- * scheduleShellCapture. The capture then runs as a background task that re-derives
+ * planShellCapture with it (ShellCaptureInput). The capture then runs as a background task that re-derives
  * the page via `ctx.router.match()` under its OWN derived request context — fresh
  * handle store, `_shellCaptureState.run` so live-lane loaders mask (loader-mask.ts)
  * and postpone at their loading() or inline <Suspense> boundary. The match is
@@ -148,7 +148,7 @@ const SHELL_SNAPSHOT_WRITE_SETTLE_MS = 1000;
  * Upper bound on the pre-render WRITE BARRIER: before the capture's match/render,
  * settle the background tasks the FOREGROUND request already scheduled — its
  * deferred ring-3 cacheRoute and ring-1 setItem writes all go through
- * reqCtx.waitUntil, and every one of them is scheduled BEFORE scheduleShellCapture
+ * reqCtx.waitUntil, and every one of them is scheduled BEFORE planShellCapture
  * runs (the response, and its onResponse callbacks, are committed first). Draining
  * them turns the capture's cache reads from a RACE into an ORDERING EDGE: the
  * capture deterministically observes the foreground's cache generation, replays it
@@ -225,7 +225,7 @@ async function raceTaskHardCap<T>(task: Promise<T>, key: string): Promise<T> {
  * Module-level in-flight key map: the stampede guard for background captures, and
  * its single owner. One capture runs per key per isolate; concurrent MISS/stale
  * requests for the same key coalesce onto the first (the rest see the key present
- * in scheduleShellCapture and skip). Added when a capture is scheduled and cleared
+ * in planShellCapture and skip). Added when a capture is scheduled and cleared
  * in the task's settle paths via a token-guarded release, so a later request can
  * recapture when TTL rolls. Living here (not split across the middleware) keeps
  * the add/clear lifecycle in one layer.
@@ -233,7 +233,7 @@ async function raceTaskHardCap<T>(task: Promise<T>, key: string): Promise<T> {
  * The value is the owning task's token ({@link CaptureGuardToken}) rather than
  * a bare set entry: workerd can kill a capture's waitUntil context before its
  * finally runs (or the task can wedge past every deadline), stranding the key.
- * scheduleShellCapture treats an entry older than
+ * planShellCapture treats an entry older than
  * SHELL_CAPTURE_TASK_HARD_CAP_MS as abandoned and reclaims it; the token guard
  * keeps a late-settling stale task from releasing its replacement's entry.
  */
@@ -624,7 +624,7 @@ export interface ShellCaptureDebugEvent {
    * - skip-stored: a capture for the key stored after the scheduling request
    *   read the store and missed (ShellCaptureDescriptor.storedSeqAtRead), so
    *   the shell that request missed exists now
-   * - skip-in-flight: scheduleShellCapture found a capture already running for
+   * - skip-in-flight: planShellCapture found a capture already running for
    *   the key (stampede guard) and scheduled nothing
    * - skip-backoff: the key is inside its refused-capture backoff window and
    *   the capture was not attempted
@@ -997,7 +997,7 @@ export function gateFlightForCapture(
  * The background shell-capture descriptor: everything the capture task needs to
  * store the shell. Built by the integrated PPR serve path (rsc-rendering.ts) from
  * the route's `ppr` path option (`PartialPrerenderProps`) and the app-level cache
- * store, and passed to scheduleShellCapture directly — it is NOT threaded through
+ * store, and passed to planShellCapture in its input — it is NOT threaded through
  * the request context. `tags` carries the route's OPERATIONAL `ppr.tags`; the
  * capture UNIONS them with the shell's own auto-collected (non-loader) request
  * tags from its derived render (the collected set stays authoritative). That
@@ -1080,7 +1080,7 @@ export interface ShellCaptureDescriptor {
   /**
    * A `router.prerender()` warm's capture (rsc-rendering.ts shellServePlan):
    * one explicit call that must store, so the guards that shed a herd of
-   * visitors do not apply to it. scheduleShellCapture skips the in-flight
+   * visitors do not apply to it. planShellCapture skips the in-flight
    * dedup and the refused-capture backoff, and attemptCapture waits longer on
    * the write barrier. Every correctness guard, the inert-store skip and the
    * queue limits still decide.
@@ -1107,6 +1107,25 @@ function noteCaptureStored(key: string): void {
   storedCaptureSeqs.set(key, ++storedCaptureSeq);
 }
 
+/** One shell capture: the request it re-renders and what it stores. */
+export interface ShellCaptureInput {
+  ctx: HandlerContext<any>;
+  request: Request;
+  env: any;
+  url: URL;
+  reqCtx: RequestContext<any>;
+  /**
+   * The SSR module for the capture's own request and URL, called once the
+   * capture leaves the queue. A document passes the module it already
+   * resolved, returned as is, so the capture awaits only a pending one.
+   */
+  ssr: (
+    request: Request,
+    url: URL,
+  ) => SSRModule | null | Promise<SSRModule | null>;
+  descriptor: ShellCaptureDescriptor;
+}
+
 /**
  * Schedule the background shell capture for a served document. Stampede-guarded:
  * one capture per key per isolate. Runs via runBackground (waitUntil on workerd,
@@ -1114,21 +1133,10 @@ function noteCaptureStored(key: string): void {
  * error is routed through reportCacheError — capture is best-effort; a failure just
  * means the next request recaptures.
  *
- * Eligibility (nonce/partial/status/strategy) is decided by the caller. An SSR
- * module loader may be passed for cold partial requests; it runs only after the
- * capture enters the guarded background queue, never on response latency.
+ * Eligibility (nonce/partial/status/strategy) is decided by the caller.
  */
-export function scheduleShellCapture(
-  ctx: HandlerContext<any>,
-  request: Request,
-  env: any,
-  url: URL,
-  reqCtx: RequestContext<any>,
-  ssrModule:
-    | SSRModule
-    | ((request: Request, url: URL) => Promise<SSRModule | null>),
-  descriptor: ShellCaptureDescriptor,
-): void {
+export function planShellCapture(input: ShellCaptureInput): void {
+  const { ctx, request, env, url, reqCtx, descriptor } = input;
   const key = descriptor.key;
   // A forced capture installs its own token below: a visitor's capture that
   // started before the warm may have read data from before the change the
@@ -1190,10 +1198,9 @@ export function scheduleShellCapture(
       const captureRequest = descriptor.navigationOnly
         ? createNavigationCaptureRequest(request, captureUrl)
         : request;
+      const ssrModule = input.ssr(captureRequest, captureUrl);
       const resolvedSsrModule =
-        typeof ssrModule === "function"
-          ? await ssrModule(captureRequest, captureUrl)
-          : ssrModule;
+        ssrModule instanceof Promise ? await ssrModule : ssrModule;
       if (
         !resolvedSsrModule ||
         !resolvedSsrModule.resumeShellHTML ||
@@ -1517,9 +1524,9 @@ type CaptureAttemptStats = Pick<
  * several HTTP requests before a capture stuck. We retry ONLY on `no-shell`
  * that did not run out of ppr.captureTimeout (CaptureAttemptStats.noShellCause),
  * and on `expired`; a genuine render error is NOT retried — it propagates to
- * scheduleShellCapture's reportCacheError. See docs/design/ppr-shell-resume.md.
+ * planShellCapture's reportCacheError. See docs/design/ppr-shell-resume.md.
  *
- * `request` and `url` are the capture's own identity (scheduleShellCapture
+ * `request` and `url` are the capture's own identity (planShellCapture
  * strips a navigation-only capture's transport parameters). `retryDelayMs` is
  * a parameter (defaulting to the module const) so unit tests can drive the
  * retry without a real 400ms wall-clock wait.
@@ -1540,7 +1547,7 @@ async function runShellCapture(
   // attemptCapture/captureAndStoreShell collecting the observability fields
   // (barrier wait, write-settle wait, prelude/snapshot bytes), and the event
   // folds them with the outcome. A genuine render error skips the attempt
-  // event — scheduleShellCapture's catch publishes the terminal `error` event.
+  // event — planShellCapture's catch publishes the terminal `error` event.
   const timedAttempt = async (
     attempt: number,
   ): Promise<{
@@ -1625,7 +1632,7 @@ async function runShellCapture(
   // lane rule: see resolveLoaderData, loader-cache.ts) is the likely cause —
   // warn once per key. Ordering matters: because the retry
   // absorbs cold-start, cold-start routes almost never reach this warning. The
-  // caller (scheduleShellCapture) reads this `no-shell` return to back the key off.
+  // caller (planShellCapture) reads this `no-shell` return to back the key off.
   warnNullCaptureOnce(key, true, second.stats);
   return "no-shell";
 }
@@ -2032,7 +2039,7 @@ export interface ShellCaptureState {
    * served response is byte-identical to axis 1. The capture descriptor itself
    * (key/ttl/swr/tags/store) is NOT threaded through the request context — the
    * integrated PPR serve path (rsc/shell-serve.ts + rsc-rendering.ts) builds it
-   * locally and passes it to scheduleShellCapture directly.
+   * locally and passes it to planShellCapture in its input.
    */
   readonly run: true;
 
@@ -2592,7 +2599,7 @@ async function captureAndStoreShell(
     // The drain's container encode adds its Flight errors here too (#927).
     // After the loader drain so a rejected bake-lane loader keeps its specific
     // refusal. Thrown like a fatal shell error: no retry, reportCacheError and
-    // backoff in scheduleShellCapture.
+    // backoff in planShellCapture.
     const renderErrors = reqCtx._renderErrors;
     if (renderErrors && renderErrors.length > 0) throw renderErrors[0];
 

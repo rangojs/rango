@@ -74,7 +74,7 @@ export function* step<T>(
  *
  * Settlement tracking follows the RETURNED value: a returned promise is
  * observed until it settles; a scheduler that fires-and-forgets internally
- * (e.g. scheduleShellCapture via runBackground) returns void, so its trace
+ * (e.g. planShellCapture via runBackground) returns void, so its trace
  * entry settles at the scheduling call, not at background completion. That is
  * deliberate — the plan's contract ends at the handoff.
  */
