@@ -541,3 +541,49 @@ describe.each([
     });
   },
 );
+
+// The check reads every segment of the capture's match: a parallel slot's
+// handler that fails on the capture's run only is refused like the route's.
+it("a parallel slot that throws on the capture pass only: no shell is stored", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  let calls = 0;
+  async function FailsOnCapture(): Promise<React.ReactNode> {
+    calls += 1;
+    if (calls === 2) throw new Error("upstream down");
+    return <aside>healthy-slot</aside>;
+  }
+  const cacheStore = new MemorySegmentCacheStore();
+  const phases: string[] = [];
+  const router = createRouter({
+    cache: { store: cacheStore },
+    onError: ({ phase }) => {
+      phases.push(phase);
+    },
+  }).routes(
+    urls(({ path, layout, parallel, errorBoundary }) => [
+      layout(
+        () => <header>chrome</header>,
+        () => [
+          errorBoundary(Declared),
+          parallel({ "@aside": FailsOnCapture }),
+          path("/slot", () => <p>healthy-content</p>, {
+            name: "slot",
+            ppr: { ttl: 300, swr: 60 },
+          }),
+        ],
+      ),
+    ]),
+  );
+
+  const first = await serveShellRequest(router, "/slot", { cacheStore });
+  expect(first.shellStatus).toBe("MISS");
+  expect(first.flight).toContain("healthy-slot");
+  expect(calls).toBe(2);
+  expect(await first.readEntry()).toBeNull();
+  expect(phases).toContain("cache");
+
+  const second = await serveShellRequest(router, "/slot", { cacheStore });
+  expect(second.shellStatus).toBe("MISS");
+  expect(second.body).toContain("healthy-slot");
+  expect(second.body).not.toContain("declared-error");
+});

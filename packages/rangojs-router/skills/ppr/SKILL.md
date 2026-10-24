@@ -1635,14 +1635,19 @@ evicted by tag at all — move always-fresh data into a live-lane loader (no
   capture is served as before. Only a throw during the capture counts: a
   component that failed in the live render and succeeds when captured is
   stored.
-- **A handler that throws during capture refuses it too**: when a handler
-  throws (or throws `notFound()`) on the capture's own run while the request
-  that scheduled it rendered fine, for example on a flaky upstream, its
-  boundary (a declared `errorBoundary()` or `notFoundBoundary()`, or the
-  default error page) would become the shell. The capture stores nothing,
-  logs `[ShellCache] capture`, reports to `onError` as `cache-write`, and
-  backs the key off; the next capture after the window stores normally. A
-  request whose own render fails answers 500/404 and schedules no capture.
+- **A handler that throws during capture refuses it too**: when a route,
+  layout or parallel slot handler throws (or throws `notFound()`) on the
+  capture's own run while the request that scheduled it rendered fine, for
+  example on a flaky upstream, its boundary (a declared `errorBoundary()` or
+  `notFoundBoundary()`, or the default error page) would become the shell.
+  The capture stores nothing, logs `[ShellCache] capture`, reports to
+  `onError` as `cache-write`, and backs the key off; the next capture after
+  the window stores normally. A request whose own render fails answers
+  500/404 and schedules no capture, but a recapture has no visitor render
+  behind it: a stale shell whose recapture fails keeps serving until its
+  `ttl` + `swr` ends (a build-time shell, until a recapture stores), as a
+  failed `cache()` refresh does, logging and calling `onError` once per
+  backoff window. When you delete a page, invalidate its tag.
 
 ## Related
 

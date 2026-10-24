@@ -214,18 +214,23 @@ layout, as a live render does. No change in your code.
 ### Fixed: a PPR shell capture whose handler fails stores no error page as the shell
 
 **Before.** A `ppr` route's background shell capture runs the route's
-handlers again. When a handler threw (or threw `notFound()`) during the
-capture only, while the visitor's render of the same request succeeded, for
-example because an upstream failed for a moment, the capture stored the
-boundary that caught it as the shell: a declared `errorBoundary()` or
-`notFoundBoundary()`, or the default error page. Every later document request
-was a HIT that served that page with a 200 until the shell expired or a
-recapture replaced it, and client navigations replayed it the same way.
+handlers again. When a route, layout or parallel slot handler threw (or threw
+`notFound()`) during the capture only, while the visitor's render of the same
+request succeeded, for example because an upstream failed for a moment, the
+capture stored the boundary that caught it as the shell: a declared
+`errorBoundary()` or `notFoundBoundary()`, or the default error page. Every
+later document request was a HIT that served that page with a 200 until the
+shell expired or a recapture replaced it, and client navigations replayed it
+the same way.
 
 **Now.** The capture stores nothing and reports the failure through
 `onError`, and the route keeps serving MISSes; the next capture after the
-key's backoff stores the healthy page. A render that fails for the visitor
-too was never captured, and still is not. No change in your code.
+key's backoff stores the healthy page. A stale shell whose recapture fails
+this way keeps serving until its `ttl` + `swr` ends (a build-time shell,
+until a recapture stores), as a failed `cache()` refresh does, and the
+recaptures log and call `onError` once per backoff window: when you delete a
+page, invalidate its tag. A render that fails for the visitor too was never
+captured, and still is not. No change in your code.
 
 ## 0.27.0 (2026-10-23)
 

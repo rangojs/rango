@@ -1741,14 +1741,19 @@ export async function settleCaptureRecord(
     return { kind: "refused", refusal: "loader" };
   }
 
-  // A boundary the match rendered in place of a handler that threw (or threw
-  // notFound()) on this pass: a request whose own render failed answered
-  // 500/404 and scheduled no capture, so the failure is this pass's own (a
-  // flaky upstream). The pass's _setStatus is the foreground's and the
-  // callbacks below get a synthetic 200, so nothing else refuses it. Checked
-  // after the settle so a guard trip in a handler or a loader names the read,
-  // and before any write starts. Thrown like captureAndStoreShell's render
-  // errors: no retry, reportCacheError and backoff in scheduleShellCapture.
+  // A boundary the match rendered in place of a handler (route, layout or
+  // slot) that threw, or threw notFound(), on this pass. A MISS whose own
+  // render failed answered 500/404 and scheduled no capture, so on a first
+  // capture the failure is this pass's own (a flaky upstream); a recapture
+  // with no visitor render behind it (stale HIT, warm, stale build shell)
+  // can only have failed. The pass's _setStatus is the foreground's and the
+  // callbacks below get a synthetic 200, so nothing else refuses it. A stale
+  // shell whose recapture fails keeps serving, as a failed cache() refresh's
+  // record does: until ttl + swr ends (a build-time shell, until a recapture
+  // stores or a tag evicts it). Checked after the settle so a guard trip in
+  // a handler or a loader names the read, and before any write starts.
+  // Thrown like captureAndStoreShell's render errors: no retry,
+  // reportCacheError and backoff in scheduleShellCapture.
   const boundary = match.segments.find(
     (s) => s.type === "error" || s.type === "notFound",
   );
