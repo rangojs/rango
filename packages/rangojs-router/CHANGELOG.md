@@ -389,6 +389,36 @@ render does and writes the record a MISS writes: the record and its HITs no
 longer carry the route's page or its tags. What the intercept shows, and the
 page under it, are unchanged. No change in your code.
 
+### Fixed: `onError` reports `isPartial: true` for an error in the background re-render a navigation starts
+
+**Before.** When a handler threw in the background re-render of a `cache()`
+record (the refresh a stale HIT starts under `cache({ ttl, swr })`, and the
+re-render that writes the record of a client-side navigation that kept the
+layout mounted), `onError` received `isPartial` unset, even when a client
+navigation, an intercept included, started the re-render. The same error in
+the navigation's own render reports `isPartial: true`, so an `onError` that
+tells navigation failures from document failures filed these as document
+failures.
+
+**Now.** The errors the re-render's segment walk catches (a handler that
+throws) carry the `isPartial` of the request that started it, as that
+request's own render reports it: `true` for a client navigation, unset for a
+document request. A streamed (`loading()`) handler's rejection still reports
+it unset, as it does in the navigation's own render. No change in your code.
+
+### Fixed: an intercept handler that throws in a `cache()` record's background re-render reaches `onError`
+
+**Before.** When an intercept's own handler threw only in the background
+re-render of its `cache()` record (the refresh a stale HIT starts, or the
+write of a navigation that kept the layout mounted), the re-render failed and
+wrote nothing, as intended, but neither `onError` nor the `handler.error`
+telemetry event heard of it. The same throw in a route or layout handler, or
+in the intercept's own handler on a navigation, is reported.
+
+**Now.** It is reported as on a navigation (`phase: "handler"`,
+`isPartial: true`), and the re-render still writes nothing, so the stale
+record keeps serving. No change in your code.
+
 ### Fixed: a `"use cache"` function that returns a server component reading `cookies()` or `headers()` no longer serves one visitor's value to the next
 
 **Before.** A server component that a `"use cache"` function returns renders

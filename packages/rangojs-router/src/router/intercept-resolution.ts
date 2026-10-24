@@ -163,9 +163,10 @@ export function findInterceptForRoute(
 /**
  * An intercept handler's throw or notFound() renders the declaring entry's
  * boundary as the slot component (catchSegmentError, as for route handlers on
- * partial navigations: 500/404 status, onError "handler"). Responses and every
- * error on the background re-render (`background`) rethrow, so a failed
- * re-render aborts its cache write instead of storing the fallback.
+ * partial navigations: 500/404 status, onError "handler"). Responses rethrow.
+ * The background re-render (`background`) reports the error the same way and
+ * then rethrows it, so a failed re-render aborts its cache write instead of
+ * storing the fallback.
  */
 function renderInterceptHandlerError<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -173,8 +174,14 @@ function renderInterceptHandlerError<TEnv>(
   parentEntry: EntryData,
   background: boolean | undefined,
 ): ReactNode {
-  if (error instanceof Response || background) throw error;
-  return catchSegmentError(
+  if (error instanceof Response) throw error;
+  // A background re-render's waitUntil task may run outside the router
+  // context, as the segment walk's report allows.
+  let telemetry;
+  try {
+    telemetry = getRouterContext()?.telemetry;
+  } catch {}
+  const { component } = catchSegmentError(
     error,
     parentEntry,
     pass.params,
@@ -182,10 +189,12 @@ function renderInterceptHandlerError<TEnv>(
     {
       ...buildLoaderErrorContext(pass.context),
       isPartial: true,
-      telemetry: getRouterContext()?.telemetry,
+      telemetry,
     },
     pass.context.pathname,
-  ).component;
+  );
+  if (background) throw error;
+  return component;
 }
 
 /** The segment id of `intercept`'s slot on `parentEntry`. */
@@ -265,9 +274,9 @@ export async function resolveInterceptEntry<TEnv>(
     /**
      * Set ONLY by the post-response background re-render (stale background
      * revalidation), whose sole purpose is to re-render the segment tree to
-     * populate the cache: a handler error rejects instead of rendering the
-     * error boundary, so a failure is never cached. Never set on the
-     * foreground path.
+     * populate the cache: a handler error is reported, then rejects instead
+     * of rendering the error boundary, so a failure is never cached. Never
+     * set on the foreground path.
      */
     background?: boolean;
   },
