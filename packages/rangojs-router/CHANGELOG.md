@@ -271,6 +271,26 @@ recaptures log and call `onError` once per backoff window: when you delete a
 page, invalidate its tag. A render that fails for the visitor too was never
 captured, and still is not. No change in your code.
 
+### Fixed: a `cache()` route's background re-render runs no intercept loader that nothing reads
+
+**Before.** With an intercept open, the background re-render that writes a
+`cache()` record ran every loader the intercept declares with `loader()`: the refresh a stale HIT starts under
+`cache({ ttl, swr })`, and the re-render that writes the record of a
+client-side navigation that kept the layout mounted. The record never holds a
+loader's value or its handle values, so each of those runs was thrown away:
+one more call to your backend per re-render, its side effects again, and a
+failing loader reported to `onError` a second time.
+
+**Now.** The re-render runs only the intercept loaders its handler reads
+with `ctx.use()`, as it already did for the route's own loaders, and starts
+each as the intercept declares it. The record, its handle values and its tags
+are unchanged, and a loader the intercept's handler reads still shows its
+handle values once. The re-render no longer emits `loader.start`,
+`loader.end`, `loader.error` or `revalidation.decision` telemetry for those
+intercept loaders, and an intercept loader with its own `cache()` is refreshed
+by its next live read rather than by the re-render, as the route's own loaders
+already are. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

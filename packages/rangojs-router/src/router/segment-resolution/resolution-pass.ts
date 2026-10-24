@@ -110,6 +110,7 @@ export function heldNothingPassInput<TEnv>(
   context: HandlerContext<any, TEnv>,
   routeKey: string,
   params: Record<string, string>,
+  options?: { skipLoaders?: boolean },
 ): ResolutionPassInput<TEnv> {
   return {
     context,
@@ -120,5 +121,6 @@ export function heldNothingPassInput<TEnv>(
     prevUrl: context.url,
     nextUrl: context.url,
     routeKey,
+    ...options,
   };
 }
