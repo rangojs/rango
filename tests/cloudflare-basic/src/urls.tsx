@@ -342,6 +342,7 @@ import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { lateHistoryPatterns } from "./pages/late-history.js";
 import { actionStalePatterns } from "./pages/action-stale.js";
 import { handlesAfterAwaitPatterns } from "./pages/handles-after-await.js";
+import { streamedHandleOwnerPatterns } from "./pages/streamed-handle-owner.js";
 import { heldHandlesPatterns } from "./pages/held-handles.js";
 import { historyHandlesPatterns } from "./pages/history-handles.js";
 import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
@@ -3168,6 +3169,10 @@ export const urlpatterns = urls(
         // Meta and Breadcrumbs pushed after an await from each place
         // (e2e/handles-after-await.test.ts).
         include("/", handlesAfterAwaitPatterns, { name: "" }),
+        // A push after real workerd I/O from a loading() route or slot, and a
+        // loader a loader body starts, files under its own segment
+        // (e2e/streamed-handle-owner.test.ts).
+        include("/", streamedHandleOwnerPatterns, { name: "" }),
         // Hidden include-scope names (#1104): nested unnamed includes, and an
         // unnamed include beside a transparent one holding another.
         include("/", includeScopePublicPatterns),

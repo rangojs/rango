@@ -32,6 +32,7 @@ import {
   type EntryData,
   type InterceptEntry,
   type LoaderEntry,
+  segmentPinOf,
 } from "../../server/context.js";
 import { requestHeaders } from "../../server/request-headers.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
@@ -493,8 +494,8 @@ export function startDeferredLoader(
 
 /**
  * The segment a run of `loaderId` files its handle pushes under: the one
- * that registers it when this prefetch deferred it, else the segment being
- * resolved.
+ * that registers it when this prefetch deferred it, else the segment whose
+ * code starts it (segmentPinOf).
  */
 export function loaderOwner(
   ctx: HandlerContext<any, any>,
@@ -503,7 +504,7 @@ export function loaderOwner(
   const internal = ctx as InternalHandlerContext<any, any>;
   return (
     internal._prefetchDeferral?.deferredLoaders?.get(loaderId)?.owner ??
-    internal._currentSegmentId
+    segmentPinOf(internal)
   );
 }
 

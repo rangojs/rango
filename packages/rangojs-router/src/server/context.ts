@@ -1719,6 +1719,33 @@ export function isInsideLoaderBody(loaderId: string): boolean {
   return false;
 }
 
+// The segment of the streamed handler or loader body running here; the
+// walker moves the shared `_currentSegmentId` on without awaiting either.
+const segmentPinALS: AsyncLocalStorage<string | undefined> = ((
+  globalThis as any
+)[Symbol.for("rangojs-router:segment-pin")] ??= new AsyncLocalStorage<
+  string | undefined
+>());
+
+/**
+ * Run `fn` as segment `segmentId`'s code: a handle push, a loader kickoff or
+ * a "use cache" call it makes, before or after an await, files under
+ * `segmentId` (segmentPinOf).
+ */
+export function runAsSegment<R>(segmentId: string | undefined, fn: () => R): R {
+  return segmentPinALS.run(segmentId, fn);
+}
+
+/**
+ * The segment code here runs for: the innermost runAsSegment scope, else
+ * `ctx`'s pin (a handler the walker awaits).
+ */
+export function segmentPinOf(ctx: {
+  _currentSegmentId?: string;
+}): string | undefined {
+  return segmentPinALS.getStore() ?? ctx._currentSegmentId;
+}
+
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).
 // A push callback's value is stored as-is; if it is a promise it is NOT tracked
 // by handleStore.settled and does not block segment resolution, so a

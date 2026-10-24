@@ -70,6 +70,8 @@ import {
   scopeReverse,
   runInsideLoaderBodyScope,
   runInsideLoaderRun,
+  runAsSegment,
+  segmentPinOf,
   isInsidePushCallbackScope,
   runInsidePushCallbackScope,
   type LoaderRunIdentity,
@@ -871,8 +873,10 @@ function createLoaderExecutor<TEnv>(
       Promise.resolve(
         runInsideLoaderBodyScope(
           () =>
-            runInsideLoaderRun(identity, () =>
-              loaderFn(loaderCtx as LoaderContext<any, TEnv>),
+            runAsSegment(owningSegmentId, () =>
+              runInsideLoaderRun(identity, () =>
+                loaderFn(loaderCtx as LoaderContext<any, TEnv>),
+              ),
             ),
           loader.$$id,
           recordedTags,
@@ -982,8 +986,7 @@ export function setupLoaderAccess<TEnv>(
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = (ctx as InternalHandlerContext<any, TEnv>)
-        ._currentSegmentId;
+      const segmentId = segmentPinOf(ctx as InternalHandlerContext<any, TEnv>);
 
       if (!segmentId) {
         throw new Error(
@@ -1057,8 +1060,7 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = (ctx as InternalHandlerContext<any, TEnv>)
-        ._currentSegmentId;
+      const segmentId = segmentPinOf(ctx as InternalHandlerContext<any, TEnv>);
 
       if (!segmentId) {
         throw new Error(
