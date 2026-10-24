@@ -725,7 +725,9 @@ default, shared by every router on the host with that prefix; `HttpOnly`,
 `SameSite=Lax`, `Path=/`, `Secure` on https, `Max-Age` 11 s with KV and 3 s
 without at the defaults: the longest memo staleness plus 1 s). It is strictly
 functional: its value is `1`, it identifies no one, and it only sends that
-browser's reads past the memos. The same user's requests that carry it skip
+browser's reads past the memos. A stale entry's background refresh (`cache()`,
+`"use cache"`, a cached loader, the document cache) sets none: no visitor made
+that invalidation. The same user's requests that carry it skip
 both memos on every isolate, so a mutating user never sees a memoized shell or
 marker from before their write. What they read past the memos is the store's
 own consistency. `VercelCacheStore`: `expireTag` is global (about 300 ms), so

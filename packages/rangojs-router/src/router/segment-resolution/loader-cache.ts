@@ -72,7 +72,6 @@ import { runIdentityExempt } from "../../cache/cache-exec-scope.js";
 import {
   getRequestContext,
   _getRequestContext,
-  runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
 import { observePhase, PHASES } from "../instrument.js";
@@ -93,6 +92,7 @@ import { isWarmReplace, noteWarmWrite } from "../../prerender/warm-request.js";
 import {
   executionStart,
   predatesInvalidation,
+  runAsBackgroundRefresh,
 } from "../../cache/tag-invalidation.js";
 import {
   maskNestedContainerThenables,
@@ -812,11 +812,13 @@ function executeLoaderData<TEnv>(
       // (read-through-swr routes the full task through wrapBackground) — so
       // the loader's rango.loader span, its fetch/KV platform spans, and the
       // store write all nest under one explanatory parent instead of dangling
-      // under the ended foreground phases. Inside runWithRequestContext so
+      // under the ended foreground phases. Inside the request context so
       // observePhase can read tracing on workerd (ALS detaches in waitUntil).
+      // No visitor made the invalidations it runs: they set no fresh-reads
+      // cookie (runAsBackgroundRefresh).
       wrapBackground: (run) => {
         revalidating = true;
-        return runWithRequestContext(requestCtxForExecute, () =>
+        return runAsBackgroundRefresh(requestCtxForExecute, () =>
           observePhase(PHASES.background("loader-revalidation"), run),
         );
       },

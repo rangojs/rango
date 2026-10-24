@@ -20,10 +20,7 @@ import {
   encodeReply,
   createClientTemporaryReferenceSet,
 } from "../deps/rsc-client.js";
-import {
-  getRequestContext,
-  runWithRequestContext,
-} from "../server/request-context.js";
+import { getRequestContext } from "../server/request-context.js";
 import { isUnderTestRunner } from "../runtime-env.js";
 import {
   isTainted,
@@ -70,6 +67,7 @@ import {
   executionStart,
   invalidatedSince,
   predatesInvalidation,
+  runAsBackgroundRefresh,
   type ExecutionStart,
 } from "./tag-invalidation.js";
 import type { CacheItemResult } from "./types.js";
@@ -717,14 +715,16 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
               // reads the ambient getRequestContext() (e.g.
               // getRequestContext().env.ApiKey) resolves during the background
               // revalidation instead of throwing "called outside of a request
-              // context". runWithRequestContext sets the store for fn's
-              // synchronous kickoff; its async continuations inherit it.
+              // context". runAsBackgroundRefresh sets the store for fn's
+              // synchronous kickoff; its async continuations inherit it. No
+              // visitor made the invalidations it runs: they set no
+              // fresh-reads cookie.
               //
               // The span opens inside the request ALS and wraps the WHOLE task —
               // fn kickoff through the store write — so its platform spans nest
               // under rango.background and a slow or failing setItem is part of
               // the traced revalidation, not an untraced tail.
-              await runWithRequestContext(requestCtx, () =>
+              await runAsBackgroundRefresh(requestCtx, () =>
                 observePhase(
                   PHASES.background("use-cache-revalidation"),
                   async () => {
