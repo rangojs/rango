@@ -703,16 +703,15 @@ export function buildEntryRevalidateMap(
     { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }
   >();
 
-  function processEntry(entry: EntryData, parentShortCode?: string) {
+  function processEntry(entry: EntryData) {
     map.set(entry.shortCode, { entry, revalidate: entry.revalidate });
 
     if (entry.type !== "parallel") {
+      // The walker's slot id (resolveParallelSegments), an orphan's included.
       for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
         entry.parallel,
       )) {
-        const parallelParentShortCode = parentShortCode ?? entry.shortCode;
-        const parallelId = `${parallelParentShortCode}.${slot}`;
-        map.set(parallelId, {
+        map.set(`${entry.shortCode}.${slot}`, {
           entry: parallelEntry,
           revalidate: parallelEntry.revalidate,
         });
@@ -720,7 +719,7 @@ export function buildEntryRevalidateMap(
     }
 
     for (const layoutEntry of entry.layout) {
-      processEntry(layoutEntry, entry.shortCode);
+      processEntry(layoutEntry);
     }
   }
 
