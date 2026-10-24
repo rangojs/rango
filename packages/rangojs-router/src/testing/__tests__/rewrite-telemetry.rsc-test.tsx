@@ -1,7 +1,7 @@
 /**
- * Telemetry of a `throw rewrite()` request through the production request
- * handler (serveShellRequest): every event carries the visitor's request id,
- * the one dispatch() reports for the same request.
+ * Telemetry of a `throw rewrite()` request and of a no-JS form post through
+ * the production request handler (serveShellRequest): every event carries the
+ * visitor's request id, the one dispatch() reports for the same request.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React, { Suspense } from "react";
@@ -15,8 +15,13 @@ vi.mock(
   () => import("../vitest-stubs/plugin-rsc.js"),
 );
 
-import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
+  createActionForm,
+  resetShellTestState,
+  serveShellRequest,
+} from "../flight.entry.js";
+import {
+  createLoader,
   createRouter,
   rewrite,
   urls,
@@ -31,6 +36,12 @@ async function SlowReviews(): Promise<React.ReactNode> {
   return <p>reviews</p>;
 }
 
+async function save(_prev: unknown, _form: FormData): Promise<string> {
+  return "saved";
+}
+
+const ItemLoader = createLoader(async () => ({ item: 1 }));
+
 const router = createRouter({
   telemetry: { emit: (event) => events.push(event) },
   timeouts: { streamIdleMs: 20 },
@@ -42,7 +53,7 @@ const router = createRouter({
     return next();
   })
   .routes(
-    urls(({ path, middleware }) => [
+    urls(({ path, middleware, loader }) => [
       path("/shop", () => <p>shop page</p>, { name: "shop" }),
       path(
         "/hop2",
@@ -74,6 +85,7 @@ const router = createRouter({
           </main>
         ),
         { name: "product" },
+        () => [loader(ItemLoader)],
       ),
     ]),
   );
@@ -148,6 +160,59 @@ describe("telemetry of a rewritten request", () => {
     const [start] = events;
     for (const [type, requestId] of eventIds()) {
       expect([type, requestId]).toEqual([type, start!.requestId]);
+    }
+  });
+});
+
+describe("telemetry of a no-JS form post", () => {
+  it("the re-render's events and a stream-idle request.timeout carry one requestId", async () => {
+    await expect(
+      serveShellRequest(router, "/product", {
+        cacheStore: new MemorySegmentCacheStore(),
+        form: createActionForm(save, { id: "actions.ts#save" }),
+      }),
+    ).rejects.toMatchObject({ name: "RouterTimeoutError" });
+
+    const types = events.map((event) => event.type);
+    expect(types).toContain("request.start");
+    expect(types).toContain("loader.end");
+    expect(types).toContain("request.end");
+    expect(types.at(-1)).toBe("request.timeout");
+    const start = events.find((event) => event.type === "request.start")!;
+    expect(start.requestId).toMatch(/^t-/);
+    for (const [type, requestId] of eventIds()) {
+      expect([type, requestId]).toEqual([type, start.requestId]);
+    }
+  });
+
+  it("a rewritten form post reports one requestId", async () => {
+    await expect(
+      serveShellRequest(router, "/old-product", {
+        cacheStore: new MemorySegmentCacheStore(),
+        form: createActionForm(save, { id: "actions.ts#saveRewritten" }),
+      }),
+    ).rejects.toMatchObject({ name: "RouterTimeoutError" });
+
+    expect(events.map((event) => event.type).at(-1)).toBe("request.timeout");
+    const start = events.find((event) => event.type === "request.start")!;
+    expect(start.requestId).toMatch(/^t-/);
+    for (const [type, requestId] of eventIds()) {
+      expect([type, requestId]).toEqual([type, start.requestId]);
+    }
+  });
+
+  it("a request-id header stays the requestId of every event", async () => {
+    await expect(
+      serveShellRequest(router, "/old-product", {
+        cacheStore: new MemorySegmentCacheStore(),
+        headers: { "x-request-id": "visitor-9" },
+        form: createActionForm(save, { id: "actions.ts#saveWithHeader" }),
+      }),
+    ).rejects.toMatchObject({ name: "RouterTimeoutError" });
+
+    expect(events.map((event) => event.type)).toContain("request.timeout");
+    for (const [type, requestId] of eventIds()) {
+      expect([type, requestId]).toEqual([type, "visitor-9"]);
     }
   });
 });

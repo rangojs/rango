@@ -17,6 +17,7 @@ import { createSsrHtmlStage } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
+import { getRequestId, setRequestId } from "../router/telemetry.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
 import { payloadInitialTheme, payloadLocation } from "./full-payload.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
@@ -322,6 +323,10 @@ async function rerenderAfterFormAction<TEnv>(
       method: "GET",
       headers,
     });
+    // A new Request: keep the visitor's telemetry id.
+    if (ctx.router.telemetry) {
+      setRequestId(renderRequest, getRequestId(request));
+    }
 
     // JS/PE parity: this is an action's revalidation render, so mark it BEFORE
     // matching — a stale `foregroundOnAction` cache entry must re-execute in the
