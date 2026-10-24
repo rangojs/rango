@@ -463,7 +463,9 @@ contract and direction-aware examples.
 ## Interaction with Prerender
 
 When the target route of an intercept uses `Prerender`, the intercept handler is
-also resolved at build time and stored alongside the main pre-rendered segments.
+also resolved at build time and stored in an intercept variant next to the
+route's own pre-rendered page. The variant holds what an intercept navigation
+renders: the layouts above the route and the intercept, not the route's page.
 This means intercept navigations to pre-rendered routes are served from the
 prerender store without executing handler code at runtime.
 

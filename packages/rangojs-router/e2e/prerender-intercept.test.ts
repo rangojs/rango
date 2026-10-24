@@ -34,6 +34,33 @@ async function expectModalKeptAcrossAction(page: Page, url: string) {
   await expect(modal.getByTestId("pri-held-runs")).toHaveText(heldRuns!);
 }
 
+/**
+ * The navigation that opens the modal is served from the stored intercept
+ * variant, the build's in production and the dev store's in dev. The variant
+ * leaves the intercepted route's own segments out, as a live render under the
+ * intercept does (prerender/store.ts interceptVariantSegments), so the
+ * response carries the modal and not the detail page.
+ */
+async function expectInterceptResponseWithoutDetailPage(
+  page: Page,
+  url: string,
+) {
+  await page.goto(url);
+  await waitForHydration(page);
+  const navigation = page.waitForResponse((response) => {
+    const target = new URL(response.url());
+    return (
+      target.pathname === "/prerender-intercept/alpha" &&
+      target.searchParams.has("_rsc_partial")
+    );
+  });
+  await page.locator('[data-testid="pri-link-alpha"]').click();
+  const body = await (await navigation).text();
+  await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
+  expect(body).toContain("pri-modal-indicator");
+  expect(body).not.toContain("pri-detail-content");
+}
+
 // ---------------------------------------------------------------------------
 // Dev mode: intercept + prerender on-demand rendering
 // ---------------------------------------------------------------------------
@@ -188,6 +215,16 @@ test.describe("prerender-intercept (dev mode)", () => {
   }) => {
     using _ = expectNoPageError(page);
     await expectModalKeptAcrossAction(page, f.url("/prerender-intercept"));
+  });
+
+  test("the intercept response carries the modal, not the detail page", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectInterceptResponseWithoutDetailPage(
+      page,
+      f.url("/prerender-intercept"),
+    );
   });
 
   test("intercept handler handle push survives into the modal (#567 gap 1)", async ({
@@ -468,6 +505,16 @@ test.describe("prerender-intercept (production build)", () => {
   }) => {
     using _ = expectNoPageError(page);
     await expectModalKeptAcrossAction(page, f.url("/prerender-intercept"));
+  });
+
+  test("the baked intercept response carries the modal, not the detail page", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectInterceptResponseWithoutDetailPage(
+      page,
+      f.url("/prerender-intercept"),
+    );
   });
 
   test("intercept handler handle push survives the baked artifact (#567 gap 1)", async ({

@@ -7,11 +7,10 @@ import {
 } from "../dev-prerender-cache";
 import type { SerializedSegmentData } from "../../../cache/types";
 
-const seg = (id: string): SerializedSegmentData =>
+const seg = (id: string, belongsToRoute?: true): SerializedSegmentData =>
   ({
-    id,
-    namespace: "route",
     encoded: `<${id}>`,
+    metadata: { id, belongsToRoute },
   }) as unknown as SerializedSegmentData;
 
 const baseResult = (
@@ -64,17 +63,39 @@ describe("payloadBodiesFromResult", () => {
     });
   });
 
-  it("intercept body merges intercept segments and uses the MERGED handles", () => {
+  it("intercept body appends intercept segments and uses the intercept handles", () => {
     const bodies = payloadBodiesFromResult(
       baseResult({
         interceptSegments: [seg("modal")],
-        interceptHandles: "MERGED",
+        interceptHandles: "VARIANT",
       }),
     );
     expect(JSON.parse(bodies.intercept)).toEqual({
       segments: [seg("a"), seg("b"), seg("modal")],
-      handles: "MERGED",
+      handles: "VARIANT",
     });
+  });
+
+  it("intercept body leaves out the intercepted route's own segments, as a render under the intercept does", () => {
+    const bodies = payloadBodiesFromResult(
+      baseResult({
+        segments: [
+          seg("layout"),
+          seg("route-layout", true),
+          seg("route", true),
+        ],
+        interceptSegments: [seg("modal", true)],
+      }),
+    );
+    expect(JSON.parse(bodies.intercept).segments).toEqual([
+      seg("layout"),
+      seg("modal", true),
+    ]);
+    expect(JSON.parse(bodies.main).segments).toEqual([
+      seg("layout"),
+      seg("route-layout", true),
+      seg("route", true),
+    ]);
   });
 
   it("intercept body falls back to empty handles when interceptHandles is absent", () => {
