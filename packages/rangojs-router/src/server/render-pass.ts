@@ -159,8 +159,14 @@ export const RENDER_PASS_FIELDS: {
    * router/match-middleware/background-revalidation.ts rerenderAndCacheRoute.
    */
   "background-revalidation": {
-    // Never read: the pass runs no DSL loader (skipLoaders), the only
-    // caller of rendered(), and no match middleware, the only resolver.
+    // The request's, resolved before the pass starts: a stale HIT resolves
+    // it in cache-lookup.ts before withBackgroundRevalidation starts the
+    // refresh, and proactive caching runs from onResponse. An open
+    // intercept's DSL loaders run here (heldNothingPassInput sets no
+    // skipLoaders), so their rendered() returns at once. What they read
+    // reaches no record: cacheRoute drops loader segments, captureHandles
+    // loader pushes. A shell capture never opens an intercept
+    // (createNavigationCaptureRequest drops the intercept source).
     renderBarrier: "inherited",
     own(pass, { handleStore, sink }) {
       // Read late by loader pushes and cache-scope.ts; setupLoaderAccess

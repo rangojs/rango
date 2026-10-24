@@ -7,9 +7,15 @@
  *   It used to render under the capture's identity guard, so a loader body's
  *   headers(), which cache() allows, failed the refresh, and every recapture
  *   replayed the stale record until it expired.
- * - The refresh runs no DSL loader, so it never reads the visitor's render
- *   barrier: the visitor's rendered() reads the handles the HIT replayed,
- *   and the refreshed record carries the refresh's own.
+ * - The refresh inherits the visitor's render barrier. Its route pass skips
+ *   DSL loaders, but an open intercept resolves with its loaders, so an
+ *   intercept loader's rendered() reads the inherited barrier. That is safe:
+ *   the barrier resolved before the pass starts (a stale HIT resolves it
+ *   before the refresh, proactive caching runs from onResponse), so
+ *   rendered() never hangs; cacheRoute drops loader segments and
+ *   captureHandles loader pushes, so what the loader read reaches no record.
+ *   A shell capture never takes the intercept branch: its request drops the
+ *   intercept source.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -37,6 +43,7 @@ import {
   VercelCacheStore,
   type VercelRuntimeCache,
 } from "../../cache/index.js";
+import { deserializeResult } from "../../cache/segment-codec.js";
 
 let generation = 1;
 
@@ -107,6 +114,19 @@ const StampReader = createLoader(async (ctx) => {
   return { read: `read:${ctx.get(Stamp).join(",")}` };
 });
 
+let modalRuns = 0;
+/** Every ModalReader run's read, once past rendered(). */
+const modalReads: string[] = [];
+
+/** Tags its read with its run, so a read shown can be traced to its pass. */
+const ModalReader = createLoader(async (ctx) => {
+  const run = ++modalRuns;
+  await ctx.rendered();
+  const read = `read:${ctx.get(Stamp).join(",")}#${run}`;
+  modalReads.push(read);
+  return { read };
+});
+
 /** Forwards a request header to its backend; the data is the same for all. */
 const ForwardingLoader = createLoader(async () => {
   void headers().get("traceparent");
@@ -123,11 +143,26 @@ async function ForwardingPage(ctx: HandlerContext): Promise<React.ReactNode> {
   return <p>{`forwarding@g${data.generation}`}</p>;
 }
 
-const routes = urls(({ path, cache, loader }) => [
+function StampLayout(ctx: HandlerContext): React.ReactNode {
+  ctx.use(Stamp)(`stamp@g${generation}`);
+  return <main>shell</main>;
+}
+
+const routes = urls(({ path, cache, layout, intercept, loader }) => [
   // Stale from the start, servable for 60 s.
   cache({ ttl: 0, swr: 60 }, () => [
     path("/stamp", StampPage, { name: "stamp" }, () => [loader(StampReader)]),
     path("/forwarding", ForwardingPage, { name: "forwarding", ppr: true }),
+    layout(StampLayout, () => [
+      path("/list", () => <ul>list</ul>, { name: "list" }),
+      path("/item/:id", () => <article>item</article>, { name: "item" }),
+      intercept(
+        "@modal",
+        ".item",
+        () => <dialog>modal</dialog>,
+        () => [loader(ModalReader)],
+      ),
+    ]),
   ]),
 ]);
 
@@ -144,6 +179,8 @@ describe("a stale cache() record's background re-render", () => {
   beforeEach(async () => {
     await resetShellTestState();
     generation = 1;
+    modalRuns = 0;
+    modalReads.length = 0;
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -164,6 +201,58 @@ describe("a stale cache() record's background re-render", () => {
     expect(await serve()).toEqual(["page@g1", "read:stamp@g1"]);
     clock.advance(1_100);
     expect(await serve()).toEqual(["page@g2", "read:stamp@g2"]);
+  });
+
+  it("refreshing an open intercept, its loader passes rendered() on the visitor's barrier, and its read reaches no response or record", async () => {
+    const clock = movableClock();
+    const cacheStore = new VercelCacheStore({ cache: vercelCache() });
+    const list = await serveShellRequest(router, "/list", {
+      cacheStore,
+      partial: true,
+    });
+    const { metadata } = await deserializeResult<{
+      metadata: { matched: string[] };
+    }>(list.flight!);
+    // Opens the modal over /list, whose layout the client holds.
+    const open = async () => {
+      const before = modalReads.length;
+      const { flight } = await serveShellRequest(router, "/item/1", {
+        cacheStore,
+        partial: { from: "/list", segments: metadata.matched },
+      });
+      return {
+        shown: flight?.match(/read:[^"]*/g),
+        ran: modalReads.slice(before),
+      };
+    };
+
+    // The client holds the layout, so the MISS writes the record by a
+    // re-render (proactive caching): the visitor's run and that pass's.
+    const miss = await open();
+    expect(miss.ran).toHaveLength(2);
+    expect(miss.shown).toEqual([expect.stringMatching(/^read:#\d+$/)]);
+    expect(miss.ran).toContain(miss.shown![0]);
+
+    // The stale HIT replays stamp@g1 and refreshes the record at g2. The
+    // refresh's loader passes rendered() too, and its run shows nowhere: the
+    // visitor reads the replayed handles, not the refresh's stamp@g2.
+    generation = 2;
+    clock.advance(1_100);
+    const staleHit = await open();
+    expect(staleHit.ran).toHaveLength(2);
+    expect(staleHit.shown).toEqual([
+      expect.stringMatching(/^read:stamp@g1#\d+$/),
+    ]);
+    expect(staleHit.ran).toContain(staleHit.shown![0]);
+
+    // The next HIT replays the refreshed record: its handles, and no value
+    // of the refresh's loader.
+    clock.advance(1_100);
+    const refreshedHit = await open();
+    expect(refreshedHit.shown).toEqual([
+      expect.stringMatching(/^read:stamp@g2#\d+$/),
+    ]);
+    expect(refreshedHit.ran).toContain(refreshedHit.shown![0]);
   });
 
   it("started by a shell recapture, refreshes under cache() rules: a loader body's headers() does not fail it", async () => {

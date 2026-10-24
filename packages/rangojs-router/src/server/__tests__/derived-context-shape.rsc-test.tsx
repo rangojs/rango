@@ -489,8 +489,9 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
     expect(base.res.status).toBe(200);
     expect(base.res.headers.get("x-background")).toBeNull();
     expect(base.res.headers.get("set-cookie")).toBeNull();
-    // No barrier of its own: no DSL loader runs in the pass, so nothing
-    // reads the request's.
+    // No barrier of its own: the request's resolved before the pass starts,
+    // so an open intercept's loader passes rendered() at once, and the
+    // record keeps nothing it reads.
     expect(Object.hasOwn(ctx, "_resolveRenderBarrier")).toBe(false);
     expect(ctx._resolveRenderBarrier).toBe(base._resolveRenderBarrier);
   });
