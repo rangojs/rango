@@ -71,12 +71,14 @@ interface Shape {
   /** An intercept of the detail route, declared beside it. */
   intercept: boolean;
   /** The layout's revalidate() asks for a re-render on every navigation. */
-  layoutRevalidates: boolean;
+  layoutRevalidates?: boolean;
+  /** The layout's own parallel on the intercept's slot (@modal). */
+  slotDefault?: boolean;
 }
 
 function makeRouter(target: Target, shape: Shape) {
   return createRouter({}).routes(
-    urls(({ path, cache, layout, intercept, revalidate }) => {
+    urls(({ path, cache, layout, intercept, parallel, revalidate }) => {
       const tree = () =>
         layout(
           (ctx: HandlerContext) => {
@@ -86,6 +88,16 @@ function makeRouter(target: Target, shape: Shape) {
           },
           () => [
             ...(shape.layoutRevalidates ? [revalidate(() => true)] : []),
+            ...(shape.slotDefault
+              ? [
+                  parallel({
+                    "@modal": (ctx: HandlerContext) => {
+                      ctx.use(Crumbs)("modal-default");
+                      return <aside>modal default body</aside>;
+                    },
+                  }),
+                ]
+              : []),
             path(
               "/list",
               (ctx: HandlerContext) => {
@@ -207,7 +219,7 @@ const NAVIGATIONS: readonly Navigation[] = [
 async function navigate(
   target: Target,
   navigation: Navigation,
-  layoutRevalidates = false,
+  options: Omit<Shape, "intercept"> = {},
 ): Promise<{
   result: ServeShellRequestResult;
   layoutRuns: number;
@@ -215,8 +227,8 @@ async function navigate(
   before: HandleData;
 }> {
   const router: Router = makeRouter(target, {
+    ...options,
     intercept: navigation.intercept,
-    layoutRevalidates,
   });
   const source = await serveShellRequest(router, navigation.from, {
     cacheStore: new MemorySegmentCacheStore(),
@@ -319,7 +331,9 @@ describe("a held layout whose revalidate() asks for it is sent, from a Prerender
     describe(navigation.name, () => {
       for (const target of TARGETS) {
         it(`${target}: sends the layout and its crumb`, async () => {
-          const { result, layoutId } = await navigate(target, navigation, true);
+          const { result, layoutId } = await navigate(target, navigation, {
+            layoutRevalidates: true,
+          });
           expect(await sentLayout(result, layoutId)).not.toBeNull();
           expect(result.flight).toContain("layout body");
           expect((await sentCrumbs(result))[layoutId]).toEqual(["layout"]);
@@ -327,4 +341,60 @@ describe("a held layout whose revalidate() asks for it is sent, from a Prerender
       }
     });
   }
+});
+
+/**
+ * The layout's own parallel on the intercept's slot: the stored intercept
+ * variant holds the parallel and the intercept's slot under one id
+ * (`${layout}.@modal`). The held parallel stays held, and the intercept's
+ * slot is sent, as a live render sends it. Handle values are compared by
+ * bucket only: the variant's shared bucket holds the parallel's pushes, not
+ * the intercept's (prerender-match.ts variantHandlesRecord), on base too.
+ */
+describe("an intercept that shares its slot with the layout's parallel is sent from a Prerender() bake as live", () => {
+  const navigation = NAVIGATIONS[0]!;
+  beforeEach(async () => {
+    layoutRuns.count = 0;
+    await resetShellTestState();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** The intercept's slot segment the response sends. */
+  async function sentIntercept(
+    result: ServeShellRequestResult,
+  ): Promise<ResolvedSegment | undefined> {
+    const { segments } = await answerOf(result);
+    return segments.find(
+      (s) => s.namespace?.startsWith("intercept:") && s.component !== null,
+    );
+  }
+
+  for (const target of ["live", "prerender"] as const) {
+    it(`${target}: sends the intercept's slot`, async () => {
+      const { result } = await navigate(target, navigation, {
+        slotDefault: true,
+      });
+      expect(await sentIntercept(result)).toBeDefined();
+      expect(result.flight).toContain("modal body");
+      expect(result.flight).not.toContain("modal default body");
+    });
+  }
+
+  it("the bake's response holds what the live render's does", async () => {
+    const hit = await navigate("prerender", navigation, { slotDefault: true });
+    const live = await navigate("live", navigation, { slotDefault: true });
+    const hitAnswer = await answerOf(hit.result);
+    const liveAnswer = await answerOf(live.result);
+    expect(hitAnswer.matched).toEqual(liveAnswer.matched);
+    const sent = (answer: Answer) =>
+      answer.segments
+        .filter((s) => s.type !== "loader" && s.component !== null)
+        .map((s) => `${s.namespace}:${s.id}`);
+    expect(sent(hitAnswer)).toEqual(sent(liveAnswer));
+    expect(Object.keys(await sentCrumbs(hit.result)).sort()).toEqual(
+      Object.keys(await sentCrumbs(live.result)).sort(),
+    );
+  });
 });

@@ -155,8 +155,11 @@ again. A prerender entry (`storedEntrySends`) re-sends the route's own
 segments when the params changed (and an overlay entry, which can be newer
 than the client's copy, also on an action or a stale request). A held layout
 above the route stays held, as a live walk keeps it, unless its
-`revalidate()` asks for it when the params changed. The entry replays the
-handle values of the segments it sends only, so a kept layout keeps the
+`revalidate()` asks for it when the params changed. Each decoded segment
+is decided on its own: an intercept variant can hold a layout's parallel and
+the intercept's slot under one id, and the slot is sent while the held
+parallel is kept. On a partial request the entry replays a handle bucket
+only when a segment with its id is sent, so a kept layout keeps the
 client's values. It used to re-send every held segment and all their
 handle values when the params changed: a `/list` to `/item/1`
 navigation, an intercept's included, replaced the layout on screen and its
@@ -647,7 +650,7 @@ In `cache-lookup.ts`, when `ctx.isIntercept` is true:
    find, or one whose build handler or layout returned a `Response`) is a
    miss, and the intercept renders live.
 3. `serveStoredSegments()` yields the narrowed segments, and
-   `decodeStoredEntry()` replays only their handle values. Downstream
+   `decodeStoredEntry()` replays only the handle values of those it sends. Downstream
    `handleCacheHitIntercept()` filters segments by `namespace?.startsWith("intercept:")`
    and sets up `state.slots[slotName]`
 4. If not found: fall through to normal pipeline (skip non-intercept prerender

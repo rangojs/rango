@@ -313,8 +313,9 @@ function cachedSegmentSends<TEnv>(
  * above the route stays held, as a live walk keeps it ("nav:non-route-skip"),
  * unless its revalidate() rules ask for it when the params changed.
  *
- * Decided once per segment: decodeStoredEntry asks first, to replay the
- * handle values of the sent segments only.
+ * Decided once per decoded segment, by object: an intercept variant can hold
+ * a layout's parallel and the intercept's slot under one id. decodeStoredEntry
+ * asks first, to replay the handle values of the sent segments only.
  */
 function storedEntrySends<TEnv>(
   ctx: MatchContext<TEnv>,
@@ -360,10 +361,10 @@ function storedEntrySends<TEnv>(
       traceSource: "cache-hit",
     });
   };
-  const decided = new Map<string, boolean | Promise<boolean>>();
+  const decided = new WeakMap<ResolvedSegment, boolean | Promise<boolean>>();
   return (segment) => {
-    let send = decided.get(segment.id);
-    if (send === undefined) decided.set(segment.id, (send = decide(segment)));
+    let send = decided.get(segment);
+    if (send === undefined) decided.set(segment, (send = decide(segment)));
     return send;
   };
 }
