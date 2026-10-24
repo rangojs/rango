@@ -1494,11 +1494,18 @@ export async function resolveOrphanLayout<TEnv>(
     // Below a unit a prefetch skipped: the orphan goes with it.
     deferred = deferUnit(context, orphan.shortCode, "below");
     if (!deferred) {
-      // Its handler's pushes are its own, not the last-pinned parent's.
-      (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-        orphan.shortCode;
+      // Its handler's pushes are its own. Pinned only while it runs: a route
+      // under loading() streams its handler, whose pushes after an await
+      // read the pin after this returns.
+      const internal = context as InternalHandlerContext<any, TEnv>;
+      const pinned = internal._currentSegmentId;
+      internal._currentSegmentId = orphan.shortCode;
       const doneHandler = track(`handler:${orphan.id}`, 2);
-      component = await resolveLayoutComponent(orphan, context);
+      try {
+        component = await resolveLayoutComponent(orphan, context);
+      } finally {
+        internal._currentSegmentId = pinned;
+      }
       doneHandler();
     }
   }

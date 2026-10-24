@@ -13,6 +13,12 @@
  *     a cache() record kept it there;
  *   - nothing (the client holds the layout and the orphan's revalidate()
  *     re-renders it): the push threw "used outside of handler context".
+ *
+ * The pin lasts only while the orphan's handler runs. A route under
+ * loading() streams its handler: resolveSegment runs the route's orphan
+ * layouts before the handler finishes, so a pin left on the orphan filed
+ * every push the handler made after an await under the orphan, ahead of the
+ * route's earlier pushes (a Meta title reverted to the first one).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -35,9 +41,12 @@ import {
 import {
   createHandle,
   createRouter,
+  Meta,
   urls,
   type HandlerContext,
 } from "../../index.rsc.js";
+import { collectHandleData } from "../../handle.js";
+import { filterSegmentOrder } from "../../browser/react/filter-segment-order.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { withoutPushedBy } from "../../handles/pushed-by.js";
@@ -239,5 +248,67 @@ describe("cache(): the record files an orphan layout's push under the orphan", (
         expect(hitBuckets).toMatchObject(expected);
       });
     }
+  }
+});
+
+/**
+ * A route under loading() pushes before and after an await, beside a layout
+ * its path() declares (a static one: no handler, no push).
+ */
+const streamedRouter = createRouter({
+  onError: ({ error }) => {
+    errors.push(error instanceof Error ? error.message : String(error));
+  },
+}).routes(
+  urls(({ path, layout, loading }) => [
+    layout(
+      (ctx: HandlerContext) => {
+        ctx.use(Crumbs)("layout");
+        return <main>shell</main>;
+      },
+      () => [
+        path("/a", () => <p>a</p>, { name: "a" }),
+        path(
+          "/product",
+          async (ctx: HandlerContext) => {
+            ctx.use(Meta)({ title: "Product" });
+            ctx.use(Crumbs)("page");
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            ctx.use(Meta)({ title: "Blue Widget" });
+            ctx.use(Crumbs)("page-late");
+            return <article>product</article>;
+          },
+          { name: "product" },
+          () => [loading(<p>loading</p>), layout(<section>frame</section>)],
+        ),
+      ],
+    ),
+  ]),
+);
+
+describe("a streamed route's push after an await stays the route's beside a layout its path() declares", () => {
+  for (const shape of ["document", "navigation"] as const) {
+    it(`${shape}: the last title wins and the crumbs keep push order`, async () => {
+      const result = await serveShellRequest(streamedRouter, "/product", {
+        cacheStore: new MemorySegmentCacheStore(),
+        partial:
+          shape === "document" ? undefined : { from: "/a", segments: [] },
+      });
+      const handles = await result.readHandles();
+      const data = (handles?.late.at(-1) ??
+        handles?.hydration ??
+        {}) as HandleData;
+      const order = filterSegmentOrder(await matchedOf(result.flight));
+      expect(errors).toEqual([]);
+      expect({
+        titles: collectHandleData(Meta, data, order).filter(
+          (d) => "title" in d,
+        ),
+        crumbs: collectHandleData(Crumbs, data, order),
+      }).toEqual({
+        titles: [{ title: "Blue Widget" }],
+        crumbs: ["layout", "page", "page-late"],
+      });
+    });
   }
 });
