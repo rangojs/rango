@@ -512,15 +512,16 @@ handler and its loaders both push to a handle (a breadcrumb read with
 the render that wrote the record listed a value the loader pushed before its
 first `await` ahead of the handler's. Breadcrumbs reordered between the first
 visit and every later one: `["layout", "shared-loader", "modal", "index"]`
-became `["layout", "modal", "shared-loader", "index"]`. A PPR shell HIT and
-the navigation that replays its shell listed a live loader's value the same
-way, on a route without `Prerender()`.
+became `["layout", "modal", "shared-loader", "index"]`. A `Prerender()`
+route's page, a PPR shell HIT and the navigation that replays its shell
+listed a live loader's value the same way.
 
 **Now.** A HIT lists them as the first render does: a value the loader pushes
 before its first `await` comes ahead of the handler's, one it pushes after an
 `await` behind it, whether the record was written by that render or by a
-background refresh. A `Prerender()` route's stored page keeps the previous
-order. No change in your code.
+background refresh. The fill after a `prefetch: false` prefetch keeps its
+order: it lists the deferred loader's value after the handler's, from a
+record or not. No change in your code.
 
 ### Fixed: an intercept over a `Prerender()` route no longer sends the route's page
 

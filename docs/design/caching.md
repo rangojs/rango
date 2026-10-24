@@ -959,14 +959,18 @@ in `CachedEntryData.handleOwners`.
 loaders, then runs its handler, so a loader push made before its first
 `await` is ahead of the handler's in the segment, and one made after it is
 behind. A HIT restores the record before any loader starts, and each live
-push used to land after the record's values. The lookup now holds them
-(`HandleStore.holdRecordedValues`): a push into a held segment goes in front
-of its record values until the HIT's loaders-only walk reaches the place
-where the MISS ran that entry's handler (`releaseRecordedValues` in
-`resolveLoadersOnly`, after the entry's own loaders and before its slots';
-in `resolveInterceptLoadersOnly`, after the intercept's loaders). The record
-needs no position of its own, so a record a background re-render wrote,
-which runs no loader, orders the same way (rango-t189).
+push used to land after the record's values. `serveStoredSegments` now
+holds them, for a `Prerender()` entry too (`HandleStore.holdRecordedValues`):
+a push into a held segment goes in front of its stored values until the
+HIT's loaders-only walk reaches the place where the MISS ran that entry's
+handler (`releaseRecordedValues` in `resolveLoadersOnly`, after the entry's
+own loaders and before its slots'; in `resolveInterceptLoadersOnly`, after
+the intercept's loaders). The record needs no position of its own, so a
+record a background re-render wrote, which runs no loader, orders the same
+way. A `prefetch: false` fill holds nothing: it does not run the held
+segment's handler, so the browser's merge (`mergePartialHandleData`)
+appends what the fill delivers on a MISS, and a HIT must give the same
+order (rango-t189).
 
 **An owned value follows its loader's value.** A copy of a loader's push in a
 record is only right next to the loader data of the same run, so

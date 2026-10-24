@@ -11,7 +11,9 @@
  *
  * The HIT keeps the record's values behind the pushes the segment's loaders
  * make until its walk reaches the place where the MISS ran the handler
- * (HandleStore.holdRecordedValues).
+ * (HandleStore.holdRecordedValues). So does a Prerender() HIT, against a live
+ * render of the same handler and loader. A `prefetch: false` fill holds
+ * nothing: its HIT orders as its MISS does.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -35,12 +37,15 @@ import {
   createHandle,
   createLoader,
   createRouter,
+  Prerender,
   urls,
   type HandlerContext,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import type { HandleData } from "../../server/handle-store.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
+import { mergePartialHandleData } from "../../handles/pushed-by.js";
+import { filterSegmentOrder } from "../../browser/react/filter-segment-order.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
@@ -73,6 +78,12 @@ const LateData = createLoader(async (ctx) => {
 const SlotData = createLoader(async (ctx) => {
   ctx.use(Crumbs)("slot-loader");
   return { slot: true };
+});
+
+/** Declared `prefetch: false`: a prefetch defers it, its fill runs it. */
+const FillData = createLoader(async (ctx) => {
+  ctx.use(Crumbs)("fill-loader");
+  return { fill: true };
 });
 
 const router = createRouter({}).routes(
@@ -144,6 +155,32 @@ const router = createRouter({}).routes(
             },
             { name: "late" },
             () => [loader(LateData)],
+          ),
+          path(
+            "/fill",
+            (ctx: HandlerContext) => {
+              ctx.use(Crumbs)("fill-handler");
+              return <article>fill</article>;
+            },
+            { name: "fill" },
+            () => [loader(FillData, { prefetch: false })],
+          ),
+          path(
+            "/fill-item/:id",
+            (ctx: HandlerContext<{ id: string }>) => {
+              ctx.use(Crumbs)("fill-item-page");
+              return <article>fill item</article>;
+            },
+            { name: "fillItem" },
+          ),
+          intercept(
+            "@fillModal",
+            ".fillItem",
+            (ctx: HandlerContext) => {
+              ctx.use(Crumbs)("fill-modal");
+              return <dialog>fill modal</dialog>;
+            },
+            () => [loader(FillData, { prefetch: false })],
           ),
           layout(
             (ctx: HandlerContext) => {
@@ -305,6 +342,180 @@ describe("cache() HIT: a segment's handle values in the MISS's order", () => {
           }
         });
       }
+    });
+  }
+});
+
+interface Answer {
+  matched: string[];
+  resolvedIds?: string[];
+  segments: { id: string; deferred?: boolean }[];
+}
+
+async function answerOf(result: ServeShellRequestResult): Promise<Answer> {
+  return (await deserializeResult<{ metadata: Answer }>(result.flight!))
+    .metadata;
+}
+
+/** The last handle state a response streamed, pushedBy records included. */
+async function streamedHandles(
+  result: ServeShellRequestResult,
+): Promise<HandleData> {
+  const { metadata } = await deserializeResult<{
+    metadata: { handles?: AsyncIterable<HandleData> };
+  }>(result.flight!);
+  let last: HandleData = {};
+  for await (const data of metadata.handles ?? []) last = data;
+  return last;
+}
+
+/** The browser's merge of a partial response onto the page's handles. */
+async function merged(
+  current: HandleData,
+  result: ServeShellRequestResult,
+): Promise<HandleData> {
+  const answer = await answerOf(result);
+  return mergePartialHandleData(
+    current,
+    await streamedHandles(result),
+    filterSegmentOrder(answer.matched),
+    answer.matched,
+    answer.resolvedIds,
+  );
+}
+
+/**
+ * From /list (layout held), a prefetch of `url` that defers FillData, then
+ * the fill that runs it, merged onto the page as the browser merges each. The
+ * fill reads `fillStore`: empty for a MISS, the record a navigation wrote for
+ * a HIT.
+ */
+async function prefetchThenFill(
+  url: string,
+  intercept: boolean,
+  hit: boolean,
+): Promise<Record<string, unknown[]>> {
+  const list = await serveShellRequest(router, "/list", {
+    cacheStore: new MemorySegmentCacheStore(),
+    partial: true,
+  });
+  const held = (await answerOf(list)).matched;
+  const cacheStore = new MemorySegmentCacheStore();
+  if (hit) {
+    await serveShellRequest(router, url, {
+      cacheStore,
+      partial: { from: "/list", segments: held },
+    });
+  }
+  const prefetch = await serveShellRequest(router, url, {
+    cacheStore,
+    partial: { from: "/list", segments: held, prefetch: true },
+  });
+  const prefetched = await answerOf(prefetch);
+  const deferred = prefetched.segments
+    .filter((s) => s.deferred)
+    .map((s) => s.id);
+  expect(deferred).toHaveLength(1);
+  const fill = await serveShellRequest(router, url, {
+    cacheStore: hit ? cacheStore : new MemorySegmentCacheStore(),
+    partial: {
+      from: "/list",
+      ...(intercept ? { interceptSource: "/list" } : {}),
+      segments: prefetched.matched.filter((id) => !deferred.includes(id)),
+      fill: true,
+    },
+  });
+  const page = await merged(
+    await merged(await streamedHandles(list), prefetch),
+    fill,
+  );
+  return (page[Crumbs.$$id] ?? {}) as Record<string, unknown[]>;
+}
+
+describe("cache() HIT of a prefetch: false fill: the fill MISS's order", () => {
+  beforeEach(async () => {
+    await resetShellTestState();
+  });
+
+  for (const [name, url, intercept, crumb] of [
+    ["a route's deferred loader", "/fill", false, "fill-handler"],
+    ["an intercept's deferred loader", "/fill-item/1", true, "fill-modal"],
+  ] as const) {
+    it(name, async () => {
+      const miss = await prefetchThenFill(url, intercept, false);
+      const hit = await prefetchThenFill(url, intercept, true);
+      // The fill does not run the held segment's handler: the merge appends
+      // the loader's value to the handler's.
+      expect(segmentWith(miss, crumb)).toEqual([crumb, "fill-loader"]);
+      expect(segmentWith(hit, crumb)).toEqual(segmentWith(miss, crumb));
+    });
+  }
+});
+
+const TwinData = createLoader(async (ctx) => {
+  ctx.use(Crumbs)("twin-loader");
+  return { twin: true };
+});
+
+/** The twin routes' handler body: one push. */
+function twinPage(push: (crumb: string) => void): React.ReactNode {
+  push("twin-handler");
+  return <article>twin</article>;
+}
+
+/** The same handler and loader, rendered live and baked by Prerender(). */
+const prerenderRouter = createRouter({}).routes(
+  urls(({ path, layout, loader }) => [
+    layout(
+      (ctx: HandlerContext) => {
+        ctx.use(Crumbs)("layout");
+        return <main>shell</main>;
+      },
+      () => [
+        path("/list", () => <ul>list</ul>, { name: "list" }),
+        path(
+          "/live/:id",
+          (ctx: HandlerContext<{ id: string }>) => twinPage(ctx.use(Crumbs)),
+          { name: "live" },
+          () => [loader(TwinData)],
+        ),
+        path(
+          "/baked/:id",
+          Prerender(
+            async () => [{ id: "1" }],
+            (ctx) => twinPage(ctx.use(Crumbs)),
+          ),
+          { name: "baked" },
+          () => [loader(TwinData)],
+        ),
+      ],
+    ),
+  ]),
+);
+
+describe("Prerender() HIT: a segment's handle values in a live render's order", () => {
+  beforeEach(async () => {
+    await resetShellTestState();
+  });
+
+  for (const shape of ["document", "navigation"] as const) {
+    it(shape, async () => {
+      const partial =
+        shape === "document" ? undefined : { from: "/list", segments: [] };
+      const serve = (url: string) =>
+        serveShellRequest(prerenderRouter, url, {
+          cacheStore: new MemorySegmentCacheStore(),
+          partial,
+        });
+      const live = await crumbsBySegment(await serve("/live/1"));
+      const baked = await crumbsBySegment(await serve("/baked/1"));
+      expect(segmentWith(live, "twin-handler")).toEqual([
+        "twin-loader",
+        "twin-handler",
+      ]);
+      expect(segmentWith(baked, "twin-handler")).toEqual(
+        segmentWith(live, "twin-handler"),
+      );
     });
   }
 });

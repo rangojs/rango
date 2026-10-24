@@ -874,9 +874,11 @@ export class CacheScope {
       // records via cacheRoute (resolveTags); the hit path records here,
       // onto the replayed segments too, for a record written from this replay
       // (a shell capture's doc record).
-      const segmentIds = segments.map((s) => s.id);
       recordRequestTags(cached.tags);
-      recordSegmentTags(segmentIds, cached.tags);
+      recordSegmentTags(
+        segments.map((s) => s.id),
+        cached.tags,
+      );
 
       // Before the handle replay: the implicit doc scope's marker arms the
       // loader pins of a navigation replay here (matchPartialWithPprReplay),
@@ -892,9 +894,10 @@ export class CacheScope {
           handleStore,
           cached,
           ownedPushes?.(),
-          this.boundary !== undefined ? new Set(segmentIds) : undefined,
+          this.boundary !== undefined
+            ? new Set(segments.map((s) => s.id))
+            : undefined,
         );
-        handleStore.holdRecordedValues(segmentIds);
       }
 
       if (INTERNAL_RANGO_DEBUG) {

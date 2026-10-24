@@ -89,7 +89,7 @@ interface SlotTag {
    * loader a copy stands for. Unset for a handler's push.
    */
   by?: string;
-  /** A value of the cache() record a HIT restored (holdRecordedValues). */
+  /** A stored value a HIT restored (holdRecordedValues). */
   record?: true;
 }
 
@@ -316,11 +316,12 @@ export interface HandleStore {
   replacePlaceholders(loaderIds: readonly string[], deliver: () => void): void;
 
   /**
-   * A cache() HIT restored its record's values into `segmentIds`
-   * (CacheScope.lookupRouteDetailed). The MISS ran each segment's handler
-   * after it started the segment's loaders, so a push into a restored array
-   * goes in front of the record's values until releaseRecordedValues: a
-   * loader's push lands where the same loader timing puts it on the MISS.
+   * A cache() or Prerender() HIT restored its stored values into
+   * `segmentIds` (cache-lookup.ts serveStoredSegments). The MISS ran each
+   * segment's handler after it started the segment's loaders, so a push into
+   * a restored array goes in front of the stored values until
+   * releaseRecordedValues: a loader's push lands where the same loader timing
+   * puts it on the MISS.
    */
   holdRecordedValues(segmentIds: readonly string[]): void;
 

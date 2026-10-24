@@ -57,6 +57,7 @@ import { loaderPins } from "../segment-resolution/loader-cache.js";
 import {
   fillSends,
   interceptFillSkips,
+  isFillRequest,
   recordUse,
 } from "../segment-resolution/prefetch-deferral.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
@@ -419,6 +420,14 @@ async function* serveStoredSegments<TEnv>(
   const segments = fromCache
     ? source.segments
     : await decodeStoredEntry(source.entry, ctx, reqCtx);
+
+  // The stored handler values stand where the MISS's handlers pushed them:
+  // behind what a segment's loaders push before the walk reaches its handler
+  // (HandleStore.holdRecordedValues). A fill holds nothing: on a fill MISS the
+  // browser's merge appends what the fill runs to the held handler values.
+  if (!isFillRequest(ctx.handlerContext)) {
+    reqCtx?._handleStore.holdRecordedValues(segments.map((s) => s.id));
+  }
 
   // Entries above the cache() boundary are not in the record: resolve them
   // fresh, exactly as an uncached render of this request would.
