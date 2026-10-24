@@ -38,10 +38,17 @@ vi.mock("../../server/request-context.js", () => ({
 
 // Identity codec: deserializeResult(serializeResult(v)) is a structurally-equal
 // but DISTINCT copy — the followers must never share the leader's object.
-vi.mock("../segment-codec.js", () => ({
-  serializeResult: vi.fn(async (v: any) => JSON.stringify(v)),
-  deserializeResult: vi.fn(async (v: string) => JSON.parse(v)),
-}));
+vi.mock("../segment-codec.js", async () => {
+  const { teeThrough } = await import("./helpers/tee-through.js");
+  const serializeResult = vi.fn(async (v: any) => JSON.stringify(v));
+  const deserializeResult = vi.fn(async (v: string) => JSON.parse(v));
+  return {
+    serializeResult,
+    deserializeResult,
+    teeResult: teeThrough(serializeResult, deserializeResult),
+    isUnsupportedValueError: () => false,
+  };
+});
 
 const mockAppendHandles = vi.fn();
 vi.mock("../handle-snapshot.js", () => ({

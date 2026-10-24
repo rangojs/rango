@@ -439,6 +439,7 @@ export const routes = {
   useCacheMemoHandlerFirst: "/use-cache-memo/handler-first",
   useCacheMemoPlain: "/use-cache-memo/plain",
   useCacheMemoRequestContext: "/use-cache-memo/request-context",
+  useCacheReturnedLazy: "/use-cache-returned-lazy/:probe",
   vtBackDetail: "/vt-back/detail/:id",
   vtBackList: "/vt-back/list",
   vtBackPlainDetail: "/vt-back-plain/detail/:id",

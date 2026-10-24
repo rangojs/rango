@@ -129,6 +129,61 @@ export async function serializeResult(
   }
 }
 
+/** The Flight encode of a value and a decoded copy of it (teeResult). */
+export interface TeedResult {
+  /** The copy: settles when the root row arrives; later rows stream in. */
+  decoded: Promise<unknown>;
+  /** The whole encoded text, or null when the stream failed. */
+  serialized: Promise<string | null>;
+}
+
+/**
+ * Encode `value` once and decode a copy of it as the encode streams, so a
+ * "use cache" miss renders the copy as a hit renders a stored entry, and
+ * stores the same bytes. Null when the encode could not start.
+ */
+export function teeResult(
+  value: unknown,
+  onError?: (error: unknown) => void,
+): TeedResult | null {
+  try {
+    const stream = renderToReadableStream(value, {
+      temporaryReferences: createTemporaryReferenceSet(),
+      onError,
+    });
+    const [toCopy, toStore] = stream.tee();
+    const decoded = Promise.resolve(
+      createFromReadableStream(
+        toCopy,
+        { temporaryReferences: createTemporaryReferenceSet() },
+        PRESERVE_SERVER_REFS,
+      ),
+    );
+    // Awaited by the caller only after the write is scheduled.
+    decoded.catch(() => {});
+    return { decoded, serialized: streamToString(toStore).catch(() => null) };
+  } catch (error) {
+    if (INTERNAL_RANGO_DEBUG) {
+      console.warn("[segment-codec] teeResult failed:", error);
+    }
+    return null;
+  }
+}
+
+/**
+ * Flight's refusal of a value it cannot encode (a function, an `on*`
+ * function, a class instance, a local symbol), by the message its server
+ * throws; the development build words a function in a children position on
+ * its own. A component that throws, or a "use cache" guard refusal, is not
+ * one.
+ */
+const UNSUPPORTED_VALUE =
+  /^(Only plain objects|Functions cannot be passed directly to Client Components|Functions are not valid as a child of Client Components|Event handlers cannot be passed to Client Component props|Only global symbols)/;
+
+export function isUnsupportedValueError(error: unknown): boolean {
+  return error instanceof Error && UNSUPPORTED_VALUE.test(error.message);
+}
+
 /**
  * RSC-deserialize a cached result string.
  * Counterpart to serializeResult() — always receives a non-empty string.
