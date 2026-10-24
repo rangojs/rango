@@ -547,7 +547,8 @@ describe("PPR shell HIT vs a pinned bake-lane loader's recorded handle pushes", 
   });
 
   // Its pins predate the `runs` bit too, so the record is not taken for the
-  // whole of the loader's pushes: the run's are kept.
+  // whole of the loader's pushes: the run's are kept, ahead of the record's
+  // values as the loader's pushes are ahead of the handler's on a MISS.
   it("a record without owner info (written before it) restores every recorded value as before", async () => {
     const legacy = snapshot.map((r) => {
       if (r.family !== "segment" || !r.key.startsWith("doc:")) return r;
@@ -560,11 +561,11 @@ describe("PPR shell HIT vs a pinned bake-lane loader's recorded handle pushes", 
       holeyPins(pinKeys, false),
     );
     expect(await crumbValues(legacyHit)).toEqual([
+      "bake-string-3",
+      { label: "bake-object-3" },
       "bake-string-1",
       { label: "bake-object-1" },
       "handler-string",
-      "bake-string-3",
-      { label: "bake-object-3" },
     ]);
   });
 

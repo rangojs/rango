@@ -502,9 +502,26 @@ showed on the MISS and were missing on every HIT. The intercept variant a
 
 **Now.** A HIT runs only the intercept's loaders, as the MISS does: it shows
 every handle value the MISS shows, and the route's loaders neither run nor
-appear in the response. Inside the intercept, a HIT can still list a loader's
-value after the handler's where the MISS lists it before. No change in your
-code.
+appear in the response. No change in your code.
+
+### Fixed: a `cache()` HIT lists a segment's handle values in the order the first render does
+
+**Before.** Under `cache()`, where a route's, a layout's or an intercept's
+handler and its loaders both push to a handle (a breadcrumb read with
+`useHandle`), every HIT listed the loader's value after the handler's, while
+the render that wrote the record listed a value the loader pushed before its
+first `await` ahead of the handler's. Breadcrumbs reordered between the first
+visit and every later one: `["layout", "shared-loader", "modal", "index"]`
+became `["layout", "modal", "shared-loader", "index"]`. A `Prerender()`
+route's page, a PPR shell HIT and the navigation that replays its shell
+listed a live loader's value the same way.
+
+**Now.** A HIT lists them as the first render does: a value the loader pushes
+before its first `await` comes ahead of the handler's, one it pushes after an
+`await` behind it, whether the record was written by that render or by a
+background refresh. The fill after a `prefetch: false` prefetch keeps its
+order: it lists the deferred loader's value after the handler's, from a
+record or not. No change in your code.
 
 ### Fixed: an intercept over a `Prerender()` route no longer sends the route's page
 
@@ -523,6 +540,22 @@ the intercept.
 intercept, with their handle values. What the intercept shows, and the page
 under it, are unchanged, and a direct load of the URL still serves the full
 page. The next build bakes the new variant. No change in your code.
+
+### Fixed: a navigation to a `Prerender()` route keeps the layout on screen when the params change
+
+**Before.** A client-side navigation served from a `Prerender()` route's bake,
+at build or on the dev server, sent every segment the browser held again when
+the params changed, the layouts above the route included, with their handle
+values. A `/list` to `/item/1` navigation, or one that opens an intercept over
+`/item/1`, replaced the layout on screen with the copy the build rendered, and
+its breadcrumbs read with `useHandle` with the build's values. A live route
+keeps that layout and its values.
+
+**Now.** The layout stays as it is on screen, with its handle values, as on a
+live route: layouts stay held on navigation, even when the params change. The
+route's own segments are sent as before. A layout whose `revalidate()` asks
+for a re-render when the params change gets the baked copy, as it gets a live
+render on a live route. No change in your code.
 
 ### Fixed: a navigation reports parallel slot and orphan layout handlers in Server-Timing and traces, as the document does
 
