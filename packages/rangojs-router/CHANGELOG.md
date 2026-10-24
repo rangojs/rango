@@ -213,9 +213,8 @@ layout, as a live render does. No change in your code.
 
 ### Fixed: a `cache()` route's background re-render runs no intercept loader that nothing reads
 
-**Before.** With an intercept open (a modal over the page), the background
-re-render that writes a `cache()` record ran every loader the intercept
-declares with `loader()`: the refresh a stale HIT starts under
+**Before.** With an intercept open, the background re-render that writes a
+`cache()` record ran every loader the intercept declares with `loader()`: the refresh a stale HIT starts under
 `cache({ ttl, swr })`, and the re-render that writes the record of a
 client-side navigation that kept the layout mounted. The record never holds a
 loader's value or its handle values, so each of those runs was thrown away:
@@ -226,7 +225,11 @@ failing loader reported to `onError` a second time.
 with `ctx.use()`, as it already did for the route's own loaders, and starts
 each as the intercept declares it. The record, its handle values and its tags
 are unchanged, and a loader the intercept's handler reads still shows its
-handle values once. No change in your code.
+handle values once. The re-render no longer emits `loader.start`,
+`loader.end`, `loader.error` or `revalidation.decision` telemetry for those
+intercept loaders, and an intercept loader with its own `cache()` is refreshed
+by its next live read rather than by the re-render, as the route's own loaders
+already are. No change in your code.
 
 ## 0.27.0 (2026-10-23)
 
