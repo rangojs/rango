@@ -545,12 +545,13 @@ function mergeResponse(
 /**
  * The response holder past one middleware. Attached, it reads and writes its
  * middleware's holder, so a chain shares one response. A middleware that
- * returns its own Response while the next() it called runs, or that calls
- * next() after it returned, detaches that run: the rest of the chain (a
- * stale document cache entry's background re-run, cache/document-cache.ts)
- * builds its own response, and the middleware ahead keep the one returned to
- * them. With one holder, a forgiving middleware ahead of the cache returned
- * the re-run's response, whose body the cache had drained into the store.
+ * returns or throws its own Response, or throws, while the next() it called
+ * runs (a timeout fallback, a stale document cache entry's background re-run,
+ * cache/document-cache.ts), or that calls next() after it returned, detaches
+ * that run: the rest of the chain builds its own response, and the
+ * middleware ahead keep what the middleware returned. With one holder, a
+ * forgiving middleware ahead of the cache returned the re-run's response,
+ * whose body the cache had drained into the store.
  */
 class DownstreamHolder implements ResponseHolder {
   private own: Response | null = null;
@@ -723,6 +724,12 @@ export async function executeMiddleware<TEnv>(
           throw error;
         }
       });
+    } catch (error) {
+      // Threw while the run its next() started is still going.
+      if (downstreamHolder && nextResolvedAt === undefined) {
+        downstreamHolder.detach();
+      }
+      throw error;
     } finally {
       // Settle the middleware own-time metric once on both the success and
       // error paths (idempotent guard in finishMiddleware).

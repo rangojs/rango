@@ -1393,6 +1393,7 @@ describe("middleware", () => {
         { late: false, forgiving: true },
         { late: false, forgiving: false },
         { late: true, forgiving: true },
+        { late: true, forgiving: false },
       ])(
         "builds its own response, and the middleware ahead keeps the one returned to it (%o)",
         async ({ late, forgiving }) => {
@@ -1464,6 +1465,57 @@ describe("middleware", () => {
           });
         },
       );
+
+      it("leaves the run of a middleware that throws while its next() runs off the response the middleware ahead catch into", async () => {
+        let markRun = (_run: Promise<Response>): void => {};
+        const run = new Promise<Response>((resolve) => {
+          markRun = resolve;
+        });
+        // Forgiving, its post-next() work outlasts the orphaned run.
+        const ahead: MiddlewareFn<unknown> = async (_ctx, next) => {
+          await next();
+          await run.catch(() => {});
+        };
+        const catcher: MiddlewareFn<unknown> = async (_ctx, next) => {
+          try {
+            return await next();
+          } catch {
+            return new Response("fallback", { status: 500 });
+          }
+        };
+        const thrower: MiddlewareFn<unknown> = async (_ctx, next) => {
+          markRun(next());
+          throw new Error("thrower");
+        };
+        const request = new Request("http://localhost/doc");
+        const response = await runWithRequestContext(
+          createRequestContext({
+            env: {},
+            request,
+            url: new URL(request.url),
+            variables: {},
+          }),
+          () =>
+            executeMiddleware(
+              [ahead, catcher, thrower].map(createMockEntry),
+              request,
+              {},
+              {},
+              async () => {
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                return new Response("final");
+              },
+            ),
+        );
+        const orphan = await run;
+        expect({
+          response: { status: response.status, body: await response.text() },
+          orphan: { status: orphan.status, body: await orphan.text() },
+        }).toEqual({
+          response: { status: 500, body: "fallback" },
+          orphan: { status: 200, body: "final" },
+        });
+      });
     });
   });
 
