@@ -20,6 +20,7 @@ import { cacheTag } from "../cache-tag.js";
 import {
   bindRes,
   createRequestContext,
+  createUseFunction,
   runWithRequestContext,
   wireRenderBarrier,
 } from "../../server/request-context.js";
@@ -150,6 +151,7 @@ describe("createDocumentCacheMiddleware", () => {
       runWithRequestContext,
       // A stale refresh's derived pass and its response sink (render-pass.ts).
       createRequestContext,
+      createUseFunction,
       bindRes,
       wireRenderBarrier,
     }));
@@ -177,6 +179,7 @@ describe("createDocumentCacheMiddleware", () => {
       runWithRequestContext,
       // A stale refresh's derived pass and its response sink (render-pass.ts).
       createRequestContext,
+      createUseFunction,
       bindRes,
       wireRenderBarrier,
     }));

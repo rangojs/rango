@@ -28,6 +28,7 @@ import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   cookies,
   createRouter,
+  getRequestContext,
   urls,
   type HandlerContext,
   type MiddlewareFn,
@@ -46,6 +47,8 @@ interface Case {
   visitorCookie: boolean;
   /** That middleware, not the page, opts in before next(). */
   middlewareOptsIn: boolean;
+  /** The page's re-run registers an onResponse() callback. */
+  rerunOnResponse: boolean;
 }
 
 let current: Case;
@@ -61,6 +64,12 @@ function DocPage(ctx: HandlerContext): React.ReactNode {
   if (run > 1) {
     ctx.headers.set("x-rerun", String(run));
     if (current.rerunCookie) cookies().set("rerun-cookie", String(run));
+    if (current.rerunOnResponse) {
+      getRequestContext().onResponse((response) => {
+        response.headers.set("x-rerun-on-response", String(run));
+        return response;
+      });
+    }
     markRerunWrote();
   }
   return <p>{`DocPage-${run}`}</p>;
@@ -93,6 +102,7 @@ async function staleHitThenNext(
     rerunCookie: false,
     visitorCookie: false,
     middlewareOptsIn: false,
+    rerunOnResponse: false,
     ...options,
   };
   const realNow = Date.now.bind(Date);
@@ -178,6 +188,18 @@ describe("a stale document cache entry's background re-run", () => {
       next: "HIT",
       stored: { cookies: [], rerun: "2" },
     });
+    expect(nextBody).toContain("DocPage-2");
+  });
+
+  it("applies the onResponse() callbacks it registers to its own response, not the visitor's", async () => {
+    const { stale, next, nextBody } = await staleHitThenNext({
+      rerunOnResponse: true,
+    });
+    expect({
+      visitor: stale.headers.get("x-rerun-on-response"),
+      next: status(next),
+      stored: next.headers.get("x-rerun-on-response"),
+    }).toEqual({ visitor: null, next: "HIT", stored: "2" });
     expect(nextBody).toContain("DocPage-2");
   });
 });

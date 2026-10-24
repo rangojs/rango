@@ -22,6 +22,7 @@ import {
 import {
   createRequestContext,
   getRequestContext,
+  runWithRequestContext,
   type RequestContext,
 } from "../server/request-context.js";
 import { deriveRenderPass } from "../server/render-pass.js";
@@ -38,7 +39,6 @@ import {
   executionStart,
   markResponseStart,
   predatesInvalidation,
-  runAsBackgroundRefresh,
 } from "./tag-invalidation.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { isRewrite } from "../route-definition/rewrite.js";
@@ -361,26 +361,22 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           `[DocumentCache] STALE ${typeLabel}: ${url.pathname} (revalidating)`,
         );
 
-        // The re-run's response writes (headers, cookies, status, onResponse)
-        // go to a sink that starts from this request's response stub as of
-        // now, as a MISS's render would: they build the re-run's own
+        // The re-run renders on its own pass (render-pass.ts). Its response
+        // writes go to a sink that starts from this request's response stub
+        // as of now, as a MISS's render would: they build the re-run's own
         // response, never the visitor's, and the visitor's later writes stay
         // off it.
-        const rerunCtx = deriveRenderPass(
-          requestCtx,
-          "background-revalidation",
-          {
-            handleStore: requestCtx._handleStore,
-            sink: createRequestContext({
-              env: ctx.env,
-              request: ctx.request,
-              url,
-              variables: {},
-              initialResponse: requestCtx.res,
-              themeConfig: requestCtx._themeConfig,
-            }),
-          },
-        );
+        const rerunCtx = deriveRenderPass(requestCtx, "document-revalidation", {
+          handleStore: requestCtx._handleStore,
+          sink: createRequestContext({
+            env: ctx.env,
+            request: ctx.request,
+            url,
+            variables: {},
+            initialResponse: requestCtx.res,
+            themeConfig: requestCtx._themeConfig,
+          }),
+        });
 
         runBackground(requestCtx, async () => {
           try {
@@ -396,9 +392,9 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             // dangling under the ended foreground phases. Running the put
             // inside the ALS matches the MISS path, where putResponse already
             // executes within the foreground request context. No visitor made
-            // the invalidations the re-run makes: they set no fresh-reads
-            // cookie (runAsBackgroundRefresh).
-            await runAsBackgroundRefresh(rerunCtx, () =>
+            // the invalidations the re-run makes: the pass's fresh-reads
+            // writer is the sink's, which sets nothing.
+            await runWithRequestContext(rerunCtx, () =>
               observePhase(
                 PHASES.background("document-revalidation"),
                 async () => {

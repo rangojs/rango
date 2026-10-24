@@ -1,6 +1,7 @@
 /**
  * Derived render passes over a request past its middleware (PPR shell
- * capture, PPR HIT tail, background re-render), each `Object.create(base)`.
+ * capture, PPR HIT tail, background re-render, document cache re-run), each
+ * `Object.create(base)`.
  * A field missing from a RENDER_PASS_FIELDS row reads the foreground
  * request's value (#684). derived-context-shape.rsc-test.tsx pins each row's
  * own keys.
@@ -9,6 +10,7 @@ import type { RecordingShellStore } from "../cache/shell-snapshot.js";
 import type { HandleStore } from "./handle-store.js";
 import {
   bindRes,
+  createUseFunction,
   wireRenderBarrier,
   type RequestContext,
 } from "./request-context.js";
@@ -39,9 +41,15 @@ export interface RenderPassInit {
   };
   "background-revalidation": {
     handleStore: HandleStore;
+    /** Throwaway: the pass's response writes land here and are dropped. */
+    sink: RequestContext<any>;
+  };
+  "document-revalidation": {
+    /** The request's: the stale HIT pushed nothing into it. */
+    handleStore: HandleStore;
     /**
-     * Throwaway: the pass's response writes land here, never on the
-     * request's response. A document cache re-run's response reads them.
+     * Holds the re-run's response writes, which make the response the
+     * document cache stores; starts from the request's response stub.
      */
     sink: RequestContext<any>;
   };
@@ -159,8 +167,7 @@ export const RENDER_PASS_FIELDS: {
   },
 
   /**
-   * router/match-middleware/background-revalidation.ts rerenderAndCacheRoute,
-   * and cache/document-cache.ts's re-run of a stale entry.
+   * router/match-middleware/background-revalidation.ts rerenderAndCacheRoute.
    */
   "background-revalidation": {
     // The request's, resolved before the pass starts: a stale HIT resolves
@@ -171,8 +178,6 @@ export const RENDER_PASS_FIELDS: {
     // reaches no record: cacheRoute drops loader segments, captureHandles
     // loader pushes. A shell capture never opens an intercept
     // (createNavigationCaptureRequest drops the intercept source).
-    // The document cache's re-run passes the request's own handle store:
-    // the stale HIT rendered nothing, so the re-run resolves the barrier.
     renderBarrier: "inherited",
     own(pass, { handleStore, sink }) {
       // Read late by loader pushes and cache-scope.ts; setupLoaderAccess
@@ -203,6 +208,51 @@ export const RENDER_PASS_FIELDS: {
       // would refuse the capture whose stale read started the pass, or opt
       // out the visitor's request.
       pass.dynamic = sink.dynamic;
+      bindRes(pass, () => sink.res);
+    },
+  },
+
+  /** cache/document-cache.ts: the re-run of a stale entry, a whole request. */
+  "document-revalidation": {
+    // The stale HIT matched and rendered nothing: the re-run is the
+    // request's render. The request's barrier closes over the request, whose
+    // _treeHasStreaming the re-run never sets.
+    renderBarrier: "own",
+    own(pass, { handleStore, sink }, base) {
+      pass._handleStore = handleStore;
+      // The request's use() reads the request's params and route name, which
+      // the re-run's match sets on this pass. Its own memo: a loader that
+      // middleware ahead of the cache started runs again here.
+      pass.use = createUseFunction({
+        handleStore,
+        loaderPromises: new Map(),
+        getContext: () => pass,
+      });
+      // Its own latch, from what middleware ahead of the cache set: the
+      // render reads it on this pass, as a MISS reads the request's. The
+      // sink's dynamic() clears the ppr header latch.
+      pass._dynamic = base._dynamic;
+      pass.dynamic = (): void => {
+        pass._dynamic = true;
+        sink.dynamic();
+      };
+      pass._metricsStore = undefined;
+      pass._renderErrors = [];
+      pass._recoveredHandlerErrors = undefined;
+      pass._shellCaptureState = undefined;
+      // Response writes go to the sink, never the visitor's STALE response.
+      pass._onResponseCallbacks = [];
+      pass.header = sink.header;
+      pass.setCookie = sink.setCookie;
+      pass.deleteCookie = sink.deleteCookie;
+      pass.setStatus = sink.setStatus;
+      pass._setStatus = sink._setStatus;
+      pass.setTheme = sink.setTheme;
+      pass._setKeepCacheDirective = sink._setKeepCacheDirective;
+      // No client receives the re-run's response: no rotation, no
+      // fresh-reads cookie (the sink has no state cookie name).
+      pass._rotateStateCookie = sink._rotateStateCookie;
+      pass._setFreshReadsCookie = sink._setFreshReadsCookie;
       bindRes(pass, () => sink.res);
     },
   },
