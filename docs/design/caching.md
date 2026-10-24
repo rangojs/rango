@@ -248,6 +248,25 @@ write and the cache cannot tell. Each renders at the origin, is never stored,
 and answers `private, no-cache`. An app that wants the shared entry refreshed
 after a write tags it and calls `updateTag()`.
 
+A stale entry's refresh re-runs the whole downstream pipeline (`next()`) in a
+`waitUntil` task while the visitor's request is still finishing. It used to
+run on the visitor's request context, so a cookie written in the re-run, or a
+header a route handler wrote that the stored entry lacks, landed on the
+visitor's `STALE` response whenever the global middleware above the cache
+returned after the re-run wrote it, and a cookie the visitor's middleware set
+after `next()` kept the refreshed page out of the store. The re-run now runs
+on the background row of `RENDER_PASS_FIELDS` (`server/render-pass.ts`), as a
+stale `cache()` refresh does, over a sink copied from the request's response
+stub when the stale hit is served. Its request-context writes build its own
+response, which is stored or refused by the rules above, and it starts from
+what middleware ahead of the cache wrote to the stub before `next()`, as a
+MISS's render does. `onResponse()` callbacks registered before the hit are
+drained onto the `STALE` response, as before, and do not reach the re-run.
+What the pass does not isolate is the global chain's own response holder
+(`executeMiddleware` in `router/middleware.ts`): a global middleware's
+`ctx.header()` that writes to the chain's current response can still land on
+the other request's response.
+
 ### Layer 2: Shell Cache + Fresh Streaming
 
 Cache synchronous shell, stream fresh data through Suspense boundaries.

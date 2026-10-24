@@ -20,9 +20,11 @@ import {
   shouldCacheResponse,
 } from "./document-cache-policy.js";
 import {
+  createRequestContext,
   getRequestContext,
   type RequestContext,
 } from "../server/request-context.js";
+import { deriveRenderPass } from "../server/render-pass.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { requestKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
@@ -359,6 +361,27 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           `[DocumentCache] STALE ${typeLabel}: ${url.pathname} (revalidating)`,
         );
 
+        // The re-run's response writes (headers, cookies, status, onResponse)
+        // go to a sink that starts from this request's response stub as of
+        // now, as a MISS's render would: they build the re-run's own
+        // response, never the visitor's, and the visitor's later writes stay
+        // off it.
+        const rerunCtx = deriveRenderPass(
+          requestCtx,
+          "background-revalidation",
+          {
+            handleStore: requestCtx._handleStore,
+            sink: createRequestContext({
+              env: ctx.env,
+              request: ctx.request,
+              url,
+              variables: {},
+              initialResponse: requestCtx.res,
+              themeConfig: requestCtx._themeConfig,
+            }),
+          },
+        );
+
         runBackground(requestCtx, async () => {
           try {
             // Re-establish the request-context ALS around the whole background
@@ -375,12 +398,12 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             // executes within the foreground request context. No visitor made
             // the invalidations the re-run makes: they set no fresh-reads
             // cookie (runAsBackgroundRefresh).
-            await runAsBackgroundRefresh(requestCtx, () =>
+            await runAsBackgroundRefresh(rerunCtx, () =>
               observePhase(
                 PHASES.background("document-revalidation"),
                 async () => {
                   const fresh = await next();
-                  const directives = shouldCacheResponse(fresh, requestCtx);
+                  const directives = shouldCacheResponse(fresh, rerunCtx);
 
                   if (!directives || !fresh.body) return;
 
@@ -388,10 +411,10 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   // drain the fresh render fully before snapshotting tags
                   // (same render-complete barrier as the miss path).
                   const body = await new Response(fresh.body).arrayBuffer();
-                  throwIfRenderErrored(requestCtx);
+                  throwIfRenderErrored(rerunCtx);
                   // Not written when one of its tags was invalidated since
                   // the render started (#977).
-                  const tags = collectRequestTags(requestCtx);
+                  const tags = collectRequestTags(rerunCtx);
                   if (await predatesInvalidation(store, tags, start)) return;
                   await store.putResponse!(
                     cacheKey,

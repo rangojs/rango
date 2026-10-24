@@ -39,7 +39,10 @@ export interface RenderPassInit {
   };
   "background-revalidation": {
     handleStore: HandleStore;
-    /** Throwaway: the pass's response writes land here and are dropped. */
+    /**
+     * Throwaway: the pass's response writes land here, never on the
+     * request's response. A document cache re-run's response reads them.
+     */
     sink: RequestContext<any>;
   };
 }
@@ -156,7 +159,8 @@ export const RENDER_PASS_FIELDS: {
   },
 
   /**
-   * router/match-middleware/background-revalidation.ts rerenderAndCacheRoute.
+   * router/match-middleware/background-revalidation.ts rerenderAndCacheRoute,
+   * and cache/document-cache.ts's re-run of a stale entry.
    */
   "background-revalidation": {
     // The request's, resolved before the pass starts: a stale HIT resolves
@@ -167,6 +171,8 @@ export const RENDER_PASS_FIELDS: {
     // reaches no record: cacheRoute drops loader segments, captureHandles
     // loader pushes. A shell capture never opens an intercept
     // (createNavigationCaptureRequest drops the intercept source).
+    // The document cache's re-run passes the request's own handle store:
+    // the stale HIT rendered nothing, so the re-run resolves the barrier.
     renderBarrier: "inherited",
     own(pass, { handleStore, sink }) {
       // Read late by loader pushes and cache-scope.ts; setupLoaderAccess

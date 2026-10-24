@@ -111,6 +111,29 @@ invalidation the request itself makes (in a server action, or in a route
 handler, middleware or render outside a background refresh) sets the cookie
 as before. No change in your code.
 
+### Fixed: a stale document cache entry's background re-run no longer writes cookies or headers on the visitor's response
+
+**Before.** When `createDocumentCacheMiddleware()` served a stale entry, it
+re-ran the page in the background on the visitor's own request context. A
+cookie (`cookies().set()`) that middleware, a route handler or the render
+wrote in that re-run, or a header that a route handler or route middleware
+wrote (`ctx.headers.set()`, `ctx.header()`) and the stored entry lacks, could
+reach the visitor's `STALE` response, for example when a global middleware
+above the cache awaited work after `next()` and then returned the response:
+the visitor got `Set-Cookie` and headers from a render whose body they never
+received. The other way round, a cookie that middleware set on the visitor's
+response after `next()` could land on the re-run's response, and the document
+cache, which stores no response with a `Set-Cookie`, then kept the refreshed
+page out, so later requests kept getting the stale one.
+
+**Now.** The re-run writes to a response of its own. It starts from what
+middleware ahead of the cache wrote to the response before `next()`, as a
+cache miss does, and is stored by the same rules: its headers are kept with
+the entry, and a cookie it sets keeps the refreshed page out of the cache. The
+visitor's `STALE` response carries the stored entry and the visitor's own
+writes. An `invalidateClientCache()` in the re-run rotates no client's state
+cookie, as in a stale `cache()` refresh. No change in your code.
+
 ### Fixed: a stale `cache()` record a PPR shell recapture reads refreshes under `cache()` rules
 
 **Before.** When a `ppr` route's shell capture read a stale `cache()` record,
