@@ -78,6 +78,25 @@ function getCacheLogs(stdout: string): {
 }
 
 /**
+ * The crumbs the /cache-intercept-crumbs layout shows with the intercept open
+ * over its index, sorted: inside the slot a HIT lists the loader's crumb after
+ * the handler's, and the MISS before it.
+ */
+const CACHE_INTERCEPT_CRUMBS = ["index", "layout", "modal-a", "shared-loader"];
+
+/** Open the /cache-intercept-crumbs intercept from its index. */
+async function openCrumbsIntercept(page: Page): Promise<void> {
+  await page.getByTestId("cic-link").click();
+  await expect(page.getByTestId("cic-modal")).toBeVisible();
+  await expect(page.getByTestId("cic-index")).toBeVisible();
+  await expect
+    .poll(async () =>
+      (await page.getByTestId("ih-crumb").allTextContents()).sort(),
+    )
+    .toEqual(CACHE_INTERCEPT_CRUMBS);
+}
+
+/**
  * /cache-test/cached-loader-dep: a loader with its own cache() awaits a
  * dependency that an uncached sibling loader also reads. The dependency's
  * crumb (a per-run id) appears once on the MISS and once on each HIT, and on
@@ -668,6 +687,30 @@ test.describe("cache-intercept-routes", () => {
       true,
     );
   });
+
+  // rango-t184: the detail route and its intercept both declare the loader
+  // that pushes "shared-loader". The HIT ran it as the route's, so its crumb
+  // was filed under a segment the response does not match.
+  test("a HIT of the intercept shows the crumbs of the MISS, a loader the route and the intercept both declare included", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-intercept-crumbs"));
+    await waitForHydration(page);
+
+    await openCrumbsIntercept(page);
+    await page.goBack();
+    await expect(page.getByTestId("cic-modal")).toHaveCount(0);
+
+    const beforeHit = f.proc().stdout().length;
+    await openCrumbsIntercept(page);
+    await waitForCacheHit(
+      f.proc(),
+      beforeHit,
+      "/cache-intercept-crumbs/item/a",
+    );
+  });
 });
 
 // ============================================================================
@@ -716,6 +759,22 @@ test.describe("cache-intercept-routes (production)", () => {
     await waitForHydration(page);
 
     await expect(page.getByTestId("cache-intercept-detail")).toBeVisible();
+  });
+
+  // rango-t184: see the dev describe's case.
+  test("a HIT of the intercept shows the crumbs of the MISS, a loader the route and the intercept both declare included", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-intercept-crumbs"));
+    await waitForHydration(page);
+
+    await openCrumbsIntercept(page);
+    await page.goBack();
+    await expect(page.getByTestId("cic-modal")).toHaveCount(0);
+
+    await openCrumbsIntercept(page);
   });
 });
 

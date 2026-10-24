@@ -533,6 +533,7 @@ async function* serveStoredSegments<TEnv>(
               stale: ctx.stale || undefined,
             },
         loaderEntries,
+        { interceptResult: ctx.interceptResult },
       ),
     );
     state.matchedIds = ctx.isFullMatch

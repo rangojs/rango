@@ -2232,6 +2232,8 @@ When `isIntercept` is true, cache operations use the `intercept:` prefix. Interc
 
 The re-render behind it and behind a stale HIT's refresh (`rerenderAndCacheRoute`) writes the record a MISS writes: it passes the match's `interceptResult` to the walk, so the intercepted route's own entry is skipped (its id is matched, its handler and loaders do not run). An `intercept:` record holds the layouts and the intercept's slot, never the route's page or its `cacheTag()`s.
 
+A HIT of an `intercept:` record runs the loaders the MISS runs. `serveStoredSegments` (`cache-lookup.ts`) passes the match's `interceptResult` to its loaders-only walk (`resolveLoadersOnly`), which skips the intercepted route's entry as the MISS's walk does, after latching a ppr route's header guard from the whole chain (dropping the route from the walk's entries instead would move that latch's leaf off the route), and `handleCacheHitIntercept` (`intercept-resolution.ts`) runs the intercept's own loaders as loader segments of its slot. A loader the route and the intercept both declare runs once, under the slot, so its handle pushes land in a segment the response matches (through `serveShellRequest`, `packages/rangojs-router/src/testing/__tests__/cached-intercept-hit-route-loaders.rsc-test.tsx`, which pins the `Prerender()` intercept variant as well).
+
 #### 5. MemorySegmentCacheStore SWR Limitation
 
 The in-memory store doesn't support SWR - it always returns `shouldRevalidate: false`:

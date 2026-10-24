@@ -132,6 +132,7 @@ export interface RouterContext<TEnv = any> {
   resolveLoadersOnly?: (
     pass: ResolutionPassInput<TEnv>,
     entries: EntryData[],
+    walk?: Pick<RevalidatingWalkOptions, "interceptResult">,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
   // Entry revalidation map

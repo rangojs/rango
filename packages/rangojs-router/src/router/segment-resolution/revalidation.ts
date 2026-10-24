@@ -585,11 +585,14 @@ export async function resolveOwnerLoaders<TEnv>(
 
 /**
  * Resolve only loader segments for all entries: a cache() or prerender HIT
- * serves the cached non-loader segments, and loaders are never cached.
+ * serves the cached non-loader segments, and loaders are never cached. Under
+ * an intercept the route's entry is skipped, as resolveAllSegments skips it,
+ * after the ppr header latch below has read it as the chain's leaf.
  */
 export async function resolveLoadersOnly<TEnv>(
   pass: ResolutionPass<TEnv>,
   entries: EntryData[],
+  walk?: Pick<RevalidatingWalkOptions, "interceptResult">,
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const allLoaderSegments: ResolvedSegment[] = [];
   const allMatchedIds: string[] = [];
@@ -668,6 +671,7 @@ export async function resolveLoadersOnly<TEnv>(
   }
 
   for (const entry of entries) {
+    if (entry.type === "route" && walk?.interceptResult) continue;
     await collectEntryLoaders(entry, entry.type === "route");
   }
 
