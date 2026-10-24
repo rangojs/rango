@@ -187,12 +187,12 @@ The render barrier is a deferred promise on the request context:
   `router/__tests__/shell-capture-barrier-isolation.test.ts`.
 - **Background re-render of a stale route record**: the
   `background-revalidation` row inherits the request's barrier, and its
-  loaders do call `rendered()` on it. The route's own pass skips loaders
-  (`skipLoaders`) and runs only the ones a handler reads: `resolveOwnerLoaders`
-  registers each, and the read starts it as a DSL loader, as on a MISS. An
-  open intercept resolves with `heldNothingPassInput`
-  (`background-revalidation.ts` `rerenderAndCacheRoute`), which runs the
-  intercept's DSL loaders. You might expect the inherited barrier to hang
+  loaders do call `rendered()` on it. Both of its passes skip loaders
+  (`skipLoaders`): the route's, and an open intercept's, which resolves with
+  `heldNothingPassInput` (`background-revalidation.ts`
+  `rerenderAndCacheRoute`). Each runs only the loaders a handler reads:
+  `resolveOwnerLoaders` registers each, and the read starts it as a DSL
+  loader, as on a MISS. You might expect the inherited barrier to hang
   them or leak into the record. It does neither:
   - The barrier has already resolved when the pass starts. A stale HIT
     resolves it in `cache-lookup.ts` before `withBackgroundRevalidation`
@@ -200,15 +200,19 @@ The render barrier is a deferred promise on the request context:
     `onResponse`, after segment resolution resolved it. So `rendered()`
     returns at once, and the loader reads the visitor's handle snapshot, not
     the refresh's store.
-  - Nothing an intercept loader produces reaches the record: `cacheRoute`
-    drops loader segments (`cache/cache-scope.ts`), and `captureHandles`
-    drops loader pushes (`cache/handle-snapshot.ts`).
-  - A route loader a handler reads is different: its value bakes into the
+  - No loader's own output reaches the record: `cacheRoute` drops loader
+    segments (`cache/cache-scope.ts`), and `captureHandles` drops loader
+    pushes (`cache/handle-snapshot.ts`). So a loader nothing reads is not
+    run at all. The intercept's pass used to run them, once more per
+    refresh for nothing, side effects and `onError` reports included
+    (`testing/__tests__/cached-intercept-refresh-loaders.rsc-test.tsx`).
+  - A loader a handler reads is different: its value bakes into the
     handler's output, as on a MISS. Its pushes stay out of the record only
     because it starts through its registration: started bare, as a
     handler-invoked loader, they stayed in and every HIT showed them twice,
     the record's copy and the live run's
-    (`testing/__tests__/cached-route-handler-reads-loader.rsc-test.tsx`).
+    (`testing/__tests__/cached-route-handler-reads-loader.rsc-test.tsx`, and
+    for an intercept's handler the file above).
   - A handler awaiting a loader that calls `rendered()` is the deadlock
     every MISS refuses (the checks in `setupLoaderAccess` and `rendered()`),
     and the refresh must refuse it too. Those checks read three fields:

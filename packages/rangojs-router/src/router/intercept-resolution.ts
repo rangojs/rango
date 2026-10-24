@@ -252,7 +252,9 @@ async function settleLoaderSegments(
 /**
  * Resolve an intercept entry: its slot segment, then its loader segments. The
  * background re-render resolves with a pass that holds nothing
- * (heldNothingPassInput, resolution-pass.ts): every segment renders fresh.
+ * (heldNothingPassInput, resolution-pass.ts): every segment renders fresh, and
+ * its loaders are skipped (skipLoaders), each registered for the handler's
+ * read.
  */
 export async function resolveInterceptEntry<TEnv>(
   pass: ResolutionPass<TEnv>,

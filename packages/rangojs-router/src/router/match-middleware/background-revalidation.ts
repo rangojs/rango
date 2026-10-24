@@ -198,11 +198,13 @@ export async function rerenderAndCacheRoute<TEnv>(
       segments.push(
         ...(await runInStore(() =>
           routerCtx.resolveInterceptEntry(
-            // Nothing held: render fresh.
+            // Nothing held: render fresh. Its loaders are skipped as the
+            // route's are: the record drops them.
             heldNothingPassInput(
               handlerContext,
               ctx.interceptResult!.intercept.routeName,
               ctx.matched.params,
+              { skipLoaders: true },
             ),
             ctx.interceptResult!.intercept,
             ctx.interceptResult!.entry,

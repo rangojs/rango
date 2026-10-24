@@ -211,6 +211,23 @@ evicts the route record as well; before, the refreshed record lost them. The
 refresh and the `Prerender` build file a layout's handle values under that
 layout, as a live render does. No change in your code.
 
+### Fixed: a `cache()` route's background re-render runs no intercept loader that nothing reads
+
+**Before.** With an intercept open (a modal over the page), the background
+re-render that writes a `cache()` record ran every loader the intercept
+declares with `loader()`: the refresh a stale HIT starts under
+`cache({ ttl, swr })`, and the re-render that writes the record of a
+client-side navigation that kept the layout mounted. The record never holds a
+loader's value or its handle values, so each of those runs was thrown away:
+one more call to your backend per re-render, its side effects again, and a
+failing loader reported to `onError` a second time.
+
+**Now.** The re-render runs only the intercept loaders its handler reads
+with `ctx.use()`, as it already did for the route's own loaders, and starts
+each as the intercept declares it. The record, its handle values and its tags
+are unchanged, and a loader the intercept's handler reads still shows its
+handle values once. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
