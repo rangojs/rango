@@ -70,6 +70,7 @@ import {
   safeEmit,
   resolveSink,
   getRequestId,
+  setRequestId,
   type TelemetrySink,
 } from "../router/telemetry.js";
 import {
@@ -445,7 +446,13 @@ export async function runRequestPasses<TEnv>(
             .then(() => runChain(passRequest, passUrl, index))
         : runChain(passRequest, passUrl, index);
     },
-    onHop: opts.onHop,
+    onHop: (pass) => {
+      // A pass's request is a new Request: keep the visitor's telemetry id.
+      if (ctx.router.telemetry) {
+        setRequestId(pass.request, getRequestId(opts.request));
+      }
+      opts.onHop?.(pass);
+    },
     report: (error, at) => {
       ctx.callOnError(error, "routing", {
         request: at.request,

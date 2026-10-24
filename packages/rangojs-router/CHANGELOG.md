@@ -72,6 +72,24 @@ The error a component route throws, and when it throws (before any
 middleware), is unchanged. A test that read `ctx.routeName` before `next()`
 in global middleware reads it after `next()`, or from route middleware.
 
+### Fixed: a rewritten request's telemetry events carry one `requestId`
+
+**Before.** With `createRouter({ telemetry })` and no request-id header
+(`x-rsc-router-request-id`, `x-request-id` or `cf-ray`), a request that
+middleware rewrote with `throw rewrite()` reported two generated ids. The
+rewritten pass's events (`request.start`, `loader.*`, `cache.decision`,
+`request.end`) carried one, and a stream-idle `request.timeout` another, so a
+sink that groups events by `requestId` could not tie the timeout to the
+request it cut off. `dispatch()` from `@rangojs/router/testing` already
+reported one id for a rewritten request, so the testing primitive and
+`router.fetch` disagreed.
+
+**Now.** Every event of a rewritten request, through any number of rewrites,
+carries the visitor's id, in `router.fetch` and `dispatch()` alike. A request
+that sends a request-id header reports that header's value, as before. A
+no-JS form post's re-render still reports its own id on its events, as it did
+before this release. No change in your code.
+
 ### Fixed: a stale `cache()` HIT's background refresh sets no fresh-reads cookie on the visitor's response
 
 **Before.** With `CFCacheStore` or `VercelCacheStore`, a handler under a
