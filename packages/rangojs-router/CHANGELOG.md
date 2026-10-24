@@ -575,6 +575,30 @@ layout that fill the same slot share that slot's segment, so the bake cannot
 tell them apart: neither is baked, and they render live, as on a route that is
 not pre-rendered. No change in your code.
 
+### Added: the build warns when an intercept over a `Prerender()` route renders live
+
+An intercept a navigation selects over a `Prerender()` route is served from
+the build's bake, except in three cases where the build does not bake it and
+it renders live: two intercepts on one layout fill the same slot; its handler
+or layout returned a `Response` at build time; or it targets the route by its
+name inside an `include()` (`"item"` for the route `"shop.item"`, or for a
+route named `"item"` in an unnamed `include()`), which only a fallback
+selects and the build does not bake. Live, its handler
+runs per request with the request's context, so a handler that only works
+with `BuildContext` (a file read, say) fails there. Until now nothing said so.
+
+`vite build` now prints one warning per route and slot (a route in an unnamed
+`include()` is named by its URL):
+
+```
+[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext.
+```
+
+What renders is unchanged. No change in your code; to silence the warning,
+give each intercept its own slot, return a node from its handler and layout,
+or target the route by its full name (name the `include()`, or declare the
+intercept inside it with `".item"`).
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

@@ -1459,6 +1459,20 @@ that fill the same slot are not pre-rendered: the variant could not tell them
 apart, so they render live. Intercepts declared in the route's own layouts are
 never selected and are not pre-rendered.
 
+The build warns once per route and slot for an intercept a navigation can
+select that is not pre-rendered: two intercepts that fill one slot, a handler
+or layout that returned a `Response` at build time, or an intercept that
+targets the route by its name inside an `include()` (`"item"` for the route
+`"shop.item"`, or for a route named `"item"` in an unnamed `include()`), which
+only the local-name fallback selects (name the `include()` and target the
+full name, or declare the intercept inside it with `".item"`, to pre-render
+it). That intercept renders live, and its handler runs per request without
+`BuildContext`; a route in an unnamed `include()` is named by its URL:
+
+```
+[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext.
+```
+
 ### Example: Pre-rendered route with intercept
 
 ```typescript

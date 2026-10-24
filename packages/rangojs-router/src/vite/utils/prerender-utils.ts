@@ -10,6 +10,8 @@ import {
 import { resolve } from "node:path";
 
 import { escapeRegExp } from "../../regex-escape.js";
+import { localRouteName, publicRouteName } from "../../route-name.js";
+import type { LiveIntercept } from "../../router/prerender-match.js";
 import { substitutePatternParams } from "../../router/substitute-pattern-params.js";
 import { encodePathRemainder } from "../../router/url-params.js";
 
@@ -214,6 +216,37 @@ export function resolvePrerenderError(
   console.error(`[rango]   FAIL ${label} (${elapsed}ms) - ${error.message}`);
   notifyOnError(registry, error, phase, routeKey, pathname);
   throw error;
+}
+
+/**
+ * Warn once per router, route and slot (`warned` holds the keys already
+ * warned) that an intercept over a Prerender() route renders live: the build
+ * did not bake it (matchForPrerender `liveIntercepts`), so its handler runs
+ * per request and one that needs BuildContext fails there. A route in an
+ * unnamed include() has an internal key; the warning names its URL instead.
+ */
+export function warnLiveIntercepts(
+  warned: Set<string>,
+  routerId: string,
+  routeName: string,
+  urlPath: string,
+  liveIntercepts: readonly LiveIntercept[] | undefined,
+): void {
+  for (const { slot, reason } of liveIntercepts ?? []) {
+    const key = `${routerId} ${routeName} ${slot}`;
+    if (warned.has(key)) continue;
+    warned.add(key);
+    const why = {
+      "same-slot": `two intercepts on one layout fill ${slot}`,
+      "handler-response": `its handler returned a Response for ${urlPath}`,
+      "layout-response": `its layout returned a Response for ${urlPath}`,
+      "local-name": `it targets "${localRouteName(routeName)}", the route's name inside its include()`,
+    }[reason];
+    console.warn(
+      `[rango] Prerender route "${publicRouteName(routeName) ?? urlPath}": intercept ${slot} is not pre-rendered: ${why}. ` +
+        `A navigation that selects it renders it live, and its handler runs per request without BuildContext.`,
+    );
+  }
 }
 
 /** Build scratch space, relative to the project root. Never shipped. */
