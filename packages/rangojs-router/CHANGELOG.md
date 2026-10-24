@@ -86,9 +86,21 @@ reported one id for a rewritten request, so the testing primitive and
 
 **Now.** Every event of a rewritten request, through any number of rewrites,
 carries the visitor's id, in `router.fetch` and `dispatch()` alike. A request
-that sends a request-id header reports that header's value, as before. A
-no-JS form post's re-render still reports its own id on its events, as it did
-before this release. No change in your code.
+that sends a request-id header reports that header's value, as before. No
+change in your code.
+
+### Fixed: a no-JS form post's telemetry events carry one `requestId`
+
+**Before.** With `createRouter({ telemetry })` and no request-id header, the
+re-render after a no-JS form post (progressive enhancement), rewritten or not,
+reported its own generated id on `request.start`, `loader.*`,
+`cache.decision` and `request.end`, while a stream-idle `request.timeout`
+carried the visitor's id. A sink that groups events by `requestId` saw two
+requests.
+
+**Now.** The re-render's events carry the visitor's id, the one the
+`request.timeout` carries. A request that sends a request-id header reports
+that header's value, as before. No change in your code.
 
 ### Fixed: a stale `cache()` HIT's background refresh sets no fresh-reads cookie on the visitor's response
 
