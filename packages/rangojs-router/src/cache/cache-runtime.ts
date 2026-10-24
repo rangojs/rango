@@ -24,6 +24,7 @@ import {
   getRequestContext,
   runWithRequestContext,
 } from "../server/request-context.js";
+import { segmentPinOf } from "../server/context.js";
 import { isUnderTestRunner } from "../runtime-env.js";
 import {
   isTainted,
@@ -491,7 +492,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           hasBodyCtx = true;
         }
         if (callerSegmentId === undefined) {
-          callerSegmentId = ctx._currentSegmentId;
+          callerSegmentId = segmentPinOf(ctx);
           claimLoaderPushes = ctx._claimLoaderPushes;
         }
         if (ctx.params && typeof ctx.params === "object") {

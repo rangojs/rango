@@ -74,6 +74,7 @@ import {
   track,
   RangoContext,
   runInsideLoaderScope,
+  runAsSegment,
   latchCachedHeaderScope,
   latchPprHeaderScopeForEntries,
 } from "../../server/context.js";
@@ -782,7 +783,7 @@ async function resolveParallelSlotComponent<TEnv>(
               )
             : runInSegmentTagScope(parallelId, handler, slotContext);
       if (hasLoadingFallback) {
-        const result = run();
+        const result = runAsSegment(parallelId, run);
         if (result instanceof Promise) {
           // FRESH: no streamed-Response warning for a slot.
           if (!fresh) warnOnStreamedResponse(result, parallelId);
@@ -1154,7 +1155,9 @@ async function resolveRouteComponent<TEnv>(
   }
   if (!actionContext) {
     const result = handleHandlerResult(
-      observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+      runAsSegment(entry.shortCode, () =>
+        observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+      ),
     );
     if (result instanceof Promise) {
       warnOnStreamedResponse(result, entry.id);

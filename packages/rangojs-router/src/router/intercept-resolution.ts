@@ -31,6 +31,7 @@ import { runInSegmentTagScope } from "../cache/cache-tag.js";
 import {
   RangoContext,
   latchPprHeaderScopeForEntries,
+  runAsSegment,
 } from "../server/context.js";
 
 /**
@@ -316,7 +317,9 @@ export async function resolveInterceptEntry<TEnv>(
     handlerResult =
       typeof handler === "function"
         ? handleHandlerResult(
-            runInSegmentTagScope(slotSegmentId, handler, context),
+            runAsSegment(slotSegmentId, () =>
+              runInSegmentTagScope(slotSegmentId, handler, context),
+            ),
           )
         : handler;
   } catch (error) {
