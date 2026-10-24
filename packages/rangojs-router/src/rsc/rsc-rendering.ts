@@ -1495,7 +1495,7 @@ async function matchPartialWithPprReplay<TEnv>(
   //
   // The probe is a PRE-match fast path, not the truth: it reads only the
   // non-intercept artifact, and whether the navigation IS an intercept (and
-  // therefore whether tryPrerenderLookup reads `paramHash` or
+  // therefore whether readPrerenderSource reads `paramHash` or
   // `paramHash + "/i"`) is resolved during the match by match-api's
   // findInterceptForRoute — an intercept-source header proves nothing in
   // either direction. runMatch reclassifies every BYPASS from the stamped

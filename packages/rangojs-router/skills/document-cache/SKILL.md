@@ -215,7 +215,9 @@ suffixes are still appended.
   everyone). That includes a response whose request called
   `updateTag()`/`revalidateTag()` on a store that keeps per-isolate memos
   (`CFCacheStore`, `VercelCacheStore`): it carries the fresh-reads cookie
-  (`rango-state-fresh` by default), so it is not stored.
+  (`rango-state-fresh` by default), so it is not stored. A stale entry's
+  background re-run sets no fresh-reads cookie (no visitor made that
+  invalidation), so its invalidation does not keep the refreshed page out.
 - Non-200 responses
 - A 200 whose render reported an error: a component that threw after the
   response started streaming, such as an async server component whose fetch

@@ -21,7 +21,6 @@ import {
 } from "./document-cache-policy.js";
 import {
   getRequestContext,
-  runWithRequestContext,
   type RequestContext,
 } from "../server/request-context.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
@@ -37,6 +36,7 @@ import {
   executionStart,
   markResponseStart,
   predatesInvalidation,
+  runAsBackgroundRefresh,
 } from "./tag-invalidation.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { isRewrite } from "../route-definition/rewrite.js";
@@ -372,8 +372,10 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             // platform spans — nest under one explanatory parent instead of
             // dangling under the ended foreground phases. Running the put
             // inside the ALS matches the MISS path, where putResponse already
-            // executes within the foreground request context.
-            await runWithRequestContext(requestCtx, () =>
+            // executes within the foreground request context. No visitor made
+            // the invalidations the re-run makes: they set no fresh-reads
+            // cookie (runAsBackgroundRefresh).
+            await runAsBackgroundRefresh(requestCtx, () =>
               observePhase(
                 PHASES.background("document-revalidation"),
                 async () => {

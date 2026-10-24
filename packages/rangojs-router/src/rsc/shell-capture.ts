@@ -1769,7 +1769,7 @@ export async function settleCaptureRecord(
     !Array.isArray(record.segments) ||
     record.segments.length === 0
   ) {
-    // Post-match serve-source truth (cache-lookup.ts tryPrerenderLookup).
+    // Post-match serve-source truth (cache-lookup.ts decodeStoredEntry).
     if (derivedCtx._pprReplayPostMatchReason === "prerender-store") {
       return { kind: "prerender", match };
     }

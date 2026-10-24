@@ -100,7 +100,7 @@ export async function decodeHandleValue<T>(encoded: string): Promise<T | null> {
  *
  * DSL-loader pushes stay out of the CACHE WRITE: a HIT runs loaders exactly
  * as an uncached render of the same request would (cache-lookup.ts
- * resolveFreshLoadersAndYield), so replaying a recorded copy would duplicate
+ * serveStoredSegments), so replaying a recorded copy would duplicate
  * the live push. Handler pushes, including
  * handler-invoked ctx.use(Loader) bodies (skipped with their handler on a
  * HIT), are kept. The store tags loader pushes by array position at push

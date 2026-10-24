@@ -90,6 +90,27 @@ development warning blaming a streaming loader or render.
 no warning, as the refresh's other response writes already reach nothing. No
 change in your code.
 
+### Fixed: a stale `"use cache"` entry's, cached loader's or document cache entry's background refresh sets no fresh-reads cookie on the visitor's response
+
+**Before.** With `CFCacheStore` or `VercelCacheStore`, a `"use cache"`
+function, or a loader bound with its own `cache()`, that called
+`revalidateTag()` or `updateTag()` while it refreshed a stale entry in the
+background could set the fresh-reads cookie (`rango-state-fresh` by default)
+on the response of the visitor whose request served the stale entry, as the
+stale `cache()` refresh above could. So could a route handler, middleware or
+render that called it while `createDocumentCacheMiddleware()` re-ran a stale
+page in the background. There the re-run's own response carried the cookie
+too, so the document cache did not store the refreshed page, and later
+requests kept getting the stale one. Each refresh runs on that visitor's
+request context. Once the response was sent, the same call printed the
+development warning blaming a streaming loader or render.
+
+**Now.** The refresh's invalidation still runs, but sets no cookie, prints no
+warning, and no longer keeps the refreshed page out of the document cache. An
+invalidation the request itself makes (in a server action, or in a route
+handler, middleware or render outside a background refresh) sets the cookie
+as before. No change in your code.
+
 ### Fixed: a stale `cache()` record a PPR shell recapture reads refreshes under `cache()` rules
 
 **Before.** When a `ppr` route's shell capture read a stale `cache()` record,
@@ -105,6 +126,24 @@ until the record expired or a request outside the shell refreshed it.
 **Now.** The refresh renders as any other background refresh of the record,
 under `cache()` rules, and the next recapture replays the refreshed record.
 The capture itself still refuses those reads. No change in your code.
+
+### Fixed: a cached handler's `ctx.dynamic()` in a background refresh no longer refuses the PPR shell capture that started it
+
+**Before.** When a `ppr` route's shell capture read a stale `cache()` record,
+the background refresh it started re-ran the cached handler, and a
+`ctx.dynamic()` call there refused the capture, with the warning
+`Shell capture … was refused: ctx.dynamic() was called while capturing the
+shared shell`. The capture had not run that handler: it replayed the record,
+as a fresh `cache()` HIT does, and a fresh HIT's capture is stored. So the
+route kept its old shell, or had none and served each request as a MISS, for
+as long as its recaptures read the record stale: with `cache({ ttl: 0 })`
+until the shell expired, otherwise until a recapture found the record
+refreshed.
+
+**Now.** The refresh's `ctx.dynamic()` reaches neither the capture nor the
+visitor's request; it renders the record only. A recapture over a stale
+record stores the shell as one over a fresh record does. `ctx.dynamic()` in
+the capture's own render still refuses it. No change in your code.
 
 ### Fixed: a `cache()` route whose handler reads its own loader shows the loader's handle values once
 
