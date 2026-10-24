@@ -146,38 +146,38 @@ export function teeResult(
   value: unknown,
   onError?: (error: unknown) => void,
 ): TeedResult | null {
-  let stream: ReadableStream<Uint8Array>;
   try {
-    stream = renderToReadableStream(value, {
+    const stream = renderToReadableStream(value, {
       temporaryReferences: createTemporaryReferenceSet(),
       onError,
     });
+    const [toCopy, toStore] = stream.tee();
+    const decoded = Promise.resolve(
+      createFromReadableStream(
+        toCopy,
+        { temporaryReferences: createTemporaryReferenceSet() },
+        PRESERVE_SERVER_REFS,
+      ),
+    );
+    // Awaited by the caller only after the write is scheduled.
+    decoded.catch(() => {});
+    return { decoded, serialized: streamToString(toStore).catch(() => null) };
   } catch (error) {
     if (INTERNAL_RANGO_DEBUG) {
       console.warn("[segment-codec] teeResult failed:", error);
     }
     return null;
   }
-  const [toCopy, toStore] = stream.tee();
-  const decoded = Promise.resolve(
-    createFromReadableStream(
-      toCopy,
-      { temporaryReferences: createTemporaryReferenceSet() },
-      PRESERVE_SERVER_REFS,
-    ),
-  );
-  // Awaited by the caller only after the write is scheduled.
-  decoded.catch(() => {});
-  return { decoded, serialized: streamToString(toStore).catch(() => null) };
 }
 
 /**
- * Flight's refusal of a value it cannot encode (a function, a class
- * instance, a local symbol), by the message its server throws. A component
+ * Flight's refusal of a value it cannot encode (a function, an `on*`
+ * function, a class instance, a local symbol), by the message its server
+ * throws. A component
  * that throws, or a "use cache" guard refusal, is not one.
  */
 const UNSUPPORTED_VALUE =
-  /^(Only plain objects|Functions cannot be passed directly to Client Components|Only global symbols)/;
+  /^(Only plain objects|Functions cannot be passed directly to Client Components|Event handlers cannot be passed to Client Component props|Only global symbols)/;
 
 export function isUnsupportedValueError(error: unknown): boolean {
   return error instanceof Error && UNSUPPORTED_VALUE.test(error.message);

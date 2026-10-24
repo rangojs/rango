@@ -70,6 +70,7 @@ describe("teeResult", () => {
 describe("isUnsupportedValueError", () => {
   it.each([
     ["a function", { fn: () => 2 }],
+    ["an on* function", { onSave: () => {} }],
     ["a class instance", { price: new Money(250) }],
     ["a local symbol", { tag: Symbol("local") }],
   ])("recognizes Flight's error for %s", async (_label, value) => {

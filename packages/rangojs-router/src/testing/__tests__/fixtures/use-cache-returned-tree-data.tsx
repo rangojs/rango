@@ -3,6 +3,7 @@
 // component, which renders when the value is encoded.
 import type { ReactElement, ReactNode } from "react";
 import {
+  cacheTag,
   cookies,
   createHandle,
   createVar,
@@ -103,4 +104,15 @@ export async function HandleBlock(ctx: HandlerContext): Promise<string> {
   "use cache";
   ctx.use(Notes)(<Reader kind="cookies" />);
   return "handle-block";
+}
+
+function TagSetter(): ReactElement {
+  cacheTag("returned-tree-tag");
+  return <i>tagged</i>;
+}
+
+/** Its returned component tags the entry when it renders. */
+export async function TaggedBlock(name: string): Promise<ReactElement> {
+  "use cache";
+  return <TagSetter key={name} />;
 }

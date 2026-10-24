@@ -1298,7 +1298,21 @@ One exception keeps today's contract for a value Flight cannot encode at all
 encode reported is that kind (`isUnsupportedValueError`, matched on the Flight
 server's own messages) the call returns `result`, uncached, as it always has.
 Nothing is stored, so rendering it live leaks nothing. A refusal, or a
-component that throws, never takes that path.
+component that throws, never takes that path. The decision is made on the
+root row only: such a value inside a promise in the data, or in a part of the
+tree a server component renders, arrives in a later row after the call
+resolved, so that promise rejects (or that part throws) where the copy is
+used, as on a hit. In an element tree that was already so, since the page's
+own Flight render could not encode it either.
+
+A miss also records the entry's tags onto the request once the encode ends
+(`recordRequestTags` in `finalizeAndWrite`): the returned tree's `cacheTag()`
+calls now run only in the encode, where they tag the entry, and the page's
+render no longer runs them. A hit replays the entry's tags the same way. The
+finalize task is one of the request's tracked background tasks, which the PPR
+shell capture settles before it reads the tags; it records them as the
+encode's stream ends, while the page's render is still taking the copy's last
+rows, and the document cache reads the tags only after the body has drained.
 
 What it costs: the caller now waits for the copy's root row. For a value of
 host elements and client components that row is ready as the encode starts;

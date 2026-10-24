@@ -44,8 +44,10 @@ stored either.
 
 Server components that read only their props, client components, and nested
 `"use cache"` calls and `cacheTag()` in the returned tree work as before. A
-value Flight cannot encode (a function, a class instance) is not stored and
-returns the live value, as before. A miss now returns a copy of the value, as
+value Flight cannot encode (a function, a class instance) in the data the
+function returns is not stored and returns the live value, as before; one
+inside a promise in that data now rejects that promise, as it would on a hit.
+A miss now returns a copy of the value, as
 a hit always did, and returns once the copy's root has arrived: a server
 component at the root of the value renders before the call resolves, not in
 the page's render. Any other write a miss skips (a component in the value

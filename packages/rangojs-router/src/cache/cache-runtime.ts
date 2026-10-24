@@ -994,6 +994,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       let encodedHandles: string | undefined;
       try {
         serialized = encoded ? await encoded.serialized : null;
+        // The returned tree renders only in the encode, so its cacheTag()
+        // calls tag the entry alone: record the entry's tags onto the
+        // request, as a hit does.
+        recordRequestTags(entryTags(recorded), requestCtx);
         encodedHandles = capture
           ? await inExecution(
               execScope,
@@ -1011,7 +1015,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       } catch (buildError) {
         // Serialize/handle-encode failed: no envelope for followers (they run
         // fresh) and nothing to write. Logged too: a read the guard refused
-        // in the value is otherwise silent with no onError.
+        // in the value is otherwise silent with no onError. An error the call
+        // also throws reaches onError once (the request dedups by identity).
         clearSelf();
         rejectEnvelope(buildError);
         reportCacheError(
@@ -1077,7 +1082,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // The root row failed. A value Flight cannot encode (a function, a
       // class instance) is not cached and renders live, as it always has;
       // anything else, a refused read above all, fails the call as the same
-      // read in the body does.
+      // read in the body does, with the encode's own error (production
+      // Flight redacts the decoded one).
       if (
         flightErrors.length > 0 &&
         flightErrors.every(isUnsupportedValueError)

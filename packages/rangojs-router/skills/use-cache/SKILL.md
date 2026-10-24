@@ -76,8 +76,9 @@ keeps serving.
 A miss renders a decoded copy of what it encodes, as a hit renders the stored
 entry, so a child that throws or a promise that rejects throws where the copy
 renders, as it would on a hit. A value Flight cannot encode at all (a
-function, a class instance) is the exception: the call returns the live value,
-uncached.
+function, a class instance) in the data the function returns is the
+exception: the call returns the live value, uncached. One inside a promise in
+that data rejects that promise instead, as it would on a hit.
 
 ## Named Cache Profiles
 

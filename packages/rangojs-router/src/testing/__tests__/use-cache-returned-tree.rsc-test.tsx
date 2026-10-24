@@ -21,6 +21,7 @@ vi.mock(
 );
 
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
+import { runInRequestContext } from "../index.js";
 import { createRouter, urls } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import {
@@ -30,6 +31,7 @@ import {
   PriceBlock,
   PropsBlock,
   RefreshBlock,
+  TaggedBlock,
   WriteBlock,
   state,
   type Kind,
@@ -125,7 +127,10 @@ describe('a server component a "use cache" function returns', () => {
       expect(second.body).not.toContain("alice");
       expect([first, second].map((s) => s.response.status)).toEqual([500, 500]);
       expect(first.body).not.toContain(`${kind}=alice`);
-      expect(messages()).toContainEqual(expect.stringContaining(refusal(kind)));
+      // Reported once per request, by the route, as a read in the body is.
+      expect(
+        messages().filter((message) => message.includes(refusal(kind))),
+      ).toHaveLength(2);
     },
   );
 
@@ -224,5 +229,25 @@ describe('a "use cache" value Flight cannot encode', () => {
     expect(messages().some((m) => m.includes("cannot be called inside"))).toBe(
       false,
     );
+  });
+});
+
+describe("the tags a returned component records", () => {
+  it("reach the request on a miss, as a hit replays them", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const options = { cacheStore, cacheProfiles: { default: { ttl: 60 } } };
+    const requestTags = () =>
+      runInRequestContext(async (ctx) => {
+        await TaggedBlock("shelf");
+        // The miss records them once its encode, a background task, ends.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return [...ctx._requestTags];
+      }, options);
+
+    const miss = await requestTags();
+    const hit = await requestTags();
+
+    expect(hit.result).toContain("returned-tree-tag");
+    expect(miss.result).toContain("returned-tree-tag");
   });
 });
