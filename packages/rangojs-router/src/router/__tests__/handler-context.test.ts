@@ -23,8 +23,10 @@ import {
   createReverseFunction,
   stripInternalParams,
   withReverseScope,
+  withSegmentPin,
 } from "../handler-context";
 import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import { isTainted } from "../../cache/taint.js";
 import type { InternalHandlerContext } from "../../types.js";
 
 beforeEach(() => {
@@ -607,6 +609,96 @@ describe("createReverseFunction", () => {
       // The shared ctx keeps the route's resolution.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
       expect(withReverseScope(ctx, undefined)).toBe(ctx);
+    });
+  });
+
+  describe("withSegmentPin", () => {
+    function sharedCtx() {
+      const seen: Array<string | undefined> = [];
+      const ctx = {
+        params: {},
+        _currentSegmentId: "R0",
+      } as unknown as InternalHandlerContext<any, any>;
+      // Reads the pin when called, as every installed ctx.use does.
+      ctx.use = ((item: unknown) => {
+        seen.push(ctx._currentSegmentId);
+        return item;
+      }) as typeof ctx.use;
+      return { ctx, seen };
+    }
+
+    it("keeps the pin of its start after the walker moves the shared one", () => {
+      const { ctx, seen } = sharedCtx();
+      const pinned = withSegmentPin(ctx);
+      ctx._currentSegmentId = "R0.@side";
+      // Destructured and called later, as a handler after an await does.
+      const { use } = pinned;
+      use({} as any);
+      expect(seen).toEqual(["R0"]);
+      expect(pinned._currentSegmentId).toBe("R0");
+      expect(ctx._currentSegmentId).toBe("R0.@side");
+      expect(pinned.params).toBe(ctx.params);
+    });
+
+    it("calls the parent's current use and restores the walker's pin when it throws", () => {
+      const { ctx } = sharedCtx();
+      const pinned = withSegmentPin(ctx);
+      ctx._currentSegmentId = "R0.@side";
+      // Installed after the child was made, as a loader cache() interceptor is.
+      ctx.use = (() => {
+        throw new Error(`as ${ctx._currentSegmentId}`);
+      }) as typeof ctx.use;
+      expect(() => pinned.use({} as any)).toThrow("as R0");
+      expect(ctx._currentSegmentId).toBe("R0.@side");
+    });
+
+    it("owns the parent's public fields; the _ fields and brand read through", () => {
+      const ctx = buildContext(new URLSearchParams("q=1"));
+      ctx._currentSegmentId = "R0";
+      const pinned = withSegmentPin(ctx);
+      const publicKeys = Object.keys(ctx).filter((key) => key[0] !== "_");
+      expect(publicKeys).toContain("params");
+      expect(Object.keys(pinned)).toEqual([...publicKeys, "_currentSegmentId"]);
+      for (const key of publicKeys.filter((key) => key !== "use")) {
+        expect(pinned[key as keyof typeof pinned]).toBe(
+          ctx[key as keyof typeof ctx],
+        );
+      }
+      expect(isTainted(pinned)).toBe(true);
+      // A copy lacks the _ fields "use cache" keys and replays a ctx by.
+      expect(isTainted({ ...pinned })).toBe(false);
+      expect(Object.hasOwn(pinned, "_variables")).toBe(false);
+      // Written on the parent after the child was made (loader-cache.ts).
+      const overrides = new Map();
+      ctx._loaderCacheOverrides = overrides;
+      expect(pinned._loaderCacheOverrides).toBe(overrides);
+    });
+
+    it("copies a build ctx's throwing getters without calling them", () => {
+      const ctx = createPrerenderContext(
+        { slug: "hello" },
+        "/blog/hello",
+        { "blog.post": "/blog/:slug" },
+        "blog.post",
+      );
+      const pinned = withSegmentPin(ctx);
+      expect(pinned.params).toEqual({ slug: "hello" });
+      expect(() => pinned.request).toThrow(
+        "not available during pre-rendering",
+      );
+    });
+
+    it("composes under withReverseScope", () => {
+      const { ctx, seen } = sharedCtx();
+      ctx.reverse = (() => "/") as any;
+      const scoped = withReverseScope(withSegmentPin(ctx), {
+        prefix: "account",
+        rootScoped: false,
+      });
+      ctx._currentSegmentId = "M0L0.@b";
+      scoped.use({} as any);
+      expect(seen).toEqual(["R0"]);
+      expect(scoped._currentSegmentId).toBe("R0");
     });
   });
 

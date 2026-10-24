@@ -1,10 +1,10 @@
 /**
- * The request context, a derived render pass, the middleware ctx, the handle
- * store and a parsed cookie jar keep V8 fast properties (#1109). A get/set
- * member in an object literal, a data property redefined as an accessor, or
- * an accessor defined with a per-call closure puts the object in dictionary
- * mode, where every property read is a hash lookup for the object's whole
- * lifetime. Each accessor is a shared descriptor instead, and these tests pin
+ * The request context, a derived render pass, the middleware ctx, a streamed
+ * handler's pinned ctx, the handle store and a parsed cookie jar keep V8 fast
+ * properties (#1109). A get/set member in an object literal, a data property
+ * redefined as an accessor, or an accessor defined with a per-call closure
+ * puts the object in dictionary mode, where every property read is a hash
+ * lookup for the object's whole lifetime. Each accessor is a shared descriptor instead, and these tests pin
  * that the property surface did not change with it: same descriptors, same
  * enumerability, same values.
  *
@@ -28,6 +28,10 @@ import {
   SnapshotOnlySegmentStore,
 } from "../../cache/shell-snapshot.js";
 import { createMiddlewareContext } from "../../router/middleware.js";
+import {
+  createHandlerContext,
+  withSegmentPin,
+} from "../../router/handler-context.js";
 import { NOCACHE_SYMBOL } from "../../cache/taint.js";
 
 function loadHasFastProperties(): ((o: object) => boolean) | undefined {
@@ -325,6 +329,27 @@ describe("middleware ctx", () => {
       holder.response = new Response(null, { headers: { "x-post": "1" } });
       expect(ctx.headers.get("x-post")).toBe("1");
     });
+  });
+});
+
+describe("streamed handler ctx", () => {
+  // Its public fields are copied with defineProperty: keyed assignment of
+  // that many fields onto an Object.create child leaves it in dictionary mode.
+  itFast("withSegmentPin's child keeps fast properties", () => {
+    for (let i = 0; i < 3; i++) {
+      const url = new URL(`https://example.com/p/${i}`);
+      const ctx = createHandlerContext(
+        { id: String(i) },
+        new Request(url),
+        url.searchParams,
+        url.pathname,
+        url,
+      );
+      ctx._currentSegmentId = "R0";
+      const pinned = withSegmentPin(ctx);
+      expect(hasFastProperties!(pinned)).toBe(true);
+      expect(hasFastProperties!(ctx)).toBe(true);
+    }
   });
 });
 
