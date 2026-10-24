@@ -114,6 +114,24 @@ change in your code. A handler without `loading()` and a push function bound
 before the `await` (`const push = ctx.use(Handle)`) were filed right before,
 and are unchanged.
 
+### Fixed: a stale `cache()` HIT's background refresh sets no fresh-reads cookie on the visitor's response
+
+**Before.** With `CFCacheStore` or `VercelCacheStore`, a handler under a
+stale `cache()` entry that called `revalidateTag()` or `updateTag()` during
+the background refresh could set the fresh-reads cookie
+(`rango-state-fresh` by default) on the response of the visitor whose request
+served the stale entry. It did whenever that response's cookies were merged
+after the refresh reached the call, for example from a global middleware that
+awaits work after `next()` and returns the response. The visitor mutated
+nothing, yet the response carried a `Set-Cookie`, which the document cache
+does not store, and the visitor's next requests skipped the stores' isolate
+memos for a few seconds. Once the response was sent, the same call printed a
+development warning blaming a streaming loader or render.
+
+**Now.** The refresh's invalidation still runs, but sets no cookie and prints
+no warning, as the refresh's other response writes already reach nothing. No
+change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

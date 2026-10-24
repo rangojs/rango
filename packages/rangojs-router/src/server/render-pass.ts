@@ -190,6 +190,8 @@ export const RENDER_PASS_FIELDS: {
       pass.setTheme = sink.setTheme;
       pass._rotateStateCookie = sink._rotateStateCookie;
       pass._setKeepCacheDirective = sink._setKeepCacheDirective;
+      // An invalidation here is not the visitor's mutation.
+      pass._setFreshReadsCookie = sink._setFreshReadsCookie;
       bindRes(pass, () => sink.res);
     },
   },
