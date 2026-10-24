@@ -452,6 +452,22 @@ const matrixRows: SemanticMatrixRow[] = [
     },
   },
   {
+    id: "MW2",
+    contract:
+      "a middleware that returns its own Response while the next() it called still runs (a timeout fallback) answers with that Response: the middleware ahead see it after next() and write on it, and the abandoned render never replaces it",
+    transport: "request",
+    execution: "full-render",
+    scope: "n/a",
+    assert: async ({ baseUrl, request }) => {
+      const response = await request.get(
+        baseUrl("/middleware-test/abandoned-next"),
+      );
+      expect(response.status()).toBe(503);
+      expect(await response.text()).toBe("render timed out");
+      expect(response.headers()["x-abandoned-ahead"]).toBe("after-render");
+    },
+  },
+  {
     id: "I1",
     contract:
       "soft navigation triggers intercept when when() condition is true",

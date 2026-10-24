@@ -188,6 +188,66 @@ re-run, as after a rewrite: its side effects happen twice per stale hit, and
 if it reads the route's params, the refreshed page holds them where a cache
 miss reuses the run that started before the match. No change in your code.
 
+### Fixed: global middleware keeps the `STALE` response while a stale document cache entry re-runs
+
+**Before.** On a stale hit, `createDocumentCacheMiddleware()` returns the
+stored entry and re-runs the rest of the middleware chain in the background
+through its `next()`. That re-run shared the response the visitor's chain
+held, so when a global middleware's post-`next()` work outlasted the re-run:
+
+- A global middleware ahead of the cache that returns nothing after
+  `await next()` answered with the re-run's response, whose body the cache had
+  already read into the store: the request failed with
+  `TypeError: Body is unusable: Body has already been read`.
+- A header that middleware ahead of the cache set after `next()`
+  (`ctx.header()`, `ctx.headers`) went to the re-run's response, not the
+  visitor's.
+- A header that a global middleware after the cache set before `next()`, past
+  an `await`, landed on the visitor's `STALE` response instead of the
+  refreshed entry.
+- The re-run's `handler-classify` entry reached the visitor's
+  `Server-Timing`.
+
+**Now.** The re-run builds its own response. The middleware ahead of the
+cache sees the `STALE` response after `next()`, writes land on it, and the
+re-run's headers go to the refreshed entry. No change in your code.
+
+### Fixed: a middleware that answers while its `next()` still runs keeps its answer
+
+**Before.** A middleware that settled while the `next()` it called was still
+running shared its response with the render it abandoned. It may have
+returned or thrown its own `Response`, thrown an error, or thrown or returned
+a `rewrite()`, which after `next()` is an error. Examples are a timeout
+fallback (`Promise.race([next(), timeout])`), a fire-and-forget `next()`, and
+a throw that a middleware ahead catches. When a middleware ahead was still
+working after `next()` once that render finished, the outcome depended on
+timing:
+
+- A middleware ahead that returns nothing after `await next()` could answer
+  with the abandoned render's page instead of the fallback, or instead of the
+  fallback it answered a caught error with.
+- A header that a middleware ahead set after `next()` could land on the
+  abandoned render's response and be lost.
+
+```ts
+const timeoutFallback: Middleware = (ctx, next) =>
+  Promise.race([
+    next(),
+    new Promise<Response>((resolve) =>
+      setTimeout(
+        () => resolve(new Response("Try again", { status: 503 })),
+        2000,
+      ),
+    ),
+  ]);
+```
+
+**Now.** The middleware ahead get what the middleware settled with: its
+`Response`, which they see after `next()` and write on, or its error, which
+they can catch and answer with a fallback. The abandoned render builds its
+own response, which nothing serves. A middleware that waits for its `next()`
+behaves as before. No change in your code.
+
 ### Fixed: a stale `cache()` record a PPR shell recapture reads refreshes under `cache()` rules
 
 **Before.** When a `ppr` route's shell capture read a stale `cache()` record,

@@ -1,5 +1,6 @@
-import { urls, getRequestContext, cookies } from "@rangojs/router";
+import { urls, getRequestContext, cookies, createVar } from "@rangojs/router";
 import {
+  MiddlewareAbandonedNextHandler,
   MiddlewareIndexHandler,
   MiddlewareProtectedHandler,
   MiddlewareProtectedDashboardHandler,
@@ -14,6 +15,9 @@ import {
   MiddlewareRouteShortcircuitHandler,
   MiddlewareCtxParityHandler,
 } from "./middleware.handlers.js";
+
+/** The render a timeout fallback abandoned (`/abandoned-next`). */
+const AbandonedRender = createVar<Promise<Response>>();
 
 /**
  * Middleware test routes URL patterns
@@ -48,6 +52,35 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
         await next();
         cookies().set("route_session", "xyz789", { path: "/", httpOnly: true });
         cookies().set("route-post-next", "applied", { path: "/" });
+      }),
+    ],
+  ),
+
+  // Semantic matrix MW2: a timeout fallback answers while the render it
+  // abandoned still runs; the middleware ahead waits for that render, then
+  // writes a header.
+  path(
+    "/abandoned-next",
+    MiddlewareAbandonedNextHandler,
+    { name: "abandonedNext" },
+    () => [
+      middleware(async (ctx, next) => {
+        await next();
+        await ctx.get(AbandonedRender)?.catch(() => {});
+        ctx.header("X-Abandoned-Ahead", "after-render");
+      }),
+      middleware(async (ctx, next) => {
+        const render = next();
+        ctx.set(AbandonedRender, render);
+        return Promise.race([
+          render,
+          new Promise<Response>((resolve) =>
+            setTimeout(
+              () => resolve(new Response("render timed out", { status: 503 })),
+              20,
+            ),
+          ),
+        ]);
       }),
     ],
   ),
