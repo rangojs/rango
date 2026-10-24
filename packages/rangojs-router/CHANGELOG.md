@@ -39,18 +39,21 @@ category `cache-write`, or `stale-revalidation` for a refresh), and a stale
 entry keeps serving. A read behind state the page's render could reach
 before the encode did, such as a `React.lazy` or a memoizing thenable created
 in the function, is refused the same way; rendering the value twice had let it
-through. A handle value the function pushes that reads the request is not
-stored either.
+through.
+
+One case is not covered yet: a handle value the function pushes with
+`ctx.use(Handle)` that holds a lazy component or a memoized promise. A handle
+value that reads the request directly is refused and not stored, but a cached
+function should not push lazy state that reads the request.
 
 Server components that read only their props, client components, and nested
 `"use cache"` calls and `cacheTag()` in the returned tree work as before. A
 value Flight cannot encode (a function, a class instance) in the data the
 function returns is not stored and returns the live value, as before; one
 inside a promise in that data now rejects that promise, as it would on a hit.
-A miss now returns a copy of the value, as
-a hit always did, and returns once the copy's root has arrived: a server
-component at the root of the value renders before the call resolves, not in
-the page's render. Any other write a miss skips (a component in the value
+A miss now returns a copy of the value, as a hit always did, and returns once
+the copy's root has arrived: a server component at the root of the value
+renders before the call resolves, not in the page's render. Any other write a miss skips (a component in the value
 that throws) is now logged too, as a refresh's already was.
 
 If your app returns such a component, read the value outside the cached

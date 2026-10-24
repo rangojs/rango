@@ -248,16 +248,26 @@ value's root the call throws, and below the root that part renders as an
 error, to its nearest error boundary. Nothing is stored. The same holds for a
 `ctx.use(Loader)` in the returned tree (the loader runs inside the guard, and
 the request's memo of it rejects, so a later read of it in the request throws
-too) and for a `React.lazy` or a memoizing thenable created in the body. A
-handle value the function pushes is encoded inside the guard as well: one that
-reads the request is not stored.
+too) and for a `React.lazy` or a memoizing thenable created in the body.
 
-One gap remains, in the body itself: a `React.cache`-memoized read of
-`cookies()` or `headers()` (a `getSession = cache(() => cookies()...)` auth
-helper) that the page called before the cached function runs returns the
-memo without reading again, so the guard never sees it and the entry stores
-that visitor's value. Pass the value in as an argument instead of calling the
-helper inside the cached function.
+A handle value the function pushes (`ctx.use(Handle)`) is encoded inside the
+guard as well, and one that reads the request is not stored. One handle case
+is not covered yet: a handle value that holds a lazy component or a memoized
+promise. Don't push lazy state that reads the request from a cached function.
+
+Two memo gaps remain, where the read happened before the guard could see it:
+
+- In the body: a `React.cache`-memoized read of `cookies()` or `headers()` (a
+  `getSession = cache(() => cookies()...)` auth helper) that the page called
+  before the cached function runs returns the memo without reading again, so
+  the guard never sees it and the entry stores that visitor's value.
+- In the body or the returned tree: a per-request memo of your own, keyed by
+  `getRequestContext()`, that the page filled and the cached function or a
+  component it returns reads. `React.cache` itself is safe in the returned
+  tree, which renders in its own Flight request.
+
+Pass the value in as an argument instead of reading a memo inside the cached
+function or the tree it returns.
 
 The raw reads throw the same way: `ctx.request.headers` on any `ctx` passed in
 (handler, loader, middleware; it is one `Request` object, also

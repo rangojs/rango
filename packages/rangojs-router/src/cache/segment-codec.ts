@@ -173,11 +173,12 @@ export function teeResult(
 /**
  * Flight's refusal of a value it cannot encode (a function, an `on*`
  * function, a class instance, a local symbol), by the message its server
- * throws. A component
- * that throws, or a "use cache" guard refusal, is not one.
+ * throws; the development build words a function in a children position on
+ * its own. A component that throws, or a "use cache" guard refusal, is not
+ * one.
  */
 const UNSUPPORTED_VALUE =
-  /^(Only plain objects|Functions cannot be passed directly to Client Components|Event handlers cannot be passed to Client Component props|Only global symbols)/;
+  /^(Only plain objects|Functions cannot be passed directly to Client Components|Functions are not valid as a child of Client Components|Event handlers cannot be passed to Client Component props|Only global symbols)/;
 
 export function isUnsupportedValueError(error: unknown): boolean {
   return error instanceof Error && UNSUPPORTED_VALUE.test(error.message);

@@ -1314,6 +1314,24 @@ shell capture settles before it reads the tags; it records them as the
 encode's stream ends, while the page's render is still taking the copy's last
 rows, and the document cache reads the tags only after the body has drained.
 
+Three edges stay open. First, handle values are not teed: on a miss the
+request's handle store keeps what the body pushed (the capture does not
+divert, unlike the refresh's), the response renders that value, and
+`encodeHandles` encodes it after the value's encode. A handle value that reads
+the request directly is refused there, but a lazy component or a memoized
+promise in a handle value is started by whichever render reaches it first.
+Closing it means diverting a miss's pushes and replaying decoded copies, as a
+hit does, which changes when a miss's handle values arrive; that is its own
+change. Second, the live fallback decides on the root row's errors only:
+`{ a: <Reader />, b: new Money(250) }` fails its root with the class
+instance, so the call returns the live value, the visitor sees their own
+value, nothing is stored, and the refusal in `a` never reaches `onError`
+(only the unsupported-value error does). Third, the tags a miss's tree
+records reach the request when the background encode ends; a response that
+does not render all of the value can finish first, and its document or shell
+then lacks those tags until a hit records them. That is staleness, not a
+leak.
+
 What it costs: the caller now waits for the copy's root row. For a value of
 host elements and client components that row is ready as the encode starts;
 a server component at the root renders before the call resolves instead of in

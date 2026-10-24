@@ -4,8 +4,12 @@
  * the decoded copy matches what a hit decodes from the stored text, and only
  * the errors Flight throws for a value it cannot encode count as
  * unsupported. A React upgrade that rewords those errors fails here instead
- * of silently failing the live fallback for such values.
+ * of silently failing the live fallback for such values. This project runs
+ * the production build; the development build is pinned in a child process
+ * with NODE_ENV=development, since its messages differ in one case.
  */
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import React from "react";
 
@@ -92,3 +96,68 @@ describe("isUnsupportedValueError", () => {
     ).toBe(false);
   });
 });
+
+/**
+ * Encodes each case with the vendored Flight server in a child process under
+ * `mode` and returns the onError messages per case (React elements via
+ * createElement, so the development build needs no JSX runtime).
+ */
+const FLIGHT_PROBE = `
+const { createRequire } = require("node:module");
+const req = createRequire(process.env.PKG_DIR + "/package.json");
+const React = req("react");
+const { renderToReadableStream } = req(
+  "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+);
+class Money { constructor(cents) { this.cents = cents; } }
+const cases = {
+  "a function": { fn: () => 2 },
+  "an on* function": { onSave: () => {} },
+  "a class instance": { price: new Money(250) },
+  "a local symbol": { tag: Symbol("local") },
+  "a function as a child": React.createElement("div", null, () => 2),
+};
+(async () => {
+  const out = {};
+  for (const [name, value] of Object.entries(cases)) {
+    const messages = [];
+    const stream = renderToReadableStream(value, null, {
+      onError: (error) => { messages.push(String(error && error.message)); },
+    });
+    const reader = stream.getReader();
+    while (!(await reader.read()).done);
+    out[name] = messages;
+  }
+  process.stdout.write(JSON.stringify(out));
+})();
+`;
+
+function flightMessages(mode: string): Record<string, string[]> {
+  const output = execFileSync(
+    process.execPath,
+    ["--conditions=react-server", "--input-type=commonjs", "-e", FLIGHT_PROBE],
+    {
+      env: {
+        ...process.env,
+        NODE_ENV: mode,
+        PKG_DIR: fileURLToPath(new URL("../../..", import.meta.url)),
+      },
+    },
+  );
+  return JSON.parse(output.toString());
+}
+
+describe.each(["development", "production"])(
+  "isUnsupportedValueError against the %s Flight build",
+  (mode) => {
+    it("recognizes every unsupported value the same way", () => {
+      const messages = flightMessages(mode);
+
+      expect(Object.keys(messages)).toHaveLength(5);
+      for (const [label, errors] of Object.entries(messages)) {
+        expect(errors, label).toHaveLength(1);
+        expect(isUnsupportedValueError(new Error(errors[0])), label).toBe(true);
+      }
+    });
+  },
+);
