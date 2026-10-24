@@ -90,6 +90,22 @@ development warning blaming a streaming loader or render.
 no warning, as the refresh's other response writes already reach nothing. No
 change in your code.
 
+### Fixed: a stale `"use cache"` entry's or cached loader's background refresh sets no fresh-reads cookie on the visitor's response
+
+**Before.** With `CFCacheStore` or `VercelCacheStore`, a `"use cache"`
+function, or a loader bound with its own `cache()`, that called
+`revalidateTag()` or `updateTag()` while it refreshed a stale entry in the
+background could set the fresh-reads cookie (`rango-state-fresh` by default)
+on the response of the visitor whose request served the stale entry, as the
+stale `cache()` refresh above could. The refresh runs on that visitor's
+request context. Once the response was sent, the same call printed the
+development warning blaming a streaming loader or render.
+
+**Now.** The refresh's invalidation still runs, but sets no cookie and prints
+no warning. An invalidation in the request's own code (a server action, a
+route handler, middleware, a render) sets the cookie as before. No change in
+your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

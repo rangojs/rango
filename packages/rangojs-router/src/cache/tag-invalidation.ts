@@ -36,7 +36,12 @@
  * predatesInvalidation, and docs/design/caching.md "Read-your-own-writes".
  */
 
-import { _getRequestContext } from "../server/request-context.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  _getRequestContext,
+  runWithRequestContext,
+  type RequestContext,
+} from "../server/request-context.js";
 import { reportingAsync } from "./cache-error.js";
 import { normalizeTags } from "./cache-tag.js";
 import type { SegmentCacheStore } from "./types.js";
@@ -129,6 +134,19 @@ function warnPartialTagStore(fn: string, incapable: number): void {
   );
 }
 
+const backgroundRefresh = new AsyncLocalStorage<true>();
+
+/**
+ * Run a stale entry's background refresh on the visitor's request context: a
+ * "use cache" function's (cache-runtime.ts) or a cached loader's
+ * (loader-cache.ts). No visitor made the invalidations in it, so they set no
+ * fresh-reads cookie, as in a stale cache() HIT's re-render
+ * (server/render-pass.ts, the background row).
+ */
+export function runAsBackgroundRefresh<T>(ctx: RequestContext, fn: () => T): T {
+  return runWithRequestContext(ctx, () => backgroundRefresh.run(true, fn));
+}
+
 /**
  * Set the fresh-reads cookie on this request's response for as long as the
  * invalidated stores' isolate memos can stay stale (isolate-tag-memo.ts), so
@@ -136,7 +154,7 @@ function warnPartialTagStore(fn: string, incapable: number): void {
  */
 function markFreshReads(stores: SegmentCacheStore[]): void {
   const ctx = _getRequestContext();
-  if (!ctx?._setFreshReadsCookie) return;
+  if (!ctx?._setFreshReadsCookie || backgroundRefresh.getStore()) return;
   let windowMs = 0;
   for (const store of stores) {
     windowMs = Math.max(windowMs, store.freshReadsWindowMs ?? 0);
