@@ -34,7 +34,12 @@ import {
 } from "./taint.js";
 
 export { isCachedFunction };
-import { serializeResult, deserializeResult } from "./segment-codec.js";
+import {
+  serializeResult,
+  deserializeResult,
+  isUnsupportedValueError,
+  teeResult,
+} from "./segment-codec.js";
 import {
   appendHandles,
   encodeHandles,
@@ -385,6 +390,23 @@ function refreshView(arg: unknown): unknown {
   });
 }
 
+/**
+ * Run `fn` inside a "use cache" execution's scopes: its exec scope
+ * (cookies()/headers() reads and ctx writes refuse) and its tag scope
+ * (cacheTag() and nested calls tag the entry, #980), `recorded` when given.
+ * The body runs here, and so does the value's encode: it renders the server
+ * components in the value, which are part of the entry. Scar: the encode ran
+ * in the tag scope only, so a returned component's cookies() read went
+ * through and the entry served the first visitor's value to the next.
+ */
+function inExecution<T>(
+  scope: CacheExecScope,
+  fn: () => T,
+  recorded?: Set<string>,
+): { result: T; tags: Set<string> } {
+  return runWithCacheTagScope(() => runWithCacheExecScope(fn, scope), recorded);
+}
+
 // ============================================================================
 // Core: registerCachedFunction
 // ============================================================================
@@ -460,14 +482,6 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     const entryTags = (recorded: Set<string>): string[] => [
       ...new Set(normalizeTags([...(profile.tags ?? []), ...recorded])),
     ];
-    // The value's Flight encode runs back inside its execution's tag scope:
-    // it renders the server components in the value, and a "use cache" call
-    // or cacheTag() among them belongs to this entry (#980).
-    const inTagScope = <T>(
-      recorded: Set<string>,
-      encode: () => Promise<T>,
-    ): Promise<T> => runWithCacheTagScope(encode, recorded).result;
-
     // Separate request-scoped args (ctx, a Request, the request's env) from
     // key-generating args. For those that carry route context (ctx params,
     // pathname, searchParams; a Request's URL), extract serializable values
@@ -734,11 +748,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                     const refreshArgs = args.map(refreshView);
                     // The refresh reads its data from here on (#973, #977).
                     const start = executionStart();
-                    const scoped = runWithCacheTagScope(() =>
-                      runWithCacheExecScope(
-                        () => fn.apply(this, refreshArgs),
-                        bgScope,
-                      ),
+                    const scoped = inExecution(bgScope, () =>
+                      fn.apply(this, refreshArgs),
                     );
                     const freshResult = await scoped.result;
                     bgCapture?.stop();
@@ -747,17 +758,22 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                     const onFlightError = (error: unknown): void => {
                       flightErrors.push(error);
                     };
-                    const serialized = await inTagScope(scoped.tags, () =>
-                      serializeResult(freshResult, onFlightError),
-                    );
+                    const serialized = await inExecution(
+                      bgScope,
+                      () => serializeResult(freshResult, onFlightError),
+                      scoped.tags,
+                    ).result;
                     if (serialized !== null) {
                       const encodedHandles = bgCapture
-                        ? await inTagScope(scoped.tags, () =>
-                            encodeHandles(
-                              bgCapture.capture.data,
-                              onFlightError,
-                            ),
-                          )
+                        ? await inExecution(
+                            bgScope,
+                            () =>
+                              encodeHandles(
+                                bgCapture.capture.data,
+                                onFlightError,
+                              ),
+                            scoped.tags,
+                          ).result
                         : undefined;
                       // An error row would replace the stale entry; the catch
                       // below reports it and the stale entry keeps serving.
@@ -939,11 +955,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     }
 
     let result: any;
-    let scoped: ReturnType<typeof runWithCacheTagScope>;
+    let scoped: ReturnType<typeof inExecution>;
     try {
-      scoped = runWithCacheTagScope(() =>
-        runWithCacheExecScope(() => fn.apply(this, args), execScope),
-      );
+      scoped = inExecution(execScope, () => fn.apply(this, args));
       result = await scoped.result;
     } catch (execError) {
       // The function threw: drop the in-flight entry and reject any waiters so
@@ -965,25 +979,39 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     const recorded = scoped!.tags;
     recordRequestTags(entryTags(recorded), requestCtx);
 
-    // Serialize + encode handles ONCE, resolve the in-flight envelope so any
-    // concurrent followers can serve a synthetic hit, then persist to the store.
-    // Fully non-blocking when waitUntil is available — the leader's response
-    // waits on neither serialization nor the store write.
+    // Encode the value ONCE, inside the execution's scopes, and hand the
+    // caller a decoded copy of it, as a hit does. The caller rendering
+    // `result` itself would share its lazy state (a React.lazy, a memoizing
+    // thenable) with the encode: whichever render reached it first decided
+    // its value for both, so a read the caller's render made outside the
+    // scope was stored for the next visitor. Then resolve the in-flight
+    // envelope so concurrent followers serve a synthetic hit, and persist.
+    // When waitUntil is available the leader waits for the copy's root row
+    // only, not for the rest of the encode or the store write.
+    const flightErrors: unknown[] = [];
+    const onFlightError = (error: unknown): void => {
+      flightErrors.push(error);
+    };
+    const encoded = inExecution(
+      execScope,
+      () => teeResult(result, onFlightError),
+      recorded,
+    ).result;
     const finalizeAndWrite = async (): Promise<void> => {
       let serialized: string | null;
       let encodedHandles: string | undefined;
-      const flightErrors: unknown[] = [];
-      const onFlightError = (error: unknown): void => {
-        flightErrors.push(error);
-      };
       try {
-        serialized = await inTagScope(recorded, () =>
-          serializeResult(result, onFlightError),
-        );
+        serialized = encoded ? await encoded.serialized : null;
+        // The returned tree renders only in the encode, so its cacheTag()
+        // calls tag the entry alone: record the entry's tags onto the
+        // request, as a hit does.
+        recordRequestTags(entryTags(recorded), requestCtx);
         encodedHandles = capture
-          ? await inTagScope(recorded, () =>
-              encodeHandles(capture.capture.data, onFlightError),
-            )
+          ? await inExecution(
+              execScope,
+              () => encodeHandles(capture.capture.data, onFlightError),
+              recorded,
+            ).result
           : undefined;
         // Flight encodes an async component that throws, or a rejected
         // promise in the result or a handle value, as an error row and
@@ -994,10 +1022,17 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         assertLoaderReadsClean(execScope);
       } catch (buildError) {
         // Serialize/handle-encode failed: no envelope for followers (they run
-        // fresh) and nothing to write.
+        // fresh) and nothing to write. Logged too: a read the guard refused
+        // in the value is otherwise silent with no onError. An error the call
+        // also throws reaches onError once (the request dedups by identity).
         clearSelf();
         rejectEnvelope(buildError);
-        requestCtx?._reportBackgroundError?.(buildError, "cache-write");
+        reportCacheError(
+          buildError,
+          "cache-write",
+          `[use cache] "${id}" write`,
+          requestCtx,
+        );
         return;
       }
       if (serialized === null) {
@@ -1047,7 +1082,24 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
 
     await runBackground(requestCtx, finalizeAndWrite, true);
 
-    return result;
+    // The encode could not start: nothing is stored, the value renders live.
+    if (!encoded) return result;
+    try {
+      return await encoded.decoded;
+    } catch (decodeError) {
+      // The root row failed. A value Flight cannot encode (a function, a
+      // class instance) is not cached and renders live, as it always has;
+      // anything else, a refused read above all, fails the call as the same
+      // read in the body does, with the encode's own error (production
+      // Flight redacts the decoded one).
+      if (
+        flightErrors.length > 0 &&
+        flightErrors.every(isUnsupportedValueError)
+      ) {
+        return result;
+      }
+      throw flightErrors[0] ?? decodeError;
+    }
   };
 
   // Brand the wrapper so it can be detected at runtime (e.g., to prevent

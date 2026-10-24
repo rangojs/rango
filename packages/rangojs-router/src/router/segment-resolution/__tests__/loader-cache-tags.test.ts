@@ -22,10 +22,22 @@ import {
 // segment-codec pulls @vitejs/plugin-rsc (unresolvable in plain vitest). A
 // JSON codec stands in for Flight on the loader value and on "use cache"
 // values.
-vi.mock("../../../cache/segment-codec.js", () => ({
-  serializeResult: vi.fn(async (value: unknown) => JSON.stringify(value)),
-  deserializeResult: vi.fn(async (encoded: string) => JSON.parse(encoded)),
-}));
+vi.mock("../../../cache/segment-codec.js", async () => {
+  const { teeThrough } =
+    await import("../../../cache/__tests__/helpers/tee-through.js");
+  const serializeResult = vi.fn(async (value: unknown) =>
+    JSON.stringify(value),
+  );
+  const deserializeResult = vi.fn(async (encoded: string) =>
+    JSON.parse(encoded),
+  );
+  return {
+    serializeResult,
+    deserializeResult,
+    teeResult: teeThrough(serializeResult, deserializeResult),
+    isUnsupportedValueError: () => false,
+  };
+});
 vi.mock("../../../cache/handle-snapshot.js", async (importActual) => ({
   ...(await importActual<object>()),
   encodeHandles: async () => "",

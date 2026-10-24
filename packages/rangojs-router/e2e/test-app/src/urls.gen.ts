@@ -730,6 +730,7 @@ export const routes = {
   "useCacheTest.useCacheTest.loaderCtx": "/use-cache-test/loader-ctx/:id",
   "useCacheTest.useCacheTest.namedProfile": "/use-cache-test/named-profile",
   "useCacheTest.useCacheTest.plainData": "/use-cache-test/plain-data",
+  "useCacheTest.useCacheTest.returnedLazy": "/use-cache-test/returned-lazy/:probe",
   "useCacheTest.useCacheTest.streaming": "/use-cache-test/streaming",
   "useCacheTest.useCacheTest.swr": "/use-cache-test/swr",
   "useCacheTest.useCacheTest.swrAction": "/use-cache-test/swr-action",

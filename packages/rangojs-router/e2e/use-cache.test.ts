@@ -173,6 +173,30 @@ function useCacheBasicSuite(f: Fixture) {
     expect(body.message).toMatch(/cookies\(\) cannot be called inside/i);
   });
 
+  test("a lazy in the returned value never serves one visitor's session to the next", async ({
+    request,
+  }) => {
+    // A fresh entry per run: the server keeps its store across tests.
+    const url = f.url(
+      `/use-cache-test/returned-lazy/p${Date.now()}${Math.random().toString(36).slice(2, 8)}`,
+    );
+    const first = await request.get(url, {
+      headers: { cookie: "session=alice" },
+    });
+    // Let the first request's background store write land.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const second = await request.get(url, {
+      headers: { cookie: "session=bob" },
+    });
+    const [firstBody, secondBody] = [await first.text(), await second.text()];
+
+    expect(secondBody).not.toContain("session=alice");
+    // The read refuses inside the guard and fails the request, as the same
+    // read in the function body does.
+    expect([first.status(), second.status()]).toEqual([500, 500]);
+    expect(firstBody).not.toContain("session=alice");
+  });
+
   test("headers() throws inside a no-argument 'use cache' function", async ({
     request,
   }) => {
