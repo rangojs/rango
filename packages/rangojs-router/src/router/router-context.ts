@@ -107,21 +107,6 @@ export interface RouterContext<TEnv = any> {
     walk: RevalidatingWalkOptions,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
-  // Generator-based segment resolution (for pipeline)
-  resolveAllSegmentsWithRevalidationGenerator?: (
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    handlerContext: HandlerContext<any, TEnv>,
-    clientSegmentSet: Set<string>,
-    prevParams: Record<string, string>,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    loaderPromises: Map<string, Promise<any>>,
-    actionContext?: any,
-  ) => AsyncGenerator<ResolvedSegment | { __type: "id"; id: string }>;
-
   // Intercept resolution
   resolveInterceptEntry: (
     pass: ResolutionPassInput<TEnv>,
@@ -130,10 +115,6 @@ export interface RouterContext<TEnv = any> {
     belongsToRoute: boolean,
     options?: { background?: boolean },
   ) => Promise<ResolvedSegment[]>;
-
-  collectWithMarkers?: <T>(
-    gen: AsyncGenerator<T | { __type: "id"; id: string }>,
-  ) => Promise<{ items: T[]; matchedIds: string[] }>;
 
   evaluateRevalidation: (
     params: EvaluateRevalidationOptions<TEnv>,
@@ -145,18 +126,6 @@ export interface RouterContext<TEnv = any> {
         _handleStore?: any;
       }
     | undefined;
-
-  resolveAllSegmentsGenerator?: (
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    handlerContext: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>,
-  ) => AsyncGenerator<ResolvedSegment | { __type: "id"; id: string }>;
-
-  collectSegmentsFromGenerator?: <T>(
-    gen: AsyncGenerator<T | { __type: "id"; id: string }>,
-  ) => Promise<T[]>;
 
   createHandleStore: () => any;
 
