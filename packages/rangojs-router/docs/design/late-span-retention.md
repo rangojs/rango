@@ -72,7 +72,7 @@ reading a trace:
      function under a derived context; the function's own fetch/KV operations
      get platform-automatic spans in the same event.
    - PPR shell capture's `deriveShellCaptureContext` deliberately suppresses
-     inner phase spans, while `scheduleShellCapture` retains the outer
+     inner phase spans, while `planShellCapture` retains the outer
      `rango.background` wrapper. Keep that split.
 3. **Detached work after client cancellation.** The client disconnects after
    the first chunk; workerd cancels the stream. Whether dependent work (and

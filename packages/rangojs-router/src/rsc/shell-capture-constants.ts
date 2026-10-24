@@ -200,7 +200,7 @@ export const POST_QUIESCE_TASK_HOPS = 16;
  * short is an acceptable loss — every terminal path backs the key off anyway),
  * and below workerd's ~30s waitUntil grace so the cap timer still fires in a
  * live context. When workerd kills the context BEFORE the cap fires, the timer
- * dies with it — that stranding is healed by scheduleShellCapture's staleness
+ * dies with it — that stranding is healed by planShellCapture's staleness
  * check on the stampede guard, keyed off the same constant.
  */
 export const SHELL_CAPTURE_TASK_HARD_CAP_MS = 25_000;

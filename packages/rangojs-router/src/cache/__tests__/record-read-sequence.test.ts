@@ -516,6 +516,9 @@ const CASES = {
     h.control.corrupt!(family, key);
     await read(h, family, key);
     await settle(h);
+    // Read as another isolate would: a shell memoized by the first read
+    // would answer this one and hide what the store healed in its tiers.
+    if (family.startsWith("shell")) h.store.dropShellMemo?.(key);
     h.events.length = 0;
   },
   expired: () => {

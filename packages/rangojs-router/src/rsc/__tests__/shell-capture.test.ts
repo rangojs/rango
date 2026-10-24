@@ -4,7 +4,7 @@ import {
   gateFlightForCapture,
   captureAndStoreShell,
   runShellCapture,
-  scheduleShellCapture,
+  planShellCapture,
   isCaptureBackedOff,
   markCaptureBackoff,
   clearCaptureBackoff,
@@ -14,6 +14,7 @@ import {
   lastStoredCaptureSeq,
   REFUSED_CAPTURE_DEV_MAX_MS,
   type ShellCaptureDebugEvent,
+  type ShellCaptureInput,
 } from "../shell-capture.js";
 import {
   SHELL_CAPTURE_MAX_WAIT_MS,
@@ -1560,7 +1561,7 @@ describe("captureAndStoreShell: a prerender-served capture's handles record", ()
 
 // runShellCapture is the background capture core: it derives a fresh context,
 // re-matches via router.match, builds the payload, and stores the shell. These
-// tests stub the router/SSR seams and drive it directly (scheduleShellCapture's
+// tests stub the router/SSR seams and drive it directly (planShellCapture's
 // runBackground dispatch is exercised by the middleware round-trip tests).
 describe("runShellCapture", () => {
   function makeCtx(
@@ -1718,12 +1719,20 @@ describe("runShellCapture", () => {
       captured.push(task);
     };
 
-    scheduleShellCapture(ctx, request, {}, rawUrl, reqCtx, ssrModule, {
-      key: "/p:shell:navigation",
-      buildVersion: "test-build",
-      ttl: 300,
-      store: { putShell } as any,
-      navigationOnly: true,
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url: rawUrl,
+      reqCtx,
+      ssr: () => ssrModule,
+      descriptor: {
+        key: "/p:shell:navigation",
+        buildVersion: "test-build",
+        ttl: 300,
+        store: { putShell } as any,
+        navigationOnly: true,
+      },
     });
     await captured[0]!();
 
@@ -2235,16 +2244,32 @@ describe("runShellCapture", () => {
     // The document MISS read the store before the heal stored.
     const readBeforeHeal = lastStoredCaptureSeq(key);
 
-    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, {
-      ...descriptor,
-      navigationOnly: true,
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url,
+      reqCtx,
+      ssr: () => ssrModule,
+      descriptor: {
+        ...descriptor,
+        navigationOnly: true,
+      },
     });
     await captured[0]!();
     expect(events.at(-1)?.outcome).toBe("stored");
 
-    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, {
-      ...descriptor,
-      storedSeqAtRead: readBeforeHeal,
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url,
+      reqCtx,
+      ssr: () => ssrModule,
+      descriptor: {
+        ...descriptor,
+        storedSeqAtRead: readBeforeHeal,
+      },
     });
     expect(events.at(-1)?.outcome).not.toBe("skip-stored");
     expect(captured).toHaveLength(2);
@@ -2282,7 +2307,7 @@ describe("runShellCapture", () => {
   });
 
   // Deliverable 1(c): a genuine (non-abort) error is NOT retried — it propagates so
-  // scheduleShellCapture reports it once.
+  // planShellCapture reports it once.
   it("does NOT retry a genuine (non-abort) capture error — it propagates (one attempt)", async () => {
     const putShell = makePutShell();
     const captureShellHTML = vi.fn(async () => {
@@ -2334,15 +2359,15 @@ describe("runShellCapture", () => {
         store: { putShell: makePutShell() } as any,
       };
 
-      scheduleShellCapture(
+      planShellCapture({
         ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        ssrModule,
+        ssr: () => ssrModule,
         descriptor,
-      );
+      });
       await captured[0]!();
 
       // No retry: an escaped AbortError is a genuine render failure.
@@ -2353,15 +2378,15 @@ describe("runShellCapture", () => {
       );
 
       // Backed off: a second schedule within the window is skipped (no new task).
-      scheduleShellCapture(
+      planShellCapture({
         ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        ssrModule,
+        ssr: () => ssrModule,
         descriptor,
-      );
+      });
       expect(captured).toHaveLength(1);
     } finally {
       errSpy.mockRestore();
@@ -2395,21 +2420,45 @@ describe("runShellCapture", () => {
     const url = new URL("http://localhost/p");
     const readBeforeStore = lastStoredCaptureSeq(key);
 
-    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, descriptor);
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url,
+      reqCtx,
+      ssr: () => ssrModule,
+      descriptor,
+    });
     await captured[0]!();
     expect(events.at(-1)?.outcome).toBe("stored");
 
-    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, {
-      ...descriptor,
-      storedSeqAtRead: readBeforeStore,
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url,
+      reqCtx,
+      ssr: () => ssrModule,
+      descriptor: {
+        ...descriptor,
+        storedSeqAtRead: readBeforeStore,
+      },
     });
     expect(captured).toHaveLength(1);
     expect(events.at(-1)?.outcome).toBe("skip-stored");
 
     // A MISS that read after that store still captures.
-    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, {
-      ...descriptor,
-      storedSeqAtRead: lastStoredCaptureSeq(key),
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url,
+      reqCtx,
+      ssr: () => ssrModule,
+      descriptor: {
+        ...descriptor,
+        storedSeqAtRead: lastStoredCaptureSeq(key),
+      },
     });
     expect(captured).toHaveLength(2);
   });
@@ -2450,15 +2499,15 @@ describe("runShellCapture", () => {
         store,
       };
 
-      scheduleShellCapture(
+      planShellCapture({
         ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        ssrModule,
+        ssr: () => ssrModule,
         descriptor,
-      );
+      });
       await captured[0]!();
 
       expect(await store.getShell(key)).toBeNull();
@@ -2474,15 +2523,15 @@ describe("runShellCapture", () => {
       // A later clean capture stores normally.
       clearCaptureBackoff(key);
       failFlight = false;
-      scheduleShellCapture(
+      planShellCapture({
         ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        ssrModule,
+        ssr: () => ssrModule,
         descriptor,
-      );
+      });
       await captured[1]!();
       expect(await store.getShell(key)).not.toBeNull();
     } finally {
@@ -2600,16 +2649,40 @@ describe("runShellCapture", () => {
       store: { putShell: makePutShell() } as any,
     };
 
-    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, descriptor);
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url,
+      reqCtx,
+      ssr: () => ssrModule,
+      descriptor,
+    });
     // Same key in-flight → skipped.
-    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, descriptor);
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url,
+      reqCtx,
+      ssr: () => ssrModule,
+      descriptor,
+    });
     expect(captured).toHaveLength(1);
 
     // Drain the first task (its finally clears the in-flight key).
     await captured[0]!();
 
     // Key released → a later schedule for the same key runs again.
-    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, descriptor);
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url,
+      reqCtx,
+      ssr: () => ssrModule,
+      descriptor,
+    });
     expect(captured).toHaveLength(2);
     await captured[1]!();
   });
@@ -2646,10 +2719,18 @@ describe("runShellCapture", () => {
     const request = new Request("http://localhost/span");
     const url = new URL("http://localhost/span");
 
-    scheduleShellCapture(ctx, request, {}, url, reqCtx, ssrModule, {
-      key: "/span:shell",
-      buildVersion: "test-build",
-      store: { putShell } as any,
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url,
+      reqCtx,
+      ssr: () => ssrModule,
+      descriptor: {
+        key: "/span:shell",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+      },
     });
 
     expect(captured).toHaveLength(1);
@@ -2691,11 +2772,19 @@ describe("runShellCapture", () => {
     );
     const url = new URL(request.url);
 
-    scheduleShellCapture(ctx, request, {}, url, reqCtx, loadSSRModule, {
-      key: "/lazy:shell:navigation",
-      buildVersion: "test-build",
-      store: { putShell } as any,
-      navigationOnly: true,
+    planShellCapture({
+      ctx,
+      request,
+      env: {},
+      url,
+      reqCtx,
+      ssr: loadSSRModule,
+      descriptor: {
+        key: "/lazy:shell:navigation",
+        buildVersion: "test-build",
+        store: { putShell } as any,
+        navigationOnly: true,
+      },
     });
 
     expect(loadSSRModule).not.toHaveBeenCalled();
@@ -2729,15 +2818,15 @@ describe("runShellCapture", () => {
       };
 
       // 1st schedule: runs both attempts (retry), both null → marks backoff.
-      scheduleShellCapture(
+      planShellCapture({
         ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        ssrModule,
+        ssr: () => ssrModule,
         descriptor,
-      );
+      });
       expect(captured).toHaveLength(1);
       const t1 = captured[0]!();
       await vi.runAllTimersAsync(); // flush the in-place retry delay
@@ -2745,28 +2834,28 @@ describe("runShellCapture", () => {
       expect(captureShellHTML).toHaveBeenCalledTimes(2);
 
       // 2nd schedule within the 60s window: skipped (no new background task).
-      scheduleShellCapture(
+      planShellCapture({
         ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        ssrModule,
+        ssr: () => ssrModule,
         descriptor,
-      );
+      });
       expect(captured).toHaveLength(1);
 
       // Past the window: re-probed.
       vi.setSystemTime(Date.now() + 120_000); // well past the (exponential) backoff window
-      scheduleShellCapture(
+      planShellCapture({
         ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        ssrModule,
+        ssr: () => ssrModule,
         descriptor,
-      );
+      });
       expect(captured).toHaveLength(2);
       const t2 = captured[1]!();
       await vi.runAllTimersAsync();
@@ -2798,29 +2887,29 @@ describe("runShellCapture", () => {
         okMatch,
         vi.fn(async () => null),
       );
-      scheduleShellCapture(
-        nullMod.ctx,
+      planShellCapture({
+        ctx: nullMod.ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        nullMod.ssrModule,
+        ssr: () => nullMod.ssrModule,
         descriptor,
-      );
+      });
       const t1 = captured[0]!();
       await vi.runAllTimersAsync();
       await t1;
 
       // Within the window scheduling is skipped.
-      scheduleShellCapture(
-        nullMod.ctx,
+      planShellCapture({
+        ctx: nullMod.ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        nullMod.ssrModule,
+        ssr: () => nullMod.ssrModule,
         descriptor,
-      );
+      });
       expect(captured).toHaveLength(1);
 
       // Past the window a VALID capture stores AND clears the backoff.
@@ -2832,15 +2921,15 @@ describe("runShellCapture", () => {
           postponed: null,
         })),
       );
-      scheduleShellCapture(
-        okMod.ctx,
+      planShellCapture({
+        ctx: okMod.ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        okMod.ssrModule,
+        ssr: () => okMod.ssrModule,
         descriptor,
-      );
+      });
       expect(captured).toHaveLength(2);
       const t2 = captured[1]!();
       await vi.runAllTimersAsync();
@@ -2849,15 +2938,15 @@ describe("runShellCapture", () => {
 
       // Backoff cleared: an immediate re-schedule runs right away (no lingering
       // negative entry), even for a would-be-refusing module.
-      scheduleShellCapture(
-        nullMod.ctx,
+      planShellCapture({
+        ctx: nullMod.ctx,
         request,
-        {},
+        env: {},
         url,
         reqCtx,
-        nullMod.ssrModule,
+        ssr: () => nullMod.ssrModule,
         descriptor,
-      );
+      });
       expect(captured).toHaveLength(3);
     } finally {
       vi.useRealTimers();
@@ -3309,18 +3398,16 @@ describe("runShellCapture", () => {
         captured.push(task);
       };
       const { ctx, ssrModule } = makeCtx(okMatch, capture);
-      const schedule = (
-        descriptor: Parameters<typeof scheduleShellCapture>[6],
-      ): void =>
-        scheduleShellCapture(
+      const schedule = (descriptor: ShellCaptureInput["descriptor"]): void =>
+        planShellCapture({
           ctx,
           request,
-          {},
+          env: {},
           url,
           reqCtx,
-          ssrModule,
+          ssr: () => ssrModule,
           descriptor,
-        );
+        });
       return { ctx, captured, schedule };
     }
 
@@ -4120,25 +4207,25 @@ describe("refused-capture backoff policy", () => {
   // Backoff state is part of the debug-sink surface (issue #651): a request
   // that skips the capture because the key is inside its window emits a
   // skip-backoff event carrying the failure count and remaining window.
-  it("scheduleShellCapture emits a skip-backoff debug event with the backoff state", () => {
+  it("planShellCapture emits a skip-backoff debug event with the backoff state", () => {
     const key = "/skip-backoff-event:shell";
     clearCaptureBackoff(key);
     try {
       markCaptureBackoff(key);
       const events: ShellCaptureDebugEvent[] = [];
-      scheduleShellCapture(
-        {} as any,
-        new Request("http://localhost/p"),
-        {},
-        new URL("http://localhost/p"),
-        {} as any,
-        {} as any,
-        {
+      planShellCapture({
+        ctx: {} as any,
+        request: new Request("http://localhost/p"),
+        env: {},
+        url: new URL("http://localhost/p"),
+        reqCtx: {} as any,
+        ssr: () => ({}) as any,
+        descriptor: {
           key,
           buildVersion: "test-build",
           debugSink: (e) => events.push(e),
         },
-      );
+      });
       expect(events).toHaveLength(1);
       expect(events[0].outcome).toBe("skip-backoff");
       expect(events[0].backoffFailures).toBe(1);
@@ -4340,20 +4427,20 @@ describe("capture task hard cap + stampede-guard staleness", () => {
       const captured: Array<() => Promise<void>> = [];
       const ctx = makeWedgedCtx();
       const reqCtx = makeScheduleReqCtx(captured);
-      scheduleShellCapture(
+      planShellCapture({
         ctx,
-        new Request("http://localhost/wedge"),
-        {},
-        new URL("http://localhost/wedge"),
+        request: new Request("http://localhost/wedge"),
+        env: {},
+        url: new URL("http://localhost/wedge"),
         reqCtx,
-        validSsr(),
-        {
+        ssr: () => validSsr(),
+        descriptor: {
           key,
           buildVersion: "test-build",
           store: { putShell: vi.fn() } as any,
           captureTimeout: 1_000,
         },
-      );
+      });
       const task = captured[0]!();
       await vi.advanceTimersByTimeAsync(1_001);
       await task;
@@ -4393,15 +4480,15 @@ describe("capture task hard cap + stampede-guard staleness", () => {
         captureTimeout: SHELL_CAPTURE_TASK_HARD_CAP_MS * 2,
       };
       const schedule = () =>
-        scheduleShellCapture(
+        planShellCapture({
           ctx,
-          new Request("http://localhost/wedge"),
-          {},
-          new URL("http://localhost/wedge"),
+          request: new Request("http://localhost/wedge"),
+          env: {},
+          url: new URL("http://localhost/wedge"),
           reqCtx,
-          validSsr(),
+          ssr: () => validSsr(),
           descriptor,
-        );
+        });
 
       schedule();
       expect(captured).toHaveLength(1);
@@ -4447,15 +4534,15 @@ describe("capture task hard cap + stampede-guard staleness", () => {
         debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
       };
       const schedule = () =>
-        scheduleShellCapture(
+        planShellCapture({
           ctx,
-          new Request("http://localhost/wedge"),
-          {},
-          new URL("http://localhost/wedge"),
+          request: new Request("http://localhost/wedge"),
+          env: {},
+          url: new URL("http://localhost/wedge"),
           reqCtx,
-          validSsr(),
+          ssr: () => validSsr(),
           descriptor,
-        );
+        });
 
       // Schedule but never run the task: the guard entry exists and nothing
       // will ever release it — exactly a capture whose workerd context was
@@ -4498,14 +4585,14 @@ describe("capture task hard cap + stampede-guard staleness", () => {
       );
       const reqCtx = makeScheduleReqCtx(captured);
       const schedule = (key: string) =>
-        scheduleShellCapture(
+        planShellCapture({
           ctx,
-          new Request("http://localhost/wedge"),
-          {},
-          new URL("http://localhost/wedge"),
+          request: new Request("http://localhost/wedge"),
+          env: {},
+          url: new URL("http://localhost/wedge"),
           reqCtx,
-          validSsr(),
-          {
+          ssr: () => validSsr(),
+          descriptor: {
             key,
             buildVersion: "test-build",
             store: { putShell: vi.fn() } as any,
@@ -4513,7 +4600,7 @@ describe("capture task hard cap + stampede-guard staleness", () => {
             captureTimeout: SHELL_CAPTURE_TASK_HARD_CAP_MS * 2,
             debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
           },
-        );
+        });
       const ahead = "/queue-ahead:shell";
       const key = "/queued-then-running:shell";
 
@@ -4562,18 +4649,15 @@ describe("capture task hard cap + stampede-guard staleness", () => {
         new Promise<SSRModule>((resolve) =>
           setTimeout(() => resolve(validSsr()), 20_000),
         );
-      const schedule = (
-        key: string,
-        ssr: Parameters<typeof scheduleShellCapture>[5],
-      ) =>
-        scheduleShellCapture(
+      const schedule = (key: string, ssr: ShellCaptureInput["ssr"]) =>
+        planShellCapture({
           ctx,
-          new Request("http://localhost/wedge"),
-          {},
-          new URL("http://localhost/wedge"),
+          request: new Request("http://localhost/wedge"),
+          env: {},
+          url: new URL("http://localhost/wedge"),
           reqCtx,
           ssr,
-          {
+          descriptor: {
             key,
             buildVersion: "test-build",
             store: { putShell: vi.fn() } as any,
@@ -4581,11 +4665,11 @@ describe("capture task hard cap + stampede-guard staleness", () => {
             captureTimeout: SHELL_CAPTURE_TASK_HARD_CAP_MS * 2,
             debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
           },
-        );
+        });
       const ahead = "/queue-ahead-slow-ssr:shell";
       const key = "/queued-slow-ssr:shell";
 
-      schedule(ahead, validSsr());
+      schedule(ahead, () => validSsr());
       schedule(key, slowSsr);
       expect(captured).toHaveLength(2);
       const tasks = captured.map((task) => task());
@@ -4633,15 +4717,15 @@ describe("capture task hard cap + stampede-guard staleness", () => {
         debugSink: (e: ShellCaptureDebugEvent) => events.push(e),
       };
       const schedule = () =>
-        scheduleShellCapture(
+        planShellCapture({
           ctx,
-          new Request("http://localhost/wedge"),
-          {},
-          new URL("http://localhost/wedge"),
+          request: new Request("http://localhost/wedge"),
+          env: {},
+          url: new URL("http://localhost/wedge"),
           reqCtx,
-          validSsr(),
+          ssr: () => validSsr(),
           descriptor,
-        );
+        });
 
       schedule();
       expect(captured).toHaveLength(1);

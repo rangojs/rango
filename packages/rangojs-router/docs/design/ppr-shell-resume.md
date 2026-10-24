@@ -680,7 +680,7 @@ Mechanics (`src/cache/shell-snapshot.ts`):
    OVERWRITE the foreground's entry with the capture's re-render. A
    get-before-set guard would just shrink that window. The contract the barrier
    enforces: a capture never clobbers a ring-3 entry the foreground produced —
-   all foreground cache writes are scheduled before `scheduleShellCapture` runs
+   all foreground cache writes are scheduled before `planShellCapture` runs
    (the response and its `onResponse` callbacks commit first), so settling them
    makes the capture's lookup HIT, replay the foreground's generation (handler
    skipped; the cache-store middleware's write path is gated off by
@@ -1360,7 +1360,7 @@ under its own derived context.
 ```
 MISS ──> axis-1 serve (x-rango-shell: MISS)
            rsc-rendering, after building the response (200 HTML only):
-             scheduleShellCapture(descriptor from the ppr path option)
+             planShellCapture({ request, ssr, descriptor from the ppr path option })
                runBackground: runWithRequestContext(derivedCtx, () =>
                  router.match()  [MIXED-CHAIN: cache()'d segments replay,
                                   uncached handlers execute; live loaders
@@ -1390,7 +1390,7 @@ HIT  ──> committed composed response (x-rango-shell: HIT)
              record unavailable ──> ShellRecordUnavailableError
                                     ──> degradeUnreplayableShell (tombstone,
                                         drop memo, recapture, reload script)
-           (+ scheduleShellCapture on a stale/SWR hit)
+           (+ planShellCapture on a stale/SWR hit)
 ```
 
 Why `router.match()` and not a pipeline re-run for runtime capture: the
@@ -1409,7 +1409,7 @@ capture guard (`guardIdentityRead`, `src/server/context.ts`, behind
 reads) all key off it. The
 old `_shellResume`/`_shellCapture` request-context flags are gone — the
 integrated serve path builds the `ShellCaptureDescriptor` locally and passes it
-to `scheduleShellCapture` directly.
+to `planShellCapture` directly.
 
 ## Contracts
 
@@ -1549,7 +1549,9 @@ once-per-key warning, since the declared intent cannot be honored).
 ### Serve plumbing (`src/rsc/shell-serve.ts` + `src/server/request-context.ts`)
 
 `shell-serve.ts` owns the config/key/store helpers the render layer uses at the
-commit point: `resolvePprConfig` (normalizes the route's `ppr` option;
+commit point: `readShell` (the document serve's store read:
+`readShellDocument` on a built-in store, else `getShell`; a failed read is a
+MISS, never a 500), `resolvePprConfig` (normalizes the route's `ppr` option;
 `DEFAULT_PPR_TTL_SECONDS` = 300), `buildShellKey`
 (`${routerId}@${host}${pathname}${sortedSearch}:shell` — host-scoped so
 multi-tenant shells never collide, and router-scoped so two routers that
@@ -1589,10 +1591,15 @@ The document branch of `handleRscRenderingInner` starts with the PPR serve
 block (commit point, above). On a HIT, `serveShellHit` commits the composed
 response and runs the live tail inside the stream. On a MISS the axis-1 flow is
 unchanged; after building the response, a servable 200-HTML document schedules
-`scheduleShellCapture` with the descriptor built from the route's ppr config,
-and the response is tagged `x-rango-shell: MISS`.
+`planShellCapture` with the descriptor built from the route's ppr config,
+and the response is tagged `x-rango-shell: MISS`. A store HIT and a build-shell
+HIT share the one serve; every capture (the MISS's, a stale or failed HIT's
+recapture, a navigation heal) is one `planShellCapture` call whose
+`ShellCaptureInput` carries the request, the descriptor and the SSR module as a
+factory (a document hands it the module it already resolved; a navigation heal
+resolves one for the capture's own request).
 
-`scheduleShellCapture` (in `shell-capture.ts`) is the single owner of the
+`planShellCapture` (in `shell-capture.ts`) is the single owner of the
 stampede guard (one capture per key per isolate) and the refused-capture
 backoff. The guard covers a capture while it runs, but a MISS schedules its
 capture only after rendering, so a capture another request started can store
@@ -1678,7 +1685,7 @@ An ineligible route — a live (non-`ssr: false`) loader read with no
 `loading()` or inline `<Suspense>` above it, or a cookie-reading handler whose
 capture throws — refuses on every request. Without a memory of
 that, a `ppr`-declared route in that shape would schedule a doomed background
-render on EVERY request it serves. `scheduleShellCapture`
+render on EVERY request it serves. `planShellCapture`
 keeps a module-level negative cache (`refusedCaptures`): a key enters backoff only
 after the in-place retry ALSO failed (or a genuine error, or an attempt that ran
 out of `ppr.captureTimeout`, which is not retried), and within the window

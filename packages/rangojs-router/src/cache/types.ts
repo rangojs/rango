@@ -293,7 +293,7 @@ export interface SegmentCacheStore<TEnv = unknown> {
   /**
    * Declares the shell family present-but-inert: getShell/putShell exist but
    * no-op (a custom store whose backing tier is conditionally unavailable).
-   * scheduleShellCapture skips captures whose only write target is inert —
+   * planShellCapture skips captures whose only write target is inert —
    * the background render would be dead work that still occupies the
    * per-isolate serialized capture queue (a promise-heavy route bakes for
    * seconds per MISS with nothing stored). Absent/false means the family,

@@ -450,7 +450,7 @@ non-claiming read option.
 
 The first cold partial request reports `BYPASS; reason=no-entry` because no
 artifact could supply that response; its successful render schedules
-`scheduleShellCapture` with a navigation-only marker. The next request reports
+`planShellCapture` with a navigation-only marker. The next request reports
 `HIT` when the capture produced an eligible snapshot. Navigation snapshots use
 a separate shell key, so they cannot overwrite or be served as a document shell.
 The capture runs with the stripped target document URL and loads SSR support in

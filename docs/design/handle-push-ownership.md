@@ -1186,7 +1186,7 @@ handler layer.
   navigation half (the doc record, or the tombstone) and returns `refused`
   after the write; the codec drain collects an import failure or a `null`
   encode with the render's errors, which refuse the capture.
-  `scheduleShellCapture` then backs the key off and skips
+  `planShellCapture` then backs the key off and skips
   `noteCaptureStored`, so a document MISS schedules at most one capture per
   backoff window.
 - `shell-snapshot.ts` `buildShellLoaderSeed` reports an undecodable pin
