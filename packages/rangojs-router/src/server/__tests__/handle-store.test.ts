@@ -1413,6 +1413,69 @@ describe("HandleStore.pushReplayed inside a replayed loader's body (navigation r
   });
 });
 
+// rango-t189: a cache() HIT restores its record before the segment's loaders
+// start; the MISS ran the handler after they started.
+describe("HandleStore.holdRecordedValues (a cache() HIT's record before its loaders start)", () => {
+  it("puts a push in front of the record's values, in push order, until the segment is released", () => {
+    const store = createHandleStore();
+    store.replaySegmentData("seg1", { crumbs: ["handler-a", "handler-b"] });
+    store.holdRecordedValues(["seg1"]);
+
+    runInsideLoaderScope(() => store.push("crumbs", "seg1", "early-1"), "L");
+    runInsideLoaderScope(() => store.push("crumbs", "seg1", "early-2"), "M");
+    store.releaseRecordedValues("seg1");
+    runInsideLoaderScope(() => store.push("crumbs", "seg1", "late"), "L");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "early-1",
+      "early-2",
+      "handler-a",
+      "handler-b",
+      "late",
+    ]);
+    expect(store.getDataForSegment("seg1", true)).toEqual({
+      crumbs: ["handler-a", "handler-b"],
+    });
+    expect(store.getPushedBy("seg1")).toEqual({
+      crumbs: ["L", "M", null, null, "L"],
+    });
+  });
+
+  it("leaves a segment it does not hold, and a handle the record has no value for, in push order", () => {
+    const store = createHandleStore();
+    store.replaySegmentData("seg1", { crumbs: ["handler"] });
+    store.replaySegmentData("seg2", { crumbs: ["other-handler"] });
+    store.holdRecordedValues(["seg1"]);
+
+    store.push("crumbs", "seg2", "other-loader");
+    store.push("meta", "seg1", "meta-1");
+    store.push("meta", "seg1", "meta-2");
+
+    expect(store.getDataForSegment("seg2").crumbs).toEqual([
+      "other-handler",
+      "other-loader",
+    ]);
+    expect(store.getDataForSegment("seg1").meta).toEqual(["meta-1", "meta-2"]);
+  });
+
+  it("keeps a placeholder's place for its loader's run", () => {
+    const store = createHandleStore();
+    store.replaySegmentData("seg1", { crumbs: [] });
+    store.pushPlaceholder("crumbs", "seg1", "copy", "L");
+    store.push("crumbs", "seg1", "handler");
+    store.holdRecordedValues(["seg1"]);
+
+    runInsideLoaderBodyScope(() => store.push("crumbs", "seg1", "run"), "L");
+    store.push("crumbs", "seg1", "other");
+
+    expect(store.getDataForSegment("seg1").crumbs).toEqual([
+      "run",
+      "other",
+      "handler",
+    ]);
+  });
+});
+
 describe("holdsThenable", () => {
   it("finds a thenable at the top, in plain containers, and in element props", () => {
     const promise = Promise.resolve(1);

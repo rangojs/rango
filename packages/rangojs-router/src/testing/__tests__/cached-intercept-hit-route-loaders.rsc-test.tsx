@@ -253,11 +253,11 @@ function routeLoaderIds(ids: string[]): string[] {
   );
 }
 
-/** The crumbs the MISS shows, sorted. */
+/** The crumbs the MISS shows. */
 function expectedCrumbs(shape: Shape): string[] {
   return shape === "nothing held"
-    ? ["layout", "modal", "shared-loader"]
-    : ["layout", "list", "modal", "shared-loader"];
+    ? ["layout", "shared-loader", "modal"]
+    : ["layout", "list", "shared-loader", "modal"];
 }
 
 describe("cache() route with an intercept open: a HIT runs the intercept's loaders, not the route's", () => {
@@ -278,14 +278,8 @@ describe("cache() route with an intercept open: a HIT runs the intercept's loade
 
       it("shows the MISS's crumbs on the HIT, the shared loader's included", async () => {
         const { first, second, before } = await openTwice("cache", shape);
-        // Sorted: inside the slot, a HIT files its live loader's push after
-        // the record's handler push, and the MISS before it.
-        expect((await crumbs(first, before)).sort()).toEqual(
-          expectedCrumbs(shape),
-        );
-        expect((await crumbs(second, before)).sort()).toEqual(
-          expectedCrumbs(shape),
-        );
+        expect(await crumbs(first, before)).toEqual(expectedCrumbs(shape));
+        expect(await crumbs(second, before)).toEqual(expectedCrumbs(shape));
       });
 
       it("runs no route loader on the HIT, and the shared loader once, as on the MISS", async () => {

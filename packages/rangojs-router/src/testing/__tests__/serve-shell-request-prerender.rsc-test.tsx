@@ -162,7 +162,9 @@ describe("a Prerender + ppr shell HIT hydrates with the loader pushes its shell 
     // The loader's data is its pin; its body did not run.
     expect(hit.flight).toContain("settled@g1");
     expect(hit.flight).not.toContain("settled@g2");
-    expect(values.shell).toEqual(["handler-note", "settled-only@g1"]);
+    // As a live render orders them (the plain ppr control below): the
+    // capture's loader kicks off before the stored handler value's place.
+    expect(values.shell).toEqual(["settled-only@g1", "handler-note"]);
     expect(values.hydration).toEqual(values.shell);
     expect(values.afterHydration).toBeUndefined();
   });
@@ -197,7 +199,7 @@ describe("a Prerender + ppr shell HIT hydrates with the loader pushes its shell 
     expect(miss.shellStatus).toBe("MISS");
     expect(await handleValues(miss)).toEqual({
       shell: undefined,
-      hydration: ["handler-note", "settled-only@g2"],
+      hydration: ["settled-only@g2", "handler-note"],
       afterHydration: undefined,
     });
   });

@@ -160,6 +160,9 @@ async function lookup(options: {
       }
     }),
   );
+  // The loader walk the stub leaves out releases the stored values once the
+  // route's loaders started: the pushes a test makes come after it.
+  reqCtx._handleStore.releaseRecordedValues("R0");
   return { reqCtx, state };
 }
 
