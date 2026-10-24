@@ -1487,6 +1487,7 @@ export async function resolveOrphanLayout<TEnv>(
   // so ctx.set() values are visible to parallel children.
   matchedIds.push(orphan.shortCode);
 
+  let handlerRan = false;
   let deferred: { readonly deferred: true } | undefined;
   let component: ReactNode = null;
   // FRESH: the orphan is new; no decision is asked, traced or observed.
@@ -1494,6 +1495,7 @@ export async function resolveOrphanLayout<TEnv>(
     // Below a unit a prefetch skipped: the orphan goes with it.
     deferred = deferUnit(context, orphan.shortCode, "below");
     if (!deferred) {
+      handlerRan = true;
       // Its handler's pushes are its own. Pinned only while it runs: a route
       // under loading() streams its handler, whose pushes after an await
       // read the pin after this returns.
@@ -1525,6 +1527,7 @@ export async function resolveOrphanLayout<TEnv>(
       pass.deps.viewTransitionDefault,
     ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
+    _handlerRan: handlerRan,
     ...deferred,
   });
 

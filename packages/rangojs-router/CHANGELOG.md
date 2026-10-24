@@ -695,6 +695,22 @@ request, as a regular layout's are: the document, every navigation, a
 `cache()` record and its HITs, and a `Prerender()` bake (the next build bakes
 them under the layout). No change in your code.
 
+### Fixed: an orphan layout that re-runs and pushes nothing clears its handle values
+
+**Before.** An orphan layout (a layout with no routes, declared among a
+layout's children or a route's) that re-ran on a navigation or a server
+action, and whose handler pushed nothing to a handle this time, kept the
+values it pushed on the previous request: a breadcrumb read with
+`useHandle` still listed its old crumb. The layout re-runs when its
+`revalidate()` says so, and, when it is declared inside a route's `path()`,
+by default on every action and whenever the route's params or search
+change. A regular layout that re-runs and pushes nothing drops its old
+values.
+
+**Now.** The orphan layout replaces its handle values whenever its handler
+re-runs, as a regular layout does: with what it pushes now, or with nothing.
+No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
