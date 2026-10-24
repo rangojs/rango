@@ -258,6 +258,20 @@ See "Rewrite" below for what moves and what stays.
   `rsc/helpers.ts`). It decides as for a GET of the page. Global middleware,
   which wraps the action, sees the POST. The render itself keeps the POST.
   `[RW11]`
+- A middleware that returns or throws its own Response, or throws, while the
+  `next()` it called still runs (a timeout fallback, a fire-and-forget
+  render, a stale document cache entry's background re-run) answers with
+  what it returned: the middleware ahead see that Response after `next()`,
+  and their writes land on it. The abandoned run detaches (`DownstreamHolder`
+  in `router/middleware.ts`): its response, and what its middleware write to
+  their response after `next()`, never reach the chain's. A `next()` called
+  after its middleware returned runs the same way. The run still shares the
+  request context, so a `cookies()` or request-context header write it makes
+  before the response is sent can still land on it; the document cache gives
+  its re-run a context of its own (`document-revalidation` in
+  `server/render-pass.ts`). A middleware that waits for its `next()`
+  (`await next()`, `return next()`, or `next()` and a return of nothing)
+  shares one response with the rest of the chain. `[MW2]`
 - Handler-first ordering is guaranteed within a full render pass:
   route handler runs before its child/orphan layouts and parallel children.
 - `ctx.set()` values flow downward through structural scope boundaries only.

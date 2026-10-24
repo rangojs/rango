@@ -319,6 +319,24 @@ export const timing: Middleware = async (ctx, next) => {
 };
 ```
 
+A middleware may answer without waiting for its `next()`, as a timeout
+fallback does. The middleware ahead then see its `Response` after `next()`
+and write on it. The abandoned render keeps running and builds its own
+response, which nothing serves.
+
+```typescript
+export const renderTimeout: Middleware = (ctx, next) =>
+  Promise.race([
+    next(),
+    new Promise<Response>((resolve) =>
+      setTimeout(
+        () => resolve(new Response("Try again", { status: 503 })),
+        2000,
+      ),
+    ),
+  ]);
+```
+
 ### Typed context variables in middleware
 
 Use `createVar<T>()` for type-safe data sharing between middleware and handlers:

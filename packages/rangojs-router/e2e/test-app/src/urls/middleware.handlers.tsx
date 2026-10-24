@@ -171,6 +171,18 @@ export const MiddlewareRouteShortcircuitHandler: Handler<
   </div>
 );
 
+export const MiddlewareAbandonedNextHandler: Handler<
+  "middlewareTest.abandonedNext"
+> = async () => {
+  // Slower than the route's timeout fallback (middleware.tsx).
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  return (
+    <div data-testid="middleware-test-abandoned-next">
+      <h1>Rendered after the timeout fallback answered</h1>
+    </div>
+  );
+};
+
 export const MiddlewareRouteLevelHandler: Handler<
   "middlewareTest.routeLevel"
 > = (ctx) => {
