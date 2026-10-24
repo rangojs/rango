@@ -23,6 +23,7 @@ import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   createLoader,
   createRouter,
+  notFound,
   urls,
   type Middleware,
 } from "../../index.rsc.js";
@@ -35,6 +36,7 @@ import {
   MemorySegmentCacheStore,
   createDocumentCacheMiddleware,
 } from "../../cache/index.js";
+import { navigationShellKey } from "../../rsc/shell-capture-constants.js";
 
 let failing = true;
 let runs = 0;
@@ -417,6 +419,125 @@ describe.each(KINDS)(
       if (kind !== "loader") expect(next.shellStatus).not.toBe("HIT");
       expect(next.flight).toContain(healthyMarker(kind));
       expect(next.flight).not.toContain("declared-error");
+    });
+  },
+);
+
+// rango-t177: the visitor's render is healthy, so its 200 schedules the
+// capture, and only the capture's own handler run fails (a flaky upstream
+// during the background capture). The boundary it renders must not become the
+// shell every later HIT serves.
+describe.each([
+  { boundary: "declared error", fallback: "declared-error" },
+  { boundary: "default error", fallback: "Internal Server Error" },
+  { boundary: "declared notFound", fallback: "declared-not-found" },
+] as const)(
+  "a handler that throws on the capture pass only ($boundary boundary)",
+  ({ boundary, fallback }) => {
+    /** Healthy on every call but the second, which is the capture's. */
+    function setup() {
+      let calls = 0;
+      async function FailsOnCapture(): Promise<React.ReactNode> {
+        calls += 1;
+        if (calls === 2) {
+          if (boundary === "declared notFound") notFound("gone for now");
+          throw new Error("upstream down");
+        }
+        return <p>healthy-content</p>;
+      }
+      const cacheStore = new MemorySegmentCacheStore();
+      const phases: string[] = [];
+      const router = createRouter({
+        cache: { store: cacheStore },
+        onError: ({ phase }) => {
+          phases.push(phase);
+        },
+      }).routes(
+        urls(({ path, errorBoundary, notFoundBoundary }) => [
+          path(
+            "/cp",
+            FailsOnCapture,
+            { name: "cp", ppr: { ttl: 300, swr: 60 } },
+            () =>
+              boundary === "declared error"
+                ? [errorBoundary(Declared)]
+                : boundary === "declared notFound"
+                  ? [notFoundBoundary(<p>declared-not-found</p>)]
+                  : [],
+          ),
+        ]),
+      );
+      return { router, cacheStore, phases, calls: () => calls };
+    }
+
+    it("document capture: no shell is stored, and a later request captures the healthy page", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const clock = movableClock();
+      const { router, cacheStore, phases, calls } = setup();
+
+      const first = await serveShellRequest(router, "/cp", { cacheStore });
+      expect(first.shellStatus).toBe("MISS");
+      expect(first.flight).toContain("healthy-content");
+      expect(calls()).toBe(2);
+      expect(await first.readEntry()).toBeNull();
+      // The capture's failure reaches onError as a cache error.
+      expect(phases).toContain("cache");
+
+      const second = await serveShellRequest(router, "/cp", { cacheStore });
+      expect(second.shellStatus).toBe("MISS");
+      expect(second.flight).toContain("healthy-content");
+      expect(second.flight).not.toContain(fallback);
+
+      // Past the failed capture's backoff window, the next MISS captures.
+      clock.advance(60_000);
+      const third = await serveShellRequest(router, "/cp", { cacheStore });
+      expect(third.shellStatus).toBe("MISS");
+      const stored = await third.readEntry();
+      expect(stored).not.toBeNull();
+      const hit = await serveShellRequest(router, "/cp", { cacheStore });
+      expect(hit.shellStatus).toBe("HIT");
+      expect(hit.prelude).toContain("healthy-content");
+      expect(hit.prelude).not.toContain(fallback);
+    });
+
+    it("navigation capture: no entry is stored, and a later navigation captures the healthy page", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const clock = movableClock();
+      const { router, cacheStore, phases, calls } = setup();
+      const partial = { from: "/" };
+      const navigate = () =>
+        serveShellRequest(router, "/cp", { cacheStore, partial });
+
+      const first = await navigate();
+      expect(first.replayStatus).toEqual({
+        outcome: "BYPASS",
+        reason: "no-entry",
+      });
+      expect(first.flight).toContain("healthy-content");
+      expect(calls()).toBe(2);
+      const key = navigationShellKey(first.key);
+      expect(await cacheStore.getShell(key)).toBeNull();
+      expect(phases).toContain("cache");
+
+      const second = await navigate();
+      expect(second.replayStatus).toEqual({
+        outcome: "BYPASS",
+        reason: "no-entry",
+      });
+      expect(second.flight).toContain("healthy-content");
+      expect(second.flight).not.toContain(fallback);
+
+      // Past the failed capture's backoff window, the next navigation captures.
+      clock.advance(60_000);
+      await navigate();
+      expect(await cacheStore.getShell(key)).not.toBeNull();
+      const replayed = await navigate();
+      expect(replayed.replayStatus).toEqual({
+        outcome: "HIT",
+        freshness: "fresh",
+      });
+      expect(replayed.flight).toContain("healthy-content");
+      expect(replayed.flight).not.toContain(fallback);
     });
   },
 );

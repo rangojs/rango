@@ -1635,6 +1635,14 @@ evicted by tag at all — move always-fresh data into a live-lane loader (no
   capture is served as before. Only a throw during the capture counts: a
   component that failed in the live render and succeeds when captured is
   stored.
+- **A handler that throws during capture refuses it too**: when a handler
+  throws (or throws `notFound()`) on the capture's own run while the request
+  that scheduled it rendered fine, for example on a flaky upstream, its
+  boundary (a declared `errorBoundary()` or `notFoundBoundary()`, or the
+  default error page) would become the shell. The capture stores nothing,
+  logs `[ShellCache] capture`, reports to `onError` as `cache-write`, and
+  backs the key off; the next capture after the window stores normally. A
+  request whose own render fails answers 500/404 and schedules no capture.
 
 ## Related
 

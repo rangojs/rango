@@ -780,6 +780,11 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   `render-failed`. A shell capture is unaffected: live loaders do not run in
   it, and a bake-lane loader that throws already refuses it.
   Pinned by `testing/__tests__/cache-writers-failed-render.rsc-test.tsx`.
+- Capture-only handler failure: a handler that throws (or throws
+  `notFound()`) on a PPR capture's run only renders its boundary under a
+  200 the capture never sees. `settleCaptureRecord` (`rsc/shell-capture.ts`)
+  fails the capture on an `error`/`notFound` segment in its match, so no
+  shell or doc record is stored. Pinned by the same file.
 
 ### Action System
 

@@ -211,6 +211,22 @@ evicts the route record as well; before, the refreshed record lost them. The
 refresh and the `Prerender` build file a layout's handle values under that
 layout, as a live render does. No change in your code.
 
+### Fixed: a PPR shell capture whose handler fails stores no error page as the shell
+
+**Before.** A `ppr` route's background shell capture runs the route's
+handlers again. When a handler threw (or threw `notFound()`) during the
+capture only, while the visitor's render of the same request succeeded, for
+example because an upstream failed for a moment, the capture stored the
+boundary that caught it as the shell: a declared `errorBoundary()` or
+`notFoundBoundary()`, or the default error page. Every later document request
+was a HIT that served that page with a 200 until the shell expired or a
+recapture replaced it, and client navigations replayed it the same way.
+
+**Now.** The capture stores nothing and reports the failure through
+`onError`, and the route keeps serving MISSes; the next capture after the
+key's backoff stores the healthy page. A render that fails for the visitor
+too was never captured, and still is not. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

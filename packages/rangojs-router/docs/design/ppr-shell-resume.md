@@ -597,6 +597,17 @@ the only capture allowed to store an entry without one is a prerender-served
 capture. A navigation-only capture is no exception: partial replay consumes
 nothing but the record.
 
+Before the callbacks fire (step 2), a match that holds an `error` or
+`notFound` segment fails the capture. A request whose own render fails
+answers 500/404 and schedules no capture, so that boundary comes from a
+handler that threw (or threw `notFound()`) on the capture's own run, a flaky
+upstream. The pass's `_setStatus` is the foreground's and the callbacks get a
+synthetic 200, so without this check the boundary became the shell every HIT
+served. It throws like a render error (`reportCacheError`, backoff, no
+retry); a tripped capture guard still refuses first, checked after the
+handler output settled so a loader's late read is seen. Pinned by "a handler that throws on the capture pass only"
+(`src/testing/__tests__/cache-writers-failed-render.rsc-test.tsx`).
+
 Scar tissue for step 4: before it, server components rendered TWICE per
 capture, once in the capture's Flight render and once inside the record's
 encode. An uncached async server component therefore showed one value in the
