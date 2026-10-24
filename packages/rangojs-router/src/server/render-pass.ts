@@ -165,7 +165,10 @@ export const RENDER_PASS_FIELDS: {
     // intercept's DSL loaders run here (heldNothingPassInput sets no
     // skipLoaders), so their rendered() returns at once. What they read
     // reaches no record: cacheRoute drops loader segments, captureHandles
-    // loader pushes. A shell capture never opens an intercept
+    // loader pushes. A route loader a handler reads runs too, started
+    // through its registration (resolveOwnerLoaders): its pushes stay out of
+    // the record and its value bakes into the handler's output, as on a
+    // MISS. A shell capture never opens an intercept
     // (createNavigationCaptureRequest drops the intercept source).
     renderBarrier: "inherited",
     own(pass, { handleStore, sink }) {
@@ -176,6 +179,16 @@ export const RENDER_PASS_FIELDS: {
       pass._metricsStore = undefined;
       pass._renderErrors = [];
       pass._recoveredHandlerErrors = undefined;
+      // The barrier's deadlock bookkeeping is the pass's own and stays open.
+      // The visitor's is closed once its barrier resolves, so a handler's
+      // read of a loader that calls rendered() went unrecorded and rendered()
+      // let it through: the record baked the visitor's handle snapshot, or on
+      // a streaming tree rendered() awaited this pass's store, which awaits
+      // that handler, and the refresh never settled. Open, the read is
+      // refused as a MISS refuses it.
+      pass._handlerLoaderDeps = undefined;
+      pass._renderBarrierWaiters = undefined;
+      pass._renderBarrierGuardClosed = undefined;
       // A route cache() record, not a shell, even when a capture's stale read
       // starts it: under the capture's guard a loader body's headers() fails
       // the refresh, and recaptures replay the stale record until it expires.

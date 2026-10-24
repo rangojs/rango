@@ -392,6 +392,10 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       _metricsStore: { metrics: [] },
       _recoveredHandlerErrors: new Map([["M0", new Error("recovered")]]),
       _renderErrors: [new Error("rendered")],
+      // Its barrier resolved: the deadlock bookkeeping is closed.
+      _renderBarrierGuardClosed: true,
+      _handlerLoaderDeps: new Set(["visitor-dep"]),
+      _renderBarrierWaiters: new Set(["visitor-waiter"]),
     });
     base._onResponseCallbacks.push((response) => response);
     const handleStore = createHandleStore();
@@ -434,9 +438,12 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
     expect(ownAtStart).toEqual([
       "[rango.requestContext.res] (hidden)",
       "_handleStore",
+      "_handlerLoaderDeps",
       "_metricsStore",
       "_onResponseCallbacks",
       "_recoveredHandlerErrors",
+      "_renderBarrierGuardClosed",
+      "_renderBarrierWaiters",
       "_renderErrors",
       "_rotateStateCookie",
       "_setFreshReadsCookie",
@@ -498,6 +505,17 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
     // record keeps nothing it reads.
     expect(Object.hasOwn(ctx, "_resolveRenderBarrier")).toBe(false);
     expect(ctx._resolveRenderBarrier).toBe(base._resolveRenderBarrier);
+    // Its deadlock bookkeeping is open, so a handler awaiting a loader that
+    // calls rendered() is refused as on a MISS, not let through.
+    expect({
+      _renderBarrierGuardClosed: ctx._renderBarrierGuardClosed,
+      _handlerLoaderDeps: ctx._handlerLoaderDeps,
+      _renderBarrierWaiters: ctx._renderBarrierWaiters,
+    }).toEqual({
+      _renderBarrierGuardClosed: undefined,
+      _handlerLoaderDeps: undefined,
+      _renderBarrierWaiters: undefined,
+    });
   });
 });
 

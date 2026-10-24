@@ -188,7 +188,9 @@ The render barrier is a deferred promise on the request context:
 - **Background re-render of a stale route record**: the
   `background-revalidation` row inherits the request's barrier, and its
   loaders do call `rendered()` on it. The route's own pass skips loaders
-  (`skipLoaders`), but an open intercept resolves with `heldNothingPassInput`
+  (`skipLoaders`) and runs only the ones a handler reads: `resolveOwnerLoaders`
+  registers each, and the read starts it as a DSL loader, as on a MISS. An
+  open intercept resolves with `heldNothingPassInput`
   (`background-revalidation.ts` `rerenderAndCacheRoute`), which runs the
   intercept's DSL loaders. You might expect the inherited barrier to hang
   them or leak into the record. It does neither:
@@ -198,9 +200,28 @@ The render barrier is a deferred promise on the request context:
     `onResponse`, after segment resolution resolved it. So `rendered()`
     returns at once, and the loader reads the visitor's handle snapshot, not
     the refresh's store.
-  - Nothing the loader produces reaches the record: `cacheRoute` drops
-    loader segments (`cache/cache-scope.ts`), and `captureHandles` drops
-    loader pushes (`cache/handle-snapshot.ts`).
+  - Nothing an intercept loader produces reaches the record: `cacheRoute`
+    drops loader segments (`cache/cache-scope.ts`), and `captureHandles`
+    drops loader pushes (`cache/handle-snapshot.ts`).
+  - A route loader a handler reads is different: its value bakes into the
+    handler's output, as on a MISS. Its pushes stay out of the record only
+    because it starts through its registration: started bare, as a
+    handler-invoked loader, they stayed in and every HIT showed them twice,
+    the record's copy and the live run's
+    (`testing/__tests__/cached-route-handler-reads-loader.rsc-test.tsx`).
+  - A handler awaiting a loader that calls `rendered()` is the deadlock
+    every MISS refuses (the checks in `setupLoaderAccess` and `rendered()`),
+    and the refresh must refuse it too. Those checks read three fields:
+    `_handlerLoaderDeps`, `_renderBarrierWaiters` and
+    `_renderBarrierGuardClosed`. The visitor's are closed once its barrier
+    resolves, so the row owns its own, open, and never closes them: it has
+    no barrier of its own to resolve. Inherited, the handler's read went
+    unrecorded and `rendered()` let it through. On a tree without
+    `loading()` the record then baked the visitor's handle snapshot; on one
+    that streams, `rendered()` awaited the refresh's own handle store, which
+    awaits that handler, and the refresh never settled. Pinned through
+    `serveShellRequest` by the same file ("handler awaits a loader that
+    calls rendered()") and by `server/__tests__/derived-context-shape.rsc-test.tsx`.
   - A shell capture never takes the intercept branch:
     `createNavigationCaptureRequest` (`rsc/shell-capture.ts`) strips the
     intercept source.

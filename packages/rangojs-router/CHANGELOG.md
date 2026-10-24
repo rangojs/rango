@@ -181,8 +181,35 @@ not check the mark, so the same code threw on a MISS only.
 
 **Now.** The request context is not marked as an argument, as it already was
 not when the body reached it through `getRequestContext()`. A write made in
-the body's own async chain still throws, on every pass. A handler or middleware `ctx` argument
-keeps its mark. No change in your code.
+the body's own async chain still throws, on every pass. A handler or
+middleware `ctx` argument keeps its mark. No change in your code.
+
+### Fixed: a `cache()` route whose handler reads its own loader shows the loader's handle values once
+
+**Before.** Under `cache({ ttl, swr })`, a route or layout handler that
+awaited its own loader, declared with `loader()` (`await ctx.use(ProductLoader)`),
+showed that loader's handle values twice on every cache HIT after a stale
+HIT's background refresh rewrote the record: duplicated breadcrumbs, meta
+tags or any other `useHandle` value the loader pushes. The refresh skips
+loaders, so the handler's read ran the loader as a handler-invoked loader,
+and the record kept its pushes; each HIT then replayed them and the loader's
+live run pushed them again. On a client-side navigation that kept the layout
+mounted, the record written for the navigation already held them, so the
+first HIT showed them twice. The refresh also ran such a loader's body
+instead of reading its own `cache()`. And a layout declared inside a route
+that owns loaders had its handler's handle values filed under the route by
+the refresh, and by the build of a `Prerender` route, so after either they
+came in another order than on a live render.
+
+**Now.** The refresh starts a loader the handler reads as the route declares
+it, its own `cache()` included, as the first render does, so the record holds
+what that render's record holds and every HIT shows the values once. Loaders
+no handler reads still do not run in the refresh. Because such a loader's
+own `cache()` is read again, the refreshed record also carries that
+`cache()`'s tags, as the first render's does, so invalidating one of them
+evicts the route record as well; before, the refreshed record lost them. The
+refresh and the `Prerender` build file a layout's handle values under that
+layout, as a live render does. No change in your code.
 
 ## 0.27.0 (2026-10-23)
 
