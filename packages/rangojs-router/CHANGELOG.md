@@ -569,6 +569,29 @@ What renders is unchanged. No change in your code. A dashboard that reads the
 per-segment rows of navigations sees the slot and orphan rows appear, and a
 `Static()` route's row disappear (documents never had it).
 
+### Fixed: an intercept over a `Prerender()` route shows only the intercept the navigation selected
+
+**Before.** When several intercepts target a `Prerender()` route, a
+client-side navigation selects one of them: the innermost whose `when()`
+passes. The build cannot evaluate `when()`, so the intercept variant it bakes
+(and the one the dev server renders) holds every intercept that targets the
+route, and every navigation served from it sent all of them with their handle
+values. With two intercepts in different slots guarded by different `when()`
+conditions, the one the navigation did not select rendered in its slot next
+to the selected one. A request that kept nothing mounted also listed the
+other intercepts as matched, so a breadcrumb read with `useHandle` showed
+their values. The same happened with `@outer` on the root layout and `@modal`
+on the layout that holds the route, where a live render shows only `@modal`.
+The build also ran and baked the intercepts declared in the route's own
+layouts, which a navigation never selects.
+
+**Now.** A navigation served from the bake carries only the intercept it
+selected, with that intercept's handle values, as a live render does. The
+build bakes only the intercepts a navigation can select. Two intercepts on one
+layout that fill the same slot share that slot's segment, so the bake cannot
+tell them apart: neither is baked, and they render live, as on a route that is
+not pre-rendered. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

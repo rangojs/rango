@@ -85,6 +85,7 @@ import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
 import { requestHeaders } from "../../server/request-headers.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
+import { interceptSlotId } from "../intercept-resolution.js";
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
@@ -95,6 +96,7 @@ let handleSnapshot: typeof import("../../cache/handle-snapshot.js") | undefined;
 let _hashParams:
   | typeof import("../../prerender/param-hash.js").hashParams
   | undefined;
+let storeModule: typeof import("../../prerender/store.js") | undefined;
 
 /**
  * @internal Replace the prerender store this module serves from, and return
@@ -121,6 +123,7 @@ async function ensurePrerenderDeps(): Promise<void> {
   codec = segmentCodec;
   handleSnapshot = snapshot;
   _hashParams = paramHash.hashParams;
+  storeModule = store;
   if (prerenderStoreInstance === undefined) {
     prerenderStoreInstance = store.createPrerenderStore();
   }
@@ -171,6 +174,14 @@ async function decodeStoredEntry<TEnv>(
   if (handleStore && entry.handles) {
     const handlesRecord = await handleSnapshot!.decodeHandles(entry.handles);
     if (handlesRecord) {
+      // An intercept variant's handles hold every baked intercept's pushes
+      // (selectInterceptVariant): replay those of the segments it serves.
+      if (ctx.isIntercept) {
+        const served = new Set(entry.segments.map((s) => s.metadata.id));
+        for (const id of Object.keys(handlesRecord)) {
+          if (!served.has(id)) delete handlesRecord[id];
+        }
+      }
       handleSnapshot!.restoreHandles(handlesRecord, handleStore);
     }
   }
@@ -750,7 +761,18 @@ async function readPrerenderSource<TEnv>(
         isPassthroughRoute: isPassthroughPrerenderRoute,
       },
     );
-    if (entry) return { kind: "prerender-build", entry };
+    // The variant holds every intercept the build found; serve the one the
+    // match selected, or render live.
+    const selected = ctx.isIntercept ? ctx.interceptResult : null;
+    const served =
+      entry && selected
+        ? storeModule!.selectInterceptVariant(
+            entry,
+            interceptSlotId(selected.entry, selected.intercept),
+            selected.intercept.routeName,
+          )
+        : entry;
+    if (served) return { kind: "prerender-build", entry: served };
   }
 
   return null;
