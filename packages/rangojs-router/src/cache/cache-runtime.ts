@@ -384,6 +384,23 @@ function refreshView(arg: unknown): unknown {
   });
 }
 
+/**
+ * Run `fn` inside a "use cache" execution's scopes: its exec scope
+ * (cookies()/headers() reads and ctx writes refuse) and its tag scope
+ * (cacheTag() and nested calls tag the entry, #980), `recorded` when given.
+ * The body runs here, and so does the value's encode: it renders the server
+ * components in the value, which are part of the entry. Scar: the encode ran
+ * in the tag scope only, so a returned component's cookies() read went
+ * through and the entry served the first visitor's value to the next.
+ */
+function inExecution<T>(
+  scope: CacheExecScope,
+  fn: () => T,
+  recorded?: Set<string>,
+): { result: T; tags: Set<string> } {
+  return runWithCacheTagScope(() => runWithCacheExecScope(fn, scope), recorded);
+}
+
 // ============================================================================
 // Core: registerCachedFunction
 // ============================================================================
@@ -459,14 +476,6 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     const entryTags = (recorded: Set<string>): string[] => [
       ...new Set(normalizeTags([...(profile.tags ?? []), ...recorded])),
     ];
-    // The value's Flight encode runs back inside its execution's tag scope:
-    // it renders the server components in the value, and a "use cache" call
-    // or cacheTag() among them belongs to this entry (#980).
-    const inTagScope = <T>(
-      recorded: Set<string>,
-      encode: () => Promise<T>,
-    ): Promise<T> => runWithCacheTagScope(encode, recorded).result;
-
     // Separate request-scoped args (ctx, a Request, the request's env) from
     // key-generating args. For those that carry route context (ctx params,
     // pathname, searchParams; a Request's URL), extract serializable values
@@ -731,11 +740,8 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                     const refreshArgs = args.map(refreshView);
                     // The refresh reads its data from here on (#973, #977).
                     const start = executionStart();
-                    const scoped = runWithCacheTagScope(() =>
-                      runWithCacheExecScope(
-                        () => fn.apply(this, refreshArgs),
-                        bgScope,
-                      ),
+                    const scoped = inExecution(bgScope, () =>
+                      fn.apply(this, refreshArgs),
                     );
                     const freshResult = await scoped.result;
                     bgCapture?.stop();
@@ -744,17 +750,22 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                     const onFlightError = (error: unknown): void => {
                       flightErrors.push(error);
                     };
-                    const serialized = await inTagScope(scoped.tags, () =>
-                      serializeResult(freshResult, onFlightError),
-                    );
+                    const serialized = await inExecution(
+                      bgScope,
+                      () => serializeResult(freshResult, onFlightError),
+                      scoped.tags,
+                    ).result;
                     if (serialized !== null) {
                       const encodedHandles = bgCapture
-                        ? await inTagScope(scoped.tags, () =>
-                            encodeHandles(
-                              bgCapture.capture.data,
-                              onFlightError,
-                            ),
-                          )
+                        ? await inExecution(
+                            bgScope,
+                            () =>
+                              encodeHandles(
+                                bgCapture.capture.data,
+                                onFlightError,
+                              ),
+                            scoped.tags,
+                          ).result
                         : undefined;
                       // An error row would replace the stale entry; the catch
                       // below reports it and the stale entry keeps serving.
@@ -931,11 +942,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     }
 
     let result: any;
-    let scoped: ReturnType<typeof runWithCacheTagScope>;
+    let scoped: ReturnType<typeof inExecution>;
     try {
-      scoped = runWithCacheTagScope(() =>
-        runWithCacheExecScope(() => fn.apply(this, args), execScope),
-      );
+      scoped = inExecution(execScope, () => fn.apply(this, args));
       result = await scoped.result;
     } catch (execError) {
       // The function threw: drop the in-flight entry and reject any waiters so
@@ -969,13 +978,17 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         flightErrors.push(error);
       };
       try {
-        serialized = await inTagScope(recorded, () =>
-          serializeResult(result, onFlightError),
-        );
+        serialized = await inExecution(
+          execScope,
+          () => serializeResult(result, onFlightError),
+          recorded,
+        ).result;
         encodedHandles = capture
-          ? await inTagScope(recorded, () =>
-              encodeHandles(capture.capture.data, onFlightError),
-            )
+          ? await inExecution(
+              execScope,
+              () => encodeHandles(capture.capture.data, onFlightError),
+              recorded,
+            ).result
           : undefined;
         // Flight encodes an async component that throws, or a rejected
         // promise in the result or a handle value, as an error row and
@@ -986,10 +999,16 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         assertLoaderReadsClean(execScope);
       } catch (buildError) {
         // Serialize/handle-encode failed: no envelope for followers (they run
-        // fresh) and nothing to write.
+        // fresh) and nothing to write. Logged too: a read the guard refused
+        // in the value is otherwise silent with no onError.
         clearSelf();
         rejectEnvelope(buildError);
-        requestCtx?._reportBackgroundError?.(buildError, "cache-write");
+        reportCacheError(
+          buildError,
+          "cache-write",
+          `[use cache] "${id}" write`,
+          requestCtx,
+        );
         return;
       }
       if (serialized === null) {

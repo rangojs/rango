@@ -68,10 +68,10 @@ export async function ProductCard({ id }: { id: string }) {
 A result Flight cannot encode cleanly is not cached: an async child component
 that throws, a promise in the result or in a handle push that rejects, a
 function or a class instance. Storing it would bake the failure into every hit
-until expiry. Instead the write is skipped and reported to `onError` (phase
-`"cache"`, category `cache-write`, or `stale-revalidation` for a background
-refresh): a miss still returns the live result, the next call runs the
-function again, and a stale entry keeps serving.
+until expiry. Instead the write is skipped, logged and reported to `onError`
+(phase `"cache"`, category `cache-write`, or `stale-revalidation` for a
+background refresh): a miss still returns the live result, the next call runs
+the function again, and a stale entry keeps serving.
 
 ## Named Cache Profiles
 
@@ -232,6 +232,13 @@ export const ProductLoader = createLoader(async (ctx) => getProduct(ctx));
 `cookies()` and `headers()` **throw** inside a `"use cache"` function because
 per-request values (cookies, headers) are not reflected in the cache key. Without
 this guard, one user's data would be served to another.
+
+That includes the server components the function returns: they render when
+the value is stored, inside the same guard, which refuses there every read and
+write it refuses in the body. A read there fails that render, so the value is
+not stored (see "Results that are not cached"); each request still renders its
+own visitor's value, and the call runs uncached until the read moves out of
+the returned tree.
 
 The raw reads throw the same way: `ctx.request.headers` on any `ctx` passed in
 (handler, loader, middleware; it is one `Request` object, also

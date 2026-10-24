@@ -1,5 +1,58 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `"use cache"` function that returns a server component reading `cookies()` or `headers()` no longer serves one visitor's value to the next
+
+**Before.** A server component that a `"use cache"` function returns renders
+when the value is stored. That render ran outside the guard that makes
+`cookies()` and `headers()` throw inside a cached function, so the read went
+through: the entry stored the first visitor's value, and every later request
+was served it until the entry expired. A stale entry's background refresh
+stored the value of the visitor whose request triggered it. A write through a
+`ctx` the component received (`ctx.set()`, `ctx.headers.set()`) was not
+refused there either, and was lost on a hit.
+
+```tsx
+async function Session() {
+  const user = cookies().get("session")?.value;
+  return <span>{user}</span>;
+}
+
+async function Account() {
+  "use cache";
+  return <Session />; // stored with the first visitor's session
+}
+```
+
+**After.** The returned tree renders inside the guard, on a miss and on a
+refresh. Every read and write the guard refuses in the function body refuses
+there too, with the same error: `cookies()`, `headers()`,
+`ctx.request.headers`, a `{ cache: false }` `ctx.get()`, the theme reads,
+`ctx.rewrittenFrom`, a loader whose run made one of those reads, and the `ctx`
+writers. The value is not stored: the error is logged and goes to `onError`
+(phase `"cache"`, category `cache-write`, or `stale-revalidation` for a
+refresh), and a stale entry keeps serving. The request still renders its own
+visitor's value, so the call runs uncached on every request until the read
+moves out. Server components that read only their props, client components,
+and nested `"use cache"` calls and `cacheTag()` in the returned tree work as
+before. Any other write a miss skips (a component in the value that throws) is
+now logged too, as a refresh's already was.
+
+If your app returns such a component, read the value outside the cached
+function and pass it in (it becomes part of the key), or render the component
+outside the cached function:
+
+```tsx
+async function Account(user: string | undefined) {
+  "use cache";
+  return <span>{user}</span>;
+}
+
+// in the handler
+<div>{await Account(cookies().get("session")?.value)}</div>;
+```
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

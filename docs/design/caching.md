@@ -1256,6 +1256,40 @@ outside any loader execution and handed in, such as a per-request memo a
 handler filled from `cookies()` before the loader awaited it. The read ran in
 no loader's set, so nothing links it to the fill.
 
+#### The server components a `"use cache"` function returns
+
+They render when the value is encoded for the write (`serializeResult` and
+`encodeHandles` in `finalizeAndWrite`, and in the stale refresh), after the
+body returned. That encode used to run inside the execution's tag scope only,
+so `isInsideCacheExecScope()` was false there: a `cookies()` or `headers()`
+read in a returned component went through, the entry stored the first
+visitor's value and every hit served it to the next visitor, and a refresh
+stored the value of the visitor whose request triggered it. `inExecution`
+(`src/cache/cache-runtime.ts`) now enters both of the execution's scopes, for
+the body and for both encodes (`execScope` on a miss, `bgScope` on a
+refresh), so the read refuses as one in the body does, and so does a write
+through a `ctx` (`assertNotInsideCacheExec` probes the same scope). One helper
+for the body and the encodes keeps the two scopes from drifting apart again.
+
+You might expect the refusal to fail the request, as a read in the body does.
+It cannot: on a miss the encode is the write's background step
+(`runBackground`), which can run after the response. It takes the path of any
+component that throws during the encode (above): Flight reports it to the
+collector, nothing is written, `reportCacheError` logs it and hands it to
+`onError` (`cache-write`, or `stale-revalidation` for a refresh), and a stale
+entry keeps serving. The caller already holds the live value and renders it
+with its own request, so each visitor sees their own value and the next call
+is a miss again. The miss used to hand a skipped write to `onError` only, so
+with no `onError` wired the refusal was silent and the cache simply never hit.
+
+Handle capture is unchanged on a miss: the capture stops before the encode,
+and `execScope` chains to an enclosing execution's scope as the caller's
+context did. On a refresh the encode now runs in the root `bgScope`, so an
+enclosing execution's capture no longer accepts pushes made while it encodes,
+as it already did not for the refresh body. A handle a returned component
+pushes during the encode is still not recorded in the entry (the capture has
+stopped); that predates this change.
+
 #### `"use cache"` reading a loader something else started (#1011)
 
 `"use cache"` throws at the read: a loader body entered inside the cached
@@ -1904,7 +1938,7 @@ The mask lives in the stores, so three more paths needed the request itself; all
 - not written. With `await updateTag()`, the first call's write landed after the invalidation and the second call read it back.
 - not written by a stale refresh either. A stale hit's background refresh that started before the call read the data from before it; its write used to land after the call and serve `"old"` to the rest of the request and to later requests.
 
-**Nested `"use cache"` ([#980](https://github.com/rangojs/rango/issues/980)).** A `"use cache"` function that calls another bakes the inner value into its own entry, so the entry answers to the inner tags. You might expect the ALS to handle that already, since `cacheTag()` inside the inner body goes to the innermost `runWithCacheTagScope`. It does, and that is the problem: the inner scope closes with the inner body, and the inner wrapper then records its merged tags onto the request (`recordRequestTags`: a miss's tags, a hit's stored tags, a joined execution's envelope tags), which fed `_requestTags`, the #957 segment owner and the #964 loader set, but not the enclosing `"use cache"` scope. `updateTag("stock")` dropped the inner entry and left the outer one serving the old stock until it expired, and the gate above did not see the outer execution as tagged `stock`. `recordOwnedTags` (`cache-tag.ts`) now also adds the tags to the `"use cache"` scope current when they are recorded, which for the inner wrapper is the caller's. The outer entry, its eviction and the gate follow with no further change, as a route `cache()` record (#965) and a loader's own `cache()` entry (#968) already did for the `"use cache"` reads inside them. A `"use cache"` component makes some of its nested calls later still: Flight renders the server components in its value when it encodes the value for the write, after the body returned and its scope closed, so those tags went to whatever scope the caller had. The encode now runs back inside the execution's tag scope (`inTagScope` in `cache-runtime.ts`), and the entry's tags are read after it. One level further, an intermediate call can return a value that holds a nested call still running (`{ stock: getStock(sku) }`, or a promise prop): that call records its tags after the intermediate one already reported its own to its caller. So each scope remembers the scope it opened under (`scopeParents`), and a tag recorded in a scope goes to every scope above it; the outermost encode awaits the same promise, so the tags are in before it reads its own. The other direction is closed too: a stale inner entry's background refresh is scheduled outside the caller's scope (`outsideCacheTagScope`), since the outer entry bakes the stale value, not the refreshed one. An entry written before this carries only its own tags until it expires or is rewritten.
+**Nested `"use cache"` ([#980](https://github.com/rangojs/rango/issues/980)).** A `"use cache"` function that calls another bakes the inner value into its own entry, so the entry answers to the inner tags. You might expect the ALS to handle that already, since `cacheTag()` inside the inner body goes to the innermost `runWithCacheTagScope`. It does, and that is the problem: the inner scope closes with the inner body, and the inner wrapper then records its merged tags onto the request (`recordRequestTags`: a miss's tags, a hit's stored tags, a joined execution's envelope tags), which fed `_requestTags`, the #957 segment owner and the #964 loader set, but not the enclosing `"use cache"` scope. `updateTag("stock")` dropped the inner entry and left the outer one serving the old stock until it expired, and the gate above did not see the outer execution as tagged `stock`. `recordOwnedTags` (`cache-tag.ts`) now also adds the tags to the `"use cache"` scope current when they are recorded, which for the inner wrapper is the caller's. The outer entry, its eviction and the gate follow with no further change, as a route `cache()` record (#965) and a loader's own `cache()` entry (#968) already did for the `"use cache"` reads inside them. A `"use cache"` component makes some of its nested calls later still: Flight renders the server components in its value when it encodes the value for the write, after the body returned and its scope closed, so those tags went to whatever scope the caller had. The encode now runs back inside the execution's tag scope (`inExecution` in `cache-runtime.ts`), and the entry's tags are read after it. One level further, an intermediate call can return a value that holds a nested call still running (`{ stock: getStock(sku) }`, or a promise prop): that call records its tags after the intermediate one already reported its own to its caller. So each scope remembers the scope it opened under (`scopeParents`), and a tag recorded in a scope goes to every scope above it; the outermost encode awaits the same promise, so the tags are in before it reads its own. The other direction is closed too: a stale inner entry's background refresh is scheduled outside the caller's scope (`outsideCacheTagScope`), since the outer entry bakes the stale value, not the refreshed one. An entry written before this carries only its own tags until it expires or is rewritten.
 
 **The write gate: work that started before another request's invalidation ([#977](https://github.com/rangojs/rango/issues/977)).** The request order above only covered the invalidating request. An execution in another request that started before the invalidation still wrote when it finished, and every built-in store accepted that write as newer than the invalidation: `CFCacheStore` stamps `taggedAt` at write time, `VercelCacheStore` stamps `ta` at write time, and `MemorySegmentCacheStore` checks no marker on write (it deletes eagerly on invalidation, so a late write simply repopulates). So the invalidating request, or any later one, read the old value until it expired. Every writer now asks one question before its store write, `predatesInvalidation(store, tags, start)` in `tag-invalidation.ts`: was one of the entry's tags invalidated after the execution started? Either answer skips the write:
 
