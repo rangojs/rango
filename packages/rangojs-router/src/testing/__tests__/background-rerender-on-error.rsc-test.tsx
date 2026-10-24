@@ -4,7 +4,9 @@
  * `isPartial` of the request that started it, as that request's own walk
  * reports it: `true` for a navigation, unset for a document. The re-render
  * is a full-match pass whatever started it, so it used to report every error
- * unset, a navigation's included.
+ * unset, a navigation's included. An intercept handler that throws in the
+ * re-render used to reach `onError` not at all: the re-render rethrows it so
+ * nothing is cached, and now reports it first.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -52,17 +54,28 @@ function movableClock(): { advance: (ms: number) => void } {
 }
 
 let layoutThrows = false;
+let interceptThrows = false;
 
 function Layout(): React.ReactNode {
   if (layoutThrows) throw new Error("layout failed");
   return <main>shell</main>;
 }
 
+function Modal(): React.ReactNode {
+  if (interceptThrows) throw new Error("intercept failed");
+  return <dialog>modal-body</dialog>;
+}
+
 type Reported = Pick<OnErrorContext, "phase" | "segmentType" | "isPartial">;
 const reported: Reported[] = [];
+/** The intercept handler's errors. */
+const interceptReported: Pick<OnErrorContext, "phase" | "isPartial">[] = [];
 
 const router = createRouter({
   onError: (ctx) => {
+    if (ctx.error.message === "intercept failed") {
+      interceptReported.push({ phase: ctx.phase, isPartial: ctx.isPartial });
+    }
     if (ctx.error.message !== "layout failed") return;
     reported.push({
       phase: ctx.phase,
@@ -78,7 +91,7 @@ const router = createRouter({
         path("/list", () => <ul>list</ul>, { name: "list" }),
         path("/item/:id", () => <article>item</article>, { name: "item" }),
         path("/photo/:id", () => <figure>photo</figure>, { name: "photo" }),
-        intercept("@modal", ".photo", () => <dialog>modal</dialog>),
+        intercept("@modal", ".photo", Modal),
       ]),
     ]),
   ]),
@@ -93,7 +106,9 @@ describe("onError's isPartial for an error in a cache() record's background re-r
   beforeEach(async () => {
     await resetShellTestState();
     layoutThrows = false;
+    interceptThrows = false;
     reported.length = 0;
+    interceptReported.length = 0;
     cacheStore = new VercelCacheStore({ cache: vercelCache() });
     clock = movableClock();
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -114,13 +129,27 @@ describe("onError's isPartial for an error in a cache() record's background re-r
     return metadata.matched;
   }
 
-  /** Serve `serve` once to write the record, then stale with the layout failing. */
-  async function staleHit(serve: () => Promise<unknown>): Promise<void> {
+  /** Serve `serve` once to write the record, then stale with `fail` applied. */
+  async function staleHit(
+    serve: () => Promise<unknown>,
+    fail = (): void => {
+      layoutThrows = true;
+    },
+  ): Promise<void> {
     await serve();
-    expect(reported).toEqual([]);
+    expect([...reported, ...interceptReported]).toEqual([]);
     clock.advance(1_100);
-    layoutThrows = true;
+    fail();
     await serve();
+  }
+
+  /** Opens the intercept over /list, the layout held; it shows the modal. */
+  async function openIntercept(segments: string[]): Promise<void> {
+    const { flight } = await serveShellRequest(router, "/photo/1", {
+      cacheStore,
+      partial: { from: "/list", segments },
+    });
+    expect(flight).toContain("modal-body");
   }
 
   describe("in the foreground (unchanged)", () => {
@@ -167,14 +196,25 @@ describe("onError's isPartial for an error in a cache() record's background re-r
 
     it("started by an intercept navigation, reports it true", async () => {
       const segments = await listSegments();
-      await staleHit(async () => {
-        const { flight } = await serveShellRequest(router, "/photo/1", {
-          cacheStore,
-          partial: { from: "/list", segments },
-        });
-        expect(flight).toContain("modal");
-      });
+      await staleHit(() => openIntercept(segments));
       expect(reported).toStrictEqual([{ ...LAYOUT_ERROR, isPartial: true }]);
+    });
+
+    it("started by an intercept navigation, reports the intercept handler's error true and caches nothing", async () => {
+      const segments = await listSegments();
+      await staleHit(
+        () => openIntercept(segments),
+        () => {
+          interceptThrows = true;
+        },
+      );
+      expect(interceptReported).toStrictEqual([
+        { phase: "handler", isPartial: true },
+      ]);
+      // The failed refresh wrote no error page: the record still shows the modal.
+      interceptThrows = false;
+      await openIntercept(segments);
+      expect(reported).toEqual([]);
     });
   });
 

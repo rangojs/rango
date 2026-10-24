@@ -346,6 +346,19 @@ request's own render reports it: `true` for a client navigation, unset for a
 document request. A streamed (`loading()`) handler's rejection still reports
 it unset, as it does in the navigation's own render. No change in your code.
 
+### Fixed: an intercept handler that throws in a `cache()` record's background re-render reaches `onError`
+
+**Before.** When an intercept's own handler threw only in the background
+re-render of its `cache()` record (the refresh a stale HIT starts, or the
+write of a navigation that kept the layout mounted), the re-render failed and
+wrote nothing, as intended, but neither `onError` nor the `handler.error`
+telemetry event heard of it. The same throw in a route or layout handler, or
+in the intercept's own handler on a navigation, is reported.
+
+**Now.** It is reported as on a navigation (`phase: "handler"`,
+`isPartial: true`), and the re-render still writes nothing, so the stale
+record keeps serving. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
