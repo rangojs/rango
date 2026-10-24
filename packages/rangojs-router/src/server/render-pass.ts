@@ -193,6 +193,10 @@ export const RENDER_PASS_FIELDS: {
       pass._setKeepCacheDirective = sink._setKeepCacheDirective;
       // An invalidation here is not the visitor's mutation.
       pass._setFreshReadsCookie = sink._setFreshReadsCookie;
+      // A cached handler's dynamic() opts out nothing here: the inherited one
+      // would refuse the capture whose stale read started the pass, or opt
+      // out the visitor's request.
+      pass.dynamic = sink.dynamic;
       bindRes(pass, () => sink.res);
     },
   },

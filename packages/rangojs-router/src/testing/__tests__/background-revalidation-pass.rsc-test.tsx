@@ -6,7 +6,9 @@
  * - A PPR shell capture that reads the record stale starts the refresh too.
  *   It used to render under the capture's identity guard, so a loader body's
  *   headers(), which cache() allows, failed the refresh, and every recapture
- *   replayed the stale record until it expired.
+ *   replayed the stale record until it expired. Its handler's dynamic()
+ *   wrote the capture's latch and refused the capture, which had replayed
+ *   the record as a fresh HIT's capture does and stores.
  * - The refresh inherits the visitor's render barrier. Its route pass skips
  *   DSL loaders, but an open intercept resolves with its loaders, so an
  *   intercept loader's rendered() reads the inherited barrier. That is safe:
@@ -143,6 +145,12 @@ async function ForwardingPage(ctx: HandlerContext): Promise<React.ReactNode> {
   return <p>{`forwarding@g${data.generation}`}</p>;
 }
 
+/** Every run opts its render off the shell axis; a cache() HIT runs none. */
+function LivePage(ctx: HandlerContext): React.ReactNode {
+  ctx.dynamic();
+  return <p>{`live@g${generation}`}</p>;
+}
+
 function StampLayout(ctx: HandlerContext): React.ReactNode {
   ctx.use(Stamp)(`stamp@g${generation}`);
   return <main>shell</main>;
@@ -153,6 +161,7 @@ const routes = urls(({ path, cache, layout, intercept, loader }) => [
   cache({ ttl: 0, swr: 60 }, () => [
     path("/stamp", StampPage, { name: "stamp" }, () => [loader(StampReader)]),
     path("/forwarding", ForwardingPage, { name: "forwarding", ppr: true }),
+    path("/live", LivePage, { name: "live", ppr: true }),
     layout(StampLayout, () => [
       path("/list", () => <ul>list</ul>, { name: "list" }),
       path("/item/:id", () => <article>item</article>, { name: "item" }),
@@ -163,6 +172,9 @@ const routes = urls(({ path, cache, layout, intercept, loader }) => [
         () => [loader(ModalReader)],
       ),
     ]),
+  ]),
+  cache({ ttl: 60 }, () => [
+    path("/live-fresh", LivePage, { name: "liveFresh", ppr: true }),
   ]),
 ]);
 
@@ -273,5 +285,45 @@ describe("a stale cache() record's background re-render", () => {
     // A stale shell HIT recaptures; the recapture replays the stale record
     // and refreshes it, and the next recapture replays the refresh.
     expect(shown).toEqual(["HIT @g1", "HIT @g1", "HIT @g2"]);
+  });
+
+  it("started by a shell recapture, a cached handler's dynamic() leaves the capture alone: a stale read captures as a fresh one does", async () => {
+    const clock = movableClock();
+    stubEdgeCache();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const serveEach = async (url: string, requests: number) => {
+      const env = { KV: kv() };
+      const shown: string[] = [];
+      for (let i = 1; i <= requests; i++) {
+        generation = i;
+        const r = await serveShellRequest(cfRouter, url, { env });
+        const body = r.prelude ?? r.flight;
+        shown.push(`${r.shellStatus} ${body?.match(/live@g\d/)?.[0]}`);
+        clock.advance(1_100);
+      }
+      return shown;
+    };
+
+    // The first render runs the handler: its dynamic() keeps that MISS off
+    // the shell axis. The next reads the record and runs no handler, so its
+    // capture stores the shell.
+    expect(await serveEach("/live-fresh", 3)).toEqual([
+      "null live@g1",
+      "MISS live@g1",
+      "HIT live@g1",
+    ]);
+    // A stale read's refresh runs the handler for the record, not the shell:
+    // each recapture stores the shell and replays the last refresh.
+    expect(await serveEach("/live", 6)).toEqual([
+      "null live@g1",
+      "MISS live@g1",
+      "HIT live@g2",
+      "HIT live@g2",
+      "HIT live@g3",
+      "HIT live@g4",
+    ]);
+    expect(
+      warn.mock.calls.filter((c) => String(c[0]).includes("was refused")),
+    ).toEqual([]);
   });
 });
