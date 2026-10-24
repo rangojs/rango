@@ -178,7 +178,9 @@ cache(
   navigations and each intercept navigation keep their own record under one
   `key()` result, so `key()` decides which requests of one kind share a
   record (a `key()` that ignores `:id` shares one document record across
-  ids), never that a document request reads an intercept's record. The
+  ids), never that a document request reads a navigation's record (which
+  keeps the fallback of a `loading(..., { ssr: false })` that a document
+  leaves out) or an intercept's. The
   result is stored namespaced (`key:` plus its URI encoding, then the kind:
   `tier:gold` is `key:tier%3Agold|doc` for a document request and
   `key:tier%3Agold|partial` for a navigation), so whatever it returns,

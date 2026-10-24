@@ -218,7 +218,9 @@ export const KEY_PART_PREFIX = "key:";
  * Among composed keys, splitting on `|` recovers each part, a part's kind
  * (a `key:` prefix, or no `:` at all) and its value. A request kind part is
  * a default key's prefix without the URL after it, so it never equals a
- * default key part. Pinned by the collision probe in
+ * default key part; a keyGenerator part can equal it (`doc`) only when the
+ * keyGenerator returns a constant, which already gives every URL one record.
+ * Pinned by the collision probe in
  * src/cache/__tests__/cache-scope-chain.test.ts. A keyGenerator result is
  * the store's own namespace, as before.
  *

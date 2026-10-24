@@ -661,7 +661,10 @@ intercept's record holds the layouts and the intercept's slot, not the route's
 page. So after an intercept navigation stored its record, a document GET of
 the item URL, or a navigation from a page where the intercept's `when()`
 fails, rendered the intercept and no page. With two intercepts selected by
-`when()`, each read the other's record.
+`when()`, each read the other's record. Under a layout's
+`loading(..., { ssr: false })`, which a document renders without its fallback,
+a navigation after a document load showed no fallback while the page
+streamed, and a document load after a navigation streamed the fallback.
 
 ```ts
 cache({ ttl: 600, key: (ctx) => `page:${ctx.url.pathname}` }, () => [

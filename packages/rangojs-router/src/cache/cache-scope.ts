@@ -524,9 +524,9 @@ export class CacheScope {
    * enclosing partition (#970, #974). A scope whose own config sets no
    * `key()` appends its own default key (resolveDefaultKey). Reusing the
    * outer `key()` result alone would give every route under the inner
-   * cache() one record: a `key()` replaces the whole default key, so an
-   * outer key that names no route (`tier:gold`) would make `/a` HIT `/b`'s
-   * record. A scope with its own `key()` adds no default key: its `key()`
+   * cache() one record: a `key()` replaces the default key's URL part, so
+   * an outer key that names no route (`tier:gold`) would make `/a` HIT
+   * `/b`'s record. A scope with its own `key()` adds no default key: its `key()`
    * replaces the URL part, and its store's keyGenerator does not run. It
    * appends `kind` instead (routeRecordKind): the `key()` decides which
    * requests of one kind share a record, never that a document, a

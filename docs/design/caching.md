@@ -1935,16 +1935,21 @@ You might read "`key()` replaces the default key" as harmless: the app said
 what identifies its page, so the router should store the page under that and
 nothing else. The default key carries one more thing than the URL, though:
 its prefix, the request kind (`doc`, `partial`, `intercept:{intercept}`).
-The kinds' records hold different segments. A document record holds the
-whole page. A navigation record holds the same page, completed in the
-background where the client held a layout (proactive caching). An intercept
-record holds the layouts and the intercept's slot and never the route's page
-(`rerenderAndCacheRoute` skips the intercepted route's entry). Before, a scope
-with its own `key()` dropped the prefix with the URL, so every kind read and
-wrote one record. After an intercept navigation stored its record, a
-navigation from a page where the intercept's `when()` failed, and a document
-GET of the same URL, both HIT it: they rendered the intercept's body and no
-page. A document request rendered an intercept.
+The kinds' records hold different segments. A document record is rendered
+in document mode (`getDocumentModeEntry`, `src/server/context.ts`): a
+`loading(..., { ssr: false })` has no fallback there, and a
+`loader(..., { ssr: false })` is awaited before the first flush. A navigation
+record keeps the fallback, and is completed in the background where the client
+held a layout (proactive caching). An intercept record holds the layouts and
+the intercept's slot and never the route's page (`rerenderAndCacheRoute`
+skips the intercepted route's entry). Before, a scope with its own `key()`
+dropped the prefix with the URL, so every kind read and wrote one record.
+After an intercept navigation stored its record, a navigation from a page
+where the intercept's `when()` failed, and a document GET of the same URL,
+both HIT it: they rendered the intercept's body and no page. A document
+request rendered an intercept. Under a layout's
+`loading(..., { ssr: false })`, a navigation after a document showed no
+fallback, and a document after a navigation streamed one.
 
 So `resolveKeyFrom` takes the kind (`routeRecordKind` in
 `src/cache/cache-scope.ts`, which `getDefaultRouteCacheKey` uses as its

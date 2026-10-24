@@ -289,3 +289,95 @@ describe("cache({ key }) route with intercepts: each request kind keeps its own 
     },
   );
 });
+
+/**
+ * A document renders a layout's `loading(..., { ssr: false })` without its
+ * fallback; a navigation keeps it (getDocumentModeEntry, server/context.ts).
+ * So a document record and a navigation record of one URL hold different
+ * segments. Under one record, a navigation after a document showed no
+ * fallback, and a document after a navigation streamed one.
+ */
+describe("cache({ key }) over a layout with loading(..., { ssr: false }): a document and a navigation keep their own record", () => {
+  beforeEach(async () => {
+    await resetShellTestState();
+  });
+
+  /** Every request shares one `key()` result. */
+  function makeFallbackRouter() {
+    return createRouter({}).routes(
+      urls(({ layout, loading, path, cache }) => [
+        path("/other", () => <p>other</p>, { name: "other" }),
+        cache({ ttl: 600, key: () => "store" }, () => [
+          layout(
+            () => <main>store layout</main>,
+            () => [
+              loading(<p>store fallback</p>, { ssr: false }),
+              path(
+                "/direct",
+                () => {
+                  ran("direct-page");
+                  return <article>direct page</article>;
+                },
+                { name: "direct" },
+              ),
+            ],
+          ),
+        ]),
+      ]),
+    );
+  }
+
+  type DocKind = "document" | "navigation";
+
+  async function load(
+    router: Router,
+    cacheStore: MemorySegmentCacheStore,
+    kind: DocKind,
+  ): Promise<{ fallback: boolean; page: boolean; runs: number }> {
+    for (const name of Object.keys(runs)) delete runs[name];
+    const result = await serveShellRequest(router, "/direct", {
+      cacheStore,
+      partial: kind === "navigation" ? { from: "/other" } : undefined,
+    });
+    return {
+      fallback: result.flight!.includes("store fallback"),
+      page: result.flight!.includes("direct page"),
+      runs: runs["direct-page"] ?? 0,
+    };
+  }
+
+  it("a live document has no fallback, a live navigation has one", async () => {
+    const router = makeFallbackRouter();
+    expect(
+      await load(router, new MemorySegmentCacheStore(), "document"),
+    ).toEqual({ fallback: false, page: true, runs: 1 });
+    expect(
+      await load(router, new MemorySegmentCacheStore(), "navigation"),
+    ).toEqual({ fallback: true, page: true, runs: 1 });
+  });
+
+  for (const [first, second] of [
+    ["document", "navigation"],
+    ["navigation", "document"],
+  ] as const) {
+    it(`a ${second} after a ${first} stored its record renders what a live ${second} does, then each HITs its own`, async () => {
+      const router = makeFallbackRouter();
+      const cacheStore = new MemorySegmentCacheStore();
+      const live = {
+        document: { fallback: false, page: true },
+        navigation: { fallback: true, page: true },
+      };
+      await load(router, cacheStore, first);
+      expect(await load(router, cacheStore, second)).toEqual({
+        ...live[second],
+        runs: 1,
+      });
+      for (const kind of [first, second]) {
+        expect(await load(router, cacheStore, kind), kind).toEqual({
+          ...live[kind],
+          runs: 0,
+        });
+      }
+    });
+  }
+});
