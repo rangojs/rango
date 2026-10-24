@@ -337,9 +337,9 @@ export interface RequestContext<
   /**
    * @internal A PPR shell capture's own state (rsc/shell-capture.ts
    * ShellCaptureState): created by RENDER_PASS_FIELDS["shell-capture"]
-   * (server/render-pass.ts) on the capture's derived context, and derived
-   * from it for a background re-render the capture starts. The foreground render never
-   * has one, so `_shellCaptureState?.run` is the capture switch.
+   * (server/render-pass.ts) on the capture's derived context. The foreground
+   * render and every background re-render never have one, so
+   * `_shellCaptureState?.run` is the capture switch.
    */
   _shellCaptureState?: ShellCaptureState;
 

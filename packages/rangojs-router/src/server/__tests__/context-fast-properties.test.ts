@@ -282,7 +282,8 @@ describe("derived render pass", () => {
       });
       expect(Object.getPrototypeOf(pass)).toBe(capture);
       expect(hasFastProperties!(pass)).toBe(true);
-      expect(hasFastProperties!(pass._shellCaptureState!)).toBe(true);
+      expect(pass._shellCaptureState).toBeUndefined();
+      expect(hasFastProperties!(capture._shellCaptureState!)).toBe(true);
     },
   );
 });
