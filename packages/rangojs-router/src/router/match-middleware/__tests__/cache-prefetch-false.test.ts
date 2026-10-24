@@ -311,7 +311,7 @@ describe("withCacheLookup and prefetch: false", () => {
   });
 });
 
-// The prerender store answers before the cache scope (yieldFromStore). It
+// The prerender store answers before the cache scope (readPrerenderSource). It
 // re-sends a held stored segment when the params changed; a fill keeps it
 // whatever the request says about where the client came from.
 describe("withCacheLookup: a fill served from the prerender store", () => {

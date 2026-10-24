@@ -3101,7 +3101,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
 
   it("reclassifies a cold-shell miss to prerender-store when the store actually served, and suppresses the heal", async () => {
     // The pre-match probe reads only the non-intercept artifact; a baked /i
-    // variant serves inside the match (tryPrerenderLookup stamps the
+    // variant serves inside the match (decodeStoredEntry stamps the
     // post-match reason). Reporting no-entry and scheduling a heal
     // would blame a cold capture for a lane the prerender store owns — its
     // captures record no doc record, so the healed snapshot could never

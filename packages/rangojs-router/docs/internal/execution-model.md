@@ -620,7 +620,9 @@ See "Rewrite" below for what moves and what stays.
   capture waits for — handler and render code, bake-lane segment loaders, and
   handler-invoked loader bodies (no exemption on this tier; the
   consumption-lane rule below). `ctx.dynamic()` called anywhere the capture
-  waits refuses it too. Live-lane segment loaders are
+  waits refuses it too. Neither applies to the background refresh of a stale
+  `cache()` record the capture read: the capture waits for it, but it renders
+  the record under `cache()` rules. Live-lane segment loaders are
   masked — they are the structural holes. Holes come from loaders only:
   `loading()` or inline-Suspense subtrees over a live-lane loader read
   (structural), and promises nested in an `ssr: false` loader's return value

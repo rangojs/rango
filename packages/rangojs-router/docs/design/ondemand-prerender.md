@@ -529,7 +529,7 @@ The producer resolves route/layout/parallel segments, waits for handle data to
 settle, filters out loader segments, serializes the non-loader segments, and
 Flight-encodes handle data.
 
-Loaders are never persisted. `yieldFromStore()` already resolves loaders fresh on
+Loaders are never persisted. `serveStoredSegments()` already resolves loaders fresh on
 every prerender hit, and on-demand entries must preserve that invariant.
 
 Intercept variants need their own entries, matching the existing key convention:
@@ -779,7 +779,7 @@ takes the same `{ ttl, tags, params }` a page takes and composes its `meta`
 through `composeStoredEntry`, so there is one staleness rule and the stores
 need no code for it (`markStale` in the memory store and the tag markers in the
 KV store both work off `meta`). The serve path schedules `onRevalidate` for any
-stale envelope before it looks at what kind it is (`tryPrerenderLookup`). A
+stale envelope before it looks at what kind it is (`readPrerenderSource`). A
 `remove()` marker never gets there because it has no `staleAt` and no tag for
 anything to lower one through.
 
@@ -964,7 +964,7 @@ resolve env-scoped prerender store
   v
 lookup durable overlay by versioned key; verify the answer
   |
-  +-- fresh hit --> yieldFromStore(entry), then resolve loaders fresh
+  +-- fresh hit --> serve the entry, then resolve loaders fresh
   |
   +-- stale hit --> serve it the same way; with onRevalidate configured,
   |                 schedule it via waitUntil (once per key per isolate)
@@ -978,11 +978,19 @@ lookup durable overlay by versioned key; verify the answer
   v
 lookup bundled manifest
   |
-  +-- hit --> yieldFromStore(entry), then resolve loaders fresh
+  +-- hit --> serve the entry, then resolve loaders fresh
   |
   v
 normal miss behavior
 ```
+
+The flag check, both lookups and the serve run in one generator,
+`serveStoredSegments(ctx, state, upstream)`, which is the cache-lookup
+middleware itself (`withCacheLookup` returns it); the env-scoped store was
+resolved with the request context before it. `readPrerenderSource` does the
+two lookups and hands the entry back as a `StoredSegmentSource`, and the same
+generator serves it as it serves a `cache()` record. When no stored source
+answers, it passes `upstream` through.
 
 The lookup gate cannot be only today's `pr` flag. A route may have no build-baked
 entry but still be on-demand eligible. The trie needs a separate flag, for
@@ -1003,7 +1011,7 @@ on-demand route it is gated), so an action re-render that skipped the overlay
 404'd an overlay-only param in production and served the older build payload
 for a baked one. The overlay is read on actions too; Passthrough routes still
 re-render live. An overlay hit on an action re-sends the route's own segments
-(`yieldFromStore`'s `replaceable` flag, mirroring the live
+(the `prerender-overlay` source in `serveStoredSegments`, mirroring the live
 `action:route-segment` default) instead of keeping the client's copy, so an
 action that awaits `router.prerender()` for the page shows the new entry in
 its own re-render. The immutable bundled manifest keeps the client's copy as

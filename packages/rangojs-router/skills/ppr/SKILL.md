@@ -509,7 +509,9 @@ In handlers it is
 too late to prevent a MISS render from already happening, but it still prevents
 the follow-up shell capture. A `ctx.dynamic()` call that only happens during the
 capture itself (for example inside a handler promise, after an await) refuses
-that capture: a dynamic render has no shell.
+that capture: a dynamic render has no shell. A cached handler that calls it in
+the background refresh of a stale `cache()` record does not: the capture
+replayed the record, and the refresh renders the record only.
 
 During `Prerender` + `ppr` build-shell capture, middleware is replayed with
 `ctx.build === true`, `ctx.waitUntil()` inert, and the same `ctx.dynamic()`
