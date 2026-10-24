@@ -673,6 +673,7 @@ describe("createSSRHandler", () => {
         previousLoader = g.__vite_rsc_client_require__;
       });
       afterEach(() => {
+        vi.useRealTimers();
         g.__vite_rsc_client_require__ = previousLoader;
       });
 
@@ -747,49 +748,40 @@ describe("createSSRHandler", () => {
       const metadata = { pathname: "/", params: {}, matched: ["/"] };
 
       it("a load requested after the shell is ready is not waited for", async () => {
+        vi.useFakeTimers();
         const order: string[] = [];
-        let resolveFirst!: () => void;
-        const first = new Promise<void>((r) => {
-          resolveFirst = r;
-        });
-        let resolveLate!: () => void;
-        const late = new Promise<void>((r) => {
-          resolveLate = r;
-        });
+        const first = new Promise<void>((r) => setTimeout(r, 10));
         const modules: Record<string, Promise<void>> = {
           "/src/a.tsx#A": first,
-          "/src/late.tsx#Late": late,
+          // Never settles, so a handler that waits for it does not return.
+          "/src/late.tsx#Late": new Promise<void>(() => {}),
         };
         g.__vite_rsc_client_require__ = (id) => modules[id];
         const deps = createMockDeps({
           createFromReadableStream: vi.fn().mockImplementation(async () => {
             void g.__vite_rsc_client_require__!("/src/a.tsx#A");
             // A row that arrives while the first load is held names another
-            // reference: its data was not there when the shell was ready.
-            void first.then(() =>
-              setTimeout(() => {
-                void g.__vite_rsc_client_require__!("/src/late.tsx#Late");
-                setTimeout(() => {
-                  order.push("late load settled");
-                  resolveLate();
-                }, 10);
-              }, 0),
-            );
-            return { metadata };
-          }),
-          renderToReadableStream: vi.fn().mockImplementation(async () => {
-            setTimeout(resolveFirst, 10);
-            return new ReadableStream({
-              start(controller) {
-                controller.close();
-              },
+            // reference: its data was not there when the shell was ready. A
+            // promise reaction keeps the decode's async context, which the load
+            // recorder reads; a fake timer's callback runs outside it.
+            void first.then(() => {
+              order.push("late load requested");
+              void g.__vite_rsc_client_require__!("/src/late.tsx#Late");
             });
+            return { metadata };
           }),
         });
 
-        await createSSRHandler(deps)(createMockRscStream());
-        order.push("stream returned");
-        expect(order).toEqual(["stream returned"]);
+        void createSSRHandler(deps)(createMockRscStream()).then(() => {
+          order.push("stream returned");
+        });
+        // The shell is ready and the first load holds the flush.
+        await vi.advanceTimersByTimeAsync(9);
+        expect(order).toEqual([]);
+        // The first load settles and the late one is requested while the flush
+        // is still held; the hold ends on its next turns.
+        await vi.advanceTimersByTimeAsync(10);
+        expect(order).toEqual(["late load requested", "stream returned"]);
       });
 
       it("with nothing pending when the shell is ready, the first flush is not held", async () => {
@@ -849,27 +841,23 @@ describe("createSSRHandler", () => {
 
       it("a load that never settles holds the first flush for 5 seconds, then the document flushes as before", async () => {
         vi.useFakeTimers();
-        try {
-          g.__vite_rsc_client_require__ = () => new Promise<void>(() => {});
-          const deps = createMockDeps({
-            createFromReadableStream: vi.fn().mockImplementation(async () => {
-              void g.__vite_rsc_client_require__!("/src/stuck.tsx#Stuck");
-              return { metadata };
-            }),
-          });
-          let returned: ReadableStream<Uint8Array> | undefined;
-          void createSSRHandler(deps)(createMockRscStream()).then((stream) => {
-            returned = stream;
-          });
+        g.__vite_rsc_client_require__ = () => new Promise<void>(() => {});
+        const deps = createMockDeps({
+          createFromReadableStream: vi.fn().mockImplementation(async () => {
+            void g.__vite_rsc_client_require__!("/src/stuck.tsx#Stuck");
+            return { metadata };
+          }),
+        });
+        let returned: ReadableStream<Uint8Array> | undefined;
+        void createSSRHandler(deps)(createMockRscStream()).then((stream) => {
+          returned = stream;
+        });
 
-          await vi.advanceTimersByTimeAsync(4_990);
-          expect(returned).toBeUndefined();
-          await vi.advanceTimersByTimeAsync(20);
-          expect(returned).toBeInstanceOf(ReadableStream);
-          expect(await consumeStream(returned!)).toContain("Test");
-        } finally {
-          vi.useRealTimers();
-        }
+        await vi.advanceTimersByTimeAsync(4_990);
+        expect(returned).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(20);
+        expect(returned).toBeInstanceOf(ReadableStream);
+        expect(await consumeStream(returned!)).toContain("Test");
       });
 
       it("a production build installs no hold", async () => {
