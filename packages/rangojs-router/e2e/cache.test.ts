@@ -141,6 +141,45 @@ async function openCrumbsIntercept(page: Page): Promise<void> {
 }
 
 /**
+ * Open the /cache-intercept-crumbs intercept, after one open and Back, so the
+ * second is a HIT of the intercept record (written by the first, or earlier).
+ * The navigation holds the layout, so it stays as the index page left it, as
+ * on a live render: neither its render stamp nor its crumb (the stamp, pushed
+ * by its handler) change, not even for a frame. The HIT used to re-send the
+ * crumb the record's render pushed (rango-t195).
+ */
+async function expectHeldLayoutStampKept(page: Page): Promise<void> {
+  await openCrumbsIntercept(page);
+  await page.goBack();
+  await expect(page.getByTestId("cic-modal")).toHaveCount(0);
+
+  const stamp = page.getByTestId("cic-layout-render-time");
+  const crumb = page.getByTestId("cic-layout-stamp");
+  const liveStamp = (await stamp.textContent())!;
+  await expect(crumb).toHaveText(liveStamp);
+  // Every text the crumb shows from here on.
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    (window as { __cicStampsSeen?: string[] }).__cicStampsSeen = seen;
+    const el = document.querySelector('[data-testid="cic-layout-stamp"]')!;
+    new MutationObserver(() => seen.push(el.textContent ?? "")).observe(el, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
+
+  await openCrumbsIntercept(page);
+
+  await expect(stamp).toHaveText(liveStamp);
+  await expect(crumb).toHaveText(liveStamp);
+  const seen = await page.evaluate(
+    () => (window as { __cicStampsSeen?: string[] }).__cicStampsSeen,
+  );
+  expect(seen?.filter((text) => text !== liveStamp)).toEqual([]);
+}
+
+/**
  * /cache-test/cached-loader-dep: a loader with its own cache() awaits a
  * dependency that an uncached sibling loader also reads. The dependency's
  * crumb (a per-run id) appears once on the MISS and once on each HIT, and on
@@ -757,6 +796,23 @@ test.describe("cache-intercept-routes", () => {
     );
   });
 
+  test("a HIT of the intercept keeps the held layout's crumb on screen", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-intercept-crumbs"));
+    await waitForHydration(page);
+
+    const beforeHit = f.proc().stdout().length;
+    await expectHeldLayoutStampKept(page);
+    await waitForCacheHit(
+      f.proc(),
+      beforeHit,
+      "/cache-intercept-crumbs/item/a",
+    );
+  });
+
   // rango-t194: the record key named only the URL, so opening the item from
   // /other HIT the record the index's modal wrote and showed the modal.
   test("two intercepts selected by when() each get their own record: each source opens its own intercept, MISS and HIT", async ({
@@ -853,6 +909,18 @@ test.describe("cache-intercept-routes (production)", () => {
     await expect(page.getByTestId("cic-modal")).toHaveCount(0);
 
     await openCrumbsIntercept(page);
+  });
+
+  // rango-t195: see the dev describe's case.
+  test("a HIT of the intercept keeps the held layout's crumb on screen", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-intercept-crumbs"));
+    await waitForHydration(page);
+
+    await expectHeldLayoutStampKept(page);
   });
 
   // rango-t194: see the dev describe's case.

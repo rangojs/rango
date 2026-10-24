@@ -10,10 +10,9 @@
  * cachedSegmentSends). A bake HIT sent every held segment when the params
  * changed (storedEntrySends), and replayed the handle values of every stored
  * segment, so a list -> detail navigation re-sent the held layout and its
- * crumbs from the bake, under an intercept and without one.
- *
- * Handle values are compared with the live render only: a cache() HIT
- * replays its record's handle values, a held segment's included.
+ * crumbs from the bake, under an intercept and without one. A cache() HIT
+ * kept the layout but replayed its record's handle values, the held
+ * layout's included (rango-t195).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -67,6 +66,9 @@ type Target = "live" | "cache" | "prerender";
 
 const TARGETS: readonly Target[] = ["live", "cache", "prerender"];
 
+/** The targets whose second request is a HIT. */
+const HIT_TARGETS: readonly Target[] = ["cache", "prerender"];
+
 interface Shape {
   /** An intercept of the detail route, declared beside it. */
   intercept: boolean;
@@ -74,6 +76,8 @@ interface Shape {
   layoutRevalidates?: boolean;
   /** The layout's own parallel on the intercept's slot (@modal). */
   slotDefault?: boolean;
+  /** The client holds none of the source page's segments. */
+  holdNothing?: boolean;
 }
 
 function makeRouter(target: Target, shape: Shape) {
@@ -222,6 +226,8 @@ async function navigate(
   options: Omit<Shape, "intercept"> = {},
 ): Promise<{
   result: ServeShellRequestResult;
+  /** What a live render of the same tree sends. */
+  live: () => Promise<ServeShellRequestResult>;
   layoutRuns: number;
   layoutId: string;
   before: HandleData;
@@ -240,18 +246,48 @@ async function navigate(
     ([, crumbs]) => crumbs.includes("layout"),
   )!;
   const cacheStore = new MemorySegmentCacheStore();
-  const partial = { from: navigation.from, segments: sourceAnswer.matched };
+  const partial = {
+    from: navigation.from,
+    segments: options.holdNothing ? [] : sourceAnswer.matched,
+  };
   const serve = () =>
     serveShellRequest(router, navigation.to, { cacheStore, partial });
-  if (target !== "live") await serve();
+  const first = target !== "live" ? await serve() : undefined;
   layoutRuns.count = 0;
   const result = await serve();
   return {
     result,
+    // The MISS that wrote the record renders the cache() tree live; a bake's
+    // first request is served from the bake.
+    live: async () =>
+      target === "cache"
+        ? first!
+        : (await navigate("live", navigation, options)).result,
     layoutRuns: layoutRuns.count,
     layoutId,
     before: await handlesOf(source),
   };
+}
+
+/**
+ * The HIT matches what the live render matches, sends the segments it sends
+ * and the handle buckets it sends.
+ */
+async function expectSameResponse(
+  hit: ServeShellRequestResult,
+  live: ServeShellRequestResult,
+): Promise<void> {
+  const hitAnswer = await answerOf(hit);
+  const liveAnswer = await answerOf(live);
+  expect(hitAnswer.matched).toEqual(liveAnswer.matched);
+  const sent = (answer: Answer) =>
+    answer.segments
+      .filter((s) => s.type !== "loader" && s.component !== null)
+      .map((s) => `${s.namespace}:${s.id}`);
+  expect(sent(hitAnswer)).toEqual(sent(liveAnswer));
+  expect(Object.keys(await sentCrumbs(hit)).sort()).toEqual(
+    Object.keys(await sentCrumbs(live)).sort(),
+  );
 }
 
 /** The layout segment the response carries, null when it is kept. */
@@ -286,12 +322,10 @@ describe("a navigation that changes the params keeps the held layout, from a Pre
           expect(result.flight).not.toContain("layout body");
         });
 
-        if (target !== "cache") {
-          it(`${target}: re-sends no handle value of the held layout`, async () => {
-            const { result, layoutId } = await navigate(target, navigation);
-            expect(await sentCrumbs(result)).not.toHaveProperty(layoutId);
-          });
-        }
+        it(`${target}: re-sends no handle value of the held layout`, async () => {
+          const { result, layoutId } = await navigate(target, navigation);
+          expect(await sentCrumbs(result)).not.toHaveProperty(layoutId);
+        });
 
         it(`${target}: shows the layout's crumb once, with the page's`, async () => {
           const { result, before } = await navigate(target, navigation);
@@ -299,21 +333,47 @@ describe("a navigation that changes the params keeps the held layout, from a Pre
         });
       }
 
-      it("the bake's response holds what the live render's does", async () => {
-        const hit = await navigate("prerender", navigation);
-        const live = await navigate("live", navigation);
-        const hitAnswer = await answerOf(hit.result);
-        const liveAnswer = await answerOf(live.result);
-        expect(hitAnswer.matched).toEqual(liveAnswer.matched);
-        const sent = (answer: Answer) =>
-          answer.segments
-            .filter((s) => s.type !== "loader" && s.component !== null)
-            .map((s) => s.id);
-        expect(sent(hitAnswer)).toEqual(sent(liveAnswer));
-        expect(Object.keys(await sentCrumbs(hit.result)).sort()).toEqual(
-          Object.keys(await sentCrumbs(live.result)).sort(),
-        );
-      });
+      for (const target of HIT_TARGETS) {
+        it(`${target}: the HIT's response holds what the live render's does`, async () => {
+          const hit = await navigate(target, navigation);
+          await expectSameResponse(hit.result, await hit.live());
+        });
+      }
+    });
+  }
+});
+
+/**
+ * The client holds none of the page's segments: a HIT sends each one with
+ * its handle values, as a live render does.
+ */
+describe("a navigation that holds nothing gets every segment's handle values, from a HIT as live", () => {
+  beforeEach(async () => {
+    layoutRuns.count = 0;
+    await resetShellTestState();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  for (const navigation of NAVIGATIONS) {
+    describe(navigation.name, () => {
+      for (const target of TARGETS) {
+        it(`${target}: sends the layout and its crumb`, async () => {
+          const { result, layoutId } = await navigate(target, navigation, {
+            holdNothing: true,
+          });
+          expect(await sentLayout(result, layoutId)).not.toBeNull();
+          expect((await sentCrumbs(result))[layoutId]).toEqual(["layout"]);
+        });
+      }
+
+      for (const target of HIT_TARGETS) {
+        it(`${target}: the HIT's response holds what the live render's does`, async () => {
+          const hit = await navigate(target, navigation, { holdNothing: true });
+          await expectSameResponse(hit.result, await hit.live());
+        });
+      }
     });
   }
 });
@@ -339,6 +399,15 @@ describe("a held layout whose revalidate() asks for it is sent, from a Prerender
           expect((await sentCrumbs(result))[layoutId]).toEqual(["layout"]);
         });
       }
+
+      for (const target of HIT_TARGETS) {
+        it(`${target}: the HIT's response holds what the live render's does`, async () => {
+          const hit = await navigate(target, navigation, {
+            layoutRevalidates: true,
+          });
+          await expectSameResponse(hit.result, await hit.live());
+        });
+      }
     });
   }
 });
@@ -351,7 +420,7 @@ describe("a held layout whose revalidate() asks for it is sent, from a Prerender
  * bucket only: the variant's shared bucket holds the parallel's pushes, not
  * the intercept's (prerender-match.ts variantHandlesRecord), on base too.
  */
-describe("an intercept that shares its slot with the layout's parallel is sent from a Prerender() bake as live", () => {
+describe("an intercept that shares its slot with the layout's parallel is sent from a HIT as live", () => {
   const navigation = NAVIGATIONS[0]!;
   beforeEach(async () => {
     layoutRuns.count = 0;
@@ -371,7 +440,7 @@ describe("an intercept that shares its slot with the layout's parallel is sent f
     );
   }
 
-  for (const target of ["live", "prerender"] as const) {
+  for (const target of TARGETS) {
     it(`${target}: sends the intercept's slot`, async () => {
       const { result } = await navigate(target, navigation, {
         slotDefault: true,
@@ -382,19 +451,10 @@ describe("an intercept that shares its slot with the layout's parallel is sent f
     });
   }
 
-  it("the bake's response holds what the live render's does", async () => {
-    const hit = await navigate("prerender", navigation, { slotDefault: true });
-    const live = await navigate("live", navigation, { slotDefault: true });
-    const hitAnswer = await answerOf(hit.result);
-    const liveAnswer = await answerOf(live.result);
-    expect(hitAnswer.matched).toEqual(liveAnswer.matched);
-    const sent = (answer: Answer) =>
-      answer.segments
-        .filter((s) => s.type !== "loader" && s.component !== null)
-        .map((s) => `${s.namespace}:${s.id}`);
-    expect(sent(hitAnswer)).toEqual(sent(liveAnswer));
-    expect(Object.keys(await sentCrumbs(hit.result)).sort()).toEqual(
-      Object.keys(await sentCrumbs(live.result)).sort(),
-    );
-  });
+  for (const target of HIT_TARGETS) {
+    it(`${target}: the HIT's response holds what the live render's does`, async () => {
+      const hit = await navigate(target, navigation, { slotDefault: true });
+      await expectSameResponse(hit.result, await hit.live());
+    });
+  }
 });
