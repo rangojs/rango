@@ -597,6 +597,25 @@ the only capture allowed to store an entry without one is a prerender-served
 capture. A navigation-only capture is no exception: partial replay consumes
 nothing but the record.
 
+Before the callbacks fire (step 2), a match that holds an `error` or
+`notFound` segment fails the capture: a route, layout or parallel slot
+handler threw (or threw `notFound()`) on the capture's own run. On a first
+capture that is a flaky upstream, since a MISS whose own render failed
+answers 500/404 and schedules no capture. A recapture has no visitor render
+behind it (a stale HIT, a warm, a stale build-time shell), so its failure can
+be lasting too, such as a deleted page: the stale shell keeps serving until
+its ttl + swr ends (a build-time shell, until a recapture stores), as a
+failed `cache()` refresh's record does, and each recapture logs and calls
+`onError` once per backoff window; invalidating the page's tag evicts it.
+The pass's `_setStatus` is the foreground's and the callbacks get a
+synthetic 200, so without this check the boundary became the shell every
+HIT served. It throws like a render error (`reportCacheError`, backoff, no
+retry); a tripped capture guard still refuses first, checked after the
+handler output settled so a loader's late read is seen. Pinned by "a handler
+that throws on the capture pass only" and "a parallel slot that throws on
+the capture pass only"
+(`src/testing/__tests__/cache-writers-failed-render.rsc-test.tsx`).
+
 Scar tissue for step 4: before it, server components rendered TWICE per
 capture, once in the capture's Flight render and once inside the record's
 encode. An uncached async server component therefore showed one value in the

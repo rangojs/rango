@@ -172,15 +172,14 @@ export const RENDER_PASS_FIELDS: {
   "background-revalidation": {
     // The request's, resolved before the pass starts: a stale HIT resolves
     // it in cache-lookup.ts before withBackgroundRevalidation starts the
-    // refresh, and proactive caching runs from onResponse. An open
-    // intercept's DSL loaders run here (heldNothingPassInput sets no
-    // skipLoaders), so their rendered() returns at once. What they read
-    // reaches no record: cacheRoute drops loader segments, captureHandles
-    // loader pushes. A route loader a handler reads runs too, started
-    // through its registration (resolveOwnerLoaders): its pushes stay out of
-    // the record and its value bakes into the handler's output, as on a
-    // MISS. A shell capture never opens an intercept
-    // (createNavigationCaptureRequest drops the intercept source).
+    // refresh, and proactive caching runs from onResponse, so a loader's
+    // rendered() here never waits. The route's and an open intercept's
+    // passes skip loaders: one runs only when a handler reads it, started
+    // through its registration (resolveOwnerLoaders), so its pushes stay out
+    // of the record (captureHandles drops loader pushes) and its value bakes
+    // into the handler's output, as on a MISS. A shell capture never opens
+    // an intercept (createNavigationCaptureRequest drops the intercept
+    // source).
     renderBarrier: "inherited",
     own(pass, { handleStore, sink }) {
       // Read late by loader pushes and cache-scope.ts; setupLoaderAccess

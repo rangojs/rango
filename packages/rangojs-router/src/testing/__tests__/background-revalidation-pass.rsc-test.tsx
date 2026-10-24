@@ -9,14 +9,13 @@
  *   replayed the stale record until it expired. Its handler's dynamic()
  *   wrote the capture's latch and refused the capture, which had replayed
  *   the record as a fresh HIT's capture does and stores.
- * - The refresh inherits the visitor's render barrier. Its route pass skips
- *   DSL loaders, but an open intercept resolves with its loaders, so an
- *   intercept loader's rendered() reads the inherited barrier. That is safe:
- *   the barrier resolved before the pass starts (a stale HIT resolves it
- *   before the refresh, proactive caching runs from onResponse), so
- *   rendered() never hangs; cacheRoute drops loader segments and
- *   captureHandles loader pushes, so what the loader read reaches no record.
- *   A shell capture never takes the intercept branch: its request drops the
+ * - The refresh inherits the visitor's render barrier, resolved before the
+ *   pass starts (a stale HIT resolves it before the refresh, proactive
+ *   caching runs from onResponse). Its route and intercept passes skip DSL
+ *   loaders, so an open intercept's loader that calls rendered() and that
+ *   nothing reads never runs there; cacheRoute drops loader segments and
+ *   captureHandles loader pushes, so no loader's read reaches the record. A
+ *   shell capture never takes the intercept branch: its request drops the
  *   intercept source.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -215,7 +214,7 @@ describe("a stale cache() record's background re-render", () => {
     expect(await serve()).toEqual(["page@g2", "read:stamp@g2"]);
   });
 
-  it("refreshing an open intercept, its loader passes rendered() on the visitor's barrier, and its read reaches no response or record", async () => {
+  it("refreshing an open intercept runs none of its loaders, and the next HIT's run reads the refreshed record's handles", async () => {
     const clock = movableClock();
     const cacheStore = new VercelCacheStore({ cache: vercelCache() });
     const list = await serveShellRequest(router, "/list", {
@@ -239,28 +238,29 @@ describe("a stale cache() record's background re-render", () => {
     };
 
     // The client holds the layout, so the MISS writes the record by a
-    // re-render (proactive caching): the visitor's run and that pass's.
+    // re-render (proactive caching), which runs no loader: the visitor's run
+    // is the only one.
     const miss = await open();
-    expect(miss.ran).toHaveLength(2);
+    expect(miss.ran).toHaveLength(1);
     expect(miss.shown).toEqual([expect.stringMatching(/^read:#\d+$/)]);
     expect(miss.ran).toContain(miss.shown![0]);
 
-    // The stale HIT replays stamp@g1 and refreshes the record at g2. The
-    // refresh's loader passes rendered() too, and its run shows nowhere: the
-    // visitor reads the replayed handles, not the refresh's stamp@g2.
+    // The stale HIT replays stamp@g1 and refreshes the record at g2 without
+    // running the loader: the visitor's run reads the replayed handles.
     generation = 2;
     clock.advance(1_100);
     const staleHit = await open();
-    expect(staleHit.ran).toHaveLength(2);
+    expect(staleHit.ran).toHaveLength(1);
     expect(staleHit.shown).toEqual([
       expect.stringMatching(/^read:stamp@g1#\d+$/),
     ]);
     expect(staleHit.ran).toContain(staleHit.shown![0]);
 
-    // The next HIT replays the refreshed record: its handles, and no value
-    // of the refresh's loader.
+    // The next HIT replays the refreshed record's handles, and its own run
+    // reads them.
     clock.advance(1_100);
     const refreshedHit = await open();
+    expect(refreshedHit.ran).toHaveLength(1);
     expect(refreshedHit.shown).toEqual([
       expect.stringMatching(/^read:stamp@g2#\d+$/),
     ]);

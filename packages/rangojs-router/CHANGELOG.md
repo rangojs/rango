@@ -86,9 +86,41 @@ reported one id for a rewritten request, so the testing primitive and
 
 **Now.** Every event of a rewritten request, through any number of rewrites,
 carries the visitor's id, in `router.fetch` and `dispatch()` alike. A request
-that sends a request-id header reports that header's value, as before. A
-no-JS form post's re-render still reports its own id on its events, as it did
-before this release. No change in your code.
+that sends a request-id header reports that header's value, as before. No
+change in your code.
+
+### Fixed: a no-JS form post's telemetry events carry one `requestId`
+
+**Before.** With `createRouter({ telemetry })` and no request-id header, the
+re-render after a no-JS form post (progressive enhancement), rewritten or not,
+reported its own generated id on `request.start`, `loader.*`,
+`cache.decision` and `request.end`, while a stream-idle `request.timeout`
+carried the visitor's id. A sink that groups events by `requestId` saw two
+requests.
+
+**Now.** The re-render's events carry the visitor's id, the one the
+`request.timeout` carries. A request that sends a request-id header reports
+that header's value, as before. No change in your code.
+
+### Fixed: a PPR shell capture sends no telemetry events
+
+**Before.** With `createRouter({ telemetry })`, a document request or a
+navigation that missed a `ppr` route's shell started a background capture,
+and the capture sent the sink its own `loader.*` events. A live loader, which
+the capture holds back, reported a `loader.start` with no `loader.end`. An
+`ssr: false` loader, which runs in the capture, reported its `loader.start`
+and `loader.end` a second time, and a `loader.error` when it failed only
+there. On a navigation these events carried the id of a request the capture
+builds, so a sink that groups events by `requestId` saw a second request. A
+handle pushed after handle collection completed also reported its
+`handler.error` twice, once from the visitor's render and once from the
+capture.
+
+**Now.** The capture sends nothing to the sink, as its `request.*`,
+`cache.decision`, `revalidation.decision` and other `handler.error` events
+already did not. The visitor's request reports its own `loader.*` and
+`handler.error` events once, under one id. `onError` is unchanged. No change
+in your code.
 
 ### Fixed: a stale `cache()` HIT's background refresh sets no fresh-reads cookie on the visitor's response
 
@@ -264,6 +296,47 @@ own `cache()` is read again, the refreshed record also carries that
 evicts the route record as well; before, the refreshed record lost them. The
 refresh and the `Prerender` build file a layout's handle values under that
 layout, as a live render does. No change in your code.
+
+### Fixed: a PPR shell capture whose handler fails stores no error page as the shell
+
+**Before.** A `ppr` route's background shell capture runs the route's
+handlers again. When a route, layout or parallel slot handler threw (or threw
+`notFound()`) during the capture only, while the visitor's render of the same
+request succeeded, for example because an upstream failed for a moment, the
+capture stored the boundary that caught it as the shell: a declared
+`errorBoundary()` or `notFoundBoundary()`, or the default error page. Every
+later document request was a HIT that served that page with a 200 until the
+shell expired or a recapture replaced it, and client navigations replayed it
+the same way.
+
+**Now.** The capture stores nothing and reports the failure through
+`onError`, and the route keeps serving MISSes; the next capture after the
+key's backoff stores the healthy page. A stale shell whose recapture fails
+this way keeps serving until its `ttl` + `swr` ends (a build-time shell,
+until a recapture stores), as a failed `cache()` refresh does, and the
+recaptures log and call `onError` once per backoff window: when you delete a
+page, invalidate its tag. A render that fails for the visitor too was never
+captured, and still is not. No change in your code.
+
+### Fixed: a `cache()` route's background re-render runs no intercept loader that nothing reads
+
+**Before.** With an intercept open, the background re-render that writes a
+`cache()` record ran every loader the intercept declares with `loader()`: the refresh a stale HIT starts under
+`cache({ ttl, swr })`, and the re-render that writes the record of a
+client-side navigation that kept the layout mounted. The record never holds a
+loader's value or its handle values, so each of those runs was thrown away:
+one more call to your backend per re-render, its side effects again, and a
+failing loader reported to `onError` a second time.
+
+**Now.** The re-render runs only the intercept loaders its handler reads
+with `ctx.use()`, as it already did for the route's own loaders, and starts
+each as the intercept declares it. The record, its handle values and its tags
+are unchanged, and a loader the intercept's handler reads still shows its
+handle values once. The re-render no longer emits `loader.start`,
+`loader.end`, `loader.error` or `revalidation.decision` telemetry for those
+intercept loaders, and an intercept loader with its own `cache()` is refreshed
+by its next live read rather than by the re-render, as the route's own loaders
+already are. No change in your code.
 
 ## 0.27.0 (2026-10-23)
 
