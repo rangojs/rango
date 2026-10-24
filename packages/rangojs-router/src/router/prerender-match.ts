@@ -443,9 +443,12 @@ export async function matchForPrerender<TEnv = any>(
           intercept: InterceptEntry;
           entry: EntryData;
         }[] = [];
-        // The entry, then its orphans (nested ones included): the same traversal
-        // findInterceptForRoute uses; the build keeps ALL matches (not just the
-        // innermost) and skips when().
+        // From the route's parent up, each entry then its orphans (nested ones
+        // included): the walk findInterceptForRoute makes at runtime, so an
+        // intercept in the route's own layouts, which it never selects, is not
+        // baked. The build keeps ALL matches (not just the innermost) and skips
+        // when(); a HIT serves the one the match selected
+        // (selectInterceptVariant, prerender/store.ts).
         const collect = (source: EntryData): undefined => {
           for (const ic of source.intercept) {
             if (ic.routeName === matched.routeKey) {
@@ -454,7 +457,7 @@ export async function matchForPrerender<TEnv = any>(
           }
           return undefined;
         };
-        let current: EntryData | null = manifestEntry;
+        let current: EntryData | null = manifestEntry.parent;
         let prev: EntryData | null = null;
         while (current) {
           collect(current);
@@ -462,14 +465,24 @@ export async function matchForPrerender<TEnv = any>(
           prev = current;
           current = current.parent;
         }
+        // Two intercepts that fill one slot share its segment id, so a HIT
+        // could not tell which one the variant holds: neither is baked, and
+        // both render live.
+        const slotIds = foundIntercepts.map(({ intercept, entry }) =>
+          interceptSlotId(entry, intercept),
+        );
+        const bakedIntercepts = foundIntercepts.filter(
+          (_, i) =>
+            slotIds.indexOf(slotIds[i]!) === slotIds.lastIndexOf(slotIds[i]!),
+        );
 
         // V1 writes only the main variant. Do not execute intercept producers
         // whose output would be discarded (and whose personalization/errors
         // must not block an otherwise valid main refresh).
-        if (!onDemand && foundIntercepts.length > 0) {
+        if (!onDemand && bakedIntercepts.length > 0) {
           const interceptResolvedSegments: typeof nonLoaderSegments = [];
 
-          for (const { intercept, entry: parentEntry } of foundIntercepts) {
+          for (const { intercept, entry: parentEntry } of bakedIntercepts) {
             // setupBuildUse keys handle pushes by ctx._currentSegmentId. The main
             // segment pass left it on the route's segment id, so pin it
             // to THIS intercept's slot id before resolving the handler/layout --

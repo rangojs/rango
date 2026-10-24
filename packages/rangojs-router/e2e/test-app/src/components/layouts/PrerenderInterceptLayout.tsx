@@ -5,6 +5,7 @@ export function PrerenderInterceptLayout() {
     <div data-testid="prerender-intercept-layout">
       <Outlet />
       <Outlet name="@modal" />
+      <Outlet name="@drawer" />
     </div>
   );
 }
