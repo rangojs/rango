@@ -1679,7 +1679,8 @@ export type CaptureRecordOutcome =
  * a HIT restores, and its handle encode has its own 5s timeout that must
  * never be the one that fires); then the capture's onResponse callbacks fire
  * with a synthetic 200 (the implicit doc scope's cacheRoute, an explicit
- * scope's own write), and the deferred writes settle.
+ * scope's own write), and the deferred writes settle. A match holding an
+ * error or notFound boundary throws before the callbacks fire.
  */
 export async function settleCaptureRecord(
   match: MatchResult,
@@ -1745,6 +1746,32 @@ export async function settleCaptureRecord(
       PPR_LANE_HINT,
     );
     return { kind: "refused", refusal: "loader" };
+  }
+
+  // A boundary the match rendered in place of a handler (route, layout or
+  // slot) that threw, or threw notFound(), on this pass. A MISS whose own
+  // render failed answered 500/404 and scheduled no capture, so on a first
+  // capture the failure is this pass's own (a flaky upstream); a recapture
+  // with no visitor render behind it (stale HIT, warm, stale build shell)
+  // can only have failed. The pass's _setStatus is the foreground's and the
+  // callbacks below get a synthetic 200, so nothing else refuses it. A stale
+  // shell whose recapture fails keeps serving, as a failed cache() refresh's
+  // record does: until ttl + swr ends (a build-time shell, until a recapture
+  // stores or a tag evicts it). Checked after the settle so a guard trip in
+  // a handler or a loader names the read, and before any write starts.
+  // Thrown like captureAndStoreShell's render errors: no retry,
+  // reportCacheError and backoff in scheduleShellCapture.
+  const boundary = match.segments.find(
+    (s) => s.type === "error" || s.type === "notFound",
+  );
+  if (boundary) {
+    if (refuseOnCaptureGuard(capture.key, derivedCtx))
+      return { kind: "refused", refusal: guardRefusal(derivedCtx) };
+    throw new Error(
+      `[rango] Shell capture for "${capture.key}" rendered the ${boundary.type} ` +
+        `boundary for segment "${boundary.id}"; a failed render is not stored.`,
+      { cause: boundary.error ?? boundary.notFoundInfo },
+    );
   }
 
   const callbacks = derivedCtx._onResponseCallbacks?.splice(0) ?? [];

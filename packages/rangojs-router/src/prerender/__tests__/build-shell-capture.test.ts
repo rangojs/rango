@@ -41,9 +41,14 @@ const { captureShellForBuild } = await import("../build-shell-capture.js");
 function prerenderServed(): {
   routeName: string;
   params: Record<string, string>;
+  segments: [];
 } {
   getRequestContext()._pprReplayPostMatchReason = "prerender-store";
-  return { routeName: "shop.category", params: { category: "power-set" } };
+  return {
+    routeName: "shop.category",
+    params: { category: "power-set" },
+    segments: [],
+  };
 }
 
 /** The 4th arg captureAndStoreShell receives — the shell descriptor + sink. */
