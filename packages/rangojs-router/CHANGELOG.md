@@ -106,10 +106,12 @@ that header's value, as before. No change in your code.
 
 **Before.** With `createRouter({ telemetry })`, a document request or a
 navigation that missed a `ppr` route's shell started a background capture,
-and the capture sent the sink a `loader.start` for each route loader. It
-held those loaders back, so no `loader.end` followed. On a navigation the
-event carried the id of a request the capture builds, so a sink that groups
-events by `requestId` saw a second request with a loader that never ended. A
+and the capture sent the sink its own `loader.*` events. A live loader, which
+the capture holds back, reported a `loader.start` with no `loader.end`. An
+`ssr: false` loader, which runs in the capture, reported its `loader.start`
+and `loader.end` a second time, and a `loader.error` when it failed only
+there. On a navigation these events carried the id of a request the capture
+builds, so a sink that groups events by `requestId` saw a second request. A
 handle pushed after handle collection completed also reported its
 `handler.error` twice, once from the visitor's render and once from the
 capture.
