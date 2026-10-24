@@ -48,8 +48,8 @@ export function createSegmentWrappers<TEnv = any>(
   });
 
   return {
-    resolveLoadersOnly: (input, entries) =>
-      _resolveLoadersOnly(pass(input), entries),
+    resolveLoadersOnly: (input, entries, walk) =>
+      _resolveLoadersOnly(pass(input), entries, walk),
     buildEntryRevalidateMap: _buildEntryRevalidateMap,
     resolveAllSegments: (input, entries, walk) =>
       _resolveAllSegments(pass(input), entries, walk),

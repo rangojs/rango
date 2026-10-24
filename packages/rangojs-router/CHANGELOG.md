@@ -329,6 +329,22 @@ render does and writes the record a MISS writes: the record and its HITs no
 longer carry the route's page or its tags. What the intercept shows, and the
 page under it, are unchanged. No change in your code.
 
+### Fixed: a `cache()` HIT under an intercept runs the intercept's loaders, not the intercepted route's
+
+**Before.** With an intercept open over a route under `cache()`, a HIT of the
+intercept's record also ran the loaders the intercepted route declares, which
+the MISS skips with the route's page. A route loader that nothing under the
+intercept reads ran on every HIT: one more call to your backend, its side
+effects, and its `onError` report. Its segment was listed in the response. A
+loader that the route and the intercept both declare ran once, as the
+route's, so the handle values it pushes (a breadcrumb read with `useHandle`)
+showed on the MISS and were missing on every HIT. The intercept variant a
+`Prerender()` route bakes was served the same way.
+
+**Now.** A HIT runs only the intercept's loaders, as the MISS does: it shows
+the MISS's handle values, and the route's loaders neither run nor appear in
+the response. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

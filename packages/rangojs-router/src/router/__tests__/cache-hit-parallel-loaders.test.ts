@@ -281,3 +281,49 @@ describe("cache-hit parallel loaders", () => {
     expect(map.has("L0P0.@sidebar")).toBe(false);
   });
 });
+
+describe("cache-hit loaders under an intercept", () => {
+  function entry(type: "layout" | "route", shortCode: string, id: string) {
+    return {
+      id: `blog.${type}`,
+      type,
+      shortCode,
+      handler: () => null,
+      loader: [{ loader: { $$id: id } as any, revalidate: [] }],
+      layout: [],
+      parallel: {},
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      handle: [],
+    } as any as EntryData;
+  }
+
+  const chain = (): EntryData[] => [
+    entry("layout", "L0", "layout-loader"),
+    entry("route", "L0R0", "route-loader"),
+  ];
+
+  it("resolves the route's loaders without an intercept", async () => {
+    const { segments } = await resolveLoadersOnly(
+      makeFreshPass(makeContext(), makeDeps()),
+      chain(),
+    );
+    expect(segments.map((s) => s.id)).toEqual([
+      "L0D0.layout-loader",
+      "L0R0D0.route-loader",
+    ]);
+  });
+
+  it("skips the intercepted route's entry, as the MISS's walk does", async () => {
+    const { segments, matchedIds } = await resolveLoadersOnly(
+      makeFreshPass(makeContext(), makeDeps()),
+      chain(),
+      { interceptResult: {} as any },
+    );
+    expect(segments.map((s) => s.id)).toEqual(["L0D0.layout-loader"]);
+    expect(matchedIds).toEqual(["L0D0.layout-loader"]);
+  });
+});
