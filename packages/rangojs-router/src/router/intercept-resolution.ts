@@ -206,6 +206,21 @@ export function interceptSlotId(
 }
 
 /**
+ * The intercept a match selected (findInterceptForRoute), as its cache()
+ * record names it (CacheScope): the slot id, then its position among the
+ * intercepts its entry declares. Two intercepts on one entry that fill the
+ * same slot share the slot id, and the position tells them apart. Undefined
+ * when the match selected none.
+ */
+export function interceptRecordKey(
+  selected: { intercept: InterceptEntry; entry: EntryData } | null,
+): string | undefined {
+  if (!selected) return undefined;
+  const { intercept, entry } = selected;
+  return `${interceptSlotId(entry, intercept)}#${entry.intercept.indexOf(intercept)}`;
+}
+
+/**
  * Every segment id an intercept's slot owns, in order: the slot, then one
  * loader segment per loader in declaration order, run or not. A request that
  * resolves the intercept lists them in `matched` (match-result.ts).

@@ -739,7 +739,13 @@ describe("CacheScope - router.prerender() warm", () => {
     const record = createWarmRecord("replace", store);
     ctx._prerenderWarm = record;
     await runWithRequestContext(ctx, async () => {
-      await scope.cacheRoute("/products", {}, [makeSegment()], false, start);
+      await scope.cacheRoute(
+        "/products",
+        {},
+        [makeSegment()],
+        undefined,
+        start,
+      );
       ctx._handleStore.seal();
       const tasks = ctx._pendingBackgroundTasks!;
       for (let i = 0; i < tasks.length; i++) await tasks[i];

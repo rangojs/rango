@@ -575,6 +575,29 @@ layout that fill the same slot share that slot's segment, so the bake cannot
 tell them apart: neither is baked, and they render live, as on a route that is
 not pre-rendered. No change in your code.
 
+### Fixed: a `cache()` route with several intercepts serves each navigation the intercept it selected
+
+**Before.** When several intercepts target one route under `cache()`, each
+with its own `when()`, a client-side navigation selects one of them. The
+intercept's record was keyed by the URL alone, so the record the first
+intercept stored answered every intercept navigation to that URL. With
+`@modal` selected from /list and `@drawer` from /other, opening the item from
+/other after /list returned the `@modal` slot and its content: the browser
+found the `@drawer` slot missing, printed "Missing 1 segments. Refetching
+all...", and fetched the whole page again, a second request on every such
+navigation. Two intercepts on one layout that fill the same slot share its
+segment id, so there the browser showed the other intercept's content.
+
+**Now.** Each intercept keeps its own record, and a navigation gets the
+intercept it selected in one request, from that intercept's record once one is
+stored. `updateTag()` and `revalidateTag()` on the `cache()` tags evict every
+intercept's record. Records stored before this release are not read again: a
+new router version already misses them on `CFCacheStore` and
+`VercelCacheStore`; on a store without the version in its keys
+(`MemorySegmentCacheStore`, a custom store), each intercept navigation renders
+once and stores a new record, and the old one expires with its TTL. No change
+in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

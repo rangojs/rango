@@ -84,7 +84,10 @@ import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
 import { requestHeaders } from "../../server/request-headers.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
-import { interceptSlotId } from "../intercept-resolution.js";
+import {
+  interceptRecordKey,
+  interceptSlotId,
+} from "../intercept-resolution.js";
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
@@ -810,7 +813,7 @@ async function readSegmentCacheSource<TEnv>(
   const explicitLookup = await ctx.cacheScope.lookupRouteDetailed(
     ctx.pathname,
     ctx.matched.params,
-    ctx.isIntercept,
+    interceptRecordKey(ctx.interceptResult),
     ownedPushes,
   );
   let cacheResult =
@@ -854,7 +857,7 @@ async function readSegmentCacheSource<TEnv>(
       cacheResult = await hitScope.lookupRoute(
         ctx.pathname,
         ctx.matched.params,
-        ctx.isIntercept,
+        undefined,
         ownedPushes,
       );
     } else if (explicitLookup.status === "bypass") {

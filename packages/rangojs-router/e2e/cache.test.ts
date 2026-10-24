@@ -84,6 +84,52 @@ function getCacheLogs(stdout: string): {
  */
 const CACHE_INTERCEPT_CRUMBS = ["index", "layout", "modal-a", "shared-loader"];
 
+/**
+ * /cache-intercept-when: two intercepts target the item route under cache(),
+ * the modal selected from the index and the drawer from /other (rango-t194).
+ * Open the item from `source` and expect its own intercept, never the other's,
+ * in one request: an answer that carries another intercept's slot misses the
+ * selected one, and the browser refetches the whole page.
+ */
+async function openWhenIntercept(
+  page: Page,
+  source: "index" | "other",
+): Promise<void> {
+  const [shown, hidden] =
+    source === "index"
+      ? ["ciw-modal", "ciw-drawer"]
+      : ["ciw-drawer", "ciw-modal"];
+  await expect(page.getByTestId(`ciw-${source}`)).toBeVisible();
+  const requests: string[] = [];
+  const onRequest = (request: { url: () => string }) => {
+    if (new URL(request.url()).pathname === "/cache-intercept-when/item/a") {
+      requests.push(request.url());
+    }
+  };
+  page.on("request", onRequest);
+  await page.getByTestId(`ciw-${source}-item`).click();
+  await expect(page.getByTestId(shown)).toHaveText(
+    `${shown === "ciw-modal" ? "modal" : "drawer"} a`,
+  );
+  await expect(page.getByTestId(hidden)).toHaveCount(0);
+  await expect(page.getByTestId(`ciw-${source}`)).toBeVisible();
+  page.off("request", onRequest);
+  expect(requests).toHaveLength(1);
+  await page.goBack();
+  await expect(page.getByTestId(shown)).toHaveCount(0);
+}
+
+/** Switch between the two source pages with a client navigation. */
+async function switchWhenSource(
+  page: Page,
+  from: "index" | "other",
+): Promise<void> {
+  await page.getByTestId(`ciw-${from}-switch`).click();
+  await expect(
+    page.getByTestId(from === "index" ? "ciw-other" : "ciw-index"),
+  ).toBeVisible();
+}
+
 /** Open the /cache-intercept-crumbs intercept from its index. */
 async function openCrumbsIntercept(page: Page): Promise<void> {
   await page.getByTestId("cic-link").click();
@@ -711,6 +757,39 @@ test.describe("cache-intercept-routes", () => {
       "/cache-intercept-crumbs/item/a",
     );
   });
+
+  // rango-t194: the record key named only the URL, so opening the item from
+  // /other HIT the record the index's modal wrote and showed the modal.
+  test("two intercepts selected by when() each get their own record: each source opens its own intercept, MISS and HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-intercept-when"));
+    await waitForHydration(page);
+
+    await openWhenIntercept(page, "index");
+    await switchWhenSource(page, "index");
+    await openWhenIntercept(page, "other");
+    await switchWhenSource(page, "other");
+
+    const beforeModalHit = f.proc().stdout().length;
+    await openWhenIntercept(page, "index");
+    await waitForCacheHit(
+      f.proc(),
+      beforeModalHit,
+      "/cache-intercept-when/item/a",
+    );
+    await switchWhenSource(page, "index");
+
+    const beforeDrawerHit = f.proc().stdout().length;
+    await openWhenIntercept(page, "other");
+    await waitForCacheHit(
+      f.proc(),
+      beforeDrawerHit,
+      "/cache-intercept-when/item/a",
+    );
+  });
 });
 
 // ============================================================================
@@ -775,6 +854,24 @@ test.describe("cache-intercept-routes (production)", () => {
     await expect(page.getByTestId("cic-modal")).toHaveCount(0);
 
     await openCrumbsIntercept(page);
+  });
+
+  // rango-t194: see the dev describe's case.
+  test("two intercepts selected by when() each get their own record: each source opens its own intercept, MISS and HIT", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-intercept-when"));
+    await waitForHydration(page);
+
+    await openWhenIntercept(page, "index");
+    await switchWhenSource(page, "index");
+    await openWhenIntercept(page, "other");
+    await switchWhenSource(page, "other");
+    await openWhenIntercept(page, "index");
+    await switchWhenSource(page, "index");
+    await openWhenIntercept(page, "other");
   });
 });
 
