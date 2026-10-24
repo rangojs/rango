@@ -636,8 +636,9 @@ In `cache-lookup.ts`, when `ctx.isIntercept` is true:
 2. If found: `selectInterceptVariant()` (`src/prerender/store.ts`) keeps the
    main segments and the selected intercept's slot (`interceptSlotId` of
    `ctx.interceptResult`, in `intercept:<routeName>`). A variant without that
-   slot (one of two intercepts that share it, or an intercept the build did
-   not find) is a miss.
+   slot (one of two intercepts that share it, an intercept the build did not
+   find, or one whose build handler or layout returned a `Response`) is a
+   miss, and the intercept renders live.
 3. `serveStoredSegments()` yields the narrowed segments, and
    `decodeStoredEntry()` replays only their handle values. Downstream
    `handleCacheHitIntercept()` filters segments by `namespace?.startsWith("intercept:")`

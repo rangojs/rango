@@ -507,7 +507,7 @@ Runtime behavior:
 
 - Intercept navigation: prerender store serves the `/i` variant (frozen handler + fresh loaders)
 - Direct navigation: prerender store serves the main variant (full page)
-- If no intercept prerender entry exists, falls through to live intercept resolution
+- If no intercept prerender entry exists, or it lacks the selected intercept, falls through to live intercept resolution
 
 Loaders inside the intercept always run fresh at request time, same as regular
 pre-rendered routes.
