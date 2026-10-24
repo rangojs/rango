@@ -1494,6 +1494,9 @@ export async function resolveOrphanLayout<TEnv>(
     // Below a unit a prefetch skipped: the orphan goes with it.
     deferred = deferUnit(context, orphan.shortCode, "below");
     if (!deferred) {
+      // Its handler's pushes are its own, not the last-pinned parent's.
+      (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+        orphan.shortCode;
       const doneHandler = track(`handler:${orphan.id}`, 2);
       component = await resolveLayoutComponent(orphan, context);
       doneHandler();

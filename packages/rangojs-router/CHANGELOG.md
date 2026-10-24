@@ -608,6 +608,25 @@ layout that fill the same slot share that slot's segment, so the bake cannot
 tell them apart: neither is baked, and they render live, as on a route that is
 not pre-rendered. No change in your code.
 
+### Fixed: an orphan layout's handle values belong to that layout
+
+**Before.** An orphan layout (a layout with no routes, declared among a
+layout's children or a route's) whose handler pushed to a handle with
+`ctx.use(Handle)`, and which declared no loader of its own, filed its values
+under the segment that ran before it: the parent layout on a document or on a
+navigation that re-ran that layout, the route when a route declared the
+layout. A `cache()` record and a `Prerender()` bake stored them there too. A
+breadcrumb read with `useHandle` listed a route's orphan layout's value after
+the route's own, though the layout wraps the route. On a navigation that kept
+the parent layout mounted, when the orphan's `revalidate()` re-rendered it,
+the push threw `Handle "…" used outside of handler context` and the
+navigation rendered an error boundary.
+
+**Now.** The orphan layout's values are filed under the orphan layout on every
+request, as a regular layout's are: the document, every navigation, a
+`cache()` record and its HITs, and a `Prerender()` bake (the next build bakes
+them under the layout). No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
