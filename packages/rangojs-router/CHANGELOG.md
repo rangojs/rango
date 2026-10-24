@@ -106,6 +106,24 @@ until the record expired or a request outside the shell refreshed it.
 under `cache()` rules, and the next recapture replays the refreshed record.
 The capture itself still refuses those reads. No change in your code.
 
+### Fixed: a cached handler's `ctx.dynamic()` in a background refresh no longer refuses the PPR shell capture that started it
+
+**Before.** When a `ppr` route's shell capture read a stale `cache()` record,
+the background refresh it started re-ran the cached handler, and a
+`ctx.dynamic()` call there refused the capture, with the warning
+`Shell capture … was refused: ctx.dynamic() was called while capturing the
+shared shell`. The capture had not run that handler: it replayed the record,
+as a fresh `cache()` HIT does, and a fresh HIT's capture is stored. So the
+route kept its old shell, or had none and served each request as a MISS, for
+as long as its recaptures read the record stale: with `cache({ ttl: 0 })`
+until the shell expired, otherwise until a recapture found the record
+refreshed.
+
+**Now.** The refresh's `ctx.dynamic()` reaches neither the capture nor the
+visitor's request; it renders the record only. A recapture over a stale
+record stores the shell as one over a fresh record does. `ctx.dynamic()` in
+the capture's own render still refuses it. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

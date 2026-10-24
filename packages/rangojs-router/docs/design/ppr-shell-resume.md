@@ -1226,7 +1226,12 @@ warning naming the source. Same for `ctx.dynamic()`: it used to write the
 FOREGROUND context's latch (its closure), which had already served and which
 the runtime capture never read, so a handler promise that called it after an
 await baked anyway. The derived context now has its own `_dynamic` and
-`dynamic()`, and the capture refuses when it flips.
+`dynamic()`, and the capture refuses when it flips. A background refresh that
+a stale `cache()` read in the capture starts is not the capture: it re-runs
+the cached handler for the route record, while the capture replays the record
+as a fresh HIT would. Its `dynamic()` lands on the refresh's throwaway
+context (the `background-revalidation` row of `RENDER_PASS_FIELDS`), so it
+refuses nothing.
 
 Not guarded: `ctx.get` of a NORMAL variable (for example a
 session object middleware set). It bakes the capturing request's value

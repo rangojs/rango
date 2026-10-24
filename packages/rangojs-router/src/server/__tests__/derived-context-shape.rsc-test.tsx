@@ -385,7 +385,7 @@ describe("PPR HIT tail context (createTailContext)", () => {
 });
 
 describe("background re-render context (rerenderAndCacheRoute)", () => {
-  it("owns its handle store, error lists, response writers and an empty capture state; inherits the request's render barrier", async () => {
+  it("owns its handle store, error lists, response writers, dynamic() and an empty capture state; inherits the request's render barrier", async () => {
     const base = requestContext();
     // The foreground has rendered: it measured, recovered and reported.
     Object.assign(base, {
@@ -444,6 +444,7 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       "_setStatus",
       "_shellCaptureState",
       "deleteCookie",
+      "dynamic",
       "header",
       "res (accessor)",
       "setCookie",
@@ -463,9 +464,10 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       _renderErrors: [],
       _onResponseCallbacks: [],
     });
-    // Response writes land on a throwaway response: no writer is the
-    // request's.
+    // Response writes and dynamic() land on a throwaway context: no writer
+    // is the request's.
     const writers = [
+      "dynamic",
       "header",
       "setCookie",
       "deleteCookie",
@@ -486,6 +488,8 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
     ctx.deleteCookie("session");
     ctx._rotateStateCookie();
     ctx._setFreshReadsCookie(5_000);
+    ctx.dynamic();
+    expect(base._dynamic).toBe(false);
     expect(base.res.status).toBe(200);
     expect(base.res.headers.get("x-background")).toBeNull();
     expect(base.res.headers.get("set-cookie")).toBeNull();
