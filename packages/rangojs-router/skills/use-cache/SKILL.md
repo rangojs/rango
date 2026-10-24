@@ -70,8 +70,14 @@ that throws, a promise in the result or in a handle push that rejects, a
 function or a class instance. Storing it would bake the failure into every hit
 until expiry. Instead the write is skipped, logged and reported to `onError`
 (phase `"cache"`, category `cache-write`, or `stale-revalidation` for a
-background refresh): a miss still returns the live result, the next call runs
-the function again, and a stale entry keeps serving.
+background refresh): the next call runs the function again, and a stale entry
+keeps serving.
+
+A miss renders a decoded copy of what it encodes, as a hit renders the stored
+entry, so a child that throws or a promise that rejects throws where the copy
+renders, as it would on a hit. A value Flight cannot encode at all (a
+function, a class instance) is the exception: the call returns the live value,
+uncached.
 
 ## Named Cache Profiles
 
@@ -233,12 +239,24 @@ export const ProductLoader = createLoader(async (ctx) => getProduct(ctx));
 per-request values (cookies, headers) are not reflected in the cache key. Without
 this guard, one user's data would be served to another.
 
-That includes the server components the function returns: they render when
-the value is stored, inside the same guard, which refuses there every read and
-write it refuses in the body. A read there fails that render, so the value is
-not stored (see "Results that are not cached"); each request still renders its
-own visitor's value, and the call runs uncached until the read moves out of
-the returned tree.
+That includes the server components the function returns. The value is
+encoded once, inside the same guard, and the page renders the decoded copy, as
+on a hit, so the guard refuses there every read and write it refuses in the
+body, and a refused read fails the request as it would in the body: at the
+value's root the call throws, and below the root that part renders as an
+error, to its nearest error boundary. Nothing is stored. The same holds for a
+`ctx.use(Loader)` in the returned tree (the loader runs inside the guard, and
+the request's memo of it rejects, so a later read of it in the request throws
+too) and for a `React.lazy` or a memoizing thenable created in the body. A
+handle value the function pushes is encoded inside the guard as well: one that
+reads the request is not stored.
+
+One gap remains, in the body itself: a `React.cache`-memoized read of
+`cookies()` or `headers()` (a `getSession = cache(() => cookies()...)` auth
+helper) that the page called before the cached function runs returns the
+memo without reading again, so the guard never sees it and the entry stores
+that visitor's value. Pass the value in as an argument instead of calling the
+helper inside the cached function.
 
 The raw reads throw the same way: `ctx.request.headers` on any `ctx` passed in
 (handler, loader, middleware; it is one `Request` object, also
@@ -404,9 +422,11 @@ export const Page = Prerender(
 
 ## Performance: waitUntil
 
-On cache miss, the function executes and the result is serialized inline (blocking).
-The cache **store write** (`setItem`) is deferred to `waitUntil` and does NOT block
-the response.
+On cache miss, the function executes and its result is encoded; the call
+returns once the decoded copy's root has arrived, so a server component at the
+root of the value renders before the call resolves. The rest of the encode and
+the cache **store write** (`setItem`) are deferred to `waitUntil` and do NOT
+block the response.
 
 On stale hit, stale data is returned immediately. Background revalidation
 (re-execute + store write) runs entirely inside `waitUntil`.
@@ -414,7 +434,7 @@ On stale hit, stale data is returned immediately. Background revalidation
 | Phase                                | Blocks response? |
 | ------------------------------------ | ---------------- |
 | Function execution (miss)            | Yes              |
-| Result serialization (miss)          | Yes              |
+| Result encode, to its root (miss)    | Yes              |
 | Cache store write (miss)             | No (waitUntil)   |
 | Stale value return (stale hit)       | No (immediate)   |
 | Background revalidation (stale)      | No (waitUntil)   |

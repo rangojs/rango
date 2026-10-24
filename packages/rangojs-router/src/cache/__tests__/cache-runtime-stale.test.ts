@@ -49,10 +49,17 @@ vi.mock("../../server/request-context.js", () => ({
 }));
 
 // Mock segment codec — identity transforms for testing
-vi.mock("../segment-codec.js", () => ({
-  serializeResult: vi.fn((v: any) => JSON.stringify(v)),
-  deserializeResult: vi.fn((v: string) => JSON.parse(v)),
-}));
+vi.mock("../segment-codec.js", async () => {
+  const { teeThrough } = await import("./helpers/tee-through.js");
+  const serializeResult = vi.fn((v: any) => JSON.stringify(v));
+  const deserializeResult = vi.fn((v: string) => JSON.parse(v));
+  return {
+    serializeResult,
+    deserializeResult,
+    teeResult: teeThrough(serializeResult, deserializeResult),
+    isUnsupportedValueError: () => false,
+  };
+});
 
 // Mock handle snapshot. encodeHandles/decodeHandles stand in for the Flight
 // codec: encode produces the stored string, decode reverses it. decode tolerates

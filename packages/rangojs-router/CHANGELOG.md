@@ -25,19 +25,31 @@ async function Account() {
 }
 ```
 
-**After.** The returned tree renders inside the guard, on a miss and on a
-refresh. Every read and write the guard refuses in the function body refuses
-there too, with the same error: `cookies()`, `headers()`,
+**After.** What the function returns is encoded once, inside its guard, on a
+miss and on a refresh, and a miss renders the decoded copy of it, as a hit
+does. Every read and write the guard refuses in the function body is refused
+in the returned tree too, with the same error: `cookies()`, `headers()`,
 `ctx.request.headers`, a `{ cache: false }` `ctx.get()`, the theme reads,
-`ctx.rewrittenFrom`, a loader whose run made one of those reads, and the `ctx`
-writers. The value is not stored: the error is logged and goes to `onError`
-(phase `"cache"`, category `cache-write`, or `stale-revalidation` for a
-refresh), and a stale entry keeps serving. The request still renders its own
-visitor's value, so the call runs uncached on every request until the read
-moves out. Server components that read only their props, client components,
-and nested `"use cache"` calls and `cacheTag()` in the returned tree work as
-before. Any other write a miss skips (a component in the value that throws) is
-now logged too, as a refresh's already was.
+`ctx.rewrittenFrom`, a loader the tree reads whose run made one of those
+reads, and the `ctx` writers. A refused read fails the request as the same
+read in the body does: at the value's root the call throws, and below the
+root that part renders as an error, to its nearest error boundary. Nothing is
+stored, the refusal is logged and goes to `onError` (phase `"cache"`,
+category `cache-write`, or `stale-revalidation` for a refresh), and a stale
+entry keeps serving. A read behind state the page's render could reach
+before the encode did, such as a `React.lazy` or a memoizing thenable created
+in the function, is refused the same way; rendering the value twice had let it
+through. A handle value the function pushes that reads the request is not
+stored either.
+
+Server components that read only their props, client components, and nested
+`"use cache"` calls and `cacheTag()` in the returned tree work as before. A
+value Flight cannot encode (a function, a class instance) is not stored and
+returns the live value, as before. A miss now returns a copy of the value, as
+a hit always did, and returns once the copy's root has arrived: a server
+component at the root of the value renders before the call resolves, not in
+the page's render. Any other write a miss skips (a component in the value
+that throws) is now logged too, as a refresh's already was.
 
 If your app returns such a component, read the value outside the cached
 function and pass it in (it becomes part of the key), or render the component

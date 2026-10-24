@@ -1258,9 +1258,9 @@ no loader's set, so nothing links it to the fill.
 
 #### The server components a `"use cache"` function returns
 
-They render when the value is encoded for the write (`serializeResult` and
-`encodeHandles` in `finalizeAndWrite`, and in the stale refresh), after the
-body returned. That encode used to run inside the execution's tag scope only,
+They render when the value is encoded for the write (`teeResult` and
+`encodeHandles` on a miss, `serializeResult` and `encodeHandles` in the stale
+refresh), after the body returned. That encode used to run inside the execution's tag scope only,
 so `isInsideCacheExecScope()` was false there: a `cookies()` or `headers()`
 read in a returned component went through, the entry stored the first
 visitor's value and every hit served it to the next visitor, and a refresh
@@ -1271,16 +1271,42 @@ refresh), so the read refuses as one in the body does, and so does a write
 through a `ctx` (`assertNotInsideCacheExec` probes the same scope). One helper
 for the body and the encodes keeps the two scopes from drifting apart again.
 
-You might expect the refusal to fail the request, as a read in the body does.
-It cannot: on a miss the encode is the write's background step
-(`runBackground`), which can run after the response. It takes the path of any
-component that throws during the encode (above): Flight reports it to the
-collector, nothing is written, `reportCacheError` logs it and hands it to
-`onError` (`cache-write`, or `stale-revalidation` for a refresh), and a stale
-entry keeps serving. The caller already holds the live value and renders it
-with its own request, so each visitor sees their own value and the next call
-is a miss again. The miss used to hand a skipped write to `onError` only, so
-with no `onError` wired the refusal was silent and the cache simply never hit.
+That alone was not enough, because a miss used to hand the caller `result`
+itself while the encode ran in the background: the value was rendered twice,
+once by the caller's response and once by the encode, and the two shared
+every object in it. State the function created and something renders lazily
+(a `React.lazy`, a memoizing thenable) ran once, in whichever render reached
+it first. The caller's render often got there first, for instance when a
+component in the value awaited `React.cache`-deduped data the page had already
+loaded: warm in the page's Flight request, cold in the encode's own. Its read
+then ran outside the scope and succeeded, and the encode stored the settled
+value for the next visitor. So the miss now encodes once and renders a copy:
+`teeResult` (`src/cache/segment-codec.ts`) tees the Flight stream, the caller
+decodes one branch (`createFromReadableStream`, as a hit does) and the write
+takes the other. The caller shares no object with the encode, the returned
+tree renders only inside the scope, and a refusal there reaches the caller as
+a refusal in the body does: at the value's root the decoded root rejects and
+the call throws the encode's own error (not the decoded one, which production
+Flight redacts); below the root the decoded copy holds a Flight error row that
+throws where it renders. Nothing is written, and `reportCacheError` logs it
+and hands it to `onError` (`cache-write`, or `stale-revalidation` for a
+refresh). The miss used to hand a skipped write to `onError` only, so with no
+`onError` wired the refusal was silent and the cache simply never hit.
+
+One exception keeps today's contract for a value Flight cannot encode at all
+(a function, a class instance): its root rejects too, and when every error the
+encode reported is that kind (`isUnsupportedValueError`, matched on the Flight
+server's own messages) the call returns `result`, uncached, as it always has.
+Nothing is stored, so rendering it live leaks nothing. A refusal, or a
+component that throws, never takes that path.
+
+What it costs: the caller now waits for the copy's root row. For a value of
+host elements and client components that row is ready as the encode starts;
+a server component at the root renders before the call resolves instead of in
+the page's render. Measured in the RSC test harness, a miss on a 50-row list
+took 0.16-0.19 ms (p50) against 0.10-0.13 ms before; a value whose root
+component waits 20 ms took 23 ms against 0.02 ms. On a host without
+`waitUntil` the miss already waited for the whole encode and the store write.
 
 Handle capture is unchanged on a miss: the capture stops before the encode,
 and `execScope` chains to an enclosing execution's scope as the caller's

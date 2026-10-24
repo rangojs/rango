@@ -34,7 +34,12 @@ import {
 } from "./taint.js";
 
 export { isCachedFunction };
-import { serializeResult, deserializeResult } from "./segment-codec.js";
+import {
+  serializeResult,
+  deserializeResult,
+  isUnsupportedValueError,
+  teeResult,
+} from "./segment-codec.js";
 import {
   appendHandles,
   encodeHandles,
@@ -966,23 +971,29 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     const recorded = scoped!.tags;
     recordRequestTags(entryTags(recorded), requestCtx);
 
-    // Serialize + encode handles ONCE, resolve the in-flight envelope so any
-    // concurrent followers can serve a synthetic hit, then persist to the store.
-    // Fully non-blocking when waitUntil is available — the leader's response
-    // waits on neither serialization nor the store write.
+    // Encode the value ONCE, inside the execution's scopes, and hand the
+    // caller a decoded copy of it, as a hit does. The caller rendering
+    // `result` itself would share its lazy state (a React.lazy, a memoizing
+    // thenable) with the encode: whichever render reached it first decided
+    // its value for both, so a read the caller's render made outside the
+    // scope was stored for the next visitor. Then resolve the in-flight
+    // envelope so concurrent followers serve a synthetic hit, and persist.
+    // When waitUntil is available the leader waits for the copy's root row
+    // only, not for the rest of the encode or the store write.
+    const flightErrors: unknown[] = [];
+    const onFlightError = (error: unknown): void => {
+      flightErrors.push(error);
+    };
+    const encoded = inExecution(
+      execScope,
+      () => teeResult(result, onFlightError),
+      recorded,
+    ).result;
     const finalizeAndWrite = async (): Promise<void> => {
       let serialized: string | null;
       let encodedHandles: string | undefined;
-      const flightErrors: unknown[] = [];
-      const onFlightError = (error: unknown): void => {
-        flightErrors.push(error);
-      };
       try {
-        serialized = await inExecution(
-          execScope,
-          () => serializeResult(result, onFlightError),
-          recorded,
-        ).result;
+        serialized = encoded ? await encoded.serialized : null;
         encodedHandles = capture
           ? await inExecution(
               execScope,
@@ -1058,7 +1069,23 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
 
     await runBackground(requestCtx, finalizeAndWrite, true);
 
-    return result;
+    // The encode could not start: nothing is stored, the value renders live.
+    if (!encoded) return result;
+    try {
+      return await encoded.decoded;
+    } catch (decodeError) {
+      // The root row failed. A value Flight cannot encode (a function, a
+      // class instance) is not cached and renders live, as it always has;
+      // anything else, a refused read above all, fails the call as the same
+      // read in the body does.
+      if (
+        flightErrors.length > 0 &&
+        flightErrors.every(isUnsupportedValueError)
+      ) {
+        return result;
+      }
+      throw flightErrors[0] ?? decodeError;
+    }
   };
 
   // Brand the wrapper so it can be detected at runtime (e.g., to prevent

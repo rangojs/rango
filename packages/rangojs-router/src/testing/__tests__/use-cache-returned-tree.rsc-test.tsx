@@ -1,10 +1,12 @@
 /**
- * A server component a "use cache" function returns renders when the value
- * is stored, as part of that function: a cookies() or headers() read there
- * refuses as one in the body does. The entry is not written (the refusal is
- * reported to onError), the visitor's own request still renders live, and the
- * first visitor's value is never served to the next. Served through the
- * public serveShellRequest, on a miss and on a stale entry's refresh.
+ * What a "use cache" function returns is encoded once, inside the function's
+ * guard, and a miss renders the decoded copy, as a hit does. So a cookies()
+ * or headers() read in a server component it returns refuses as one in the
+ * body does: at the value's root it fails the request, below the root it
+ * fails that subtree, and the first visitor's value is never stored for the
+ * next. A value Flight cannot encode (a class instance) is not stored and
+ * renders live, as it always has. Served through the public
+ * serveShellRequest, on a miss and on a stale entry's refresh.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -23,6 +25,9 @@ import { createRouter, urls } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import {
   Block,
+  HandleBlock,
+  NestedBlock,
+  PriceBlock,
   PropsBlock,
   RefreshBlock,
   WriteBlock,
@@ -48,6 +53,11 @@ function setup() {
         { name: "miss" },
       ),
       path(
+        "/nested/:kind",
+        async (ctx) => <div>{await NestedBlock(ctx.params.kind as Kind)}</div>,
+        { name: "nested" },
+      ),
+      path(
         "/refresh/:kind",
         async (ctx) => <div>{await RefreshBlock(ctx.params.kind as Kind)}</div>,
         { name: "refresh" },
@@ -57,6 +67,17 @@ function setup() {
       }),
       path("/write", async (ctx) => <div>{await WriteBlock(ctx)}</div>, {
         name: "write",
+      }),
+      path(
+        "/price",
+        async () => {
+          const item = await PriceBlock("tea");
+          return <p>{`${item.sku} ${item.price.format()}`}</p>;
+        },
+        { name: "price" },
+      ),
+      path("/handle", async (ctx) => <div>{await HandleBlock(ctx)}</div>, {
+        name: "handle",
       }),
     ]),
   );
@@ -84,6 +105,7 @@ const refusal = (kind: Kind) =>
 beforeEach(async () => {
   state.readOnRefresh = false;
   state.propsRuns = 0;
+  state.dataRuns = 0;
   await resetShellTestState();
 });
 
@@ -93,7 +115,7 @@ afterEach(() => {
 
 describe('a server component a "use cache" function returns', () => {
   it.each(KINDS)(
-    "%s(): a miss stores nothing, and the next visitor sees their own value",
+    "%s() at the value's root: fails the request, as in the body, and the next visitor never sees the first one's value",
     async (kind) => {
       const { serve, messages } = setup();
 
@@ -101,8 +123,28 @@ describe('a server component a "use cache" function returns', () => {
       const second = await serve(`/miss/${kind}`, "bob");
 
       expect(second.body).not.toContain("alice");
-      expect(first.body).toContain(`${kind}=alice`);
-      expect(second.body).toContain(`${kind}=bob`);
+      expect([first, second].map((s) => s.response.status)).toEqual([500, 500]);
+      expect(first.body).not.toContain(`${kind}=alice`);
+      expect(messages()).toContainEqual(expect.stringContaining(refusal(kind)));
+    },
+  );
+
+  it.each(KINDS)(
+    "%s() below the value's root: that subtree renders as an error, as on a hit, and nothing is stored",
+    async (kind) => {
+      const { serve, messages } = setup();
+
+      const first = await serve(`/nested/${kind}`, "alice");
+      const second = await serve(`/nested/${kind}`, "bob");
+
+      expect(second.body).not.toContain("alice");
+      // The rest of the value renders; the reader's place is a Flight error
+      // row, which throws to the nearest error boundary where it renders.
+      for (const response of [first, second]) {
+        expect(response.body).toContain("nested");
+        expect(response.body).toMatch(/\n\d+:E\{/);
+      }
+      expect(first.body).not.toContain(`${kind}=alice`);
       expect(messages()).toContainEqual(expect.stringContaining(refusal(kind)));
     },
   );
@@ -138,7 +180,20 @@ describe('a server component a "use cache" function returns', () => {
         'ctx.set() cannot be called inside a "use cache" function',
       ),
     );
-    expect(first.body).toContain("written");
+    expect(first.response.status).toBe(500);
+  });
+
+  it("a handle value that reads the visitor: not stored, so the next visitor never sees the first one's", async () => {
+    const { serve, messages } = setup();
+
+    await serve("/handle", "alice");
+    const second = await serve("/handle", "bob");
+
+    expect(second.body).not.toContain("alice");
+    expect(second.body).toContain("handle-block");
+    expect(messages()).toContainEqual(
+      expect.stringContaining(refusal("cookies")),
+    );
   });
 
   it("one that reads only its props is stored and served on the next request", async () => {
@@ -150,5 +205,24 @@ describe('a server component a "use cache" function returns', () => {
     expect(second.body).toContain("hello ada");
     expect(state.propsRuns).toBe(1);
     expect(messages()).toEqual([]);
+  });
+});
+
+describe('a "use cache" value Flight cannot encode', () => {
+  it("a class instance: not stored, and each request gets the live value", async () => {
+    const { serve, messages } = setup();
+
+    const first = await serve("/price", "alice");
+    const second = await serve("/price", "bob");
+
+    expect([first, second].map((s) => s.response.status)).toEqual([200, 200]);
+    expect(second.body).toContain("tea $2.50");
+    expect(state.dataRuns).toBe(2);
+    expect(messages()).toContainEqual(
+      expect.stringContaining("Only plain objects"),
+    );
+    expect(messages().some((m) => m.includes("cannot be called inside"))).toBe(
+      false,
+    );
   });
 });
