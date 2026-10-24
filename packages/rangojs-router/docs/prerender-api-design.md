@@ -86,7 +86,7 @@ route was pre-rendered.
   Request arrives
        |
        v
-  cache-lookup middleware
+  cache-lookup middleware (serveStoredSegments)
        |
        v
   Is route marked pr: true?
@@ -104,7 +104,7 @@ route was pre-rendered.
   |    |    +----+----+
   |    |    | miss    | hit
   |    |    |         v
-  |    |    |    serveStoredSegments (intercept variant)
+  |    |    |    serve the entry (intercept variant)
   |    |    |    return
   |    |    |
   |    |    v
@@ -117,7 +117,7 @@ route was pre-rendered.
   |    +----+----+
   |    | miss    | hit
   |    |         v
-  |    |    serveStoredSegments (main variant)
+  |    |    serve the entry (main variant)
   |    |    return
   |    |
   |    v

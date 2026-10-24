@@ -964,7 +964,7 @@ resolve env-scoped prerender store
   v
 lookup durable overlay by versioned key; verify the answer
   |
-  +-- fresh hit --> serveStoredSegments(entry), then resolve loaders fresh
+  +-- fresh hit --> serve the entry, then resolve loaders fresh
   |
   +-- stale hit --> serve it the same way; with onRevalidate configured,
   |                 schedule it via waitUntil (once per key per isolate)
@@ -978,11 +978,19 @@ lookup durable overlay by versioned key; verify the answer
   v
 lookup bundled manifest
   |
-  +-- hit --> serveStoredSegments(entry), then resolve loaders fresh
+  +-- hit --> serve the entry, then resolve loaders fresh
   |
   v
 normal miss behavior
 ```
+
+The flag check, both lookups and the serve run in one generator,
+`serveStoredSegments(ctx, state, upstream)`, which is the cache-lookup
+middleware itself (`withCacheLookup` returns it); the env-scoped store was
+resolved with the request context before it. `readPrerenderSource` does the
+two lookups and hands the entry back as a `StoredSegmentSource`, and the same
+generator serves it as it serves a `cache()` record. When no stored source
+answers, it passes `upstream` through.
 
 The lookup gate cannot be only today's `pr` flag. A route may have no build-baked
 entry but still be on-demand eligible. The trie needs a separate flag, for
