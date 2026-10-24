@@ -32,6 +32,7 @@ import {
   RangoContext,
   latchPprHeaderScopeForEntries,
 } from "../server/context.js";
+import { _getRequestContext } from "../server/request-context.js";
 
 /**
  * Header-guard latch for the intercept funnels (issue #713). ppr and
@@ -424,11 +425,16 @@ export async function resolveInterceptLoadersOnly<TEnv>(
   belongsToRoute: boolean,
 ): Promise<ResolvedSegment[]> {
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
+  const handleStore = _getRequestContext()?._handleStore;
   const { segments } = await resolveInterceptLoaders(
     pass,
     interceptEntry,
     parentEntry,
     belongsToRoute,
+  );
+  // Where resolveInterceptEntry runs the handler.
+  handleStore?.releaseRecordedValues(
+    interceptSlotId(parentEntry, interceptEntry),
   );
   if (!interceptEntry.loading) await settleLoaderSegments(segments);
   deliverStartedLoaders(pass.context, segments);

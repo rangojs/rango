@@ -604,6 +604,7 @@ export async function resolveLoadersOnly<TEnv>(
   // no latch: loader writes are exempt under cache()
   // (assertCachedHeaderWriteAllowed).
   latchPprHeaderScopeForEntries(entries, pass.routeKey);
+  const handleStore = _getRequestContext()?._handleStore;
 
   async function collectEntryLoaders(
     entry: EntryData,
@@ -633,6 +634,9 @@ export async function resolveLoadersOnly<TEnv>(
       }
       allMatchedIds.push(...matchedIds);
     }
+    // Where the MISS runs this entry's handler: before its slots' loaders,
+    // which push into its segment too (a slot's own call releases nothing).
+    handleStore?.releaseRecordedValues(sc);
 
     const seenParallelEntryIds = new Set<string>();
     for (const parallelEntry of getParallelEntries(entry.parallel)) {

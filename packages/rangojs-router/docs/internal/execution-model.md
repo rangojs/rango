@@ -383,6 +383,21 @@ See "Rewrite" below for what moves and what stays.
   `cache-lookup-owned-pushes.test.ts`, `cache-record-loader-pushes.test.ts`
   and `serve-shell-request.rsc-test.tsx`.
 
+- A `cache()` HIT, a PPR shell replay included, lists a segment's handle
+  values in the order an uncached render does (a `Prerender()` entry does
+  not: `decodeStoredEntry` restores it without a hold). The MISS starts an
+  entry's loaders, then runs its handler; the HIT restores the record before
+  any loader starts. So the restored values hold the handler's place: until the
+  loaders-only walk reaches the point where the MISS ran that entry's
+  handler (after the entry's own loaders and before its slots' loaders in
+  `resolveLoadersOnly`, after the intercept's loaders in
+  `resolveInterceptLoadersOnly`), a push into the segment goes in front of
+  them. A loader's push made before its first `await` lists ahead of the
+  handler's, one made after it behind. Source: `holdRecordedValues` and
+  `releaseRecordedValues` in `handle-store.ts`, held by
+  `CacheScope.lookupRouteDetailed`; pinned by
+  `cached-handle-push-order.rsc-test.tsx` (rango-t189).
+
 - Under PPR shell capture, of the DSL `loader()` registrations only
   `loader(Def, { ssr: false })` executes and bakes; every other registration
   is masked and live, whatever its `loading()`

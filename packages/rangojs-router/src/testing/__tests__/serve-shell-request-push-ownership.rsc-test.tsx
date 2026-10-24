@@ -1302,7 +1302,9 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
 
       expect(delivered(values)).toEqual({
         hydration: ["handler-note"],
-        afterHydration: ["handler-note", "live-note@g2", "slow-live-note@g2"],
+        // The document MISS's order: the push made before the loader's first
+        // await is ahead of the handler's.
+        afterHydration: ["live-note@g2", "handler-note", "slow-live-note@g2"],
       });
     });
 
@@ -1422,7 +1424,7 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
       });
       expect(await nav("/live-noted")).toEqual({
         shell: undefined,
-        hydration: ["handler-note", "live-note@g2", "slow-live-note@g2"],
+        hydration: ["live-note@g2", "handler-note", "slow-live-note@g2"],
         afterHydration: undefined,
       });
     });

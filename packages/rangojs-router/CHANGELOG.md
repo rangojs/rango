@@ -502,9 +502,25 @@ showed on the MISS and were missing on every HIT. The intercept variant a
 
 **Now.** A HIT runs only the intercept's loaders, as the MISS does: it shows
 every handle value the MISS shows, and the route's loaders neither run nor
-appear in the response. Inside the intercept, a HIT can still list a loader's
-value after the handler's where the MISS lists it before. No change in your
-code.
+appear in the response. No change in your code.
+
+### Fixed: a `cache()` HIT lists a segment's handle values in the order the first render does
+
+**Before.** Under `cache()`, where a route's, a layout's or an intercept's
+handler and its loaders both push to a handle (a breadcrumb read with
+`useHandle`), every HIT listed the loader's value after the handler's, while
+the render that wrote the record listed a value the loader pushed before its
+first `await` ahead of the handler's. Breadcrumbs reordered between the first
+visit and every later one: `["layout", "shared-loader", "modal", "index"]`
+became `["layout", "modal", "shared-loader", "index"]`. A PPR shell HIT and
+the navigation that replays its shell listed a live loader's value the same
+way, on a route without `Prerender()`.
+
+**Now.** A HIT lists them as the first render does: a value the loader pushes
+before its first `await` comes ahead of the handler's, one it pushes after an
+`await` behind it, whether the record was written by that render or by a
+background refresh. A `Prerender()` route's stored page keeps the previous
+order. No change in your code.
 
 ## 0.27.0 (2026-10-23)
 

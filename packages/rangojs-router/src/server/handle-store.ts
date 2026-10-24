@@ -89,10 +89,14 @@ interface SlotTag {
    * loader a copy stands for. Unset for a handler's push.
    */
   by?: string;
+  /** A value of the cache() record a HIT restored (holdRecordedValues). */
+  record?: true;
 }
 
 // Shared by every plain DSL-loader push; tags are never mutated in place.
 const LOADER_SLOT: SlotTag = Object.freeze({ loader: true });
+// Shared by every held record value that had no tag (holdRecordedValues).
+const RECORD_SLOT: SlotTag = Object.freeze({ record: true });
 
 /**
  * What a restored record is to one loader's handle pushes on this request
@@ -312,6 +316,23 @@ export interface HandleStore {
   replacePlaceholders(loaderIds: readonly string[], deliver: () => void): void;
 
   /**
+   * A cache() HIT restored its record's values into `segmentIds`
+   * (CacheScope.lookupRouteDetailed). The MISS ran each segment's handler
+   * after it started the segment's loaders, so a push into a restored array
+   * goes in front of the record's values until releaseRecordedValues: a
+   * loader's push lands where the same loader timing puts it on the MISS.
+   */
+  holdRecordedValues(segmentIds: readonly string[]): void;
+
+  /**
+   * The HIT's loader walk reached the place where the MISS ran
+   * `segmentId`'s handler (revalidation.ts resolveLoadersOnly,
+   * intercept-resolution.ts resolveInterceptLoadersOnly): later pushes
+   * follow the record's values.
+   */
+  releaseRecordedValues(segmentId: string): void;
+
+  /**
    * Get all collected handle data after all handlers have settled.
    * Waits for `settled` (handler lane), then returns the data at that point.
    */
@@ -482,6 +503,8 @@ export function createHandleStore(): HandleStore {
   // it restored placeholders for (pushPlaceholder).
   const restoredLoaders = new Set<string>();
   const placeholderLoaders = new Set<string>();
+  // Segments whose restored record values a push still goes in front of.
+  const held = new Set<string>();
   let authority: ((loaderId: string) => RecordAuthority) | undefined;
   const isRestored = (loaderId: string): boolean =>
     restoredLoaders.has(loaderId) || authority?.(loaderId) === "pin";
@@ -618,6 +641,16 @@ export function createHandleStore(): HandleStore {
       }
     }
     return at;
+  }
+
+  // The first restored record value in `values` (holdRecordedValues).
+  function firstRecordSlot(values: unknown[]): number | undefined {
+    const tags = slotTags.get(values);
+    if (!tags) return undefined;
+    for (let i = 0; i < values.length; i++) {
+      if (tags[i]?.record) return i;
+    }
+    return undefined;
   }
 
   // Where a live push by a loader with copies lands in `values`: its first
@@ -954,6 +987,9 @@ export function createHandleStore(): HandleStore {
         at = restoredInsertIndex(values, restoredBy);
         if (replayOf === undefined) liveOf = restoredBy;
       }
+      if (at === undefined && held.has(segmentId)) {
+        at = firstRecordSlot(values);
+      }
       const by =
         getHandlePushOwner() ??
         replayOf ??
@@ -1056,6 +1092,24 @@ export function createHandleStore(): HandleStore {
       dropCopies(loaderId, hole);
       version++;
       signalEmission();
+    },
+
+    holdRecordedValues(segmentIds: readonly string[]): void {
+      for (const segmentId of segmentIds) {
+        held.add(segmentId);
+        for (const handleName in data) {
+          const values = data[handleName][segmentId];
+          if (!values?.length) continue;
+          const tags = tagsFor(values);
+          for (let i = 0; i < values.length; i++) {
+            tags[i] = tags[i] ? { ...tags[i], record: true } : RECORD_SLOT;
+          }
+        }
+      }
+    },
+
+    releaseRecordedValues(segmentId: string): void {
+      held.delete(segmentId);
     },
 
     replacePlaceholders(

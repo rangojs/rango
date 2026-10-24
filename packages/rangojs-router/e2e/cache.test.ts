@@ -79,10 +79,10 @@ function getCacheLogs(stdout: string): {
 
 /**
  * The crumbs the /cache-intercept-crumbs layout shows with the intercept open
- * over its index, sorted: inside the slot a HIT lists the loader's crumb after
- * the handler's, and the MISS before it.
+ * over its index, in order: inside the slot, the loader's crumb (pushed
+ * before its first await) is ahead of the handler's (rango-t189).
  */
-const CACHE_INTERCEPT_CRUMBS = ["index", "layout", "modal-a", "shared-loader"];
+const CACHE_INTERCEPT_CRUMBS = ["layout", "shared-loader", "modal-a", "index"];
 
 /** Open the /cache-intercept-crumbs intercept from its index. */
 async function openCrumbsIntercept(page: Page): Promise<void> {
@@ -90,9 +90,7 @@ async function openCrumbsIntercept(page: Page): Promise<void> {
   await expect(page.getByTestId("cic-modal")).toBeVisible();
   await expect(page.getByTestId("cic-index")).toBeVisible();
   await expect
-    .poll(async () =>
-      (await page.getByTestId("ih-crumb").allTextContents()).sort(),
-    )
+    .poll(async () => page.getByTestId("ih-crumb").allTextContents())
     .toEqual(CACHE_INTERCEPT_CRUMBS);
 }
 
@@ -690,7 +688,8 @@ test.describe("cache-intercept-routes", () => {
 
   // rango-t184: the detail route and its intercept both declare the loader
   // that pushes "shared-loader". The HIT ran it as the route's, so its crumb
-  // was filed under a segment the response does not match.
+  // was filed under a segment the response does not match. rango-t189: the
+  // HIT listed it after the intercept handler's crumb, the MISS before it.
   test("a HIT of the intercept shows the crumbs of the MISS, a loader the route and the intercept both declare included", async ({
     page,
   }) => {

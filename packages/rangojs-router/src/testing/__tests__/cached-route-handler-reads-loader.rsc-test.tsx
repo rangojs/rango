@@ -250,11 +250,7 @@ async function visitOf(shape: Shape): Promise<{
   };
 }
 
-/**
- * Every crumb the page pushes, once each. Sorted: within one segment a HIT
- * shows the record's handler push before the live loader run's, a MISS the
- * other way round.
- */
+/** Every crumb the page pushes, once each, sorted. */
 const CRUMBS = [
   "aside-crumb",
   "aside-data-crumb",
@@ -289,9 +285,10 @@ describe("cache() route whose handler reads its own DSL loader", () => {
         clock.advance(1_100);
         const hit = await serve();
 
-        expect((await crumbs(miss, before)).sort()).toEqual(CRUMBS);
-        expect((await crumbs(stale, before)).sort()).toEqual(CRUMBS);
-        expect((await crumbs(hit, before)).sort()).toEqual(CRUMBS);
+        const shown = await crumbs(miss, before);
+        expect([...shown].sort()).toEqual(CRUMBS);
+        expect(await crumbs(stale, before)).toEqual(shown);
+        expect(await crumbs(hit, before)).toEqual(shown);
       });
 
       it("the refresh writes the record a MISS writes", async () => {
