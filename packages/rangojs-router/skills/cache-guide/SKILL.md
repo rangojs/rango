@@ -320,11 +320,14 @@ domains, and the router id keeps two routers on one store apart when both
 serve the same host and path (see `/host-router`, "Shared cache store"); the search part is sorted, excludes the router's internal params, and
 honors `createRouter({ cache: { searchParams } })`.
 
-A custom `key` function replaces the whole default key (e.g., to key by user role
-or locale); it also bypasses the store's `keyGenerator` and the search-param
-filter. It runs once per request and may read `cookies()`. Its result is
-stored namespaced (`key:` plus its URI encoding), so no value it returns, raw
-request input included, names another route's record. A nested `cache()`
+A custom `key` function replaces the URL part of the default key (e.g., to
+key by user role or locale), not the request type: document loads, client
+navigations and intercept navigations still keep their own records, and the
+key decides which requests of one type share a record. It also bypasses the
+store's `keyGenerator` and the search-param filter. It runs once per request
+and may read `cookies()`. Its result is stored namespaced (`key:` plus its URI
+encoding, then the request type), so no value it returns, raw request input
+included, names another route's record. A nested `cache()`
 keys its records within the enclosing `key()` partition (`/caching` → "Keys
 nest"). Normalize the result to the values you serve: each distinct value is
 a record. On a `ppr` route, `key()` (and a store `keyGenerator` that returns

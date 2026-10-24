@@ -317,7 +317,7 @@ describe("resolveShellPartition (request-partitioned ppr shells)", () => {
       },
     );
     expect(keyFn).toHaveBeenCalledTimes(1);
-    expect(inner.gets).toEqual(["key:tier%3Agold"]);
+    expect(inner.gets).toEqual(["key:tier%3Agold|doc"]);
   });
 
   it("is the store keyGenerator result given the document default key, with no route cache()", async () => {
