@@ -162,8 +162,8 @@ later visitor got. A capture or a HIT tail that passed its own context did
 not check the mark, so the same code threw on a MISS only.
 
 **Now.** The request context is not marked as an argument, as it already was
-not when the body reached it through `getRequestContext()`. A write inside
-the body still throws, on every pass. A handler or middleware `ctx` argument
+not when the body reached it through `getRequestContext()`. A write made in
+the body's own async chain still throws, on every pass. A handler or middleware `ctx` argument
 keeps its mark. No change in your code.
 
 ## 0.27.0 (2026-10-23)

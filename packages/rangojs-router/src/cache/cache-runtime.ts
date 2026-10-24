@@ -926,9 +926,10 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // execution window (a 2s cached fetch poisoned a sibling loader's
     // cookies() — same hazard class as issue #684, plan 010). Not as an
     // argument either (getRequestContext(), any pass: a derived pass inherits
-    // `_requestRoot`): every render pass's writers check the request's own
-    // context (server/render-pass.ts), so the stamp failed a shell capture's
-    // or a background re-render's writes while a foreground body held it.
+    // `_requestRoot`): a derived pass's writers that it does not route to a
+    // sink check the request's own context (server/render-pass.ts), so the
+    // stamp failed a shell capture's or a background re-render's writes while
+    // a foreground body held it.
     const taintedArgs: unknown[] = [];
     for (const arg of args) {
       if (isTainted(arg) && !(arg as RequestContext)._requestRoot) {
