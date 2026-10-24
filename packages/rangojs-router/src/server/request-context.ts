@@ -902,6 +902,13 @@ export interface RequestContext<
    */
   _handlerStart?: number;
 
+  /**
+   * @internal Handler-level Server-Timing entries (rsc/handler.ts): the
+   * bootstrap timings, then the core handler's classify. A stale document
+   * cache entry's re-run has its own (render-pass.ts).
+   */
+  _handlerTiming?: string[];
+
   /** @internal Resolved platform phase-span tracing for this request (Cloudflare or OTel) */
   _tracing?: ResolvedTracing;
 
@@ -1017,6 +1024,7 @@ export type PublicRequestContext<
   | "_activeRoutine"
   | "_renderDiagnosticsEnabled"
   | "_handlerStart"
+  | "_handlerTiming"
   | "_tracing"
   | "_basename"
   | "_routerId"
@@ -1744,6 +1752,7 @@ export function createRequestContext<TEnv>(
     _activeRoutine: undefined,
     _renderDiagnosticsEnabled: undefined,
     _handlerStart: undefined,
+    _handlerTiming: undefined,
 
     _resolveRenderBarrier: null as any,
     _renderBarrierSegmentOrder: undefined,

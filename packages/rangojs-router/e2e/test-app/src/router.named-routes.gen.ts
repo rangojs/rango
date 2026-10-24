@@ -368,6 +368,7 @@ export const NamedRoutes = {
   "metaUnset.child": "/meta-unset/child",
   "metaUnset.index": "/meta-unset",
   "metaUnset.unsetThenSet": "/meta-unset/unset-then-set",
+  "middlewareTest.abandonedNext": "/middleware-test/abandoned-next",
   "middlewareTest.cookies": "/middleware-test/cookies",
   "middlewareTest.cookiesAfterNext": "/middleware-test/cookies-after-next",
   "middlewareTest.ctxParity": "/middleware-test/ctx-parity",
