@@ -268,6 +268,16 @@ describe("derived render pass", () => {
     expect(hasFastProperties!(pass)).toBe(true);
   });
 
+  itFast("a document cache re-run keeps fast properties", () => {
+    const base = makeRequestContext();
+    const pass = deriveRenderPass(base, "document-revalidation", {
+      handleStore: base._handleStore,
+      sink: makeRequestContext(),
+    });
+    expect(Object.getPrototypeOf(pass)).toBe(base);
+    expect(hasFastProperties!(pass)).toBe(true);
+  });
+
   itFast(
     "a background re-render a shell capture starts keeps fast properties",
     () => {

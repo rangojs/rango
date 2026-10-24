@@ -4,7 +4,8 @@
  * deriveShellCaptureContext), the PPR HIT tail (rsc/rsc-rendering.ts
  * createTailContext and the seeding after it), the background re-render of a
  * stale route record (router/match-middleware/background-revalidation.ts
- * rerenderAndCacheRoute), and what rebaseRequestContext moves when
+ * rerenderAndCacheRoute), the re-run of a stale document cache entry
+ * (cache/document-cache.ts), and what rebaseRequestContext moves when
  * middleware rewrites a request. A field missing from a derivation's own set
  * reads the foreground request's value through the prototype (#684: a
  * capture that inherited the foreground's render barrier baked foreground
@@ -33,6 +34,7 @@ vi.mock(
 import {
   createRequestContext,
   rebaseRequestContext,
+  runWithRequestContext,
   _getRequestContext,
   type RequestContext,
 } from "../request-context.js";
@@ -43,7 +45,11 @@ import { rerenderAndCacheRoute } from "../../router/match-middleware/background-
 import type { MatchContext } from "../../router/match-context.js";
 import type { RouterContext } from "../../router/router-context.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
-import { MemorySegmentCacheStore } from "../../cache/index.js";
+import {
+  createDocumentCacheMiddleware,
+  MemorySegmentCacheStore,
+} from "../../cache/index.js";
+import type { MiddlewareContext } from "../../router/middleware.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
 import {
   resetShellTestState,
@@ -516,6 +522,125 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       _handlerLoaderDeps: undefined,
       _renderBarrierWaiters: undefined,
     });
+  });
+});
+
+describe("document cache re-run context (document-cache.ts)", () => {
+  it("owns its render barrier, use(), dynamic() latch, error lists and response writers over the request's handle store", async () => {
+    const base = requestContext();
+    base.header("x-before", "1");
+    base._cacheStore = {
+      getResponse: async () => ({
+        response: new Response("stale"),
+        shouldRevalidate: true,
+      }),
+      putResponse: async () => {},
+    } as unknown as RequestContext["_cacheStore"];
+    const tasks: Promise<void>[] = [];
+    base.waitUntil = (fn) => {
+      tasks.push(Promise.resolve().then(fn));
+    };
+    let rerun: RequestContext | undefined;
+    let ownAtStart: string[] = [];
+    const next = async (): Promise<Response> => {
+      rerun = _getRequestContext();
+      ownAtStart = ownKeys(rerun!);
+      return new Response("fresh", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+    };
+    const stale = await runWithRequestContext(base, () =>
+      createDocumentCacheMiddleware()(
+        {
+          request: base.request,
+          url: base.url,
+          env: {},
+        } as unknown as MiddlewareContext,
+        next,
+      ),
+    );
+    expect(stale.headers.get("x-document-cache-status")).toBe("STALE");
+    // After the stale hit: the visitor's own write, not the re-run's.
+    base.header("x-after", "1");
+    await Promise.all(tasks);
+
+    const ctx = rerun!;
+    expect(Object.getPrototypeOf(ctx)).toBe(base);
+    expect(ownAtStart).toEqual(
+      [
+        ...RENDER_BARRIER,
+        "[rango.requestContext.res] (hidden)",
+        "_dynamic",
+        "_handleStore",
+        "_metricsStore",
+        "_onResponseCallbacks",
+        "_recoveredHandlerErrors",
+        "_renderErrors",
+        "_rotateStateCookie",
+        "_setFreshReadsCookie",
+        "_setKeepCacheDirective",
+        "_setStatus",
+        "_shellCaptureState",
+        "deleteCookie",
+        "dynamic",
+        "header",
+        "res (accessor)",
+        "setCookie",
+        "setStatus",
+        "setTheme",
+        "use",
+      ].sort(),
+    );
+    // The request's handle store, its own barrier over it and its own use().
+    expect(ctx._handleStore).toBe(base._handleStore);
+    expect(ctx._resolveRenderBarrier).not.toBe(base._resolveRenderBarrier);
+    expect(ctx.use).not.toBe(base.use);
+    expect({
+      _metricsStore: ctx._metricsStore,
+      _recoveredHandlerErrors: ctx._recoveredHandlerErrors,
+      _renderErrors: ctx._renderErrors,
+      _onResponseCallbacks: ctx._onResponseCallbacks,
+      _shellCaptureState: ctx._shellCaptureState,
+    }).toEqual({
+      _metricsStore: undefined,
+      _recoveredHandlerErrors: undefined,
+      _renderErrors: [],
+      _onResponseCallbacks: [],
+      _shellCaptureState: undefined,
+    });
+    // Its response starts from the request's stub at the stale hit.
+    expect(ctx.res).not.toBe(base.res);
+    expect(ctx.res.headers.get("x-before")).toBe("1");
+    expect(ctx.res.headers.get("x-after")).toBeNull();
+    const writers = [
+      "dynamic",
+      "header",
+      "setCookie",
+      "deleteCookie",
+      "setStatus",
+      "_setStatus",
+      "setTheme",
+      "_rotateStateCookie",
+      "_setKeepCacheDirective",
+      "_setFreshReadsCookie",
+    ] as const;
+    expect(writers.filter((writer) => ctx[writer] === base[writer])).toEqual(
+      [],
+    );
+    ctx.setStatus(500);
+    ctx.header("x-rerun", "1");
+    ctx.setCookie("rerun", "1");
+    ctx._rotateStateCookie();
+    ctx._setFreshReadsCookie(5_000);
+    expect(ctx.res.headers.get("x-rerun")).toBe("1");
+    expect(base.res.status).toBe(200);
+    expect(base.res.headers.get("x-rerun")).toBeNull();
+    expect(base.res.headers.get("set-cookie")).toBeNull();
+    // Its dynamic() opts out the re-run's render, not the request's.
+    expect(ctx._dynamic).toBe(false);
+    ctx.dynamic();
+    expect(ctx._dynamic).toBe(true);
+    expect(base._dynamic).toBe(false);
   });
 });
 

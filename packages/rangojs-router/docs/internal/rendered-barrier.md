@@ -172,7 +172,8 @@ The render barrier is a deferred promise on the request context:
   (`wireRenderBarrier` in `server/request-context.ts`, called by
   `deriveRenderPass` in `server/render-pass.ts` for the `shell-capture` and
   `ppr-tail` rows of `RENDER_PASS_FIELDS`; the background re-render's row
-  inherits the request's barrier, see the next item). This is scar
+  inherits the request's barrier, and the document cache re-run's row owns
+  one over the request's handle store, see the next two items). This is scar
   tissue (issue #684, plan 009): the derived context is
   `Object.create(reqCtx)`, and before the explicit wiring every
   `_renderBarrier*` read fell through the prototype to the foreground
@@ -228,6 +229,20 @@ The render barrier is a deferred promise on the request context:
 
   Pinned through `serveShellRequest` by
   `testing/__tests__/background-revalidation-pass.rsc-test.tsx`.
+
+- **Re-run of a stale document cache entry**: the `document-revalidation`
+  row owns its barrier, wired to the request's handle store. The stale HIT
+  matched and rendered nothing, so the re-run is the request's only render,
+  and its barrier must resolve for its own tree. When it took the background
+  row and inherited the request's barrier, the barrier resolved through the
+  request's closure, which read the request's `_treeHasStreaming` (unset;
+  the re-run set its own on the pass), built the handle snapshot before a
+  `loading()` handler pushed, and a loader that read a handle after
+  `rendered()` got an empty list in the refreshed entry. Its guard fields
+  close on the pass with the barrier, so a handler read of a loader after
+  the barrier resolved is not taken for a deadlock. Pinned through
+  `serveShellRequest` by
+  `testing/__tests__/document-cache-refresh-render.rsc-test.tsx`.
 
 ### Loader `get(handle)` After Barrier
 
