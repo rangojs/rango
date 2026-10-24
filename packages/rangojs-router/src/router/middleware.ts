@@ -545,11 +545,12 @@ function mergeResponse(
 /**
  * The response holder past one middleware. Attached, it reads and writes its
  * middleware's holder, so a chain shares one response. A middleware that
- * returns or throws its own Response, or throws, while the next() it called
- * runs (a timeout fallback, a stale document cache entry's background re-run,
- * cache/document-cache.ts), or that calls next() after it returned, detaches
- * that run: the rest of the chain builds its own response, and the
- * middleware ahead keep what the middleware returned. With one holder, a
+ * settles without that run's response while it runs (it returns or throws
+ * its own Response, throws, or rewrites: a timeout fallback, a stale
+ * document cache entry's background re-run, cache/document-cache.ts), or
+ * that calls next() after it returned, detaches that run: the rest of the
+ * chain builds its own response, and the middleware ahead keep what the
+ * middleware settled with. With one holder, a
  * forgiving middleware ahead of the cache returned the re-run's response,
  * whose body the cache had drained into the store.
  */
@@ -573,6 +574,17 @@ class DownstreamHolder implements ResponseHolder {
     this.own = from;
     this.attached = false;
   }
+}
+
+/**
+ * A middleware settled without the response of the run its next() started
+ * (its own Response, a throw, a rewrite error) while that run still goes.
+ */
+function detachIfRunning(
+  holder: DownstreamHolder | undefined,
+  nextResolvedAt: number | undefined,
+): void {
+  if (holder && nextResolvedAt === undefined) holder.detach();
 }
 
 /**
@@ -725,10 +737,7 @@ export async function executeMiddleware<TEnv>(
         }
       });
     } catch (error) {
-      // Threw while the run its next() started is still going.
-      if (downstreamHolder && nextResolvedAt === undefined) {
-        downstreamHolder.detach();
-      }
+      detachIfRunning(downstreamHolder, nextResolvedAt);
       throw error;
     } finally {
       // Settle the middleware own-time metric once on both the success and
@@ -742,10 +751,14 @@ export async function executeMiddleware<TEnv>(
     // already pushed, and drop the response it built. Only a rewrite after
     // next() rejected with a Rewrite (nothing rendered) unwinds.
     if (rewrite && nextPromise && !nextRejectedWithRewrite) {
+      detachIfRunning(downstreamHolder, nextResolvedAt);
       throw rewriteAfterNextError(entry.handler, rewrite);
     }
     if (rewrite) throw rewrite;
-    if (isRewrite(result)) throw returnedRewriteError(entry.handler);
+    if (isRewrite(result)) {
+      detachIfRunning(downstreamHolder, nextResolvedAt);
+      throw returnedRewriteError(entry.handler);
+    }
 
     // Record post-next() processing time when middleware did work after
     // the downstream chain resolved (e.g. adding headers, logging).
@@ -767,10 +780,7 @@ export async function executeMiddleware<TEnv>(
     // RequestContext stub headers (from cookies().set()) into the
     // returned Response so they are not lost.
     if (result instanceof Response) {
-      // Its own Response while the run its next() started is still going.
-      if (downstreamHolder && nextResolvedAt === undefined) {
-        downstreamHolder.detach();
-      }
+      detachIfRunning(downstreamHolder, nextResolvedAt);
       if (isWebSocketUpgradeResponse(result)) {
         holder.response = result;
         return result;

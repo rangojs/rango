@@ -214,15 +214,18 @@ re-run's headers go to the refreshed entry. No change in your code.
 
 ### Fixed: a middleware that answers while its `next()` still runs keeps its answer
 
-**Before.** A middleware that returned or threw its own `Response`, or threw,
-while the `next()` it called was still running shared its response with the
-render it abandoned. Examples are a timeout fallback
-(`Promise.race([next(), timeout])`), a fire-and-forget `next()`, and a throw
-that a middleware ahead catches. When a middleware ahead was still working
-after `next()` once that render finished, the outcome depended on timing:
+**Before.** A middleware that settled while the `next()` it called was still
+running shared its response with the render it abandoned. It may have
+returned or thrown its own `Response`, thrown an error, or thrown or returned
+a `rewrite()`, which after `next()` is an error. Examples are a timeout
+fallback (`Promise.race([next(), timeout])`), a fire-and-forget `next()`, and
+a throw that a middleware ahead catches. When a middleware ahead was still
+working after `next()` once that render finished, the outcome depended on
+timing:
 
 - A middleware ahead that returns nothing after `await next()` could answer
-  with the abandoned render's page instead of the fallback.
+  with the abandoned render's page instead of the fallback, or instead of the
+  fallback it answered a caught error with.
 - A header that a middleware ahead set after `next()` could land on the
   abandoned render's response and be lost.
 
@@ -230,14 +233,20 @@ after `next()` once that render finished, the outcome depended on timing:
 const timeoutFallback: Middleware = (ctx, next) =>
   Promise.race([
     next(),
-    sleep(2000).then(() => new Response("Try again", { status: 503 })),
+    new Promise<Response>((resolve) =>
+      setTimeout(
+        () => resolve(new Response("Try again", { status: 503 })),
+        2000,
+      ),
+    ),
   ]);
 ```
 
-**Now.** The answer is what the middleware returned: the middleware ahead see
-it after `next()`, and their header writes land on it. The abandoned render
-builds its own response, which nothing serves. A middleware that waits for
-its `next()` behaves as before. No change in your code.
+**Now.** The middleware ahead get what the middleware settled with: its
+`Response`, which they see after `next()` and write on, or its error, which
+they can catch and answer with a fallback. The abandoned render builds its
+own response, which nothing serves. A middleware that waits for its `next()`
+behaves as before. No change in your code.
 
 ### Fixed: a stale `cache()` record a PPR shell recapture reads refreshes under `cache()` rules
 

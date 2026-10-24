@@ -6,9 +6,8 @@
  * even when their post-next() work outlasts the abandoned render, which
  * builds its own response.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
-import { vi } from "vitest";
 
 vi.mock(
   "@vitejs/plugin-rsc/rsc/server",
@@ -20,7 +19,12 @@ vi.mock(
 );
 
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
-import { createRouter, urls, type MiddlewareFn } from "../../index.rsc.js";
+import {
+  createRouter,
+  rewrite,
+  urls,
+  type MiddlewareFn,
+} from "../../index.rsc.js";
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -126,25 +130,49 @@ describe("a middleware that answers while the next() it called still runs", () =
     });
   });
 
-  it("answers the fallback of a middleware that catches a throw made while next() runs", async () => {
-    const result = await serve({
-      forgiving: true,
-      answer: async (_ctx, next) => {
-        try {
-          return await next();
-        } catch {
-          return new Response("fallback", { status: 500 });
-        }
-      },
-      inner: async (_ctx, next) => {
+  // A rewrite made after next() started the render is an error
+  // (router/middleware.ts rewriteAfterNextError, returnedRewriteError).
+  it.each<[string, MiddlewareFn]>([
+    [
+      "throws",
+      async (_ctx, next) => {
         abandon(next);
         throw new Error("inner failed");
       },
-    });
-    expect(result).toEqual({
-      status: 500,
-      body: "fallback",
-      headers: AHEAD_WROTE,
-    });
-  });
+    ],
+    [
+      "throws rewrite()",
+      async (_ctx, next) => {
+        abandon(next);
+        throw rewrite("/elsewhere");
+      },
+    ],
+    [
+      "returns rewrite()",
+      (async (_ctx: unknown, next: () => Promise<Response>) => {
+        abandon(next);
+        return rewrite("/elsewhere");
+      }) as unknown as MiddlewareFn,
+    ],
+  ])(
+    "answers the fallback of a middleware ahead that catches when one %s while next() runs",
+    async (_label, inner) => {
+      const result = await serve({
+        forgiving: true,
+        answer: async (_ctx, next) => {
+          try {
+            return await next();
+          } catch {
+            return new Response("fallback", { status: 500 });
+          }
+        },
+        inner,
+      });
+      expect(result).toEqual({
+        status: 500,
+        body: "fallback",
+        headers: AHEAD_WROTE,
+      });
+    },
+  );
 });
