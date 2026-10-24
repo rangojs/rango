@@ -250,6 +250,8 @@ export const RENDER_PASS_FIELDS: {
         sink.dynamic();
       };
       pass._metricsStore = undefined;
+      // The re-run's classify timing stays off the visitor's Server-Timing.
+      pass._handlerTiming = [];
       pass._renderErrors = [];
       pass._recoveredHandlerErrors = undefined;
       pass._shellCaptureState = undefined;

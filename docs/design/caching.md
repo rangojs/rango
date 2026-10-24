@@ -280,10 +280,14 @@ the render both read, so it is documented instead.
 `onResponse()` callbacks the re-run registers apply to its own response, as
 on a MISS; ones registered before the hit are drained onto the `STALE`
 response, as before, and do not reach the re-run.
-What the pass does not isolate is the global chain's own response holder
-(`executeMiddleware` in `router/middleware.ts`): a global middleware's
-`ctx.header()` that writes to the chain's current response can still land on
-the other request's response.
+The global chain's response holder (`executeMiddleware` in
+`router/middleware.ts`) is the re-run's own as well: the cache returned the
+`STALE` response while the `next()` it called still ran, which detaches that
+run (`DownstreamHolder`). The middleware ahead of the cache keep the `STALE`
+response, so their writes after `next()` land on it and a forgiving one never
+returns the re-run's drained body; the middleware after the cache write to
+the re-run's response. Its handler timing (`_handlerTiming`) is its own too,
+so its `handler-classify` stays off the visitor's `Server-Timing`.
 
 ### Layer 2: Shell Cache + Fresh Streaming
 

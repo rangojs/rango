@@ -510,9 +510,8 @@ export function createRSCHandler<
       `handler-ctx-create;dur=${ctxCreateDur.toFixed(2)}`,
     ];
 
-    // Store timing data in variables for downstream access
-    variables.__handlerTiming = handlerTiming;
-    variables.__handlerStart = handlerStart;
+    // The core handler adds its classify timing (coreRequestHandler).
+    requestContext._handlerTiming = handlerTiming;
 
     // Wrap entire request handling in request context
     // Makes context available via getRequestContext() throughout:
@@ -603,14 +602,12 @@ export function createRSCHandler<
               // timeline. Handler timing parts are always emitted (even
               // without debug metrics) so non-debug requests still get
               // bootstrap Server-Timing entries.
-              const handlerTimingArr: string[] =
-                variables.__handlerTiming || [];
               // Preserve any existing Server-Timing set by response routes or
               // middleware
               const existingTiming = response.headers.get("Server-Timing");
               const timingParts = existingTiming
-                ? [existingTiming, ...handlerTimingArr]
-                : [...handlerTimingArr];
+                ? [existingTiming, ...handlerTiming]
+                : [...handlerTiming];
 
               const metricsStore = requestContext._metricsStore;
               if (metricsStore) {
@@ -684,7 +681,8 @@ export function createRSCHandler<
     variables: Record<string, any>,
     nonce: string | undefined,
   ): Promise<Response> {
-    const handlerTiming: string[] = variables.__handlerTiming || [];
+    const reqCtx = getRequestContext();
+    const handlerTiming: string[] = reqCtx._handlerTiming || [];
 
     // ---- 1. Classify ----
     const classifyStart = performance.now();
@@ -696,7 +694,7 @@ export function createRSCHandler<
     // — the outer handler tail cannot see the plan. Stays unset when middleware
     // short-circuits before core execution runs (reported as
     // "middleware-short-circuit").
-    getRequestContext()._requestMode = plan.mode;
+    reqCtx._requestMode = plan.mode;
 
     // ---- 2. Terminal plans (no execution needed) ----
     const terminal = terminalPlanResponse(plan, url, handlerCtx);

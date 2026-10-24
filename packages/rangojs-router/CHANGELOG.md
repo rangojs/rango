@@ -156,6 +156,33 @@ re-run, as after a rewrite: its side effects happen twice per stale hit, and
 if it reads the route's params, the refreshed page holds them where a cache
 miss reuses the run that started before the match. No change in your code.
 
+### Fixed: global middleware keeps the `STALE` response while a stale document cache entry re-runs
+
+**Before.** On a stale hit, `createDocumentCacheMiddleware()` returns the
+stored entry and re-runs the rest of the middleware chain in the background
+through its `next()`. That re-run shared the response the visitor's chain
+held, so when a global middleware's post-`next()` work outlasted the re-run:
+
+- A global middleware ahead of the cache that returns nothing after
+  `await next()` answered with the re-run's response, whose body the cache had
+  already read into the store: the request failed with
+  `TypeError: Body is unusable: Body has already been read`.
+- A header that middleware ahead of the cache set after `next()`
+  (`ctx.header()`, `ctx.headers`) went to the re-run's response, not the
+  visitor's.
+- A header that a global middleware after the cache set before `next()`, past
+  an `await`, landed on the visitor's `STALE` response instead of the
+  refreshed entry.
+- The re-run's `handler-classify` entry reached the visitor's
+  `Server-Timing`.
+
+**Now.** The re-run builds its own response. The middleware ahead of the
+cache sees the `STALE` response after `next()`, writes land on it, and the
+re-run's headers go to the refreshed entry. The same holds for any middleware
+that returns its own `Response` while the `next()` it called is still running,
+or that calls `next()` after it returned. A middleware chain that waits for its
+`next()` behaves as before. No change in your code.
+
 ### Fixed: a stale `cache()` record a PPR shell recapture reads refreshes under `cache()` rules
 
 **Before.** When a `ppr` route's shell capture read a stale `cache()` record,

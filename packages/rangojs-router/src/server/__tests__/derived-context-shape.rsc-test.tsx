@@ -572,6 +572,7 @@ describe("document cache re-run context (document-cache.ts)", () => {
         "[rango.requestContext.res] (hidden)",
         "_dynamic",
         "_handleStore",
+        "_handlerTiming",
         "_metricsStore",
         "_onResponseCallbacks",
         "_recoveredHandlerErrors",
@@ -597,12 +598,14 @@ describe("document cache re-run context (document-cache.ts)", () => {
     expect(ctx.use).not.toBe(base.use);
     expect({
       _metricsStore: ctx._metricsStore,
+      _handlerTiming: ctx._handlerTiming,
       _recoveredHandlerErrors: ctx._recoveredHandlerErrors,
       _renderErrors: ctx._renderErrors,
       _onResponseCallbacks: ctx._onResponseCallbacks,
       _shellCaptureState: ctx._shellCaptureState,
     }).toEqual({
       _metricsStore: undefined,
+      _handlerTiming: [],
       _recoveredHandlerErrors: undefined,
       _renderErrors: [],
       _onResponseCallbacks: [],
