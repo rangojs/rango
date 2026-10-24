@@ -128,10 +128,16 @@ function validatedSwr(value: number | undefined): number | undefined {
   return isValidCacheSeconds(value, "swr") ? value : undefined;
 }
 
+/**
+ * `intercept` is the intercept an intercept navigation selected
+ * (interceptRecordKey, router/intercept-resolution.ts). Its record holds that
+ * intercept's slot, so the key names it: keyed by the URL alone, a record
+ * written under one intercept answered a navigation that selected another.
+ */
 function getDefaultRouteCacheKey(
   pathname: string,
   params?: Record<string, string>,
-  isIntercept?: boolean,
+  intercept?: string,
   prefixOverride?: "doc",
 ): string {
   const ctx = getRequestContext();
@@ -139,10 +145,10 @@ function getDefaultRouteCacheKey(
   const searchParams = ctx?.url.searchParams;
   const host = ctx?.url.host ?? "localhost";
 
-  // Intercept navigations get their own cache namespace
-  const prefix = isIntercept
-    ? "intercept"
-    : (prefixOverride ?? (isPartial ? "partial" : "doc"));
+  const prefix =
+    intercept !== undefined
+      ? `intercept:${intercept}`
+      : (prefixOverride ?? (isPartial ? "partial" : "doc"));
 
   return `${prefix}:${requestKeyBase(ctx, host, pathname, searchParams, params, ctx?._searchParamsFilter)}`;
 }
@@ -468,13 +474,13 @@ export class CacheScope {
   private resolveKey(
     pathname: string,
     params: Record<string, string>,
-    isIntercept?: boolean,
+    intercept?: string,
   ): Promise<string> {
     return this.resolveKeyFrom(
       getDefaultRouteCacheKey(
         pathname,
         params,
-        isIntercept,
+        intercept,
         this.defaultKeyPrefix,
       ),
     );
@@ -571,7 +577,12 @@ export class CacheScope {
       ? undefined
       : this.getStore()?.keyGenerator;
     if (!this.mayPartition && !keyGenerator) return undefined;
-    const defaultKey = getDefaultRouteCacheKey(pathname, params, false, "doc");
+    const defaultKey = getDefaultRouteCacheKey(
+      pathname,
+      params,
+      undefined,
+      "doc",
+    );
     const requestCtx = _getRequestContext();
     if (!requestCtx) {
       return this.keyFns.length > 0
@@ -748,7 +759,8 @@ export class CacheScope {
    *
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
-   * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
+   * @param intercept - The intercept an intercept navigation selected
+   *   (interceptRecordKey): its record has its own key
    * @param ownedPushes - What the record is to each loader's handle pushes
    *   (withCacheLookup: loader-cache.ts loaderPins), called on a hit
    * @param deferHandles - Restore no handle value here: the caller calls the
@@ -757,14 +769,14 @@ export class CacheScope {
   async lookupRoute(
     pathname: string,
     params: Record<string, string>,
-    isIntercept?: boolean,
+    intercept?: string,
     ownedPushes?: () => OwnedPushDelivery,
     deferHandles?: boolean,
   ): Promise<CachedRouteHit | null> {
     const outcome = await this.lookupRouteDetailed(
       pathname,
       params,
-      isIntercept,
+      intercept,
       ownedPushes,
       deferHandles,
     );
@@ -792,7 +804,7 @@ export class CacheScope {
   async lookupRouteDetailed(
     pathname: string,
     params: Record<string, string>,
-    isIntercept?: boolean,
+    intercept?: string,
     ownedPushes?: () => OwnedPushDelivery,
     deferHandles?: boolean,
   ): Promise<CacheRouteLookupOutcome> {
@@ -816,7 +828,7 @@ export class CacheScope {
     // happens here, where a miss is a safe outcome.
     let key: string | undefined;
     try {
-      key = await this.resolveKey(pathname, params, isIntercept);
+      key = await this.resolveKey(pathname, params, intercept);
 
       const result = await store.get(key);
 
@@ -993,7 +1005,8 @@ export class CacheScope {
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
    * @param segments - All resolved segments to cache
-   * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
+   * @param intercept - The intercept an intercept navigation selected
+   *   (interceptRecordKey): its record has its own key
    * @param start - Where the render of `segments` started: the record is not
    *   written when one of its tags was invalidated since (#977,
    *   predatesInvalidation). A shell capture's doc record passes none: it
@@ -1003,7 +1016,7 @@ export class CacheScope {
     pathname: string,
     params: Record<string, string>,
     segments: ResolvedSegment[],
-    isIntercept?: boolean,
+    intercept?: string,
     start?: ExecutionStart,
   ): Promise<void> {
     if (!this.enabled || segments.length === 0) return;
@@ -1030,7 +1043,7 @@ export class CacheScope {
     this.noteRecordWindow(requestCtx, Date.now() + ttl * 1000, true);
 
     // Resolve cache key early (while request context is available)
-    const key = await this.resolveKey(pathname, params, isIntercept);
+    const key = await this.resolveKey(pathname, params, intercept);
 
     // Doc-namespaced scopes (the shell implicit scope and the capture's
     // composed doc scope) publish the canonical document segment key so
@@ -1228,7 +1241,12 @@ export function resolveShellPartition(
 ): Promise<string | null> | undefined {
   if (routeScope?.enabled) return routeScope.resolvePartition(pathname, params);
   if (!appStore?.keyGenerator) return undefined;
-  const defaultKey = getDefaultRouteCacheKey(pathname, params, false, "doc");
+  const defaultKey = getDefaultRouteCacheKey(
+    pathname,
+    params,
+    undefined,
+    "doc",
+  );
   return resolveCacheKey(undefined, appStore, defaultKey).then((resolved) =>
     resolved === defaultKey ? null : resolved,
   );
