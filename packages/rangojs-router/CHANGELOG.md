@@ -305,9 +305,9 @@ a record the visitor's own render wrote does not, so `revalidateTag()` on one
 of them evicted the intercept's record only when a re-render had written it.
 
 **Now.** The re-render skips the intercepted route's page as the visitor's
-render does: it writes the record a MISS writes, and every HIT answers as the
-MISS did. What the intercept shows, and the page under it, are unchanged. No
-change in your code.
+render does and writes the record a MISS writes: the record and its HITs no
+longer carry the route's page or its tags. What the intercept shows, and the
+page under it, are unchanged. No change in your code.
 
 ## 0.27.0 (2026-10-23)
 
