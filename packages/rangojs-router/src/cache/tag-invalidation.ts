@@ -138,10 +138,11 @@ const backgroundRefresh = new AsyncLocalStorage<true>();
 
 /**
  * Run a stale entry's background refresh on the visitor's request context: a
- * "use cache" function's (cache-runtime.ts) or a cached loader's
- * (loader-cache.ts). No visitor made the invalidations in it, so they set no
- * fresh-reads cookie, as in a stale cache() HIT's re-render
- * (server/render-pass.ts, the background row).
+ * "use cache" function's (cache-runtime.ts), a cached loader's
+ * (loader-cache.ts) or a document cache entry's re-run (document-cache.ts).
+ * No visitor made the invalidations in it, so they set no fresh-reads cookie,
+ * as in a stale cache() HIT's re-render (server/render-pass.ts, the background
+ * row).
  */
 export function runAsBackgroundRefresh<T>(ctx: RequestContext, fn: () => T): T {
   return runWithRequestContext(ctx, () => backgroundRefresh.run(true, fn));

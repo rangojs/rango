@@ -1,9 +1,9 @@
 /**
- * A stale "use cache" HIT, and a stale cached loader HIT, refresh in the
- * background (SWR) on the visitor's request context. A revalidateTag() in
- * that refresh is not the visitor's mutation: it sets no fresh-reads cookie
- * on the visitor's response, and once the response is sent it warns about
- * nothing. The invalidation itself still runs.
+ * A stale "use cache" HIT, a stale cached loader HIT and a stale document
+ * cache HIT refresh in the background (SWR) on the visitor's request context.
+ * A revalidateTag() in that refresh is not the visitor's mutation: it sets no
+ * fresh-reads cookie on the visitor's response, and once the response is sent
+ * it warns about nothing. The invalidation itself still runs.
  *
  * The global middleware's post-next() work can outlast the refresh, as an
  * awaited log or metrics call can; the response it returns merges the
@@ -27,8 +27,10 @@ import {
   createRouter,
   urls,
   type HandlerContext,
+  type MiddlewareFn,
 } from "../../index.rsc.js";
 import {
+  createDocumentCacheMiddleware,
   VercelCacheStore,
   type VercelRuntimeCache,
 } from "../../cache/index.js";
@@ -71,15 +73,23 @@ async function RatePage(ctx: HandlerContext): Promise<React.ReactNode> {
   return <p>{await ctx.use(RateLoader)}</p>;
 }
 
+/** The document cache re-runs the whole page in its refresh. */
+async function DocPage(ctx: HandlerContext): Promise<React.ReactNode> {
+  ctx.headers.set("Cache-Control", "s-maxage=1, stale-while-revalidate=60");
+  return <p>{`DocPage-${await runAndInvalidateOnRefresh("DocPage")}`}</p>;
+}
+
+const respondAfterReturnGate: MiddlewareFn = async (_ctx, next) => {
+  const response = await next();
+  markResponded();
+  await returnAfter;
+  return response;
+};
+
 const router = createRouter({
   cacheProfiles: { stale: { ttl: 0, swr: 60 } },
 })
-  .use(async (_ctx, next) => {
-    const response = await next();
-    markResponded();
-    await returnAfter;
-    return response;
-  })
+  .use(respondAfterReturnGate)
   .routes(
     urls(({ path, loader, cache }) => [
       path("/price", PricePage, { name: "price" }),
@@ -89,10 +99,19 @@ const router = createRouter({
     ]),
   );
 
-/** [what refreshes, its route, its body's name, which prefixes its value] */
+const docRouter = createRouter()
+  .use(respondAfterReturnGate)
+  .use(createDocumentCacheMiddleware())
+  .routes(urls(({ path }) => [path("/doc", DocPage, { name: "doc" })]));
+
+/**
+ * [what refreshes, its router, its route, its body's name, which prefixes
+ * its value]
+ */
 const CASES = [
-  ['"use cache" function', "/price", "getPrice"],
-  ["cached loader", "/rate", "RateLoader"],
+  ['"use cache" function', router, "/price", "getPrice"],
+  ["cached loader", router, "/rate", "RateLoader"],
+  ["document cache entry", docRouter, "/doc", "DocPage"],
 ] as const;
 
 /**
@@ -100,55 +119,65 @@ const CASES = [
  * between those requests.
  */
 async function staleHit(
+  app: typeof router | typeof docRouter,
   url: string,
   body: string,
   arm: () => void,
-): Promise<Response> {
+): Promise<{ response: Response; cacheStore: VercelCacheStore }> {
   const realNow = Date.now.bind(Date);
   let offset = 0;
   vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
   const cacheStore = new VercelCacheStore({ cache: vercelCache() });
   expect(cacheStore.freshReadsWindowMs).toBeGreaterThan(0);
-  const miss = await serveShellRequest(router, url, { cacheStore });
+  const miss = await serveShellRequest(app, url, { cacheStore });
   expect(miss.body).toContain(`${body}-1`);
 
-  // ttl 0, swr 60: stale from the start, servable for 60 s.
-  offset += 1_100;
+  // Past every entry's freshness (ttl 0, or the page's s-maxage=1) and
+  // within its 60 s swr.
+  offset += 2_100;
   arm();
-  const stale = await serveShellRequest(router, url, { cacheStore });
+  const stale = await serveShellRequest(app, url, { cacheStore });
   expect(stale.body).toContain(`${body}-1`);
   expect(refresh.runs[body]).toBe(2);
-  return stale.response;
+  return { response: stale.response, cacheStore };
 }
+
+/** The refresh invalidates before the visitor's response is returned. */
+function invalidateBeforeResponse(): void {
+  returnAfter = new Promise((resolve) => {
+    refresh.onInvalidated = resolve;
+    // A refresh that never runs fails on `runs`, not a timeout.
+    setTimeout(resolve, 1_000);
+  });
+}
+
+beforeEach(async () => {
+  await resetShellTestState();
+  refresh.runs = {};
+  refresh.invalidateAfter = undefined;
+  refresh.onInvalidated = () => {};
+  markResponded = () => {};
+  returnAfter = undefined;
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe.each(CASES)(
   "a revalidateTag() in a stale %s's refresh",
-  (_, url, body) => {
-    beforeEach(async () => {
-      await resetShellTestState();
-      refresh.runs = {};
-      refresh.invalidateAfter = undefined;
-      refresh.onInvalidated = () => {};
-      markResponded = () => {};
-      returnAfter = undefined;
-    });
-    afterEach(() => {
-      vi.restoreAllMocks();
-      vi.unstubAllEnvs();
-    });
-
+  (_, app, url, body) => {
     it("sets no fresh-reads cookie on the visitor's response", async () => {
       const invalidateTags = vi.spyOn(
         VercelCacheStore.prototype,
         "invalidateTags",
       );
-      const response = await staleHit(url, body, () => {
-        returnAfter = new Promise((resolve) => {
-          refresh.onInvalidated = resolve;
-          // A refresh that never runs fails on `runs`, not a timeout.
-          setTimeout(resolve, 1_000);
-        });
-      });
+      const { response } = await staleHit(
+        app,
+        url,
+        body,
+        invalidateBeforeResponse,
+      );
       expect(response.headers.getSetCookie()).toEqual([]);
       expect(invalidateTags).toHaveBeenCalledWith(["prices"]);
     });
@@ -157,7 +186,7 @@ describe.each(CASES)(
       vi.stubEnv("NODE_ENV", "development");
       const warn = vi.spyOn(console, "warn");
       let invalidated = false;
-      await staleHit(url, body, () => {
+      await staleHit(app, url, body, () => {
         refresh.onInvalidated = () => {
           invalidated = true;
         };
@@ -172,3 +201,18 @@ describe.each(CASES)(
     });
   },
 );
+
+describe("a stale document cache entry whose refresh invalidates", () => {
+  // A cookie on the re-run's own response would keep it out: the document
+  // cache stores no response with a Set-Cookie.
+  it("stores the refreshed page for the next visitor", async () => {
+    const { cacheStore } = await staleHit(
+      docRouter,
+      "/doc",
+      "DocPage",
+      invalidateBeforeResponse,
+    );
+    const next = await serveShellRequest(docRouter, "/doc", { cacheStore });
+    expect(next.body).toContain("DocPage-2");
+  });
+});

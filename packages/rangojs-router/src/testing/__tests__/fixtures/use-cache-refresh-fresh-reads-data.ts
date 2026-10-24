@@ -1,7 +1,8 @@
 // A "use cache" function for use-cache-refresh-fresh-reads.rsc-test.tsx
 // (wrapped by rangoUseCacheTransform() in vitest.rsc.config.ts) whose stale
-// refresh invalidates a tag, and the helper a cached loader shares with it.
-import { revalidateTag } from "../../../cache/tag-invalidation.js";
+// refresh invalidates a tag, and the helper the cached loader and the
+// document-cached page share with it.
+import { revalidateTag } from "../../../index.rsc.js";
 
 export const refresh: {
   /** Body runs, per body. */

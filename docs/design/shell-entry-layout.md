@@ -943,10 +943,13 @@ read too. A router with its own `stateCookiePrefix` gets its own cookie.
 A stale entry's background refresh sets none. Its invalidation still runs,
 but the visitor whose request served the stale entry made no mutation. A
 stale `cache()` HIT's re-render takes the sink's no-op writer
-(`server/render-pass.ts`, the background row). A stale `"use cache"` entry's
-or cached loader's refresh runs on the visitor's context under
-`runAsBackgroundRefresh` (`cache/tag-invalidation.ts`), which `markFreshReads`
-reads.
+(`server/render-pass.ts`, the background row). A stale `"use cache"` entry's,
+cached loader's or document cache entry's refresh runs on the visitor's
+context under `runAsBackgroundRefresh` (`cache/tag-invalidation.ts`), which
+`markFreshReads` reads. The document cache's refresh re-runs the whole page
+(`next()`: downstream middleware, route handlers and the render), and it
+stores no response with a `Set-Cookie`, so a cookie there would also keep
+the refreshed page out of the store.
 
 Its `Max-Age` is the longest any invalidated store's memos can be stale
 (`SegmentCacheStore.freshReadsWindowMs`, rounded up to seconds): the shell
