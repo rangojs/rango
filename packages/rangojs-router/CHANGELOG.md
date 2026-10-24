@@ -524,6 +524,34 @@ intercept, with their handle values. What the intercept shows, and the page
 under it, are unchanged, and a direct load of the URL still serves the full
 page. The next build bakes the new variant. No change in your code.
 
+### Fixed: a navigation reports parallel slot and orphan layout handlers in Server-Timing and traces, as the document does
+
+**Before.** A client navigation or an action's revalidation left out two
+kinds of handler that the document request reports. With `debugPerformance`
+on, it sent no `handler:<id>` Server-Timing row (`d2-handler-…`) for a
+parallel slot's handler (`parallel({ "@side": … })`) or for a layout declared
+among a route's children (an orphan layout, such as a layout after a bare
+`cache()`). With `tracing` on, a slot's handler had no `rango.handler` span.
+A navigation to a route served from the static store (`Static()`) sent a
+`handler:<id>` row for a handler that did not run, where the document sent
+none. In development, a slot handler under `loading()` that returned a
+`Response` (e.g. `redirect()`) printed the "returned a Response … NOT sent as
+an HTTP redirect" warning on navigations only, not on document loads.
+
+**Now.** Every request reports the handlers it runs the same way:
+
+- A parallel slot's handler has its `handler:<parallel id>.<slot>` row and a
+  `rango.handler` span (`rango.handler_id` is `<parallel id>.<slot>`).
+- An orphan layout's handler has its `handler:<id>` row.
+- A route served from the static store has no `handler:<id>` row (a static
+  hit runs no handler), as on the document.
+- The dev warning for a streamed slot handler's `Response` prints on document
+  loads too.
+
+What renders is unchanged. No change in your code. A dashboard that reads the
+per-segment rows of navigations sees the slot and orphan rows appear, and a
+`Static()` route's row disappear (documents never had it).
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
