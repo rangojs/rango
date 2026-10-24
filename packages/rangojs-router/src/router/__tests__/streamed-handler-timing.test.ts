@@ -3,9 +3,9 @@ import { RangoContext, track } from "../../server/context.js";
 import type { MetricsStore } from "../../server/context.js";
 import { runWithRouterContext } from "../router-context.js";
 import {
-  resolveEntryHandlerWithRevalidation,
-  resolveParallelSegmentsWithRevalidation,
-  resolveSegmentWithRevalidation,
+  resolveEntryHandler,
+  resolveParallelSegments,
+  resolveSegment,
 } from "../segment-resolution/revalidation.js";
 import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 
@@ -71,7 +71,7 @@ function createDeps() {
 
 function minimalRouterCtx() {
   return {
-    resolveAllSegmentsWithRevalidation: vi.fn(),
+    resolveAllSegments: vi.fn(),
     findInterceptForRoute: () => null,
   } as any;
 }
@@ -182,7 +182,7 @@ describe("streamed handler timing — FRESH pass", () => {
 
     await runWithMetrics(metrics, () =>
       runWithRouterContext(minimalRouterCtx(), async () => {
-        await resolveSegmentWithRevalidation(
+        await resolveSegment(
           makeFreshPass(ctx, deps, { routeKey: "blog.post", params: {} }),
           entry,
         );
@@ -239,7 +239,7 @@ describe("streamed handler timing — FRESH pass", () => {
 
     await runWithMetrics(metrics, () =>
       runWithRouterContext(minimalRouterCtx(), async () => {
-        await resolveParallelSegmentsWithRevalidation(
+        await resolveParallelSegments(
           makeFreshPass(ctx, deps, { params: {} }),
           {
             id: "layout",
@@ -303,7 +303,7 @@ describe("streamed handler timing — revalidation path", () => {
 
     await runWithMetrics(metrics, () =>
       runWithRouterContext(minimalRouterCtx(), async () => {
-        const result = await resolveEntryHandlerWithRevalidation(
+        const result = await resolveEntryHandler(
           {
             context: ctx,
             client: new Set<string>(), // empty = new segment, always revalidate
@@ -370,7 +370,7 @@ describe("streamed handler timing — revalidation path", () => {
 
     await runWithMetrics(metrics, () =>
       runWithRouterContext(minimalRouterCtx(), async () => {
-        const result = await resolveEntryHandlerWithRevalidation(
+        const result = await resolveEntryHandler(
           {
             context: ctx,
             client: new Set<string>(),

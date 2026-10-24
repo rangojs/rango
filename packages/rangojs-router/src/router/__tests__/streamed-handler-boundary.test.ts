@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 import { createElement } from "react";
 import { runWithRouterContext } from "../router-context";
 import {
-  resolveSegmentWithRevalidation,
-  resolveParallelSegmentsWithRevalidation,
-  resolveEntryHandlerWithRevalidation,
+  resolveSegment,
+  resolveParallelSegments,
+  resolveEntryHandler,
 } from "../segment-resolution";
 import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import { DataNotFoundError } from "../../errors";
@@ -45,7 +45,7 @@ async function resolveRoute(
   const reqCtx = newRequestContext(ctx);
   const box = await runWithRequestContext(reqCtx, () =>
     runWithRouterContext(routerCtx, async () => {
-      const { segments } = await resolveSegmentWithRevalidation(
+      const { segments } = await resolveSegment(
         makeFreshPass(ctx, deps, { routeKey: "r", params: {}, ...options }),
         entry,
       );
@@ -219,7 +219,7 @@ describe("parallel slots resolve the boundary from the owning entry", () => {
     slotOwner.parallel = [failing()];
     const { segments } = await runWithRequestContext(reqCtx, () =>
       runWithRouterContext(routerCtx, () =>
-        resolveSegmentWithRevalidation(
+        resolveSegment(
           makeFreshPass(ctx, deps, { routeKey: "r", params: {} }),
           slotOwner,
         ),
@@ -239,7 +239,7 @@ describe("parallel slots resolve the boundary from the owning entry", () => {
     slotOwner.parallel = [failing()];
     const result = await runWithRequestContext(newRequestContext(ctx), () =>
       runWithRouterContext(routerCtx, () =>
-        resolveParallelSegmentsWithRevalidation(
+        resolveParallelSegments(
           {
             context: ctx,
             client: new Set<string>(),
@@ -265,7 +265,7 @@ describe("parallel slots resolve the boundary from the owning entry", () => {
     const ctx = createContext();
     const result = await runWithRequestContext(newRequestContext(ctx), () =>
       runWithRouterContext(routerCtx, () =>
-        resolveEntryHandlerWithRevalidation(
+        resolveEntryHandler(
           {
             context: ctx,
             client: new Set<string>(),

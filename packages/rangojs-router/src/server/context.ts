@@ -1084,7 +1084,7 @@ const loaderBodyScopeALS: AsyncLocalStorage<LoaderBodyScope> = ((
 export function isInsideCacheScope(): boolean {
   if (RangoContext.getStore()?.insideCacheScope !== true) return false;
   // Request-scoped READS are exempt in any loader body — DSL loaders re-run on
-  // every request (including cache() HITs via resolveLoadersOnlyWithRevalidation), and a
+  // every request (including cache() HITs via resolveLoadersOnly), and a
   // handler-invoked loader body, though skipped with its handler on a HIT,
   // yields a BAKED shared copy in the cached artifact — an accepted
   // consumption-lane tradeoff (#672/#674). This is deliberately BROADER than
@@ -1525,7 +1525,7 @@ export function latchPprHeaderScopeForEntries(
  * ONLY the ppr (shell) axis is dropped — dynamic() does NOT opt off the CACHE
  * axis. Two cases:
  * - Pure ppr funnel (no cache() boundary): clear the latch → writes re-permit.
- * - ppr route nested under a cache() boundary: resolveAllSegmentsWithRevalidation
+ * - ppr route nested under a cache() boundary: resolveAllSegments
  *   latches "ppr" at the funnel top (first-wins), which MASKS the positional
  *   cache() latch, but the handler still runs inside the cache scope
  *   (`insideCacheScope`). A cache() HIT skips that handler, so the write is
@@ -1565,7 +1565,7 @@ export function assertCachedHeaderWriteAllowed(
   if (!scope) return;
   // Exempt DSL loaders (loaderScopeALS) ONLY. A registered loader re-runs on
   // every cache HIT (resolveOwnerLoaders runInsideLoaderScope, reached from
-  // cache-lookup.ts resolveLoadersOnlyWithRevalidation), so its header/cookie
+  // cache-lookup.ts resolveLoadersOnly), so its header/cookie
   // writes merge into every response with no MISS/HIT divergence. A
   // handler-invoked loader body has
   // loaderBodyScopeALS active but loaderScopeALS unset (loader-resolution.ts

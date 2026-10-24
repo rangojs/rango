@@ -124,11 +124,11 @@ afterAll(() => {
 const routerCtx = {
   evaluateRevalidation: async () => false,
   buildEntryRevalidateMap: () => new Map(),
-  resolveLoadersOnlyWithRevalidation: async () => ({
+  resolveLoadersOnly: async () => ({
     segments: [],
     matchedIds: [],
   }),
-  resolveAllSegmentsWithRevalidation: async () => ({
+  resolveAllSegments: async () => ({
     segments: [],
     matchedIds: [],
   }),

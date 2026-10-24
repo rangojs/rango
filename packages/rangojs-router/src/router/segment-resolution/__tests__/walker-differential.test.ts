@@ -1,5 +1,5 @@
 /**
- * The segment walker (revalidation.ts resolveAllSegmentsWithRevalidation) on
+ * The segment walker (revalidation.ts resolveAllSegments) on
  * a full match's FRESH pass (resolution-pass.ts freshPassInput) against a
  * partial pass whose client holds nothing (an empty set): the same route,
  * one pass each, each with a handler context built the same way. They agree
@@ -328,7 +328,7 @@ function passEntries(pass: Pass): {
 
 async function walkFresh(pass: Pass): Promise<ResolvedSegment[]> {
   const { entries, chain } = passEntries(pass);
-  const { segments } = await routerCtx.resolveAllSegmentsWithRevalidation(
+  const { segments } = await routerCtx.resolveAllSegments(
     freshPassInput(
       pass.context,
       pass.snapshot.routeKey,
@@ -387,7 +387,7 @@ function walkRevalidating(
     routeKey: pass.snapshot.routeKey,
   };
   const { entries, chain } = passEntries(pass);
-  return routerCtx.resolveAllSegmentsWithRevalidation(input, entries, {
+  return routerCtx.resolveAllSegments(input, entries, {
     interceptResult,
     localRouteName: pass.snapshot.localRouteName,
     pathname: pass.pathname,
@@ -565,7 +565,7 @@ type Differences = Partial<Record<Exception | "unnamed", string[]>>;
 type Exception =
   /**
    * Internal-only. A segment whose handler ran is marked (`_handlerRan`,
-   * resolveEntryHandlerWithRevalidation and the slot loop). Both passes
+   * resolveEntryHandler and the slot loop). Both passes
    * mark it now, so the difference is gone; it was the fresh walker's
    * absent marker. Neither marks an orphan layout or an error segment.
    * buildMatchResult (match-result.ts) strips it from the segments it
@@ -576,14 +576,14 @@ type Exception =
   | "handler ran marker"
   /**
    * Internal-only. The FRESH branch of the slot loop
-   * (resolveParallelSegmentsWithRevalidation) tags a slot's loaders with the
+   * (resolveParallelSegments) tags a slot's loaders with the
    * slot's loading() (`parallelLoading`); a partial pass does not.
    * renderSegments restores the tag on every render
    * (restoreParallelLoaderMarkers, segment-system.tsx).
    */
   | "slot loading tag"
   /**
-   * The intercept branch of resolveAllSegmentsWithRevalidation
+   * The intercept branch of resolveAllSegments
    * (`interceptResult`): under an intercept the walker skips the intercepted
    * route's entry (its handler and loaders) and lists only the route's id
    * as matched. A full match's FRESH pass has no intercept; the background
@@ -602,7 +602,7 @@ type Exception =
    */
   | "build-time loaders"
   /**
-   * The `throwOnError` branch (resolveAllSegmentsWithRevalidation, and a
+   * The `throwOnError` branch (resolveAllSegments, and a
    * streamed handler's `recover`), which the build-time FRESH pass sets: a
    * handler error rethrows. The partial pass renders the route's error
    * segment.

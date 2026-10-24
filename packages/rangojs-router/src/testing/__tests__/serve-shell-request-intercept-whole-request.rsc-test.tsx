@@ -3,7 +3,7 @@
  * (`_rsc_segments=` empty) keeps the page under the intercept (rango-t126).
  *
  * Under an intercept the server never renders the route under it
- * (segment-resolution/revalidation.ts resolveAllSegmentsWithRevalidation):
+ * (segment-resolution/revalidation.ts resolveAllSegments):
  * the page underneath comes from the ids the client sends, which `matched`
  * lists (router/match-result.ts buildMatchResult, interceptMatched). With no
  * ids, `matched` is what the server rendered, the layout chain and the slot.

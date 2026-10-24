@@ -91,7 +91,7 @@ function makeRouterContextStub() {
   return {
     evaluateRevalidation: vi.fn(),
     buildEntryRevalidateMap: undefined,
-    resolveLoadersOnlyWithRevalidation: undefined,
+    resolveLoadersOnly: undefined,
   } as any;
 }
 

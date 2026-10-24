@@ -11,7 +11,7 @@ import {
  * Regression test: parallel slot loaders with revalidate(() => true) must
  * produce consistent segment IDs across fresh and revalidation code paths.
  *
- * Bug: resolveOrphanLayoutWithRevalidation passed undefined as shortCodeOverride
+ * Bug: resolveOrphanLayout passed undefined as shortCodeOverride
  * for parallel entry loaders, causing the parallel's own shortCode (e.g., L0P0)
  * to be used instead of the parent layout's shortCode (L0). This produced a
  * loader segment ID the client couldn't match, making useLoader() throw

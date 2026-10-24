@@ -440,7 +440,7 @@ async function* serveStoredSegments<TEnv>(
         // The full chain keeps a bare cache() marker, which also sits in
         // its layout's orphan list, out of the live pass: the record
         // supplies it and its subtree (issue #918).
-        const result = await router.resolveAllSegmentsWithRevalidation(
+        const result = await router.resolveAllSegments(
           ctx.isFullMatch
             ? freshPassInput(
                 ctx.handlerContext,
@@ -519,10 +519,10 @@ async function* serveStoredSegments<TEnv>(
   const loaderEntries = ctx.entries
     .slice(boundaryIndex)
     .filter((e) => !interceptFillSkips(ctx, e.shortCode));
-  const { resolveLoadersOnlyWithRevalidation } = router;
-  if (resolveLoadersOnlyWithRevalidation) {
+  const { resolveLoadersOnly } = router;
+  if (resolveLoadersOnly) {
     const loaderResult = await ctx.Store.run(() =>
-      resolveLoadersOnlyWithRevalidation(
+      resolveLoadersOnly(
         ctx.isFullMatch
           ? freshPassInput(ctx.handlerContext, ctx.routeKey, ctx.matched.params)
           : {

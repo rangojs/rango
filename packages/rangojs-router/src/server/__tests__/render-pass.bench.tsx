@@ -95,7 +95,7 @@ const routerCtx = {
   createHandleStore: (): HandleStore => handleStore,
   createHandlerContext: () => ({}),
   setupLoaderAccess: () => {},
-  resolveAllSegmentsWithRevalidation: async () => ({
+  resolveAllSegments: async () => ({
     segments: [],
     matchedIds: [],
   }),

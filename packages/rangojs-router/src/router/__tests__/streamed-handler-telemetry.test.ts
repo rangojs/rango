@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { runWithRouterContext } from "../router-context";
 import {
-  resolveSegmentWithRevalidation,
-  resolveParallelSegmentsWithRevalidation,
-  resolveOrphanLayoutWithRevalidation,
+  resolveSegment,
+  resolveParallelSegments,
+  resolveOrphanLayout,
 } from "../segment-resolution";
 import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import type { TelemetrySink, TelemetryEvent } from "../telemetry";
@@ -108,7 +108,7 @@ function collectEvents(events: TelemetryEvent[]): TelemetrySink {
 function minimalRouterCtx(telemetry?: TelemetrySink) {
   return {
     telemetry,
-    resolveAllSegmentsWithRevalidation: vi.fn(),
+    resolveAllSegments: vi.fn(),
     findInterceptForRoute: () => null,
   } as any;
 }
@@ -122,7 +122,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
     vi.restoreAllMocks();
   });
 
-  describe("FRESH pass — resolveSegmentWithRevalidation", () => {
+  describe("FRESH pass — resolveSegment", () => {
     it("emits handler.error when a streamed route handler rejects", async () => {
       const events: TelemetryEvent[] = [];
       const sink = collectEvents(events);
@@ -132,7 +132,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       const entry = createRouteEntry(() => Promise.reject(handlerError));
 
       await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        const { segments } = await resolveSegmentWithRevalidation(
+        const { segments } = await resolveSegment(
           makeFreshPass(ctx, deps, {
             routeKey: "blog",
             params: { slug: "hello" },
@@ -167,7 +167,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       const entry = createRouteEntry(() => Promise.reject(new Error("boom")));
 
       await runWithRouterContext(minimalRouterCtx(undefined), async () => {
-        const { segments } = await resolveSegmentWithRevalidation(
+        const { segments } = await resolveSegment(
           makeFreshPass(ctx, deps, { routeKey: "blog", params: {} }),
           entry,
         );
@@ -180,7 +180,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
     });
   });
 
-  describe("FRESH pass — resolveParallelSegmentsWithRevalidation", () => {
+  describe("FRESH pass — resolveParallelSegments", () => {
     it("emits handler.error when a streamed parallel slot handler rejects", async () => {
       const events: TelemetryEvent[] = [];
       const sink = collectEvents(events);
@@ -192,7 +192,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       );
 
       await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        const { segments } = await resolveParallelSegmentsWithRevalidation(
+        const { segments } = await resolveParallelSegments(
           makeFreshPass(ctx, deps, {
             routeKey: "blog",
             params: { slug: "hello" },
@@ -221,7 +221,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
     });
   });
 
-  describe("revalidation path — resolveParallelSegmentsWithRevalidation", () => {
+  describe("revalidation path — resolveParallelSegments", () => {
     it("emits handler.error when a streamed parallel slot handler rejects", async () => {
       const events: TelemetryEvent[] = [];
       const sink = collectEvents(events);
@@ -234,7 +234,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       const layoutEntry = createLayoutEntry([parallelEntry]);
 
       await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        const result = await resolveParallelSegmentsWithRevalidation(
+        const result = await resolveParallelSegments(
           {
             context: ctx,
             client: new Set<string>(),
@@ -268,7 +268,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
     });
   });
 
-  describe("revalidation path — resolveOrphanLayoutWithRevalidation", () => {
+  describe("revalidation path — resolveOrphanLayout", () => {
     it("emits handler.error when a streamed orphan-parallel slot handler rejects", async () => {
       const events: TelemetryEvent[] = [];
       const sink = collectEvents(events);
@@ -292,7 +292,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       } as any;
 
       await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        const result = await resolveOrphanLayoutWithRevalidation(
+        const result = await resolveOrphanLayout(
           {
             context: ctx,
             client: new Set<string>(),
@@ -338,7 +338,7 @@ describe("streamed handler telemetry (handler.error emission)", () => {
       );
 
       await runWithRouterContext(minimalRouterCtx(sink), async () => {
-        await resolveSegmentWithRevalidation(
+        await resolveSegment(
           makeFreshPass(ctx, deps, {
             routeKey: "products.detail",
             params: { id: "42" },

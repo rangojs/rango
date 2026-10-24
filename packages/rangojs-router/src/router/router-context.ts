@@ -101,7 +101,7 @@ export interface RouterContext<TEnv = any> {
   ) => InterceptResult | null;
 
   /** The segment walker; a full match passes freshPassInput (FRESH). */
-  resolveAllSegmentsWithRevalidation: (
+  resolveAllSegments: (
     pass: ResolutionPassInput<TEnv>,
     entries: EntryData[],
     walk: RevalidatingWalkOptions,
@@ -129,7 +129,7 @@ export interface RouterContext<TEnv = any> {
 
   createHandleStore: () => any;
 
-  resolveLoadersOnlyWithRevalidation?: (
+  resolveLoadersOnly?: (
     pass: ResolutionPassInput<TEnv>,
     entries: EntryData[],
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
