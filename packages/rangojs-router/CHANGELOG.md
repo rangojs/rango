@@ -631,6 +631,30 @@ new router version already misses them on `CFCacheStore` and
 once and stores a new record, and the old one expires with its TTL. No change
 in your code.
 
+### Added: the build warns when an intercept over a `Prerender()` route renders live
+
+An intercept a navigation selects over a `Prerender()` route is served from
+the build's bake, except in three cases where the build does not bake it and
+it renders live: two intercepts on one layout fill the same slot; its handler
+or layout returned a `Response` at build time; or it targets the route by its
+name inside an `include()` (`"item"` for the route `"shop.item"`, or for a
+route named `"item"` in an unnamed `include()`), which only a fallback
+selects and the build does not bake. Live, its handler
+runs per request with the request's context, so a handler that only works
+with `BuildContext` (a file read, say) fails there. Until now nothing said so.
+
+`vite build` now prints one warning per route and slot (a route in an unnamed
+`include()` is named by its URL):
+
+```
+[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext. To pre-render it, give each intercept its own slot.
+```
+
+Each warning ends with what pre-renders the intercept: give each intercept its
+own slot, return a node from its handler or layout at build time, or declare it
+inside the `include()` as `".item"`. What renders is unchanged, and no change
+in your code is needed.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

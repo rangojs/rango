@@ -638,6 +638,27 @@ available). All intercepts are pre-rendered unconditionally. `when` is evaluated
 at runtime, where the match selects one intercept (`findInterceptForRoute`: the
 innermost whose `when` passes), and a HIT serves only that one.
 
+An intercept a navigation can select but the build does not bake renders live,
+and its handler runs per request with the request's context. A handler that
+only works with BuildContext (a file read, say) fails there, so the build says
+which ones: `matchForPrerender` returns them as `liveIntercepts`, and
+`warnLiveIntercepts` (`src/vite/utils/prerender-utils.ts`) prints one
+`[rango]` warning per router, route and slot (a route in an unnamed
+`include()` has an internal key, so the warning names its URL). Each warning
+ends with what would pre-render the intercept, and the build-only e2e
+`e2e/prerender-onerror.test.ts` pins it through the compiled plugin. There
+are three cases:
+
+- two intercepts on one layout fill the same slot (step 3);
+- the intercept's build handler or layout returned a `Response`, for that URL;
+- the intercept targets the route's last name segment (`"item"` for
+  `"shop.item"`, or for `"$prefix_0.item"`, a route named `"item"` in an
+  unnamed `include()`). The match falls back to that name (`localRouteName`,
+  `src/router/match-api.ts`) when no intercept for the full name applies, and
+  the build, which matches the full name only, never bakes it. An intercept
+  for the full name without `when()` always applies, so with one in the chain
+  the fallback never runs and the build does not warn.
+
 ### Runtime intercept lookup
 
 In `cache-lookup.ts`, when `ctx.isIntercept` is true:

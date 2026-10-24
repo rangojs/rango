@@ -17,6 +17,7 @@ import { isRouteRootScoped } from "../route-map-builder.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { findInOrphans } from "./error-handling.js";
 import { interceptSlotId } from "./intercept-resolution.js";
+import { localRouteName } from "../route-name.js";
 import { loadManifest } from "./manifest.js";
 import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
@@ -34,6 +35,21 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+
+/**
+ * An intercept a navigation can select over the route that the build does
+ * not bake: its HIT misses (selectInterceptVariant) and it renders live,
+ * with the request instead of BuildContext.
+ * - `same-slot`: another intercept on its layout fills the same slot.
+ * - `handler-response` / `layout-response`: its handler or layout returned a
+ *   Response for this URL.
+ * - `local-name`: it targets the route's localRouteName, which the build
+ *   never bakes.
+ */
+export interface LiveIntercept {
+  slot: string;
+  reason: "same-slot" | "handler-response" | "layout-response" | "local-name";
+}
 
 export interface PrerenderMatchDeps<TEnv = any> {
   /** Owning router id; scopes bake-time root-scope/search-schema lookups the
@@ -88,6 +104,9 @@ export async function matchForPrerender<TEnv = any>(
    *  pushes and those of the main segments the intercepted route does not
    *  own; the sinks store it as-is. */
   interceptHandles?: string;
+  /** The intercepts the intercept variant does not hold, for the build's
+   *  warning (warnLiveIntercepts). */
+  liveIntercepts?: LiveIntercept[];
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
@@ -443,6 +462,8 @@ export async function matchForPrerender<TEnv = any>(
           intercept: InterceptEntry;
           entry: EntryData;
         }[] = [];
+        const localNamed: InterceptEntry[] = [];
+        const localName = localRouteName(matched.routeKey);
         // From the route's parent up, each entry then its orphans (nested ones
         // included): the walk findInterceptForRoute makes at runtime, so an
         // intercept in the route's own layouts, which it never selects, is not
@@ -453,6 +474,8 @@ export async function matchForPrerender<TEnv = any>(
           for (const ic of source.intercept) {
             if (ic.routeName === matched.routeKey) {
               foundIntercepts.push({ intercept: ic, entry: source });
+            } else if (ic.routeName === localName) {
+              localNamed.push(ic);
             }
           }
           return undefined;
@@ -475,6 +498,24 @@ export async function matchForPrerender<TEnv = any>(
           (_, i) =>
             slotIds.indexOf(slotIds[i]!) === slotIds.lastIndexOf(slotIds[i]!),
         );
+
+        const liveIntercepts: LiveIntercept[] = [];
+        const live = (
+          intercept: InterceptEntry,
+          reason: LiveIntercept["reason"],
+        ): void => {
+          liveIntercepts.push({ slot: intercept.slotName, reason });
+        };
+        for (const found of foundIntercepts) {
+          if (!bakedIntercepts.includes(found)) {
+            live(found.intercept, "same-slot");
+          }
+        }
+        // The match tries the local name only when no intercept for the full
+        // name applies, and one without when() always applies.
+        if (foundIntercepts.every(({ intercept }) => intercept.when?.length)) {
+          for (const intercept of localNamed) live(intercept, "local-name");
+        }
 
         // V1 writes only the main variant. Do not execute intercept producers
         // whose output would be discarded (and whose personalization/errors
@@ -503,7 +544,7 @@ export async function matchForPrerender<TEnv = any>(
             const handlerResolved =
               handlerRaw instanceof Promise ? await handlerRaw : handlerRaw;
             if (handlerResolved instanceof Response) {
-              // Handler returned a redirect/response -- skip this intercept
+              live(intercept, "handler-response");
               continue;
             }
             const component: ReactNode = handlerResolved;
@@ -513,7 +554,10 @@ export async function matchForPrerender<TEnv = any>(
             if (intercept.layout) {
               if (typeof intercept.layout === "function") {
                 const layoutResult = await intercept.layout(buildCtx);
-                if (layoutResult instanceof Response) continue;
+                if (layoutResult instanceof Response) {
+                  live(intercept, "layout-response");
+                  continue;
+                }
                 layoutElement = layoutResult;
               } else {
                 layoutElement = intercept.layout;
@@ -581,6 +625,7 @@ export async function matchForPrerender<TEnv = any>(
           params: matchedParams,
           interceptSegments,
           interceptHandles,
+          liveIntercepts,
           onDemandConfig,
           ppr: routePpr,
         };
