@@ -1580,7 +1580,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
 export interface RevalidatingWalkOptions {
   /**
    * The intercept the request resolves: the route's entry (its handler and
-   * loaders) is skipped and only its id is matched. None on a FRESH pass.
+   * loaders) is skipped and only its id is matched. None on a full match.
    */
   readonly interceptResult?: InterceptResult | null;
   /** For the intercept skip's debug log. */
@@ -1605,8 +1605,9 @@ function boundaryResult(seg: ResolvedSegment): SegmentRevalidationResult {
 }
 
 /**
- * Resolve all segments for a route: a partial match (matchPartial), or a
- * full match with a FRESH pass.
+ * Resolve all segments for a route: a partial match (matchPartial), a full
+ * match with a FRESH pass, or the FRESH pass of an intercept record's
+ * background re-render (rerenderAndCacheRoute).
  */
 export async function resolveAllSegmentsWithRevalidation<TEnv>(
   pass: ResolutionPass<TEnv>,

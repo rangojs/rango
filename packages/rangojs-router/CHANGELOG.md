@@ -291,6 +291,24 @@ intercept loaders, and an intercept loader with its own `cache()` is refreshed
 by its next live read rather than by the re-render, as the route's own loaders
 already are. No change in your code.
 
+### Fixed: a `cache()` route's background re-render under an intercept no longer runs the intercepted route's handler
+
+**Before.** With an intercept open over a route under `cache()`, the
+background re-render that writes the intercept's record (the refresh a stale
+HIT starts under `cache({ ttl, swr })`, and the re-render that writes the
+record of a client-side navigation that kept the layout mounted) also rendered
+the intercepted route's own page, which a render under an intercept skips. Its
+handler, and any loader it reads, ran on every such re-render. The record
+stored that page, so every HIT from it sent the page's payload, which the
+browser never shows. The record also carried the page's `cacheTag()`s, which
+a record the visitor's own render wrote does not, so `revalidateTag()` on one
+of them evicted the intercept's record only when a re-render had written it.
+
+**Now.** The re-render skips the intercepted route's page as the visitor's
+render does: it writes the record a MISS writes, and every HIT answers as the
+MISS did. What the intercept shows, and the page under it, are unchanged. No
+change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

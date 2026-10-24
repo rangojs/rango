@@ -11,6 +11,11 @@
  * reports included. It now skips them as it skips the route's: each is
  * registered, and a handler's read starts it as its DSL declaration, so its
  * pushes stay out of the record and every HIT shows them once.
+ *
+ * The re-render skips the intercepted route's own entry, as the MISS does.
+ * It used to run that route's handler and store its segment and cacheTag()s
+ * in the intercept record, so every HIT sent the route's page, in a `diff`
+ * its `matched` did not always list.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -80,7 +85,7 @@ const Breadcrumbs = createHandle<string, string[]>((segments) =>
   segments.flat(),
 );
 
-const runs = { unread: 0, read: 0 };
+const runs = { unread: 0, read: 0, target: 0 };
 
 /** Declared by the intercept and read by nothing. */
 const UnreadData = createLoader(async (ctx) => {
@@ -118,6 +123,20 @@ async function ReadModal(ctx: HandlerContext): Promise<React.ReactNode> {
   return <dialog>{title}</dialog>;
 }
 
+/** The page an intercept opens over /list, as a document renders it. */
+function TargetPage(ctx: HandlerContext<{ id: string }>): React.ReactNode {
+  runs.target += 1;
+  ctx.use(Breadcrumbs)("target-page-crumb");
+  cacheTag("target-page");
+  return <article>target page</article>;
+}
+
+function TargetModal(ctx: HandlerContext): React.ReactNode {
+  ctx.use(Breadcrumbs)("target-modal-crumb");
+  cacheTag("target-modal");
+  return <dialog>target modal</dialog>;
+}
+
 /** The routes, with or without the loader nobody reads. */
 function routesWith(unreadLoader: boolean) {
   return urls(({ path, cache, layout, intercept, loader }) => [
@@ -144,6 +163,8 @@ function routesWith(unreadLoader: boolean) {
           () => <dialog>failing modal</dialog>,
           () => [loader(FailingData)],
         ),
+        path("/target/:id", TargetPage, { name: "target" }),
+        intercept("@modal", ".target", TargetModal),
       ]),
     ]),
   ]);
@@ -259,7 +280,7 @@ async function missStaleHit(
   over: Router = router,
 ): Promise<{
   results: ServeShellRequestResult[];
-  runs: { unread: number; read: number }[];
+  runs: { unread: number; read: number; target: number }[];
   /** The onError reports of each request, its background work included. */
   reports: string[][];
   writes: StoreWrite[];
@@ -269,11 +290,12 @@ async function missStaleHit(
   const { store, writes } = recordingStore();
   const { partial, before } = await visitOf(shape, over);
   const results: ServeShellRequestResult[] = [];
-  const counted: { unread: number; read: number }[] = [];
+  const counted: { unread: number; read: number; target: number }[] = [];
   const reports: string[][] = [];
   for (let i = 0; i < 3; i++) {
     runs.unread = 0;
     runs.read = 0;
+    runs.target = 0;
     reported.length = 0;
     results.push(
       await serveShellRequest(over, url, { cacheStore: store, partial }),
@@ -367,26 +389,7 @@ describe("cache() route with an intercept open: the background re-render", () =>
           await recordOf(writes[0]!.data),
           await recordOf(writes[1]!.data),
         ];
-        if (shape === "layout held") {
-          // A re-render writes both.
-          expect(refreshed).toEqual(miss);
-        } else {
-          // The MISS writes its own render. The refresh also stores the
-          // intercepted route's own segment, which a render under an
-          // intercept skips: compare what the MISS holds.
-          const ids = new Set(miss.segments.map((s: any) => s.id));
-          expect(refreshed.segments.filter((s: any) => ids.has(s.id))).toEqual(
-            miss.segments,
-          );
-          const nonEmpty = (handles: HandleData | undefined) =>
-            Object.fromEntries(
-              Object.entries(handles ?? {}).filter(
-                ([, byHandle]) => Object.keys(byHandle).length > 0,
-              ),
-            );
-          expect(nonEmpty(refreshed.handles)).toEqual(nonEmpty(miss.handles));
-          expect(refreshed.tags).toEqual(miss.tags);
-        }
+        expect(refreshed).toEqual(miss);
         // The handler's push stays, the loader's never enters; the read
         // links the loader's tag to the slot.
         const slot = miss.segments.find((s: any) => s.id.endsWith(".@modal"));
@@ -394,6 +397,49 @@ describe("cache() route with an intercept open: the background re-render", () =>
           [Breadcrumbs.$$id]: ["modal-crumb"],
         });
         expect(refreshed.tags).toEqual(["modal", "read-data"]);
+      });
+
+      it("never runs the intercepted route's own handler", async () => {
+        const { runs: counted, writes } = await missStaleHit(
+          "/target/1",
+          shape,
+        );
+        // The MISS, the stale HIT with its refresh, and the HIT.
+        expect(counted.map((c) => c.target)).toEqual([0, 0, 0]);
+        // The refresh ran: the MISS wrote the record, and the refresh again.
+        expect(writes).toHaveLength(2);
+      });
+
+      it("writes the refreshed record as the MISS wrote it, without the intercepted route's segment", async () => {
+        const { writes } = await missStaleHit("/target/1", shape);
+        expect(writes).toHaveLength(2);
+        const [miss, refreshed] = [
+          await recordOf(writes[0]!.data),
+          await recordOf(writes[1]!.data),
+        ];
+        expect(refreshed).toEqual(miss);
+        expect(miss.segments.filter((s: any) => s.type === "route")).toEqual(
+          [],
+        );
+        expect(miss.tags).toEqual(["target-modal"]);
+      });
+
+      it("answers every HIT as the MISS answered, without the intercepted route's page", async () => {
+        const { results } = await missStaleHit("/target/1", shape);
+        const answers: { matched: string[]; diff: string[] }[] = [];
+        for (const result of results) {
+          const { matched, diff } = (
+            await deserializeResult<any>(result.flight!)
+          ).metadata;
+          // Every segment the response sends is one it matched.
+          expect(diff.filter((id: string) => !matched.includes(id))).toEqual(
+            [],
+          );
+          expect(result.flight).not.toContain("target page");
+          answers.push({ matched, diff });
+        }
+        expect(answers[1]).toEqual(answers[0]);
+        expect(answers[2]).toEqual(answers[0]);
       });
     });
   }
