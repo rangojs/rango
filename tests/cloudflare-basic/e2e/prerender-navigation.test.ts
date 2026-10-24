@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
 import {
   waitForHydration,
@@ -8,6 +8,52 @@ import {
 } from "./helper";
 
 test.describe.configure({ mode: "serial" });
+
+/**
+ * Paging from /articles/page/1 to /articles/page/2 changes the route params
+ * and holds ArticlesLayout; both pages are served from their bake. The layout
+ * stays as the first page left it, as a live route keeps it: page 2's
+ * responses (its prefetch included) do not carry it, and the page keeps the
+ * same element with the same render stamp. The bake used to send it again
+ * from page 2's artifact when the params changed (cache-lookup.ts
+ * storedEntrySends); a build can bake both pages' layout with one stamp, so
+ * only the response tells it apart there.
+ */
+async function expectArticlesLayoutHeld(page: Page, url: string) {
+  const pageTwo: Promise<string>[] = [];
+  page.on("response", (response) => {
+    const target = new URL(response.url());
+    if (
+      target.pathname === "/articles/page/2" &&
+      target.searchParams.has("_rsc_partial")
+    ) {
+      // A prefetch the router dropped may have no body to read.
+      pageTwo.push(response.text().catch(() => ""));
+    }
+  });
+  await page.goto(url);
+  await waitForHydration(page);
+  const stamp = await testId(page, "layout-rendered-at").textContent();
+  await testId(page, "articles-layout").evaluate((el) => {
+    (el as HTMLElement & { __held?: boolean }).__held = true;
+  });
+
+  await using _ = await expectNoReload(page);
+  await testId(page, "pagination-next").click();
+  await expect(testId(page, "pagination-info")).toContainText("Page 2 of");
+
+  await expect(testId(page, "layout-rendered-at")).toHaveText(stamp!);
+  expect(
+    await testId(page, "articles-layout").evaluate(
+      (el) => (el as HTMLElement & { __held?: boolean }).__held === true,
+    ),
+  ).toBe(true);
+  const bodies = await Promise.all(pageTwo);
+  expect(bodies.some((body) => body.length > 0)).toBe(true);
+  for (const body of bodies) {
+    expect(body).not.toContain("Layout rendered at");
+  }
+}
 
 /**
  * Tests for navigating AWAY from pre-rendered pages.
@@ -128,6 +174,13 @@ test.describe("prerender navigation (production)", () => {
 
     expect(warnings).toEqual([]);
   });
+
+  test("paging between prerendered articles keeps the held layout", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectArticlesLayoutHeld(page, f.url("/articles/page/1"));
+  });
 });
 
 test.describe("prerender navigation (dev)", () => {
@@ -197,5 +250,12 @@ test.describe("prerender navigation (dev)", () => {
     await expect(testId(page, "about-page")).toBeVisible();
     await expect(testId(page, "nav")).toBeVisible();
     expect(missingSegments).toEqual([]);
+  });
+
+  test("paging between prerendered articles keeps the held layout", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectArticlesLayoutHeld(page, f.url("/articles/page/1"));
   });
 });

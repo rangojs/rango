@@ -150,10 +150,17 @@ That is the same function that serves a runtime `cache()` record (the
 What differs by source: a prerender entry is decoded here; a `cache()` record
 also resolves the entries above its boundary live and sets
 `state.shouldRevalidate`; and each decides which held segments are sent
-again. A prerender entry re-sends them when the params changed (and an
-overlay entry, which can be newer than the client's copy, re-sends the
-route's own segments on an action or a stale request); a `cache()` record
-asks its `revalidate()` rules. Pre-rendering IS caching, just at build time instead of runtime.
+again. A prerender entry (`storedEntrySends`) re-sends the route's own
+segments when the params changed (and an overlay entry, which can be newer
+than the client's copy, also on an action or a stale request). A held layout
+above the route stays held, as a live walk keeps it, unless its
+`revalidate()` asks for it when the params changed. The entry replays the
+handle values of the segments it sends only, so a kept layout keeps the
+client's values. It used to re-send every held segment and all their
+handle values when the params changed: a `/list` to `/item/1`
+navigation, an intercept's included, replaced the layout on screen and its
+crumbs with the build's render. A `cache()` record asks its `revalidate()`
+rules. Pre-rendering IS caching, just at build time instead of runtime.
 
 `serveStoredSegments` is also the middleware itself: `withCacheLookup` returns
 it, and it reads the sources in gate order before it serves. A cache HIT is

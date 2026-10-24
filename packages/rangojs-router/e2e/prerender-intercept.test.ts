@@ -61,6 +61,56 @@ async function expectInterceptResponseWithoutDetailPage(
   expect(body).not.toContain("pri-detail-content");
 }
 
+/**
+ * The navigation that opens the modal holds the layout, and is served from
+ * the stored intercept variant, the build's in production and the dev store's
+ * in dev. The layout stays as the index page's live render left it, as a live
+ * render under the intercept keeps it: it does not remount, and neither its
+ * render stamp nor its crumbs (the stamp, pushed by its handler) change, not
+ * even for a frame. The variant used to re-send it and its crumbs from the
+ * bake (cache-lookup.ts storedEntrySends).
+ */
+async function expectHeldLayoutKept(page: Page, url: string) {
+  await page.goto(url);
+  await waitForHydration(page);
+  const stamp = page.locator('[data-testid="pri-layout-render-time"]');
+  const crumbs = page.locator('[data-testid="pri-layout-crumbs"]');
+  const liveStamp = (await stamp.textContent())!;
+  await expect(crumbs).toHaveText(liveStamp);
+  const mounts = () =>
+    page.evaluate(
+      () => (window as { __priLayoutMounts?: number }).__priLayoutMounts,
+    );
+  const mountsBefore = await mounts();
+  expect(mountsBefore).toBeGreaterThan(0);
+  // Every text the crumbs show from here on.
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    (window as { __priCrumbsSeen?: string[] }).__priCrumbsSeen = seen;
+    const el = document.querySelector('[data-testid="pri-layout-crumbs"]')!;
+    new MutationObserver(() => seen.push(el.textContent ?? "")).observe(el, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
+
+  await page.locator('[data-testid="pri-link-alpha"]').click();
+  await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
+  // The modal's crumb lands with the response's handle values.
+  await expect(page.locator('[data-testid="pri-modal-handle"]')).toHaveText(
+    "modal-handle:alpha",
+  );
+
+  await expect(stamp).toHaveText(liveStamp);
+  await expect(crumbs).toHaveText(liveStamp);
+  expect(await mounts()).toBe(mountsBefore);
+  const seen = await page.evaluate(
+    () => (window as { __priCrumbsSeen?: string[] }).__priCrumbsSeen,
+  );
+  expect(seen?.filter((text) => text !== liveStamp)).toEqual([]);
+}
+
 // ---------------------------------------------------------------------------
 // Dev mode: intercept + prerender on-demand rendering
 // ---------------------------------------------------------------------------
@@ -225,6 +275,13 @@ test.describe("prerender-intercept (dev mode)", () => {
       page,
       f.url("/prerender-intercept"),
     );
+  });
+
+  test("opening the modal keeps the held layout: no remount, no re-sent render or crumbs", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectHeldLayoutKept(page, f.url("/prerender-intercept"));
   });
 
   test("intercept handler handle push survives into the modal (#567 gap 1)", async ({
@@ -515,6 +572,13 @@ test.describe("prerender-intercept (production build)", () => {
       page,
       f.url("/prerender-intercept"),
     );
+  });
+
+  test("opening the baked modal keeps the held layout: no remount, no re-sent render or crumbs", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectHeldLayoutKept(page, f.url("/prerender-intercept"));
   });
 
   test("intercept handler handle push survives the baked artifact (#567 gap 1)", async ({

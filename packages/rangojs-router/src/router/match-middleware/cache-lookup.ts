@@ -147,13 +147,16 @@ type StoredSegmentSource =
   | { kind: "prerender-build" | "prerender-overlay"; entry: PrerenderEntry };
 
 /**
- * Decode a prerender entry's segments and replay its handle data into the
- * request's HandleStore, as the cache scope's lookup does for a record.
+ * Decode a prerender entry's segments and replay the handle data of the ones
+ * it `sends` into the request's HandleStore: a held segment the client keeps
+ * keeps its handle values too, as on a live walk, where its handler does not
+ * run.
  */
 async function decodeStoredEntry<TEnv>(
   entry: PrerenderEntry,
   ctx: MatchContext<TEnv>,
   reqCtx: RequestContext<TEnv> | undefined,
+  sends: (segment: ResolvedSegment) => boolean | Promise<boolean>,
 ): Promise<ResolvedSegment[]> {
   // Shell-HIT tail (issue #700): a Prerender+ppr route's tail serves from THIS
   // store (the prerender lookup runs before the cache scope), so the fragment
@@ -170,6 +173,11 @@ async function decodeStoredEntry<TEnv>(
   if (handleStore && entry.handles) {
     const handlesRecord = await handleSnapshot!.decodeHandles(entry.handles);
     if (handlesRecord) {
+      for (const segment of segments) {
+        let send = sends(segment);
+        if (typeof send !== "boolean") send = await send;
+        if (!send) delete handlesRecord[segment.id];
+      }
       handleSnapshot!.restoreHandles(handlesRecord, handleStore);
     }
   }
@@ -284,30 +292,68 @@ function cachedSegmentSends<TEnv>(
 
 /**
  * Whether a prerender entry's segment is sent. On a partial navigation the
- * client keeps the segments it holds, so parent layouts stay live; when the
- * params changed (e.g., a different guide slug) the segments have different
- * content and are all sent. An overlay entry may be newer than the client's
- * copy: on an action or a stale request the route's own segments are re-sent,
- * as a live action re-render re-sends them (revalidation.ts
- * "action:route-segment"); the immutable bundled manifest keeps the client's
- * copy.
+ * client keeps the segments it holds. The route's own segments (an
+ * intercept's included) are sent again when the params changed (e.g., a
+ * different guide slug). An overlay entry may be newer than the client's
+ * copy: on an action or a stale request they are re-sent too, as a live
+ * action re-render re-sends them (revalidation.ts "action:route-segment");
+ * the immutable bundled manifest keeps the client's copy. A held segment
+ * above the route stays held, as a live walk keeps it ("nav:non-route-skip"),
+ * unless its revalidate() rules ask for it when the params changed.
+ *
+ * Decided once per segment: decodeStoredEntry asks first, to replay the
+ * handle values of the sent segments only.
  */
 function storedEntrySends<TEnv>(
   ctx: MatchContext<TEnv>,
   replaceable: boolean,
-): (segment: ResolvedSegment) => boolean {
-  const paramsChanged =
-    !ctx.isFullMatch && !paramsEqual(ctx.matched.params, ctx.prevParams);
+  router: RouterContext<TEnv>,
+): (segment: ResolvedSegment) => boolean | Promise<boolean> {
+  if (ctx.isFullMatch) return () => true;
+  const paramsChanged = !paramsEqual(ctx.matched.params, ctx.prevParams);
   const resendRouteSegments = replaceable && (ctx.isAction || ctx.stale);
-  return (segment) =>
-    ctx.isFullMatch ||
-    !ctx.clientSegmentSet.has(segment.id) ||
-    // A fill keeps it (fillSends); otherwise it is sent again when the params
-    // changed or an action re-sends the route's own segments.
-    (fillSends(ctx.handlerContext, segment.id, ctx.clientSegmentSet) ??
-      (paramsChanged ||
-        (resendRouteSegments &&
-          (segment.type === "route" || segment.belongsToRoute === true))));
+  const entryRevalidateMap =
+    paramsChanged && router.buildEntryRevalidateMap
+      ? router.buildEntryRevalidateMap(ctx.entries)
+      : undefined;
+  const decide = (segment: ResolvedSegment): boolean | Promise<boolean> => {
+    if (!ctx.clientSegmentSet.has(segment.id)) return true;
+    // A fill keeps it (fillSends).
+    const fill = fillSends(
+      ctx.handlerContext,
+      segment.id,
+      ctx.clientSegmentSet,
+    );
+    if (fill !== undefined) return fill;
+    if (segment.type === "route" || segment.belongsToRoute === true) {
+      return paramsChanged || resendRouteSegments;
+    }
+    const revalidate = entryRevalidateMap?.get(segment.id)?.revalidate;
+    if (!revalidate?.length) return false;
+    return router.evaluateRevalidation({
+      segment,
+      prevParams: ctx.prevParams,
+      getPrevSegment: null,
+      request: ctx.request,
+      prevUrl: ctx.prevUrl,
+      nextUrl: ctx.url,
+      revalidations: revalidate.map((fn, i) => ({
+        name: `revalidate${i}`,
+        fn,
+      })),
+      routeKey: ctx.routeKey,
+      context: ctx.handlerContext,
+      actionContext: ctx.actionContext,
+      stale: ctx.stale,
+      traceSource: "cache-hit",
+    });
+  };
+  const decided = new Map<string, boolean | Promise<boolean>>();
+  return (segment) => {
+    let send = decided.get(segment.id);
+    if (send === undefined) decided.set(segment.id, (send = decide(segment)));
+    return send;
+  };
 }
 
 /**
@@ -416,9 +462,12 @@ async function* serveStoredSegments<TEnv>(
   const source: StoredSegmentSource = stored;
 
   const fromCache = source.kind === "segment-cache";
+  const storedSends = fromCache
+    ? undefined
+    : storedEntrySends(ctx, source.kind === "prerender-overlay", router);
   const segments = fromCache
     ? source.segments
-    : await decodeStoredEntry(source.entry, ctx, reqCtx);
+    : await decodeStoredEntry(source.entry, ctx, reqCtx, storedSends!);
 
   // Entries above the cache() boundary are not in the record: resolve them
   // fresh, exactly as an uncached render of this request would.
@@ -479,7 +528,7 @@ async function* serveStoredSegments<TEnv>(
 
   const sends = fromCache
     ? cachedSegmentSends(ctx, source.shouldRevalidate, reqCtx, router)
-    : storedEntrySends(ctx, source.kind === "prerender-overlay");
+    : storedSends!;
 
   yield* liveSegments;
 

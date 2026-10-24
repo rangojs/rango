@@ -524,6 +524,22 @@ intercept, with their handle values. What the intercept shows, and the page
 under it, are unchanged, and a direct load of the URL still serves the full
 page. The next build bakes the new variant. No change in your code.
 
+### Fixed: a navigation to a `Prerender()` route keeps the layout on screen when the params change
+
+**Before.** A client-side navigation served from a `Prerender()` route's bake,
+at build or on the dev server, sent every segment the browser held again when
+the params changed, the layouts above the route included, with their handle
+values. A `/list` to `/item/1` navigation, or one that opens an intercept over
+`/item/1`, replaced the layout on screen with the copy the build rendered, and
+its breadcrumbs read with `useHandle` with the build's values. A live route
+keeps that layout and its values.
+
+**Now.** The layout stays as it is on screen, with its handle values, as on a
+live route: layouts stay held on navigation, even when the params change. The
+route's own segments are sent as before. A layout whose `revalidate()` asks
+for a re-render when the params change gets the baked copy, as it gets a live
+render on a live route. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
