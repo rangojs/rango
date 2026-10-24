@@ -578,6 +578,28 @@ navigation served from the record, as on an uncached one: read the value in
 a loader of its own, or give the layout a `revalidate()` that re-renders it.
 A document request is unchanged. No change in your code.
 
+### Fixed: an orphan layout's parallel slot follows its `revalidate()` on a navigation served from `cache()` or a `Prerender()` bake
+
+**Before.** A parallel slot declared in an orphan layout (a layout with no
+routes, declared among a layout's children or a route's) had its
+`revalidate()` rules ignored when a navigation was served from a `cache()`
+record or a `Prerender()` bake. A held slot whose rule asked for it, such as
+`revalidate(() => true)` on an `/item/1` to `/item/2` navigation, stayed as it
+was on screen, where a live route sends it. Under `cache()` the same happened
+when the params did not change, and the slot of an orphan layout inside a
+`path()` whose rule returned `false` was sent again when the params changed,
+where a live route keeps it. A layout's own slot that shared its name with a
+slot of one of its orphan layouts answered to the orphan's slot's rules on
+those navigations instead of its own.
+
+**Now.** The slot is sent or kept as its rules say, as on a live route, and a
+layout's own slot that shares its name with an orphan's slot keeps its own
+`revalidate()` rules. Two `Prerender()` behaviours are unchanged: a bake
+consults no `revalidate()` rule of a held layout or slot when the params did
+not change, and it sends a route's own segments (an orphan layout inside the
+`path()` and its slots included) whenever the params changed. No change in
+your code.
+
 ### Fixed: a navigation reports parallel slot and orphan layout handlers in Server-Timing and traces, as the document does
 
 **Before.** A client navigation or an action's revalidation left out two
