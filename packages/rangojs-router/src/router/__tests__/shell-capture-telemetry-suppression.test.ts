@@ -1,13 +1,13 @@
 /**
  * The PPR background shell capture re-runs router.match under a derived request
- * context flagged `_shellCaptureRun: true`. That background render must be
+ * context with `_shellCaptureState.run`. That background render must be
  * INVISIBLE to a configured TelemetrySink: it re-uses the foreground Request, so
  * a second request.start/cache.decision/request.end pair (stamped with the same
  * WeakMap-keyed requestId) would double-count latency dashboards and let a
  * background render masquerade as a foreground request.
  *
  * match()/matchPartial() derive `emitTelemetry = hasTelemetry &&
- * !_getRequestContext()?._shellCaptureRun` — so with the flag set (capture),
+ * !_getRequestContext()?._shellCaptureState?.run` — so with the flag set (capture),
  * ZERO events reach the sink; without it (foreground), request.start still
  * arrives. Drives createMatchHandlers with a recording sink under the REAL
  * request-context ALS (only the flag differs between runs).
@@ -87,18 +87,19 @@ function makeDeps(telemetry: TelemetrySink): any {
   };
 }
 
-describe("PPR shell-capture telemetry suppression (_shellCaptureRun)", () => {
+describe("PPR shell-capture telemetry suppression (_shellCaptureState)", () => {
   beforeEach(() => {
     (collectMatchResult as any).mockReset();
     (collectMatchResult as any).mockResolvedValue(OK_RESULT);
   });
 
-  it("match() emits ZERO events when run under a _shellCaptureRun context", async () => {
+  it("match() emits ZERO events when run under a _shellCaptureState context", async () => {
     const { sink, events } = recordingSink();
     const handlers = createMatchHandlers(makeDeps(sink));
 
-    await runWithRequestContext({ _shellCaptureRun: true } as never, () =>
-      handlers.match(new Request("http://localhost/blog"), {}),
+    await runWithRequestContext(
+      { _shellCaptureState: { run: true } } as never,
+      () => handlers.match(new Request("http://localhost/blog"), {}),
     );
 
     expect(events).toEqual([]);
@@ -115,12 +116,13 @@ describe("PPR shell-capture telemetry suppression (_shellCaptureRun)", () => {
     expect(types).toContain("request.end");
   });
 
-  it("matchPartial() emits ZERO events when run under a _shellCaptureRun context", async () => {
+  it("matchPartial() emits ZERO events when run under a _shellCaptureState context", async () => {
     const { sink, events } = recordingSink();
     const handlers = createMatchHandlers(makeDeps(sink));
 
-    await runWithRequestContext({ _shellCaptureRun: true } as never, () =>
-      handlers.matchPartial(new Request("http://localhost/blog"), {}),
+    await runWithRequestContext(
+      { _shellCaptureState: { run: true } } as never,
+      () => handlers.matchPartial(new Request("http://localhost/blog"), {}),
     );
 
     expect(events).toEqual([]);

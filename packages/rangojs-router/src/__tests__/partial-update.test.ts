@@ -28,7 +28,7 @@ vi.mock("../browser/segment-structure-assert.js", () => ({
 }));
 
 import { createPartialUpdater } from "../browser/partial-update";
-import { LoaderStore } from "../loader-store";
+import { makeNavigationStore } from "./kit/navigation-store.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -46,68 +46,6 @@ function seg(
     component: `component-${id}`,
     ...overrides,
   } as any;
-}
-
-function createMockStore(opts?: {
-  historyKey?: string;
-  cachedSegments?: ResolvedSegment[];
-  segmentIds?: string[];
-  currentUrl?: string;
-}) {
-  const cache = new Map<
-    string,
-    { segments: ResolvedSegment[]; stale: boolean }
-  >();
-  const historyKey = opts?.historyKey ?? "/";
-  if (opts?.cachedSegments) {
-    cache.set(historyKey, { segments: opts.cachedSegments, stale: false });
-  }
-
-  let currentHistoryKey = historyKey;
-  let interceptSourceUrl: string | null = null;
-
-  return {
-    loaders: new LoaderStore(),
-    getHistoryKey: vi.fn(() => currentHistoryKey),
-    setHistoryKey: vi.fn((k: string) => {
-      currentHistoryKey = k;
-    }),
-    rememberDisplayedEntry: vi.fn(),
-    getHistoryEntryMemory: vi.fn(() => undefined),
-    getCachedSegments: vi.fn((key: string) => cache.get(key)),
-    getSegmentState: vi.fn(() => ({
-      path: "/",
-      currentUrl: opts?.currentUrl ?? "http://localhost/",
-      currentSegmentIds: opts?.segmentIds ?? [],
-    })),
-    setInterceptSourceUrl: vi.fn((url: string | null) => {
-      interceptSourceUrl = url;
-    }),
-    getInterceptSourceUrl: vi.fn(() => interceptSourceUrl),
-    // Stubs for methods not directly used in partial-update
-    getState: vi.fn(() => ({ state: "idle" })),
-    setState: vi.fn(),
-    subscribe: vi.fn(),
-    cacheSegmentsForHistory: vi.fn(),
-    hasHistoryCache: vi.fn(() => false),
-    setPath: vi.fn(),
-    setCurrentUrl: vi.fn(),
-    setSegmentIds: vi.fn(),
-    markCacheAsStale: vi.fn(),
-    clearHistoryCache: vi.fn(),
-    markCacheAsStaleAndBroadcast: vi.fn(),
-    setCrossTabRefreshCallback: vi.fn(),
-    addInflightAction: vi.fn(),
-    removeInflightAction: vi.fn(),
-    isActionInProgress: vi.fn(() => false),
-    setActionInProgress: vi.fn(),
-    updateCacheHandleData: vi.fn(),
-    onUpdate: vi.fn(),
-    emitUpdate: vi.fn(),
-    getActionState: vi.fn(),
-    setActionState: vi.fn(),
-    subscribeToAction: vi.fn(),
-  };
 }
 
 function createMockClient(
@@ -162,8 +100,8 @@ describe("partial-update", () => {
       const cachedRoute = seg("L0R0", { component: "cached-route" });
       const newRoute = seg("L0R0", { component: "new-route" });
 
-      const store = createMockStore({
-        cachedSegments: [cachedLayout, cachedRoute],
+      const store = makeNavigationStore({
+        initialSegments: [cachedLayout, cachedRoute],
       });
 
       const { client } = createMockClient({
@@ -181,7 +119,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -232,8 +170,8 @@ describe("partial-update", () => {
       const newLayout = seg("L0", { type: "layout", component: null as any });
       const cachedRoute = seg("L0R0");
 
-      const store = createMockStore({
-        cachedSegments: [cachedLayout, cachedRoute],
+      const store = makeNavigationStore({
+        initialSegments: [cachedLayout, cachedRoute],
       });
 
       const { client } = createMockClient({
@@ -250,7 +188,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments,
@@ -266,7 +204,7 @@ describe("partial-update", () => {
 
     it("preserves loading state for cached (unchanged) segments", async () => {
       const cached = seg("R0", { loading: "skeleton" as any });
-      const store = createMockStore({ cachedSegments: [cached] });
+      const store = makeNavigationStore({ initialSegments: [cached] });
 
       const { client } = createMockClient({
         metadata: {
@@ -282,7 +220,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments,
@@ -315,8 +253,8 @@ describe("partial-update", () => {
       });
       const cachedRoute = seg("L0R0", { component: "cached-route" });
 
-      const store = createMockStore({
-        cachedSegments: [cachedLayout, cachedRoute],
+      const store = makeNavigationStore({
+        initialSegments: [cachedLayout, cachedRoute],
       });
 
       // Server returns a new route segment but NOT the layout.
@@ -338,7 +276,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments,
@@ -369,7 +307,7 @@ describe("partial-update", () => {
       serverSegments: ResolvedSegment[];
       mode?: any;
     }) {
-      const store = createMockStore({ cachedSegments: opts.cached });
+      const store = makeNavigationStore({ initialSegments: opts.cached });
       const { client } = createMockClient({
         metadata: {
           isPartial: true,
@@ -384,7 +322,7 @@ describe("partial-update", () => {
       });
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments: vi.fn(async () => "tree"),
@@ -499,7 +437,7 @@ describe("partial-update", () => {
   describe("empty diff handling", () => {
     it("skips UI update when diff is empty (same-route revalidation)", async () => {
       const cached = seg("R0");
-      const store = createMockStore({ cachedSegments: [cached] });
+      const store = makeNavigationStore({ initialSegments: [cached] });
 
       const { client } = createMockClient({
         metadata: {
@@ -515,7 +453,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments: vi.fn(),
@@ -538,7 +476,7 @@ describe("partial-update", () => {
     it("renders cached segments when navigating with targetCacheSegments", async () => {
       const targetSegs = [seg("L0", { type: "layout" }), seg("L0R0")];
 
-      const store = createMockStore();
+      const store = makeNavigationStore();
       const { client } = createMockClient({
         metadata: {
           isPartial: true,
@@ -554,7 +492,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -579,9 +517,8 @@ describe("partial-update", () => {
         type: "parallel",
         namespace: "intercept:modal",
       });
-      const store = createMockStore({
-        cachedSegments: [cached, modal],
-        segmentIds: ["L0", "L0.@modal"],
+      const store = makeNavigationStore({
+        initialSegments: [cached, modal],
       });
 
       const { client } = createMockClient({
@@ -599,7 +536,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -624,10 +561,9 @@ describe("partial-update", () => {
         type: "parallel",
         namespace: "intercept:modal",
       });
-      const store = createMockStore({
-        cachedSegments: [cached, modal],
-        segmentIds: ["L0", "L0.@modal"],
-        currentUrl: "http://localhost/shop/product/42", // pre-popstate intercept URL
+      const store = makeNavigationStore({
+        initialSegments: [cached, modal],
+        url: "http://localhost/shop/product/42", // pre-popstate intercept URL
       });
 
       const { client } = createMockClient({
@@ -642,7 +578,7 @@ describe("partial-update", () => {
       const tx = createMockTx("http://localhost/shop?page=5"); // popstate destination
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments: vi.fn(async () => "tree"),
@@ -681,16 +617,15 @@ describe("partial-update", () => {
         tx: ReturnType<typeof createMockTx> & { traversal?: boolean },
         mode?: Parameters<ReturnType<typeof createPartialUpdater>>[5],
       ): Promise<string> => {
-        const store = createMockStore({
-          cachedSegments: [route],
-          segmentIds: ["R0"],
+        const store = makeNavigationStore({
+          initialSegments: [route],
           // The entry on screen: the one being left.
-          currentUrl: "http://localhost/list?page=6",
+          url: "http://localhost/list?page=6",
         });
         const { client } = createMockClient(noChanges);
         const updater = createPartialUpdater({
           getVersion: () => undefined,
-          store: store as any,
+          store,
           client: client as any,
           onUpdate: vi.fn(),
           renderSegments: vi.fn(async () => "tree"),
@@ -741,12 +676,11 @@ describe("partial-update", () => {
       const sentRoute = async (
         mode?: Parameters<ReturnType<typeof createPartialUpdater>>[5],
       ): Promise<string | undefined> => {
-        const store = createMockStore({
-          cachedSegments: [seg("R0")],
-          segmentIds: ["R0"],
-          currentUrl: "http://localhost/public-1?sort=a",
+        const store = makeNavigationStore({
+          initialSegments: [seg("R0")],
+          url: "http://localhost/public-1?sort=a",
         });
-        store.getHistoryEntryMemory.mockReturnValue({
+        vi.spyOn(store, "getHistoryEntryMemory").mockReturnValue({
           routeName: "item",
           rewriteTarget: "/item/1?sort=a",
           state: null,
@@ -761,7 +695,7 @@ describe("partial-update", () => {
         });
         const updater = createPartialUpdater({
           getVersion: () => undefined,
-          store: store as any,
+          store,
           client: client as any,
           onUpdate: vi.fn(),
           renderSegments: vi.fn(async () => "tree"),
@@ -798,11 +732,10 @@ describe("partial-update", () => {
     });
 
     it("throws ServerRedirect for same-origin redirect payload", async () => {
+      const store = makeNavigationStore({ initialSegments: [seg("R0")] });
       vi.stubGlobal("window", {
         location: { origin: "http://localhost" },
       });
-
-      const store = createMockStore({ cachedSegments: [seg("R0")] });
       const { client } = createMockClient({
         metadata: {
           redirect: { url: "/target" },
@@ -813,7 +746,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments: vi.fn(async () => "tree"),
@@ -828,11 +761,10 @@ describe("partial-update", () => {
     });
 
     it("ignores cross-origin redirect payload", async () => {
+      const store = makeNavigationStore({ initialSegments: [seg("R0")] });
       vi.stubGlobal("window", {
         location: { origin: "http://localhost" },
       });
-
-      const store = createMockStore({ cachedSegments: [seg("R0")] });
       const { client } = createMockClient({
         metadata: {
           redirect: { url: "https://evil.example/phish" },
@@ -849,7 +781,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -867,11 +799,10 @@ describe("partial-update", () => {
 
     it("hard-navigates an external:true redirect payload via location.assign", async () => {
       const assign = vi.fn();
+      const store = makeNavigationStore({ initialSegments: [seg("R0")] });
       vi.stubGlobal("window", {
         location: { origin: "http://localhost", assign },
       });
-
-      const store = createMockStore({ cachedSegments: [seg("R0")] });
       const { client } = createMockClient({
         metadata: {
           redirect: {
@@ -887,7 +818,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -912,11 +843,10 @@ describe("partial-update", () => {
       const consoleError = vi
         .spyOn(console, "error")
         .mockImplementation(() => {});
+      const store = makeNavigationStore({ initialSegments: [seg("R0")] });
       vi.stubGlobal("window", {
         location: { origin: "http://localhost", assign },
       });
-
-      const store = createMockStore({ cachedSegments: [seg("R0")] });
       const { client } = createMockClient({
         metadata: {
           redirect: {
@@ -932,7 +862,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -960,12 +890,12 @@ describe("partial-update", () => {
         location: { origin: "http://localhost", href: "http://localhost/" },
       });
 
-      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const store = makeNavigationStore({ initialSegments: [seg("R0")] });
       // Defense in depth: the server redirects on a cross-app mismatch, so a
       // partial whose routerId differs from this client's should never arrive.
       // If one does (stale/edge cache, proxy mixing apps, server bug), it must
       // NOT be merged into this document.
-      (store as any).getRouterId = vi.fn(() => "client-app");
+      store.setRouterId!("client-app");
 
       const { client } = createMockClient({
         metadata: {
@@ -986,7 +916,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -1005,8 +935,8 @@ describe("partial-update", () => {
     });
 
     it("applies a partial response whose routerId matches the client", async () => {
-      const store = createMockStore({ cachedSegments: [seg("R0")] });
-      (store as any).getRouterId = vi.fn(() => "client-app");
+      const store = makeNavigationStore({ initialSegments: [seg("R0")] });
+      store.setRouterId!("client-app");
 
       const { client } = createMockClient({
         metadata: {
@@ -1023,7 +953,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments: vi.fn(async () => "tree"),
@@ -1061,9 +991,8 @@ describe("partial-update", () => {
       });
 
       // Source page is cached at the current history key
-      const store = createMockStore({
-        cachedSegments: [sourceLayout, sourceRoute],
-        segmentIds: ["L0", "L0R0"],
+      const store = makeNavigationStore({
+        initialSegments: [sourceLayout, sourceRoute],
       });
 
       // Server returns an intercept response: only the modal is in diff.
@@ -1083,7 +1012,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments,
@@ -1118,9 +1047,8 @@ describe("partial-update", () => {
         namespace: "intercept:modal",
       });
 
-      const store = createMockStore({
-        segmentIds: ["L0", "L0R0", "L0.@modal"],
-        cachedSegments: [layout, route, modal],
+      const store = makeNavigationStore({
+        initialSegments: [layout, route, modal],
       });
 
       const { client } = createMockClient({
@@ -1136,7 +1064,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments: vi.fn(async () => "tree"),
@@ -1160,7 +1088,7 @@ describe("partial-update", () => {
         namespace: "intercept:modal",
       });
 
-      const store = createMockStore({ cachedSegments: [layout, route] });
+      const store = makeNavigationStore({ initialSegments: [layout, route] });
 
       const { client } = createMockClient({
         metadata: {
@@ -1177,7 +1105,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments,
@@ -1237,9 +1165,8 @@ describe("partial-update", () => {
       slots?: Record<string, { active: boolean }>;
       mode?: { type: "stale-revalidation" } | { type: "navigate" };
     }) {
-      const store = createMockStore({
-        cachedSegments: opts.onScreen,
-        segmentIds: opts.onScreen.map((s) => s.id),
+      const store = makeNavigationStore({
+        initialSegments: opts.onScreen,
       });
       const { client } = createMockClient({
         metadata: {
@@ -1255,7 +1182,7 @@ describe("partial-update", () => {
       const tx = createMockTx("http://localhost/list");
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -1374,7 +1301,7 @@ describe("partial-update", () => {
 
   describe("stale navigation detection", () => {
     it("returns early when signal is aborted before processing", async () => {
-      const store = createMockStore();
+      const store = makeNavigationStore();
       const controller = new AbortController();
       controller.abort();
 
@@ -1393,7 +1320,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -1407,10 +1334,11 @@ describe("partial-update", () => {
     });
 
     it("skips UI update for stale revalidation when history key changed", async () => {
-      const store = createMockStore({ historyKey: "/page1" });
+      const store = makeNavigationStore({ initialHistoryKey: "/page1" });
+      const getHistoryKey = vi.spyOn(store, "getHistoryKey");
       // Simulate history key changing mid-request
       let callCount = 0;
-      store.getHistoryKey.mockImplementation(() => {
+      getHistoryKey.mockImplementation(() => {
         callCount++;
         return callCount <= 1 ? "/page1" : "/page2";
       });
@@ -1429,7 +1357,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments: vi.fn(async () => "tree"),
@@ -1448,7 +1376,7 @@ describe("partial-update", () => {
     it("renders all segments client-side when isPartial=false", async () => {
       const serverSegments = [seg("L0", { type: "layout" }), seg("L0R0")];
 
-      const store = createMockStore();
+      const store = makeNavigationStore();
       const { client } = createMockClient({
         metadata: {
           isPartial: false,
@@ -1462,7 +1390,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -1492,7 +1420,7 @@ describe("partial-update", () => {
       const controller = new AbortController();
       controller.abort();
 
-      const store = createMockStore();
+      const store = makeNavigationStore();
       const { client } = createMockClient({
         metadata: {
           isPartial: false,
@@ -1506,7 +1434,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -1527,11 +1455,12 @@ describe("partial-update", () => {
      * during which a new navigation can land.
      */
     it("skips full-update UI commit for stale revalidation when history key changed", async () => {
-      const store = createMockStore({ historyKey: "/page1" });
+      const store = makeNavigationStore({ initialHistoryKey: "/page1" });
+      const getHistoryKey = vi.spyOn(store, "getHistoryKey");
       // Key matches when captured at start, then changes (user navigated away)
       // by the time the post-stream guard re-reads it.
       let callCount = 0;
-      store.getHistoryKey.mockImplementation(() => {
+      getHistoryKey.mockImplementation(() => {
         callCount++;
         return callCount <= 1 ? "/page1" : "/page2";
       });
@@ -1549,7 +1478,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments,
@@ -1565,7 +1494,7 @@ describe("partial-update", () => {
     });
 
     it("applies full-update stale revalidation when history key is unchanged", async () => {
-      const store = createMockStore({ historyKey: "/page1" });
+      const store = makeNavigationStore({ initialHistoryKey: "/page1" });
 
       const { client } = createMockClient({
         metadata: {
@@ -1579,7 +1508,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments: vi.fn(async () => "full-tree"),
@@ -1597,7 +1526,7 @@ describe("partial-update", () => {
   describe("HMR resilience", () => {
     it("retries with empty segments when matched IDs are missing from cache", async () => {
       // No cached segments → server's matched["L0", "L0R0"] won't be found
-      const store = createMockStore({ cachedSegments: [] });
+      const store = makeNavigationStore({ initialSegments: [] });
 
       // First call: partial with missing segments
       // Second call (retry): full update
@@ -1643,7 +1572,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments,
@@ -1658,7 +1587,7 @@ describe("partial-update", () => {
     });
 
     it("throws on retry failure", async () => {
-      const store = createMockStore({ cachedSegments: [] });
+      const store = makeNavigationStore({ initialSegments: [] });
 
       const { client } = createMockClient({
         metadata: {
@@ -1673,7 +1602,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments: vi.fn(async () => "tree"),
@@ -1688,8 +1617,8 @@ describe("partial-update", () => {
 
   describe("isAction and staleRevalidation options", () => {
     it("wraps onUpdate in startTransition when isAction=true", async () => {
-      const store = createMockStore({
-        cachedSegments: [seg("R0")],
+      const store = makeNavigationStore({
+        initialSegments: [seg("R0")],
       });
 
       const { client } = createMockClient({
@@ -1706,7 +1635,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments: vi.fn(async () => "tree"),
@@ -1725,8 +1654,8 @@ describe("partial-update", () => {
     // new one is ready and no fallback shows, on a page with no transition()
     // too.
     it("commits a stale revalidation in a transition", async () => {
-      const store = createMockStore({
-        cachedSegments: [seg("R0")],
+      const store = makeNavigationStore({
+        initialSegments: [seg("R0")],
       });
       const { client } = createMockClient({
         metadata: {
@@ -1739,7 +1668,7 @@ describe("partial-update", () => {
       const lanes: boolean[] = [];
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(() => {
           lanes.push(transitionState.inTransition);
@@ -1762,8 +1691,8 @@ describe("partial-update", () => {
     });
 
     it("passes forceAwait to renderSegments when staleRevalidation=true", async () => {
-      const store = createMockStore({
-        cachedSegments: [seg("R0")],
+      const store = makeNavigationStore({
+        initialSegments: [seg("R0")],
       });
 
       const { client } = createMockClient({
@@ -1780,7 +1709,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments,
@@ -1817,7 +1746,7 @@ describe("partial-update", () => {
    */
   describe("fully-prefetched commit branch (#622 follow-up)", () => {
     it("renders with forceAwait when fullyPrefetched=true", async () => {
-      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const store = makeNavigationStore({ initialSegments: [seg("R0")] });
       const { client } = createMockClient(
         {
           metadata: {
@@ -1834,7 +1763,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments,
@@ -1861,7 +1790,7 @@ describe("partial-update", () => {
       }) as any);
 
       try {
-        const store = createMockStore({ cachedSegments: [seg("R0")] });
+        const store = makeNavigationStore({ initialSegments: [seg("R0")] });
         const { client } = createMockClient(
           {
             metadata: {
@@ -1878,7 +1807,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
         const updater = createPartialUpdater({
           getVersion: () => undefined,
-          store: store as any,
+          store,
           client: client as any,
           onUpdate,
           renderSegments: vi.fn(async () => "tree"),
@@ -1898,7 +1827,7 @@ describe("partial-update", () => {
     });
 
     it("does NOT forceAwait a cold nav (fullyPrefetched=false) so its fallbacks stream", async () => {
-      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const store = makeNavigationStore({ initialSegments: [seg("R0")] });
       const { client } = createMockClient(
         {
           metadata: {
@@ -1915,7 +1844,7 @@ describe("partial-update", () => {
       const tx = createMockTx();
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments,
@@ -1943,8 +1872,8 @@ describe("partial-update", () => {
         // A transition-tagged segment drives shouldStartViewTransition=true, so
         // the hasTransition branch wins regardless of fullyPrefetched: a
         // transition() route is the documented content-hold opt-in.
-        const store = createMockStore({
-          cachedSegments: [seg("R0", { transition: true } as any)],
+        const store = makeNavigationStore({
+          initialSegments: [seg("R0", { transition: true } as any)],
         });
         const { client } = createMockClient(
           {
@@ -1964,7 +1893,7 @@ describe("partial-update", () => {
         const tx = createMockTx();
         const updater = createPartialUpdater({
           getVersion: () => undefined,
-          store: store as any,
+          store,
           client: client as any,
           onUpdate,
           renderSegments: vi.fn(async () => "tree"),
@@ -2015,8 +1944,8 @@ describe("partial-update", () => {
         });
         const serverRoute = seg("L0R0", { component: "updated-route" });
 
-        const store = createMockStore({
-          cachedSegments: [cachedLayout, cachedRoute],
+        const store = makeNavigationStore({
+          initialSegments: [cachedLayout, cachedRoute],
         });
 
         const { client } = createMockClient({
@@ -2033,7 +1962,7 @@ describe("partial-update", () => {
 
         const updater = createPartialUpdater({
           getVersion: () => undefined,
-          store: store as any,
+          store,
           client: client as any,
           onUpdate: vi.fn(),
           renderSegments,
@@ -2080,8 +2009,8 @@ describe("partial-update", () => {
         });
         const serverRoute = seg("L0R0", { component: "updated" });
 
-        const store = createMockStore({
-          cachedSegments: [cachedLayout, cachedRoute],
+        const store = makeNavigationStore({
+          initialSegments: [cachedLayout, cachedRoute],
         });
 
         const { client } = createMockClient({
@@ -2098,7 +2027,7 @@ describe("partial-update", () => {
 
         const updater = createPartialUpdater({
           getVersion: () => undefined,
-          store: store as any,
+          store,
           client: client as any,
           onUpdate: vi.fn(),
           renderSegments,
@@ -2146,8 +2075,8 @@ describe("partial-update", () => {
         });
         const serverRoute = seg("L0R0", { component: "updated-route" });
 
-        const store = createMockStore({
-          cachedSegments: [cachedLayout, cachedRoute],
+        const store = makeNavigationStore({
+          initialSegments: [cachedLayout, cachedRoute],
         });
 
         const { client } = createMockClient({
@@ -2164,7 +2093,7 @@ describe("partial-update", () => {
 
         const updater = createPartialUpdater({
           getVersion: () => undefined,
-          store: store as any,
+          store,
           client: client as any,
           onUpdate: vi.fn(),
           renderSegments,
@@ -2209,8 +2138,8 @@ describe("partial-update", () => {
         });
         const serverRoute = seg("L0R0", { component: "updated" });
 
-        const store = createMockStore({
-          cachedSegments: [cachedLayout, cachedRoute],
+        const store = makeNavigationStore({
+          initialSegments: [cachedLayout, cachedRoute],
         });
 
         const { client } = createMockClient({
@@ -2227,7 +2156,7 @@ describe("partial-update", () => {
 
         const updater = createPartialUpdater({
           getVersion: () => undefined,
-          store: store as any,
+          store,
           client: client as any,
           onUpdate: vi.fn(),
           renderSegments,
@@ -2272,8 +2201,8 @@ describe("partial-update", () => {
           mountPath: "/shop",
         });
 
-        const store = createMockStore({
-          cachedSegments: [cachedLayout, cachedRoute],
+        const store = makeNavigationStore({
+          initialSegments: [cachedLayout, cachedRoute],
         });
 
         const { client } = createMockClient({
@@ -2290,7 +2219,7 @@ describe("partial-update", () => {
 
         const updater = createPartialUpdater({
           getVersion: () => undefined,
-          store: store as any,
+          store,
           client: client as any,
           onUpdate: vi.fn(),
           renderSegments,
@@ -2314,10 +2243,11 @@ describe("partial-update", () => {
 
   describe("intercept context tracking", () => {
     it("sets intercept source URL when slots are active", async () => {
-      const store = createMockStore({
-        cachedSegments: [seg("L0", { type: "layout" }), seg("L0R0")],
-        currentUrl: "http://localhost/shop",
+      const store = makeNavigationStore({
+        initialSegments: [seg("L0", { type: "layout" }), seg("L0R0")],
+        url: "http://localhost/shop",
       });
+      const setInterceptSourceUrl = vi.spyOn(store, "setInterceptSourceUrl");
 
       const { client } = createMockClient({
         metadata: {
@@ -2333,7 +2263,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments: vi.fn(async () => "tree"),
@@ -2348,15 +2278,16 @@ describe("partial-update", () => {
       );
 
       // Should set intercept source URL from current URL (segmentState.currentUrl)
-      expect(store.setInterceptSourceUrl).toHaveBeenCalledWith(
+      expect(setInterceptSourceUrl).toHaveBeenCalledWith(
         "http://localhost/shop",
       );
     });
 
     it("clears intercept source URL for non-intercept navigation", async () => {
-      const store = createMockStore({
-        cachedSegments: [seg("R0")],
+      const store = makeNavigationStore({
+        initialSegments: [seg("R0")],
       });
+      const setInterceptSourceUrl = vi.spyOn(store, "setInterceptSourceUrl");
 
       const { client } = createMockClient({
         metadata: {
@@ -2371,7 +2302,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments: vi.fn(async () => "tree"),
@@ -2379,13 +2310,14 @@ describe("partial-update", () => {
 
       await updater("http://localhost/page", ["R0"], false, undefined, tx);
 
-      expect(store.setInterceptSourceUrl).toHaveBeenCalledWith(null);
+      expect(setInterceptSourceUrl).toHaveBeenCalledWith(null);
     });
 
     it("does not update intercept context for actions", async () => {
-      const store = createMockStore({
-        cachedSegments: [seg("R0")],
+      const store = makeNavigationStore({
+        initialSegments: [seg("R0")],
       });
+      const setInterceptSourceUrl = vi.spyOn(store, "setInterceptSourceUrl");
 
       const { client } = createMockClient({
         metadata: {
@@ -2400,7 +2332,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments: vi.fn(async () => "tree"),
@@ -2410,13 +2342,13 @@ describe("partial-update", () => {
         type: "action",
       });
 
-      expect(store.setInterceptSourceUrl).not.toHaveBeenCalled();
+      expect(setInterceptSourceUrl).not.toHaveBeenCalled();
     });
   });
 
   describe("streaming lifecycle", () => {
     it("starts and ends streaming token", async () => {
-      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const store = makeNavigationStore({ initialSegments: [seg("R0")] });
       const endFn = vi.fn();
 
       const { client, resolveStream } = createMockClient(
@@ -2436,7 +2368,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments: vi.fn(async () => "tree"),
@@ -2470,7 +2402,7 @@ describe("partial-update", () => {
     });
 
     it("does not start streaming when fetchPartial throws", async () => {
-      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const store = makeNavigationStore({ initialSegments: [seg("R0")] });
 
       const fetchError = new Error("network failure");
       const client = {
@@ -2483,7 +2415,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments: vi.fn(async () => "tree"),
@@ -2536,7 +2468,7 @@ describe("partial-update", () => {
     it("removes the abort listener after a non-aborted partial render", async () => {
       const cached = seg("L0", { type: "layout", component: "cached" });
       const newRoute = seg("L0R0", { component: "new" });
-      const store = createMockStore({ cachedSegments: [cached] });
+      const store = makeNavigationStore({ initialSegments: [cached] });
 
       const { client } = createMockClient({
         metadata: {
@@ -2552,7 +2484,7 @@ describe("partial-update", () => {
 
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate: vi.fn(),
         renderSegments: vi.fn(async () => "tree"),
@@ -2593,7 +2525,7 @@ describe("partial-update", () => {
 
       try {
         const serverSegments = [seg("L0", { type: "layout" }), seg("L0R0")];
-        const store = createMockStore();
+        const store = makeNavigationStore();
         const { client } = createMockClient({
           metadata: { isPartial: false, segments: serverSegments },
         });
@@ -2602,7 +2534,7 @@ describe("partial-update", () => {
 
         const updater = createPartialUpdater({
           getVersion: () => undefined,
-          store: store as any,
+          store,
           client: client as any,
           onUpdate,
           renderSegments: vi.fn(async () => "full-tree"),
@@ -2634,7 +2566,7 @@ describe("partial-update", () => {
   describe("stream completion rejection is swallowed (F5)", () => {
     it("completes the partial update even if streamComplete rejects", async () => {
       const cached = seg("R0", { component: "cached" });
-      const store = createMockStore({ cachedSegments: [cached] });
+      const store = makeNavigationStore({ initialSegments: [cached] });
 
       // streamComplete rejects; the .catch must absorb it.
       const rejecting = Promise.reject(new Error("stream boom"));
@@ -2664,7 +2596,7 @@ describe("partial-update", () => {
       const onUpdate = vi.fn();
       const updater = createPartialUpdater({
         getVersion: () => undefined,
-        store: store as any,
+        store,
         client: client as any,
         onUpdate,
         renderSegments: vi.fn(async () => "tree"),
@@ -2708,21 +2640,19 @@ describe("partial-update transition({ when })", () => {
       params: { id: "1" },
       transition: { when: opts.when },
     } as any);
-    const store = {
-      ...createMockStore({
-        cachedSegments: [seg("L0", { type: "layout" }), route],
-        currentUrl: "http://localhost/items/1",
-      }),
-      getHistoryEntryMemory: vi.fn(() => ({
-        routeName: opts.memory?.routeName ?? "items.detail",
-        state: opts.memory?.state ?? { key: "k-from", mark: "memory" },
-      })),
-    };
+    const store = makeNavigationStore({
+      initialSegments: [seg("L0", { type: "layout" }), route],
+      url: "http://localhost/items/1",
+    });
+    vi.spyOn(store, "getHistoryEntryMemory").mockReturnValue({
+      routeName: opts.memory?.routeName ?? "items.detail",
+      state: opts.memory?.state ?? { key: "k-from", mark: "memory" },
+    });
     if (opts.historyKeys) {
       const entry = store.getCachedSegments(store.getHistoryKey());
-      store.getCachedSegments = vi.fn(() => entry);
+      vi.spyOn(store, "getCachedSegments").mockReturnValue(entry);
       const keys = [...opts.historyKeys];
-      store.getHistoryKey = vi.fn(() =>
+      vi.spyOn(store, "getHistoryKey").mockImplementation(() =>
         keys.length > 1 ? keys.shift()! : keys[0]!,
       );
     }
@@ -2751,7 +2681,7 @@ describe("partial-update transition({ when })", () => {
     const tx = { ...createMockTx("http://localhost/items/1"), ...opts.tx };
     const updater = createPartialUpdater({
       getVersion: () => undefined,
-      store: store as any,
+      store,
       client: client as any,
       onUpdate,
       renderSegments,
@@ -2951,9 +2881,14 @@ describe("partial-update: a navigation left after its response arrived", () => {
       mode?: Parameters<ReturnType<typeof createPartialUpdater>>[5];
     } = {},
   ) {
-    const store = createMockStore({
-      cachedSegments: options.cachedSegments ?? [seg("L0", { type: "layout" })],
+    const store = makeNavigationStore({
+      initialSegments: options.cachedSegments ?? [
+        seg("L0", { type: "layout" }),
+      ],
     });
+    vi.spyOn(store, "setSegmentIds");
+    vi.spyOn(store, "cacheSegmentsForHistory");
+    vi.spyOn(store, "setInterceptSourceUrl");
     const { client } = createMockClient(
       { metadata: { isPartial: true, ...metadata } },
       { hangStream: true },
@@ -2968,7 +2903,7 @@ describe("partial-update: a navigation left after its response arrived", () => {
     const consoleError = vi.spyOn(console, "error");
     const updater = createPartialUpdater({
       getVersion: () => undefined,
-      store: store as any,
+      store,
       client: client as any,
       onUpdate,
       renderSegments,
@@ -3087,14 +3022,14 @@ describe("partial-update: a navigation left after its response arrived", () => {
     vi.stubGlobal("window", {
       location: { origin: "http://localhost", href: "http://localhost/" },
     });
-    const store = createMockStore({ cachedSegments: [seg("R0")] });
-    (store as any).getRouterId = vi.fn(() => "client-app");
+    const store = makeNavigationStore({ initialSegments: [seg("R0")] });
+    store.setRouterId!("client-app");
     const response = deferred<unknown>();
     const controller = new AbortController();
     const onUpdate = vi.fn();
     const updater = createPartialUpdater({
       getVersion: () => undefined,
-      store: store as any,
+      store,
       client: {
         fetchPartial: vi.fn(() => response.promise),
       } as any,
@@ -3167,9 +3102,8 @@ describe("an action refetch whose loader throws on its rerun", () => {
   ) {
     const held = loader({ __loaderResult: true, ok: true, data: "stock:1" });
     const rerun = loader(entry);
-    const store = createMockStore({
-      cachedSegments: [seg("R0"), held],
-      segmentIds: ["R0", "R0D0.stock"],
+    const store = makeNavigationStore({
+      initialSegments: [seg("R0"), held],
     });
     const { client } = createMockClient({
       metadata: {
@@ -3187,7 +3121,7 @@ describe("an action refetch whose loader throws on its rerun", () => {
     const tx = createMockTx();
     const result = await createPartialUpdater({
       getVersion: () => undefined,
-      store: store as any,
+      store,
       client: client as any,
       onUpdate,
       renderSegments,
@@ -3232,7 +3166,7 @@ describe("an action refetch whose loader throws on its rerun", () => {
     });
     const result = await createPartialUpdater({
       getVersion: () => undefined,
-      store: createMockStore() as any,
+      store: makeNavigationStore(),
       client: client as any,
       onUpdate: vi.fn(),
       renderSegments: vi.fn(async () => "tree"),
@@ -3247,7 +3181,7 @@ describe("an action refetch whose loader throws on its rerun", () => {
   // logs "Background revalidation failed" (dc-t65).
   it("a stale revalidation whose loader throws rejects with the error and commits nothing", async () => {
     let caught: unknown;
-    const store = createMockStore({ cachedSegments: [seg("R0")] });
+    const store = makeNavigationStore({ initialSegments: [seg("R0")] });
     const renderSegments = vi.fn(async () => "tree");
     const onUpdate = vi.fn();
     const tx = createMockTx();
@@ -3269,7 +3203,7 @@ describe("an action refetch whose loader throws on its rerun", () => {
     });
     await createPartialUpdater({
       getVersion: () => undefined,
-      store: store as any,
+      store,
       client: client as any,
       onUpdate,
       renderSegments,
@@ -3305,7 +3239,7 @@ describe("an action refetch whose loader throws on its rerun", () => {
     });
     await createPartialUpdater({
       getVersion: () => undefined,
-      store: createMockStore({ cachedSegments: [seg("R0")] }) as any,
+      store: makeNavigationStore({ initialSegments: [seg("R0")] }),
       client: client as any,
       onUpdate,
       renderSegments: vi.fn(async () => "tree"),
@@ -3347,7 +3281,7 @@ describe("an action refetch whose loader throws on its rerun", () => {
     const tx = createMockTx();
     await createPartialUpdater({
       getVersion: () => undefined,
-      store: createMockStore({ cachedSegments: [seg("R0")] }) as any,
+      store: makeNavigationStore({ initialSegments: [seg("R0")] }),
       client: client as any,
       onUpdate,
       renderSegments: vi.fn(async () => "tree"),

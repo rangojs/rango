@@ -120,7 +120,7 @@ describe("a deferred loader something reads", () => {
     ]);
     expect(value).toEqual([{ run: 1 }, { run: 1 }]);
     expect(loader.calls).toBe(1);
-    expect(ctx._prefetchDeferral!.deferredLoaders!.get(loader.$$id)).toEqual(
+    expect(ctx._deferredLoaders!.get(loader.$$id)).toEqual(
       expect.objectContaining({ started: true }),
     );
     expect(ctx._loaderStarted!(loader.$$id)).toBe(true);
@@ -149,9 +149,7 @@ describe("a deferred loader something reads", () => {
       c._runLoaderIsolated!(loader),
     );
     expect(value).toEqual({ run: 2 });
-    expect(
-      ctx._prefetchDeferral!.deferredLoaders!.get(loader.$$id)!.started,
-    ).toBeUndefined();
+    expect(ctx._deferredLoaders!.get(loader.$$id)!.started).toBeUndefined();
   });
 
   it("nothing reads it: it is not started and its cache() is not read", async () => {

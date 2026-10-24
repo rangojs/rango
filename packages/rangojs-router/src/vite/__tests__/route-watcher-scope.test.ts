@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
-import { isFileOutsideApp } from "../router-discovery.js";
+import { isFileOutsideApp } from "../discovery/dev-server-phase.js";
 
 const ROOT = join("/", "work", "app");
 

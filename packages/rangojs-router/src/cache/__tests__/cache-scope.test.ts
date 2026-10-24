@@ -56,7 +56,7 @@ vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 const { serializeSegments, deserializeSegments, serializeResult } =
   await import("../segment-codec.js");
 const { CacheScope } = await import("../cache-scope.js");
-const { createRequestContext, runWithRequestContext } =
+const { runWithRequestContext } =
   await import("../../server/request-context.js");
 const warmModule = await import("../../prerender/warm-request.js");
 const { executionStart, markInvalidated } =
@@ -64,6 +64,13 @@ const { executionStart, markInvalidated } =
 
 import type { SegmentCacheStore, CachedEntryData } from "../types.js";
 import type { PartialCacheOptions } from "../../types.js";
+import type { RequestContext } from "../../server/request-context.js";
+import {
+  makeRequestContext,
+  makeShellCaptureState,
+} from "../../__tests__/kit/request-context.js";
+
+const PRODUCTS_URL = "https://example.com/products";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -323,16 +330,6 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
     } as unknown as SegmentCacheStore;
   }
 
-  function makeCtx(store: SegmentCacheStore) {
-    return createRequestContext({
-      env: {},
-      request: new Request("https://example.com/products"),
-      url: new URL("https://example.com/products"),
-      variables: {},
-      cacheStore: store,
-    });
-  }
-
   function makeScope(
     store: SegmentCacheStore,
   ): InstanceType<typeof CacheScope> {
@@ -342,7 +339,7 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
 
   it("records a tagged hit's tags into _requestTags", async () => {
     const store = await makeHitStore(["products"]);
-    const ctx = makeCtx(store);
+    const ctx = makeRequestContext({ url: PRODUCTS_URL, cacheStore: store });
 
     const result = await runWithRequestContext(ctx, () =>
       makeScope(store).lookupRoute("/products", {}),
@@ -357,7 +354,7 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
 
   it("leaves _requestTags empty for an untagged hit", async () => {
     const store = await makeHitStore(undefined);
-    const ctx = makeCtx(store);
+    const ctx = makeRequestContext({ url: PRODUCTS_URL, cacheStore: store });
 
     const result = await runWithRequestContext(ctx, () =>
       makeScope(store).lookupRoute("/products", {}),
@@ -374,16 +371,6 @@ describe("CacheScope.lookupRoute - records hit tags into request tag union", () 
 // ---------------------------------------------------------------------------
 
 describe("CacheScope.lookupRoute - throwing key() degrades to a miss", () => {
-  function makeCtx(store: SegmentCacheStore) {
-    return createRequestContext({
-      env: {},
-      request: new Request("https://example.com/products"),
-      url: new URL("https://example.com/products"),
-      variables: {},
-      cacheStore: store,
-    });
-  }
-
   it("returns null (not throw) when the consumer key() throws", async () => {
     const get = vi.fn();
     const store = { get } as unknown as SegmentCacheStore;
@@ -396,7 +383,7 @@ describe("CacheScope.lookupRoute - throwing key() degrades to a miss", () => {
       },
     };
     const scope = new CacheScope(config);
-    const ctx = makeCtx(store);
+    const ctx = makeRequestContext({ url: PRODUCTS_URL, cacheStore: store });
 
     const result = await runWithRequestContext(ctx, () =>
       scope.lookupRoute("/products", {}),
@@ -417,7 +404,7 @@ describe("CacheScope.lookupRoute - throwing key() degrades to a miss", () => {
       },
     };
     const scope = new CacheScope(config);
-    const ctx = makeCtx(store);
+    const ctx = makeRequestContext({ url: PRODUCTS_URL, cacheStore: store });
 
     const result = await runWithRequestContext(ctx, () =>
       scope.lookupRoute("/products", {}),
@@ -530,17 +517,8 @@ describe("CacheScope.recordTags - first-write tags land in the request tag union
   // synchronously (this method) BEFORE the document cache snapshots _requestTags.
   // cacheRoute() also records them, but it runs inside requestCtx.waitUntil(),
   // racing that snapshot — recordTags() is what closes the window.
-  function makeCtx() {
-    return createRequestContext({
-      env: {},
-      request: new Request("https://example.com/products"),
-      url: new URL("https://example.com/products"),
-      variables: {},
-    });
-  }
-
   it("records static cache({ tags }) into _requestTags with no cache write", () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: PRODUCTS_URL });
     const scope = new CacheScope({ ttl: 60, tags: ["products"] });
 
     expect(ctx._requestTags.size).toBe(0);
@@ -552,7 +530,7 @@ describe("CacheScope.recordTags - first-write tags land in the request tag union
   });
 
   it("resolves dynamic tags against the request context", () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: PRODUCTS_URL });
     const scope = new CacheScope({
       ttl: 60,
       tags: (c) => [`path:${new URL(c.request.url).pathname}`],
@@ -564,7 +542,7 @@ describe("CacheScope.recordTags - first-write tags land in the request tag union
   });
 
   it("records nothing when the scope's write condition returns false", () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: PRODUCTS_URL });
     const scope = new CacheScope({
       ttl: 60,
       tags: ["products"],
@@ -579,13 +557,13 @@ describe("CacheScope.recordTags - first-write tags land in the request tag union
   });
 
   it("records nothing for a disabled scope or untagged config", () => {
-    const disabled = makeCtx();
+    const disabled = makeRequestContext({ url: PRODUCTS_URL });
     runWithRequestContext(disabled, () =>
       new CacheScope(false).recordTags(disabled),
     );
     expect(disabled._requestTags.size).toBe(0);
 
-    const untagged = makeCtx();
+    const untagged = makeRequestContext({ url: PRODUCTS_URL });
     runWithRequestContext(untagged, () =>
       new CacheScope({ ttl: 60 }).recordTags(untagged),
     );
@@ -624,28 +602,18 @@ describe("CacheScope - router.prerender() warm", () => {
     };
   }
 
-  function makeCtx(store: SegmentCacheStore) {
-    return createRequestContext({
-      env: {},
-      request: new Request("https://example.com/products"),
-      url: new URL("https://example.com/products"),
-      variables: {},
-      cacheStore: store,
-    });
-  }
-
   async function seed(
     scope: InstanceType<typeof CacheScope>,
     store: SegmentCacheStore,
   ) {
     // A non-warm write through the scope's own path.
-    const ctx = makeCtx(store);
+    const ctx = makeRequestContext({ url: PRODUCTS_URL, cacheStore: store });
     await writeRoute(scope, ctx);
   }
 
   async function writeRoute(
     scope: InstanceType<typeof CacheScope>,
-    ctx: ReturnType<typeof makeCtx>,
+    ctx: RequestContext,
   ) {
     await runWithRequestContext(ctx, async () => {
       await scope.cacheRoute("/products", {}, [makeSegment()]);
@@ -661,14 +629,14 @@ describe("CacheScope - router.prerender() warm", () => {
     await seed(scope, store);
     expect(entries.size).toBe(1);
 
-    const normal = makeCtx(store);
+    const normal = makeRequestContext({ url: PRODUCTS_URL, cacheStore: store });
     const hit = await runWithRequestContext(normal, () =>
       scope.lookupRouteDetailed("/products", {}),
     );
     expect(hit.status).toBe("hit");
     get.mockClear();
 
-    const ctx = makeCtx(store);
+    const ctx = makeRequestContext({ url: PRODUCTS_URL, cacheStore: store });
     ctx._prerenderWarm = createWarmRecord("replace", store);
     const outcome = await runWithRequestContext(ctx, () =>
       scope.lookupRouteDetailed("/products", {}),
@@ -681,14 +649,20 @@ describe("CacheScope - router.prerender() warm", () => {
   it("replace mode keeps the opt-outs: cache(false) and a false condition() still bypass", async () => {
     const { store, get } = makeMapStore();
 
-    const disabledCtx = makeCtx(store);
+    const disabledCtx = makeRequestContext({
+      url: PRODUCTS_URL,
+      cacheStore: store,
+    });
     disabledCtx._prerenderWarm = createWarmRecord("replace", store);
     const disabled = await runWithRequestContext(disabledCtx, () =>
       new CacheScope(false).lookupRouteDetailed("/products", {}),
     );
     expect(disabled).toEqual({ status: "bypass" });
 
-    const conditionCtx = makeCtx(store);
+    const conditionCtx = makeRequestContext({
+      url: PRODUCTS_URL,
+      cacheStore: store,
+    });
     conditionCtx._prerenderWarm = createWarmRecord("replace", store);
     const gated = await runWithRequestContext(conditionCtx, () =>
       new CacheScope({
@@ -706,7 +680,7 @@ describe("CacheScope - router.prerender() warm", () => {
     const scope = new CacheScope({ ttl: 60, store });
     await seed(scope, store);
 
-    const ctx = makeCtx(store);
+    const ctx = makeRequestContext({ url: PRODUCTS_URL, cacheStore: store });
     ctx._prerenderWarm = createWarmRecord("fill", store);
     const outcome = await runWithRequestContext(ctx, () =>
       scope.lookupRouteDetailed("/products", {}),
@@ -721,10 +695,13 @@ describe("CacheScope - router.prerender() warm", () => {
     const scope = new CacheScope({ ttl: 60, store });
     await seed(scope, store);
 
-    const foreground = makeCtx(store);
+    const foreground = makeRequestContext({
+      url: PRODUCTS_URL,
+      cacheStore: store,
+    });
     foreground._prerenderWarm = createWarmRecord("replace", store);
     const capture = Object.create(foreground) as typeof foreground;
-    capture._shellCaptureRun = true;
+    capture._shellCaptureState = makeShellCaptureState();
     const outcome = await runWithRequestContext(capture, () =>
       scope.lookupRouteDetailed("/products", {}),
     );
@@ -740,7 +717,7 @@ describe("CacheScope - router.prerender() warm", () => {
     const [[normalKey, previous]] = [...entries.entries()];
     expect(set).toHaveBeenCalledTimes(1);
 
-    const ctx = makeCtx(store);
+    const ctx = makeRequestContext({ url: PRODUCTS_URL, cacheStore: store });
     const record = createWarmRecord("replace", store);
     ctx._prerenderWarm = record;
     await writeRoute(scope, ctx);
@@ -758,11 +735,17 @@ describe("CacheScope - router.prerender() warm", () => {
     const start = executionStart();
     markInvalidated(["warm-tag"]);
 
-    const ctx = makeCtx(store);
+    const ctx = makeRequestContext({ url: PRODUCTS_URL, cacheStore: store });
     const record = createWarmRecord("replace", store);
     ctx._prerenderWarm = record;
     await runWithRequestContext(ctx, async () => {
-      await scope.cacheRoute("/products", {}, [makeSegment()], false, start);
+      await scope.cacheRoute(
+        "/products",
+        {},
+        [makeSegment()],
+        undefined,
+        start,
+      );
       ctx._handleStore.seal();
       const tasks = ctx._pendingBackgroundTasks!;
       for (let i = 0; i < tasks.length; i++) await tasks[i];

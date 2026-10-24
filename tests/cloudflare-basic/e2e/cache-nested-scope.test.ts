@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { useFixture, type Fixture } from "./fixture";
 
 /**
  * What a nested cache() takes from the scopes enclosing it, and namespaced
@@ -207,9 +207,7 @@ async function expectLoaderKeyCannotOverwriteVictim(
   expect(await renderOf(request, victim(probe))).toMatch(/^victim:/);
 }
 
-test.describe("nested cache() inherits the enclosing scopes (dev)", () => {
-  const f = useFixture({ root: ".", mode: "dev" });
-
+function cacheNestedScopeSuite(f: Fixture) {
   test("an outer condition() refusing a request bypasses the inner record", async ({
     request,
   }) => {
@@ -245,44 +243,14 @@ test.describe("nested cache() inherits the enclosing scopes (dev)", () => {
   }) => {
     await expectLoaderKeyCannotOverwriteVictim(request, f.url);
   });
+}
+
+test.describe("nested cache() inherits the enclosing scopes (dev)", () => {
+  const f = useFixture({ root: ".", mode: "dev" });
+  cacheNestedScopeSuite(f);
 });
 
 test.describe("nested cache() inherits the enclosing scopes (production)", () => {
   const f = useFixture({ root: ".", mode: "build" });
-
-  test("an outer condition() refusing a request bypasses the inner record", async ({
-    request,
-  }) => {
-    await expectOuterConditionGatesInner(request, f.url);
-  });
-
-  test("updateTag() of an outer cache() tag evicts the inner record", async ({
-    request,
-  }) => {
-    await expectOuterTagEvictsInner(request, f.url);
-  });
-
-  test("an outer cache({ store }) keyGenerator partitions the inner record", async ({
-    request,
-  }) => {
-    await expectOuterStorePartitionsInner(request, f.url);
-  });
-
-  test("a raw key() result cannot name another route's default-keyed entry", async ({
-    request,
-  }) => {
-    await expectRawKeyCannotNameVictim(request, f.url);
-  });
-
-  test("a loader's own key() result cannot read another loader's entry", async ({
-    request,
-  }) => {
-    await expectLoaderKeyCannotReadVictim(request, f.url);
-  });
-
-  test("a loader's own key() result cannot overwrite another loader's entry", async ({
-    request,
-  }) => {
-    await expectLoaderKeyCannotOverwriteVictim(request, f.url);
-  });
+  cacheNestedScopeSuite(f);
 });

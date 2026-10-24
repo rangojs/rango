@@ -65,10 +65,10 @@ vi.mock("../../server/context.js", async () => {
 });
 
 import {
-  resolveParallelSegmentsWithRevalidation,
-  resolveOrphanLayoutWithRevalidation,
+  resolveParallelSegments,
+  resolveOrphanLayout,
 } from "../segment-resolution/revalidation.js";
-import { resolveParallelEntry } from "../segment-resolution/fresh.js";
+import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import { filterSegmentOrder } from "../../browser/react/filter-segment-order.js";
 import type { EntryData } from "../../server/context.js";
 import type { SegmentResolutionDeps } from "../types.js";
@@ -191,18 +191,20 @@ describe("parallel slot handlers (revalidation main path)", () => {
       return null;
     });
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
+      {
+        context: makeContext(),
+        client: new Set(["L0", "L0.@panel"]),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false,
-      new Set(["L0", "L0.@panel"]),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(observedSegmentId).toBe("L0.@panel");
@@ -220,18 +222,20 @@ describe("parallel slot handlers (revalidation main path)", () => {
       () => null,
     );
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
+      {
+        context: makeContext(),
+        client: new Set(["L0", "L0.@panel"]),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       layout,
-      params,
-      makeContext(),
       false,
-      new Set(["L0", "L0.@panel"]),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
-      makeDeps(),
     );
 
     expect(observedSegmentId).toBe("L0.@panel");
@@ -253,18 +257,20 @@ describe("parallel slot handlers (revalidation orphan path)", () => {
       return null;
     });
 
-    await resolveOrphanLayoutWithRevalidation(
+    await resolveOrphanLayout(
+      {
+        context: makeContext(),
+        client: new Set(["O0", "O0.@panel"]),
+        params,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey: "mailbox.email",
+        deps: makeDeps(),
+      },
       orphan,
-      params,
-      makeContext(),
-      new Set(["O0", "O0.@panel"]),
-      prevParams,
-      request,
-      prevUrl,
-      nextUrl,
-      "mailbox.email",
       true,
-      makeDeps(),
     );
 
     expect(observedSegmentId).toBe("O0.@panel");
@@ -272,7 +278,7 @@ describe("parallel slot handlers (revalidation orphan path)", () => {
   });
 });
 
-describe("parallel slot handlers (fresh path)", () => {
+describe("parallel slot handlers (FRESH pass)", () => {
   it("keys _currentSegmentId to '<parent>.<slot>'", async () => {
     let observedSegmentId: string | undefined;
     const slotHandler = (ctx: any) => {
@@ -280,32 +286,10 @@ describe("parallel slot handlers (fresh path)", () => {
       return null;
     };
 
-    const parallelEntry = {
-      id: "layout.parallel",
-      type: "parallel",
-      shortCode: "L0P0",
-      handler: { "@panel": slotHandler },
-      loader: [],
-      layout: [],
-      parallel: {},
-      intercept: [],
-      middleware: [],
-      revalidate: [],
-      errorBoundary: [],
-      notFoundBoundary: [],
-    } as any;
-
-    await resolveParallelEntry(
-      parallelEntry,
-      { mailboxId: "x", folder: "draft", emailId: "2" },
-      makeContext(),
+    await resolveParallelSegments(
+      makeFreshPass(makeContext(), makeDeps(), { routeKey: "mailbox.email" }),
+      makeLayoutWithSlotHandler(slotHandler),
       false,
-      "L0",
-      makeDeps(),
-      undefined,
-      "mailbox.email",
-      ["@panel"],
-      true,
     );
 
     expect(observedSegmentId).toBe("L0.@panel");
@@ -340,32 +324,10 @@ describe("parallel-slot handle pushes use slot-keyed buckets that survive filter
       return null;
     };
 
-    const parallelEntry = {
-      id: "layout.parallel",
-      type: "parallel",
-      shortCode: "L0P0",
-      handler: { "@panel": slotHandler },
-      loader: [],
-      layout: [],
-      parallel: {},
-      intercept: [],
-      middleware: [],
-      revalidate: [],
-      errorBoundary: [],
-      notFoundBoundary: [],
-    } as any;
-
-    await resolveParallelEntry(
-      parallelEntry,
-      { mailboxId: "x", folder: "draft", emailId: "2" },
-      makeContext(),
+    await resolveParallelSegments(
+      makeFreshPass(makeContext(), makeDeps(), { routeKey: "mailbox.email" }),
+      makeLayoutWithSlotHandler(slotHandler),
       false,
-      "L0",
-      makeDeps(),
-      undefined,
-      "mailbox.email",
-      ["@panel"],
-      true,
     );
 
     expect(pushes).toHaveLength(1);

@@ -4,7 +4,6 @@ import type { ReverseFunction } from "../reverse.js";
 import type { UrlPatterns } from "../urls.js";
 import type { ClientUrlPatterns } from "../client-urls/types.js";
 import type { UrlBuilder, EnvCompatible } from "../urls/pattern-types.js";
-import type { EntryData } from "../server/context";
 import type { ErrorInfo, MatchResult } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
 import type { ShellCaptureDebug } from "../rsc/shell-capture.js";
@@ -12,6 +11,7 @@ import type { ExecutionContext } from "../server/request-context.js";
 import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
+import type { LiveIntercept } from "./prerender-match.js";
 import type { ExtractParams } from "../types/route-config.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RangoOptions, RootLayoutProps } from "./router-options.js";
@@ -544,8 +544,10 @@ export interface RangoInternal<
     routeName: string;
     params: Record<string, string>;
     interceptSegments?: SerializedSegmentData[];
-    /** RSC-encoded MERGED (main + intercept) handle map for the intercept artifact. */
+    /** RSC-encoded handle map for the intercept artifact (see matchForPrerender). */
     interceptHandles?: string;
+    /** The intercepts the intercept artifact does not hold (see matchForPrerender). */
+    liveIntercepts?: LiveIntercept[];
     passthrough?: true;
   } | null>;
 
@@ -563,8 +565,8 @@ export interface RangoInternal<
   ): Promise<{ encoded: string; handles: string } | null>;
 
   /**
-   * Preview match - returns route middleware without segment resolution.
-   * Also returns responseType and handler for response routes (non-RSC short-circuit).
+   * Preview match - returns the route, its params and route middleware
+   * without segment resolution.
    */
   previewMatch(
     request: Request,
@@ -574,11 +576,7 @@ export interface RangoInternal<
       handler: import("./middleware.js").MiddlewareFn;
       params: Record<string, string>;
     }>;
-    responseType?: string;
-    handler?: Function;
     params?: Record<string, string>;
-    negotiated?: boolean;
-    manifestEntry?: EntryData;
     routeKey?: string;
   } | null>;
 

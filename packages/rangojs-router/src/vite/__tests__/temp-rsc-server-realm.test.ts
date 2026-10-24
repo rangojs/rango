@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ViteDevServer } from "vite";
-import { createTempRscServer } from "../router-discovery.js";
+import { createTempRscServer } from "../temp-rsc-server.js";
 import { createDiscoveryState } from "../discovery/state.js";
 
 // #947: buildStart installs the route tries into the build temp server's RSC

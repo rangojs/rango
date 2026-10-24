@@ -317,6 +317,11 @@ export function getRequestId(request: Request): string {
   return id;
 }
 
+/** Make `id` the id getRequestId returns for `request`. */
+export function setRequestId(request: Request, id: string): void {
+  requestIds.set(request, id);
+}
+
 /**
  * Built-in console sink that logs events in a structured format.
  * Designed as the default sink for development / debugging.

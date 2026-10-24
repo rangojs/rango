@@ -354,7 +354,7 @@ export function getVirtualVersionContent(version: string): string {
 /**
  * Free identifier the production version module ships in place of the table.
  * The versions are hashes of the built server code, so they cannot be part of
- * it: the buildApp post hook (router-discovery.ts) replaces this token in the
+ * it: the buildApp post hook (discovery/build-discovery-phase.ts) replaces this token in the
  * written chunk once the hashes are final (runRouterVersionsPhase,
  * discovery/router-versions-phase.ts). An unreplaced token throws a ReferenceError
  * when the module evaluates, so a build that skipped the step cannot serve

@@ -1765,46 +1765,33 @@ describe("dispatch", () => {
     });
   });
 
-  // Content negotiation: when the router's previewMatch reports negotiated:true
-  // (set only when a route has negotiate variants and a response-route variant
-  // wins), dispatch appends Vary: Accept, matching handleResponseRoute's
-  // callHandlerWithVary. Plain (single-variant) response routes report no
-  // negotiated flag and get no Vary.
+  // Content negotiation: when a route has negotiate variants and a
+  // response-route variant wins, dispatch appends Vary: Accept, matching
+  // handleResponseRoute's callHandlerWithVary. Plain (single-variant) response
+  // routes are not negotiated and get no Vary.
   //
-  // negotiated:true is populated from the build-time route trie, which the
-  // in-memory createRouter() test path does not construct (it uses the regex
-  // fallback). The real trie-driven Vary integration is e2e-covered in
-  // e2e/content-negotiation.test.ts (dev + production). These tests pin
-  // dispatch's own contract via a minimal router whose previewMatch returns
-  // the negotiated flag, so the dispatch-side behavior is exercised directly.
+  // The variants come from the route trie, which dispatch builds from the
+  // router's routes (ensureRouterTrie). The trie-driven Vary integration is
+  // also e2e-covered in e2e/content-negotiation.test.ts (dev + production).
   describe("Vary: Accept on negotiated response routes", () => {
-    function negotiatedStubRouter(opts: {
-      negotiated: boolean;
-      responseType?: string;
-      handler?: (ctx: any) => unknown;
-    }) {
-      const responseType = opts.responseType ?? "json";
-      const handler = opts.handler ?? (() => ({ shape: responseType }));
-      return {
-        id: "stub-negotiate",
-        routeMap: { stub: "/data" },
-        middleware: [],
-        findMatch: (_pathname: string) => ({
-          routeKey: "stub",
-          params: {},
-        }),
-        previewMatch: async () => ({
-          responseType,
-          handler,
-          params: {},
-          routeKey: "stub",
-          ...(opts.negotiated ? { negotiated: true } : {}),
-        }),
-      } as any;
+    // Routes of several types on one path negotiate by Accept; a route alone
+    // on its path does not.
+    function negotiationRouter(types: Array<"json" | "text">) {
+      return createRouter<{}>({}).routes(
+        urls(({ path }) =>
+          types.map((type) =>
+            type === "json"
+              ? path.json("/data", () => ({ shape: "json" }), {
+                  name: "dataJson",
+                })
+              : path.text("/data", () => "shape=text", { name: "dataText" }),
+          ),
+        ),
+      ) as any;
     }
 
-    it("appends Vary: Accept when previewMatch reports a negotiated variant", async () => {
-      const router = negotiatedStubRouter({ negotiated: true });
+    it("appends Vary: Accept when a negotiated variant wins", async () => {
+      const router = negotiationRouter(["json", "text"]);
       const res = await dispatch(router, {
         request: new Request("http://localhost/data", {
           headers: { accept: "application/json" },
@@ -1820,11 +1807,7 @@ describe("dispatch", () => {
     });
 
     it("appends Vary: Accept on a negotiated text variant", async () => {
-      const router = negotiatedStubRouter({
-        negotiated: true,
-        responseType: "text",
-        handler: () => "shape=text",
-      });
+      const router = negotiationRouter(["text", "json"]);
       const res = await dispatch(router, {
         request: new Request("http://localhost/data", {
           headers: { accept: "text/plain" },
@@ -1838,7 +1821,7 @@ describe("dispatch", () => {
     });
 
     it("omits Vary on a non-negotiated response route", async () => {
-      const router = negotiatedStubRouter({ negotiated: false });
+      const router = negotiationRouter(["json"]);
       const res = await dispatch(router, { request: "/data" });
 
       expect(res.status).toBe(200);

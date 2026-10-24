@@ -7,21 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reportCacheError } from "../cache-error.js";
 import { printServerError } from "../../server/print-server-error.js";
-import {
-  createRequestContext,
-  runWithRequestContext,
-} from "../../server/request-context.js";
-
-function makeCtx() {
-  const ctx = createRequestContext({
-    env: {},
-    request: new Request("https://shop.example/product/1"),
-    url: new URL("https://shop.example/product/1"),
-    variables: {},
-  });
-  ctx._reportBackgroundError = vi.fn();
-  return ctx;
-}
+import { runWithRequestContext } from "../../server/request-context.js";
+import { makeRequestContext } from "../../__tests__/kit/request-context.js";
 
 let consoleError: ReturnType<typeof vi.spyOn>;
 
@@ -35,7 +22,8 @@ afterEach(() => {
 
 describe("reportCacheError: printing", () => {
   it("prints a cache failure with its label", () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: "https://shop.example/product/1" });
+    ctx._reportBackgroundError = vi.fn();
     const error = new Error("KV put failed");
 
     runWithRequestContext(ctx, () =>
@@ -52,7 +40,8 @@ describe("reportCacheError: printing", () => {
   });
 
   it("reports a render error printed where it originated without printing it again", () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: "https://shop.example/product/1" });
+    ctx._reportBackgroundError = vi.fn();
     const error = new Error("reviews widget failed");
 
     runWithRequestContext(ctx, () => {

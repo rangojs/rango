@@ -1,7 +1,7 @@
 /**
  * Tags recorded by the body of a loader with its own cache()
  * (`loader(Def, () => [cache({...})])`), through the real segment funnel:
- * resolveLoaders -> resolveLoaderData -> executeLoaderData -> the real
+ * resolveOwnerLoaders -> resolveLoaderData -> executeLoaderData -> the real
  * setupLoaderAccess executor (#964).
  *
  * A loader-cache HIT skips the body, so its cacheTag() calls and the tags of
@@ -22,10 +22,22 @@ import {
 // segment-codec pulls @vitejs/plugin-rsc (unresolvable in plain vitest). A
 // JSON codec stands in for Flight on the loader value and on "use cache"
 // values.
-vi.mock("../../../cache/segment-codec.js", () => ({
-  serializeResult: vi.fn(async (value: unknown) => JSON.stringify(value)),
-  deserializeResult: vi.fn(async (encoded: string) => JSON.parse(encoded)),
-}));
+vi.mock("../../../cache/segment-codec.js", async () => {
+  const { teeThrough } =
+    await import("../../../cache/__tests__/helpers/tee-through.js");
+  const serializeResult = vi.fn(async (value: unknown) =>
+    JSON.stringify(value),
+  );
+  const deserializeResult = vi.fn(async (encoded: string) =>
+    JSON.parse(encoded),
+  );
+  return {
+    serializeResult,
+    deserializeResult,
+    teeResult: teeThrough(serializeResult, deserializeResult),
+    isUnsupportedValueError: () => false,
+  };
+});
 vi.mock("../../../cache/handle-snapshot.js", async (importActual) => ({
   ...(await importActual<object>()),
   encodeHandles: async () => "",
@@ -51,7 +63,9 @@ beforeAll(async () => {
   );
 });
 
-import { resolveLoaders } from "../fresh.js";
+import { ownerOf, resolveOwnerLoaders } from "../revalidation.js";
+import { makeFreshPass } from "../../../__tests__/kit/resolution-pass.js";
+import type { ResolvedSegment } from "../../../types.js";
 import { setupLoaderAccess } from "../../loader-resolution.js";
 import { createHandlerContext } from "../../handler-context.js";
 import {
@@ -86,6 +100,21 @@ import type {
 import type { SegmentCacheStore } from "../../../cache/types.js";
 import type { SegmentResolutionDeps } from "../../types.js";
 
+/** A full match's loader funnel: a FRESH pass of resolveOwnerLoaders. */
+async function resolveLoaders(
+  entry: EntryData,
+  ctx: HandlerContext<any>,
+  belongsToRoute: boolean,
+  deps: SegmentResolutionDeps<any>,
+): Promise<ResolvedSegment[]> {
+  const { segments } = await resolveOwnerLoaders(
+    makeFreshPass(ctx, deps),
+    ownerOf(entry),
+    belongsToRoute,
+  );
+  return segments;
+}
+
 const deps = {
   wrapLoaderPromise: (p: Promise<unknown>) => p,
 } as unknown as SegmentResolutionDeps<any>;
@@ -112,7 +141,7 @@ function entryWith(loaderEntries: LoaderEntry[]): EntryData {
     shortCode: "R0",
     type: "route",
     loader: loaderEntries,
-    // Loading-disabled: resolveLoaders awaits every loader before returning.
+    // Loading-disabled: a FRESH pass awaits every loader before returning.
     loading: false,
   } as unknown as EntryData;
 }

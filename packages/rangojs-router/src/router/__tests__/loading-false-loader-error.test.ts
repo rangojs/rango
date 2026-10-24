@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { resolveLoaders } from "../segment-resolution/fresh.js";
+import {
+  ownerOf,
+  resolveOwnerLoaders,
+} from "../segment-resolution/revalidation.js";
+import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import type { EntryData } from "../../server/context";
 import type { SegmentResolutionDeps } from "../types.js";
 
@@ -55,7 +59,22 @@ function makeCtx() {
   } as any;
 }
 
-describe("resolveLoaders — loading:false with a rejecting loader (M10)", () => {
+/** A full match's loader funnel: a FRESH pass of resolveOwnerLoaders. */
+async function resolveLoaders(
+  entry: EntryData,
+  ctx: any,
+  belongsToRoute: boolean,
+  deps: SegmentResolutionDeps<any>,
+) {
+  const { segments } = await resolveOwnerLoaders(
+    makeFreshPass(ctx, deps),
+    ownerOf(entry),
+    belongsToRoute,
+  );
+  return segments;
+}
+
+describe("FRESH loaders — loading:false with a rejecting loader (M10)", () => {
   it("does not reject; routes the failure to a per-loader result and keeps sibling data", async () => {
     const deps = makeDeps();
     const ctx = makeCtx();

@@ -445,6 +445,85 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function asSegmentEnvelope(raw: unknown): VercelSegmentEnvelope | null {
+  if (!isRecord(raw)) return null;
+  const { d, s, e, ta } = raw;
+  if (!isRecord(d) || !Array.isArray((d as Record<string, unknown>).segments)) {
+    return null;
+  }
+  if (typeof s !== "number" || typeof e !== "number") return null;
+  return {
+    d: d as unknown as CachedEntryData,
+    s,
+    e,
+    ta: typeof ta === "number" ? ta : undefined,
+  };
+}
+
+function asItemEnvelope(raw: unknown): VercelItemEnvelope | null {
+  if (!isRecord(raw)) return null;
+  const { v, h, s, e, t, ta } = raw;
+  if (typeof v !== "string") return null;
+  if (typeof s !== "number" || typeof e !== "number") return null;
+  return {
+    v,
+    h: typeof h === "string" ? h : undefined,
+    s,
+    e,
+    ta: typeof ta === "number" ? ta : undefined,
+    t: Array.isArray(t) ? (t as string[]) : undefined,
+  };
+}
+
+function asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
+  if (!isRecord(raw)) return null;
+  const { p, po, rv, bv, c, s, e, t, i, lp, sn, dk, pr, no } = raw;
+  if (typeof rv !== "string" || typeof bv !== "string") return null;
+  // Document half: required unless navigationOnly (`no`), which stores
+  // neither field. Tolerate a legacy navigationOnly envelope that still
+  // carries them.
+  if (p === undefined ? no !== true : typeof p !== "string") return null;
+  if (po === undefined ? no !== true : po !== null && typeof po !== "string") {
+    return null;
+  }
+  if (typeof c !== "number") return null;
+  if (typeof s !== "number" || typeof e !== "number") return null;
+  return {
+    ...(typeof p === "string" ? { p } : {}),
+    ...(po !== undefined ? { po: po as string | null } : {}),
+    rv,
+    bv,
+    c,
+    s,
+    e,
+    t: Array.isArray(t) ? (t as string[]) : undefined,
+    i: typeof i === "string" ? i : undefined,
+    lp: typeof lp === "string" ? lp : undefined,
+    // A non-array field reads as no records.
+    sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : [],
+    dk: typeof dk === "string" ? dk : undefined,
+    pr: typeof pr === "string" ? pr : undefined,
+    no: no === true ? true : undefined,
+  };
+}
+
+function asResponseEnvelope(raw: unknown): VercelResponseEnvelope | null {
+  if (!isRecord(raw)) return null;
+  const { b, st, hd, s, e, t, ta } = raw;
+  if (typeof b !== "string" || typeof st !== "number") return null;
+  if (!Array.isArray(hd)) return null;
+  if (typeof s !== "number" || typeof e !== "number") return null;
+  return {
+    b,
+    st,
+    hd: hd as [string, string][],
+    s,
+    e,
+    t: Array.isArray(t) ? (t as string[]) : undefined,
+    ta: typeof ta === "number" ? ta : undefined,
+  };
+}
+
 /**
  * The envelope's `ta` stamp, on tagged entries only: the producing execution's
  * start when the writer passed it, else write time (#1068). Only the request
@@ -455,6 +534,83 @@ function tagStamp(tags: string[], startedAt?: number): { ta?: number } {
   const ta = taggedStamp(tags, startedAt);
   return ta === undefined ? {} : { ta };
 }
+
+/**
+ * A family read of VercelCacheStore (`get`, `getItem`, `getResponse`,
+ * through readRecord): its keys, its envelope check, the tags the request
+ * mask reads and the hit it serves.
+ */
+interface VercelReadFamily<
+  E extends { s: number; e: number; ta?: number },
+  V extends { shouldRevalidate: boolean },
+  Err extends CacheReadError | null,
+> {
+  op: "get" | "getItem" | "getResponse";
+  family: "s" | "i" | "r";
+  /** Names the envelope in the corrupt-entry report. */
+  name: "segment" | "item" | "response";
+  readError: Err;
+  decode(raw: unknown): E | null;
+  /** The tags the request mask checks, with the envelope's `ta`. */
+  tags(env: E): string[] | undefined;
+  /**
+   * The hit, with `shouldRevalidate: false` until the stale claim sets it;
+   * throws when the envelope does not rebuild.
+   */
+  hit(env: E): V;
+}
+
+const SEGMENT_READ: VercelReadFamily<
+  VercelSegmentEnvelope,
+  CacheGetResult,
+  CacheReadError
+> = {
+  op: "get",
+  family: "s",
+  name: "segment",
+  // Distinct from a miss so the PPR replay composition renders uncached
+  // instead of substituting the seeded doc record.
+  readError: CACHE_READ_ERROR,
+  decode: asSegmentEnvelope,
+  tags: (env) => env.d.tags,
+  hit: (env) => ({ data: env.d, shouldRevalidate: false }),
+};
+
+const ITEM_READ: VercelReadFamily<VercelItemEnvelope, CacheItemResult, null> = {
+  op: "getItem",
+  family: "i",
+  name: "item",
+  readError: null,
+  decode: asItemEnvelope,
+  tags: (env) => env.t,
+  hit: (env) => ({
+    value: env.v,
+    handles: env.h,
+    shouldRevalidate: false,
+    tags: env.t,
+  }),
+};
+
+const RESPONSE_READ: VercelReadFamily<
+  VercelResponseEnvelope,
+  { response: Response; shouldRevalidate: boolean },
+  null
+> = {
+  op: "getResponse",
+  family: "r",
+  name: "response",
+  readError: null,
+  decode: asResponseEnvelope,
+  tags: (env) => env.t,
+  // Invalid base64, bad header entries or an out-of-range status throw.
+  hit: (env) => ({
+    response: new Response(base64ToBuffer(env.b), {
+      status: env.st,
+      headers: new Headers(env.hd),
+    }),
+    shouldRevalidate: false,
+  }),
+};
 
 /**
  * Vercel Runtime Cache-backed segment cache store.
@@ -562,68 +718,8 @@ export class VercelCacheStore<
 
   // --- Segment family (get/set/delete) ---
 
-  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
-    const storeKey = this.toStoreKey(key, "s");
-    const started = Date.now();
-    let raw: unknown;
-    try {
-      raw = await this.cache.get(storeKey);
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[VercelCacheStore] get");
-      this.emitDebug({ op: "get", key, outcome: "error" });
-      // Distinct from a miss so the PPR replay composition renders uncached
-      // instead of substituting the seeded doc record (CACHE_READ_ERROR).
-      return CACHE_READ_ERROR;
-    }
-    const readMs = Date.now() - started;
-
-    if (raw == null) {
-      this.emitDebug({ op: "get", key, outcome: "miss", readMs });
-      return null;
-    }
-    const env = this.asSegmentEnvelope(this.decodeRaw(raw));
-    if (!env) {
-      reportCacheError(
-        new Error("malformed segment envelope"),
-        "cache-corrupt",
-        "[VercelCacheStore] get",
-      );
-      void this.safeDelete(storeKey);
-      this.emitDebug({ op: "get", key, outcome: "corrupt", readMs });
-      return null;
-    }
-
-    const now = Date.now();
-    if (now > env.e) {
-      void this.safeDelete(storeKey);
-      this.emitDebug({
-        op: "get",
-        key,
-        outcome: "expired",
-        staleAt: env.s,
-        expiresAt: env.e,
-        readMs,
-      });
-      return null;
-    }
-    if (this.maskedMiss("get", key, { t: env.d.tags, ta: env.ta }, readMs)) {
-      return null;
-    }
-
-    const isStale = env.s > 0 && now > env.s;
-    const shouldRevalidate = isStale
-      ? await this.claimRevalidation(storeKey, env.e, "[VercelCacheStore] get")
-      : false;
-    this.emitDebug({
-      op: "get",
-      key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
-      staleAt: env.s,
-      expiresAt: env.e,
-      readMs,
-    });
-    return { data: env.d, shouldRevalidate };
+  get(key: string): Promise<CacheGetResult | null | CacheReadError> {
+    return this.readRecord(key, SEGMENT_READ);
   }
 
   async set(
@@ -677,92 +773,10 @@ export class VercelCacheStore<
 
   // --- Response family (getResponse/putResponse) ---
 
-  async getResponse(
+  getResponse(
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
-    const storeKey = this.toStoreKey(key, "r");
-    const started = Date.now();
-    let raw: unknown;
-    try {
-      raw = await this.cache.get(storeKey);
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[VercelCacheStore] getResponse");
-      this.emitDebug({ op: "getResponse", key, outcome: "error" });
-      return null;
-    }
-    const readMs = Date.now() - started;
-
-    if (raw == null) {
-      this.emitDebug({ op: "getResponse", key, outcome: "miss", readMs });
-      return null;
-    }
-    const env = this.asResponseEnvelope(this.decodeRaw(raw));
-    if (!env) {
-      reportCacheError(
-        new Error("malformed response envelope"),
-        "cache-corrupt",
-        "[VercelCacheStore] getResponse",
-      );
-      void this.safeDelete(storeKey);
-      this.emitDebug({ op: "getResponse", key, outcome: "corrupt", readMs });
-      return null;
-    }
-
-    const now = Date.now();
-    if (now > env.e) {
-      void this.safeDelete(storeKey);
-      this.emitDebug({
-        op: "getResponse",
-        key,
-        outcome: "expired",
-        staleAt: env.s,
-        expiresAt: env.e,
-        readMs,
-      });
-      return null;
-    }
-    if (this.maskedMiss("getResponse", key, env, readMs)) return null;
-
-    // Reconstruct the Response BEFORE claiming revalidation. A corrupt body
-    // (e.g. invalid base64 from base64ToBuffer, or bad header entries) would
-    // otherwise throw out of getResponse — breaking the fail-open contract — and
-    // a stale read would have written a lock for an entry it then evicts. Treat a
-    // reconstruction failure as a corrupt entry: report, evict, and miss.
-    let response: Response;
-    try {
-      response = new Response(base64ToBuffer(env.b), {
-        status: env.st,
-        headers: new Headers(env.hd),
-      });
-    } catch (error) {
-      reportCacheError(
-        error,
-        "cache-corrupt",
-        "[VercelCacheStore] getResponse",
-      );
-      void this.safeDelete(storeKey);
-      this.emitDebug({ op: "getResponse", key, outcome: "corrupt", readMs });
-      return null;
-    }
-
-    const isStale = env.s > 0 && now > env.s;
-    const shouldRevalidate = isStale
-      ? await this.claimRevalidation(
-          storeKey,
-          env.e,
-          "[VercelCacheStore] getResponse",
-        )
-      : false;
-    this.emitDebug({
-      op: "getResponse",
-      key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
-      staleAt: env.s,
-      expiresAt: env.e,
-      readMs,
-    });
-    return { response, shouldRevalidate };
+    return this.readRecord(key, RESPONSE_READ);
   }
 
   async putResponse(
@@ -813,73 +827,8 @@ export class VercelCacheStore<
 
   // --- Item family ("use cache" - getItem/setItem) ---
 
-  async getItem(key: string): Promise<CacheItemResult | null> {
-    const storeKey = this.toStoreKey(key, "i");
-    const started = Date.now();
-    let raw: unknown;
-    try {
-      raw = await this.cache.get(storeKey);
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[VercelCacheStore] getItem");
-      this.emitDebug({ op: "getItem", key, outcome: "error" });
-      return null;
-    }
-    const readMs = Date.now() - started;
-
-    if (raw == null) {
-      this.emitDebug({ op: "getItem", key, outcome: "miss", readMs });
-      return null;
-    }
-    const env = this.asItemEnvelope(this.decodeRaw(raw));
-    if (!env) {
-      reportCacheError(
-        new Error("malformed item envelope"),
-        "cache-corrupt",
-        "[VercelCacheStore] getItem",
-      );
-      void this.safeDelete(storeKey);
-      this.emitDebug({ op: "getItem", key, outcome: "corrupt", readMs });
-      return null;
-    }
-
-    const now = Date.now();
-    if (now > env.e) {
-      void this.safeDelete(storeKey);
-      this.emitDebug({
-        op: "getItem",
-        key,
-        outcome: "expired",
-        staleAt: env.s,
-        expiresAt: env.e,
-        readMs,
-      });
-      return null;
-    }
-    if (this.maskedMiss("getItem", key, env, readMs)) return null;
-
-    const isStale = env.s > 0 && now > env.s;
-    const shouldRevalidate = isStale
-      ? await this.claimRevalidation(
-          storeKey,
-          env.e,
-          "[VercelCacheStore] getItem",
-        )
-      : false;
-    this.emitDebug({
-      op: "getItem",
-      key,
-      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
-      shouldRevalidate,
-      staleAt: env.s,
-      expiresAt: env.e,
-      readMs,
-    });
-    return {
-      value: env.v,
-      handles: env.h,
-      shouldRevalidate,
-      tags: env.t,
-    };
+  getItem(key: string): Promise<CacheItemResult | null> {
+    return this.readRecord(key, ITEM_READ);
   }
 
   async setItem(
@@ -1071,7 +1020,7 @@ export class VercelCacheStore<
       this.emitDebug({ op: "getShell", key, outcome: "miss", readMs });
       return null;
     }
-    const env = this.asShellEnvelope(this.decodeRaw(raw));
+    const env = asShellEnvelope(this.decodeRaw(raw));
     if (stats) {
       const readAt = performance.now();
       stats.matchMs = readAt - readStartedAt;
@@ -1479,19 +1428,87 @@ export class VercelCacheStore<
     return maskedForRequest(_getRequestContext(), this, tags, taggedAt ?? 0);
   }
 
-  /** A data read's mask check: reports the miss and returns true when masked. */
-  private maskedMiss(
-    op: "get" | "getItem" | "getResponse",
-    key: string,
-    env: { t?: string[]; ta?: number },
-    readMs: number,
-  ): boolean {
-    if (!this.maskedForRequest(env.t, env.ta)) return false;
-    this.emitDebug({ op, key, outcome: "miss", readMs });
-    return true;
-  }
-
   // --- Internals ---
+
+  /**
+   * The read of a data family (get, getItem, getResponse): a failed read is
+   * the family's `readError`; a missing, corrupt, expired or masked entry is a
+   * miss, and a corrupt or expired one is evicted. The hit is built before the
+   * stale claim, so an entry that does not rebuild is evicted as corrupt with
+   * no revalidation lock written for it.
+   */
+  private async readRecord<
+    E extends { s: number; e: number; ta?: number },
+    V extends { shouldRevalidate: boolean },
+    Err extends CacheReadError | null,
+  >(key: string, f: VercelReadFamily<E, V, Err>): Promise<V | null | Err> {
+    const { op } = f;
+    const storeKey = this.toStoreKey(key, f.family);
+    const label = `[VercelCacheStore] ${op}`;
+    const started = Date.now();
+    let raw: unknown;
+    try {
+      raw = await this.cache.get(storeKey);
+    } catch (error) {
+      reportCacheError(error, "cache-read", label);
+      this.emitDebug({ op, key, outcome: "error" });
+      return f.readError;
+    }
+    const readMs = Date.now() - started;
+
+    if (raw == null) {
+      this.emitDebug({ op, key, outcome: "miss", readMs });
+      return null;
+    }
+    const corrupt = (error: unknown): null => {
+      reportCacheError(error, "cache-corrupt", label);
+      void this.safeDelete(storeKey);
+      this.emitDebug({ op, key, outcome: "corrupt", readMs });
+      return null;
+    };
+    const env = f.decode(this.decodeRaw(raw));
+    if (!env) return corrupt(new Error(`malformed ${f.name} envelope`));
+
+    const now = Date.now();
+    if (now > env.e) {
+      void this.safeDelete(storeKey);
+      this.emitDebug({
+        op,
+        key,
+        outcome: "expired",
+        staleAt: env.s,
+        expiresAt: env.e,
+        readMs,
+      });
+      return null;
+    }
+    if (this.maskedForRequest(f.tags(env), env.ta)) {
+      this.emitDebug({ op, key, outcome: "miss", readMs });
+      return null;
+    }
+    let hit: V;
+    try {
+      hit = f.hit(env);
+    } catch (error) {
+      return corrupt(error);
+    }
+
+    const isStale = env.s > 0 && now > env.s;
+    const shouldRevalidate = isStale
+      ? await this.claimRevalidation(storeKey, env.e, label)
+      : false;
+    this.emitDebug({
+      op,
+      key,
+      outcome: shouldRevalidate ? "stale-revalidate" : "fresh",
+      shouldRevalidate,
+      staleAt: env.s,
+      expiresAt: env.e,
+      readMs,
+    });
+    hit.shouldRevalidate = shouldRevalidate;
+    return hit;
+  }
 
   // The `rg:{family}:` prefix keeps the three value tiers in disjoint
   // keyspaces, but the isolation is only as strong as the cache's
@@ -1694,89 +1711,5 @@ export class VercelCacheStore<
     } catch {
       // The debug sink must never break the cache path.
     }
-  }
-
-  private asSegmentEnvelope(raw: unknown): VercelSegmentEnvelope | null {
-    if (!isRecord(raw)) return null;
-    const { d, s, e, ta } = raw;
-    if (
-      !isRecord(d) ||
-      !Array.isArray((d as Record<string, unknown>).segments)
-    ) {
-      return null;
-    }
-    if (typeof s !== "number" || typeof e !== "number") return null;
-    return {
-      d: d as unknown as CachedEntryData,
-      s,
-      e,
-      ta: typeof ta === "number" ? ta : undefined,
-    };
-  }
-
-  private asItemEnvelope(raw: unknown): VercelItemEnvelope | null {
-    if (!isRecord(raw)) return null;
-    const { v, h, s, e, t, ta } = raw;
-    if (typeof v !== "string") return null;
-    if (typeof s !== "number" || typeof e !== "number") return null;
-    return {
-      v,
-      h: typeof h === "string" ? h : undefined,
-      s,
-      e,
-      ta: typeof ta === "number" ? ta : undefined,
-      t: Array.isArray(t) ? (t as string[]) : undefined,
-    };
-  }
-
-  private asShellEnvelope(raw: unknown): VercelShellEnvelope | null {
-    if (!isRecord(raw)) return null;
-    const { p, po, rv, bv, c, s, e, t, i, lp, sn, dk, pr, no } = raw;
-    if (typeof rv !== "string" || typeof bv !== "string") return null;
-    // Document half: required unless navigationOnly (`no`), which stores
-    // neither field. Tolerate a legacy navigationOnly envelope that still
-    // carries them.
-    if (p === undefined ? no !== true : typeof p !== "string") return null;
-    if (
-      po === undefined ? no !== true : po !== null && typeof po !== "string"
-    ) {
-      return null;
-    }
-    if (typeof c !== "number") return null;
-    if (typeof s !== "number" || typeof e !== "number") return null;
-    return {
-      ...(typeof p === "string" ? { p } : {}),
-      ...(po !== undefined ? { po: po as string | null } : {}),
-      rv,
-      bv,
-      c,
-      s,
-      e,
-      t: Array.isArray(t) ? (t as string[]) : undefined,
-      i: typeof i === "string" ? i : undefined,
-      lp: typeof lp === "string" ? lp : undefined,
-      // A non-array field reads as no records.
-      sn: Array.isArray(sn) ? (sn as ShellSnapshotRecord[]) : [],
-      dk: typeof dk === "string" ? dk : undefined,
-      pr: typeof pr === "string" ? pr : undefined,
-      no: no === true ? true : undefined,
-    };
-  }
-
-  private asResponseEnvelope(raw: unknown): VercelResponseEnvelope | null {
-    if (!isRecord(raw)) return null;
-    const { b, st, hd, s, e, t, ta } = raw;
-    if (typeof b !== "string" || typeof st !== "number") return null;
-    if (!Array.isArray(hd)) return null;
-    if (typeof s !== "number" || typeof e !== "number") return null;
-    return {
-      b,
-      st,
-      hd: hd as [string, string][],
-      s,
-      e,
-      t: Array.isArray(t) ? (t as string[]) : undefined,
-      ta: typeof ta === "number" ? ta : undefined,
-    };
   }
 }

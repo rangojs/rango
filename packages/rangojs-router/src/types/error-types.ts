@@ -83,7 +83,15 @@ export interface OnErrorContext<TEnv = any> {
   env?: TEnv;
   /** Duration from request start to error (milliseconds) */
   duration?: number;
-  /** Whether this is a partial/navigation request */
+  /**
+   * Whether this is a partial/navigation request, on an error the segment
+   * walk catches (a handler that throws, a DSL loader that rejects): `true`
+   * for a navigation, unset for a document. An error in the background
+   * re-render of a `cache()` record (a stale HIT's refresh, the write of a
+   * navigation that kept a layout mounted) reports the request that started
+   * it. A streamed (`loading()`) handler's rejection does not carry it, in
+   * either render; the `routing` phase reports `false`.
+   */
   isPartial?: boolean;
   /** Whether an error boundary caught the error */
   handledByBoundary?: boolean;

@@ -380,7 +380,7 @@ discovery, and the reload landed during a cold dev server's first request, so a 
 clientUrls test failed 9 of 10 cold runs.
 
 So the watcher ignores a file in a directory every discovery scan skips, unless the RSC
-module graph has loaded it (`isFileOutsideApp` in `router-discovery.ts`). "Every scan" is
+module graph has loaded it (`isFileOutsideApp` in `discovery/dev-server-phase.ts`). "Every scan" is
 literal: `isUniversallySkippedScanDir` in `scan-filter.ts` is the one predicate
 `findTsFiles`, `findRouterFiles` and `findHostRouterFiles` all build on, so the watcher
 and the scans cannot drift apart. It names dot-directories, `node_modules`, `dist` and

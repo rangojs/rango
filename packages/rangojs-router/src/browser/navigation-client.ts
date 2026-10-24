@@ -38,7 +38,7 @@ import {
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
 import { cancelAllPrefetches } from "./prefetch/loader.js";
-import { FILL_PARAM, STALE_PARAM } from "../prefetch-markers.js";
+import { writePartialParams } from "./wire-protocol.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -103,30 +103,23 @@ export function createNavigationClient(
       }
 
       // Build fetch URL with partial rendering params (used for both
-      // cache key lookup and actual fetch if cache misses)
-      const fetchUrl = new URL(targetUrl, window.location.origin);
-      fetchUrl.searchParams.set("_rsc_partial", "true");
-      fetchUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
-      if (staleRevalidation) {
-        fetchUrl.searchParams.set(STALE_PARAM, "true");
-      }
-      if (version) {
-        fetchUrl.searchParams.set("_rsc_v", version);
-      }
-      if (routerId) {
-        fetchUrl.searchParams.set("_rsc_rid", routerId);
-      }
-      // The page left's rewrite target (#1144), in both prefetch keys like
-      // the params above: buildPrefetchUrl sets it in the same place.
-      if (rewriteTarget) {
-        fetchUrl.searchParams.set("_rsc_rt", rewriteTarget);
-      }
-      // A param, not a header: the document cache decides from the raw URL
-      // (cache/document-cache.ts), and it keeps the fill out of every
-      // prefetch key below.
-      if (fill) {
-        fetchUrl.searchParams.set(FILL_PARAM, "1");
-      }
+      // cache key lookup and actual fetch if cache misses). The page left's
+      // rewrite target (#1144) is in both prefetch keys, like the params
+      // around it. The fill is a param, not a header: the document cache
+      // decides from the raw URL (cache/document-cache.ts), and it keeps the
+      // fill out of every prefetch key below.
+      const fetchUrl = writePartialParams(
+        new URL(targetUrl, window.location.origin),
+        {
+          segmentIds,
+          emptySegments: "send",
+          stale: staleRevalidation,
+          version,
+          routerId,
+          rewriteTarget,
+          fill,
+        },
+      );
 
       // If the lazy prefetch runtime has not loaded yet, prevent a deferred
       // speculative request from starting after this navigation misses the

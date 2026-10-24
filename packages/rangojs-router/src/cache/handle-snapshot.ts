@@ -14,7 +14,7 @@ import type { HandleOwners, SegmentHandleData } from "./types.js";
 // in plain node/vitest). It is imported LAZILY inside the two async encode/decode
 // helpers below so that modules which import handle-snapshot only for the
 // plugin-rsc-free captureHandles/restoreHandles (e.g. cache-scope, on dispatch's
-// lazy response-route cache path) do not pull plugin-rsc at module load. Behavior
+// response-route path) do not pull plugin-rsc at module load. Behavior
 // is unchanged: both helpers are async and already awaited the codec.
 
 const HANDLE_ENCODE_TIMEOUT_MS = 5000;
@@ -100,7 +100,7 @@ export async function decodeHandleValue<T>(encoded: string): Promise<T | null> {
  *
  * DSL-loader pushes stay out of the CACHE WRITE: a HIT runs loaders exactly
  * as an uncached render of the same request would (cache-lookup.ts
- * resolveFreshLoadersAndYield), so replaying a recorded copy would duplicate
+ * serveStoredSegments), so replaying a recorded copy would duplicate
  * the live push. Handler pushes, including
  * handler-invoked ctx.use(Loader) bodies (skipped with their handler on a
  * HIT), are kept. The store tags loader pushes by array position at push
@@ -179,29 +179,39 @@ export type OwnedPushDelivery = (loaderId: string) => RecordAuthority;
  * owner. Neither claims its loader, so the loader's own cache() HIT still
  * delivers (the pushes holding a promise a restored copy lets through, or its
  * entry's pushes in a placeholder's place).
+ *
+ * `sent` (a partial request) names the segments the response sends. Any
+ * other segment is kept with its handler's values, as on a live walk: only
+ * its loaders' copies are restored, which follow their loader as above.
  */
 export function restoreHandles(
   handles: Record<string, SegmentHandleData>,
   handleStore: HandleStore,
   owners?: HandleOwners,
   owned?: OwnedPushDelivery,
+  sent?: ReadonlySet<string>,
 ): void {
   for (const [segId, segHandles] of Object.entries(handles)) {
     if (Object.keys(segHandles).length === 0) continue;
     const segOwners = owners?.[segId];
+    const kept = sent !== undefined && !sent.has(segId);
     if (!segOwners) {
-      handleStore.replaySegmentData(segId, segHandles);
+      if (!kept) handleStore.replaySegmentData(segId, segHandles);
       continue;
     }
     const cleared: SegmentHandleData = {};
-    for (const handleName in segHandles) cleared[handleName] = [];
+    for (const handleName in segHandles) {
+      if (!kept || segOwners[handleName]?.some(Boolean)) {
+        cleared[handleName] = [];
+      }
+    }
     handleStore.replaySegmentData(segId, cleared);
     for (const [handleName, values] of Object.entries(segHandles)) {
       const valueOwners = segOwners[handleName];
       for (let i = 0; i < values.length; i++) {
         const owner = valueOwners?.[i];
         if (!owner) {
-          handleStore.push(handleName, segId, values[i]);
+          if (!kept) handleStore.push(handleName, segId, values[i]);
           continue;
         }
         const authority = owned?.(owner);
@@ -220,13 +230,15 @@ export function restoreHandles(
  * (with or without a handles blob: a pinned loader whose capture pushed
  * nothing has no copy, and its run must still add no settled push), then
  * decode and restoreHandles. `keepIds` limits the restore to the segments a
- * boundary-scoped scope serves. A decode failure skips the restore.
+ * boundary-scoped scope serves; `sent` is restoreHandles'. A decode failure
+ * skips the restore.
  */
 export async function restoreRecordHandles(
   handleStore: HandleStore,
   record: { handles?: string; handleOwners?: HandleOwners },
   owned: OwnedPushDelivery | undefined,
   keepIds?: ReadonlySet<string>,
+  sent?: ReadonlySet<string>,
 ): Promise<void> {
   if (owned) handleStore.setRecordAuthority(owned);
   if (!record.handles) return;
@@ -237,7 +249,7 @@ export async function restoreRecordHandles(
       if (!keepIds.has(id)) delete decoded[id];
     }
   }
-  restoreHandles(decoded, handleStore, record.handleOwners, owned);
+  restoreHandles(decoded, handleStore, record.handleOwners, owned, sent);
 }
 
 /**

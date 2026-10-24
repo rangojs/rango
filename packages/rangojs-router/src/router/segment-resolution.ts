@@ -5,20 +5,11 @@ export {
   buildLoaderErrorContext,
 } from "./segment-resolution/helpers.js";
 export {
-  resolveLoaders,
-  type ResolveSegmentOptions,
+  resolveLoadersOnly,
+  buildEntryRevalidateMap,
+  resolveParallelSegments,
+  resolveEntryHandler,
   resolveSegment,
   resolveOrphanLayout,
-  resolveParallelEntry,
   resolveAllSegments,
-  resolveLoadersOnly,
-} from "./segment-resolution/fresh.js";
-export {
-  resolveLoadersOnlyWithRevalidation,
-  buildEntryRevalidateMap,
-  resolveParallelSegmentsWithRevalidation,
-  resolveEntryHandlerWithRevalidation,
-  resolveSegmentWithRevalidation,
-  resolveOrphanLayoutWithRevalidation,
-  resolveAllSegmentsWithRevalidation,
 } from "./segment-resolution/revalidation.js";

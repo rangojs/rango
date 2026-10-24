@@ -12,11 +12,11 @@ import { wrapLoaderWithErrorHandling } from "../loader-resolution.js";
 import { notFound, DataNotFoundError } from "../../errors.js";
 import { redirect } from "../../route-definition/redirect.js";
 import { createLocationState } from "../../browser/react/location-state-shared.js";
-import {
-  createRequestContext,
-  runWithRequestContext,
-} from "../../server/request-context.js";
+import { runWithRequestContext } from "../../server/request-context.js";
+import { makeRequestContext } from "../../__tests__/kit/request-context.js";
 import type { EntryData } from "../../server/context";
+
+const MISSING_URL = "https://shop.example/products/missing";
 
 const entry = { shortCode: "t0", type: "route" } as unknown as EntryData;
 
@@ -46,15 +46,6 @@ function wrap(
     opts?.onError,
     opts?.notFoundDeps,
   );
-}
-
-function makeCtx(url = "https://shop.example/products/missing") {
-  return createRequestContext({
-    env: {},
-    request: new Request(url),
-    url: new URL(url),
-    variables: {},
-  });
 }
 
 describe("notFound() envelopes", () => {
@@ -109,7 +100,7 @@ describe("notFound() envelopes", () => {
 
   it("does NOT invoke onError (control flow, not failure) and sets stub status 404", async () => {
     const onError = vi.fn();
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: MISSING_URL });
     const result: any = await runWithRequestContext(ctx, () =>
       wrap(Promise.reject(new DataNotFoundError("nope")), { onError }),
     );
@@ -141,7 +132,7 @@ function notFoundThrown(): unknown {
 
 describe("redirect() envelopes", () => {
   it("produces redirect.to resolved same-origin inside a request context", async () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: MISSING_URL });
     const result: any = await runWithRequestContext(ctx, () =>
       wrap(Promise.reject(redirect("/products"))),
     );
@@ -165,7 +156,7 @@ describe("redirect() envelopes", () => {
     // Key injection is the exposeInternalIds plugin's job; stamp it by hand
     // here (same convention as location-state-shared.test.ts).
     (Flash as any).__rsc_ls_key = "__rsc_ls_flashTest";
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: MISSING_URL });
     const result: any = await runWithRequestContext(ctx, () =>
       wrap(
         Promise.reject(
@@ -180,7 +171,7 @@ describe("redirect() envelopes", () => {
   });
 
   it("neutralizes a cross-origin target without the external opt-in", async () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: MISSING_URL });
     const result: any = await runWithRequestContext(ctx, () =>
       wrap(Promise.reject(redirect("https://evil.example/steal"))),
     );
@@ -189,7 +180,7 @@ describe("redirect() envelopes", () => {
   });
 
   it("allows an http(s) cross-origin target with redirect(url, { external: true })", async () => {
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: MISSING_URL });
     const result: any = await runWithRequestContext(ctx, () =>
       wrap(
         Promise.reject(
@@ -202,7 +193,7 @@ describe("redirect() envelopes", () => {
 
   it("does NOT invoke onError for redirects", async () => {
     const onError = vi.fn();
-    const ctx = makeCtx();
+    const ctx = makeRequestContext({ url: MISSING_URL });
     await runWithRequestContext(ctx, () =>
       wrap(Promise.reject(redirect("/login")), { onError }),
     );

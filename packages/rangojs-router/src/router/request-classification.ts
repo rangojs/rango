@@ -22,6 +22,7 @@ import type { CollectedMiddleware } from "./middleware-types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import { negotiateRoute } from "./content-negotiation.js";
 import { stripInternalParams } from "./handler-context.js";
+import { WIRE } from "../wire-params.js";
 import { resolveRoute, type RouteSnapshot } from "./route-snapshot.js";
 
 interface RedirectPlan<TEnv = any> {
@@ -74,6 +75,11 @@ interface FullRenderPlan<TEnv = any> {
   mode: "full-render";
   route: RouteSnapshot<TEnv>;
   negotiated: boolean;
+  /**
+   * No route matched: the render path renders the 404 (match() re-throws
+   * RouteNotFoundError). Set by rsc/request-stages.ts classify.
+   */
+  unmatched?: true;
 }
 
 interface PartialRenderPlan<TEnv = any> {
@@ -151,9 +157,9 @@ export async function classifyRequest<TEnv = any>(
   const pathname = url.pathname;
   const isAction =
     requestHeaders(request).has("rsc-action") ||
-    url.searchParams.has("_rsc_action");
-  const isLoaderFetch = url.searchParams.has("_rsc_loader");
-  const isPartialReq = url.searchParams.has("_rsc_partial");
+    url.searchParams.has(WIRE.action);
+  const isLoaderFetch = url.searchParams.has(WIRE.loader);
+  const isPartialReq = url.searchParams.has(WIRE.partial);
   const contentType = requestHeaders(request).get("content-type") || "";
   const isFormSubmission =
     contentType.includes("multipart/form-data") ||
@@ -173,11 +179,11 @@ export async function classifyRequest<TEnv = any>(
   // Before the version check: each router has its own version, so a tab of
   // another app always carries one this router does not have. That request is
   // an app switch, not a stale client.
-  const clientRouterId = url.searchParams.get("_rsc_rid");
+  const clientRouterId = url.searchParams.get(WIRE.routerId);
   if (
     clientRouterId &&
     clientRouterId !== deps.routerId &&
-    url.searchParams.has("_rsc_partial")
+    url.searchParams.has(WIRE.partial)
   ) {
     return {
       mode: "app-switch",
@@ -185,7 +191,7 @@ export async function classifyRequest<TEnv = any>(
     };
   }
 
-  const clientVersion = url.searchParams.get("_rsc_v");
+  const clientVersion = url.searchParams.get(WIRE.version);
   if (
     deps.routerVersion &&
     clientVersion &&
@@ -254,7 +260,7 @@ export async function classifyRequest<TEnv = any>(
 
   const actionId =
     requestHeaders(request).get("rsc-action") ||
-    url.searchParams.get("_rsc_action");
+    url.searchParams.get(WIRE.action);
 
   const hasVariants =
     snapshot.matched.negotiateVariants &&

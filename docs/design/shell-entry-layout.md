@@ -292,7 +292,7 @@ on `CFCacheStore` reads the framed body and returns the same `ShellCacheEntry`
 it always did (the prelude re-encoded with `toBase64`, 0.05 ms). The first-byte
 path uses an `@internal` optional store method,
 `readShellDocument(key, { tagHints })`, that only built-in stores implement
-and the serve path (`readShellEntry` in `rsc-rendering.ts`) prefers when
+and the serve path (`readShell` in `shell-serve.ts`) prefers when
 present. `tagHints` is the route's `ppr.tags`, known before the entry is read:
 
 ```ts
@@ -939,6 +939,19 @@ https, one `Set-Cookie` per response. It is named by the state cookie's
 prefix, not the router: routers on one host often share a store, and a
 mutation through one of them should send the user past the memos the others
 read too. A router with its own `stateCookiePrefix` gets its own cookie.
+
+A stale entry's background refresh sets none. Its invalidation still runs,
+but the visitor whose request served the stale entry made no mutation. A
+stale `cache()` HIT's re-render and a stale document cache entry's re-run take
+a sink's no-op writer (`server/render-pass.ts`, the `background-revalidation`
+and `document-revalidation` rows). The document cache's re-run renders the
+whole page (`next()`: downstream middleware, route handlers and the render),
+so its other request-context response writes land on its own response too,
+not the visitor's; it stores no response with a `Set-Cookie`, so a
+fresh-reads cookie there would also keep the refreshed page out of the store.
+A stale `"use cache"` entry's or cached loader's refresh runs on the
+visitor's context under `runAsBackgroundRefresh` (`cache/tag-invalidation.ts`),
+which `markFreshReads` reads.
 
 Its `Max-Age` is the longest any invalidated store's memos can be stale
 (`SegmentCacheStore.freshReadsWindowMs`, rounded up to seconds): the shell

@@ -71,7 +71,7 @@ export async function kvKeyDigest(value: string): Promise<string> {
  * of restarting it -- copying set()'s original full-window max-age would reset
  * CF's retention clock on every re-arm and pin a perpetually-stale entry forever.
  * An entry lacking a valid deadline (legacy/tampered) floors to max-age=1, so it
- * hard-expires in ~1s and self-heals via KV. Mirrors promoteSegmentToL1's math.
+ * hard-expires in ~1s and self-heals via KV. Mirrors promoteToL1's math.
  * @internal
  */
 export function remainingCacheControl(headers: Headers, now: number): string {

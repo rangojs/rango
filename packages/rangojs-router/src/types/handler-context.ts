@@ -462,7 +462,7 @@ export type InternalHandlerContext<
   _reverseScope?: import("../server/context.js").ReverseScope;
   /**
    * @internal The on-demand overlay holds a "removed" marker for this request
-   * (tryPrerenderLookup, cache-lookup.ts); gateOnDemandProducer reads it. On
+   * (readPrerenderSource, cache-lookup.ts); gateOnDemandProducer reads it. On
    * this context, not the request's: withCacheLookup documents that the
    * request ALS can be lost mid-pipeline on workerd.
    */
@@ -510,6 +510,17 @@ export type InternalHandlerContext<
    * request is a fill. See router/segment-resolution/prefetch-deferral.ts.
    */
   _prefetchDeferral?: import("../router/segment-resolution/prefetch-deferral.js").PrefetchDeferral;
+  /**
+   * @internal DSL loaders registered and not started, by `$$id`: a prefetch
+   * deferred them, or a pass that skips loaders (`skipLoaders`) did not run
+   * them. A reader's ctx.use() starts one through its registration
+   * (registerDeferredLoader, startDeferredLoader in
+   * router/segment-resolution/prefetch-deferral.ts).
+   */
+  _deferredLoaders?: Map<
+    string,
+    import("../router/segment-resolution/prefetch-deferral.js").DeferredLoader
+  >;
   /**
    * @internal Whether a loader was started in this request: a run of it (a
    * handler's or another loader's ctx.use()) or its cache() binding. A

@@ -18,7 +18,7 @@ const RUNTIME_DISCOVERY_LINE = /\[rango\] Generated route types -> /;
  *   1. The temp-runner discovery threw `Unknown route: shop.product.item42`
  *      because the user entry calls `router.reverse()` at module load and
  *      `__rscRouterDiscoveryActive` was unset on the dev path (build set it
- *      via router-discovery.ts's build branch but dev didn't).
+ *      via build-discovery-phase.ts but dev didn't).
  *   2. Even after fixing (1), workerd still raced ahead and evaluated
  *      `worker.rsc.tsx` against the 19-route static-parsed gen file because
  *      `import "virtual:rsc-router/routes-manifest"` was source-positioned

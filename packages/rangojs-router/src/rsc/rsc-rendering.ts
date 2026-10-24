@@ -10,8 +10,8 @@ import {
   getRequestContext,
   setRequestContextParams,
   runWithRequestContext,
-  wireRenderBarrier,
 } from "../server/request-context.js";
+import { deriveRenderPass } from "../server/render-pass.js";
 import {
   SeededShellStore,
   ShellRecordUnavailableError,
@@ -58,11 +58,11 @@ import {
   capShellWindow,
   lastStoredCaptureSeq,
   markCaptureBackoff,
-  scheduleShellCapture,
+  planShellCapture,
   resolveShellCaptureDebugSink,
   takeCaptureDebugEventForTiming,
   describeShellCaptureEvent,
-  type ShellCaptureDescriptor,
+  type ShellCaptureInput,
 } from "./shell-capture.js";
 import {
   PPR_REPLAY_STATUS_HEADER,
@@ -87,8 +87,10 @@ import {
   describeShellTailTiming,
   publishShellTailTiming,
   takeShellTailTimingForServerTiming,
+  readShell,
   type ResolvedPprConfig,
   type ShellDocument,
+  type ShellRead,
   type ShellTailTiming,
 } from "./shell-serve.js";
 import {
@@ -99,7 +101,8 @@ import {
 import { contextGet } from "../context-var.js";
 import { rewriteShellAudience, rewriteTrail } from "../server/rewrite-trail.js";
 import { visitorShellKey } from "./shell-capture-constants.js";
-import { PREFETCH_HEADER, STALE_PARAM } from "../prefetch-markers.js";
+import { PREFETCH_HEADER } from "../prefetch-markers.js";
+import { WIRE } from "../wire-params.js";
 import {
   isWarmReplace,
   noteWarmShellEvent,
@@ -130,9 +133,7 @@ import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type {
   SegmentCacheStore,
   ShellCacheEntry,
-  ShellDocumentRead,
   ShellEntryHead,
-  ShellReadStats,
   ShellSnapshotRecord,
 } from "../cache/types.js";
 import {
@@ -202,33 +203,41 @@ function requestShellBase(
   };
 }
 
-function createShellCaptureDescriptor(
-  ctx: HandlerContext<any>,
+/** The shell capture of `key` this request schedules. */
+function createShellCapture(
+  input: RequestRenderInput<any>,
   key: string,
   base: RequestShellBase,
-  originSeed: string,
   pprConfig: ResolvedPprConfig,
-  store: SegmentCacheStore<any>,
+  ssr: ShellCaptureInput["ssr"],
   navigationOnly?: true,
-): ShellCaptureDescriptor {
+): ShellCaptureInput {
+  const { ctx, request, env, url, reqCtx } = input;
   return {
-    key,
-    searchSeed: base.searchSeed,
-    pathname: base.pathname,
-    // Derived from the same request URL as the key (the callers compute
-    // both next to each other, so they cannot drift): seeding the origin
-    // keeps origin-dependent static markup (Link's data-external)
-    // identical across capture, resume, and browser hydration.
-    originSeed,
-    buildVersion: ctx.version,
-    ttl: pprConfig.ttl,
-    swr: pprConfig.swr,
-    tags: pprConfig.tags,
-    captureTimeout: pprConfig.captureTimeout,
-    store,
-    maxSnapshotBytes: pprConfig.maxSnapshotBytes,
-    debugSink: resolveShellCaptureDebugSink(ctx.router.debugShellCapture),
-    navigationOnly,
+    ctx,
+    request,
+    env,
+    url,
+    reqCtx,
+    ssr,
+    descriptor: {
+      key,
+      searchSeed: base.searchSeed,
+      pathname: base.pathname,
+      // Derived from the same request URL as the key: seeding the origin
+      // keeps origin-dependent static markup (Link's data-external)
+      // identical across capture, resume, and browser hydration.
+      originSeed: url.origin,
+      buildVersion: ctx.version,
+      ttl: pprConfig.ttl,
+      swr: pprConfig.swr,
+      tags: pprConfig.tags,
+      captureTimeout: pprConfig.captureTimeout,
+      store: reqCtx._cacheStore,
+      maxSnapshotBytes: pprConfig.maxSnapshotBytes,
+      debugSink: resolveShellCaptureDebugSink(ctx.router.debugShellCapture),
+      navigationOnly,
+    },
   };
 }
 
@@ -343,7 +352,7 @@ interface RequestRenderInput<TEnv> {
 
 type ShellServeOutcome =
   | { kind: "serve"; response: Response }
-  | { kind: "miss"; descriptor: ShellCaptureDescriptor; ssrModule: SSRModule }
+  | { kind: "miss"; capture: ShellCaptureInput }
   | { kind: "pass" };
 
 type PreparedRender =
@@ -454,18 +463,8 @@ function* requestRenderPlan<TEnv>(
       response.status === 200 &&
       (response.headers.get("content-type") ?? "").includes("text/html")
     ) {
-      const { descriptor, ssrModule } = shell;
-      yield* handoff("shell-capture", () =>
-        scheduleShellCapture(
-          input.ctx,
-          input.request,
-          input.env,
-          input.url,
-          reqCtx,
-          ssrModule,
-          descriptor,
-        ),
-      );
+      const { capture } = shell;
+      yield* handoff("shell-capture", () => planShellCapture(capture));
     }
     response.headers.set(SHELL_STATUS_HEADER, "MISS");
   }
@@ -520,8 +519,7 @@ function warnIfPprWindowReduced(
 function* shellServePlan<TEnv>(
   input: RequestRenderInput<TEnv>,
 ): RoutinePlan<ShellServeOutcome> {
-  const { ctx, request, env, url, isPartial, handleStore, nonce, reqCtx } =
-    input;
+  const { ctx, request, env, url, isPartial, nonce, reqCtx } = input;
   const manifestEntry = reqCtx._classifiedRoute?.manifestEntry;
 
   // A router.prerender() warm (prerender/warm-request.ts) reports the shell of
@@ -627,7 +625,10 @@ function* shellServePlan<TEnv>(
   const cached = warmReplace
     ? null
     : yield* step("shell-read", () =>
-        readShellEntry(store, key, reqCtx, pprConfig.tags),
+        readShell(store, key, {
+          tagHints: pprConfig.tags,
+          metrics: reqCtx._metricsStore,
+        }),
       );
 
   // allReady (ssr.resolveStreaming) bypasses PPR entirely: buffering defeats
@@ -643,14 +644,16 @@ function* shellServePlan<TEnv>(
   ) {
     return { kind: "pass" };
   }
-  const descriptor = createShellCaptureDescriptor(
-    ctx,
+  // A MISS's capture after the response, or a HIT's recapture (stale, or a
+  // tail that could not finish).
+  const capture = createShellCapture(
+    input,
     key,
     base,
-    url.origin,
     pprConfig,
-    store,
+    () => ssrModule,
   );
+  const { descriptor } = capture;
   if (warm) {
     // The warm learns its capture's outcome from the capture's own events,
     // ahead of the router's debugShellCapture sink.
@@ -660,24 +663,27 @@ function* shellServePlan<TEnv>(
       routerSink?.(event);
     };
   }
+  // Neither the stored shell nor the build shell is read: a warm renders.
+  if (warmReplace) {
+    return {
+      kind: "miss",
+      capture: { ...capture, descriptor: { ...descriptor, force: true } },
+    };
+  }
   // MISS (no entry, invalid reactVersion, a tombstone, or store read
   // failure): axis 1 + a background capture scheduled once the response is
   // known servable.
   const miss: ShellServeOutcome = {
     kind: "miss",
-    descriptor: { ...descriptor, storedSeqAtRead },
-    ssrModule,
+    capture: { ...capture, descriptor: { ...descriptor, storedSeqAtRead } },
   };
-  // Neither the stored shell nor the build shell is read: a warm renders.
-  if (warmReplace) {
-    return { ...miss, descriptor: { ...descriptor, force: true } };
-  }
 
   // A HIT replays the handler layer from the entry's doc record (`docKey`),
   // or, for a Prerender route, from the prerender store. An entry that has
   // neither is a MISS: serving it would run handlers after the commit.
   // The entry must have rendered this request's location: the browser
   // hydrates against the address bar.
+  let hit: { document: ShellDocument; recapture: boolean } | undefined;
   if (
     cached &&
     !cached.entry.navigationOnly &&
@@ -700,42 +706,15 @@ function* shellServePlan<TEnv>(
         "[ShellServe] getShell",
       );
     } else {
-      // An onlyIfStale warm found a servable shell; a recapture scheduled
-      // below overwrites this through the capture's events.
-      if (warm) warm.shell = "fresh";
       // Stale (SWR) hit: serve the stale shell now, recapture in the
-      // background (stampede-guarded + backoff inside scheduleShellCapture),
+      // background (stampede-guarded + backoff inside planShellCapture),
       // at most once per SHELL_MIN_RECAPTURE_INTERVAL_MS of the shell's age.
-      if (
-        cached.shouldRevalidate &&
-        staleShellRecaptureDue(cached.entry, Date.now())
-      ) {
-        yield* handoff("shell-recapture", () =>
-          scheduleShellCapture(
-            ctx,
-            request,
-            env,
-            url,
-            reqCtx,
-            ssrModule,
-            descriptor,
-          ),
-        );
-      }
-      const response = yield* step("shell-hit", () =>
-        serveShellHit(
-          ctx,
-          request,
-          env,
-          url,
-          reqCtx,
-          handleStore,
-          ssrModule,
-          document,
-          descriptor,
-        ),
-      );
-      return { kind: "serve", response };
+      hit = {
+        document,
+        recapture:
+          !!cached.shouldRevalidate &&
+          staleShellRecaptureDue(cached.entry, Date.now()),
+      };
     }
   }
 
@@ -764,78 +743,59 @@ function* shellServePlan<TEnv>(
   // server's /__rsc_shell endpoint for PRERENDERED routes only (production's
   // exact candidate set). Folded away in production builds (NODE_ENV is a
   // compile-time constant).
-  const devShellLookup = resolveDevShellLookup(reqCtx, pprConfig);
-  let buildHit: Awaited<ReturnType<typeof lookupBuildShell>> = null;
-  if (base.pathname !== undefined) {
+  if (!hit && base.pathname === undefined) {
     // A build shell is the target's: never served under a visitor key.
-  } else if (key !== baseKey) {
-    // Probed once per path without a build shell, and not again once the
-    // route warned. A search-bearing URL never reads one: nothing to probe.
-    const routeName = reqCtx._classifiedRoute?.routeKey;
-    if (
-      !partitionBuildShellCheckDone(ctx.router.id, url.pathname, routeName) &&
-      shellSearchSeed(url, reqCtx._searchParamsFilter) === ""
-    ) {
-      const found = yield* step("build-shell-check", () =>
-        hasBuildShell(ctx.router.id, url.pathname, devShellLookup),
-      );
-      notePartitionBuildShellCheck(
-        ctx.router.id,
-        url.pathname,
-        routeName,
-        found,
-      );
-    }
-  } else {
-    buildHit = yield* step("build-shell-lookup", () =>
-      lookupBuildShell(
-        ctx.router.id,
-        url,
-        ctx.version,
-        store,
-        devShellLookup,
-        reqCtx._searchParamsFilter,
-      ),
-    );
-  }
-  // The document serve decodes the baked prelude once here; an undecodable
-  // one is a MISS like a corrupt runtime entry.
-  const buildDocument = buildHit
-    ? openShellDocumentMetered(reqCtx, { entry: buildHit.entry })
-    : null;
-  if (buildHit && buildDocument) {
-    if (warm) warm.shell = "fresh";
-    // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
-    if (buildHit.stale) {
-      yield* handoff("shell-recapture", () =>
-        scheduleShellCapture(
-          ctx,
-          request,
-          env,
+    const devShellLookup = resolveDevShellLookup(reqCtx, pprConfig);
+    if (key !== baseKey) {
+      // Probed once per path without a build shell, and not again once the
+      // route warned. A search-bearing URL never reads one: nothing to probe.
+      const routeName = reqCtx._classifiedRoute?.routeKey;
+      if (
+        !partitionBuildShellCheckDone(ctx.router.id, url.pathname, routeName) &&
+        shellSearchSeed(url, reqCtx._searchParamsFilter) === ""
+      ) {
+        const found = yield* step("build-shell-check", () =>
+          hasBuildShell(ctx.router.id, url.pathname, devShellLookup),
+        );
+        notePartitionBuildShellCheck(
+          ctx.router.id,
+          url.pathname,
+          routeName,
+          found,
+        );
+      }
+    } else {
+      const built = yield* step("build-shell-lookup", () =>
+        lookupBuildShell(
+          ctx.router.id,
           url,
-          reqCtx,
-          ssrModule,
-          descriptor,
+          ctx.version,
+          store,
+          devShellLookup,
+          reqCtx._searchParamsFilter,
         ),
       );
+      // The document serve decodes the baked prelude once here; an
+      // undecodable one is a MISS like a corrupt runtime entry.
+      const document =
+        built && openShellDocumentMetered(reqCtx, { entry: built.entry });
+      // Past ppr.ttl: still serve the baked entry, recapture upgrades it.
+      if (document) hit = { document, recapture: built.stale };
     }
-    const response = yield* step("shell-hit", () =>
-      serveShellHit(
-        ctx,
-        request,
-        env,
-        url,
-        reqCtx,
-        handleStore,
-        ssrModule,
-        buildDocument,
-        descriptor,
-      ),
-    );
-    return { kind: "serve", response };
   }
+  if (!hit) return miss;
 
-  return miss;
+  // An onlyIfStale warm found a servable shell; a recapture scheduled below
+  // overwrites this through the capture's events.
+  if (warm) warm.shell = "fresh";
+  if (hit.recapture) {
+    yield* handoff("shell-recapture", () => planShellCapture(capture));
+  }
+  const { document } = hit;
+  const response = yield* step("shell-hit", () =>
+    serveShellHit(input, ssrModule, document, capture),
+  );
+  return { kind: "serve", response };
 }
 
 /**
@@ -980,116 +940,12 @@ async function matchPartialAndRecordParams<TEnv>(
 }
 
 /**
- * A document serve's store read: a getShell entry, or a prelude-first read
- * (readShellDocument) whose entry is the head and whose snapshot arrives on
- * its own promise.
- */
-type ShellStoreRead =
-  | { entry: ShellCacheEntry; shouldRevalidate?: boolean; read?: undefined }
-  | {
-      entry: ShellEntryHead;
-      shouldRevalidate?: boolean;
-      read: ShellDocumentRead;
-    };
-
-/**
- * Shell store read that degrades to null on failure (axis 1 MISS, never a 500)
- * and records the raw `ppr:shell-read` outcome (pre-validity-gates, so a
- * version-mismatch lifecycle miss stays distinguishable from a store miss).
- * A store with a prelude-first read (readShellDocument) resolves before the
- * snapshot is read, so the HIT commits without waiting for it.
- */
-async function readShellEntry(
-  store: SegmentCacheStore & {
-    getShell: NonNullable<SegmentCacheStore["getShell"]>;
-  },
-  key: string,
-  reqCtx: ReturnType<typeof getRequestContext>,
-  tagHints: readonly string[] | undefined,
-): Promise<ShellStoreRead | null> {
-  let cached: ShellStoreRead | null = null;
-  const shellReadStart = reqCtx._metricsStore ? performance.now() : 0;
-  try {
-    if (store.readShellDocument) {
-      const read = await store.readShellDocument(
-        key,
-        tagHints ? { tagHints } : undefined,
-      );
-      cached = read
-        ? { entry: read.entry, shouldRevalidate: read.shouldRevalidate, read }
-        : null;
-    } else {
-      cached = await store.getShell(key);
-    }
-  } catch (error) {
-    reportCacheError(error, "cache-read", "[ShellServe] getShell");
-  }
-  if (reqCtx._metricsStore) {
-    const stats = cached?.read?.stats;
-    appendMetric(
-      reqCtx._metricsStore,
-      "ppr:shell-read",
-      shellReadStart,
-      performance.now() - shellReadStart,
-      undefined,
-      cached ? (stats ? `hit ${stats.tier}` : "hit") : "miss",
-    );
-    if (stats)
-      recordShellReadStats(reqCtx._metricsStore, shellReadStart, stats);
-  }
-  return cached;
-}
-
-/**
- * A prelude-first read's sub-steps as `debugPerformance` rows under
- * `ppr:shell-read`. The marker row starts with the prelude row because the
- * two run in parallel; its desc says how long the read still waited on the
- * marker once the prelude was in. On a deployed worker the clock only
- * advances on I/O, so the byte counts are the cost signal for the CPU parts.
- */
-function recordShellReadStats(
-  store: MetricsStore,
-  readStart: number,
-  stats: ShellReadStats,
-): void {
-  let at = readStart;
-  const row = (label: string, ms: number | undefined, desc: string): void => {
-    if (ms !== undefined) appendMetric(store, label, at, ms, 1, desc);
-  };
-  if (stats.memo) {
-    row(
-      "ppr:shell-memo",
-      0,
-      `${stats.memo.hit ? "hit" : "miss"} size=${stats.memo.bytes}b`,
-    );
-  }
-  // A KV hit after an L1 miss: the L1 attempt first, then the KV read.
-  row("ppr:shell-l1-miss", stats.l1MissMs, stats.l1MissReason ?? "miss");
-  at += stats.l1MissMs ?? 0;
-  row("ppr:shell-match", stats.matchMs, stats.tier);
-  at += stats.matchMs ?? 0;
-  row("ppr:shell-head", stats.headMs, `bytes=${stats.headBytes ?? 0}`);
-  at += stats.headMs ?? 0;
-  row("ppr:shell-prelude", stats.preludeMs, `bytes=${stats.preludeBytes ?? 0}`);
-  let marker = `tags=${stats.tags ?? 0} ${stats.markerSerial ? "serial" : "parallel"} commit-wait=${(stats.markerWaitMs ?? 0).toFixed(2)}ms`;
-  if (stats.markerMemo) marker += ` memo=${stats.markerMemo}`;
-  if (stats.markerHinted) {
-    marker += ` hint=${stats.markerHintHits ?? 0}/${stats.markerHinted.length}`;
-    if (stats.markerLeadMs !== undefined) {
-      marker += ` lead=${stats.markerLeadMs.toFixed(2)}ms`;
-    }
-  }
-  if (stats.freshReads) marker += " fresh-reads";
-  row("ppr:shell-marker", stats.markerMs, marker);
-}
-
-/**
  * openShellDocument (the HIT's integrity gate and only prelude decode) as a
  * `ppr:shell-open` row: CPU only, so it reads 0 on a deployed worker.
  */
 function openShellDocumentMetered(
   reqCtx: RequestContext<any>,
-  stored: ShellStoreRead,
+  stored: ShellRead,
 ): ShellDocument | null {
   const read = stored.read;
   const open = (): ShellDocument | null =>
@@ -1275,7 +1131,7 @@ function renderPreparedRscResponse<TEnv>(
     reqCtx._payloadDeferred ||
     (isPartial &&
       (reqCtx._requestKind === "fill" ||
-        url.searchParams.get(STALE_PARAM) === "true"))
+        url.searchParams.get(WIRE.stale) === "true"))
   ) {
     rscHeaders["cache-control"] = NOT_REUSED;
   }
@@ -1336,36 +1192,22 @@ function scheduleNavigationShellCapture<TEnv>(
   input: RequestRenderInput<TEnv>,
   captureKey: string,
 ): void {
-  const { ctx, request, env, url, reqCtx } = input;
+  const { ctx, env, url, reqCtx } = input;
   const pprConfig = resolvePprConfig(reqCtx._classifiedRoute?.manifestEntry)!;
-  const store = reqCtx._cacheStore!;
   const base = requestShellBase(ctx, reqCtx, url);
   if (!base) return;
-  scheduleShellCapture(
-    ctx,
-    request,
-    env,
-    url,
-    reqCtx,
-    async (captureRequest, captureUrl) => {
-      const [ssrModule, streamMode] = await getSSRSetup(
-        ctx,
-        captureRequest,
-        env,
-        captureUrl,
-        undefined,
-      );
-      return streamMode === "allReady" ? null : ssrModule;
-    },
-    createShellCaptureDescriptor(
+  const ssr = async (captureRequest: Request, captureUrl: URL) => {
+    const [ssrModule, streamMode] = await getSSRSetup(
       ctx,
-      captureKey,
-      base,
-      url.origin,
-      pprConfig,
-      store,
-      true,
-    ),
+      captureRequest,
+      env,
+      captureUrl,
+      undefined,
+    );
+    return streamMode === "allReady" ? null : ssrModule;
+  };
+  planShellCapture(
+    createShellCapture(input, captureKey, base, pprConfig, ssr, true),
   );
 }
 
@@ -1465,7 +1307,7 @@ async function matchPartialWithPprReplay<TEnv>(
   }
   // A stale partial renders live, as an action does (rendersLive,
   // router/match-context.ts): the record may predate the action's write.
-  if (url.searchParams.get(STALE_PARAM) === "true") {
+  if (url.searchParams.get(WIRE.stale) === "true") {
     return runMatch({ outcome: "BYPASS", reason: "stale" });
   }
   // Fragment passthrough (#700), extended to partial replay. Navigation
@@ -1494,7 +1336,7 @@ async function matchPartialWithPprReplay<TEnv>(
   //
   // The probe is a PRE-match fast path, not the truth: it reads only the
   // non-intercept artifact, and whether the navigation IS an intercept (and
-  // therefore whether tryPrerenderLookup reads `paramHash` or
+  // therefore whether readPrerenderSource reads `paramHash` or
   // `paramHash + "/i"`) is resolved during the match by match-api's
   // findInterceptForRoute — an intercept-source header proves nothing in
   // either direction. runMatch reclassifies every BYPASS from the stamped
@@ -1824,10 +1666,10 @@ async function isSettled(value: unknown): Promise<boolean> {
  * leaves the entry alone.
  */
 async function degradeUnreplayableShell(
-  descriptor: ShellCaptureDescriptor,
+  capture: ShellCaptureInput,
   entry: ShellEntryHead,
-  scheduleRecapture: () => void,
 ): Promise<void> {
+  const { descriptor } = capture;
   const store = descriptor.store;
   try {
     await store?.putShell?.(
@@ -1846,7 +1688,7 @@ async function degradeUnreplayableShell(
     reportCacheError(error, "cache-write", "[ShellServe] tombstone");
   }
   store?.dropShellMemo?.(descriptor.key);
-  scheduleRecapture();
+  planShellCapture(capture);
 }
 
 /**
@@ -1859,16 +1701,13 @@ async function degradeUnreplayableShell(
  * frame; the adapter may pull the stream outside it.
  */
 function serveShellHit(
-  ctx: HandlerContext<any>,
-  request: Request,
-  env: any,
-  url: URL,
-  reqCtx: RequestContext<any>,
-  handleStore: ReturnType<typeof getRequestContext>["_handleStore"],
+  input: RequestRenderInput<any>,
   ssrModule: SSRModule,
   document: ShellDocument,
-  descriptor: ShellCaptureDescriptor,
+  capture: ShellCaptureInput,
 ): Response {
+  const { ctx, request, env, url, reqCtx, handleStore } = input;
+  const { descriptor } = capture;
   const { entry, prelude: preludeBytes } = document;
   // A visitor-keyed shell shows the visitor's URL: the document cache keys
   // this response by the target.
@@ -1887,8 +1726,6 @@ function serveShellHit(
         }
       : null;
   const tailT0 = tailTiming ? performance.now() : 0;
-  const scheduleRecapture = (): void =>
-    scheduleShellCapture(ctx, request, env, url, reqCtx, ssrModule, descriptor);
   /** Report a broken entry, then tombstone and recapture it. Never throws. */
   const retireEntry = async (reason: string): Promise<void> => {
     reportCacheError(
@@ -1897,33 +1734,13 @@ function serveShellHit(
       "[ShellServe] retire",
     );
     try {
-      await degradeUnreplayableShell(descriptor, entry, scheduleRecapture);
+      await degradeUnreplayableShell(capture, entry);
     } catch (error) {
       reportCacheError(error, "cache-write", "[ShellServe] retire");
     }
   };
   /** The first loader pin of the entry that failed to decode (dc-t89). */
   let undecodablePin: string | undefined;
-
-  const createTailContext = (): RequestContext<any> => {
-    const tailCtx: RequestContext<any> = Object.create(reqCtx);
-    // Matching writes render state onto the derived context. Its barrier must
-    // close over that same context or a streaming tail inherits the base
-    // context's premature non-streaming handle snapshot.
-    wireRenderBarrier(tailCtx, handleStore);
-    // The tail's render barrier resolves once its record is replayed and
-    // before a loader runs (cache-lookup.ts withCacheLookup, yieldFromStore).
-    // The store then holds what the prelude was rendered from, so that is
-    // the snapshot the document hydrates with; what this request's loaders
-    // do to it afterwards reaches the client after hydration
-    // (HandleStore.freezeDocumentSnapshot, issue #1035).
-    const resolveRenderBarrier = tailCtx._resolveRenderBarrier;
-    tailCtx._resolveRenderBarrier = (segments) => {
-      handleStore.freezeDocumentSnapshot();
-      resolveRenderBarrier(segments);
-    };
-    return tailCtx;
-  };
 
   const renderTail = async (
     activeCtx: RequestContext<any>,
@@ -2036,7 +1853,6 @@ function serveShellHit(
         tailTiming.snapshotParseMs = Math.round(snapshotStats.parseMs);
       }
     }
-    const seededCtx = createTailContext();
     const records = snapshot ?? [];
     // Loader-family records (bake-lane containers, loader-container-bake):
     // decode into a seed Map for the resolveLoaderData overlay, so the
@@ -2060,32 +1876,31 @@ function serveShellHit(
         `[Server][ppr] shell HIT: loader seed built +${Math.round(performance.now() - seedStart)}ms (abs ${Math.round(performance.now())})`,
       );
     }
-    if (loaderSeed) seededCtx._shellLoaderSeed = loaderSeed;
-    // The handler layer is REPLAYED from the entry's own doc record, never
-    // executed: the implicit doc scope replaces any route-derived scope
-    // (docTail), looks the record up by the key the capture wrote
-    // (fixedDocKey), and reads it from a segment-only overlay of the snapshot
-    // (the real store never holds a doc: record). A lookup that does not hit
-    // throws ShellRecordUnavailableError (withCacheLookup), handled by the
-    // degrade below. Live and promise-carrying bake-lane loaders still run
-    // fresh; a promise-free bake-lane loader is served from its pin
-    // (_shellLoaderSeed, loader-cache.ts). A Prerender route's tail takes
-    // the handler layer from the prerender store before this scope is
-    // consulted, and the loader pushes from `prerenderHandles`.
-    seededCtx._shellImplicitCache = {
-      ttl: descriptor.ttl,
-      swr: descriptor.swr,
-      store: new SeededShellStore(reqCtx._cacheStore!, records),
-      keyPrefix: "doc",
-      docTail: true,
-      fixedDocKey: entry.docKey,
-      prerenderHandles: shellPrerenderHandles(records),
-    };
-    // Fragment splice (issue #700): store hits in THIS tail emit their stored
-    // segment fragments verbatim (expanded by segment-fragments.ts). The flag
-    // lives on the derived context so it can never leak into a capture render,
-    // which serializes segments and must see real elements.
-    seededCtx._shellFragmentPayload = true;
+    // What the tail owns, and why: RENDER_PASS_FIELDS["ppr-tail"].
+    const seededCtx = deriveRenderPass(reqCtx, "ppr-tail", {
+      handleStore,
+      loaderSeed,
+      // The handler layer is REPLAYED from the entry's own doc record, never
+      // executed: the implicit doc scope replaces any route-derived scope
+      // (docTail), looks the record up by the key the capture wrote
+      // (fixedDocKey), and reads it from a segment-only overlay of the
+      // snapshot (the real store never holds a doc: record). A lookup that
+      // does not hit throws ShellRecordUnavailableError (withCacheLookup),
+      // handled by the degrade below. Live and promise-carrying bake-lane
+      // loaders still run fresh; a promise-free bake-lane loader is served
+      // from its pin (_shellLoaderSeed, loader-cache.ts). A Prerender route's
+      // tail takes the handler layer from the prerender store before this
+      // scope is consulted, and the loader pushes from `prerenderHandles`.
+      implicitCache: {
+        ttl: descriptor.ttl,
+        swr: descriptor.swr,
+        store: new SeededShellStore(reqCtx._cacheStore!, records),
+        keyPrefix: "doc",
+        docTail: true,
+        fixedDocKey: entry.docKey,
+        prerenderHandles: shellPrerenderHandles(records),
+      },
+    });
     return runWithRequestContext(seededCtx, () => renderTail(seededCtx));
   })();
   // The stream below is the only consumer; pre-attach a no-op catch so a tail
@@ -2230,8 +2045,8 @@ function serveShellHit(
         // here AFTER the 200 + prelude flushed and would re-fail on every
         // request until the entry ages out — recapture overwrites the entry.
         // Client disconnects land here too; the recapture is idempotent and
-        // bounded by scheduleShellCapture's stampede guard + backoff.
-        scheduleRecapture();
+        // bounded by planShellCapture's stampede guard + backoff.
+        planShellCapture(capture);
         if (tailTiming) {
           tailTiming.outcome = "error";
           tailTiming.completeMs = Math.round(performance.now() - tailT0);

@@ -9,6 +9,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { makeShellCaptureState } from "../../__tests__/kit/request-context.js";
 
 // Handler consumption of a loader under PPR shell capture (issues #672/#674):
 // server-side HANDLER consumption (`await ctx.use(Loader)`) EXECUTES the loader
@@ -121,8 +122,7 @@ function deriveCaptureContext(
   reqCtx: RequestContext<any>,
 ): RequestContext<any> {
   const derived: any = Object.create(reqCtx);
-  derived._shellCaptureRun = true;
-  derived._shellCaptureLoaderRecords = new Map();
+  derived._shellCaptureState = makeShellCaptureState();
   derived._metricsStore = undefined;
   derived._tracing = undefined;
   return derived;
@@ -162,8 +162,8 @@ describe("PPR capture: handler ctx.use consumption bakes (#672/#674)", () => {
     expect(loaderBody).toHaveBeenCalledTimes(1);
     // The guard flags the capture (settleCaptureRecord refuses on it) and
     // names the loader that read.
-    expect(derived._shellCaptureGuardTripped?.surface).toBe("cookies()");
-    expect(derived._shellCaptureGuardTrippedLoaderId).toBe(
+    expect(derived._shellCaptureState?.guardTripped?.surface).toBe("cookies()");
+    expect(derived._shellCaptureState?.guardTrippedLoaderId).toBe(
       "test#NavCartLoader672",
     );
     await expect(loaderBody.mock.results[0]!.value).rejects.toThrow(
@@ -178,7 +178,7 @@ describe("PPR capture: handler ctx.use consumption bakes (#672/#674)", () => {
 
     expect(slotHandlerRan).toHaveBeenCalledTimes(1);
     expect(loaderBody).toHaveBeenCalledTimes(1);
-    expect(derived._shellCaptureGuardTripped?.surface).toBe("cookies()");
+    expect(derived._shellCaptureState?.guardTripped?.surface).toBe("cookies()");
     expect(await settlesWithin(derived, 500)).toBe(true);
   });
 
@@ -186,7 +186,7 @@ describe("PPR capture: handler ctx.use consumption bakes (#672/#674)", () => {
     const derived = await captureMatch("/cached");
 
     expect(cachedLoaderBody).toHaveBeenCalledTimes(1);
-    expect(derived._shellCaptureGuardTripped).toBeUndefined();
+    expect(derived._shellCaptureState?.guardTripped).toBeUndefined();
     expect(await settlesWithin(derived, 500)).toBe(true);
   });
 
@@ -199,6 +199,6 @@ describe("PPR capture: handler ctx.use consumption bakes (#672/#674)", () => {
 
     expect(slotHandlerRan).toHaveBeenCalledTimes(1);
     expect(loaderBody).toHaveBeenCalledTimes(1);
-    expect((reqCtx as any)._shellCaptureGuardTripped).toBeUndefined();
+    expect((reqCtx as any)._shellCaptureState?.guardTripped).toBeUndefined();
   });
 });

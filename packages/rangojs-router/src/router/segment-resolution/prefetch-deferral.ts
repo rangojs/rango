@@ -36,7 +36,8 @@ import {
 import { requestHeaders } from "../../server/request-headers.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
-import { FILL_PARAM, PREFETCH_HEADER } from "../../prefetch-markers.js";
+import { PREFETCH_HEADER } from "../../prefetch-markers.js";
+import { WIRE } from "../../wire-params.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
 
 /**
@@ -50,7 +51,7 @@ export function requestKind(
   request: Request,
   rawUrl: URL,
 ): "prefetch" | "fill" | undefined {
-  if (rawUrl.searchParams.has(FILL_PARAM)) return "fill";
+  if (rawUrl.searchParams.has(WIRE.fill)) return "fill";
   return requestHeaders(request).has(PREFETCH_HEADER) ? "prefetch" : undefined;
 }
 
@@ -114,14 +115,6 @@ export interface PrefetchDeferral {
    * a navigation to the page lists.
    */
   below?: true;
-  /**
-   * The loaders this prefetch deferred, by `$$id` (registerDeferredLoader).
-   * A deferred loader runs only if something reads it: a handler's or another
-   * loader's ctx.use() starts it through its registration
-   * (startDeferredLoader), and revalidation.ts deliverStartedLoaders delivers
-   * what was started by the end of resolution.
-   */
-  deferredLoaders?: Map<string, DeferredLoader>;
 }
 
 /**
@@ -149,7 +142,14 @@ export interface RecordUse {
   readonly refresh: boolean;
 }
 
-/** A loader this prefetch deferred: PrefetchDeferral.deferredLoaders. */
+/**
+ * A DSL loader registered and not started (InternalHandlerContext
+ * ._deferredLoaders): a prefetch deferred it, or a pass that skips loaders
+ * (`skipLoaders`) did not run it. It runs only if something reads it: a
+ * handler's or another loader's ctx.use() starts it through its registration
+ * (startDeferredLoader), and revalidation.ts deliverStartedLoaders delivers
+ * what a prefetch started by the end of resolution.
+ */
 export interface DeferredLoader {
   /**
    * The segment that registers it. Its run files its handle pushes there,
@@ -232,7 +232,7 @@ export function resolveDeferralScope(
       loaderIds.add(loaderEntry.loader.$$id);
     }
     for (const parallelEntry of getParallelEntries(entry.parallel)) {
-      // A slot's segment id, as resolveParallelSegmentsWithRevalidation
+      // A slot's segment id, as resolveParallelSegments
       // (revalidation.ts) forms it.
       const slotIds = flagsLoading(parallelEntry)
         ? getParallelSlotEntries(entry.parallel)
@@ -245,7 +245,7 @@ export function resolveDeferralScope(
     for (const orphan of entry.layout) {
       if (chain.has(orphan)) continue;
       // An orphan layout's handler is awaited after its owner's ran
-      // (revalidation.ts resolveOrphanLayoutWithRevalidation): never a unit,
+      // (revalidation.ts resolveOrphanLayout): never a unit,
       // its loaders are still behind its fallback.
       collect(
         orphan,
@@ -446,8 +446,8 @@ export function recordUse(
 }
 
 /**
- * Register a loader this prefetch deferred, with the segment that registers
- * it and how to start it there (PrefetchDeferral.deferredLoaders). The first
+ * Register a loader resolution does not start, with the segment that
+ * registers it and how to start it there (DeferredLoader). The first
  * registration wins, as the loader's one run per request does.
  */
 export function registerDeferredLoader(
@@ -456,18 +456,21 @@ export function registerDeferredLoader(
   owner: string,
   start: () => Promise<unknown>,
 ): void {
-  const plan = getPrefetchDeferral(ctx);
-  if (plan && !plan.deferredLoaders?.has(loaderId)) {
-    (plan.deferredLoaders ??= new Map()).set(loaderId, { owner, start });
+  const internal = ctx as InternalHandlerContext<any, any>;
+  if (!internal._deferredLoaders?.has(loaderId)) {
+    (internal._deferredLoaders ??= new Map()).set(loaderId, { owner, start });
   }
 }
 
 /**
- * A reader asks for a loader this prefetch deferred and nothing has started:
- * start it through its registration and return the run, or undefined when
- * the read takes the ordinary path. Without this the reader ran the loader
- * bare, without its cache() binding, and the segment delivered afterwards
- * read the binding: two values on one page and an extra run on a HIT.
+ * A reader asks for a registered loader (registerDeferredLoader) and nothing
+ * has started it: start it through its registration and return the run, or
+ * undefined when the read takes the ordinary path. Without this the reader
+ * ran the loader bare, as a handler-invoked loader: in a prefetch without its
+ * cache() binding, so the segment delivered afterwards read the binding (two
+ * values on one page, an extra run on a HIT); in a route record's background
+ * re-render outside its DSL scope, so the record kept its handle pushes and
+ * every HIT showed them twice.
  *
  * A started cache() binding of the loader (`_loaderCacheOverrides`) is never
  * redirected here: the read is that binding's own MISS execution, and
@@ -478,7 +481,7 @@ export function startDeferredLoader(
   loaderId: string,
 ): Promise<unknown> | undefined {
   const internal = ctx as InternalHandlerContext<any, any>;
-  const deferred = internal._prefetchDeferral?.deferredLoaders?.get(loaderId);
+  const deferred = internal._deferredLoaders?.get(loaderId);
   if (
     !deferred ||
     deferred.started ||
@@ -492,8 +495,8 @@ export function startDeferredLoader(
 
 /**
  * The segment a run of `loaderId` files its handle pushes under: the one
- * that registers it when this prefetch deferred it, else the segment being
- * resolved.
+ * that registers it when it is registered (registerDeferredLoader), else the
+ * segment being resolved.
  */
 export function loaderOwner(
   ctx: HandlerContext<any, any>,
@@ -501,7 +504,7 @@ export function loaderOwner(
 ): string | undefined {
   const internal = ctx as InternalHandlerContext<any, any>;
   return (
-    internal._prefetchDeferral?.deferredLoaders?.get(loaderId)?.owner ??
+    internal._deferredLoaders?.get(loaderId)?.owner ??
     internal._currentSegmentId
   );
 }

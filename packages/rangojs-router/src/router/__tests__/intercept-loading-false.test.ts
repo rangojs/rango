@@ -7,6 +7,10 @@ import { evaluateRevalidation } from "../revalidation.js";
 import type { InterceptEntry } from "../../server/context";
 import type { EntryData } from "../../server/context";
 import type { SegmentResolutionDeps } from "../types.js";
+import {
+  heldNothingPassInput,
+  type ResolutionPass,
+} from "../segment-resolution/resolution-pass.js";
 
 // Stub dependencies that resolveInterceptLoadersOnly uses transitively
 vi.mock("../revalidation.js", () => ({
@@ -82,13 +86,20 @@ function makeInterceptEntry(
   };
 }
 
-const revalidationContext = (clientSegmentIds: string[] = []) => ({
-  clientSegmentIds: new Set(clientSegmentIds),
+const pass = (
+  context: any,
+  deps: SegmentResolutionDeps<any>,
+  clientSegmentIds: string[] = [],
+): ResolutionPass<any> => ({
+  context,
+  client: new Set(clientSegmentIds),
+  params: {},
   prevParams: {},
   request: new Request("http://localhost/"),
   prevUrl: new URL("http://localhost/prev"),
   nextUrl: new URL("http://localhost/next"),
   routeKey: "test",
+  deps,
 });
 
 /**
@@ -120,12 +131,10 @@ describe("resolveInterceptLoadersOnly loading: false parity", () => {
     it(label, async () => {
       const { deps, release, settled } = gatedDeps();
       const done = resolveInterceptLoadersOnly(
+        pass(makeContext(), deps),
         makeInterceptEntry(loading as InterceptEntry["loading"]),
         makeParentEntry(),
-        makeContext(),
         true,
-        deps,
-        revalidationContext(),
       );
       setTimeout(release, 5);
       const segments = await done;
@@ -144,12 +153,10 @@ describe("resolveInterceptLoadersOnly loading: false parity", () => {
     const entry = makeInterceptEntry(false);
     const deps = makeDeps();
     await resolveInterceptLoadersOnly(
+      pass(makeContext(), deps),
       entry,
       makeParentEntry(),
-      makeContext(),
       true,
-      deps,
-      revalidationContext(),
     );
 
     // The 5th arg to wrapLoaderPromise is the errorContext that drives onError +
@@ -164,12 +171,10 @@ describe("resolveInterceptLoadersOnly on a slot the client holds", () => {
     vi.mocked(evaluateRevalidation).mockResolvedValueOnce(false);
     const deps = makeDeps();
     const segments = await resolveInterceptLoadersOnly(
+      pass(makeContext(), deps, ["L0R0.@modal", "L0R0.@modalD0.test-loader"]),
       makeInterceptEntry(false),
       makeParentEntry(),
-      makeContext(),
       true,
-      deps,
-      revalidationContext(["L0R0.@modal", "L0R0.@modalD0.test-loader"]),
     );
 
     expect(segments).toEqual([]);
@@ -179,12 +184,10 @@ describe("resolveInterceptLoadersOnly on a slot the client holds", () => {
   it("a loader the client lacks runs although the slot is held", async () => {
     vi.mocked(evaluateRevalidation).mockClear();
     const segments = await resolveInterceptLoadersOnly(
+      pass(makeContext(), makeDeps(), ["L0R0.@modal"]),
       makeInterceptEntry(false),
       makeParentEntry(),
-      makeContext(),
       true,
-      makeDeps(),
-      revalidationContext(["L0R0.@modal"]),
     );
 
     expect(segments.map((s) => s.id)).toEqual(["L0R0.@modalD0.test-loader"]);
@@ -199,12 +202,10 @@ describe("resolveInterceptLoadersOnly on a slot the client holds", () => {
       return Promise.resolve({ data: "loader-result" });
     });
     await resolveInterceptLoadersOnly(
+      pass(context, makeDeps()),
       makeInterceptEntry(false),
       makeParentEntry(),
-      context,
       true,
-      makeDeps(),
-      revalidationContext(),
     );
 
     expect(owners).toEqual(["L0R0.@modal"]);
@@ -228,12 +229,13 @@ describe("resolveInterceptEntry handle push owner", () => {
     };
 
     await resolveInterceptEntry(
+      {
+        ...heldNothingPassInput(context, entry.routeName, {}),
+        deps: makeDeps(),
+      },
       entry,
       makeParentEntry(),
-      {},
-      context,
       true,
-      makeDeps(),
     );
 
     expect(owners).toEqual({
@@ -256,13 +258,10 @@ describe("resolveInterceptEntry: the slot and its loader segments", () => {
 
   it("emits the slot with no aggregate, then one loader segment per loader in declaration order", async () => {
     const segments = await resolveInterceptEntry(
+      pass(makeContext(), makeDeps()),
       twoLoaders(),
       makeParentEntry(),
-      {},
-      makeContext(),
       true,
-      makeDeps(),
-      revalidationContext(),
     );
     expect(segments.map((s) => [s.id, s.type])).toEqual([
       ["L0R0.@modal", "parallel"],
@@ -279,13 +278,10 @@ describe("resolveInterceptEntry: the slot and its loader segments", () => {
     const context = makeContext();
     context._prefetchDeferral = { mode: "fill", held: new Set() };
     const segments = await resolveInterceptEntry(
+      pass(context, makeDeps(), ["L0R0.@modal", "L0R0.@modalD0.first"]),
       entry,
       makeParentEntry(),
-      {},
-      context,
       true,
-      makeDeps(),
-      revalidationContext(["L0R0.@modal", "L0R0.@modalD0.first"]),
     );
     expect(entry.handler).not.toHaveBeenCalled();
     expect(entry.layout).not.toHaveBeenCalled();

@@ -17,6 +17,8 @@
  * state regardless of listener ordering.
  */
 
+import { WIRE } from "../wire-params.js";
+
 const IDLE_TIMEOUT = 60_000;
 const DEBOUNCE_DELAY = 150;
 
@@ -61,7 +63,7 @@ export function startConnectionWarmup(
 
   function sendWarmup() {
     coldLatch = false;
-    env.fetch("/?_rsc_warmup", { method: "HEAD" }).catch(() => {});
+    env.fetch(`/?${WIRE.warmup}`, { method: "HEAD" }).catch(() => {});
   }
 
   function triggerWarmup() {

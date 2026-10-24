@@ -14,17 +14,18 @@
  */
 
 import { requestHeaders } from "../server/request-headers.js";
-import { FILL_PARAM, STALE_PARAM } from "../prefetch-markers.js";
 import type { MiddlewareFn, MiddlewareContext } from "../router/middleware.js";
 import {
   documentCacheStoresRender,
   shouldCacheResponse,
 } from "./document-cache-policy.js";
 import {
+  createRequestContext,
   getRequestContext,
   runWithRequestContext,
   type RequestContext,
 } from "../server/request-context.js";
+import { deriveRenderPass } from "../server/render-pass.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { requestKeyBase } from "./cache-key-utils.js";
 import { runBackground } from "./background-task.js";
@@ -45,6 +46,7 @@ import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
   SEGMENT_FRAGMENT_RECOVERY_HEADER,
 } from "../segment-fragments.js";
+import { WIRE } from "../wire-params.js";
 
 export { documentCacheStoresRender };
 
@@ -229,12 +231,12 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     }
 
     // Skip RSC action requests (mutations shouldn't be cached)
-    if (rawUrl.searchParams.has("_rsc_action")) {
+    if (rawUrl.searchParams.has(WIRE.action)) {
       return next();
     }
 
     // Skip loader requests (have their own caching)
-    if (rawUrl.searchParams.has("_rsc_loader")) {
+    if (rawUrl.searchParams.has(WIRE.loader)) {
       return next();
     }
 
@@ -245,9 +247,9 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     // the key cannot see. Partial only: _rsc params leave the key, so a
     // document GET carrying them must not force an origin render.
     if (
-      rawUrl.searchParams.has("_rsc_partial") &&
-      (rawUrl.searchParams.has(FILL_PARAM) ||
-        rawUrl.searchParams.get(STALE_PARAM) === "true")
+      rawUrl.searchParams.has(WIRE.partial) &&
+      (rawUrl.searchParams.has(WIRE.fill) ||
+        rawUrl.searchParams.get(WIRE.stale) === "true")
     ) {
       return next();
     }
@@ -283,7 +285,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     // Determine request type for cache key differentiation.
     // Uses rawUrl for _rsc* param checks and mayNeedSSR for Accept-based
     // detection. Full-document RSC fetches must not share the HTML cache slot.
-    const isPartial = rawUrl.searchParams.has("_rsc_partial");
+    const isPartial = rawUrl.searchParams.has(WIRE.partial);
     const isRscRequest = !mayNeedSSR(ctx.request, rawUrl);
     const typeLabel = isRscRequest ? "RSC" : "HTML";
 
@@ -296,7 +298,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // gracefully to the origin handler instead of rejecting the request.
       // This is a deliberate fail-open-to-origin policy: the fallback is
       // "serve uncached from origin", not "use a different cache key".
-      const clientSegments = rawUrl.searchParams.get("_rsc_segments") || "";
+      const clientSegments = rawUrl.searchParams.get(WIRE.segments) || "";
       const segmentHash =
         isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
       // Fragment envelopes require a capable Rango decoder. Keep that wire
@@ -359,6 +361,23 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           `[DocumentCache] STALE ${typeLabel}: ${url.pathname} (revalidating)`,
         );
 
+        // The re-run renders on its own pass (render-pass.ts). Its response
+        // writes go to a sink that starts from this request's response stub
+        // as of now, as a MISS's render would: they build the re-run's own
+        // response, never the visitor's, and the visitor's later writes stay
+        // off it.
+        const rerunCtx = deriveRenderPass(requestCtx, "document-revalidation", {
+          handleStore: requestCtx._handleStore,
+          sink: createRequestContext({
+            env: ctx.env,
+            request: ctx.request,
+            url,
+            variables: {},
+            initialResponse: requestCtx.res,
+            themeConfig: requestCtx._themeConfig,
+          }),
+        });
+
         runBackground(requestCtx, async () => {
           try {
             // Re-establish the request-context ALS around the whole background
@@ -372,13 +391,15 @@ export function createDocumentCacheMiddleware<TEnv = any>(
             // platform spans — nest under one explanatory parent instead of
             // dangling under the ended foreground phases. Running the put
             // inside the ALS matches the MISS path, where putResponse already
-            // executes within the foreground request context.
-            await runWithRequestContext(requestCtx, () =>
+            // executes within the foreground request context. No visitor made
+            // the invalidations the re-run makes: the pass's fresh-reads
+            // writer is the sink's, which sets nothing.
+            await runWithRequestContext(rerunCtx, () =>
               observePhase(
                 PHASES.background("document-revalidation"),
                 async () => {
                   const fresh = await next();
-                  const directives = shouldCacheResponse(fresh, requestCtx);
+                  const directives = shouldCacheResponse(fresh, rerunCtx);
 
                   if (!directives || !fresh.body) return;
 
@@ -386,10 +407,10 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   // drain the fresh render fully before snapshotting tags
                   // (same render-complete barrier as the miss path).
                   const body = await new Response(fresh.body).arrayBuffer();
-                  throwIfRenderErrored(requestCtx);
+                  throwIfRenderErrored(rerunCtx);
                   // Not written when one of its tags was invalidated since
                   // the render started (#977).
-                  const tags = collectRequestTags(requestCtx);
+                  const tags = collectRequestTags(rerunCtx);
                   if (await predatesInvalidation(store, tags, start)) return;
                   await store.putResponse!(
                     cacheKey,

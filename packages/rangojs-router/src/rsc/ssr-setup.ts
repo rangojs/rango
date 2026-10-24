@@ -24,6 +24,7 @@ import {
 import { _getRequestContext } from "../server/request-context.js";
 import { renderedLocation } from "./full-payload.js";
 import { markServerErrorPrinted } from "../server/print-server-error.js";
+import { WIRE } from "../wire-params.js";
 
 export type SSRSetup = readonly [SSRModule, SSRStreamMode];
 
@@ -233,10 +234,10 @@ function acceptsFlightExplicitly(request: Request, url: URL): boolean {
  */
 export function mayNeedSSR(request: Request, url: URL): boolean {
   if (
-    url.searchParams.has("_rsc_partial") ||
-    url.searchParams.has("_rsc_action") ||
+    url.searchParams.has(WIRE.partial) ||
+    url.searchParams.has(WIRE.action) ||
     requestHeaders(request).has("rsc-action") ||
-    url.searchParams.has("_rsc_loader") ||
+    url.searchParams.has(WIRE.loader) ||
     url.searchParams.has("__rsc")
   ) {
     return false;
@@ -264,7 +265,7 @@ export function isRscRequest(
 ): boolean {
   return (
     isPartial ||
-    url.searchParams.has("_rsc_partial") ||
+    url.searchParams.has(WIRE.partial) ||
     url.searchParams.has("__rsc") ||
     acceptsFlightExplicitly(request, url)
   );

@@ -7,12 +7,17 @@
  */
 
 import type { RangoInternal } from "../router/router-interfaces.js";
-import type { ErrorPhase } from "../types.js";
-import type { InvokeOnErrorContext } from "../router/error-handling.js";
 import type { RSCDependencies, LoadSSRModule } from "./types.js";
 import type { SSRStreamMode } from "../router/router-options.js";
+import type { RequestStageContext } from "./request-stages.js";
 
-export interface HandlerContext<TEnv = unknown> {
+/**
+ * Extends what the request stages (rsc/request-stages.ts) call back into, so
+ * the handler hands this one bundle to them as well.
+ */
+export interface HandlerContext<
+  TEnv = unknown,
+> extends RequestStageContext<TEnv> {
   router: RangoInternal<TEnv, any>;
   /**
    * The router's DOCUMENT version (router-versions.ts): payload metadata, the
@@ -28,17 +33,6 @@ export interface HandlerContext<TEnv = unknown> {
   decodeAction: RSCDependencies["decodeAction"];
   decodeFormState: RSCDependencies["decodeFormState"];
   loadSSRModule: LoadSSRModule;
-  callOnError: (
-    error: unknown,
-    phase: ErrorPhase,
-    context: InvokeOnErrorContext<TEnv>,
-  ) => void;
-  getRequiredRouteMap: () => Record<string, string>;
-  createRedirectFlightResponse: (
-    redirectUrl: string,
-    locationState?: Record<string, unknown>,
-    external?: boolean,
-  ) => Response;
 
   /**
    * Resolve the SSR stream mode for a given request.

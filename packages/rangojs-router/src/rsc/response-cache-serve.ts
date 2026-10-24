@@ -5,18 +5,13 @@
  * matched entry tree, condition eval, key resolution (route key() > store
  * keyGenerator > default, CacheScope.resolveKeyFrom), tag resolution,
  * pre-handler-callback timing, and the fresh-hit / SWR-revalidate /
- * miss-write branches — for BOTH the production
- * response-route handler (rsc/response-route-handler.ts) and the dispatch testing
- * primitive (testing/dispatch.ts), so the two can never drift.
+ * miss-write branches — for the response-route handler
+ * (rsc/response-route-handler.ts), which the production handler and the
+ * dispatch testing primitive both run (rsc/request-stages.ts
+ * serveResponseRoute), so the two can never drift.
  *
- * Plugin-rsc hazard: cache-scope.ts pulls @vitejs/plugin-rsc (via segment-codec),
- * which the non-Vite unit-test runner cannot resolve, and this module is on the
- * testing barrel's EAGER graph (dispatch imports it). So `createCacheScope` is
- * NOT imported here at runtime — it is INJECTED by the caller (production
- * imports it statically; dispatch lazy-imports it only once a response route
- * matches). The only runtime imports here are plugin-rsc-free
- * (helpers' isCacheableStatus/finalizeResponse, traverseBack); cache-scope is a
- * type-only import (erased at build).
+ * `createCacheScope` is injected by the caller: the response-route handler
+ * passes the real one, unit tests a stub.
  */
 
 import { isRewrite } from "../route-definition/rewrite.js";
@@ -44,7 +39,7 @@ import {
 } from "../cache/tag-invalidation.js";
 import { hasPerClientSignal } from "../browser/cookie-name.js";
 
-/** Injected cache-scope builder (kept off this module's runtime import graph). */
+/** Injected cache-scope builder. */
 export interface CacheScopeDeps {
   createCacheScope: (
     config: EntryCacheConfig | undefined,
@@ -110,8 +105,9 @@ export async function serveResponseRouteWithCache(
   let cacheKey = `response:${responseType}:${requestKeyBase(reqCtx, url.host, url.pathname, url.searchParams, undefined, reqCtx._searchParamsFilter)}`;
 
   // Keyed like the segment record (CacheScope.resolveKeyFrom): with key()
-  // results on the cache() chain (a full override, namespaced, #975) or an
-  // enclosing scope on another store whose keyGenerator partitions (#974),
+  // results on the cache() chain (they replace the URL part, namespaced,
+  // #975; a response entry has no request kind to keep) or an enclosing
+  // scope on another store whose keyGenerator partitions (#974),
   // `response:` plus the composed key, so a nested cache() never shares an
   // entry across the enclosing partitions (#970); otherwise the store's
   // keyGenerator result (it modifies the default key), else the default key.

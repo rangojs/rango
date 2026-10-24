@@ -178,26 +178,27 @@ request"), and one predicate:
 // src/prerender/warm-request.ts
 export function isWarmReplace(ctx: RequestContext | undefined): boolean {
   return (
-    ctx?._prerenderWarm?.mode === "replace" && ctx._shellCaptureRun !== true
+    ctx?._prerenderWarm?.mode === "replace" &&
+    ctx._shellCaptureState?.run !== true
   );
 }
 ```
 
-The `_shellCaptureRun` exclusion is invariant 10: the capture's derived
+The `_shellCaptureState` exclusion is invariant 10: the capture's derived
 context (`deriveShellCaptureContext`, `Object.create(reqCtx)`) inherits the
 record through the prototype, and must read normally. The predicate is read at
 six points, all before a store read that already exists. None of them needs a
 store contract change.
 
-| Layer                | Hook point (file:function)                                                                                                                                                                                           | Reached through the normal pipeline?           |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| Route `cache()`      | `cache/cache-scope.ts:CacheScope.lookupRouteDetailed`, before `store.get`                                                                                                                                            | yes, plus the predicate                        |
-| Loader `cache()`     | `router/segment-resolution/loader-cache.ts:executeLoaderData`, the `getItem` passed to `readThroughItem`                                                                                                             | yes, plus the predicate                        |
-| `"use cache"`        | `cache/cache-runtime.ts:registerCachedFunction` (the wrapper), `store.getItem` and the in-flight follower loop                                                                                                       | yes, plus the predicate                        |
-| PPR document shell   | `rsc/rsc-rendering.ts:shellServePlan` (`readShellEntry`, `lookupBuildShell`, `storedSeqAtRead`, the descriptor); `rsc/shell-capture.ts:scheduleShellCapture` and `attemptCapture` via `ShellCaptureDescriptor.force` | yes, plus the predicate and `descriptor.force` |
-| Navigation shell     | none                                                                                                                                                                                                                 | not warmed; see below                          |
-| Document cache       | `cache/document-cache.ts:createDocumentCacheMiddleware`, the `getResponse`                                                                                                                                           | yes, plus the predicate                        |
-| Response-route cache | `rsc/response-cache-serve.ts:serveResponseRouteWithCache`, the `getResponse`                                                                                                                                         | yes, plus the predicate                        |
+| Layer                | Hook point (file:function)                                                                                                                                                                                  | Reached through the normal pipeline?           |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Route `cache()`      | `cache/cache-scope.ts:CacheScope.lookupRouteDetailed`, before `store.get`                                                                                                                                   | yes, plus the predicate                        |
+| Loader `cache()`     | `router/segment-resolution/loader-cache.ts:executeLoaderData`, the `getItem` passed to `readThroughItem`                                                                                                    | yes, plus the predicate                        |
+| `"use cache"`        | `cache/cache-runtime.ts:registerCachedFunction` (the wrapper), `store.getItem` and the in-flight follower loop                                                                                              | yes, plus the predicate                        |
+| PPR document shell   | `rsc/rsc-rendering.ts:shellServePlan` (`readShell`, `lookupBuildShell`, `storedSeqAtRead`, the descriptor); `rsc/shell-capture.ts:planShellCapture` and `attemptCapture` via `ShellCaptureDescriptor.force` | yes, plus the predicate and `descriptor.force` |
+| Navigation shell     | none                                                                                                                                                                                                        | not warmed; see below                          |
+| Document cache       | `cache/document-cache.ts:createDocumentCacheMiddleware`, the `getResponse`                                                                                                                                  | yes, plus the predicate                        |
+| Response-route cache | `rsc/response-cache-serve.ts:serveResponseRouteWithCache`, the `getResponse`                                                                                                                                | yes, plus the predicate                        |
 
 ### Route `cache()`
 
@@ -259,7 +260,7 @@ In replace mode `shellServePlan` keeps every gate up to the key (`isPartial`,
 method, `_dynamic`, the nonce gate, the store's shell family, the route
 scope's `allowsCache("read")`, `resolveRequestShellKey`), then:
 
-- skips `readShellEntry` and the build-shell lookup, so the request is a MISS;
+- skips `readShell` and the build-shell lookup, so the request is a MISS;
 - leaves `storedSeqAtRead` unset, so a capture another request stored in
   between does not cancel the warm's own (`skip-stored`);
 - sets `descriptor.force = true` and chains the warm record's sink in front of
@@ -278,7 +279,7 @@ schedules an ordinary capture, and the runner still wants its outcome); the
 skipped reads, the unset sequence and `force` are replace mode only.
 
 The response renders and `requestRenderPlan` schedules the capture as on any
-MISS. `scheduleShellCapture` with `force`:
+MISS. `planShellCapture` with `force`:
 
 - does not return on an in-flight capture for the key; it installs its own
   token, so a visitor's capture started meanwhile coalesces onto the warm's. The
@@ -290,7 +291,7 @@ MISS. `scheduleShellCapture` with `force`:
   `caches.shell: "skipped-capacity" | "skipped-queue-timeout"`.
 
 The capture's derived context reads normally (the predicate excludes
-`_shellCaptureRun`). That is load-bearing: the write barrier in `attemptCapture`
+`_shellCaptureState.run`). That is load-bearing: the write barrier in `attemptCapture`
 settles the warm's foreground writes first, so the capture replays the record
 and the `"use cache"` items the warm just wrote (#957), and the shell, its doc
 record and the stores agree on one generation. A forced miss there would render
@@ -321,7 +322,7 @@ into a new shell is exactly what a warm must not produce.
 - **Refusal reasons:** the capture's attempt event
   (`ShellCaptureDebugEvent`) gains an optional `refusal` field, additive, set
   at the existing refuse exits from what they already know
-  (`_shellCaptureGuardTripped`, `_dynamic`, the warning they emit). Its values
+  (`_shellCaptureState.guardTripped`, `_dynamic`, the warning they emit). Its values
   are `ShellCaptureRefusal` (`rsc/shell-capture-constants.ts`), listed under
   `PrerenderWarmCaches.refusal` in "Result shape".
 - **The write count:** `noteWarmWrite(reqCtx, "shell")` after a `putShell`
@@ -390,7 +391,7 @@ read:
   reads as an L1 miss: `CFCacheStore.get`, `getItem`, `getResponse` and the
   shell read (`readShellDocumentWithin`, and `readMemoizedShell` for a copy in
   the isolate's shell memo) go on to the entry's KV key through the readers a
-  plain miss uses (`kvGetSegment`, `kvGetItem`, `kvGetResponse`,
+  plain miss uses (`readKv` for the three data families,
   `kvReadShellDocument`). Those check what KV holds against the same markers
   (`isGloballyInvalidated`; the values that rejected the copy are already in
   the request's memo, so an entry carrying the same tags costs no second
@@ -944,7 +945,7 @@ version once, as a production isolate does, so a test that moves versions with
   `throwOnError` on a refusal, the follow-up warm only after `rendered` /
   `skipped-passthrough` and only on a shared store with an origin).
 - `src/prerender/__tests__/warm-request.test.ts`: the mark is per `Request`
-  object, `isWarmReplace` is false under `_shellCaptureRun` and in fill mode,
+  object, `isWarmReplace` is false under `_shellCaptureState.run` and in fill mode,
   the record's writers, `noteWarmShellEvent`.
 - `src/prerender/__tests__/warm.test.ts`: the request (a GET, `accept:
 text/html` only, marked), the collecting context, the drain, the wait for

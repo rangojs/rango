@@ -9,7 +9,7 @@ type InternalOnlyContextKey =
   | "_prerender"
   | "_onDemandProducer"
   | "_readTheme"
-  | "_shellCaptureGuardTripped"
+  | "_shellCaptureState"
   | "_tracing";
 
 const publicContextHidesInternalFields: Extract<

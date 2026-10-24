@@ -86,12 +86,11 @@ async function entryData(ids: string[]): Promise<CachedEntryData> {
 }
 
 function makeRouterContextStub() {
-  // With these resolve fns absent, resolveFreshLoadersAndYield only assigns
+  // With these resolve fns absent, serveStoredSegments only assigns
   // matchedIds — no loader machinery needed for the composition contract.
   return {
     evaluateRevalidation: vi.fn(),
     buildEntryRevalidateMap: undefined,
-    resolveLoadersOnlyWithRevalidation: undefined,
     resolveLoadersOnly: undefined,
   } as any;
 }

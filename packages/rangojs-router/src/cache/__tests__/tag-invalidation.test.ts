@@ -4,29 +4,16 @@ import {
   executionStart,
   invalidatedSince,
   predatesInvalidation,
+  runAsBackgroundRefresh,
   updateTag,
   revalidateTag,
 } from "../tag-invalidation.js";
 import { resolveCacheStore } from "../cache-policy.js";
 import type { SegmentCacheStore } from "../types.js";
-import {
-  createRequestContext,
-  runWithRequestContext,
-} from "../../server/request-context.js";
+import { runWithRequestContext } from "../../server/request-context.js";
+import { makeRequestContext } from "../../__tests__/kit/request-context.js";
 
-function makeCtx(opts: {
-  cacheStore?: SegmentCacheStore;
-  explicitTaggedStores?: Set<SegmentCacheStore>;
-}) {
-  return createRequestContext({
-    env: {},
-    request: new Request("https://example.com/"),
-    url: new URL("https://example.com/"),
-    variables: {},
-    cacheStore: opts.cacheStore,
-    explicitTaggedStores: opts.explicitTaggedStores,
-  });
-}
+const EXAMPLE_URL = "https://example.com/";
 
 describe("updateTag (read-your-own-writes)", () => {
   beforeEach(() => {
@@ -37,7 +24,7 @@ describe("updateTag (read-your-own-writes)", () => {
     const app = new MemorySegmentCacheStore();
     await app.setItem("k1", "v1", { ttl: 60, tags: ["products"] });
     await app.setItem("k2", "v2", { ttl: 60, tags: ["other"] });
-    const ctx = makeCtx({ cacheStore: app });
+    const ctx = makeRequestContext({ url: EXAMPLE_URL, cacheStore: app });
 
     await runWithRequestContext(ctx, async () => {
       await updateTag("products");
@@ -52,7 +39,11 @@ describe("updateTag (read-your-own-writes)", () => {
     const custom = new MemorySegmentCacheStore();
     const explicitTaggedStores = new Set<SegmentCacheStore>();
     await custom.setItem("c1", "cv", { ttl: 60, tags: ["catalog"] });
-    const ctx = makeCtx({ cacheStore: app, explicitTaggedStores });
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
+      cacheStore: app,
+      explicitTaggedStores,
+    });
 
     await runWithRequestContext(ctx, async () => {
       // Resolving the explicit store registers it (cache({ store: custom })).
@@ -76,7 +67,11 @@ describe("updateTag (read-your-own-writes)", () => {
     await healthy.setItem("k", "v", { ttl: 60, tags: ["products"] });
 
     const explicitTaggedStores = new Set<SegmentCacheStore>();
-    const ctx = makeCtx({ cacheStore: failing, explicitTaggedStores });
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
+      cacheStore: failing,
+      explicitTaggedStores,
+    });
 
     await runWithRequestContext(ctx, async () => {
       resolveCacheStore(healthy); // register the succeeding store
@@ -95,7 +90,7 @@ describe("updateTag (read-your-own-writes)", () => {
     await app.setItem("a", "1", { ttl: 60, tags: ["t1"] });
     await app.setItem("b", "2", { ttl: 60, tags: ["t2"] });
     await app.setItem("c", "3", { ttl: 60, tags: ["t3"] });
-    const ctx = makeCtx({ cacheStore: app });
+    const ctx = makeRequestContext({ url: EXAMPLE_URL, cacheStore: app });
 
     await runWithRequestContext(ctx, async () => {
       await updateTag("t1", "t2");
@@ -107,7 +102,7 @@ describe("updateTag (read-your-own-writes)", () => {
 
   it("warns (in every environment) and no-ops when no tag-capable store is configured", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const ctx = makeCtx({}); // no store at all
+    const ctx = makeRequestContext({ url: EXAMPLE_URL }); // no store at all
 
     await runWithRequestContext(ctx, async () => {
       await updateTag("products");
@@ -131,7 +126,11 @@ describe("updateTag (read-your-own-writes)", () => {
     const explicit = new MemorySegmentCacheStore();
     const explicitTaggedStores = new Set<SegmentCacheStore>();
     await explicit.setItem("k", "v", { ttl: 60, tags: ["shared"] });
-    const ctx = makeCtx({ cacheStore: appStore, explicitTaggedStores });
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
+      cacheStore: appStore,
+      explicitTaggedStores,
+    });
 
     await runWithRequestContext(ctx, async () => {
       resolveCacheStore(explicit); // register the explicit store
@@ -150,7 +149,7 @@ describe("updateTag (read-your-own-writes)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const app = new MemorySegmentCacheStore();
     await app.setItem("k", "v", { ttl: 60, tags: ["real"] });
-    const ctx = makeCtx({ cacheStore: app });
+    const ctx = makeRequestContext({ url: EXAMPLE_URL, cacheStore: app });
 
     await runWithRequestContext(ctx, async () => {
       // Empty tags normalize away before the store check -> no-op, no warning.
@@ -173,7 +172,7 @@ describe("revalidateTag (background hard-purge)", () => {
   it("schedules invalidation via ctx.waitUntil", async () => {
     const app = new MemorySegmentCacheStore();
     await app.setItem("k", "v", { ttl: 60, tags: ["products"] });
-    const ctx = makeCtx({ cacheStore: app });
+    const ctx = makeRequestContext({ url: EXAMPLE_URL, cacheStore: app });
 
     let scheduled = 0;
     const originalWaitUntil = ctx.waitUntil.bind(ctx);
@@ -198,7 +197,11 @@ describe("revalidateTag (background hard-purge)", () => {
     const explicitTaggedStores = new Set<SegmentCacheStore>();
     await app.setItem("a", "1", { ttl: 60, tags: ["shared"] });
     await custom.setItem("c", "2", { ttl: 60, tags: ["shared"] });
-    const ctx = makeCtx({ cacheStore: app, explicitTaggedStores });
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
+      cacheStore: app,
+      explicitTaggedStores,
+    });
 
     await runWithRequestContext(ctx, async () => {
       resolveCacheStore(custom);
@@ -220,7 +223,7 @@ describe("revalidateTag (background hard-purge)", () => {
       delete: async () => false,
       invalidateTags: vi.fn().mockRejectedValue(new Error("KV unavailable")),
     } as unknown as SegmentCacheStore;
-    const ctx = makeCtx({ cacheStore: failing });
+    const ctx = makeRequestContext({ url: EXAMPLE_URL, cacheStore: failing });
 
     const reported: Array<{ error: unknown; category: string }> = [];
     (ctx as unknown as Record<string, unknown>)._reportBackgroundError = (
@@ -261,7 +264,7 @@ describe("revalidateTag: the invalidating request reads its own writes (#973)", 
       delete: async () => false,
       invalidateTags: vi.fn(() => durable),
     } as unknown as SegmentCacheStore;
-    const ctx = makeCtx({ cacheStore: store });
+    const ctx = makeRequestContext({ url: EXAMPLE_URL, cacheStore: store });
     const tasks: Array<() => Promise<void>> = [];
     ctx.waitUntil = (fn: () => Promise<void>) => {
       tasks.push(fn);
@@ -291,11 +294,8 @@ describe("revalidateTag: the invalidating request reads its own writes (#973)", 
       delete: async () => false,
       invalidateTags: vi.fn(async () => {}),
     } as unknown as SegmentCacheStore;
-    const ctx = createRequestContext({
-      env: {},
-      request: new Request("https://example.com/"),
-      url: new URL("https://example.com/"),
-      variables: {},
+    const ctx = makeRequestContext({
+      url: EXAMPLE_URL,
       cacheStore: store,
       build: true,
     });
@@ -313,7 +313,7 @@ describe("revalidateTag: the invalidating request reads its own writes (#973)", 
       { segments: [], handles: "", expiresAt: 0, tags: ["products"] },
       60,
     );
-    const ctx = makeCtx({ cacheStore: app });
+    const ctx = makeRequestContext({ url: EXAMPLE_URL, cacheStore: app });
 
     const [item, seg] = await runWithRequestContext(ctx, () => {
       revalidateTag("products");
@@ -327,7 +327,7 @@ describe("revalidateTag: the invalidating request reads its own writes (#973)", 
   it("MemorySegmentCacheStore: a read after a prior read in the request misses", async () => {
     const app = new MemorySegmentCacheStore();
     await app.setItem("item", "v", { ttl: 60, tags: ["products"] });
-    const ctx = makeCtx({ cacheStore: app });
+    const ctx = makeRequestContext({ url: EXAMPLE_URL, cacheStore: app });
 
     await runWithRequestContext(ctx, async () => {
       expect(await app.getItem("item")).not.toBeNull();
@@ -339,7 +339,7 @@ describe("revalidateTag: the invalidating request reads its own writes (#973)", 
 
 describe("the write gate: an execution that started before an invalidation (#977)", () => {
   const withStore = (store: SegmentCacheStore) =>
-    makeCtx({ cacheStore: store });
+    makeRequestContext({ url: EXAMPLE_URL, cacheStore: store });
   const invalidateIn = (store: SegmentCacheStore, ...tags: string[]) =>
     runWithRequestContext(withStore(store), () => updateTag(...tags));
 
@@ -455,7 +455,7 @@ describe("outside a request context", () => {
 
   it("still warns about store config (not context) when a context exists but has no tag-capable store", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const ctx = makeCtx({}); // a real request context, but no stores
+    const ctx = makeRequestContext({ url: EXAMPLE_URL }); // a real request context, but no stores
 
     await runWithRequestContext(ctx, async () => {
       await updateTag("products");
@@ -489,14 +489,9 @@ describe("the fresh-reads cookie", () => {
   }
 
   function ctxFor(cacheStore: SegmentCacheStore, cookie?: string) {
-    const request = new Request("https://example.com/", {
-      headers: cookie ? { cookie } : {},
-    });
-    return createRequestContext({
-      env: {},
-      request,
-      url: new URL(request.url),
-      variables: {},
+    return makeRequestContext({
+      url: EXAMPLE_URL,
+      init: { headers: cookie ? { cookie } : {} },
       cacheStore,
       stateCookieName: "rango-state_router_0",
     });
@@ -588,6 +583,53 @@ describe("the fresh-reads cookie", () => {
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining("after the response headers were sent"),
       );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  // A stale entry's refresh runs on the visitor's context, but the visitor
+  // made none of its invalidations. The request's own, concurrent with it,
+  // still sets the cookie.
+  it("inside a background refresh: no cookie and no dev warning, the invalidation still runs", async () => {
+    const store = storeWithWindow(10_000);
+    const invalidate = vi.spyOn(store, "invalidateTags");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const freshCookies = (ctx: ReturnType<typeof ctxFor>) =>
+      ctx.res.headers
+        .getSetCookie()
+        .filter((cookie) => cookie.startsWith("rango-state-fresh="));
+    try {
+      const ctx = ctxFor(store);
+      await runWithRequestContext(ctx, async () => {
+        let invalidated!: () => void;
+        const refreshInvalidated = new Promise<void>(
+          (resolve) => (invalidated = resolve),
+        );
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => (release = resolve));
+        const refresh = runAsBackgroundRefresh(ctx, async () => {
+          await Promise.resolve();
+          revalidateTag("refreshed");
+          invalidated();
+          await held;
+        });
+        await refreshInvalidated;
+        expect(freshCookies(ctx)).toEqual([]);
+        // While the refresh is still running.
+        revalidateTag("own");
+        release();
+        await refresh;
+      });
+      expect(invalidate).toHaveBeenCalledWith(["refreshed"]);
+      expect(freshCookies(ctx)).toEqual([
+        "rango-state-fresh=1; Max-Age=10; Path=/; HttpOnly; SameSite=Lax; Secure",
+      ]);
+
+      const sent = ctxFor(store);
+      sent._responseSent = true;
+      await runAsBackgroundRefresh(sent, () => updateTag("refreshed"));
+      expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
     }

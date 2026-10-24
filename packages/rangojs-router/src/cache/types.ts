@@ -96,9 +96,13 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * Return value becomes the final cache key (unless route overrides with `key` option).
    *
    * Resolution priority:
-   * 1. Route-level `key` function (full override)
+   * 1. Route-level `key` function (replaces the URL part; the request kind stays)
    * 2. Store-level `keyGenerator` (modifies default key)
    * 3. Default key generation (prefix:pathname:params)
+   *
+   * Keep `defaultKey` in the result: its prefix names the request kind (a
+   * document, a navigation or an intercept navigation), whose records hold
+   * different segments. A result without it gives every kind one record.
    *
    * Return `defaultKey` unchanged to leave a request unpartitioned. An empty
    * string is not a key: where the result partitions a nested cache() on
@@ -293,7 +297,7 @@ export interface SegmentCacheStore<TEnv = unknown> {
   /**
    * Declares the shell family present-but-inert: getShell/putShell exist but
    * no-op (a custom store whose backing tier is conditionally unavailable).
-   * scheduleShellCapture skips captures whose only write target is inert —
+   * planShellCapture skips captures whose only write target is inert —
    * the background render would be dead work that still occupies the
    * per-isolate serialized capture queue (a promise-heavy route bakes for
    * seconds per MISS with nothing stored). Absent/false means the family,
@@ -659,7 +663,7 @@ export type ShellSnapshotFamily = "segment" | "loader" | "handles";
  * format (CachedEntryData `handles` + `handleOwners`). A Prerender + ppr
  * route's handler layer comes from the prerender store, whose build-time
  * entry has no loader push, so the entry keeps these for the HIT to restore
- * as a doc record's (issue #1057, yieldFromStore in cache-lookup.ts). An
+ * as a doc record's (issue #1057, decodeStoredEntry in cache-lookup.ts). An
  * entry written before it (v0.21) has none and serves as it did.
  */
 export type ShellSnapshotHandlesValue = Pick<

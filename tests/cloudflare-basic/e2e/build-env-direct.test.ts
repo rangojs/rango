@@ -8,7 +8,7 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
 // Counterpart to build-env.test.ts which uses the `ctx.env` parameter pattern.
 // This exercises the direct-import pattern: the `cloudflare:workers` stub's
 // `env` export is populated from `globalThis[BUILD_ENV_GLOBAL_KEY]`, which
-// router-discovery sets to the resolved `getPlatformProxy().env` proxy when
+// acquireBuildEnv (build-env.ts) sets to the resolved `getPlatformProxy().env` proxy when
 // `buildEnv: "auto"` is configured. If the bridge weren't wired, `env` would
 // be `{}` and `env.KV.put()` would throw during prerender — the build would
 // fail before we ever reached Playwright.

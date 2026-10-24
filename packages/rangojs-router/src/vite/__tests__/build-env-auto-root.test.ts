@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveBuildEnv } from "../router-discovery";
+import { resolveBuildEnv } from "../discovery/build-env.js";
 
 /**
  * buildEnv: "auto" must read the wrangler config of the Vite root, not of

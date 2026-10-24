@@ -370,9 +370,14 @@ below), and `cache()` onto the target route.
 
 To cache a modal, put `cache()` on the target route (or a layout above it).
 An intercept navigation is cached under that scope with its own `intercept:`
-key, so it never collides with the full-page render of the same URL. For
-finer control, use `"use cache"` in the intercept handler, or cache the
-intercept's loader: `loader(ProductLoader, () => [cache()])`.
+key, so it never collides with the full-page render of the same URL. The key
+names the intercept the navigation selected, so two intercepts that target one
+route with different `when()` conditions each keep their own record. Both
+hold under a `cache({ key })` too: the `key()` replaces the URL part of the
+key, never the request kind, so a document request and a plain navigation
+never read an intercept's record (see `/caching`). For finer control, use
+`"use cache"` in the intercept handler, or cache the intercept's loader:
+`loader(ProductLoader, () => [cache()])`.
 
 ## Errors in an Intercept
 
@@ -463,7 +468,9 @@ contract and direction-aware examples.
 ## Interaction with Prerender
 
 When the target route of an intercept uses `Prerender`, the intercept handler is
-also resolved at build time and stored alongside the main pre-rendered segments.
+also resolved at build time and stored in an intercept variant next to the
+route's own pre-rendered page. The variant holds what an intercept navigation
+renders: the layouts above the route and the intercept, not the route's page.
 This means intercept navigations to pre-rendered routes are served from the
 prerender store without executing handler code at runtime.
 
@@ -496,13 +503,16 @@ Build-time behavior:
 - The intercept handler (`<ProductModal />`) is resolved with BuildContext
 - Result is stored under the key `"detail/paramHash/i"` (intercept variant)
 - `when` config conditions are skipped at build time (all intercepts pre-rendered unconditionally)
-- `when` is still evaluated at runtime by the intercept-resolution middleware
+- `when` is still evaluated at runtime by the intercept-resolution middleware,
+  and a navigation shows only the intercept it selected
+- Two intercepts on one layout that fill the same slot are not pre-rendered:
+  they render live
 
 Runtime behavior:
 
-- Intercept navigation: prerender store serves the `/i` variant (frozen handler + fresh loaders)
+- Intercept navigation: prerender store serves the `/i` variant (frozen handler + fresh loaders). A layout the client holds (`ShopLayout`) stays as it is on screen, as on a live intercept, unless its `revalidate()` asks for it
 - Direct navigation: prerender store serves the main variant (full page)
-- If no intercept prerender entry exists, falls through to live intercept resolution
+- If no intercept prerender entry exists, or it lacks the selected intercept, falls through to live intercept resolution
 
 Loaders inside the intercept always run fresh at request time, same as regular
 pre-rendered routes.

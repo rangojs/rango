@@ -55,14 +55,14 @@ export const CACHE_REVALIDATING_AT_HEADER = "x-edge-cache-revalidating-at";
  * re-arm re-puts the full window and restarts CF's retention clock, pinning a
  * perpetually-stale entry (one whose background revalidation keeps failing) past
  * its intended hard-expiry indefinitely. Mirrors the KVSegmentEnvelope `e`
- * field and the remaining-ttl math in promoteSegmentToL1/promoteItemToL1.
+ * field and the remaining-ttl math in promoteToL1.
  * @internal
  */
 export const CACHE_EXPIRES_AT_HEADER = "x-edge-cache-expires-at";
 
 /**
  * Header stashing the route author's original Cache-Control on L1 document
- * entries. putResponse/promoteResponseToL1 overwrite Cache-Control with a long
+ * entries. putResponse/promoteToL1 overwrite Cache-Control with a long
  * `max-age` so the CF Cache API retains the entry across the whole SWR window;
  * getResponse restores this original value before serving so the client and any
  * upstream CDN see the author's intended directive, not the internal edge TTL.

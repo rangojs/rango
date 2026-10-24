@@ -161,6 +161,16 @@ short-circuits the middleware's downstream pipeline; global middleware that
 wraps it can still run. Route middleware, handlers, and loaders below it do not.
 An external CDN hit is different: the function never runs at all.
 
+The background revalidation re-runs that downstream pipeline for the stale
+entry. Its cookies, and the headers its route handlers and the middleware
+after the cache write, go on its own response, never on the visitor's `STALE`
+response; middleware ahead of the cache gets the `STALE` response from
+`next()`, and its writes after `next()` land there. It
+starts from what middleware ahead of the cache wrote to the response before
+`next()`, as a `MISS` does, and its response is stored by the rules below:
+its headers are kept, and a cookie it sets keeps the refreshed page out of the
+cache.
+
 ## Cache Status Header
 
 Response includes `x-document-cache-status`:
@@ -215,7 +225,9 @@ suffixes are still appended.
   everyone). That includes a response whose request called
   `updateTag()`/`revalidateTag()` on a store that keeps per-isolate memos
   (`CFCacheStore`, `VercelCacheStore`): it carries the fresh-reads cookie
-  (`rango-state-fresh` by default), so it is not stored.
+  (`rango-state-fresh` by default), so it is not stored. A stale entry's
+  background re-run sets no fresh-reads cookie (no visitor made that
+  invalidation), so its invalidation does not keep the refreshed page out.
 - Non-200 responses
 - A 200 whose render reported an error: a component that threw after the
   response started streaming, such as an async server component whose fetch
