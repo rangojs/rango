@@ -20,7 +20,10 @@ import {
   encodeReply,
   createClientTemporaryReferenceSet,
 } from "../deps/rsc-client.js";
-import { getRequestContext } from "../server/request-context.js";
+import {
+  getRequestContext,
+  type RequestContext,
+} from "../server/request-context.js";
 import { isUnderTestRunner } from "../runtime-env.js";
 import {
   isTainted,
@@ -921,10 +924,14 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // deliberately NOT stamped: a property on that SHARED object made every
     // parallel read on the request throw for the cached body's whole
     // execution window (a 2s cached fetch poisoned a sibling loader's
-    // cookies() — same hazard class as issue #684, plan 010).
+    // cookies() — same hazard class as issue #684, plan 010). Not as an
+    // argument either (getRequestContext(), any pass: a derived pass inherits
+    // `_requestRoot`): every render pass's writers check the request's own
+    // context (server/render-pass.ts), so the stamp failed a shell capture's
+    // or a background re-render's writes while a foreground body held it.
     const taintedArgs: unknown[] = [];
     for (const arg of args) {
-      if (isTainted(arg)) {
+      if (isTainted(arg) && !(arg as RequestContext)._requestRoot) {
         stampCacheExec(arg as object);
         taintedArgs.push(arg);
       }

@@ -145,6 +145,27 @@ visitor's request; it renders the record only. A recapture over a stale
 record stores the shell as one over a fresh record does. `ctx.dynamic()` in
 the capture's own render still refuses it. No change in your code.
 
+### Fixed: a `"use cache"` function that takes `getRequestContext()` no longer fails writes outside its body
+
+**Before.** A `"use cache"` function called with the request context
+(`getRequestContext()`) as an argument marked that context while its body ran
+on a miss. The request context's writers check that mark: `set()`,
+`header()`, `setCookie()`, `deleteCookie()`, `setStatus()`, `onResponse()`,
+`setLocationState()`, `cookies().set()` and `.delete()`, and a handler's
+`ctx.setTheme()` and `ctx.setLocationState()`. So a write from code running
+beside the body threw `ctx.set() cannot be called inside a "use cache"
+function`. That included the PPR shell capture and the stale `cache()`
+record's background refresh the request started, whose writes check the
+request's context: the refresh failed and the record stayed stale, and the
+capture rendered the route's error boundary and stored it as the shell every
+later visitor got. A capture or a HIT tail that passed its own context did
+not check the mark, so the same code threw on a MISS only.
+
+**Now.** The request context is not marked as an argument, as it already was
+not when the body reached it through `getRequestContext()`. A write inside
+the body still throws, on every pass. A handler or middleware `ctx` argument
+keeps its mark. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
