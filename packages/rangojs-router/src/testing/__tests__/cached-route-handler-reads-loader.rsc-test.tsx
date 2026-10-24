@@ -156,7 +156,7 @@ const router = createRouter({}).routes(
         path("/section", () => <p>section</p>, { name: "section" }),
       ]),
       path("/cached", CachedPage, { name: "cached" }, () => [
-        loader(CachedData, () => [cache({ ttl: 60 })]),
+        loader(CachedData, () => [cache({ ttl: 60, tags: ["cached-data"] })]),
       ]),
     ]),
   ]),
@@ -347,7 +347,7 @@ describe("cache() route whose handler reads its own DSL loader", () => {
 
   it("the refresh reads a loader with its own cache() through it", async () => {
     const clock = movableClock();
-    const { store } = recordingStore();
+    const { store, writes } = recordingStore();
     const shown: string[][] = [];
     for (let i = 0; i < 3; i++) {
       const result = await serveShellRequest(router, "/cached", {
@@ -363,6 +363,13 @@ describe("cache() route whose handler reads its own DSL loader", () => {
       ["cached-data-crumb"],
       ["cached-data-crumb"],
     ]);
+    // The refreshed record answers for the loader cache()'s tags, as the
+    // MISS's does: invalidating one evicts the route record too.
+    const routeWrites = writes.filter((w) => w.data.segments);
+    expect(routeWrites.length).toBeGreaterThanOrEqual(2);
+    const [miss, refreshed] = [routeWrites[0]!, routeWrites.at(-1)!];
+    expect(recordOf(refreshed.data).tags).toContain("cached-data");
+    expect(recordOf(refreshed.data).tags).toEqual(recordOf(miss.data).tags);
   });
 
   it("the refresh runs only the loader the handler reads", async () => {
@@ -376,4 +383,132 @@ describe("cache() route whose handler reads its own DSL loader", () => {
     // The stale HIT runs both live; the refresh runs what its handler reads.
     expect(runs).toEqual({ pageData: 2, sideData: 1, cachedData: 0 });
   });
+});
+
+/**
+ * A handler that awaits a loader which calls rendered() is the barrier
+ * deadlock: every MISS refuses it (the read throws, and this handler catches
+ * it and renders its fallback). The refresh must refuse it too. It renders
+ * on a derived pass whose render barrier is the visitor's, already resolved:
+ * with the visitor's guard bookkeeping inherited (closed), the read went
+ * through, and rendered() read the visitor's handle snapshot into the record
+ * or, on a tree that streams, waited on the refresh's own handle store,
+ * which waits on the handler awaiting it: the refresh never settled.
+ */
+const Stamp = createHandle<string>();
+
+const StampReader = createLoader(async (ctx) => {
+  await ctx.rendered();
+  return { read: `read:${ctx.get(Stamp).join(",")}` };
+});
+
+async function CatchingReader(ctx: HandlerContext): Promise<React.ReactNode> {
+  ctx.use(Stamp)("stamp");
+  try {
+    const { read } = await ctx.use(StampReader);
+    return <p>{`ok ${read}`}</p>;
+  } catch {
+    return <p>refused</p>;
+  }
+}
+
+async function Reader(ctx: HandlerContext): Promise<React.ReactNode> {
+  ctx.use(Stamp)("stamp");
+  const { read } = await ctx.use(StampReader);
+  return <p>{`ok ${read}`}</p>;
+}
+
+const barrierRouter = createRouter({}).routes(
+  urls(({ path, cache, layout, loader, loading }) => [
+    cache({ ttl: 0, swr: 60 }, () => [
+      layout(<main>shell</main>, () => [
+        path("/list", () => <ul>list</ul>, { name: "list" }),
+        path("/catching", CatchingReader, { name: "catching" }, () => [
+          loader(StampReader),
+        ]),
+        path(
+          "/catching-streamed",
+          CatchingReader,
+          { name: "catchingStreamed" },
+          () => [loader(StampReader), loading(<p>loading</p>)],
+        ),
+        path("/streamed", Reader, { name: "streamed" }, () => [
+          loader(StampReader),
+          loading(<p>loading</p>),
+        ]),
+      ]),
+    ]),
+  ]),
+);
+
+/** Rejects instead of waiting on a request that never settles. */
+function bounded<T>(work: Promise<T>, ms = 5_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer in ${ms} ms`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function heldAtList(): Promise<ServeShellRequestOptions["partial"]> {
+  const list = await serveShellRequest(barrierRouter, "/list", {
+    cacheStore: new VercelCacheStore({ cache: vercelCache() }),
+    partial: true,
+  });
+  return { from: "/list", segments: await matchedOf(list) };
+}
+
+describe("cache() route whose handler awaits a loader that calls rendered()", () => {
+  beforeEach(async () => {
+    await resetShellTestState();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  for (const url of ["/catching", "/catching-streamed"]) {
+    for (const held of [false, true]) {
+      it(`${url}, ${held ? "navigation, layout held" : "document"}: every request renders the refusal, the refresh included`, async () => {
+        const clock = movableClock();
+        const { store } = recordingStore();
+        const partial = held ? await heldAtList() : undefined;
+        const shown: string[][] = [];
+        for (let i = 0; i < 4; i++) {
+          const { flight } = await bounded(
+            serveShellRequest(barrierRouter, url, {
+              cacheStore: store,
+              partial,
+            }),
+          );
+          shown.push(flight?.match(/refused|ok read:[^"]*/g) ?? []);
+          clock.advance(1_100);
+        }
+        expect(shown).toEqual([
+          ["refused"],
+          ["refused"],
+          ["refused"],
+          ["refused"],
+        ]);
+      }, 30_000);
+    }
+  }
+
+  it("/streamed, navigation, layout held: the re-render that writes the record settles", async () => {
+    const clock = movableClock();
+    const { store, writes } = recordingStore();
+    const partial = await heldAtList();
+    for (let i = 0; i < 3; i++) {
+      await bounded(
+        serveShellRequest(barrierRouter, "/streamed", {
+          cacheStore: store,
+          partial,
+        }),
+      );
+      clock.advance(1_100);
+    }
+    // A MISS fails the handler: nothing is written.
+    expect(writes).toEqual([]);
+  }, 30_000);
 });

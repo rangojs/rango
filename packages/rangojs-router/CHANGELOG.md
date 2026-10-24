@@ -165,9 +165,12 @@ came in another order than on a live render.
 **Now.** The refresh starts a loader the handler reads as the route declares
 it, its own `cache()` included, as the first render does, so the record holds
 what that render's record holds and every HIT shows the values once. Loaders
-no handler reads still do not run in the refresh. The refresh and the
-`Prerender` build file a layout's handle values under that layout, as a live
-render does. No change in your code.
+no handler reads still do not run in the refresh. Because such a loader's
+own `cache()` is read again, the refreshed record also carries that
+`cache()`'s tags, as the first render's does, so invalidating one of them
+evicts the route record as well; before, the refreshed record lost them. The
+refresh and the `Prerender` build file a layout's handle values under that
+layout, as a live render does. No change in your code.
 
 ## 0.27.0 (2026-10-23)
 
