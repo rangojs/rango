@@ -7,6 +7,7 @@
  */
 
 import { contextSet, hasContextVars } from "../../context-var.js";
+import { prerenderManifestEntries } from "../../prerender/store.js";
 import { sha256 } from "./build-versions.js";
 import {
   createGetParamsReverse,
@@ -288,20 +289,20 @@ export async function expandPrerenderRoutes(
               break;
             }
 
+            const stage = ([key, value]: [string, string]): void => {
+              manifestEntries[key] = stageBuildAssetModule(
+                state.projectRoot,
+                "__pr",
+                value,
+              );
+              recordBuildData(state, "prerender", key, value, { routerId });
+            };
             const paramHash = hashParams(result.params || {});
-            const mainKey = `${result.routeName}/${paramHash}`;
-            const mainValue = JSON.stringify({
-              segments: result.segments,
-              handles: result.handles,
-            });
-            manifestEntries[mainKey] = stageBuildAssetModule(
-              state.projectRoot,
-              "__pr",
-              mainValue,
+            const [main, intercept] = prerenderManifestEntries(
+              result,
+              paramHash,
             );
-            recordBuildData(state, "prerender", mainKey, mainValue, {
-              routerId,
-            });
+            stage(main);
             // Prerender + ppr composition: flag the URL as a build-time shell
             // candidate for the post-build capture phase (producer B, #699).
             // The payload JSON is retained in memory so that phase can seed an
@@ -313,34 +314,9 @@ export async function expandPrerenderRoutes(
                 paramHash,
                 ppr: result.ppr === true ? true : result.ppr,
               });
-              (state.prerenderPayloadValues ??= new Map()).set(
-                mainKey,
-                mainValue,
-              );
+              (state.prerenderPayloadValues ??= new Map()).set(...main);
             }
-            if (result.interceptSegments?.length) {
-              const interceptKey = `${result.routeName}/${paramHash}/i`;
-              const interceptValue = JSON.stringify({
-                segments: [...result.segments, ...result.interceptSegments],
-                // interceptHandles is the pre-encoded MERGED (main + intercept)
-                // handle string (the producer merged before encoding).
-                handles: result.interceptHandles ?? "",
-              });
-              manifestEntries[interceptKey] = stageBuildAssetModule(
-                state.projectRoot,
-                "__pr",
-                interceptValue,
-              );
-              recordBuildData(
-                state,
-                "prerender",
-                interceptKey,
-                interceptValue,
-                {
-                  routerId,
-                },
-              );
-            }
+            if (intercept) stage(intercept);
             const elapsed = (performance.now() - startUrl).toFixed(0);
             console.log(
               `[rango]   OK   ${entry.urlPath.padEnd(40)} (${elapsed}ms)`,

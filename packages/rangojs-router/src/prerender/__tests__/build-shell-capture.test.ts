@@ -35,7 +35,7 @@ const { captureShellForBuild } = await import("../build-shell-capture.js");
 
 /**
  * A build capture's match is served from the prerender store (no handler
- * runs, no doc record); cache-lookup.ts tryPrerenderLookup marks that on the
+ * runs, no doc record); cache-lookup.ts decodeStoredEntry marks that on the
  * capture context, which settleCaptureRecord reads.
  */
 function prerenderServed(): {

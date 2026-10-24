@@ -3,9 +3,9 @@
  * segments: a route cache() record (the segment cache, withCacheLookup's
  * HIT), a build-time Prerender artifact (the bundled prerender store) and an
  * on-demand overlay entry (router.prerender() into the router's `prerender`
- * store). cache-lookup.ts serves the three through two paths today
- * (yieldFromStore for the prerender sources, the record HIT for the cache);
- * serving them through one function must keep the three answers equal.
+ * store). cache-lookup.ts serves the three through one function
+ * (serveStoredSegments, the source as data in StoredSegmentSource); the three
+ * answers must stay equal.
  *
  * Each source runs through serveShellRequest, the router's production
  * request handler, on its own router with the same tree; only the route's
@@ -15,7 +15,7 @@
  * An action re-renders live, past the segment cache, except on a Prerender
  * route that is not a passthrough: its handler is evicted at build, so the
  * re-render serves the stored entry (cache-lookup.ts, the gate in front of
- * tryPrerenderLookup). Both Prerender sources must keep answering it.
+ * readPrerenderSource). Both Prerender sources must keep answering it.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React, { isValidElement } from "react";

@@ -16,6 +16,7 @@ export default defineConfig({
         "dist",
         "e2e",
         "src/rsc/__tests__/request-stages.bench.tsx",
+        "src/router/match-middleware/__tests__/stored-source.bench.tsx",
       ],
     },
   },
