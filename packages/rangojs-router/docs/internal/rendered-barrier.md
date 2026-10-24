@@ -172,7 +172,11 @@ The render barrier is a deferred promise on the request context:
   (`wireRenderBarrier` in `server/request-context.ts`, called by
   `deriveRenderPass` in `server/render-pass.ts` for the `shell-capture` and
   `ppr-tail` rows of `RENDER_PASS_FIELDS`; the background re-render's row
-  inherits the request's barrier). This is scar
+  inherits the request's barrier, and never reads it: it resolves segments
+  with `skipLoaders`, so no DSL loader calls `rendered()`, and it runs no
+  match middleware, so nothing resolves a barrier. Pinned through
+  `serveShellRequest` by
+  `testing/__tests__/background-revalidation-pass.rsc-test.tsx`). This is scar
   tissue (issue #684, plan 009): the derived context is
   `Object.create(reqCtx)`, and before the explicit wiring every
   `_renderBarrier*` read fell through the prototype to the foreground

@@ -159,9 +159,10 @@ export const RENDER_PASS_FIELDS: {
    * router/match-middleware/background-revalidation.ts rerenderAndCacheRoute.
    */
   "background-revalidation": {
-    // The request's barrier; whether this pass needs its own is rango-t160.
+    // Never read: the pass runs no DSL loader (skipLoaders), the only
+    // caller of rendered(), and no match middleware, the only resolver.
     renderBarrier: "inherited",
-    own(pass, { handleStore, sink }, base) {
+    own(pass, { handleStore, sink }) {
       // Read late by loader pushes and cache-scope.ts; setupLoaderAccess
       // binds it at setup, so that also runs inside this pass.
       pass._handleStore = handleStore;
@@ -169,16 +170,10 @@ export const RENDER_PASS_FIELDS: {
       pass._metricsStore = undefined;
       pass._renderErrors = [];
       pass._recoveredHandlerErrors = undefined;
-      // A capture's stale route cache() read re-renders under the capture.
-      // Derived like the pass: it reads the capture's state live, and its
-      // field writes (a guard trip, a record window) stay its own; the
-      // loaderRecords Map is the capture's.
-      const captureState = base._shellCaptureState;
-      if (captureState) {
-        pass._shellCaptureState = Object.create(
-          captureState,
-        ) as typeof captureState;
-      }
+      // A route cache() record, not a shell, even when a capture's stale read
+      // starts it: under the capture's guard a loader body's headers() fails
+      // the refresh, and recaptures replay the stale record until it expires.
+      pass._shellCaptureState = undefined;
       // Response writes go to the sink: a layout above the cache() boundary
       // or an error boundary's status would otherwise reach the live response.
       pass._onResponseCallbacks = [];
