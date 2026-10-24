@@ -631,6 +631,49 @@ new router version already misses them on `CFCacheStore` and
 once and stores a new record, and the old one expires with its TTL. No change
 in your code.
 
+### Fixed: under `cache({ key })`, a document request and a plain navigation never render an intercept's record
+
+**Before.** A `cache()` with its own `key()` stored one record per `key()`
+result, whatever the request kind: a document request, a client navigation
+and every intercept navigation to the URL read and wrote the same record. An
+intercept's record holds the layouts and the intercept's slot, not the route's
+page. So after an intercept navigation stored its record, a document GET of
+the item URL, or a navigation from a page where the intercept's `when()`
+fails, rendered the intercept and no page. With two intercepts selected by
+`when()`, each read the other's record.
+
+```ts
+cache({ ttl: 600, key: (ctx) => `page:${ctx.url.pathname}` }, () => [
+  layout(ShopLayout, () => [
+    path("/list", ListPage),
+    path("/item/:id", ItemPage, { name: "item" }),
+    intercept("@modal", ".item", ItemModal, {
+      when: ({ from }) => from.url.pathname === "/list",
+    }),
+  ]),
+]);
+// /list -> /item/1 stored the intercept's record; a reload of /item/1
+// then rendered ShopLayout with ItemModal and no ItemPage.
+```
+
+**Now.** The `key()` result replaces the URL part of the key, never the
+request kind: a document request, a navigation and each intercept navigation
+keep their own record, as under the default key. The `key()` still decides
+sharing within one kind, so a `key()` that ignores a param still shares one
+document record (and one navigation record) across its values.
+`updateTag()` and `revalidateTag()` evict every kind's record. The stored key
+gains the kind as its last part (`key:page%3A%2Fitem%2F1` is now
+`key:page%3A%2Fitem%2F1|doc`, `|partial` or `|intercept%3A…`), so records
+stored before this release are not read again: `CFCacheStore` and
+`VercelCacheStore` already miss them under the new router version; on
+`MemorySegmentCacheStore` or a custom store each request kind renders once and
+stores a new record, and the old one expires with its TTL. On a `ppr` route
+under a keyed `cache()`, the first navigation after a document request is now
+answered from the PPR shell (`x-rango-ppr-replay: HIT`) instead of the
+document's record (`BYPASS; reason=explicit-cache-hit`), as on a `ppr` route
+without a `key()`. The PPR shell partition and a response route's entry are
+unchanged. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

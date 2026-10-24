@@ -477,9 +477,9 @@ function describePprShell(mode: "dev" | "build") {
         };
 
         if (nested) {
-          // /ppr-tiered's record sits under the outer key alone
-          // ("key:tier%3Agold"). Write it first: the nested route must not
-          // read it.
+          // /ppr-tiered's record sits under the outer key and the request
+          // kind alone ("key:tier%3Agold|doc"). Write it first: the nested
+          // route must not read it.
           const flat = f.url(
             `/ppr-tiered?probe=${crypto.randomUUID().slice(0, 8)}`,
           );

@@ -210,7 +210,7 @@ describe("serveShellRequest: namespaced key() results (#975)", () => {
     expect(gold.key).toBe(
       `${router.id}@localhost/ns/tiered:shell|key%3Atier%253Agold`,
     );
-    expect(await cacheStore.get("key:tier%3Agold")).not.toBeNull();
+    expect(await cacheStore.get("key:tier%3Agold|doc")).not.toBeNull();
 
     const hit = await serve("/ns/tiered", tier("gold"));
     expect(hit.shellStatus).toBe("HIT");
@@ -224,7 +224,7 @@ describe("serveShellRequest: namespaced key() results (#975)", () => {
     await serve("/ns/bare", tier(victimKey));
     expect(await cacheStore.get(victimKey)).toBeNull();
     expect(
-      await cacheStore.get(`key:${encodeURIComponent(victimKey)}`),
+      await cacheStore.get(`key:${encodeURIComponent(victimKey)}|doc`),
     ).not.toBeNull();
 
     const victim = await serve("/ns/victim");

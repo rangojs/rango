@@ -129,28 +129,35 @@ function validatedSwr(value: number | undefined): number | undefined {
 }
 
 /**
- * `intercept` is the intercept an intercept navigation selected
- * (interceptRecordKey, router/intercept-resolution.ts). Its record holds that
- * intercept's slot, so the key names it: keyed by the URL alone, a record
- * written under one intercept answered a navigation that selected another.
+ * The request kind a route record answers: `doc` (a document request),
+ * `partial` (a navigation) or `intercept:<intercept>`, where `intercept` is
+ * the intercept an intercept navigation selected (interceptRecordKey,
+ * router/intercept-resolution.ts). The kinds' records hold different
+ * segments (an intercept's holds its slot and no route page), so every record
+ * key names its kind, a `key()`'s included (CacheScope.resolveKeyFrom).
+ * Keyed by the URL alone, a record written under one intercept answered a
+ * navigation that selected another; keyed by a `key()` alone, a document GET
+ * rendered an intercept's record and dropped the page.
  */
+function routeRecordKind(intercept?: string, prefixOverride?: "doc"): string {
+  if (intercept !== undefined) return `intercept:${intercept}`;
+  if (prefixOverride !== undefined) return prefixOverride;
+  const isPartial =
+    getRequestContext()?.originalUrl?.searchParams.has(WIRE.partial) ?? false;
+  return isPartial ? "partial" : "doc";
+}
+
+/** `{kind}:` + the request's key base (routeRecordKind, requestKeyBase). */
 function getDefaultRouteCacheKey(
   pathname: string,
-  params?: Record<string, string>,
-  intercept?: string,
-  prefixOverride?: "doc",
+  params: Record<string, string> | undefined,
+  kind: string,
 ): string {
   const ctx = getRequestContext();
-  const isPartial = ctx?.originalUrl?.searchParams.has(WIRE.partial) ?? false;
   const searchParams = ctx?.url.searchParams;
   const host = ctx?.url.host ?? "localhost";
 
-  const prefix =
-    intercept !== undefined
-      ? `intercept:${intercept}`
-      : (prefixOverride ?? (isPartial ? "partial" : "doc"));
-
-  return `${prefix}:${requestKeyBase(ctx, host, pathname, searchParams, params, ctx?._searchParamsFilter)}`;
+  return `${kind}:${requestKeyBase(ctx, host, pathname, searchParams, params, ctx?._searchParamsFilter)}`;
 }
 
 // ============================================================================
@@ -468,13 +475,11 @@ export class CacheScope {
     params: Record<string, string>,
     intercept?: string,
   ): Promise<string> {
+    const kind = routeRecordKind(intercept, this.defaultKeyPrefix);
     return this.resolveKeyFrom(
-      getDefaultRouteCacheKey(
-        pathname,
-        params,
-        intercept,
-        this.defaultKeyPrefix,
-      ),
+      getDefaultRouteCacheKey(pathname, params, kind),
+      "",
+      kind,
     );
   }
 
@@ -513,12 +518,16 @@ export class CacheScope {
    * outer `key()` result alone would give every route under the inner
    * cache() one record: a `key()` replaces the whole default key, so an
    * outer key that names no route (`tier:gold`) would make `/a` HIT `/b`'s
-   * record. A scope with its own `key()` adds no default key: a `key()` is a
-   * full override, and its store's keyGenerator does not run. With no
-   * partition part it is resolveDefaultKey alone. With a `key()` on the
-   * chain but no request context it rejects (keyWithoutContextError).
-   * `partitionedPrefix` prefixes a key built from partition parts only (the
-   * response family's `response:`).
+   * record. A scope with its own `key()` adds no default key: its `key()`
+   * replaces the URL part, and its store's keyGenerator does not run. It
+   * appends `kind` instead (routeRecordKind): the `key()` decides which
+   * requests of one kind share a record, never that a document, a
+   * navigation and an intercept navigation do. With no partition part it is
+   * resolveDefaultKey alone. With a `key()` on the chain but no request
+   * context it rejects (keyWithoutContextError). `partitionedPrefix`
+   * prefixes a key built from partition parts only (the response family's
+   * `response:`, which passes no `kind`: a response route answers every
+   * request alike).
    *
    * Each `key()` result lives on the request context (`_resolvedCacheKeys`),
    * by function: it runs once per request whatever the default key
@@ -529,7 +538,11 @@ export class CacheScope {
    * itself: a `key()` calling `cookies()` would trip the capture guard there,
    * and a capture must store the partition its request resolved.
    */
-  resolveKeyFrom(defaultKey: string, partitionedPrefix = ""): Promise<string> {
+  resolveKeyFrom(
+    defaultKey: string,
+    partitionedPrefix = "",
+    kind?: string,
+  ): Promise<string> {
     if (this.fixedKey !== undefined) return Promise.resolve(this.fixedKey);
     const requestCtx = _getRequestContext();
     if (!requestCtx || !this.mayPartition) {
@@ -545,7 +558,8 @@ export class CacheScope {
     ]).then(([[keys, storeParts], ownDefault]) => {
       const generated = positionalParts(storeParts);
       if (keys.length === 0 && generated.length === 0) return ownDefault!;
-      if (ownDefault !== undefined) generated.push(ownDefault);
+      const last = ownDefault ?? kind;
+      if (last !== undefined) generated.push(last);
       return partitionedPrefix + composeCacheKeys(keys, generated);
     });
   }
@@ -569,12 +583,7 @@ export class CacheScope {
       ? undefined
       : this.getStore()?.keyGenerator;
     if (!this.mayPartition && !keyGenerator) return undefined;
-    const defaultKey = getDefaultRouteCacheKey(
-      pathname,
-      params,
-      undefined,
-      "doc",
-    );
+    const defaultKey = getDefaultRouteCacheKey(pathname, params, "doc");
     const requestCtx = _getRequestContext();
     if (!requestCtx) {
       return this.keyFns.length > 0
@@ -1222,12 +1231,7 @@ export function resolveShellPartition(
 ): Promise<string | null> | undefined {
   if (routeScope?.enabled) return routeScope.resolvePartition(pathname, params);
   if (!appStore?.keyGenerator) return undefined;
-  const defaultKey = getDefaultRouteCacheKey(
-    pathname,
-    params,
-    undefined,
-    "doc",
-  );
+  const defaultKey = getDefaultRouteCacheKey(pathname, params, "doc");
   return resolveCacheKey(undefined, appStore, defaultKey).then((resolved) =>
     resolved === defaultKey ? null : resolved,
   );
