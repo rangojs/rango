@@ -15,6 +15,7 @@ export function PrerenderInterceptLayout(ctx: HandlerContext) {
       <PrerenderInterceptLayoutProbe />
       <Outlet />
       <Outlet name="@modal" />
+      <Outlet name="@drawer" />
     </div>
   );
 }

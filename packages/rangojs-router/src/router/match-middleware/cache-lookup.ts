@@ -84,6 +84,7 @@ import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
 import { requestHeaders } from "../../server/request-headers.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
+import { interceptSlotId } from "../intercept-resolution.js";
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
@@ -94,6 +95,7 @@ let handleSnapshot: typeof import("../../cache/handle-snapshot.js") | undefined;
 let _hashParams:
   | typeof import("../../prerender/param-hash.js").hashParams
   | undefined;
+let storeModule: typeof import("../../prerender/store.js") | undefined;
 
 /**
  * @internal Replace the prerender store this module serves from, and return
@@ -120,6 +122,7 @@ async function ensurePrerenderDeps(): Promise<void> {
   codec = segmentCodec;
   handleSnapshot = snapshot;
   _hashParams = paramHash.hashParams;
+  storeModule = store;
   if (prerenderStoreInstance === undefined) {
     prerenderStoreInstance = store.createPrerenderStore();
   }
@@ -147,10 +150,9 @@ type StoredSegmentSource =
   | { kind: "prerender-build" | "prerender-overlay"; entry: PrerenderEntry };
 
 /**
- * Decode a prerender entry's segments and replay the handle data of the ones
- * it `sends` into the request's HandleStore: a held segment the client keeps
- * keeps its handle values too, as on a live walk, where its handler does not
- * run.
+ * Decode a prerender entry's segments and replay its handle data into the
+ * request's HandleStore, as the cache scope's lookup does for a record; on a
+ * partial request, only the buckets of the segments it `sends`.
  */
 async function decodeStoredEntry<TEnv>(
   entry: PrerenderEntry,
@@ -173,10 +175,20 @@ async function decodeStoredEntry<TEnv>(
   if (handleStore && entry.handles) {
     const handlesRecord = await handleSnapshot!.decodeHandles(entry.handles);
     if (handlesRecord) {
-      for (const segment of segments) {
-        let send = sends(segment);
-        if (typeof send !== "boolean") send = await send;
-        if (!send) delete handlesRecord[segment.id];
+      // On a partial request, a bucket is replayed only when a segment with
+      // its id is sent: not one a kept segment holds (the client keeps its
+      // values, as on a live walk), nor one of an intercept the variant does
+      // not serve (selectInterceptVariant).
+      if (!ctx.isFullMatch) {
+        const sent = new Set<string>();
+        for (const segment of segments) {
+          let send = sends(segment);
+          if (typeof send !== "boolean") send = await send;
+          if (send) sent.add(segment.id);
+        }
+        for (const id of Object.keys(handlesRecord)) {
+          if (!sent.has(id)) delete handlesRecord[id];
+        }
       }
       handleSnapshot!.restoreHandles(handlesRecord, handleStore);
     }
@@ -565,9 +577,7 @@ async function* serveStoredSegments<TEnv>(
   // Resolve loaders fresh. The live pass already resolved the loaders of the
   // entries above the boundary.
   const loaderStart = performance.now();
-  const loaderEntries = ctx.entries
-    .slice(boundaryIndex)
-    .filter((e) => !interceptFillSkips(ctx, e.shortCode));
+  const loaderEntries = ctx.entries.slice(boundaryIndex);
   const { resolveLoadersOnly } = router;
   if (resolveLoadersOnly) {
     const loaderResult = await ctx.Store.run(() =>
@@ -792,7 +802,18 @@ async function readPrerenderSource<TEnv>(
         isPassthroughRoute: isPassthroughPrerenderRoute,
       },
     );
-    if (entry) return { kind: "prerender-build", entry };
+    // The variant holds every intercept the build found; serve the one the
+    // match selected, or render live.
+    const selected = ctx.isIntercept ? ctx.interceptResult : null;
+    const served =
+      entry && selected
+        ? storeModule!.selectInterceptVariant(
+            entry,
+            interceptSlotId(selected.entry, selected.intercept),
+            selected.intercept.routeName,
+          )
+        : entry;
+    if (served) return { kind: "prerender-build", entry: served };
   }
 
   return null;

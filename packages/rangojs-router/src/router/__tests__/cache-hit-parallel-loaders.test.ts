@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { EntryData } from "../../server/context.js";
+import { RangoContext, type EntryData } from "../../server/context.js";
 import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import {
   buildEntryRevalidateMap,
   resolveLoadersOnly,
 } from "../segment-resolution/revalidation.js";
+import { planPrefetchDeferral } from "../segment-resolution/prefetch-deferral.js";
 import type { SegmentResolutionDeps } from "../types.js";
 
 const mockEvaluateRevalidation = vi.fn((_opts: any) => true);
@@ -325,5 +326,37 @@ describe("cache-hit loaders under an intercept", () => {
     );
     expect(segments.map((s) => s.id)).toEqual(["L0D0.layout-loader"]);
     expect(matchedIds).toEqual(["L0D0.layout-loader"]);
+  });
+
+  it("on the intercept's fill, skips an entry the client lacks after the ppr latch read the route", async () => {
+    const entries: EntryData[] = [
+      entry("layout", "L0", "layout-loader"),
+      entry("layout", "L1", "unheld-loader"),
+      { ...entry("route", "L0R0", "route-loader"), ppr: true } as EntryData,
+    ];
+    const context = {
+      ...makeContext(),
+      _prefetchDeferral: planPrefetchDeferral(entries, "fill", {}, null),
+    };
+    const store: { cachedHeaderScope?: { kind: string } } = {};
+    const { segments } = await RangoContext.run(store as never, () =>
+      resolveLoadersOnly(
+        {
+          context,
+          client: new Set(["L0"]),
+          params: {},
+          prevParams: {},
+          request: new Request("http://localhost/blog"),
+          prevUrl: new URL("http://localhost/"),
+          nextUrl: new URL("http://localhost/blog"),
+          routeKey: "blog",
+          deps: makeDeps(),
+        },
+        entries,
+        { interceptResult: {} as any },
+      ),
+    );
+    expect(segments.map((s) => s.id)).toEqual(["L0D0.layout-loader"]);
+    expect(store.cachedHeaderScope?.kind).toBe("ppr");
   });
 });

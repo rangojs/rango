@@ -498,13 +498,16 @@ Build-time behavior:
 - The intercept handler (`<ProductModal />`) is resolved with BuildContext
 - Result is stored under the key `"detail/paramHash/i"` (intercept variant)
 - `when` config conditions are skipped at build time (all intercepts pre-rendered unconditionally)
-- `when` is still evaluated at runtime by the intercept-resolution middleware
+- `when` is still evaluated at runtime by the intercept-resolution middleware,
+  and a navigation shows only the intercept it selected
+- Two intercepts on one layout that fill the same slot are not pre-rendered:
+  they render live
 
 Runtime behavior:
 
 - Intercept navigation: prerender store serves the `/i` variant (frozen handler + fresh loaders). A layout the client holds (`ShopLayout`) stays as it is on screen, as on a live intercept, unless its `revalidate()` asks for it
 - Direct navigation: prerender store serves the main variant (full page)
-- If no intercept prerender entry exists, falls through to live intercept resolution
+- If no intercept prerender entry exists, or it lacks the selected intercept, falls through to live intercept resolution
 
 Loaders inside the intercept always run fresh at request time, same as regular
 pre-rendered routes.

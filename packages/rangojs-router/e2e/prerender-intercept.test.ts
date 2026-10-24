@@ -111,6 +111,31 @@ async function expectHeldLayoutKept(page: Page, url: string) {
   expect(seen?.filter((text) => text !== liveStamp)).toEqual([]);
 }
 
+/**
+ * Two intercepts target the detail route: @modal from inside the section
+ * and @drawer from a page that asks for it (when()). The stored intercept
+ * variant holds both, since the build cannot evaluate when(); the navigation
+ * from the index selects @modal, and the response carries only that one
+ * (prerender/store.ts selectInterceptVariant), as a live render does.
+ */
+async function expectOnlySelectedIntercept(page: Page, url: string) {
+  await page.goto(url);
+  await waitForHydration(page);
+  const navigation = page.waitForResponse((response) => {
+    const target = new URL(response.url());
+    return (
+      target.pathname === "/prerender-intercept/alpha" &&
+      target.searchParams.has("_rsc_partial")
+    );
+  });
+  await page.locator('[data-testid="pri-link-alpha"]').click();
+  const body = await (await navigation).text();
+  await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
+  expect(body).toContain("pri-modal-indicator");
+  expect(body).not.toContain("pri-drawer");
+  await expect(page.locator('[data-testid="pri-drawer"]')).toHaveCount(0);
+}
+
 // ---------------------------------------------------------------------------
 // Dev mode: intercept + prerender on-demand rendering
 // ---------------------------------------------------------------------------
@@ -282,6 +307,13 @@ test.describe("prerender-intercept (dev mode)", () => {
   }) => {
     using _ = expectNoPageError(page);
     await expectHeldLayoutKept(page, f.url("/prerender-intercept"));
+  });
+
+  test("the intercept response carries only the intercept the navigation selected", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectOnlySelectedIntercept(page, f.url("/prerender-intercept"));
   });
 
   test("intercept handler handle push survives into the modal (#567 gap 1)", async ({
@@ -579,6 +611,13 @@ test.describe("prerender-intercept (production build)", () => {
   }) => {
     using _ = expectNoPageError(page);
     await expectHeldLayoutKept(page, f.url("/prerender-intercept"));
+  });
+
+  test("the baked intercept response carries only the intercept the navigation selected", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectOnlySelectedIntercept(page, f.url("/prerender-intercept"));
   });
 
   test("intercept handler handle push survives the baked artifact (#567 gap 1)", async ({
