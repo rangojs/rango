@@ -120,13 +120,14 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
 
   /**
    * Custom key generator applied to all cache operations.
-   * Receives the full RequestContext and the default-generated key.
+   * Receives the full RequestContext and the default-generated key. A route
+   * record keeps its request kind (see SegmentCacheStore.keyGenerator).
    *
    * @example
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {
    *   const locale = cookies().get('locale')?.value || 'en';
-   *   return `${locale}:${defaultKey}`;
+   *   return `${defaultKey}|${locale}`;
    * }
    * ```
    */
