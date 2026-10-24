@@ -259,10 +259,10 @@ describe("segment cache key generation", () => {
 
       mockGetRequestContext.mockReturnValue(makeRequestContext(""));
       const scope = new CacheScope({ store } as any);
-      await scope.lookupRoute("/test", {}, "M0L0.@modal#0");
+      await scope.lookupRoute("/test", {}, "M0L0.@modal~0");
       const key = store.get.mock.calls[0][0];
 
-      expect(key).toMatch(/^intercept:M0L0\.@modal#0:/);
+      expect(key).toMatch(/^intercept:M0L0\.@modal~0:/);
     });
 
     it("names the selected intercept: two intercepts on one URL read two keys", async () => {
@@ -273,9 +273,9 @@ describe("segment cache key generation", () => {
 
       mockGetRequestContext.mockReturnValue(makeRequestContext(""));
       const scope = new CacheScope({ store } as any);
-      await scope.lookupRoute("/test", {}, "M0L0.@modal#0");
-      await scope.lookupRoute("/test", {}, "M0L0.@drawer#1");
-      await scope.lookupRoute("/test", {}, "M0L0.@modal#2");
+      await scope.lookupRoute("/test", {}, "M0L0.@modal~0");
+      await scope.lookupRoute("/test", {}, "M0L0.@drawer~0");
+      await scope.lookupRoute("/test", {}, "M0L0.@modal~1");
       const keys = store.get.mock.calls.map((call) => call[0]);
 
       expect(new Set(keys).size).toBe(3);
@@ -390,7 +390,7 @@ describe("segment cache key generation", () => {
 
       store.get.mockClear();
       const interceptScope = new CacheScope({ store } as any);
-      await interceptScope.lookupRoute("/products", {}, "M0L0.@modal#0");
+      await interceptScope.lookupRoute("/products", {}, "M0L0.@modal~0");
       const interceptKey = store.get.mock.calls[0][0];
 
       expect(docKey).not.toBe(interceptKey);
@@ -414,7 +414,7 @@ describe("segment cache key generation", () => {
       store.get.mockClear();
       mockGetRequestContext.mockReturnValue(makeRequestContext(""));
       const interceptScope = new CacheScope({ store } as any);
-      await interceptScope.lookupRoute("/products", {}, "M0L0.@modal#0");
+      await interceptScope.lookupRoute("/products", {}, "M0L0.@modal~0");
       const interceptKey = store.get.mock.calls[0][0];
 
       expect(partialKey).not.toBe(interceptKey);
@@ -523,7 +523,7 @@ describe("segment cache key generation", () => {
       store.get.mockClear();
       mockGetRequestContext.mockReturnValue(makeRequestContext("", host));
       const interceptScope = new CacheScope({ store } as any);
-      await interceptScope.lookupRoute("/test", {}, "M0L0.@modal#0");
+      await interceptScope.lookupRoute("/test", {}, "M0L0.@modal~0");
       const interceptKey = store.get.mock.calls[0][0] as string;
 
       // All three should contain the host
@@ -593,8 +593,8 @@ describe("segment cache key generation", () => {
       expect(await lookupKey("app-a", "?_rsc_partial=1&q=1")).toBe(
         "partial:app-a@shop.example/test?q=1",
       );
-      expect(await lookupKey("app-a", "", "M0L0.@modal#0")).toBe(
-        "intercept:M0L0.@modal#0:app-a@shop.example/test",
+      expect(await lookupKey("app-a", "", "M0L0.@modal~0")).toBe(
+        "intercept:M0L0.@modal~0:app-a@shop.example/test",
       );
     });
 

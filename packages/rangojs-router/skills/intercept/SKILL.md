@@ -372,7 +372,8 @@ To cache a modal, put `cache()` on the target route (or a layout above it).
 An intercept navigation is cached under that scope with its own `intercept:`
 key, so it never collides with the full-page render of the same URL. The key
 names the intercept the navigation selected, so two intercepts that target one
-route with different `when()` conditions each keep their own record. For
+route with different `when()` conditions each keep their own record. Both
+hold for the default key: a `cache({ key })` replaces it (see `/caching`). For
 finer control, use `"use cache"` in the intercept handler, or cache the
 intercept's loader: `loader(ProductLoader, () => [cache()])`.
 

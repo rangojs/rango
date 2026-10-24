@@ -208,17 +208,29 @@ export function interceptSlotId(
 
 /**
  * The intercept a match selected (findInterceptForRoute), as its cache()
- * record names it (CacheScope): the slot id, then its position among the
- * intercepts its entry declares. Two intercepts on one entry that fill the
- * same slot share the slot id, and the position tells them apart. Undefined
- * when the match selected none.
+ * record names it (CacheScope): the slot id, then `~` and its position among
+ * the intercepts its entry declares for the same slot and target route. Two
+ * such intercepts share the slot id, and the position tells them apart; one
+ * for another slot or route does not renumber it. `~` is unreserved in a
+ * URL, so a store that maps the key onto one unencoded keeps the whole key.
+ * Undefined when the match selected none.
  */
 export function interceptRecordKey(
   selected: { intercept: InterceptEntry; entry: EntryData } | null,
 ): string | undefined {
   if (!selected) return undefined;
   const { intercept, entry } = selected;
-  return `${interceptSlotId(entry, intercept)}#${entry.intercept.indexOf(intercept)}`;
+  let position = 0;
+  for (const other of entry.intercept) {
+    if (other === intercept) break;
+    if (
+      other.slotName === intercept.slotName &&
+      other.routeName === intercept.routeName
+    ) {
+      position++;
+    }
+  }
+  return `${interceptSlotId(entry, intercept)}~${position}`;
 }
 
 /**
