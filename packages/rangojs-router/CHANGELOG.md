@@ -458,6 +458,24 @@ async function Account(user: string | undefined) {
 <div>{await Account(cookies().get("session")?.value)}</div>;
 ```
 
+### Fixed: an intercept over a `Prerender()` route no longer sends the route's page
+
+**Before.** The intercept variant a `Prerender()` route bakes, at build and on
+the dev server, stored the route's whole page next to the intercept: the
+route's handler output, its own layouts and parallel slots, and the handle
+values they push. A render under an intercept skips all of them. Every
+client-side navigation that opened the intercept from the bake sent the
+page's payload, which the browser never shows, and the page's handle values.
+A request that kept nothing mounted also listed the page's segments as
+matched, so a breadcrumb read with `useHandle` showed the page's values over
+the intercept.
+
+**Now.** The variant stores what a render under the intercept resolves, as a
+`cache()` intercept record does: the layouts above the route and the
+intercept, with their handle values. What the intercept shows, and the page
+under it, are unchanged, and a direct load of the URL still serves the full
+page. The next build bakes the new variant. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
