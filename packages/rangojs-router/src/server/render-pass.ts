@@ -165,7 +165,12 @@ export const RENDER_PASS_FIELDS: {
     // intercept's DSL loaders run here (heldNothingPassInput sets no
     // skipLoaders), so their rendered() returns at once. What they read
     // reaches no record: cacheRoute drops loader segments, captureHandles
-    // loader pushes. A shell capture never opens an intercept
+    // loader pushes. A route loader a handler reads runs too, started
+    // through its registration (resolveOwnerLoaders): its pushes stay out of
+    // the record and its value bakes into the handler's output, as on a
+    // MISS. It never calls rendered() here: a handler awaiting a loader that
+    // does is the barrier deadlock every MISS refuses, so no record of it is
+    // written. A shell capture never opens an intercept
     // (createNavigationCaptureRequest drops the intercept source).
     renderBarrier: "inherited",
     own(pass, { handleStore, sink }) {

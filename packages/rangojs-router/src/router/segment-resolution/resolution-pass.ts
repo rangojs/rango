@@ -52,9 +52,12 @@ export interface ResolutionPassInput<TEnv = any> {
   readonly actionContext?: ActionContext;
   readonly stale?: boolean;
   /**
-   * No loader runs and no loader segment is emitted: build time
+   * No loader is started and no loader segment is emitted: build time
    * (prerender-match.ts) and the background re-render of a route record
    * (background-revalidation.ts), whose records never hold loaders.
+   * resolveOwnerLoaders registers each loader instead: in the re-render a
+   * handler's read starts it as its declaration; at build time a read
+   * throws (setupBuildUse).
    */
   readonly skipLoaders?: boolean;
   /**

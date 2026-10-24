@@ -511,6 +511,17 @@ export type InternalHandlerContext<
    */
   _prefetchDeferral?: import("../router/segment-resolution/prefetch-deferral.js").PrefetchDeferral;
   /**
+   * @internal DSL loaders registered and not started, by `$$id`: a prefetch
+   * deferred them, or a pass that skips loaders (`skipLoaders`) did not run
+   * them. A reader's ctx.use() starts one through its registration
+   * (registerDeferredLoader, startDeferredLoader in
+   * router/segment-resolution/prefetch-deferral.ts).
+   */
+  _deferredLoaders?: Map<
+    string,
+    import("../router/segment-resolution/prefetch-deferral.js").DeferredLoader
+  >;
+  /**
    * @internal Whether a loader was started in this request: a run of it (a
    * handler's or another loader's ctx.use()) or its cache() binding. A
    * prefetch delivers such a loader instead of deferring it. See

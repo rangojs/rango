@@ -106,6 +106,30 @@ until the record expired or a request outside the shell refreshed it.
 under `cache()` rules, and the next recapture replays the refreshed record.
 The capture itself still refuses those reads. No change in your code.
 
+### Fixed: a `cache()` route whose handler reads its own loader shows the loader's handle values once
+
+**Before.** Under `cache({ ttl, swr })`, a route or layout handler that
+awaited its own loader, declared with `loader()` (`await ctx.use(ProductLoader)`),
+showed that loader's handle values twice on every cache HIT after a stale
+HIT's background refresh rewrote the record: duplicated breadcrumbs, meta
+tags or any other `useHandle` value the loader pushes. The refresh skips
+loaders, so the handler's read ran the loader as a handler-invoked loader,
+and the record kept its pushes; each HIT then replayed them and the loader's
+live run pushed them again. On a client-side navigation that kept the layout
+mounted, the record written for the navigation already held them, so the
+first HIT showed them twice. The refresh also ran such a loader's body
+instead of reading its own `cache()`. And a layout declared inside a route
+that owns loaders had its handler's handle values filed under the route by
+the refresh, and by the build of a `Prerender` route, so after either they
+came in another order than on a live render.
+
+**Now.** The refresh starts a loader the handler reads as the route declares
+it, its own `cache()` included, as the first render does, so the record holds
+what that render's record holds and every HIT shows the values once. Loaders
+no handler reads still do not run in the refresh. The refresh and the
+`Prerender` build file a layout's handle values under that layout, as a live
+render does. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

@@ -210,7 +210,7 @@ export function deliverStartedLoaders<TEnv>(
   if (plan?.mode !== "prefetch") return;
   const internal = ctx as InternalHandlerContext<any, TEnv>;
   const started = (loaderId: string): boolean =>
-    plan.deferredLoaders?.get(loaderId)?.started === true ||
+    internal._deferredLoaders?.get(loaderId)?.started === true ||
     internal._loaderStarted?.(loaderId) === true;
   for (const segment of segments) {
     if (!segment.deferred || segment.type !== "loader") continue;
@@ -272,8 +272,8 @@ export function ownerOf(
  * walker checks before the call: most entries own none, and the async call
  * would cost a promise and microtask ticks for an empty result.
  */
-function ownsLoaders(pass: ResolutionPass<any>, entry: EntryData): boolean {
-  return !pass.skipLoaders && (entry.loader?.length ?? 0) > 0;
+function ownsLoaders(entry: EntryData): boolean {
+  return (entry.loader?.length ?? 0) > 0;
 }
 
 /** getParallelSlotEntries(parallels) lists a slot. */
@@ -407,9 +407,7 @@ export async function resolveOwnerLoaders<TEnv>(
   belongsToRoute: boolean,
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const loaderEntries = owner.loaders;
-  if (loaderEntries.length === 0 || pass.skipLoaders) {
-    return { segments: [], matchedIds: [] };
-  }
+  if (loaderEntries.length === 0) return { segments: [], matchedIds: [] };
 
   const ctx = pass.context;
   const shortCode = owner.segmentPrefix;
@@ -430,34 +428,6 @@ export async function resolveOwnerLoaders<TEnv>(
   for (let i = 0; i < loaderEntries.length; i++) {
     matchedIds.push(`${shortCode}D${i}.${loaderEntries[i]!.loader.$$id}`);
   }
-
-  // FRESH: every loader is new; no decision is asked, traced or observed.
-  const toRun = fresh
-    ? undefined
-    : await loadersToRerun(pass, owner, belongsToRoute, matchedIds);
-
-  // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
-  // fires createRouter({ onError }) (phase "loader") nor emits the loader.error
-  // telemetry event. A partial pass reports with isPartial.
-  const errorContext = fresh
-    ? buildLoaderErrorContext(ctx)
-    : { ...buildLoaderErrorContext(ctx), isPartial: true };
-
-  // FRESH: awaitBeforeFlush (loader(Def, { ssr: false })). A document render
-  // awaits these loaders before returning, so their data is settled, their
-  // handle pushes beat the barrier snapshot, and a thrown notFound()'s status
-  // write deterministically precedes Response construction. The ids must
-  // register on the request context BEFORE kickoff — rendered() checks the
-  // set to fail fast on the barrier cycle (segment resolution awaits the
-  // loader, the barrier awaits segment resolution, rendered() awaits the
-  // barrier), and the loader body can call rendered() before the await below
-  // is reached. Shell-capture renders await too: flagged loaders execute at
-  // capture (lane rule: see resolveLoaderData, loader-cache.ts), so their
-  // handle pushes must land in the prelude. A navigation evaluation never
-  // carries awaitBeforeFlush.
-  const awaitedIndices = fresh
-    ? registerAwaitBeforeFlushIds(loaderEntries)
-    : [];
 
   // PPR bake/seed key (lane rule: see resolveLoaderData, loader-cache.ts).
   // The key must thread through EVERY resolveLoaderData funnel — omitting it
@@ -488,6 +458,50 @@ export async function resolveOwnerLoaders<TEnv>(
       loaderEntry.loader.$$id,
       loaderEntry.reverseScope,
     );
+
+  // skipLoaders: no loader runs and none is emitted. Each is registered
+  // instead, so a reader starts it as a MISS starts it, in its DSL scope
+  // under this owner: a route record leaves its pushes out (captureHandles)
+  // and a HIT's live run shows them once. The pin above holds as on a MISS:
+  // an orphan layout's handler pushes under the orphan.
+  if (pass.skipLoaders) {
+    for (let i = 0; i < loaderEntries.length; i++) {
+      const loaderEntry = loaderEntries[i]!;
+      registerDeferredLoader(ctx, loaderEntry.loader.$$id, shortCode, () =>
+        kickoff(loaderEntry, matchedIds[i]!),
+      );
+    }
+    return { segments: [], matchedIds: [] };
+  }
+
+  // FRESH: every loader is new; no decision is asked, traced or observed.
+  const toRun = fresh
+    ? undefined
+    : await loadersToRerun(pass, owner, belongsToRoute, matchedIds);
+
+  // Error context for wrapLoaderPromise: without it, a throwing DSL loader never
+  // fires createRouter({ onError }) (phase "loader") nor emits the loader.error
+  // telemetry event. A partial pass reports with isPartial.
+  const errorContext = fresh
+    ? buildLoaderErrorContext(ctx)
+    : { ...buildLoaderErrorContext(ctx), isPartial: true };
+
+  // FRESH: awaitBeforeFlush (loader(Def, { ssr: false })). A document render
+  // awaits these loaders before returning, so their data is settled, their
+  // handle pushes beat the barrier snapshot, and a thrown notFound()'s status
+  // write deterministically precedes Response construction. The ids must
+  // register on the request context BEFORE kickoff — rendered() checks the
+  // set to fail fast on the barrier cycle (segment resolution awaits the
+  // loader, the barrier awaits segment resolution, rendered() awaits the
+  // barrier), and the loader body can call rendered() before the await below
+  // is reached. Shell-capture renders await too: flagged loaders execute at
+  // capture (lane rule: see resolveLoaderData, loader-cache.ts), so their
+  // handle pushes must land in the prelude. A navigation evaluation never
+  // carries awaitBeforeFlush.
+  const awaitedIndices = fresh
+    ? registerAwaitBeforeFlushIds(loaderEntries)
+    : [];
+
   // The wrapped promise is contracted to never reject (wrapLoaderPromise): a
   // failed loader resolves with its error envelope and renders its own
   // per-loader boundary.
@@ -602,7 +616,7 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
       loaderEntries.every((le, i) =>
         seenIds.has(`${sc}D${i}.${le.loader.$$id}`),
       );
-    if (!allAlreadySeen && ownsLoaders(pass, entry)) {
+    if (!allAlreadySeen && ownsLoaders(entry)) {
       const { segments, matchedIds } = await resolveOwnerLoaders(
         pass,
         ownerOf(entry, shortCodeOverride),
@@ -879,7 +893,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
     // emitted either before or after the slot segment per loaderOrder.
     const resolveSlotLoaders =
       resolvedParallelEntries.has(parallelEntry.id) ||
-      !ownsLoaders(pass, parallelEntry)
+      !ownsLoaders(parallelEntry)
         ? undefined
         : async () => {
             const loaderResult = await resolveOwnerLoaders(
@@ -1274,7 +1288,7 @@ export async function resolveSegmentWithRevalidation<TEnv>(
 
   const belongsToRoute = entry.type === "route";
 
-  if (ownsLoaders(pass, entry)) {
+  if (ownsLoaders(entry)) {
     const loaderResult = await resolveOwnerLoaders(
       pass,
       ownerOf(entry),
@@ -1444,7 +1458,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   const segments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
 
-  if (ownsLoaders(pass, orphan)) {
+  if (ownsLoaders(orphan)) {
     const loaderResult = await resolveOwnerLoaders(
       pass,
       ownerOf(orphan),

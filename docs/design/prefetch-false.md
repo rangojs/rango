@@ -572,7 +572,7 @@ so the loader runs in the prefetch whatever its flag says. The rule is lazy
 deferral: a deferred loader is one nobody started by the end of resolution.
 
 Deferring a loader registers it and starts nothing. The registration
-(`PrefetchDeferral.deferredLoaders`, `registerDeferredLoader`) holds the
+(`InternalHandlerContext._deferredLoaders`, `registerDeferredLoader`) holds the
 segment that registers the loader and how resolution would have started it:
 `resolveLoaderData` with the loader's entry, its `cache()` binding included.
 When something reads the loader, a handler's `ctx.use()` or another loader's,
@@ -595,6 +595,13 @@ the `cache()`. On a HIT the page rendered the loader's fresh run while its
 segment carried the cached value, two values on one page, and the loader ran
 once more than on a plain navigation. Pinned by
 `src/testing/__tests__/prefetch-false.rsc-test.tsx` ("with its own cache()").
+
+A pass that skips loaders (`skipLoaders`: build time, and the background
+re-render of a route `cache()` record) registers every loader in the same
+table, so a handler's read starts it as its declaration there too. Started
+bare, the refresh's run was a handler-invoked loader whose handle pushes the
+record kept, and every HIT showed them twice. Pinned by
+`src/testing/__tests__/cached-route-handler-reads-loader.rsc-test.tsx`.
 
 Two reads are not redirected. A stale refresh's executor
 (`_runLoaderIsolated`) reads each loader fresh by design and never starts a
