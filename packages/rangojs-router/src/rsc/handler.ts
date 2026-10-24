@@ -761,7 +761,9 @@ export function createRSCHandler<
         params: reqCtx.params as Record<string, string>,
         handledByBoundary: true,
       });
-      if (router.telemetry) {
+      // A PPR shell capture's store inherits this onError
+      // (deriveShellCaptureContext); the capture sends nothing to the sink.
+      if (router.telemetry && !reqCtx._shellCaptureState?.run) {
         safeEmit(resolveSink(router.telemetry), {
           type: "handler.error",
           timestamp: performance.now(),

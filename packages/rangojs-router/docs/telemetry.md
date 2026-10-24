@@ -346,9 +346,8 @@ otherwise generates an internal id of the form `t-{base36 counter}`. The same
 request always reports the same id, a request that middleware rewrote with
 `throw rewrite()` and the re-render after a no-JS form post (progressive
 enhancement) included: their events and a stream-idle `request.timeout` carry
-the visitor's id. One exception remains: a PPR shell capture still emits a
-`loader.start` with no matching `loader.end`, and on a navigation capture it
-carries the id of the Request the capture builds.
+the visitor's id. A PPR shell capture, the background render after a shell
+miss, sends no events.
 
 | Event                     | Lifecycle                                             |
 | ------------------------- | ----------------------------------------------------- |
