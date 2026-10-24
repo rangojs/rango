@@ -712,7 +712,7 @@ function* shellServePlan<TEnv>(
       hit = {
         document,
         recapture:
-          cached.shouldRevalidate === true &&
+          !!cached.shouldRevalidate &&
           staleShellRecaptureDue(cached.entry, Date.now()),
       };
     }
