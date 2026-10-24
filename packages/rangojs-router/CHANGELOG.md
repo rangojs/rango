@@ -572,8 +572,11 @@ An uncached navigation sends none of them.
 the navigation replays the stored handler values of the segments it sends
 only. A layout whose `revalidate()` asks for a re-render is sent with its
 stored values, as before, and a `ppr` route's stored copies of a loader's
-pushes still follow the loader. A document request is unchanged. No change
-in your code.
+pushes still follow the loader. A loader that reads a handle with `ctx.get()`
+after `await ctx.rendered()` no longer sees a held layout's values on a
+navigation served from the record, as on an uncached one: read the value in
+a loader of its own, or give the layout a `revalidate()` that re-renders it.
+A document request is unchanged. No change in your code.
 
 ### Fixed: a navigation reports parallel slot and orphan layout handlers in Server-Timing and traces, as the document does
 

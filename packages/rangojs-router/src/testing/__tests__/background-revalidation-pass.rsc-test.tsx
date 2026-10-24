@@ -240,7 +240,9 @@ describe("a stale cache() record's background re-render", () => {
 
     // The client holds the layout, so the MISS writes the record by a
     // re-render (proactive caching), which runs no loader: the visitor's run
-    // is the only one.
+    // is the only one. The empty read pins rango-t195-c1 (an intercept
+    // loader's rendered() read misses the intercept's own push on a MISS but
+    // sees it on a HIT); update it when that is fixed.
     const miss = await open();
     expect(miss.ran).toHaveLength(1);
     expect(miss.shown).toEqual([expect.stringMatching(/^read:#\d+$/)]);
