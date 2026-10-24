@@ -21,9 +21,11 @@ export function isTainted(value: unknown): boolean {
 }
 
 /**
- * Symbol stamped on tainted ctx objects PASSED AS ARGUMENTS to a "use cache"
- * function during its execution. ctx.set(), ctx.header(), etc. check this
- * flag and throw if present — those side effects are lost on cache hit.
+ * Symbol stamped on tainted handler and middleware ctx objects PASSED AS
+ * ARGUMENTS to a "use cache" function during its execution. ctx.set(),
+ * ctx.header(), etc. check this flag and throw if present — those side
+ * effects are lost on cache hit. A request context passed as an argument is
+ * not stamped (registerCachedFunction in cache-runtime.ts).
  *
  * Argument objects only. Ambient access (cookies()/headers() and ctx methods
  * reached via getRequestContext()) is guarded by the AsyncLocalStorage scope

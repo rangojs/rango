@@ -930,6 +930,43 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(INSIDE_CACHE_EXEC in requestCtxObj).toBe(false);
   });
 
+  it("never stamps a request context passed as an argument, nor a pass derived from it", async () => {
+    // Every render pass's writers check the request's own context
+    // (server/render-pass.ts): a stamp there failed another pass's writes
+    // while the body ran.
+    const INSIDE_CACHE_EXEC = Symbol.for("rango:inside-cache-exec");
+    const requestCtxObj: any = {
+      [NOCACHE_SYMBOL]: true,
+      params: {},
+      pathname: "/test",
+      _cacheStore: {
+        getItem: vi.fn().mockResolvedValue(null),
+        setItem: vi.fn().mockResolvedValue(undefined),
+      },
+      _cacheProfiles: { default: { ttl: 60 } },
+      _handleStore: {
+        push: vi.fn(),
+        settled: Promise.resolve(),
+        getDataForSegment: vi.fn().mockReturnValue({}),
+      },
+      waitUntil: () => {},
+    };
+    requestCtxObj._requestRoot = requestCtxObj;
+    const pass = Object.create(requestCtxObj);
+    mockGetRequestContext.mockReturnValue(requestCtxObj);
+
+    let stamped: boolean[] = [];
+    const fn = async (...args: object[]) => {
+      stamped = args.map((arg) => INSIDE_CACHE_EXEC in arg);
+      return "value";
+    };
+    const cached = registerCachedFunction(fn, "request-ctx-arg", "default");
+    await cached(requestCtxObj, pass, makeTaintedCtx());
+
+    // A handler ctx argument is still stamped for the body's run.
+    expect(stamped).toEqual([false, false, true]);
+  });
+
   it("does not stamp RequestContext during stale background revalidation", async () => {
     // RequestContext is intentionally not stamped in background revalidation
     // to avoid polluting the shared foreground context. The foreground miss
