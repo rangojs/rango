@@ -162,6 +162,10 @@ describe("a navigation reports a page's handlers as its document does", () => {
   it("an orphan layout and its slot have the same rows and spans on a navigation as on the document", async () => {
     const document = await serve("/orphan", "document");
     const navigation = await serve("/orphan", "navigation");
+    // The orphan layout's own row, `d2-handler-…orphanlayout<n>`.
+    const orphanRow = expect.stringMatching(/orphanlayout\d+$/);
+    expect(document.rows).toContainEqual(orphanRow);
+    expect(navigation.rows).toContainEqual(orphanRow);
     expect(document.spans.some((id) => id.endsWith(".@aside"))).toBe(true);
     expect(navigation.rows).toEqual(document.rows);
     expect(navigation.spans).toEqual(document.spans);

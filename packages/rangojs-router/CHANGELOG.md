@@ -549,7 +549,8 @@ an HTTP redirect" warning on navigations only, not on document loads.
   loads too.
 
 What renders is unchanged. No change in your code. A dashboard that reads the
-per-segment rows of navigations sees the slot and orphan rows appear.
+per-segment rows of navigations sees the slot and orphan rows appear, and a
+`Static()` route's row disappear (documents never had it).
 
 ## 0.27.0 (2026-10-23)
 

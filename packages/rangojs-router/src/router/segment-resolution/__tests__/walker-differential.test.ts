@@ -858,6 +858,21 @@ function recordedDifferences(
   return out;
 }
 
+/**
+ * The segments a walk meters, by segment id: each `handler:<id>` metric's
+ * `<id>` is a layout's or route's namespace, or a slot's `parallelName`.
+ */
+function meteredSegments(walk: Walk): string[] {
+  const ids = new Map<unknown, string>();
+  for (const s of walk.segments) {
+    if (s.type === "parallel") ids.set(s.parallelName, s.id as string);
+    else if (s.type === "layout" || s.type === "route") {
+      ids.set(s.namespace, s.id as string);
+    }
+  }
+  return walk.recorded.metered.map((id) => ids.get(id) ?? `?${id}`).sort();
+}
+
 function differences(
   fresh: Walk,
   revalidating: Walk,
@@ -973,6 +988,11 @@ interface Case extends Partial<PassKind> {
   expected: Differences;
   /** The differences in what the walks report (`Walk.recorded`); none by default. */
   recorded?: Differences;
+  /**
+   * The segments each walk meters (a `handler:<id>` metric), by segment id;
+   * both walks alike. Unchecked when absent.
+   */
+  metered?: string[];
 }
 
 const CASES: Case[] = [
@@ -1069,6 +1089,7 @@ const CASES: Case[] = [
     expected: {
       "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R7L0.@aside", "M0L0L0R7"],
     },
+    metered: ["M0L0", "M0L0L0", "M0L0L0R7", "M0L0L0R7L0", "M0L0L0R7L0.@aside"],
   },
   {
     name: "routeless layout nested in a cache() marker (#918), route before the marker",
@@ -1251,6 +1272,8 @@ const CASES: Case[] = [
       'M0L0L0R9 route "static hit"',
     ],
     expected: {},
+    // A static hit runs no handler: neither walk meters the route.
+    metered: ["M0L0", "M0L0L0"],
   },
   {
     name: "streamed slot handler returning a Response",
@@ -1282,6 +1305,7 @@ describe("fresh vs revalidating walker, nothing held by the client", () => {
         fresh: freshLines,
         expected,
         recorded = {},
+        metered,
       }) => {
         const options = { isSSR, build, intercept, skipLoaders, aboveMarker };
         const fresh = await walk("fresh", pathname, options);
@@ -1309,6 +1333,12 @@ describe("fresh vs revalidating walker, nothing held by the client", () => {
         expect(recordedDifferences(fresh, revalidating, options)).toEqual(
           recorded,
         );
+        if (metered) {
+          expect({
+            fresh: meteredSegments(fresh),
+            revalidating: meteredSegments(revalidating),
+          }).toEqual({ fresh: metered, revalidating: metered });
+        }
       },
     );
   });
