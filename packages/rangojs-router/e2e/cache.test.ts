@@ -119,6 +119,29 @@ async function openWhenIntercept(
   await expect(page.getByTestId(shown)).toHaveCount(0);
 }
 
+/**
+ * /cache-intercept-when: open the drawer, the second intercept declared, from
+ * /other and call its server action. The answer keeps the drawer, with its
+ * loader re-run, and opens nothing else: the action re-rendered the first
+ * intercept declared, the modal, next to the drawer, and the drawer kept its
+ * loader data (rango-t200).
+ */
+async function actFromWhenDrawer(page: Page): Promise<void> {
+  await page.getByTestId("ciw-other-item").click();
+  await expect(page.getByTestId("ciw-drawer")).toHaveText("drawer a");
+  const runs = Number(await page.getByTestId("ciw-drawer-runs").textContent());
+  await page.getByTestId("ciw-drawer-action").click();
+  await expect
+    .poll(async () =>
+      Number(await page.getByTestId("ciw-drawer-runs").textContent()),
+    )
+    .toBeGreaterThan(runs);
+  await expect(page.getByTestId("ciw-modal")).toHaveCount(0);
+  await expect(page.getByTestId("ciw-drawer")).toHaveText("drawer a");
+  await expect(page.getByTestId("ciw-other")).toBeVisible();
+  await expect(page).toHaveURL(/\/cache-intercept-when\/item\/a$/);
+}
+
 /** Switch between the two source pages with a client navigation. */
 async function switchWhenSource(
   page: Page,
@@ -845,6 +868,19 @@ test.describe("cache-intercept-routes", () => {
       "/cache-intercept-when/item/a",
     );
   });
+
+  // rango-t200: an action skipped when() and re-rendered the first intercept
+  // declared for the route, whichever was open.
+  test("an action from the second intercept declared keeps that intercept, its loader re-run, and opens no other", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-intercept-when/other"));
+    await waitForHydration(page);
+
+    await actFromWhenDrawer(page);
+  });
 });
 
 // ============================================================================
@@ -939,6 +975,18 @@ test.describe("cache-intercept-routes (production)", () => {
     await openWhenIntercept(page, "index");
     await switchWhenSource(page, "index");
     await openWhenIntercept(page, "other");
+  });
+
+  // rango-t200: see the dev describe's case.
+  test("an action from the second intercept declared keeps that intercept, its loader re-run, and opens no other", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cache-intercept-when/other"));
+    await waitForHydration(page);
+
+    await actFromWhenDrawer(page);
   });
 });
 

@@ -1582,6 +1582,12 @@ selector returns true for the navigation's `from`/`to` locations
 soft navigation renders the full target page with no intercept. Pinned by the
 `[I1]`/`[W1]` semantic matrix rows.
 
+A server action from an open intercept re-renders the intercept whose slot the
+client holds (`findInterceptForRoute` in `router/intercept-resolution.ts`),
+not the first one declared for the route. `when()` runs only to choose between
+held intercepts that share a slot, with `from` the intercept source the action
+sends. Pinned by `src/testing/__tests__/action-intercept-selection.rsc-test.tsx`.
+
 ### Async and streaming limits
 
 Async server components inherit the request ALS through render and streaming.

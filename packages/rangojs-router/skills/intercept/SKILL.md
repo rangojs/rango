@@ -272,9 +272,16 @@ gives `from.url.pathname === "/list/open"`, not `/item/1`. That differs from
 `transition({ when })`'s `from`, which is always the committed location on
 screen. `routeName` is set for named routes only. Pass an array of predicates
 for AND logic (all must return true). Omit `when` entirely and the intercept
-always activates. `when` is not re-evaluated during action revalidation, so
-an open modal stays open after an action. A selector that throws does not
-intercept: the full page renders and the error is logged with the route name.
+always activates. A selector that throws does not intercept: the full page
+renders and the error is logged with the route name.
+
+A server action from an open intercept re-renders that intercept, the one
+whose slot the page holds, and opens no other intercept that targets the
+route. Its `when` is not evaluated again, so the intercept stays open after
+the action even when its `when` would now reject. Two intercepts on one
+layout that fill the same slot share that slot, so between them the action
+evaluates `when` again, with `from` the intercept's source page; when neither
+passes, the first declared renders.
 
 The server learns `from` from the `X-RSC-Router-Client-Path` header, which the
 rango client sends on every navigation. A partial request without it falls
