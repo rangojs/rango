@@ -68,7 +68,6 @@ import { isLayoutLoaderCopy } from "../../client-urls/layout-loader-copies.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeSegmentHandler } from "../instrument.js";
 import { withReverseScope } from "../handler-context.js";
-import { runInSegmentTagScope } from "../../cache/cache-tag.js";
 import { trackStreamedHandler } from "./streamed-handler-boundary.js";
 import {
   track,
@@ -759,7 +758,6 @@ async function resolveParallelSlotComponent<TEnv>(
     boundaryEntry,
   } = args;
   const { context, deps, routeKey, params } = pass;
-  const fresh = pass.client === FRESH;
 
   let component: ReactNode | undefined;
   let handlerRan = false;
@@ -783,28 +781,21 @@ async function resolveParallelSlotComponent<TEnv>(
         parallelId;
       handlerRan = true;
       const slotContext = withReverseScope(context, parallelEntry.reverseScope);
-      // FRESH meters the slot handler (its perf metric) and runs it inside its
-      // rango.handler span; a partial pass runs it in the slot's tag scope.
-      const doneHandler = fresh
-        ? track(`handler:${parallelEntry.id}.${slot}`, 2)
-        : undefined;
+      const doneHandler = track(`handler:${parallelEntry.id}.${slot}`, 2);
       const run = () =>
         typeof handler !== "function"
           ? handler
-          : fresh
-            ? observeSegmentHandler(
-                parallelId,
-                `${parallelEntry.id}.${slot}`,
-                handler,
-                slotContext,
-              )
-            : runInSegmentTagScope(parallelId, handler, slotContext);
+          : observeSegmentHandler(
+              parallelId,
+              `${parallelEntry.id}.${slot}`,
+              handler,
+              slotContext,
+            );
       if (hasLoadingFallback) {
         const result = run();
         if (result instanceof Promise) {
-          // FRESH: no streamed-Response warning for a slot.
-          if (!fresh) warnOnStreamedResponse(result, parallelId);
-          if (doneHandler) result.finally(doneHandler).catch(() => {});
+          warnOnStreamedResponse(result, parallelId);
+          result.finally(doneHandler).catch(() => {});
           component = trackStreamedHandler(deps, result, {
             boundaryEntry,
             segmentId: parallelId,
@@ -815,13 +806,13 @@ async function resolveParallelSlotComponent<TEnv>(
             recover: !pass.throwOnError,
           });
         } else {
-          doneHandler?.();
+          doneHandler();
           component = result as ReactNode;
         }
       } else {
         // A static value (a Promise included) goes to render as is.
         component = typeof handler === "function" ? await run() : handler;
-        doneHandler?.();
+        doneHandler();
       }
     }
   }
@@ -1146,18 +1137,12 @@ async function entryRevalidates<TEnv>(
 async function resolveRouteComponent<TEnv>(
   pass: ResolutionPass<TEnv>,
   entry: Extract<EntryData, { type: "route" }>,
-  fresh: boolean,
 ): Promise<ReactNode | { content: ReactNode }> {
   const { context, params, routeKey, actionContext } = pass;
-  // A partial pass meters a static hit as a handler run; FRESH meters a
-  // route's handler only when it runs.
-  let doneHandler = fresh ? undefined : track(`handler:${entry.id}`, 2);
+  // A static hit runs no handler: no handler metric, no span.
   const staticComponent = await tryStaticHandler(entry, entry.shortCode);
-  if (staticComponent !== undefined) {
-    doneHandler?.();
-    return staticComponent;
-  }
-  doneHandler ??= track(`handler:${entry.id}`, 2);
+  if (staticComponent !== undefined) return staticComponent;
+  const doneHandler = track(`handler:${entry.id}`, 2);
   // For Passthrough routes at runtime, use the live handler instead of
   // the build handler. At build time (context.build === true), always
   // use the build handler from entry.handler.
@@ -1229,7 +1214,7 @@ export async function resolveEntryHandler<TEnv>(
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         entry.shortCode;
       if (entry.type === "route") {
-        component = await resolveRouteComponent(pass, entry, fresh);
+        component = await resolveRouteComponent(pass, entry);
       } else {
         const doneHandler = track(`handler:${entry.id}`, 2);
         component = await resolveLayoutComponent(entry, context);
@@ -1498,14 +1483,9 @@ export async function resolveOrphanLayout<TEnv>(
     // Below a unit a prefetch skipped: the orphan goes with it.
     deferred = deferUnit(context, orphan.shortCode, "below");
     if (!deferred) {
-      if (!fresh) {
-        component = await resolveLayoutComponent(orphan, context);
-      } else {
-        // FRESH meters the orphan's handler; a partial pass does not.
-        const doneHandler = track(`handler:${orphan.id}`, 2);
-        component = await resolveLayoutComponent(orphan, context);
-        doneHandler();
-      }
+      const doneHandler = track(`handler:${orphan.id}`, 2);
+      component = await resolveLayoutComponent(orphan, context);
+      doneHandler();
     }
   }
 

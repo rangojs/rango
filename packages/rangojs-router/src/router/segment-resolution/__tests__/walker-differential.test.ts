@@ -17,8 +17,8 @@
  * rango.handler spans (observeSegmentHandler), the streamed-Response
  * warnings (warnOnStreamedResponse) and every other console.warn. Each case
  * pins how the two passes differ there (`Case.recorded`), named the same
- * way: the FRESH branches that keep the full match's own reporting differ
- * there and nowhere in the payload.
+ * way: both passes meter, span and warn for every handler they run, so they
+ * differ there only where one of them skips a handler.
  *
  * Besides a request's walk, the FRESH passes with options: build time
  * (prerender-match.ts, `skipLoaders` and `throwOnError`), the background
@@ -767,34 +767,7 @@ type Exception =
    * normalizes it to null. cache-scope.ts refuses a document record whose
    * layout component is null.
    */
-  | "void layout"
-  /**
-   * Recorded. The FRESH branch of resolveParallelSlotComponent meters a
-   * slot's handler (`handler:<parallel>.<slot>`); the partial pass does not.
-   */
-  | "slot handler metered"
-  /**
-   * Recorded. The FRESH branch of resolveParallelSlotComponent runs a slot's
-   * handler in its rango.handler span (observeSegmentHandler); the partial
-   * pass runs it in the slot's tag scope only (runInSegmentTagScope).
-   */
-  | "slot handler span"
-  /**
-   * Recorded. The partial pass warns when a streamed slot handler returns a
-   * Response (warnOnStreamedResponse); the FRESH pass does not.
-   */
-  | "slot Response warning"
-  /**
-   * Recorded. The FRESH branch of resolveOrphanLayout meters an orphan
-   * layout's handler (`handler:<id>`); the partial pass does not.
-   */
-  | "orphan handler metered"
-  /**
-   * Recorded. resolveRouteComponent: the partial pass meters a route's
-   * static hit (tryStaticHandler) as a handler run; the FRESH pass meters a
-   * route's handler only when it runs.
-   */
-  | "static hit metered";
+  | "void layout";
 
 /**
  * The differences that stay inside the server or the render: the passes may
@@ -821,8 +794,7 @@ function onlyIn(a: readonly string[], b: readonly string[]): string[] {
  * The differences in `Walk.recorded`, each shown by the id of the segment it
  * belongs to (a slot's `parallelName`, or its id for a warning; a layout's
  * `layoutName`; a route's namespace) and named by that segment's kind. A
- * chain layout is metered by both passes, so only an orphan differs. A route
- * whose handler the partial pass never runs (under an intercept, or a
+ * route whose handler the partial pass never runs (under an intercept, or a
  * build-time loader error) is metered and spanned by the FRESH pass only.
  */
 function recordedDifferences(
@@ -868,15 +840,10 @@ function recordedDifferences(
   const f = fresh.recorded;
   const r = revalidating.recorded;
   each(onlyIn(f.metered, r.metered), "metered by fresh only", {
-    slot: "slot handler metered",
-    layout: "orphan handler metered",
     route: skippedRoute,
   });
-  each(onlyIn(r.metered, f.metered), "metered by revalidating only", {
-    route: "static hit metered",
-  });
+  each(onlyIn(r.metered, f.metered), "metered by revalidating only", {});
   each(onlyIn(f.spans, r.spans), "span by fresh only", {
-    slot: "slot handler span",
     route: skippedRoute,
   });
   each(onlyIn(r.spans, f.spans), "span by revalidating only", {});
@@ -884,7 +851,7 @@ function recordedDifferences(
   each(
     onlyIn(r.warnedResponse, f.warnedResponse),
     "warned by revalidating only",
-    { slot: "slot Response warning" },
+    {},
   );
   each(onlyIn(f.warnedOther, r.warnedOther), "warned by fresh only", {});
   each(onlyIn(r.warnedOther, f.warnedOther), "warned by revalidating only", {});
@@ -1086,10 +1053,6 @@ const CASES: Case[] = [
       ],
       "slot loading tag": ["M0L0L0L0D0.walker#Slot"],
     },
-    recorded: {
-      "slot handler metered": ["metered by fresh only: M0L0L0L0.@side"],
-      "slot handler span": ["span by fresh only: M0L0L0L0.@side"],
-    },
   },
   {
     name: "orphan layout with a slot, inheriting the route's loaders",
@@ -1106,11 +1069,6 @@ const CASES: Case[] = [
     expected: {
       "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R7L0.@aside", "M0L0L0R7"],
     },
-    recorded: {
-      "orphan handler metered": ["metered by fresh only: M0L0L0R7L0"],
-      "slot handler metered": ["metered by fresh only: M0L0L0R7L0.@aside"],
-      "slot handler span": ["span by fresh only: M0L0L0R7L0.@aside"],
-    },
   },
   {
     name: "routeless layout nested in a cache() marker (#918), route before the marker",
@@ -1125,12 +1083,6 @@ const CASES: Case[] = [
     ],
     expected: {
       "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0L1", "M0L0L0L1R0"],
-    },
-    recorded: {
-      "orphan handler metered": [
-        "metered by fresh only: M0L0L0L1C0",
-        "metered by fresh only: M0L0L0L1C0L0",
-      ],
     },
   },
   {
@@ -1152,9 +1104,6 @@ const CASES: Case[] = [
         "M0L0L0L1C0",
         "M0L0L0L1C0R0",
       ],
-    },
-    recorded: {
-      "orphan handler metered": ["metered by fresh only: M0L0L0L1C0L0"],
     },
   },
   {
@@ -1302,9 +1251,6 @@ const CASES: Case[] = [
       'M0L0L0R9 route "static hit"',
     ],
     expected: {},
-    recorded: {
-      "static hit metered": ["metered by revalidating only: M0L0L0R9"],
-    },
   },
   {
     name: "streamed slot handler returning a Response",
@@ -1317,13 +1263,6 @@ const CASES: Case[] = [
       'M0L0L0L4R0 route "slot response"',
     ],
     expected: {},
-    recorded: {
-      "slot handler metered": ["metered by fresh only: M0L0L0L4.@response"],
-      "slot handler span": ["span by fresh only: M0L0L0L4.@response"],
-      "slot Response warning": [
-        "warned by revalidating only: M0L0L0L4.@response",
-      ],
-    },
   },
 ];
 
