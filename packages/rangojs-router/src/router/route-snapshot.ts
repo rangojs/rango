@@ -20,6 +20,7 @@ import { loadManifest } from "./manifest.js";
 import { collectRouteMiddleware } from "./middleware.js";
 import type { CollectedMiddleware } from "./middleware-types.js";
 import { traverseBack } from "./pattern-matching.js";
+import { localRouteName } from "../route-name.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 
 /**
@@ -170,10 +171,6 @@ export async function resolveRoute<TEnv = any>(
     matched.responseType ||
     (manifestEntry.type === "route" ? manifestEntry.responseType : undefined);
 
-  const localRouteName = matched.routeKey.includes(".")
-    ? matched.routeKey.split(".").pop()!
-    : matched.routeKey;
-
   return {
     type: "match",
     snapshot: {
@@ -181,7 +178,7 @@ export async function resolveRoute<TEnv = any>(
       manifestEntry,
       entries,
       routeKey: matched.routeKey,
-      localRouteName,
+      localRouteName: localRouteName(matched.routeKey),
       params: matched.params,
       routeMiddleware,
       cacheScope,

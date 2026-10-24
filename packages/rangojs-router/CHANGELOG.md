@@ -557,6 +557,27 @@ route's own segments are sent as before. A layout whose `revalidate()` asks
 for a re-render when the params change gets the baked copy, as it gets a live
 render on a live route. No change in your code.
 
+### Fixed: a navigation served from a `cache()` record keeps the layout's handle values on screen
+
+**Before.** A client-side navigation served from a route's `cache()` record
+kept the layouts the browser held, but sent their handle values again from
+the record. A `/list` to `/item/1` navigation, or one that opens an intercept
+over `/item/1`, replaced the breadcrumbs a held layout pushed, read with
+`useHandle`, with the values the record stored, which differ from the ones on
+screen when a crumb carries render-time data. A loader that reads a handle
+with `ctx.get()` after `await ctx.rendered()` read those stored values too.
+An uncached navigation sends none of them.
+
+**Now.** A held layout keeps its handle values, as on an uncached navigation:
+the navigation replays the stored handler values of the segments it sends
+only. A layout whose `revalidate()` asks for a re-render is sent with its
+stored values, as before, and a `ppr` route's stored copies of a loader's
+pushes still follow the loader. A loader that reads a handle with `ctx.get()`
+after `await ctx.rendered()` no longer sees a held layout's values on a
+navigation served from the record, as on an uncached one: read the value in
+a loader of its own, or give the layout a `revalidate()` that re-renders it.
+A document request is unchanged. No change in your code.
+
 ### Fixed: a navigation reports parallel slot and orphan layout handlers in Server-Timing and traces, as the document does
 
 **Before.** A client navigation or an action's revalidation left out two
@@ -673,6 +694,49 @@ answered from the PPR shell (`x-rango-ppr-replay: HIT`) instead of the
 document's record (`BYPASS; reason=explicit-cache-hit`), as on a `ppr` route
 without a `key()`. The PPR shell partition and a response route's entry are
 unchanged. No change in your code.
+
+### Added: the build warns when an intercept over a `Prerender()` route renders live
+
+An intercept a navigation selects over a `Prerender()` route is served from
+the build's bake, except in three cases where the build does not bake it and
+it renders live: two intercepts on one layout fill the same slot; its handler
+or layout returned a `Response` at build time; or it targets the route by its
+name inside an `include()` (`"item"` for the route `"shop.item"`, or for a
+route named `"item"` in an unnamed `include()`), which only a fallback
+selects and the build does not bake. Live, its handler
+runs per request with the request's context, so a handler that only works
+with `BuildContext` (a file read, say) fails there. Until now nothing said so.
+
+`vite build` now prints one warning per route and slot (a route in an unnamed
+`include()` is named by its URL):
+
+```
+[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext. To pre-render it, give each intercept its own slot.
+```
+
+Each warning ends with what pre-renders the intercept: give each intercept its
+own slot, return a node from its handler or layout at build time, or declare it
+inside the `include()` as `".item"`. What renders is unchanged, and no change
+in your code is needed.
+
+### Fixed: an orphan layout's handle values belong to that layout
+
+**Before.** An orphan layout (a layout with no routes, declared among a
+layout's children or a route's) whose handler pushed to a handle with
+`ctx.use(Handle)`, and which declared no loader of its own, filed its values
+under the segment that ran before it: the parent layout on a document or on a
+navigation that re-ran that layout, the route when a route declared the
+layout. A `cache()` record and a `Prerender()` bake stored them there too. A
+breadcrumb read with `useHandle` listed a route's orphan layout's value after
+the route's own, though the layout wraps the route. On a navigation that kept
+the parent layout mounted, when the orphan's `revalidate()` re-rendered it,
+the push threw `Handle "…" used outside of handler context` and the
+navigation rendered an error boundary.
+
+**Now.** The orphan layout's values are filed under the orphan layout on every
+request, as a regular layout's are: the document, every navigation, a
+`cache()` record and its HITs, and a `Prerender()` bake (the next build bakes
+them under the layout). No change in your code.
 
 ## 0.27.0 (2026-10-23)
 

@@ -1,4 +1,5 @@
-import { createRouter, Prerender, Static } from "@rangojs/router";
+import { createRouter, Prerender, Static, urls } from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
 import { serverWhen } from "./server-when.js";
 
 function HomePage() {
@@ -39,6 +40,31 @@ export const StaticBoom = Static(() => {
   return <div data-testid="static-boom-ok" />;
 });
 
+// A Prerender() route named "item" in an unnamed include(), and an intercept
+// outside it that targets "item". The route's key is internal
+// ("$prefix_0.item"), so the intercept reaches it only through the
+// local-name fallback and the build does not bake it: the build warns once
+// for the route's two URLs, naming it by its URL. Registered only when
+// RANGO_TEST_PRERENDER_LIVE_INTERCEPT is set.
+const shopPatterns = urls(({ path }) => [
+  path(
+    "/item/:id",
+    Prerender(
+      async () => [{ id: "1" }, { id: "2" }],
+      () => <div data-testid="shop-item">shop item</div>,
+    ),
+    { name: "item" },
+  ),
+]);
+
+function ShopShell() {
+  return (
+    <main>
+      <Outlet />
+    </main>
+  );
+}
+
 type AppRoutes = typeof router.routeMap;
 
 declare global {
@@ -53,19 +79,30 @@ declare global {
 // RANGO_TEST_SERVER_WHEN is set, and unnamed so the static route-type parser
 // leaves the committed gen file alone.
 
-export const router = createRouter({}).routes(({ path, transition }) => [
-  path("/", HomePage, { name: "home" }),
-  ...(process.env.RANGO_TEST_SERVER_WHEN
-    ? [
-        path("/server-when/:id", HomePage, () => [
-          transition({ when: serverWhen }),
-        ]),
-      ]
-    : []),
-  ...(process.env.RANGO_TEST_PRERENDER_ERROR
-    ? [path("/prerender-boom", PrerenderBoom)]
-    : []),
-  ...(process.env.RANGO_TEST_PRERENDER_CHILD_ERROR
-    ? [path("/prerender-child-boom", PrerenderChildBoom)]
-    : []),
-]);
+export const router = createRouter({}).routes(
+  ({ path, transition, layout, include, intercept }) => [
+    path("/", HomePage, { name: "home" }),
+    ...(process.env.RANGO_TEST_SERVER_WHEN
+      ? [
+          path("/server-when/:id", HomePage, () => [
+            transition({ when: serverWhen }),
+          ]),
+        ]
+      : []),
+    ...(process.env.RANGO_TEST_PRERENDER_ERROR
+      ? [path("/prerender-boom", PrerenderBoom)]
+      : []),
+    ...(process.env.RANGO_TEST_PRERENDER_CHILD_ERROR
+      ? [path("/prerender-child-boom", PrerenderChildBoom)]
+      : []),
+    ...(process.env.RANGO_TEST_PRERENDER_LIVE_INTERCEPT
+      ? [
+          layout(ShopShell, () => [
+            include("/shop", shopPatterns),
+            // @ts-expect-error a route in an unnamed include() has no public name; the match still selects this through the local-name fallback.
+            intercept("@modal", "item", () => <dialog>item modal</dialog>),
+          ]),
+        ]
+      : []),
+  ],
+);

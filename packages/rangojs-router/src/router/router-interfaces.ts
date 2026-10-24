@@ -11,6 +11,7 @@ import type { ExecutionContext } from "../server/request-context.js";
 import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
+import type { LiveIntercept } from "./prerender-match.js";
 import type { ExtractParams } from "../types/route-config.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RangoOptions, RootLayoutProps } from "./router-options.js";
@@ -545,6 +546,8 @@ export interface RangoInternal<
     interceptSegments?: SerializedSegmentData[];
     /** RSC-encoded handle map for the intercept artifact (see matchForPrerender). */
     interceptHandles?: string;
+    /** The intercepts the intercept artifact does not hold (see matchForPrerender). */
+    liveIntercepts?: LiveIntercept[];
     passthrough?: true;
   } | null>;
 

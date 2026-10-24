@@ -3,20 +3,30 @@ import { Link } from "@rangojs/router/client";
 import { CacheInterceptLayout } from "../components/layouts/index.js";
 import { InterceptHeldCrumbs } from "./intercept-held.defs.js";
 import { InterceptHeldCrumbsBar } from "./intercept-held.client.js";
-import { CacheInterceptSharedLoader } from "./cache-intercept-crumbs.defs.js";
+import {
+  CacheInterceptLayoutStamp,
+  CacheInterceptSharedLoader,
+} from "./cache-intercept-crumbs.defs.js";
+import { CacheInterceptStampCrumb } from "./cache-intercept-crumbs.client.js";
 
 // e2e/cache.test.ts "cache-intercept-routes" (rango-t184). cache() covers the
 // layout, so the second intercept navigation from the index is a HIT of the
 // intercept: record. A loader the detail route and its intercept both declare
 // pushes a crumb the layout renders: the HIT shows the crumbs the MISS shows.
+// The layout's render stamp, shown and pushed, tells which render the client
+// holds: a HIT keeps the one on screen, not the record's (rango-t195).
 export const cacheInterceptCrumbsPatterns = urls(
   ({ path, layout, intercept, cache, loader }) => [
     cache({ ttl: 600 }, () => [
       layout(
         (ctx) => {
           ctx.use(InterceptHeldCrumbs)("layout");
+          const renderTime = new Date().toISOString();
+          ctx.use(CacheInterceptLayoutStamp)(renderTime);
           return (
             <>
+              <p data-testid="cic-layout-render-time">{renderTime}</p>
+              <CacheInterceptStampCrumb />
               <InterceptHeldCrumbsBar />
               <CacheInterceptLayout />
             </>

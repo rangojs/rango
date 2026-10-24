@@ -179,29 +179,39 @@ export type OwnedPushDelivery = (loaderId: string) => RecordAuthority;
  * owner. Neither claims its loader, so the loader's own cache() HIT still
  * delivers (the pushes holding a promise a restored copy lets through, or its
  * entry's pushes in a placeholder's place).
+ *
+ * `sent` (a partial request) names the segments the response sends. Any
+ * other segment is kept with its handler's values, as on a live walk: only
+ * its loaders' copies are restored, which follow their loader as above.
  */
 export function restoreHandles(
   handles: Record<string, SegmentHandleData>,
   handleStore: HandleStore,
   owners?: HandleOwners,
   owned?: OwnedPushDelivery,
+  sent?: ReadonlySet<string>,
 ): void {
   for (const [segId, segHandles] of Object.entries(handles)) {
     if (Object.keys(segHandles).length === 0) continue;
     const segOwners = owners?.[segId];
+    const kept = sent !== undefined && !sent.has(segId);
     if (!segOwners) {
-      handleStore.replaySegmentData(segId, segHandles);
+      if (!kept) handleStore.replaySegmentData(segId, segHandles);
       continue;
     }
     const cleared: SegmentHandleData = {};
-    for (const handleName in segHandles) cleared[handleName] = [];
+    for (const handleName in segHandles) {
+      if (!kept || segOwners[handleName]?.some(Boolean)) {
+        cleared[handleName] = [];
+      }
+    }
     handleStore.replaySegmentData(segId, cleared);
     for (const [handleName, values] of Object.entries(segHandles)) {
       const valueOwners = segOwners[handleName];
       for (let i = 0; i < values.length; i++) {
         const owner = valueOwners?.[i];
         if (!owner) {
-          handleStore.push(handleName, segId, values[i]);
+          if (!kept) handleStore.push(handleName, segId, values[i]);
           continue;
         }
         const authority = owned?.(owner);
@@ -220,13 +230,15 @@ export function restoreHandles(
  * (with or without a handles blob: a pinned loader whose capture pushed
  * nothing has no copy, and its run must still add no settled push), then
  * decode and restoreHandles. `keepIds` limits the restore to the segments a
- * boundary-scoped scope serves. A decode failure skips the restore.
+ * boundary-scoped scope serves; `sent` is restoreHandles'. A decode failure
+ * skips the restore.
  */
 export async function restoreRecordHandles(
   handleStore: HandleStore,
   record: { handles?: string; handleOwners?: HandleOwners },
   owned: OwnedPushDelivery | undefined,
   keepIds?: ReadonlySet<string>,
+  sent?: ReadonlySet<string>,
 ): Promise<void> {
   if (owned) handleStore.setRecordAuthority(owned);
   if (!record.handles) return;
@@ -237,7 +249,7 @@ export async function restoreRecordHandles(
       if (!keepIds.has(id)) delete decoded[id];
     }
   }
-  restoreHandles(decoded, handleStore, record.handleOwners, owned);
+  restoreHandles(decoded, handleStore, record.handleOwners, owned, sent);
 }
 
 /**

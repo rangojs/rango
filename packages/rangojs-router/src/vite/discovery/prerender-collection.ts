@@ -18,6 +18,7 @@ import {
   notifyOnError,
   resolvePrerenderError,
   stageBuildAssetModule,
+  warnLiveIntercepts,
 } from "../utils/prerender-utils.js";
 import type { DiscoveryState } from "./state.js";
 import { createRangoDebugger, NS } from "../debug.js";
@@ -251,6 +252,7 @@ export async function expandPrerenderRoutes(
   const manifestEntries: Record<string, string> = {};
   let doneCount = 0;
   let skipCount = 0;
+  const warnedLiveIntercepts = new Set<string>();
   // #587: a render error reaches here (matchForPrerender now re-throws it rather
   // than baking the error boundary). Default "fail" fails the build; "warn" logs
   // and skips baking the URL.
@@ -320,6 +322,13 @@ export async function expandPrerenderRoutes(
             const elapsed = (performance.now() - startUrl).toFixed(0);
             console.log(
               `[rango]   OK   ${entry.urlPath.padEnd(40)} (${elapsed}ms)`,
+            );
+            warnLiveIntercepts(
+              warnedLiveIntercepts,
+              routerId,
+              result.routeName,
+              entry.urlPath,
+              result.liveIntercepts,
             );
             doneCount++;
             break;
