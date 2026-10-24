@@ -342,8 +342,10 @@ showed on the MISS and were missing on every HIT. The intercept variant a
 `Prerender()` route bakes was served the same way.
 
 **Now.** A HIT runs only the intercept's loaders, as the MISS does: it shows
-the MISS's handle values, and the route's loaders neither run nor appear in
-the response. No change in your code.
+every handle value the MISS shows, and the route's loaders neither run nor
+appear in the response. Inside the intercept, a HIT can still list a loader's
+value after the handler's where the MISS lists it before. No change in your
+code.
 
 ## 0.27.0 (2026-10-23)
 

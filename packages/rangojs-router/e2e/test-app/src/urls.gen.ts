@@ -42,6 +42,8 @@ export const routes = {
   "buildSkip.article": "/build-skip/:slug",
   "buildSkip.staticSkip": "/build-skip/static-skip",
   "buildSkip.workingStatic": "/build-skip/working-static",
+  "cacheInterceptCrumbs.index": "/cache-intercept-crumbs",
+  "cacheInterceptCrumbs.item": "/cache-intercept-crumbs/item/:id",
   "cacheIsolation.authKeyed": "/cache-isolation/auth-keyed",
   "cacheIsolation.conditionGated": "/cache-isolation/condition-gated",
   "cacheIsolation.noAuthKey": "/cache-isolation/no-auth-key",
