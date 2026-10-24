@@ -174,7 +174,7 @@ describe("cache() key() results are namespaced (#975)", () => {
     const defaults = [
       "doc:localhost/pricing",
       "partial:localhost/pricing",
-      "intercept:localhost/pricing",
+      "intercept:M0L0.@modal~0:localhost/pricing",
       "doc:localhost/a|b",
       "doc:localhost/key:a",
     ];

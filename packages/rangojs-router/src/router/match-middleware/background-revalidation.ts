@@ -104,6 +104,7 @@
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
+import { interceptRecordKey } from "../intercept-resolution.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
@@ -238,7 +239,7 @@ export async function rerenderAndCacheRoute<TEnv>(
       ctx.pathname,
       ctx.matched.params,
       segments,
-      ctx.isIntercept,
+      interceptRecordKey(ctx.interceptResult),
       start,
     );
     return segments.length;
