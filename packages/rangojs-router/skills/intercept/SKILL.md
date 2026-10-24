@@ -498,7 +498,10 @@ Build-time behavior:
 - The intercept handler (`<ProductModal />`) is resolved with BuildContext
 - Result is stored under the key `"detail/paramHash/i"` (intercept variant)
 - `when` config conditions are skipped at build time (all intercepts pre-rendered unconditionally)
-- `when` is still evaluated at runtime by the intercept-resolution middleware
+- `when` is still evaluated at runtime by the intercept-resolution middleware,
+  and a navigation shows only the intercept it selected
+- Two intercepts on one layout that fill the same slot are not pre-rendered:
+  they render live
 
 Runtime behavior:
 

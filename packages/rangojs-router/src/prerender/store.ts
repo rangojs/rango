@@ -178,6 +178,33 @@ export function interceptVariantSegments(
 }
 
 /**
+ * The intercept variant as served under the intercept the match selected
+ * (findInterceptForRoute): its main segments and that intercept's slot,
+ * `slotId` in `intercept:<routeName>`. The build bakes every intercept that
+ * can target the route, since it cannot evaluate when(). Null when the
+ * variant does not hold that slot: the request renders live. The handles
+ * string is kept whole; decodeStoredEntry (cache-lookup.ts) replays only the
+ * served segments' pushes.
+ */
+export function selectInterceptVariant(
+  entry: PrerenderEntry,
+  slotId: string,
+  routeName: string,
+): PrerenderEntry | null {
+  const namespace = `intercept:${routeName}`;
+  let found = false;
+  const segments = entry.segments.filter(({ metadata }) => {
+    if (!metadata.namespace?.startsWith("intercept:")) return true;
+    if (metadata.id !== slotId || metadata.namespace !== namespace) {
+      return false;
+    }
+    found = true;
+    return true;
+  });
+  return found ? { segments, handles: entry.handles } : null;
+}
+
+/**
  * The manifest entries ([key, PrerenderEntry JSON]) one prerendered URL
  * bakes, keyed as the production store's get() reads them. The intercept
  * variant (`/i`) holds interceptVariantSegments with the handle string the
