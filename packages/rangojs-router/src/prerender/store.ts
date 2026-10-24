@@ -160,10 +160,28 @@ export function createPrerenderStore(): PrerenderStore | null {
 }
 
 /**
+ * The segments of a prerendered URL's intercept variant (`/i`): the main
+ * variant's without the intercepted route's own (`belongsToRoute`: its
+ * handler, layouts and slots), then the intercept's. A render under an
+ * intercept skips the route's entry (resolveAllSegments), so the variant
+ * holds what a cache() intercept record holds. The producer
+ * (matchForPrerender) encodes `interceptHandles` for exactly these segments.
+ */
+export function interceptVariantSegments(
+  segments: SerializedSegmentData[],
+  interceptSegments: SerializedSegmentData[],
+): SerializedSegmentData[] {
+  return [
+    ...segments.filter((s) => s.metadata.belongsToRoute !== true),
+    ...interceptSegments,
+  ];
+}
+
+/**
  * The manifest entries ([key, PrerenderEntry JSON]) one prerendered URL
  * bakes, keyed as the production store's get() reads them. The intercept
- * variant (`/i`) holds main + intercept segments with the MERGED handle
- * string the producer encoded. Written by the build
+ * variant (`/i`) holds interceptVariantSegments with the handle string the
+ * producer encoded for it. Written by the build
  * (vite/discovery/prerender-collection.ts) and serveShellRequest.
  */
 export function prerenderManifestEntries(
@@ -180,7 +198,7 @@ export function prerenderManifestEntries(
     [key, JSON.stringify({ segments, handles })],
   ];
   if (interceptSegments?.length) {
-    const intercept = [...segments, ...interceptSegments];
+    const intercept = interceptVariantSegments(segments, interceptSegments);
     const interceptHandles = result.interceptHandles ?? "";
     entries.push([
       `${key}/i`,

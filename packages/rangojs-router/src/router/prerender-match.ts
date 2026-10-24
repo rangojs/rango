@@ -84,8 +84,9 @@ export async function matchForPrerender<TEnv = any>(
   routeName: string;
   params: Record<string, string>;
   interceptSegments?: SerializedSegmentData[];
-  /** RSC-encoded MERGED (main + intercept) handle map for the intercept artifact;
-   *  the sinks store it as-is (no longer merge raw records). */
+  /** RSC-encoded handle map for the intercept artifact: the intercept's
+   *  pushes and those of the main segments the intercepted route does not
+   *  own; the sinks store it as-is. */
   interceptHandles?: string;
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
@@ -537,14 +538,22 @@ export async function matchForPrerender<TEnv = any>(
                   await resolveSegmentHandleValues(segHandles);
               }
             }
-            // The intercept artifact serves main + intercept segments together, so
-            // encode the MERGED handle map here (the sinks no longer merge raw
-            // records — they store this pre-encoded string as-is).
+            // The handle map of exactly the segments the sinks store for the
+            // intercept artifact; they store this string as-is.
+            const { interceptVariantSegments } =
+              await import("../prerender/store.js");
+            const variantHandlesRecord: Record<string, SegmentHandleData> = {};
+            for (const { metadata } of interceptVariantSegments(
+              serializedSegments,
+              interceptSegments,
+            )) {
+              const data =
+                handlesRecord[metadata.id] ??
+                interceptHandlesRecord[metadata.id];
+              if (data) variantHandlesRecord[metadata.id] = data;
+            }
             interceptHandles = await encodeHandles(
-              {
-                ...handlesRecord,
-                ...interceptHandlesRecord,
-              },
+              variantHandlesRecord,
               onFlightError,
             );
           }

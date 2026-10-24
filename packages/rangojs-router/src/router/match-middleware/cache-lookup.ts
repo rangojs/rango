@@ -516,9 +516,7 @@ async function* serveStoredSegments<TEnv>(
   // Resolve loaders fresh. The live pass already resolved the loaders of the
   // entries above the boundary.
   const loaderStart = performance.now();
-  const loaderEntries = ctx.entries
-    .slice(boundaryIndex)
-    .filter((e) => !interceptFillSkips(ctx, e.shortCode));
+  const loaderEntries = ctx.entries.slice(boundaryIndex);
   const { resolveLoadersOnly } = router;
   if (resolveLoadersOnly) {
     const loaderResult = await ctx.Store.run(() =>

@@ -543,7 +543,7 @@ export interface RangoInternal<
     routeName: string;
     params: Record<string, string>;
     interceptSegments?: SerializedSegmentData[];
-    /** RSC-encoded MERGED (main + intercept) handle map for the intercept artifact. */
+    /** RSC-encoded handle map for the intercept artifact (see matchForPrerender). */
     interceptHandles?: string;
     passthrough?: true;
   } | null>;
