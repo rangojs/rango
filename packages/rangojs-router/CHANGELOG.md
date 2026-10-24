@@ -132,7 +132,11 @@ cache miss does, and is stored by the same rules: its headers are kept with
 the entry, and a cookie it sets keeps the refreshed page out of the cache. The
 visitor's `STALE` response carries the stored entry and the visitor's own
 writes. An `invalidateClientCache()` in the re-run rotates no client's state
-cookie, as in a stale `cache()` refresh. No change in your code.
+cookie, as in a stale `cache()` refresh. A loader that middleware ahead of
+the cache started through `getRequestContext().use()` runs again in the
+re-run, as after a rewrite: its side effects happen twice per stale hit, and
+if it reads the route's params, the refreshed page holds them where a cache
+miss reuses the run that started before the match. No change in your code.
 
 ### Fixed: a stale `cache()` record a PPR shell recapture reads refreshes under `cache()` rules
 

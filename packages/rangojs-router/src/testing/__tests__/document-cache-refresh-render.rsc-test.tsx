@@ -1,6 +1,8 @@
 /**
  * A stale document cache HIT re-runs the page in the background (SWR), and
- * the refreshed entry is the page a MISS of the same request renders. The
+ * the refreshed entry is the page a MISS of the same request renders (one
+ * documented exception: a loader that middleware ahead of the cache started
+ * through `getRequestContext().use()` runs again in the re-run). The
  * stale HIT itself rendered nothing, so the re-run matches, renders and
  * resolves its own render barrier: a loader that reads a handle after
  * `rendered()` sees the handles the streamed handler pushed, a loader read

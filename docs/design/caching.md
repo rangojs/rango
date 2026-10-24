@@ -270,7 +270,13 @@ it snapshotted handles before a `loading()` handler pushed), a
 `getRequestContext().use()` that reads the re-run's params, and the
 `dynamic()` latch the render reads. Its loader memo is new, as after a
 rewrite (`rebaseRequestContext`): a loader that middleware ahead of the cache
-started through `getRequestContext().use()` runs again in the re-run.
+started through `getRequestContext().use()` runs again in the re-run. Its
+side effects happen twice per stale hit, and if it reads route-derived
+fields (params, route name), the refreshed entry holds the matched values
+where a MISS reuses the run that started before the match. Sharing the
+request's memo would give exact MISS parity but needs the memo exposed on the
+pass; the divergence needs a loader that middleware ahead of the cache and
+the render both read, so it is documented instead.
 `onResponse()` callbacks the re-run registers apply to its own response, as
 on a MISS; ones registered before the hit are drained onto the `STALE`
 response, as before, and do not reach the re-run.
