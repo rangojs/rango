@@ -102,6 +102,26 @@ requests.
 `request.timeout` carries. A request that sends a request-id header reports
 that header's value, as before. No change in your code.
 
+### Fixed: a PPR shell capture sends no telemetry events
+
+**Before.** With `createRouter({ telemetry })`, a document request or a
+navigation that missed a `ppr` route's shell started a background capture,
+and the capture sent the sink its own `loader.*` events. A live loader, which
+the capture holds back, reported a `loader.start` with no `loader.end`. An
+`ssr: false` loader, which runs in the capture, reported its `loader.start`
+and `loader.end` a second time, and a `loader.error` when it failed only
+there. On a navigation these events carried the id of a request the capture
+builds, so a sink that groups events by `requestId` saw a second request. A
+handle pushed after handle collection completed also reported its
+`handler.error` twice, once from the visitor's render and once from the
+capture.
+
+**Now.** The capture sends nothing to the sink, as its `request.*`,
+`cache.decision`, `revalidation.decision` and other `handler.error` events
+already did not. The visitor's request reports its own `loader.*` and
+`handler.error` events once, under one id. `onError` is unchanged. No change
+in your code.
+
 ### Fixed: a stale `cache()` HIT's background refresh sets no fresh-reads cookie on the visitor's response
 
 **Before.** With `CFCacheStore` or `VercelCacheStore`, a handler under a
