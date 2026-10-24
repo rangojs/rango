@@ -2,15 +2,15 @@
  * onError Integration Tests
  *
  * Exercises the real segment resolution code paths (a FRESH pass of
- * resolveSegmentWithRevalidation and resolveParallelSegmentsWithRevalidation)
+ * resolveSegment and resolveParallelSegments)
  * with deps wired to match router.ts's trackHandler
  * implementation. Verifies that streaming handler and parallel-slot errors
  * are reported to callOnError through the production code path.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
-  resolveParallelSegmentsWithRevalidation,
-  resolveSegmentWithRevalidation,
+  resolveParallelSegments,
+  resolveSegment,
 } from "../segment-resolution/revalidation.js";
 import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import type { SegmentResolutionDeps } from "../types.js";
@@ -176,7 +176,7 @@ describe("Streaming route handler onError (production path)", () => {
     });
     const context = makeContext();
 
-    await resolveSegmentWithRevalidation(
+    await resolveSegment(
       makeFreshPass(context, deps, { routeKey: "test-route" }),
       entry,
     );
@@ -191,7 +191,7 @@ describe("Streaming route handler onError (production path)", () => {
     const entry = makeRouteEntry(async () => "sync content");
     const context = makeContext();
 
-    await resolveSegmentWithRevalidation(
+    await resolveSegment(
       makeFreshPass(context, deps, { routeKey: "test-route" }),
       entry,
     );
@@ -207,7 +207,7 @@ describe("Streaming route handler onError (production path)", () => {
     });
     const context = makeContext();
 
-    await resolveSegmentWithRevalidation(
+    await resolveSegment(
       makeFreshPass(context, deps, { routeKey: "test-route" }),
       entry,
     );
@@ -273,7 +273,7 @@ describe("Streaming parallel-slot handler onError (production path)", () => {
     );
     const context = makeContext();
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       makeFreshPass(context, deps, { routeKey: "test-route" }),
       makeSlotOwner(entry, "M1R0"),
       true,
@@ -292,7 +292,7 @@ describe("Streaming parallel-slot handler onError (production path)", () => {
     );
     const context = makeContext();
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       makeFreshPass(context, deps, { routeKey: "test-route" }),
       makeSlotOwner(entry, "M1R0"),
       true,
@@ -310,7 +310,7 @@ describe("Streaming parallel-slot handler onError (production path)", () => {
     );
     const context = makeContext();
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       makeFreshPass(context, deps, { routeKey: "test-route" }),
       makeSlotOwner(entry, "M1R0"),
       true,
@@ -341,7 +341,7 @@ describe("Streaming parallel-slot handler onError (production path)", () => {
     );
     const context = makeContext();
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       makeFreshPass(context, deps, { routeKey: "test-route" }),
       makeSlotOwner(entry, "M1R0"),
       true,

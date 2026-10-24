@@ -6,9 +6,9 @@ import type {
 } from "./segment-resolution/resolution-pass.js";
 
 import {
-  resolveLoadersOnlyWithRevalidation as _resolveLoadersOnlyWithRevalidation,
+  resolveLoadersOnly as _resolveLoadersOnly,
   buildEntryRevalidateMap as _buildEntryRevalidateMap,
-  resolveAllSegmentsWithRevalidation as _resolveAllSegmentsWithRevalidation,
+  resolveAllSegments as _resolveAllSegments,
 } from "./segment-resolution.js";
 
 import {
@@ -20,12 +20,12 @@ import {
 /** The resolvers RouterContext exposes, with the router's deps bound. */
 export type SegmentWrappers<TEnv = any> = Pick<
   RouterContext<TEnv>,
-  "resolveAllSegmentsWithRevalidation" | "resolveInterceptEntry"
+  "resolveAllSegments" | "resolveInterceptEntry"
 > &
   Required<
     Pick<
       RouterContext<TEnv>,
-      | "resolveLoadersOnlyWithRevalidation"
+      | "resolveLoadersOnly"
       | "buildEntryRevalidateMap"
       | "resolveInterceptLoadersOnly"
     >
@@ -48,11 +48,11 @@ export function createSegmentWrappers<TEnv = any>(
   });
 
   return {
-    resolveLoadersOnlyWithRevalidation: (input, entries) =>
-      _resolveLoadersOnlyWithRevalidation(pass(input), entries),
+    resolveLoadersOnly: (input, entries) =>
+      _resolveLoadersOnly(pass(input), entries),
     buildEntryRevalidateMap: _buildEntryRevalidateMap,
-    resolveAllSegmentsWithRevalidation: (input, entries, walk) =>
-      _resolveAllSegmentsWithRevalidation(pass(input), entries, walk),
+    resolveAllSegments: (input, entries, walk) =>
+      _resolveAllSegments(pass(input), entries, walk),
     findInterceptForRoute: _findInterceptForRoute,
     resolveInterceptEntry: (input, intercept, entry, belongsToRoute, options) =>
       _resolveInterceptEntry(

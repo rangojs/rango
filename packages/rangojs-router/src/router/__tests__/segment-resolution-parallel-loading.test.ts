@@ -1,9 +1,9 @@
 import { createLoader } from "../../loader.js";
 import { describe, it, expect, vi } from "vitest";
 import {
-  resolveOrphanLayoutWithRevalidation,
-  resolveParallelSegmentsWithRevalidation,
-  resolveSegmentWithRevalidation,
+  resolveOrphanLayout,
+  resolveParallelSegments,
+  resolveSegment,
 } from "../segment-resolution";
 import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 
@@ -90,7 +90,7 @@ describe("segment-resolution parallel loading", () => {
       notFoundBoundary: [],
     } as any;
 
-    const { segments: result } = await resolveSegmentWithRevalidation(
+    const { segments: result } = await resolveSegment(
       makeFreshPass(
         context,
         {
@@ -130,7 +130,7 @@ describe("segment-resolution parallel loading", () => {
       notFoundBoundary: [],
     } as any;
 
-    const result = await resolveSegmentWithRevalidation(
+    const result = await resolveSegment(
       {
         context,
         client: new Set(),
@@ -174,7 +174,7 @@ describe("segment-resolution parallel loading", () => {
       notFoundBoundary: [],
     } as any;
 
-    const resultPromise = resolveParallelSegmentsWithRevalidation(
+    const resultPromise = resolveParallelSegments(
       {
         context,
         client: new Set(),
@@ -232,7 +232,7 @@ describe("segment-resolution parallel loading", () => {
       notFoundBoundary: [],
     } as any;
 
-    const resultPromise = resolveOrphanLayoutWithRevalidation(
+    const resultPromise = resolveOrphanLayout(
       {
         context,
         client: new Set(),
@@ -294,7 +294,7 @@ describe("segment-resolution parallel loading", () => {
       notFoundBoundary: [],
     } as any;
 
-    const resultPromise = resolveParallelSegmentsWithRevalidation(
+    const resultPromise = resolveParallelSegments(
       {
         context,
         client: new Set(),
@@ -360,7 +360,7 @@ describe("segment-resolution parallel loading", () => {
     it("hands a Promise slot value to render unawaited in a FRESH pass", async () => {
       const value = Promise.resolve("slot-content");
       const context = createContext();
-      const result = await resolveParallelSegmentsWithRevalidation(
+      const result = await resolveParallelSegments(
         makeFreshPass(context, deps, { routeKey: "/blog", params: {} }),
         staticSlotLayout(value),
         false,
@@ -372,7 +372,7 @@ describe("segment-resolution parallel loading", () => {
     it("hands a Promise slot value to render unawaited in a partial pass", async () => {
       const value = Promise.resolve("slot-content");
       const context = createContext();
-      const result = await resolveParallelSegmentsWithRevalidation(
+      const result = await resolveParallelSegments(
         {
           context,
           client: new Set(),
@@ -399,7 +399,7 @@ describe("segment-resolution parallel loading", () => {
       loader: [{ loader: TestParallelLoader, revalidate: [] }],
     } as any;
 
-    const { segments } = await resolveParallelSegmentsWithRevalidation(
+    const { segments } = await resolveParallelSegments(
       makeFreshPass(
         context,
         {
@@ -446,7 +446,7 @@ describe("segment-resolution parallel loading", () => {
       notFoundBoundary: [],
     } as any;
 
-    const result = await resolveParallelSegmentsWithRevalidation(
+    const result = await resolveParallelSegments(
       {
         context,
         client: new Set<string>(),
@@ -494,7 +494,7 @@ describe("segment-resolution parallel loading", () => {
       notFoundBoundary: [],
     } as any;
 
-    const result = await resolveOrphanLayoutWithRevalidation(
+    const result = await resolveOrphanLayout(
       {
         context,
         client: new Set<string>(),

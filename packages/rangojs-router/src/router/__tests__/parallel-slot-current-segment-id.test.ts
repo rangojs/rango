@@ -65,8 +65,8 @@ vi.mock("../../server/context.js", async () => {
 });
 
 import {
-  resolveParallelSegmentsWithRevalidation,
-  resolveOrphanLayoutWithRevalidation,
+  resolveParallelSegments,
+  resolveOrphanLayout,
 } from "../segment-resolution/revalidation.js";
 import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import { filterSegmentOrder } from "../../browser/react/filter-segment-order.js";
@@ -191,7 +191,7 @@ describe("parallel slot handlers (revalidation main path)", () => {
       return null;
     });
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       {
         context: makeContext(),
         client: new Set(["L0", "L0.@panel"]),
@@ -222,7 +222,7 @@ describe("parallel slot handlers (revalidation main path)", () => {
       () => null,
     );
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       {
         context: makeContext(),
         client: new Set(["L0", "L0.@panel"]),
@@ -257,7 +257,7 @@ describe("parallel slot handlers (revalidation orphan path)", () => {
       return null;
     });
 
-    await resolveOrphanLayoutWithRevalidation(
+    await resolveOrphanLayout(
       {
         context: makeContext(),
         client: new Set(["O0", "O0.@panel"]),
@@ -286,7 +286,7 @@ describe("parallel slot handlers (FRESH pass)", () => {
       return null;
     };
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       makeFreshPass(makeContext(), makeDeps(), { routeKey: "mailbox.email" }),
       makeLayoutWithSlotHandler(slotHandler),
       false,
@@ -324,7 +324,7 @@ describe("parallel-slot handle pushes use slot-keyed buckets that survive filter
       return null;
     };
 
-    await resolveParallelSegmentsWithRevalidation(
+    await resolveParallelSegments(
       makeFreshPass(makeContext(), makeDeps(), { routeKey: "mailbox.email" }),
       makeLayoutWithSlotHandler(slotHandler),
       false,

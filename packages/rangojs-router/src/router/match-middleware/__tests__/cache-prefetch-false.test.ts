@@ -149,7 +149,7 @@ async function lookup(
     evaluateRevalidation,
     buildEntryRevalidateMap: () =>
       new Map([[ROUTE, { revalidate: [() => options.routeRevalidates] }]]),
-    resolveLoadersOnlyWithRevalidation: undefined,
+    resolveLoadersOnly: undefined,
   } as any;
   const ctx = {
     cacheScope: new CacheScope({ ttl: 30 }),
@@ -362,7 +362,7 @@ describe("withCacheLookup: a fill served from the prerender store", () => {
     } as unknown as MatchPipelineState;
     const routerContext = {
       evaluateRevalidation: vi.fn(),
-      resolveLoadersOnlyWithRevalidation: vi.fn(async () => ({
+      resolveLoadersOnly: vi.fn(async () => ({
         segments: [],
         matchedIds: [],
       })),

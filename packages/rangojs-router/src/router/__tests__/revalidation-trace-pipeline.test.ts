@@ -48,7 +48,7 @@ vi.mock("../segment-resolution/helpers.js", () => ({
 import {
   ownerOf,
   resolveOwnerLoaders,
-  resolveParallelSegmentsWithRevalidation,
+  resolveParallelSegments,
 } from "../segment-resolution/revalidation.js";
 import {
   runWithRouterLogContext,
@@ -334,7 +334,7 @@ describe("revalidation trace through segment resolution pipeline", () => {
         });
 
         // Parent on the client, slot not, belongsToRoute -> floored seed.
-        await resolveParallelSegmentsWithRevalidation(
+        await resolveParallelSegments(
           {
             context: makeContext(),
             client: new Set(["L0"]),
@@ -378,7 +378,7 @@ describe("revalidation trace through segment resolution pipeline", () => {
         });
 
         // Same shape but belongsToRoute=false -> seed false, no floor.
-        await resolveParallelSegmentsWithRevalidation(
+        await resolveParallelSegments(
           {
             context: makeContext(),
             client: new Set(["L0"]),

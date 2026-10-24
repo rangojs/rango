@@ -29,13 +29,14 @@
  *  yes          no
  *   |           |
  *   v           v
- * resolveAll  resolveAllWithRevalidation
- * Segments    Segments
- *   |           |
+ * FRESH pass  partial pass
  *   |           | (compares with prev state)
  *   |           | (handles null components)
  *   |           |
  *   +-----------+
+ *         |
+ *         v
+ *   resolveAllSegments()
  *         |
  *         v
  *   +---------------------------+
@@ -54,7 +55,7 @@
  * RESOLUTION MODES
  * ================
  *
- * Both use resolveAllSegmentsWithRevalidation().
+ * Both use resolveAllSegments().
  *
  * Full Match (document request):
  *   - A FRESH pass (freshPassInput): no revalidation logic (nothing to
@@ -158,11 +159,11 @@ export function withSegmentResolution<TEnv>(
       reqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
     }
 
-    const { resolveAllSegmentsWithRevalidation } = getRouterContext<TEnv>();
+    const { resolveAllSegments } = getRouterContext<TEnv>();
 
     // A full match (interceptResult null) is a FRESH pass.
     const result = await ctx.Store.run(() =>
-      resolveAllSegmentsWithRevalidation(
+      resolveAllSegments(
         ctx.isFullMatch
           ? freshPassInput(ctx.handlerContext, ctx.routeKey, ctx.matched.params)
           : resolutionPassInput(ctx),

@@ -111,7 +111,7 @@ export function invokeOnError<TEnv = any>(
 /**
  * First non-undefined `pick(orphan)` over the routeless entries in
  * `entry.layout` and, recursively, in theirs: depth-first in render order
- * (resolveOrphanLayoutWithRevalidation in segment-resolution/revalidation.ts).
+ * (resolveOrphanLayout in segment-resolution/revalidation.ts).
  * Since #922 a routeless entry nested in another renders (a layout() after a
  * bare cache() marker, a layout() in a routeless wrapper); a one-level scan
  * missed the boundaries and intercepts it declares (#926).

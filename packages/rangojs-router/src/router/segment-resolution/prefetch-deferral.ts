@@ -232,7 +232,7 @@ export function resolveDeferralScope(
       loaderIds.add(loaderEntry.loader.$$id);
     }
     for (const parallelEntry of getParallelEntries(entry.parallel)) {
-      // A slot's segment id, as resolveParallelSegmentsWithRevalidation
+      // A slot's segment id, as resolveParallelSegments
       // (revalidation.ts) forms it.
       const slotIds = flagsLoading(parallelEntry)
         ? getParallelSlotEntries(entry.parallel)
@@ -245,7 +245,7 @@ export function resolveDeferralScope(
     for (const orphan of entry.layout) {
       if (chain.has(orphan)) continue;
       // An orphan layout's handler is awaited after its owner's ran
-      // (revalidation.ts resolveOrphanLayoutWithRevalidation): never a unit,
+      // (revalidation.ts resolveOrphanLayout): never a unit,
       // its loaders are still behind its fallback.
       collect(
         orphan,

@@ -259,14 +259,14 @@ describe("clearPprHeaderScope (issue #735 — dynamic() re-permit)", () => {
   });
 
   it("ppr route nested under a cache() boundary: dynamic() UNMASKS to 'cache', write still throws (cache axis not opted off)", () => {
-    // resolveAllSegmentsWithRevalidation latches "ppr" at the funnel top
+    // resolveAllSegments latches "ppr" at the funnel top
     // (first-wins), masking the positional cache() latch, but the handler
     // still runs inside the cache scope. A cache() HIT skips the handler, so
     // the write stays non-deterministic — dynamic() opts off the SHELL axis,
     // not the cache axis.
     RangoContext.run(makeStore() as never, () => {
       const store = RangoContext.getStore() as { insideCacheScope?: boolean };
-      // resolveAllSegmentsWithRevalidation sets this when entering cache()
+      // resolveAllSegments sets this when entering cache()
       store.insideCacheScope = true;
       latchCachedHeaderScope("ppr", "product");
       clearPprHeaderScope();

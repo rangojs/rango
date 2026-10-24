@@ -587,7 +587,7 @@ export async function resolveOwnerLoaders<TEnv>(
  * Resolve only loader segments for all entries: a cache() or prerender HIT
  * serves the cached non-loader segments, and loaders are never cached.
  */
-export async function resolveLoadersOnlyWithRevalidation<TEnv>(
+export async function resolveLoadersOnly<TEnv>(
   pass: ResolutionPass<TEnv>,
   entries: EntryData[],
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
@@ -597,7 +597,7 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
 
   // Loader-only serves still run loaders live — on a ppr route their header
   // writes are dead letters (headers flushed with the shell), so the guard
-  // latches here too (see resolveAllSegmentsWithRevalidation). cache() needs
+  // latches here too (see resolveAllSegments). cache() needs
   // no latch: loader writes are exempt under cache()
   // (assertCachedHeaderWriteAllowed).
   latchPprHeaderScopeForEntries(entries, pass.routeKey);
@@ -720,7 +720,7 @@ export function buildEntryRevalidateMap(
 /**
  * Resolve the component for a single parallel slot. Pure component resolution
  * shared by the main path and the orphan path of
- * resolveParallelSegmentsWithRevalidation: try the static slot cache, else run
+ * resolveParallelSegments: try the static slot cache, else run
  * the slot handler (pinning _currentSegmentId to the slot id so handle pushes
  * land in the slot's own bucket, and wrapping a streamed handler). Returns the
  * resolved component and whether the handler actually ran, or undefined when
@@ -826,9 +826,9 @@ async function resolveParallelSlotComponent<TEnv>(
 }
 
 /**
- * Resolve parallel segments with revalidation.
+ * Resolve an entry's parallel slots: each slot's segment and its loaders.
  */
-export async function resolveParallelSegmentsWithRevalidation<TEnv>(
+export async function resolveParallelSegments<TEnv>(
   pass: ResolutionPass<TEnv>,
   entry: EntryData,
   belongsToRoute: boolean,
@@ -1201,9 +1201,9 @@ async function resolveRouteComponent<TEnv>(
 }
 
 /**
- * Resolve entry handler (layout, cache, or route) with revalidation.
+ * Resolve a chain entry's handler (layout, cache, or route) into its segment.
  */
-export async function resolveEntryHandlerWithRevalidation<TEnv>(
+export async function resolveEntryHandler<TEnv>(
   pass: ResolutionPass<TEnv>,
   entry: Exclude<EntryData, { type: "parallel" }>,
   belongsToRoute: boolean,
@@ -1277,7 +1277,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
  * Resolve one chain entry's segments: its loaders, its handler, its orphan
  * layouts and its parallels, handler first.
  */
-export async function resolveSegmentWithRevalidation<TEnv>(
+export async function resolveSegment<TEnv>(
   pass: ResolutionPass<TEnv>,
   entry: Exclude<EntryData, { type: "parallel" }>,
   /** The matched route's full chain; see RevalidatingWalkOptions.chain. */
@@ -1305,19 +1305,10 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     | { segment: ResolvedSegment; matchedId: string }
     | undefined;
   if (entry.type === "route") {
-    routeHandlerResult = await resolveEntryHandlerWithRevalidation(
-      pass,
-      entry,
-      belongsToRoute,
-    );
+    routeHandlerResult = await resolveEntryHandler(pass, entry, belongsToRoute);
 
     for (const orphan of entry.layout) {
-      const orphanResult = await resolveOrphanLayoutWithRevalidation(
-        pass,
-        orphan,
-        true,
-        entry,
-      );
+      const orphanResult = await resolveOrphanLayout(pass, orphan, true, entry);
       segments.push(...orphanResult.segments);
       matchedIds.push(...orphanResult.matchedIds);
     }
@@ -1329,7 +1320,7 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     // Route entry: handler already executed above; resolve parallels
     // (handler data visible) then push handler segment last for tree order.
     if (slotted) {
-      const parallelResult = await resolveParallelSegmentsWithRevalidation(
+      const parallelResult = await resolveParallelSegments(
         pass,
         entry,
         belongsToRoute,
@@ -1343,7 +1334,7 @@ export async function resolveSegmentWithRevalidation<TEnv>(
   } else {
     // Layout/cache entry: handler-first — resolve handler before parallels
     // so ctx.set() values are visible to parallel children.
-    const handlerResult = await resolveEntryHandlerWithRevalidation(
+    const handlerResult = await resolveEntryHandler(
       pass,
       entry,
       belongsToRoute,
@@ -1352,7 +1343,7 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     matchedIds.push(handlerResult.matchedId);
 
     if (slotted) {
-      const parallelResult = await resolveParallelSegmentsWithRevalidation(
+      const parallelResult = await resolveParallelSegments(
         pass,
         entry,
         belongsToRoute,
@@ -1363,7 +1354,7 @@ export async function resolveSegmentWithRevalidation<TEnv>(
 
     for (const orphan of entry.layout) {
       if (chain?.includes(orphan)) continue;
-      const orphanResult = await resolveOrphanLayoutWithRevalidation(
+      const orphanResult = await resolveOrphanLayout(
         pass,
         orphan,
         false,
@@ -1433,9 +1424,10 @@ async function orphanRevalidates<TEnv>(
 }
 
 /**
- * Resolve orphan layout with revalidation.
+ * Resolve an orphan layout: its loaders, its handler, its slots and the
+ * routeless entries nested in it.
  */
-export async function resolveOrphanLayoutWithRevalidation<TEnv>(
+export async function resolveOrphanLayout<TEnv>(
   pass: ResolutionPass<TEnv>,
   orphan: EntryData,
   belongsToRoute: boolean,
@@ -1443,7 +1435,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   parentRouteEntry?: EntryData,
   /**
    * Matched chain entry being resolved (see
-   * resolveParallelSegmentsWithRevalidation's boundaryEntry); defaults to
+   * resolveParallelSegments's boundaryEntry); defaults to
    * parentRouteEntry.
    */
   boundaryEntry: EntryData | undefined = parentRouteEntry,
@@ -1542,7 +1534,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   // `entry.shortCode` inside the helper is `orphan.shortCode` (orphan is passed
   // as `entry`), so the parallel ids + loader shortCodeOverride are unchanged.
   if (declaresSlot(orphan.parallel)) {
-    const parallelResult = await resolveParallelSegmentsWithRevalidation(
+    const parallelResult = await resolveParallelSegments(
       pass,
       orphan,
       belongsToRoute,
@@ -1560,9 +1552,9 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   // marker, a wrapper inside a routeless wrapper) wrap the same content one
   // level deeper. Issue #918: they were never rendered. None is in the
   // matched chain: that would put this orphan in it, and
-  // resolveSegmentWithRevalidation skips those.
+  // resolveSegment skips those.
   for (const nested of orphan.layout) {
-    const nestedResult = await resolveOrphanLayoutWithRevalidation(
+    const nestedResult = await resolveOrphanLayout(
       pass,
       nested,
       belongsToRoute,
@@ -1576,7 +1568,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   return { segments, matchedIds };
 }
 
-/** What resolveAllSegmentsWithRevalidation needs beyond its pass. */
+/** What resolveAllSegments needs beyond its pass. */
 export interface RevalidatingWalkOptions {
   /**
    * The intercept the request resolves: the route's entry (its handler and
@@ -1609,7 +1601,7 @@ function boundaryResult(seg: ResolvedSegment): SegmentRevalidationResult {
  * match with a FRESH pass, or the FRESH pass of an intercept record's
  * background re-render (rerenderAndCacheRoute).
  */
-export async function resolveAllSegmentsWithRevalidation<TEnv>(
+export async function resolveAllSegments<TEnv>(
   pass: ResolutionPass<TEnv>,
   entries: EntryData[],
   walk: RevalidatingWalkOptions,
@@ -1682,7 +1674,7 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
     const resolved = await resolveWithErrorBoundary(
       nonParallelEntry,
       params,
-      () => resolveSegmentWithRevalidation(pass, nonParallelEntry, chain),
+      () => resolveSegment(pass, nonParallelEntry, chain),
       boundaryResult,
       pass.deps,
       report,

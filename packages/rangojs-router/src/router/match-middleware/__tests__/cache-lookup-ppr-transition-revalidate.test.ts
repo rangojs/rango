@@ -106,7 +106,7 @@ async function drain(
     evaluateRevalidation: async () => routeRevalidates,
     buildEntryRevalidateMap: () =>
       new Map([[ROUTE, { revalidate: [() => routeRevalidates] }]]),
-    resolveLoadersOnlyWithRevalidation: undefined,
+    resolveLoadersOnly: undefined,
   } as any;
 
   const ctx = {

@@ -398,14 +398,14 @@ See "Rewrite" below for what moves and what stays.
   route segment and its own layouts and parallels are stored and replayed, and
   every entry above the route stays live. The header and non-cacheable-var
   guards latch at the route (`entry.cache` in
-  `resolveAllSegmentsWithRevalidation`). Pinned by
+  `resolveAllSegments`). Pinned by
   `match-middleware/__tests__/cache-path-children.test.ts` and
   `e2e/cache-path-children.test.ts`. A `cache()` inside a routeless
   `layout()`/`middleware()`/`transition()` wrapper in a path configures that
   path the same way (`enclosingRoute()` in `dsl-helpers.ts`).
 - An orphan renders the routeless entries in its own `layout[]` after its
   handler and parallels
-  (`resolveOrphanLayoutWithRevalidation`), so a `layout()` after a bare
+  (`resolveOrphanLayout`), so a `layout()` after a bare
   `cache()` marker wraps every route of the enclosing layout. The marker is
   also the chain parent of the routes after it; for those routes it is
   resolved and its middleware collected once, at its chain position, never as
@@ -908,7 +908,7 @@ the resolution boundary, so the thrown `Response` propagates out to `match()`
 and becomes a 302/308.
 
 On a route that declares `loading()`, the handler result is **streamed** — it is
-not awaited at the resolution boundary (`resolveEntryHandlerWithRevalidation` in
+not awaited at the resolution boundary (`resolveEntryHandler` in
 `segment-resolution/revalidation.ts`). So an
 **async** handler that returns a `Response` has that `Response` surface only
 during RSC serialization, where it is rendered into the stream via React's
@@ -2183,10 +2183,10 @@ should not be treated as equivalent.
   decision, never lower it. All four resolvers in
   `router/segment-resolution/revalidation.ts` honour it, in two shapes:
 
-  | Resolver                                                   | Shape                                                        |
-  | ---------------------------------------------------------- | ------------------------------------------------------------ |
-  | loaders, layout/route entries, orphan-layout entries       | early return `true`; user predicates never run               |
-  | parallel slots (`resolveParallelSegmentsWithRevalidation`) | `defaultOverride.floor` — predicates run, but can only raise |
+  | Resolver                                             | Shape                                                        |
+  | ---------------------------------------------------- | ------------------------------------------------------------ |
+  | loaders, layout/route entries, orphan-layout entries | early return `true`; user predicates never run               |
+  | parallel slots (`resolveParallelSegments`)           | `defaultOverride.floor` — predicates run, but can only raise |
 
   The parallel path differs deliberately. PR #482 made it consult predicates
   even for an unknown slot, so a `skip-parent-chain` seed (`false`) could still

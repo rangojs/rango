@@ -8,7 +8,7 @@ const mockRouterCtx = {
   createHandleStore: vi.fn(() => ({ id: "fresh-handle-store", seal: vi.fn() })),
   createHandlerContext: vi.fn(() => ({ id: "fresh-handler-context" }) as any),
   setupLoaderAccess: vi.fn(),
-  resolveAllSegmentsWithRevalidation: vi.fn(async () => ({
+  resolveAllSegments: vi.fn(async () => ({
     segments: [] as ResolvedSegment[],
     matchedIds: [] as string[],
   })),
@@ -131,9 +131,7 @@ describe("withBackgroundRevalidation", () => {
       const freshSegments: ResolvedSegment[] = [
         makeSegment("L0", "fresh-component"),
       ];
-      mockRouterCtx.resolveAllSegmentsWithRevalidation.mockResolvedValue(
-        walked(freshSegments),
-      );
+      mockRouterCtx.resolveAllSegments.mockResolvedValue(walked(freshSegments));
 
       const middleware = withBackgroundRevalidation(ctx, state);
       await drain(middleware(toAsyncGen([])));
@@ -154,9 +152,7 @@ describe("withBackgroundRevalidation", () => {
       const ctx = makeCtx();
       const state = makeState();
 
-      mockRouterCtx.resolveAllSegmentsWithRevalidation.mockResolvedValue(
-        walked([]),
-      );
+      mockRouterCtx.resolveAllSegments.mockResolvedValue(walked([]));
 
       const middleware = withBackgroundRevalidation(ctx, state);
       await drain(middleware(toAsyncGen([])));
@@ -166,8 +162,7 @@ describe("withBackgroundRevalidation", () => {
       expect(mockRouterCtx.createHandlerContext).toHaveBeenCalledTimes(1);
 
       // The walk must receive the fresh context, not the original
-      const call = mockRouterCtx.resolveAllSegmentsWithRevalidation.mock
-        .calls[0] as any[];
+      const call = mockRouterCtx.resolveAllSegments.mock.calls[0] as any[];
       expect(call[0].context).toEqual({ id: "fresh-handler-context" });
     });
   });
@@ -181,7 +176,7 @@ describe("withBackgroundRevalidation", () => {
         makeSegment("L0", "layout-component"),
         makeSegment("R0", "route-component"),
       ];
-      mockRouterCtx.resolveAllSegmentsWithRevalidation.mockResolvedValue(
+      mockRouterCtx.resolveAllSegments.mockResolvedValue(
         walked(completeSegments),
       );
 
@@ -191,8 +186,7 @@ describe("withBackgroundRevalidation", () => {
 
       // Must walk a FRESH pass (no revalidation, no loaders), never the
       // request's own pass
-      const calls = mockRouterCtx.resolveAllSegmentsWithRevalidation.mock
-        .calls as any[][];
+      const calls = mockRouterCtx.resolveAllSegments.mock.calls as any[][];
       expect(calls).toHaveLength(1);
       expect(calls[0]![0].client).toBe(FRESH);
       expect(calls[0]![0].skipLoaders).toBe(true);
@@ -210,7 +204,7 @@ describe("withBackgroundRevalidation", () => {
       const ctx = makeCtx({ isFullMatch: true });
       const state = makeState();
 
-      mockRouterCtx.resolveAllSegmentsWithRevalidation.mockResolvedValue(
+      mockRouterCtx.resolveAllSegments.mockResolvedValue(
         walked([makeSegment("L0", "comp")]),
       );
 
@@ -218,8 +212,7 @@ describe("withBackgroundRevalidation", () => {
       await drain(middleware(toAsyncGen([])));
       await waitUntilFns[0]();
 
-      const calls = mockRouterCtx.resolveAllSegmentsWithRevalidation.mock
-        .calls as any[][];
+      const calls = mockRouterCtx.resolveAllSegments.mock.calls as any[][];
       expect(calls).toHaveLength(1);
       expect(calls[0]![0].client).toBe(FRESH);
     });
@@ -251,13 +244,11 @@ describe("withBackgroundRevalidation", () => {
 
       let ambientStoreDuringResolution: any;
       let sharedStoreDuringResolution: any;
-      mockRouterCtx.resolveAllSegmentsWithRevalidation.mockImplementation(
-        async () => {
-          ambientStoreDuringResolution = _getRequestContext()?._handleStore;
-          sharedStoreDuringResolution = mockRequestCtx._handleStore;
-          return walked([]);
-        },
-      );
+      mockRouterCtx.resolveAllSegments.mockImplementation(async () => {
+        ambientStoreDuringResolution = _getRequestContext()?._handleStore;
+        sharedStoreDuringResolution = mockRequestCtx._handleStore;
+        return walked([]);
+      });
 
       const middleware = withBackgroundRevalidation(ctx, state);
       await drain(middleware(toAsyncGen([])));

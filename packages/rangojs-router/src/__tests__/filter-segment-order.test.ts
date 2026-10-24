@@ -25,7 +25,7 @@ describe("filterSegmentOrder", () => {
   /**
    * Regression: on a FRESH and on a partial pass alike, route-mounted
    * parallels resolve BEFORE the route segment is pushed
-   * (resolveSegmentWithRevalidation). Raw matched order for a route with
+   * (resolveSegment). Raw matched order for a route with
    * parallels is therefore [..., R0.@panel, R0] — slot before route.
    * collectHandleData consumes segmentOrder verbatim with later-wins
    * semantics, so without normalization the route handler's Meta would
@@ -101,7 +101,7 @@ describe("collectHandleData with parallel slot ordering", () => {
         "R0.@panel": [{ title: "Product A specific title" }],
       },
     };
-    // Raw match order has slot before route — what resolveSegmentWithRevalidation emits.
+    // Raw match order has slot before route — what resolveSegment emits.
     const segmentOrder = filterSegmentOrder(["R0.@panel", "R0"]);
 
     const result = collectHandleData(Meta, data, segmentOrder);

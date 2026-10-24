@@ -666,9 +666,9 @@ export function createRouter<TEnv = any>(
 
   // Create segment resolution wrappers bound to segmentDeps
   const {
-    resolveLoadersOnlyWithRevalidation,
+    resolveLoadersOnly,
     buildEntryRevalidateMap,
-    resolveAllSegmentsWithRevalidation,
+    resolveAllSegments,
     findInterceptForRoute,
     resolveInterceptEntry,
     resolveInterceptLoadersOnly,
@@ -714,13 +714,13 @@ export function createRouter<TEnv = any>(
       getMetricsStore,
       createCacheScope,
       findInterceptForRoute,
-      resolveAllSegmentsWithRevalidation,
+      resolveAllSegments,
       resolveInterceptEntry,
       evaluateRevalidation,
       getRequestContext,
       createHandleStore,
       buildEntryRevalidateMap,
-      resolveLoadersOnlyWithRevalidation,
+      resolveLoadersOnly,
       resolveInterceptLoadersOnly,
       telemetry: telemetrySink,
     };
@@ -732,7 +732,7 @@ export function createRouter<TEnv = any>(
     findMatch,
     buildRouterContext,
     mergedRouteMap,
-    resolveAllSegmentsWithRevalidation,
+    resolveAllSegments,
   };
 
   async function matchForPrerender(

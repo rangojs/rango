@@ -25,6 +25,7 @@ export const routes = {
   "useCacheTest.loaderCtx": "/loader-ctx/:id",
   "useCacheTest.namedProfile": "/named-profile",
   "useCacheTest.plainData": "/plain-data",
+  "useCacheTest.returnedLazy": "/returned-lazy/:probe",
   "useCacheTest.streaming": "/streaming",
   "useCacheTest.swr": "/swr",
   "useCacheTest.swrAction": "/swr-action",

@@ -15,14 +15,14 @@ const {
   mockEvaluateRevalidation,
   mockRevalidateRules,
   mockTelemetry,
-  mockResolveLoadersOnlyWithRevalidation,
+  mockResolveLoadersOnly,
 } = vi.hoisted(() => ({
   mockEvaluateRevalidation: vi.fn(async () => false),
   // When set, buildEntryRevalidateMap returns these rules for matching segments
   mockRevalidateRules: { value: null as Map<string, any> | null },
   // When set, the router's telemetry sink (observeEvent emits to it)
   mockTelemetry: { value: undefined as TelemetrySink | undefined },
-  mockResolveLoadersOnlyWithRevalidation: vi.fn(async () => ({
+  mockResolveLoadersOnly: vi.fn(async () => ({
     segments: [],
     matchedIds: [],
   })),
@@ -37,7 +37,7 @@ vi.mock("../router-context.js", () => ({
       // Default: empty map — all segments get "cached-no-rules"
       return new Map();
     },
-    resolveLoadersOnlyWithRevalidation: mockResolveLoadersOnlyWithRevalidation,
+    resolveLoadersOnly: mockResolveLoadersOnly,
     telemetry: mockTelemetry.value,
   }),
   runWithRouterContext: (_ctx: any, fn: any) => fn(),

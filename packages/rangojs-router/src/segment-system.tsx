@@ -1064,7 +1064,7 @@ function* segmentTreeWalk(
   }
 
   // Segments arrive in root-to-leaf order from the server
-  // (resolveSegmentWithRevalidation pushes segments in this order).
+  // (resolveSegment pushes segments in this order).
   // All consumers (reconcileSegments, cache) preserve this order.
   // No sorting needed — iterate bottom-to-top to process leaf segments first.
   // This processes route/leaf layouts first, then parent layouts

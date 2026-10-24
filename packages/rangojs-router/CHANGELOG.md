@@ -359,6 +359,75 @@ in the intercept's own handler on a navigation, is reported.
 `isPartial: true`), and the re-render still writes nothing, so the stale
 record keeps serving. No change in your code.
 
+### Fixed: a `"use cache"` function that returns a server component reading `cookies()` or `headers()` no longer serves one visitor's value to the next
+
+**Before.** A server component that a `"use cache"` function returns renders
+when the value is stored. That render ran outside the guard that makes
+`cookies()` and `headers()` throw inside a cached function, so the read went
+through: the entry stored the first visitor's value, and every later request
+was served it until the entry expired. A stale entry's background refresh
+stored the value of the visitor whose request triggered it. A write through a
+`ctx` the component received (`ctx.set()`, `ctx.headers.set()`) was not
+refused there either, and was lost on a hit.
+
+```tsx
+async function Session() {
+  const user = cookies().get("session")?.value;
+  return <span>{user}</span>;
+}
+
+async function Account() {
+  "use cache";
+  return <Session />; // stored with the first visitor's session
+}
+```
+
+**After.** What the function returns is encoded once, inside its guard, on a
+miss and on a refresh, and a miss renders the decoded copy of it, as a hit
+does. Every read and write the guard refuses in the function body is refused
+in the returned tree too, with the same error: `cookies()`, `headers()`,
+`ctx.request.headers`, a `{ cache: false }` `ctx.get()`, the theme reads,
+`ctx.rewrittenFrom`, a loader the tree reads whose run made one of those
+reads, and the `ctx` writers. A refused read fails the request as the same
+read in the body does: at the value's root the call throws, and below the
+root that part renders as an error, to its nearest error boundary. Nothing is
+stored, the refusal is logged and goes to `onError` (phase `"cache"`,
+category `cache-write`, or `stale-revalidation` for a refresh), and a stale
+entry keeps serving. A read behind state the page's render could reach
+before the encode did, such as a `React.lazy` or a memoizing thenable created
+in the function, is refused the same way; rendering the value twice had let it
+through.
+
+One case is not covered yet: a handle value the function pushes with
+`ctx.use(Handle)` that holds a lazy component or a memoized promise. A handle
+value that reads the request directly is refused and not stored, but a cached
+function should not push lazy state that reads the request.
+
+Server components that read only their props, client components, and nested
+`"use cache"` calls and `cacheTag()` in the returned tree work as before. A
+value Flight cannot encode (a function, a class instance) in the data the
+function returns is not stored and returns the live value, as before; one
+inside a promise in that data now rejects that promise, as it would on a hit.
+A miss now returns a copy of the value, as a hit always did, and returns once
+the copy's root has arrived: a server component at the root of the value
+renders before the call resolves, not in the page's render. Any other write
+a miss skips (a component in the value that throws) is now logged too, as a
+refresh's already was.
+
+If your app returns such a component, read the value outside the cached
+function and pass it in (it becomes part of the key), or render the component
+outside the cached function:
+
+```tsx
+async function Account(user: string | undefined) {
+  "use cache";
+  return <span>{user}</span>;
+}
+
+// in the handler
+<div>{await Account(cookies().get("session")?.value)}</div>;
+```
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))
