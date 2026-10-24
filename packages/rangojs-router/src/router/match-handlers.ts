@@ -163,6 +163,7 @@ export interface MatchHandlerDeps<TEnv = any> {
     parentEntry: EntryData | null,
     selectorContext: InterceptSelectorContext | null,
     isAction: boolean,
+    held?: ReadonlySet<string>,
   ) => { intercept: InterceptEntry; entry: EntryData } | null;
   telemetry?: TelemetrySink;
   /**

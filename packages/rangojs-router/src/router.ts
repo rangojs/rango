@@ -655,8 +655,7 @@ export function createRouter<TEnv = any>(
   const matchApiDeps: MatchApiDeps<TEnv> = {
     findMatch: (pathname: string, ms?: any) => findMatch(pathname, ms),
     getMetricsStore,
-    findInterceptForRoute: (routeKey, parentEntry, selectorContext, isAction) =>
-      findInterceptForRoute(routeKey, parentEntry, selectorContext, isAction),
+    findInterceptForRoute: (...args) => findInterceptForRoute(...args),
     callOnError,
     findNearestErrorBoundary,
     // Use per-router manifest when available, otherwise the static named map

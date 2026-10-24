@@ -674,6 +674,26 @@ request, as a regular layout's are: the document, every navigation, a
 `cache()` record and its HITs, and a `Prerender()` bake (the next build bakes
 them under the layout). No change in your code.
 
+### Fixed: a server action from an open intercept keeps that intercept when several target the route
+
+**Before.** When several intercepts target one route, each with its own
+`when()`, a server action submitted while one of them was open re-rendered
+the first intercept declared for the route, whichever was open: an action
+skipped `when()`. With `@modal` (from /list) declared before `@drawer` (from
+/other), an action from the drawer opened over /other opened the modal next
+to it, and the drawer's loaders did not re-run, so it kept the data it had
+before the action. Two intercepts on one layout that fill the same slot showed
+the other intercept's content and loader data in that slot. The same happened
+under `cache()` and over a `Prerender()` route.
+
+**Now.** An action re-renders the intercept on screen, the one whose slot the
+page holds: its loaders re-run as after any action, and no other intercept
+opens. An open intercept still stays open after an action when its `when()`
+would now reject. Two intercepts that fill one slot share that slot, so
+between them the action evaluates `when()` again, with `from` the
+intercept's source page; when neither passes, the first declared renders. No
+change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

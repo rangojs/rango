@@ -98,6 +98,7 @@ export interface RouterContext<TEnv = any> {
     parentEntry: EntryData | null,
     selectorContext: InterceptSelectorContext,
     isAction: boolean,
+    held?: ReadonlySet<string>,
   ) => InterceptResult | null;
 
   /** The segment walker; a full match passes freshPassInput (FRESH). */

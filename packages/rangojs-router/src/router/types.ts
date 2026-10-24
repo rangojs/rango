@@ -85,6 +85,7 @@ export interface MatchApiDeps<TEnv = any> {
     parentEntry: EntryData | null,
     selectorContext: InterceptSelectorContext | null,
     isAction: boolean,
+    held?: ReadonlySet<string>,
   ) => { intercept: InterceptEntry; entry: EntryData } | null;
   callOnError: SegmentResolutionDeps<TEnv>["callOnError"];
   findNearestErrorBoundary: SegmentResolutionDeps<TEnv>["findNearestErrorBoundary"];
