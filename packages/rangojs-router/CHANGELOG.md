@@ -340,9 +340,11 @@ the navigation's own render reports `isPartial: true`, so an `onError` that
 tells navigation failures from document failures filed these as document
 failures.
 
-**Now.** The re-render's errors carry the `isPartial` of the request that
-started it, as that request's own render reports it: `true` for a client
-navigation, unset for a document request. No change in your code.
+**Now.** The errors the re-render's segment walk catches (a handler that
+throws) carry the `isPartial` of the request that started it, as that
+request's own render reports it: `true` for a client navigation, unset for a
+document request. A streamed (`loading()`) handler's rejection still reports
+it unset, as it does in the navigation's own render. No change in your code.
 
 ## 0.27.0 (2026-10-23)
 
