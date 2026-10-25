@@ -845,6 +845,43 @@ describe("segment-reconciler", () => {
 
       expect(result.segments).toHaveLength(0);
     });
+
+    it("merges a segment re-run above the boundary as an action does, and swaps the error segment raw", () => {
+      const cachedLayout = seg("L0", {
+        type: "layout",
+        component: "layout",
+        loading: "spinner" as any,
+        mountPath: "/shop",
+      });
+      const cachedRoute = seg("L0R0", {
+        component: "route",
+        loading: "route-spinner" as any,
+      });
+      // A layout the action's revalidation re-rendered, and one it held.
+      const reRendered = seg("L0", { type: "layout", component: "layout v2" });
+      const held = seg("L0", { type: "layout", component: null });
+      const errorSegment = seg("L0R0", {
+        type: "error",
+        component: "error-boundary",
+      });
+
+      const rerun = reconcileErrorSegments(
+        [cachedLayout, cachedRoute],
+        [reRendered, errorSegment],
+      );
+      expect(rerun.segments[0]).toEqual({
+        ...reRendered,
+        loading: "spinner",
+        mountPath: "/shop",
+      });
+      expect(rerun.segments[1]).toBe(errorSegment);
+
+      const kept = reconcileErrorSegments(
+        [cachedLayout, cachedRoute],
+        [held, errorSegment],
+      );
+      expect(kept.segments[0]).toMatchObject({ component: "layout" });
+    });
   });
 
   describe("server-provided loader promises", () => {

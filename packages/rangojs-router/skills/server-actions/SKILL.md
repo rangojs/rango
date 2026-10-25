@@ -704,7 +704,14 @@ is usually too aggressive.
 Throw for genuinely exceptional conditions (network failure, DB outage,
 auth violation). The nearest `errorBoundary()` above the page the action was
 called from catches them, and the boundary renders inside route middleware like
-a normal render.
+a normal render. Above the boundary the response is the action's revalidation,
+as after a success: the layouts' loaders re-run as their `revalidate()`
+decides, so a cart count shows what the action wrote before it threw. A
+route's `errorBoundary()` replaces the route: its handler and loaders do not
+run. A layout's `errorBoundary()` replaces what the layout renders in its
+outlet: the layout's own loaders, slots and orphan layouts revalidate as on a
+success, and nothing inside the outlet runs. An action sent from an intercept
+gets the boundary alone.
 
 ```typescript
 // urls.tsx — inside the urls() callback

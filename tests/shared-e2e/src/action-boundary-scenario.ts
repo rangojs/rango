@@ -6,15 +6,13 @@ import { waitForShellHydration } from "./shell-request.js";
 /**
  * An action that writes, then throws, on a route with its own errorBoundary()
  * under a layout whose loader reads the write (a cart count). The user stays
- * on the page. The server answers with the error-boundary response: the
- * boundary's segment alone (match-api.ts matchError), so the browser keeps
- * the layout's cached loader data (segment-reconciler.ts
- * reconcileErrorSegments). Other tabs refresh and a fresh load reads the
- * write; the page the action ran on keeps the count from before it, also
- * after Back to it (rango-t124). A successful action on the same page shows
- * its write in the layout. Fixture: action-boundary.tsx in each app, mounted
- * at /action-boundary; both apps call this from a dev and a (production)
- * describe.
+ * on the page. The error-boundary response is the action's revalidation cut
+ * at the boundary (rango-t124): above it, what a successful action would
+ * re-run (the layout's loader); at it, the boundary. So the page shows the
+ * boundary and the write together, and a link under the same layout keeps
+ * the fresh count. Other tabs refresh and a fresh load read the write too.
+ * Fixture: action-boundary.tsx in each app, mounted at /action-boundary; both
+ * apps call this from a dev and a (production) describe.
  */
 
 export interface ActionBoundaryScenarioOptions {
@@ -82,8 +80,22 @@ export function runActionBoundaryTests(
     await show(fresh);
     await expect(fresh.getByTestId("ab-cart")).toHaveText("cart:1");
 
-    // rango-t124: the layout keeps the count from before the write.
-    test.fail();
+    // rango-t124: the boundary's response re-ran the layout's loader.
+    await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
+  });
+
+  test("a link to another page under the same layout after a thrown action shows the write", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+    await addThenFail(page);
+
+    // A forward link holds the layout and its loader: the page keeps the
+    // copy the boundary's response brought.
+    await page.getByTestId("ab-to-other").click();
+    await expect(page.getByTestId("ab-other")).toBeVisible();
     await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
   });
 
@@ -109,8 +121,6 @@ export function runActionBoundaryTests(
     await expect(page).toHaveURL(options.url(PAGE));
     await (await revalidated).finished();
 
-    // rango-t124: green on main since the stale-defaults work; the same-page
-    // case above is still red.
     await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
   });
 

@@ -1606,7 +1606,8 @@ function boundaryResult(seg: ResolvedSegment): SegmentRevalidationResult {
 /**
  * Resolve all segments for a route: a partial match (matchPartial), a full
  * match with a FRESH pass, or the FRESH pass of an intercept record's
- * background re-render (rerenderAndCacheRoute).
+ * background re-render (rerenderAndCacheRoute). A thrown action's pass is cut
+ * at its error boundary (ActionContext.boundary).
  */
 export async function resolveAllSegments<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -1648,7 +1649,19 @@ export async function resolveAllSegments<TEnv>(
     clientSegmentSet: pass.client,
   };
 
+  const boundary = pass.actionContext?.boundary;
+  const boundaryId = boundary?.id;
   for (const entry of entries) {
+    if (entry.shortCode === boundaryId) {
+      // The outlet's loader ids stay claimed. _handlerRan makes the browser
+      // clear the outlet's handle values.
+      allSegments.push({ ...boundary!, _handlerRan: true });
+      matchedIds.push(boundaryId);
+      entry.loader?.forEach((loaderEntry, i) =>
+        matchedIds.push(`${entry.shortCode}D${i}.${loaderEntry.loader.$$id}`),
+      );
+      break;
+    }
     if (entry.type === "route" && interceptResult) {
       debugLog(
         "matchPartial.intercept",

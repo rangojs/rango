@@ -118,16 +118,7 @@ import type { HandlerContext, ResolvedSegment } from "../types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { InterceptResult } from "./router-context.js";
 import type { ResolutionPassInput } from "./segment-resolution/resolution-pass.js";
-
-/**
- * Action context passed to matchPartial
- */
-export interface ActionContext {
-  actionId?: string;
-  actionUrl?: URL;
-  actionResult?: any;
-  formData?: FormData;
-}
+import type { ActionContext } from "./types.js";
 
 /**
  * Match context containing all state for the match pipeline

@@ -24,6 +24,8 @@ import {
 import { printServerError } from "../server/print-server-error.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { resolveActionRefId } from "../router/is-action.js";
+import { getInterceptSourceHeader } from "../router/navigation-snapshot.js";
+import type { ActionContext } from "../router/types.js";
 import type { TraceSpan } from "../router/tracing.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
 import { payloadLocation } from "./full-payload.js";
@@ -50,6 +52,8 @@ import {
 import { warnNonRedirectActionResponse } from "./runtime-warnings.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { MatchResult } from "../types.js";
+import type { HandleData } from "../server/handle-store.js";
+import { isRedirectResponse } from "../response-utils.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 
 /**
@@ -62,8 +66,8 @@ import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
  * the revalidation phase so it runs INSIDE the same route-middleware wrapper as
  * a successful revalidation — route middleware (context vars, headers, cookies)
  * must apply to the error render too, matching the module doc's "identical to a
- * normal render". When `errorBoundary` is set, `actionContext` is unused (the
- * boundary is already matched; no matchPartial is run).
+ * normal render". That render is the action's revalidation, cut at the
+ * boundary (ActionContext.boundary).
  */
 export interface ActionContinuation {
   returnValue: { ok: boolean; data: unknown };
@@ -195,6 +199,7 @@ export async function executeServerAction<TEnv>(
   let returnValue: { ok: boolean; data: unknown };
   let actionStatus = 200;
   let loadedAction: Function | undefined;
+  let errorBoundary: MatchResult | undefined;
 
   try {
     loadedAction = await ctx.loadServerAction(actionId);
@@ -267,14 +272,13 @@ export async function executeServerAction<TEnv>(
 
     // Try to render error boundary.
     // Report the action error first so it is not lost if matchError throws.
-    let errorResult;
+    // The boundary renders in the revalidation phase, so route middleware
+    // applies to it as to a success's render (handler.ts
+    // executeRenderWithMiddleware).
     try {
-      errorResult = await ctx.router.matchError(
-        request,
-        { env },
-        error,
-        "route",
-      );
+      errorBoundary =
+        (await ctx.router.matchError(request, { env }, error, "route")) ??
+        undefined;
     } catch (matchErr) {
       // matchError failed — report the original action error as unhandled,
       // then let the matchError failure propagate.
@@ -293,32 +297,8 @@ export async function executeServerAction<TEnv>(
       url,
       env,
       actionId,
-      handledByBoundary: !!errorResult,
+      handledByBoundary: !!errorBoundary,
     });
-
-    if (errorResult) {
-      // Defer the error-boundary render to the revalidation phase so it runs
-      // inside the same route-middleware wrapper as a successful revalidation
-      // (handler.ts executeRenderWithMiddleware). Building + returning the
-      // Response here would bypass route middleware: context vars, headers, and
-      // cookies set by route middleware would NOT apply to the error render,
-      // diverging from the success path and from the module doc's "identical to
-      // a normal render". The boundary is already matched; the render in
-      // revalidateAfterAction uses errorResult directly (no matchPartial).
-      return {
-        returnValue,
-        actionStatus,
-        temporaryReferences,
-        // actionContext is unused on the errorBoundary path (no matchPartial).
-        actionContext: {
-          actionId,
-          actionUrl: new URL(url),
-          actionResult: returnValue.data,
-          formData: actionFormData,
-        },
-        errorBoundary: errorResult,
-      };
-    }
   }
 
   // Build continuation for the revalidation phase
@@ -337,6 +317,7 @@ export async function executeServerAction<TEnv>(
       actionResult: returnValue.data,
       formData: actionFormData,
     },
+    ...(errorBoundary && { errorBoundary }),
   };
 }
 
@@ -456,9 +437,9 @@ async function revalidateAfterActionInner<TEnv>(
 }
 
 /**
- * The action-revalidation plan: render the deferred error boundary if the
- * action threw and one matched, otherwise match affected segments (falling
- * back to a full match for redirects) and render the partial payload.
+ * The action-revalidation plan: match the affected segments, cut at the error
+ * boundary when the action threw into one (a full match for a redirect
+ * route), and render the partial payload.
  */
 function* actionRevalidationPlan<TEnv>(
   input: ActionRevalidationInput<TEnv>,
@@ -466,12 +447,14 @@ function* actionRevalidationPlan<TEnv>(
   const { ctx, request, env, url, continuation } = input;
   const { actionContext, errorBoundary } = continuation;
 
-  // Action threw and a boundary matched: render the (already-matched) error
-  // boundary here so it runs inside the route-middleware wrapper, exactly like
-  // the success branch below.
+  // Action threw and a boundary matched: render it here so it runs inside the
+  // route-middleware wrapper, exactly like the success branch below.
   if (errorBoundary) {
+    const boundaryResult = yield* step("match:partial", () =>
+      matchBoundaryRevalidation(input, errorBoundary),
+    );
     return yield* step("render", () =>
-      renderActionBoundaryResponse(input, errorBoundary),
+      renderActionResponse(input, boundaryResult),
     );
   }
 
@@ -510,9 +493,7 @@ function* actionRevalidationPlan<TEnv>(
     );
   }
 
-  return yield* step("render", () =>
-    renderRevalidationResponse(input, matchResult),
-  );
+  return yield* step("render", () => renderActionResponse(input, matchResult));
 }
 
 /** matchPartial that stamps params/routeName when a result exists. */
@@ -520,7 +501,7 @@ async function matchPartialAndRecord<TEnv>(
   ctx: HandlerContext<TEnv>,
   request: Request,
   env: TEnv,
-  actionContext: ActionContinuation["actionContext"],
+  actionContext: ActionContext,
 ): Promise<
   Awaited<ReturnType<HandlerContext<TEnv>["router"]["matchPartial"]>>
 > {
@@ -536,82 +517,67 @@ async function matchPartialAndRecord<TEnv>(
 }
 
 /**
- * Render the deferred action error boundary. setRequestContextParams + the
- * payload mirror the pre-deferral render that executeServerAction used to do
- * inline.
+ * A thrown action's boundary response: its revalidation, cut at the boundary
+ * (ActionContext.boundary). matchError's result alone, which streams no
+ * handle values, for an action sent from an intercept, and when the cut
+ * revalidation returns null, misses the boundary or throws anything but a
+ * redirect.
  */
-function renderActionBoundaryResponse<TEnv>(
-  input: ActionRevalidationInput<TEnv>,
+async function matchBoundaryRevalidation<TEnv>(
+  { ctx, request, env, continuation, reqCtx }: ActionRevalidationInput<TEnv>,
   errorBoundary: MatchResult,
-): Promise<Response> {
-  const { ctx, request, env, url, handleStore, continuation, reqCtx } = input;
-  const { returnValue, actionStatus, temporaryReferences, actionContext } =
-    continuation;
-
+): Promise<MatchResult> {
+  // matchError returns the error segment alone.
+  const boundary = errorBoundary.segments[0]!;
+  if (!getInterceptSourceHeader(request)) {
+    let failure: string | undefined;
+    try {
+      const matchResult = await matchPartialAndRecord(ctx, request, env, {
+        ...continuation.actionContext,
+        boundary,
+      });
+      if (
+        matchResult?.segments.some(
+          (s) => s.id === boundary.id && s.type === "error",
+        )
+      ) {
+        return matchResult;
+      }
+      if (matchResult) failure = "did not reach the boundary";
+    } catch (error) {
+      // Redirects as from a success's revalidation (handler.ts
+      // executeRenderWithMiddleware). matchError's 500 was the boundary's.
+      if (error instanceof Response && isRedirectResponse(error)) {
+        reqCtx._setStatus(200);
+        throw error;
+      }
+      failure = `threw ${error instanceof Response ? `a ${error.status} Response` : String(error)}`;
+    }
+    if (failure && process.env.NODE_ENV !== "production") {
+      console.warn(
+        `[@rangojs/router] Server action "${continuation.actionContext.actionId}" ` +
+          `threw into an error boundary whose revalidation ${failure}. The ` +
+          `response carries the error segment alone, without the loaders above it.`,
+      );
+    }
+  }
   setRequestContextParams(errorBoundary.params, errorBoundary.routeName);
-
-  const errorPayload: RscPayload = {
-    metadata: {
-      ...payloadLocation(reqCtx, url),
-      // routerId exposed for the frontend (current app identity); see
-      // rsc-rendering.ts partial branch.
-      routerId: ctx.router.id,
-      segments: attachTransitionWhen(errorBoundary.segments, reqCtx),
-      isPartial: true,
-      matched: errorBoundary.matched,
-      diff: errorBoundary.diff,
-      resolvedIds: errorBoundary.resolvedIds,
-      params: errorBoundary.params,
-      routeName: publicRouteName(errorBoundary.routeName),
-      isError: true,
-      handles: handleStore.stream(),
-      version: ctx.version,
-    },
-    returnValue,
-  };
-
-  // Intentionally omit attachLocationState for error payloads: location state
-  // is a success-only semantic. Error boundary responses update the error UI
-  // but should not mutate browser history state.
-
-  return renderRscResponse({
-    ctx,
-    request,
-    env,
-    url,
-    payload: errorPayload,
-    temporaryReferences,
-    init: {
-      status: actionStatus,
-      headers: {
-        "content-type": "text/x-component;charset=utf-8",
-        // Router identity for the client's pre-decode integrity check (the
-        // action apply path has no post-decode guard). See response-adapter.
-        "X-RSC-Router-Id": ctx.router.id,
-      },
-    },
-    tracking: {
-      mode: "action-revalidation",
-      routeKey: input.reqCtx._routeName,
-      actionId: actionContext?.actionId,
-      span: input.renderSpan,
-      onEvent:
-        reqCtx._activeRoutine &&
-        createRenderStageTraceBridge(reqCtx._activeRoutine),
-    },
-  });
+  return errorBoundary;
 }
 
-/** Render the updated segments after a successful action. */
-function renderRevalidationResponse<TEnv>(
+/**
+ * Render the action's revalidation, or a thrown action's boundary response.
+ * An error payload attaches no location state: that is a success-only
+ * semantic, and the boundary must not mutate history state.
+ */
+function renderActionResponse<TEnv>(
   input: ActionRevalidationInput<TEnv>,
-  matchResult: NonNullable<
-    Awaited<ReturnType<HandlerContext<TEnv>["router"]["matchPartial"]>>
-  >,
+  matchResult: MatchResult,
 ): Promise<Response> {
   const { ctx, request, env, url, handleStore, continuation, reqCtx } = input;
   const { returnValue, actionStatus, temporaryReferences, actionContext } =
     continuation;
+  const isError = !!continuation.errorBoundary;
 
   const payload: RscPayload = {
     metadata: {
@@ -627,13 +593,18 @@ function renderRevalidationResponse<TEnv>(
       params: matchResult.params,
       routeName: publicRouteName(matchResult.routeName),
       slots: matchResult.slots,
-      handles: handleStore.stream(),
+      ...(isError && { isError }),
+      // matchError's result: the abandoned walk's pushes are not the page's.
+      handles:
+        matchResult === continuation.errorBoundary
+          ? noHandles()
+          : handleStore.stream(),
       version: ctx.version,
     },
     returnValue,
   };
 
-  attachLocationStateIfPresent(payload);
+  if (!isError) attachLocationStateIfPresent(payload);
 
   return renderRscResponse({
     ctx,
@@ -662,3 +633,6 @@ function renderRevalidationResponse<TEnv>(
     },
   });
 }
+
+/** The handle stream of matchBoundaryRevalidation's fallback. */
+async function* noHandles(): AsyncGenerator<HandleData, void, unknown> {}
