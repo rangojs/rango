@@ -1,78 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.28.0 (2026-10-25)
 
-### Changed: `dispatch()` answers as production in a few edge cases
-
-**Before.** `dispatch()` from `@rangojs/router/testing` kept its own copy of
-the handler's steps around a response route: the global middleware passes,
-the response route's timeout, the redirect interception and the response's
-finalization. In a few cases its answer differed from the one `router.fetch`
-sends.
-
-**After.** It runs the production handler's request stages, so these cases
-answer as production does:
-
-- An action request (`?_rsc_action`, not a partial) whose final pass ran no
-  global middleware, answered with a 3xx (a trailing-slash redirect, or a
-  redirect from a response route or its route middleware): the 3xx, through
-  the open-redirect guard, instead of a `204` + `X-RSC-Redirect`.
-- A partial request (`?_rsc_partial`) to a trailing-slash path: a global
-  middleware that reads the response after `next()` sees the `204` +
-  `X-RSC-Redirect` instead of a `308`. The response is unchanged.
-- A response route's `renderStartMs` timeout with no global middleware:
-  `onResponse` callbacks the route registered before the deadline no longer
-  apply to the 504 or `onTimeout` response.
-- A content-negotiated response route whose route middleware short-circuits:
-  the response carries `Vary: Accept`.
-- A response route for a type with no MIME (image, stream, any) whose handler
-  returns a value that is not a `Response`: the 500 carries production's
-  message, `Response route handler for "…" must return a Response object`.
-- A throwing `onTimeout` logs `[RSC] onTimeout callback error:` instead of
-  `[dispatch] onTimeout callback error:`.
-- A response-route timeout on a rewritten pass: `onError`, `onTimeout` and
-  the `request.timeout` event carry the rewrite target's request and URL. The
-  event keeps the `requestId` of `dispatch`'s own `request.start` and
-  `request.end`.
-- A stream-idle timeout's `onError` call and `request.timeout` event carry
-  `routeKey`.
-- The same timeout, stream-idle or rewrite error reaches `onError` once per
-  request.
-
-No change in your code. A test that pinned one of the old answers now gets
-production's.
-
-### Changed: `dispatch()` classifies a request as production does
-
-**Before.** `dispatch()` matched each URL with a lookup of its own before the
-global middleware ran, and set the route's params and name there. It never
-answered a reload, and it served an action that a rewrite moved to a response
-route.
-
-**After.** It classifies each pass with the production handler's classify
-stage and answers its terminal plans inside the global middleware chain:
-
-- A request whose `_rsc_v` names another deploy's document version (see
-  `setBuildVersions`) gets the `X-RSC-Reload` production sends, on any route.
-  On a component route `dispatch()` threw, on an unmatched path it answered
-  404, and on a response route a request that was not a partial got the
-  route's response.
-- A partial request (`?_rsc_partial`) whose `_rsc_rid` names another router (a
-  navigation from another app) gets the `X-RSC-Reload` too, where a component
-  route threw and an unmatched path answered 404.
-- An action request (`?_rsc_action`) that a rewrite moved to a response route,
-  a redirect or an unmatched path rejects with production's error, `A rewrite
-of a server action or form post must target a page route; …`, instead of
-  serving the target.
-- Global middleware sees the route in `ctx.routeName` and the request
-  context's `params` after `await next()`, not before it. A trailing-slash
-  redirect sets neither.
-
-The error a component route throws, and when it throws (before any
-middleware), is unchanged. A test that read `ctx.routeName` before `next()`
-in global middleware reads it after `next()`, or from route middleware.
-
-### Fixed: a rewritten request's telemetry events carry one `requestId`
+### Fixed: a rewritten request's telemetry events carry one `requestId` ([#1269](https://github.com/rangojs/rango/pull/1269))
 
 **Before.** With `createRouter({ telemetry })` and no request-id header
 (`x-rsc-router-request-id`, `x-request-id` or `cf-ray`), a request that
@@ -89,7 +19,7 @@ carries the visitor's id, in `router.fetch` and `dispatch()` alike. A request
 that sends a request-id header reports that header's value, as before. No
 change in your code.
 
-### Fixed: a no-JS form post's telemetry events carry one `requestId`
+### Fixed: a no-JS form post's telemetry events carry one `requestId` ([#1274](https://github.com/rangojs/rango/pull/1274))
 
 **Before.** With `createRouter({ telemetry })` and no request-id header, the
 re-render after a no-JS form post (progressive enhancement), rewritten or not,
@@ -102,7 +32,7 @@ requests.
 `request.timeout` carries. A request that sends a request-id header reports
 that header's value, as before. No change in your code.
 
-### Fixed: a PPR shell capture sends no telemetry events
+### Fixed: a PPR shell capture sends no telemetry events ([#1276](https://github.com/rangojs/rango/pull/1276))
 
 **Before.** With `createRouter({ telemetry })`, a document request or a
 navigation that missed a `ppr` route's shell started a background capture,
@@ -122,7 +52,7 @@ already did not. The visitor's request reports its own `loader.*` and
 `handler.error` events once, under one id. `onError` is unchanged. No change
 in your code.
 
-### Fixed: a stale `cache()` HIT's background refresh sets no fresh-reads cookie on the visitor's response
+### Fixed: a stale `cache()` HIT's background refresh sets no fresh-reads cookie on the visitor's response ([#1259](https://github.com/rangojs/rango/pull/1259))
 
 **Before.** With `CFCacheStore` or `VercelCacheStore`, a handler under a
 stale `cache()` entry that called `revalidateTag()` or `updateTag()` during
@@ -140,7 +70,7 @@ development warning blaming a streaming loader or render.
 no warning, as the refresh's other response writes already reach nothing. No
 change in your code.
 
-### Fixed: a stale `"use cache"` entry's, cached loader's or document cache entry's background refresh sets no fresh-reads cookie on the visitor's response
+### Fixed: a stale `"use cache"` entry's, cached loader's or document cache entry's background refresh sets no fresh-reads cookie on the visitor's response ([#1264](https://github.com/rangojs/rango/pull/1264))
 
 **Before.** With `CFCacheStore` or `VercelCacheStore`, a `"use cache"`
 function, or a loader bound with its own `cache()`, that called
@@ -161,7 +91,7 @@ invalidation the request itself makes (in a server action, or in a route
 handler, middleware or render outside a background refresh) sets the cookie
 as before. No change in your code.
 
-### Fixed: a stale document cache entry's background re-run no longer writes cookies or headers on the visitor's response
+### Fixed: a stale document cache entry's background re-run no longer writes cookies or headers on the visitor's response ([#1267](https://github.com/rangojs/rango/pull/1267))
 
 **Before.** When `createDocumentCacheMiddleware()` served a stale entry, it
 re-ran the page in the background on the visitor's own request context. A
@@ -188,7 +118,7 @@ re-run, as after a rewrite: its side effects happen twice per stale hit, and
 if it reads the route's params, the refreshed page holds them where a cache
 miss reuses the run that started before the match. No change in your code.
 
-### Fixed: global middleware keeps the `STALE` response while a stale document cache entry re-runs
+### Fixed: global middleware keeps the `STALE` response while a stale document cache entry re-runs ([#1278](https://github.com/rangojs/rango/pull/1278))
 
 **Before.** On a stale hit, `createDocumentCacheMiddleware()` returns the
 stored entry and re-runs the rest of the middleware chain in the background
@@ -212,7 +142,7 @@ held, so when a global middleware's post-`next()` work outlasted the re-run:
 cache sees the `STALE` response after `next()`, writes land on it, and the
 re-run's headers go to the refreshed entry. No change in your code.
 
-### Fixed: a middleware that answers while its `next()` still runs keeps its answer
+### Fixed: a middleware that answers while its `next()` still runs keeps its answer ([#1278](https://github.com/rangojs/rango/pull/1278))
 
 **Before.** A middleware that settled while the `next()` it called was still
 running shared its response with the render it abandoned. It may have
@@ -248,7 +178,7 @@ they can catch and answer with a fallback. The abandoned render builds its
 own response, which nothing serves. A middleware that waits for its `next()`
 behaves as before. No change in your code.
 
-### Fixed: a stale `cache()` record a PPR shell recapture reads refreshes under `cache()` rules
+### Fixed: a stale `cache()` record a PPR shell recapture reads refreshes under `cache()` rules ([#1263](https://github.com/rangojs/rango/pull/1263))
 
 **Before.** When a `ppr` route's shell capture read a stale `cache()` record,
 the background refresh it started rendered under the capture's guard instead
@@ -264,7 +194,7 @@ until the record expired or a request outside the shell refreshed it.
 under `cache()` rules, and the next recapture replays the refreshed record.
 The capture itself still refuses those reads. No change in your code.
 
-### Fixed: a cached handler's `ctx.dynamic()` in a background refresh no longer refuses the PPR shell capture that started it
+### Fixed: a cached handler's `ctx.dynamic()` in a background refresh no longer refuses the PPR shell capture that started it ([#1265](https://github.com/rangojs/rango/pull/1265))
 
 **Before.** When a `ppr` route's shell capture read a stale `cache()` record,
 the background refresh it started re-ran the cached handler, and a
@@ -282,7 +212,7 @@ visitor's request; it renders the record only. A recapture over a stale
 record stores the shell as one over a fresh record does. `ctx.dynamic()` in
 the capture's own render still refuses it. No change in your code.
 
-### Fixed: a `"use cache"` function that takes `getRequestContext()` no longer fails writes outside its body
+### Fixed: a `"use cache"` function that takes `getRequestContext()` no longer fails writes outside its body ([#1268](https://github.com/rangojs/rango/pull/1268))
 
 **Before.** A `"use cache"` function called with the request context
 (`getRequestContext()`) as an argument marked that context while its body ran
@@ -303,7 +233,7 @@ not when the body reached it through `getRequestContext()`. A write made in
 the body's own async chain still throws, on every pass. A handler or
 middleware `ctx` argument keeps its mark. No change in your code.
 
-### Fixed: a `cache()` route whose handler reads its own loader shows the loader's handle values once
+### Fixed: a `cache()` route whose handler reads its own loader shows the loader's handle values once ([#1266](https://github.com/rangojs/rango/pull/1266))
 
 **Before.** Under `cache({ ttl, swr })`, a route or layout handler that
 awaited its own loader, declared with `loader()` (`await ctx.use(ProductLoader)`),
@@ -330,7 +260,7 @@ evicts the route record as well; before, the refreshed record lost them. The
 refresh and the `Prerender` build file a layout's handle values under that
 layout, as a live render does. No change in your code.
 
-### Fixed: a PPR shell capture whose handler fails stores no error page as the shell
+### Fixed: a PPR shell capture whose handler fails stores no error page as the shell ([#1272](https://github.com/rangojs/rango/pull/1272))
 
 **Before.** A `ppr` route's background shell capture runs the route's
 handlers again. When a route, layout or parallel slot handler threw (or threw
@@ -351,7 +281,7 @@ recaptures log and call `onError` once per backoff window: when you delete a
 page, invalidate its tag. A render that fails for the visitor too was never
 captured, and still is not. No change in your code.
 
-### Fixed: a `cache()` route's background re-render runs no intercept loader that nothing reads
+### Fixed: a `cache()` route's background re-render runs no intercept loader that nothing reads ([#1273](https://github.com/rangojs/rango/pull/1273))
 
 **Before.** With an intercept open, the background re-render that writes a
 `cache()` record ran every loader the intercept declares with `loader()`: the refresh a stale HIT starts under
@@ -371,7 +301,7 @@ intercept loaders, and an intercept loader with its own `cache()` is refreshed
 by its next live read rather than by the re-render, as the route's own loaders
 already are. No change in your code.
 
-### Fixed: a `cache()` route's background re-render under an intercept no longer runs the intercepted route's handler
+### Fixed: a `cache()` route's background re-render under an intercept no longer runs the intercepted route's handler ([#1277](https://github.com/rangojs/rango/pull/1277))
 
 **Before.** With an intercept open over a route under `cache()`, the
 background re-render that writes the intercept's record (the refresh a stale
@@ -389,7 +319,7 @@ render does and writes the record a MISS writes: the record and its HITs no
 longer carry the route's page or its tags. What the intercept shows, and the
 page under it, are unchanged. No change in your code.
 
-### Fixed: `onError` reports `isPartial: true` for an error in the background re-render a navigation starts
+### Fixed: `onError` reports `isPartial: true` for an error in the background re-render a navigation starts ([#1281](https://github.com/rangojs/rango/pull/1281))
 
 **Before.** When a handler threw in the background re-render of a `cache()`
 record (the refresh a stale HIT starts under `cache({ ttl, swr })`, and the
@@ -406,7 +336,7 @@ request's own render reports it: `true` for a client navigation, unset for a
 document request. A streamed (`loading()`) handler's rejection still reports
 it unset, as it does in the navigation's own render. No change in your code.
 
-### Fixed: an intercept handler that throws in a `cache()` record's background re-render reaches `onError`
+### Fixed: an intercept handler that throws in a `cache()` record's background re-render reaches `onError` ([#1281](https://github.com/rangojs/rango/pull/1281))
 
 **Before.** When an intercept's own handler threw only in the background
 re-render of its `cache()` record (the refresh a stale HIT starts, or the
@@ -419,7 +349,7 @@ in the intercept's own handler on a navigation, is reported.
 `isPartial: true`), and the re-render still writes nothing, so the stale
 record keeps serving. No change in your code.
 
-### Fixed: a `"use cache"` function that returns a server component reading `cookies()` or `headers()` no longer serves one visitor's value to the next
+### Fixed: a `"use cache"` function that returns a server component reading `cookies()` or `headers()` no longer serves one visitor's value to the next ([#1271](https://github.com/rangojs/rango/pull/1271))
 
 **Before.** A server component that a `"use cache"` function returns renders
 when the value is stored. That render ran outside the guard that makes
@@ -488,7 +418,7 @@ async function Account(user: string | undefined) {
 <div>{await Account(cookies().get("session")?.value)}</div>;
 ```
 
-### Fixed: a `cache()` HIT under an intercept runs the intercept's loaders, not the intercepted route's
+### Fixed: a `cache()` HIT under an intercept runs the intercept's loaders, not the intercepted route's ([#1282](https://github.com/rangojs/rango/pull/1282))
 
 **Before.** With an intercept open over a route under `cache()`, a HIT of the
 intercept's record also ran the loaders the intercepted route declares, which
@@ -504,7 +434,7 @@ showed on the MISS and were missing on every HIT. The intercept variant a
 every handle value the MISS shows, and the route's loaders neither run nor
 appear in the response. No change in your code.
 
-### Fixed: a `cache()` HIT lists a segment's handle values in the order the first render does
+### Fixed: a `cache()` HIT lists a segment's handle values in the order the first render does ([#1286](https://github.com/rangojs/rango/pull/1286))
 
 **Before.** Under `cache()`, where a route's, a layout's or an intercept's
 handler and its loaders both push to a handle (a breadcrumb read with
@@ -523,7 +453,7 @@ background refresh. The fill after a `prefetch: false` prefetch keeps its
 order: it lists the deferred loader's value after the handler's, from a
 record or not. No change in your code.
 
-### Fixed: an intercept over a `Prerender()` route no longer sends the route's page
+### Fixed: an intercept over a `Prerender()` route no longer sends the route's page ([#1283](https://github.com/rangojs/rango/pull/1283))
 
 **Before.** The intercept variant a `Prerender()` route bakes, at build and on
 the dev server, stored the route's whole page next to the intercept: the
@@ -541,7 +471,7 @@ intercept, with their handle values. What the intercept shows, and the page
 under it, are unchanged, and a direct load of the URL still serves the full
 page. The next build bakes the new variant. No change in your code.
 
-### Fixed: a navigation to a `Prerender()` route keeps the layout on screen when the params change
+### Fixed: a navigation to a `Prerender()` route keeps the layout on screen when the params change ([#1288](https://github.com/rangojs/rango/pull/1288))
 
 **Before.** A client-side navigation served from a `Prerender()` route's bake,
 at build or on the dev server, sent every segment the browser held again when
@@ -557,7 +487,7 @@ route's own segments are sent as before. A layout whose `revalidate()` asks
 for a re-render when the params change gets the baked copy, as it gets a live
 render on a live route. No change in your code.
 
-### Fixed: a navigation served from a `cache()` record keeps the layout's handle values on screen
+### Fixed: a navigation served from a `cache()` record keeps the layout's handle values on screen ([#1292](https://github.com/rangojs/rango/pull/1292))
 
 **Before.** A client-side navigation served from a route's `cache()` record
 kept the layouts the browser held, but sent their handle values again from
@@ -578,7 +508,7 @@ navigation served from the record, as on an uncached one: read the value in
 a loader of its own, or give the layout a `revalidate()` that re-renders it.
 A document request is unchanged. No change in your code.
 
-### Fixed: an orphan layout's parallel slot follows its `revalidate()` on a navigation served from `cache()` or a `Prerender()` bake
+### Fixed: an orphan layout's parallel slot follows its `revalidate()` on a navigation served from `cache()` or a `Prerender()` bake ([#1296](https://github.com/rangojs/rango/pull/1296))
 
 **Before.** A parallel slot declared in an orphan layout (a layout with no
 routes, declared among a layout's children or a route's) had its
@@ -600,7 +530,7 @@ not change, and it sends a route's own segments (an orphan layout inside the
 `path()` and its slots included) whenever the params changed. No change in
 your code.
 
-### Fixed: a navigation reports parallel slot and orphan layout handlers in Server-Timing and traces, as the document does
+### Fixed: a navigation reports parallel slot and orphan layout handlers in Server-Timing and traces, as the document does ([#1285](https://github.com/rangojs/rango/pull/1285))
 
 **Before.** A client navigation or an action's revalidation left out two
 kinds of handler that the document request reports. With `debugPerformance`
@@ -628,7 +558,7 @@ What renders is unchanged. No change in your code. A dashboard that reads the
 per-segment rows of navigations sees the slot and orphan rows appear, and a
 `Static()` route's row disappear (documents never had it).
 
-### Fixed: an intercept over a `Prerender()` route shows only the intercept the navigation selected
+### Fixed: an intercept over a `Prerender()` route shows only the intercept the navigation selected ([#1287](https://github.com/rangojs/rango/pull/1287))
 
 **Before.** When several intercepts target a `Prerender()` route, a
 client-side navigation selects one of them: the innermost whose `when()`
@@ -651,7 +581,7 @@ layout that fill the same slot share that slot's segment, so the bake cannot
 tell them apart: neither is baked, and they render live, as on a route that is
 not pre-rendered. No change in your code.
 
-### Fixed: a `cache()` route with several intercepts serves each navigation the intercept it selected
+### Fixed: a `cache()` route with several intercepts serves each navigation the intercept it selected ([#1289](https://github.com/rangojs/rango/pull/1289))
 
 **Before.** When several intercepts target one route under `cache()`, each
 with its own `when()`, a client-side navigation selects one of them. The
@@ -674,7 +604,7 @@ new router version already misses them on `CFCacheStore` and
 once and stores a new record, and the old one expires with its TTL. No change
 in your code.
 
-### Fixed: under `cache({ key })`, a document request and a plain navigation never render an intercept's record
+### Fixed: under `cache({ key })`, a document request and a plain navigation never render an intercept's record ([#1293](https://github.com/rangojs/rango/pull/1293))
 
 **Before.** A `cache()` with its own `key()` stored one record per `key()`
 result, whatever the request kind: a document request, a client navigation
@@ -720,31 +650,7 @@ document's record (`BYPASS; reason=explicit-cache-hit`), as on a `ppr` route
 without a `key()`. The PPR shell partition and a response route's entry are
 unchanged. No change in your code.
 
-### Added: the build warns when an intercept over a `Prerender()` route renders live
-
-An intercept a navigation selects over a `Prerender()` route is served from
-the build's bake, except in three cases where the build does not bake it and
-it renders live: two intercepts on one layout fill the same slot; its handler
-or layout returned a `Response` at build time; or it targets the route by its
-name inside an `include()` (`"item"` for the route `"shop.item"`, or for a
-route named `"item"` in an unnamed `include()`), which only a fallback
-selects and the build does not bake. Live, its handler
-runs per request with the request's context, so a handler that only works
-with `BuildContext` (a file read, say) fails there. Until now nothing said so.
-
-`vite build` now prints one warning per route and slot (a route in an unnamed
-`include()` is named by its URL):
-
-```
-[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext. To pre-render it, give each intercept its own slot.
-```
-
-Each warning ends with what pre-renders the intercept: give each intercept its
-own slot, return a node from its handler or layout at build time, or declare it
-inside the `include()` as `".item"`. What renders is unchanged, and no change
-in your code is needed.
-
-### Fixed: an orphan layout's handle values belong to that layout
+### Fixed: an orphan layout's handle values belong to that layout ([#1291](https://github.com/rangojs/rango/pull/1291))
 
 **Before.** An orphan layout (a layout with no routes, declared among a
 layout's children or a route's) whose handler pushed to a handle with
@@ -763,7 +669,7 @@ request, as a regular layout's are: the document, every navigation, a
 `cache()` record and its HITs, and a `Prerender()` bake (the next build bakes
 them under the layout). No change in your code.
 
-### Fixed: an orphan layout that re-runs and pushes nothing clears its handle values
+### Fixed: an orphan layout that re-runs and pushes nothing clears its handle values ([#1295](https://github.com/rangojs/rango/pull/1295))
 
 **Before.** An orphan layout (a layout with no routes, declared among a
 layout's children or a route's) that re-ran on a navigation or a server
@@ -779,7 +685,7 @@ values.
 re-runs, as a regular layout does: with what it pushes now, or with nothing.
 No change in your code.
 
-### Fixed: Back/Forward onto an intercept entry restores it over its own source page
+### Fixed: Back/Forward onto an intercept entry restores it over its own source page ([#1236](https://github.com/rangojs/rango/pull/1236))
 
 **Before.** The browser's history cache kept one entry per intercepted URL,
 whatever page the intercept was opened over. Open `/item/1` as an intercept
@@ -791,7 +697,7 @@ nothing corrected it.
 **Now.** An intercept entry is cached per source page, so each restores over
 the page it was opened from, still with no request. No change in your code.
 
-### Fixed: an action's error boundary for a page the user already left no longer cancels the actions on the page they are on
+### Fixed: an action's error boundary for a page the user already left no longer cancels the actions on the page they are on ([#1237](https://github.com/rangojs/rango/pull/1237))
 
 **Before.** A user fires action A on one page, navigates, and fires action B
 on the new page. A throws into an `errorBoundary()` and its response arrives
@@ -808,7 +714,7 @@ the page on screen gets the background revalidation an action owes when the
 user navigated away. A boundary that shows still aborts the other actions in
 flight, so none commits over it. No change in your code.
 
-### Fixed: `useAction()` reports the error of an action whose error boundary shows
+### Fixed: `useAction()` reports the error of an action whose error boundary shows ([#1237](https://github.com/rangojs/rango/pull/1237))
 
 **Before.** An action that throws gets an error-boundary response: its route's
 `errorBoundary()`, or the router's default one. When that response kept
@@ -821,7 +727,7 @@ boundary, never saw the error.
 streaming. Until then the action counts as in flight, as a successful one
 does: `useNavigation().state` reads `"loading"`. No change in your code.
 
-### Fixed: an action that throws into an `errorBoundary()` shows its write above the boundary
+### Fixed: an action that throws into an `errorBoundary()` shows its write above the boundary ([#1300](https://github.com/rangojs/rango/pull/1300))
 
 **Before.** A layout above a route's `errorBoundary()` shows a loader value,
 such as a cart count. An action writes the cart, then throws, and the user
@@ -875,6 +781,100 @@ replaces the page alone, an action sent from an intercept gets the boundary
 alone, and a form post without JavaScript renders as before. When the
 revalidation returns nothing or fails with anything but a redirect, the
 boundary shows alone, as before; in development a failure logs a warning.
+
+### Changed: `dispatch()` answers as production in a few edge cases ([#1242](https://github.com/rangojs/rango/pull/1242))
+
+**Before.** `dispatch()` from `@rangojs/router/testing` kept its own copy of
+the handler's steps around a response route: the global middleware passes,
+the response route's timeout, the redirect interception and the response's
+finalization. In a few cases its answer differed from the one `router.fetch`
+sends.
+
+**After.** It runs the production handler's request stages, so these cases
+answer as production does:
+
+- An action request (`?_rsc_action`, not a partial) whose final pass ran no
+  global middleware, answered with a 3xx (a trailing-slash redirect, or a
+  redirect from a response route or its route middleware): the 3xx, through
+  the open-redirect guard, instead of a `204` + `X-RSC-Redirect`.
+- A partial request (`?_rsc_partial`) to a trailing-slash path: a global
+  middleware that reads the response after `next()` sees the `204` +
+  `X-RSC-Redirect` instead of a `308`. The response is unchanged.
+- A response route's `renderStartMs` timeout with no global middleware:
+  `onResponse` callbacks the route registered before the deadline no longer
+  apply to the 504 or `onTimeout` response.
+- A content-negotiated response route whose route middleware short-circuits:
+  the response carries `Vary: Accept`.
+- A response route for a type with no MIME (image, stream, any) whose handler
+  returns a value that is not a `Response`: the 500 carries production's
+  message, `Response route handler for "…" must return a Response object`.
+- A throwing `onTimeout` logs `[RSC] onTimeout callback error:` instead of
+  `[dispatch] onTimeout callback error:`.
+- A response-route timeout on a rewritten pass: `onError`, `onTimeout` and
+  the `request.timeout` event carry the rewrite target's request and URL. The
+  event keeps the `requestId` of `dispatch`'s own `request.start` and
+  `request.end`.
+- A stream-idle timeout's `onError` call and `request.timeout` event carry
+  `routeKey`.
+- The same timeout, stream-idle or rewrite error reaches `onError` once per
+  request.
+
+No change in your code. A test that pinned one of the old answers now gets
+production's.
+
+### Changed: `dispatch()` classifies a request as production does ([#1252](https://github.com/rangojs/rango/pull/1252))
+
+**Before.** `dispatch()` matched each URL with a lookup of its own before the
+global middleware ran, and set the route's params and name there. It never
+answered a reload, and it served an action that a rewrite moved to a response
+route.
+
+**After.** It classifies each pass with the production handler's classify
+stage and answers its terminal plans inside the global middleware chain:
+
+- A request whose `_rsc_v` names another deploy's document version (see
+  `setBuildVersions`) gets the `X-RSC-Reload` production sends, on any route.
+  On a component route `dispatch()` threw, on an unmatched path it answered
+  404, and on a response route a request that was not a partial got the
+  route's response.
+- A partial request (`?_rsc_partial`) whose `_rsc_rid` names another router (a
+  navigation from another app) gets the `X-RSC-Reload` too, where a component
+  route threw and an unmatched path answered 404.
+- An action request (`?_rsc_action`) that a rewrite moved to a response route,
+  a redirect or an unmatched path rejects with production's error, `A rewrite
+of a server action or form post must target a page route; …`, instead of
+  serving the target.
+- Global middleware sees the route in `ctx.routeName` and the request
+  context's `params` after `await next()`, not before it. A trailing-slash
+  redirect sets neither.
+
+The error a component route throws, and when it throws (before any
+middleware), is unchanged. A test that read `ctx.routeName` before `next()`
+in global middleware reads it after `next()`, or from route middleware.
+
+### Added: the build warns when an intercept over a `Prerender()` route renders live ([#1290](https://github.com/rangojs/rango/pull/1290))
+
+An intercept a navigation selects over a `Prerender()` route is served from
+the build's bake, except in three cases where the build does not bake it and
+it renders live: two intercepts on one layout fill the same slot; its handler
+or layout returned a `Response` at build time; or it targets the route by its
+name inside an `include()` (`"item"` for the route `"shop.item"`, or for a
+route named `"item"` in an unnamed `include()`), which only a fallback
+selects and the build does not bake. Live, its handler
+runs per request with the request's context, so a handler that only works
+with `BuildContext` (a file read, say) fails there. Until now nothing said so.
+
+`vite build` now prints one warning per route and slot (a route in an unnamed
+`include()` is named by its URL):
+
+```
+[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext. To pre-render it, give each intercept its own slot.
+```
+
+Each warning ends with what pre-renders the intercept: give each intercept its
+own slot, return a node from its handler or layout at build time, or declare it
+inside the `include()` as `".item"`. What renders is unchanged, and no change
+in your code is needed.
 
 ## 0.27.0 (2026-10-23)
 
