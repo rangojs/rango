@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: Back/Forward onto an intercept entry restores it over its own source page
+
+**Before.** The browser's history cache kept one entry per intercepted URL,
+whatever page the intercept was opened over. Open `/item/1` as an intercept
+from `/list`, follow a link in it to `/search`, and open `/item/1` again from
+there: the second entry's tree replaced the first's. Going Back twice then
+showed the intercept over `/search` instead of `/list`, with no request, so
+nothing corrected it.
+
+**Now.** An intercept entry is cached per source page, so each restores over
+the page it was opened from, still with no request. No change in your code.
+
+### Fixed: an action's error boundary for a page the user already left no longer cancels the actions on the page they are on
+
+**Before.** A user fires action A on one page, navigates, and fires action B
+on the new page. A throws into an `errorBoundary()` and its response arrives
+while B is still in flight. The boundary is not shown, because its page is
+gone, but it still aborted B: `useAction(B)` went back to idle with no
+result, B's `await` resolved with `undefined`, and the client cache was not
+invalidated for B's write.
+
+**Now.** A boundary for a page the user already left aborts nothing. B
+completes as usual: `useAction(B)` and its `await` get its real result. A
+boundary the user leaves while it renders is dropped after it has aborted the
+other actions, as before. A's call still rejects with its error, `useAction(A)` reports it, and
+the page on screen gets the background revalidation an action owes when the
+user navigated away. A boundary that shows still aborts the other actions in
+flight, so none commits over it. No change in your code.
+
+### Fixed: `useAction()` reports the error of an action whose error boundary shows
+
+**Before.** An action that throws gets an error-boundary response: its route's
+`errorBoundary()`, or the router's default one. When that response kept
+streaming after its first rows (a fallback with a `<Suspense>` tail, or a slow
+connection), `useAction(action).error` stayed `null`. The boundary showed, but a
+component reading the action's state, such as a toast in a layout above the
+boundary, never saw the error.
+
+**Now.** `useAction(action).error` holds the error once the response finishes
+streaming. Until then the action counts as in flight, as a successful one
+does: `useNavigation().state` reads `"loading"`. No change in your code.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

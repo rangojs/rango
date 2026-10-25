@@ -743,33 +743,47 @@ export function createServerActionBridge(
       if (isError && isPartial && segments && diff) {
         log("processing error boundary response");
 
-        // Fail current handle BEFORE aborting all actions so the event controller
-        // records the error state (abortAllActions clears inflight entries)
+        // transition({ when }) sees action.error on the boundary commit and on
+        // a dropped one's follow-up.
+        whenAction = {
+          ...whenAction,
+          error: returnValue && !returnValue.ok ? returnValue.data : undefined,
+        };
+
+        // No consolidation: the boundary replaces the page, or the page left.
+        handle.clearConsolidation();
+
+        const currentKey = store.getHistoryKey();
+        const pageLeft = () =>
+          navigatedSince() || store.getHistoryKey() !== currentKey;
+        // The action's page left the screen (during the flight or the error
+        // render): drop the boundary; the call rejects and the exit owes the
+        // follow-up.
+        const dropBoundary = () => {
+          log("user navigated during error render, skipping");
+          if (returnValue && !returnValue.ok) throw returnValue.data;
+          handle.complete(undefined);
+          return undefined;
+        };
+        if (pageLeft()) return dropBoundary();
+
+        // fail() settles once the response's stream ends; the abort below
+        // spares this action, so its entry keeps the error for useAction().
         if (returnValue && !returnValue.ok) {
           handle.fail(returnValue.data);
         }
 
-        // Abort all other pending action requests - error takes precedence
-        // This prevents other actions from completing and overwriting the error UI
-        eventController.abortAllActions();
-
-        // Clear concurrent action tracking - no consolidation needed when showing error
-        handle.clearConsolidation();
+        // Abort the other actions in flight: the error takes precedence, so
+        // none completes over the boundary.
+        eventController.abortAllActions(handle.id);
 
         // Get current page's cached segments
-        const currentKey = store.getHistoryKey();
         const cached = store.getCachedSegments(currentKey);
         const cachedSegments = cached?.segments || [];
 
         // Reconcile error segments with cached tree
         const errorResult = reconcileErrorSegments(cachedSegments, segments);
 
-        // transition({ when }) decides the error-boundary commit too, with
-        // `action.error` set.
-        whenAction = {
-          ...whenAction,
-          error: returnValue && !returnValue.ok ? returnValue.data : undefined,
-        };
         const errorGatedOff = decideActionGatedOff(
           errorResult.segments,
           metadata,
@@ -786,17 +800,7 @@ export function createServerActionBridge(
               : undefined,
         });
 
-        // The page the action was sent from left the screen, during the
-        // flight or while the error tree rendered: the boundary is not shown,
-        // and the action's exit owes the page on screen the follow-up.
-        if (navigatedSince() || store.getHistoryKey() !== currentKey) {
-          log("user navigated during error render, skipping");
-          if (returnValue && !returnValue.ok) {
-            throw returnValue.data;
-          }
-          handle.complete(undefined);
-          return undefined;
-        }
+        if (pageLeft()) return dropBoundary();
 
         // Update segment tracking to exclude error segment IDs
         const errorSegmentIds = new Set(diff);

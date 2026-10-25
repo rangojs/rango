@@ -9,5 +9,6 @@ export const routes = {
   pushHeldItem: "/push-held/:id",
   pushItem: "/push/:id",
   rerunItem: "/rerun/:id",
+  search: "/search",
 } as const;
 export type routes = typeof routes;
