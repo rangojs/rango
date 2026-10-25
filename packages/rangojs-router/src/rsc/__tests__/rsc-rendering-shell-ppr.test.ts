@@ -5,13 +5,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // consults the app-level store's shell family, and either commits the composed
 // HIT response (prelude flushed first, live tail resumed behind it) or serves
 // axis 1 and schedules a background capture. Mock ONLY the capture dispatch seam
-// (scheduleShellCapture) so these tests assert the serve/schedule decisions
+// (planShellCapture) so these tests assert the serve/schedule decisions
 // against the REAL shell-serve config/key/store logic and a REAL memory store.
 vi.mock("../shell-capture.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../shell-capture.js")>();
   return {
     ...actual,
-    scheduleShellCapture: vi.fn(),
+    planShellCapture: vi.fn(),
   };
 });
 
@@ -51,7 +51,7 @@ import { createHandle } from "../../handle.js";
 import { buildRouterTrieFromUrlpatterns } from "../manifest-init.js";
 import { handleRscRendering } from "../rsc-rendering.js";
 import {
-  scheduleShellCapture,
+  planShellCapture,
   type ShellCaptureDebugEvent,
 } from "../shell-capture.js";
 import {
@@ -106,7 +106,7 @@ import {
   withoutShellMissMarker,
 } from "../shell-serve.js";
 
-const scheduleMock = vi.mocked(scheduleShellCapture);
+const scheduleMock = vi.mocked(planShellCapture);
 
 const PRELUDE_HTML = "<html><body>SHELL-PRELUDE</body></html>";
 
@@ -345,8 +345,7 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-rango-shell")).toBe("MISS");
     expect(scheduleMock).toHaveBeenCalledTimes(1);
-    // (ctx, request, env, url, reqCtx, ssrModule, descriptor)
-    const descriptor = scheduleMock.mock.calls[0]![6] as any;
+    const descriptor = scheduleMock.mock.calls[0]![0].descriptor as any;
     expect(descriptor.key).toBe(KEY);
     expect(descriptor.ttl).toBe(300); // DEFAULT_PPR_TTL_SECONDS
     expect(descriptor.swr).toBeUndefined();
@@ -360,7 +359,7 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
       ppr: { ttl: 600, swr: 120, tags: ["op:x"] },
     });
     expect(response.headers.get("x-rango-shell")).toBe("MISS");
-    const descriptor = scheduleMock.mock.calls[0]![6] as any;
+    const descriptor = scheduleMock.mock.calls[0]![0].descriptor as any;
     expect(descriptor.ttl).toBe(600);
     expect(descriptor.swr).toBe(120);
     expect(descriptor.tags).toEqual(["op:x"]);
@@ -375,7 +374,7 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
       ppr: { ttl: 600, captureTimeout: 12_000 },
     });
     expect(response.headers.get("x-rango-shell")).toBe("MISS");
-    const descriptor = scheduleMock.mock.calls[0]![6] as any;
+    const descriptor = scheduleMock.mock.calls[0]![0].descriptor as any;
     expect(descriptor.captureTimeout).toBe(12_000);
   });
 
@@ -385,7 +384,7 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
       ppr: { ttl: 600, captureTimeout: Number.NaN },
     });
     expect(response.headers.get("x-rango-shell")).toBe("MISS");
-    const descriptor = scheduleMock.mock.calls[0]![6] as any;
+    const descriptor = scheduleMock.mock.calls[0]![0].descriptor as any;
     expect(descriptor.captureTimeout).toBeUndefined();
   });
 
@@ -417,7 +416,7 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
     expect(scheduleMock).toHaveBeenCalledTimes(1);
     // The recapture descriptor carries the RUNNING build's version, so the
     // overwriting entry passes the gate next time.
-    const descriptor = scheduleMock.mock.calls[0]![6] as any;
+    const descriptor = scheduleMock.mock.calls[0]![0].descriptor as any;
     expect(descriptor.buildVersion).toBe("v-test");
   });
 
@@ -447,7 +446,7 @@ describe("handleRscRendering — integrated PPR serve: MISS", () => {
     expect(ssrModule.renderHTML).toHaveBeenCalledTimes(1);
     expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
     expect(scheduleMock).toHaveBeenCalledTimes(1);
-    expect(scheduleMock.mock.calls[0]![6]).not.toMatchObject({
+    expect(scheduleMock.mock.calls[0]![0].descriptor).not.toMatchObject({
       navigationOnly: true,
     });
   });
@@ -1209,7 +1208,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     );
     // ...and the catch scheduled the healing recapture for the same key.
     expect(scheduleMock).toHaveBeenCalledTimes(1);
-    const descriptor = scheduleMock.mock.calls[0]![6] as any;
+    const descriptor = scheduleMock.mock.calls[0]![0].descriptor as any;
     expect(descriptor.key).toBe(KEY);
     expect(descriptor.buildVersion).toBe("v-test");
   });
@@ -1999,7 +1998,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
   // Fragment splice (issue #700): every HIT tail render — snapshot-seeded or
   // not — runs under a derived context carrying _shellFragmentPayload, so its
   // cache/prerender-store hits emit stored fragments verbatim. The flag must
-  // never mutate the SHARED reqCtx: scheduleShellCapture derives the capture
+  // never mutate the SHARED reqCtx: planShellCapture derives the capture
   // context from reqCtx, and a capture render seeing the flag would serialize
   // fragment envelopes into records (double-encoding).
   for (const withSnapshot of [true, false]) {
@@ -2080,7 +2079,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     expect(response.headers.get("x-rango-shell")).toBe("HIT");
     expect(await readAll(response.body!)).toBe(`${PRELUDE_HTML}RESUMED-HOLE`);
     expect(scheduleMock).toHaveBeenCalledTimes(1);
-    expect((scheduleMock.mock.calls[0]![6] as any).key).toBe(KEY);
+    expect((scheduleMock.mock.calls[0]![0].descriptor as any).key).toBe(KEY);
   });
 
   it("a stale hit inside the minimum recapture interval serves the stale shell without scheduling a recapture", async () => {
@@ -2623,7 +2622,7 @@ describe("handleRscRendering — integrated PPR serve: bypasses", () => {
     // Tenant B misses: axis 1 + its own host-scoped capture key.
     expect(response.headers.get("x-rango-shell")).toBe("MISS");
     expect(ssrModule.resumeShellHTML).not.toHaveBeenCalled();
-    expect((scheduleMock.mock.calls[0]![6] as any).key).toBe(
+    expect((scheduleMock.mock.calls[0]![0].descriptor as any).key).toBe(
       "test-router@tenant-b.example/page:shell",
     );
   });
@@ -2684,7 +2683,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     );
     if (options.captureExpected) {
       expect(scheduleMock).toHaveBeenCalledTimes(1);
-      expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+      expect(scheduleMock.mock.calls[0]![0].descriptor).toMatchObject({
         key: NAVIGATION_KEY,
         navigationOnly: true,
       });
@@ -3101,7 +3100,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
 
   it("reclassifies a cold-shell miss to prerender-store when the store actually served, and suppresses the heal", async () => {
     // The pre-match probe reads only the non-intercept artifact; a baked /i
-    // variant serves inside the match (tryPrerenderLookup stamps the
+    // variant serves inside the match (decodeStoredEntry stamps the
     // post-match reason). Reporting no-entry and scheduling a heal
     // would blame a cold capture for a lane the prerender store owns — its
     // captures record no doc record, so the healed snapshot could never
@@ -3228,7 +3227,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       "BYPASS; reason=explicit-cache-hit",
     );
     expect(scheduleMock).toHaveBeenCalledTimes(1);
-    expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+    expect(scheduleMock.mock.calls[0]![0].descriptor).toMatchObject({
       key: NAVIGATION_KEY,
       navigationOnly: true,
     });
@@ -3257,7 +3256,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       "BYPASS; reason=no-segment-snapshot",
     );
     expect(scheduleMock).toHaveBeenCalledTimes(1);
-    expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+    expect(scheduleMock.mock.calls[0]![0].descriptor).toMatchObject({
       key: NAVIGATION_KEY,
       navigationOnly: true,
     });
@@ -3323,10 +3322,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
     expect(response.status).toBe(200);
     expect(ctx.loadSSRModule).not.toHaveBeenCalled();
     expect(ctx.resolveStreamMode).not.toHaveBeenCalled();
-    const resolveModule = scheduleMock.mock.calls[0]![5] as (
-      request: Request,
-      url: URL,
-    ) => Promise<SSRModule | null>;
+    const resolveModule = scheduleMock.mock.calls[0]![0].ssr;
     const captureUrl = new URL("http://localhost/p");
     await expect(
       resolveModule(
@@ -3478,7 +3474,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       "BYPASS; reason=no-entry",
     );
     expect(scheduleMock).toHaveBeenCalledTimes(1);
-    expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+    expect(scheduleMock.mock.calls[0]![0].descriptor).toMatchObject({
       key: NAVIGATION_KEY,
       navigationOnly: true,
     });
@@ -3514,7 +3510,7 @@ describe("handleRscRendering — PPR partial navigation replay", () => {
       "BYPASS; reason=snapshot-miss",
     );
     expect(scheduleMock).toHaveBeenCalledTimes(1);
-    expect(scheduleMock.mock.calls[0]![6]).toMatchObject({
+    expect(scheduleMock.mock.calls[0]![0].descriptor).toMatchObject({
       key: KEY,
       navigationOnly: true,
     });
@@ -3821,7 +3817,7 @@ describe("handleRscRendering — integrated PPR serve: a router.prerender() warm
   /** The descriptor of the one capture the request scheduled. */
   function scheduledDescriptor() {
     expect(scheduleMock).toHaveBeenCalledTimes(1);
-    return scheduleMock.mock.calls[0]![6];
+    return scheduleMock.mock.calls[0]![0].descriptor;
   }
 
   const partitionedStore = () =>
@@ -3866,8 +3862,8 @@ describe("handleRscRendering — integrated PPR serve: a router.prerender() warm
       expect(getShell).toHaveBeenCalledTimes(1);
     });
 
-    // CFCacheStore is read through readShellDocument (rsc-rendering.ts
-    // readShellEntry), so a getShell spy would not see its read.
+    // CFCacheStore is read through readShellDocument (shell-serve.ts
+    // readShell), so a getShell spy would not see its read.
     it("reads nothing from a CFCacheStore that holds the shell (no Cache API or KV read)", async () => {
       try {
         const cf = createCfShellFixture();

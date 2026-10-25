@@ -29,13 +29,18 @@ import { x } from "tinyexec";
  * must take the same policy path.
  *
  * Build-only by design (explicit gap): #587 is a build-time bug and prerender.onError
- * is build config. The dev `/__rsc_prerender` endpoint tweak (router-discovery.ts) is
+ * is build config. The dev `/__rsc_prerender` endpoint tweak (dev-server-phase.ts) is
  * a cosmetic log refinement (stay quiet on Skip) on a path that serves ONLY non-Node
  * runtimes — and the repo's only non-Node dev fixture (cloudflare-basic) uses
  * buildEnv:"auto", where ctx.env is available at build, so the render-error repro
  * cannot occur there. The behavioral change (matchForPrerender re-throwing instead of
  * baking) is unit-covered (src/router/__tests__/prerender-render-error.test.tsx).
  * The endpoint's catch/404-fallthrough is therefore a deliberate untested gap.
+ *
+ * RANGO_TEST_PRERENDER_LIVE_INTERCEPT registers a Prerender() route with an
+ * intercept the build cannot bake, for the build's live-intercept warning
+ * (warnLiveIntercepts, vite/utils/prerender-utils.ts). Build-only too: the
+ * warning is a build signal, and dev prints none.
  */
 const cwd = path.resolve("./e2e/prerender-onerror");
 
@@ -80,6 +85,7 @@ test.describe("prerender render error (production)", () => {
     expect(out).toMatch(/WARN\s+\/prerender-boom.*prerender\.onError: "warn"/);
     // Skipped, not baked.
     expect(out).toContain("Pre-render complete: 0 done, 1 skipped");
+    expect(out).not.toContain("is not pre-rendered");
   });
 
   test("an async child that throws while the route is encoded fails the build by default", async () => {
@@ -157,5 +163,32 @@ test.describe("prerender render error (production)", () => {
     expect(out).toMatch(/WARN\s+StaticBoom.*prerender\.onError: "warn"/);
     // Skipped, not baked: the static render step reports it as skipped.
     expect(out).toContain("Static render complete: 0 done, 1 skipped");
+  });
+});
+
+test.describe("live intercept build warning (production)", () => {
+  test.describe.configure({ timeout: 180_000 });
+
+  test("an intercept the build cannot bake warns once for the route, named by its URL", async () => {
+    const res = await x("pnpm", ["build"], {
+      nodeOptions: {
+        cwd,
+        env: buildEnv({ RANGO_TEST_PRERENDER_LIVE_INTERCEPT: "1" }),
+      },
+      throwOnError: false,
+    });
+    const out = `${res.stdout}\n${res.stderr}`;
+    expect(res.exitCode, `build should succeed (exit 0); output:\n${out}`).toBe(
+      0,
+    );
+    expect(out).toMatch(/OK\s+\/shop\/item\/1\s/);
+    expect(out).toMatch(/OK\s+\/shop\/item\/2\s/);
+    // Once for the route's two URLs, named by the first URL: the route's key
+    // is internal ("$prefix_0.item", unnamed include()).
+    expect(
+      out.split("\n").filter((line) => line.includes("is not pre-rendered")),
+    ).toEqual([
+      '[rango] Prerender route "/shop/item/1": intercept @modal is not pre-rendered: it targets "item", the route\'s name inside its include(). A navigation that selects it renders it live, and its handler runs per request without BuildContext. To pre-render it, declare it inside the include() as ".item".',
+    ]);
   });
 });

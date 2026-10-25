@@ -262,6 +262,24 @@ See "Rewrite" below for what moves and what stays.
   `rsc/helpers.ts`). It decides as for a GET of the page. Global middleware,
   which wraps the action, sees the POST. The render itself keeps the POST.
   `[RW11]`
+- A middleware that settles while the `next()` it called still runs settles
+  the chain with what it settled with. It may return or throw its own
+  Response (a timeout fallback, a fire-and-forget render, a stale document
+  cache entry's background re-run): the middleware ahead see that Response
+  after `next()`, and their writes land on it. It may throw an error, or
+  throw or return a `rewrite()`, which after `next()` is an error
+  (`rewriteAfterNextError`, `returnedRewriteError`): the middleware ahead get
+  that error, and a fallback they answer with is the response. Either way the
+  abandoned run detaches (`DownstreamHolder` in `router/middleware.ts`): its
+  response, and what its middleware write to their response after `next()`,
+  never reach the chain's. A `next()` called after its middleware returned
+  runs the same way. The run still shares the request context, so a
+  `cookies()` or request-context header write it makes before the response
+  is sent can still land on it; the document cache gives its re-run a
+  context of its own (`document-revalidation` in `server/render-pass.ts`). A
+  middleware that waits for its `next()` (`await next()`, `return next()`,
+  or `next()` and a return of nothing) shares one response with the rest of
+  the chain. `[MW2]`
 - Handler-first ordering is guaranteed within a full render pass:
   route handler runs before its child/orphan layouts and parallel children.
 - `ctx.set()` values flow downward through structural scope boundaries only.
@@ -369,6 +387,21 @@ See "Rewrite" below for what moves and what stays.
   `cache-lookup-owned-pushes.test.ts`, `cache-record-loader-pushes.test.ts`
   and `serve-shell-request.rsc-test.tsx`.
 
+- A `cache()` or `Prerender()` HIT, a PPR shell replay included, lists a
+  segment's handle values in the order an uncached render does. The MISS
+  starts an entry's loaders, then runs its handler; the HIT restores the
+  stored values before any loader starts. So the restored values hold the handler's place: until the
+  loaders-only walk reaches the point where the MISS ran that entry's
+  handler (after the entry's own loaders and before its slots' loaders in
+  `resolveLoadersOnly`, after the intercept's loaders in
+  `resolveInterceptLoadersOnly`), a push into the segment goes in front of
+  them. A loader's push made before its first `await` lists ahead of the
+  handler's, one made after it behind. A `prefetch: false` fill holds
+  nothing, so its HIT orders as its MISS does. Source: `holdRecordedValues`
+  and `releaseRecordedValues` in `handle-store.ts`, held by
+  `serveStoredSegments`; pinned by `cached-handle-push-order.rsc-test.tsx`
+  (rango-t189).
+
 - Under PPR shell capture, of the DSL `loader()` registrations only
   `loader(Def, { ssr: false })` executes and bakes; every other registration
   is masked and live, whatever its `loading()`
@@ -401,19 +434,19 @@ See "Rewrite" below for what moves and what stays.
   config (`cache()` in `dsl-helpers.ts`), so the route is its boundary: the
   route segment and its own layouts and parallels are stored and replayed, and
   every entry above the route stays live. The header and non-cacheable-var
-  guards latch at the route (`entry.cache` in `resolveAllSegments` and
-  `resolveAllSegmentsWithRevalidation`). Pinned by
+  guards latch at the route (`entry.cache` in
+  `resolveAllSegments`). Pinned by
   `match-middleware/__tests__/cache-path-children.test.ts` and
   `e2e/cache-path-children.test.ts`. A `cache()` inside a routeless
   `layout()`/`middleware()`/`transition()` wrapper in a path configures that
   path the same way (`enclosingRoute()` in `dsl-helpers.ts`).
 - An orphan renders the routeless entries in its own `layout[]` after its
-  handler and parallels (`resolveOrphanLayout`,
-  `resolveOrphanLayoutWithRevalidation`), so a `layout()` after a bare
+  handler and parallels
+  (`resolveOrphanLayout`), so a `layout()` after a bare
   `cache()` marker wraps every route of the enclosing layout. The marker is
   also the chain parent of the routes after it; for those routes it is
   resolved and its middleware collected once, at its chain position, never as
-  its layout's orphan (`ResolveSegmentOptions.chain`, `collectRouteMiddleware`).
+  its layout's orphan (the `chain` walk option, `collectRouteMiddleware`).
   A hit's live pass gets the full chain, so the marker's subtree comes only
   from the record. Pinned by
   `match-middleware/__tests__/orphan-nested-layouts.test.ts` and
@@ -624,7 +657,9 @@ See "Rewrite" below for what moves and what stays.
   capture waits for — handler and render code, bake-lane segment loaders, and
   handler-invoked loader bodies (no exemption on this tier; the
   consumption-lane rule below). `ctx.dynamic()` called anywhere the capture
-  waits refuses it too. Live-lane segment loaders are
+  waits refuses it too. Neither applies to the background refresh of a stale
+  `cache()` record the capture read: the capture waits for it, but it renders
+  the record under `cache()` rules. Live-lane segment loaders are
   masked — they are the structural holes. Holes come from loaders only:
   `loading()` or inline-Suspense subtrees over a live-lane loader read
   (structural), and promises nested in an `ssr: false` loader's return value
@@ -910,7 +945,8 @@ the resolution boundary, so the thrown `Response` propagates out to `match()`
 and becomes a 302/308.
 
 On a route that declares `loading()`, the handler result is **streamed** — it is
-not awaited at the resolution boundary (`segment-resolution/fresh.ts`). So an
+not awaited at the resolution boundary (`resolveEntryHandler` in
+`segment-resolution/revalidation.ts`). So an
 **async** handler that returns a `Response` has that `Response` surface only
 during RSC serialization, where it is rendered into the stream via React's
 error boundary instead of becoming an HTTP redirect. A **synchronous** `Response`
@@ -927,13 +963,13 @@ or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
 
 The same non-awaited promise carries failures. `trackStreamedHandler`
 (`segment-resolution/streamed-handler-boundary.ts`) is the one entry for every
-streamed handler (fresh and revalidation route handlers, parallel slots,
+streamed handler (route handlers on a full or partial match, parallel slots,
 intercept slots): it runs `trackHandler`, `observeStreamedHandler`, and, when a
 boundary exists, derives a promise that resolves to the nearest
 `errorBoundary()` / `notFoundBoundary()` fallback. Layouts and nav stay on the
 document and on a client navigation. The boundary is looked up from the matched
-chain entry being resolved (`ResolveSegmentOptions.boundaryEntry`, threaded
-explicitly through `fresh.ts` / `revalidation.ts`; no mutable field): the entry
+chain entry being resolved (the `boundaryEntry` argument, threaded
+explicitly through `segment-resolution/revalidation.ts`; no mutable field): the entry
 the sync path catches at, whatever
 routeless layout owns a slot (parallel entries have `parent: null`). Intercept
 slots use their declaring entry.
@@ -1250,7 +1286,7 @@ Guarantees, each pinned by a semantic matrix row:
   (`visitorShellKey`: the visitor's URL partitioned by
   `rw:<target path+search>`, the route's own partition after it), captured
   with the visitor's location and `ctx.rewrittenFrom`
-  (`_shellCaptureForVisitor`); the target's own shell stays its own.
+  (`_shellCaptureState.forVisitor`); the target's own shell stays its own.
   `.shell("target")` reads and captures the target's shared shell, as before
   #1146. `[RW8]`
 - A navigation, prefetch or action from a page middleware rewrote diffs
@@ -1320,7 +1356,7 @@ guards run on that re-render, as on a direct visit; they never guarded the
 action itself, since route middleware never wraps action execution. Only
 the action and PE branches render from the outcome, so after the action the
 target must be a page route: a response route, a redirect or no match on
-pass 2 is an error (`coreRequestHandler`), not a fresh POST that a response
+pass 2 is an error (`terminalPlanResponse` in `rsc/request-stages.ts`), not a fresh POST that a response
 route's handler would serve as a second mutation. Before the action no
 outcome exists, so pass 2 is classified as any request: a response route
 target serves a plain POST with its body, as a direct post to it would. A JS
@@ -1440,7 +1476,7 @@ Where the old and the new URL show:
   function it throws, and a loader's own `cache()` fill records it. A render
   other visitors may be served (`rendersForSharedAudience`: a PPR shell
   capture, a render the document cache stores) reads `undefined`, as a direct
-  visit would, except a visitor-keyed shell capture (`_shellCaptureForVisitor`),
+  visit would, except a visitor-keyed shell capture (`_shellCaptureState.forVisitor`),
   whose key covers the URL; any other render that reads the visitor's URL is
   not stored by the document cache (`_payloadVisitorLocation`). A middleware
   ctx reads it plainly: middleware runs per request and is never stored.
@@ -1814,9 +1850,11 @@ change (see Contract Change Process).
   An action that throws on a matched route gets an error-boundary response
   instead. It holds the nearest `errorBoundary()`, or the router's default
   error boundary at the root when the app declares none (`matchError` in
-  `router/match-api.ts`). It commits on the same terms. When it commits, it
-  aborts the other actions in flight, so none completes over it, and the
-  failing action keeps its error for `useAction()`
+  `router/match-api.ts`). It is the action's revalidation cut at the
+  boundary (`ActionContext.boundary`; the R2 case table below). It commits on
+  the same terms: its loader values commit in the boundary's commit. When it
+  commits, it aborts the other actions in flight, so none completes over it,
+  and the failing action keeps its error for `useAction()`
   (`abortAllActions(except)` in `browser/event-controller.ts`). One that
   arrives after the user left its page is dropped before it aborts anything:
   its call rejects with the error, `useAction()` records it, and its exit owes
@@ -1883,6 +1921,37 @@ because the client cannot know which loaders on the page it navigated to read
 the action's write; `segments: []` is the only shape that re-runs all of them.
 It is the same request `refresh()` sends. A user who stayed gets no second
 request: the action's response already re-ran every loader on that page.
+
+What an action that throws gets back (R2), case by case. Before rango-t124
+the error-boundary response carried the error segment alone, so a layout
+loader above the boundary kept its pre-write value on the page the user
+stayed on, and on the next page under that layout.
+
+| Case                                                                              | What the response carries                                                                                                                                                                                                                                                                  | Pinned by                                                                                                             |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| Throws under its route's `errorBoundary()`, the user stays                        | every loader above the route, as its `revalidate()` decides; layouts and slots a `revalidate()` opts in; the error at the route; the route's loaders stay held                                                                                                                             | `action-boundary-revalidation.rsc-test.tsx`, the `action-boundary` scenario (both apps)                               |
+| Throws under a layout's `errorBoundary()`                                         | the same above that layout's chain child, the error at the child; nothing under the child runs, and its loader ids stay held                                                                                                                                                               | `action-boundary-revalidation.rsc-test.tsx`, `segment-resolution/__tests__/boundary-cut.test.tsx`                     |
+| Throws under an orphan (routeless) layout's `errorBoundary()`                     | the cut at the chain child of the layout that declares the orphan; the orphan, its loaders and its slots are above it and revalidate as on a success, and `matched` lists the whole chain (it listed the orphan alone, so the chain's handle values were dropped); no route code runs      | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| Throws, no declared boundary                                                      | the router's default boundary at the root alone, as before: nothing above the root                                                                                                                                                                                                         | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| Throws on a `Prerender()` or on-demand route                                      | the same, resolved live: the prerender store is skipped, and the evicted handler sits below the cut (`match-middleware/cache-lookup.ts`)                                                                                                                                                   | `match-middleware/__tests__/stored-source.rsc-test.tsx`                                                               |
+| Throws on a rewrite target (#1145)                                                | the target's boundary, cut on the target's chain                                                                                                                                                                                                                                           | `rewrite-action.rsc-test.tsx`                                                                                         |
+| The arguments do not decode, under a boundary (`actionStatus` 400)                | the same as a throw: the loaders above re-run though nothing wrote, and `isAction(ref)` compares the raw request id, since no action loaded. The HTTP status is 500: `matchError`'s status wins over the continuation's (`createResponseWithMergedHeaders` in `rsc/helpers.ts`), as before | the continuation: `rsc/__tests__/server-action.test.ts`; the response has no pin                                      |
+| A `revalidate()` above the boundary throws `redirect()`                           | the redirect, as from a success's revalidation (`X-RSC-Redirect`, 204); no boundary. Before, the boundary showed                                                                                                                                                                           | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| A loader above the boundary throws on its rerun                                   | that loader's error at its `useLoader` read, reported with phase `loader`; the action's error reported once with phase `action`                                                                                                                                                            | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| Sent from an intercept (`X-RSC-Router-Intercept-Source`)                          | the error segment alone, as before (rango-t151)                                                                                                                                                                                                                                            | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| `matchPartial` returns null, throws anything but a redirect, or misses the outlet | the error segment alone, as before, and no handle values: the abandoned walk's pushes are dropped. A throw or a miss warns in development                                                                                                                                                  | null and a thrown non-redirect `Response`: `action-boundary-revalidation.rsc-test.tsx`; the miss (a guard) has no pin |
+| A form post without JavaScript                                                    | unchanged (`rsc/progressive-enhancement.ts`)                                                                                                                                                                                                                                               | `[A3]`                                                                                                                |
+
+The browser reconciles it with `reconcileErrorSegments`
+(`browser/segment-reconciler.ts`): the error segment replaces its cached
+copy, and every other segment merges as an action's does (`mergeCached`),
+keeping the cached component of a held layout and the cached `loading` and
+`mountPath`. It then stops holding the error segments only
+(`browser/server-action-bridge.ts`): the loaders the response re-ran stay
+held, so the next navigation keeps their fresh data and a `revalidate(() =>
+false)` still holds them. Pinned by `segment-reconciler.test.ts` and
+`server-action-bridge.test.ts` ("server-action-bridge error-boundary
+response").
 
 The document cache never answers a stale request, so it never answers the
 follow-up either. Its key cannot see the write, so the cache neither stores nor
@@ -1994,7 +2063,7 @@ holds after an `await` and in a server component the handler hands the ctx
 to, which React renders after the handler returned.
 
 Loaders take it from their DSL kickoff: `runInsideLoaderScope` (the loader
-scope fresh.ts and revalidation.ts already open per kickoff) carries
+scope revalidation.ts already opens per kickoff) carries
 `loaderEntry.reverseScope`, and the loader executor (`loader-resolution.ts`)
 builds the loader ctx's `reverse` in `getLoaderReverseScope()`. A layout
 handler's `ctx.use(RouteLoader)` runs outside any kickoff, so the route's
@@ -2202,10 +2271,10 @@ should not be treated as equivalent.
   decision, never lower it. All four resolvers in
   `router/segment-resolution/revalidation.ts` honour it, in two shapes:
 
-  | Resolver                                                   | Shape                                                        |
-  | ---------------------------------------------------------- | ------------------------------------------------------------ |
-  | loaders, layout/route entries, orphan-layout entries       | early return `true`; user predicates never run               |
-  | parallel slots (`resolveParallelSegmentsWithRevalidation`) | `defaultOverride.floor` — predicates run, but can only raise |
+  | Resolver                                             | Shape                                                        |
+  | ---------------------------------------------------- | ------------------------------------------------------------ |
+  | loaders, layout/route entries, orphan-layout entries | early return `true`; user predicates never run               |
+  | parallel slots (`resolveParallelSegments`)           | `defaultOverride.floor` — predicates run, but can only raise |
 
   The parallel path differs deliberately. PR #482 made it consult predicates
   even for an unknown slot, so a `skip-parent-chain` seed (`false`) could still
@@ -2304,7 +2373,7 @@ should not be treated as equivalent.
   `defaultErrorBoundary`) gets the router's default error boundary on the
   server (`useDefaultErrorBoundary` in
   `router/loader-resolution.ts` `wrapLoaderWithErrorHandling`, passed by
-  `segment-resolution/fresh.ts` for `awaitBeforeFlush` loaders, dc-t92), and
+  `resolveOwnerLoaders` in `segment-resolution/revalidation.ts` for `awaitBeforeFlush` loaders, dc-t92), and
   every flagged loader error answers 500, declared boundary included
   (dc-q61), pinned by `e2e/flagged-loader-default-boundary.test.ts` (both
   apps, dev + production).

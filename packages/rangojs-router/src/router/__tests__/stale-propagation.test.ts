@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  resolveLoadersOnlyWithRevalidation,
-  resolveAllSegmentsWithRevalidation,
+  resolveLoadersOnly,
+  resolveAllSegments,
 } from "../segment-resolution/revalidation.js";
 import type { SegmentResolutionDeps } from "../types.js";
 import type { EntryData } from "../../server/context";
@@ -90,18 +90,18 @@ function makeEntry(loaderId: string): EntryData {
   } as any;
 }
 
-// Mock router-context (needed by resolveAllSegmentsWithRevalidation)
+// Mock router-context (needed by resolveAllSegments)
 vi.mock("../router-context.js", () => ({
   getRouterContext: vi.fn(() => null),
 }));
 
-// Mock telemetry (needed by resolveAllSegmentsWithRevalidation)
+// Mock telemetry (needed by resolveAllSegments)
 vi.mock("../telemetry.js", () => ({
   resolveSink: vi.fn(() => null),
   safeEmit: vi.fn(),
 }));
 
-// Mock server/context track (needed by resolveAllSegmentsWithRevalidation)
+// Mock server/context track (needed by resolveAllSegments)
 vi.mock("../../server/context.js", async () => {
   const actual = await vi.importActual("../../server/context.js");
   return {
@@ -120,18 +120,20 @@ describe("loader revalidation stale isolation", () => {
     const entry = makeEntry("cart-loader");
     const segmentId = "L0R0D0.cart-loader";
 
-    await resolveLoadersOnlyWithRevalidation(
+    await resolveLoadersOnly(
+      {
+        context: makeContext(),
+        client: new Set([segmentId]),
+        params: {},
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+        // stale: no browser staleness signal
+      },
       [entry],
-      makeContext(),
-      new Set([segmentId]),
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      "test.route",
-      makeDeps(),
-      undefined, // actionContext
-      undefined, // stale: no browser staleness signal
     );
 
     expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
@@ -148,18 +150,20 @@ describe("loader revalidation stale isolation", () => {
     const entry = makeEntry("cart-loader-stale");
     const segmentId = "L0R0D0.cart-loader-stale";
 
-    await resolveLoadersOnlyWithRevalidation(
+    await resolveLoadersOnly(
+      {
+        context: makeContext(),
+        client: new Set([segmentId]),
+        params: {},
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+        stale: true, // stale: browser says action happened
+      },
       [entry],
-      makeContext(),
-      new Set([segmentId]),
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      "test.route",
-      makeDeps(),
-      undefined, // actionContext
-      true, // stale: browser says action happened
     );
 
     expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
@@ -169,7 +173,7 @@ describe("loader revalidation stale isolation", () => {
   });
 });
 
-describe("stale propagation through resolveLoadersOnlyWithRevalidation", () => {
+describe("stale propagation through resolveLoadersOnly", () => {
   it("passes stale=true to evaluateRevalidation when provided", async () => {
     mockEvaluateRevalidation.mockClear();
 
@@ -177,18 +181,20 @@ describe("stale propagation through resolveLoadersOnlyWithRevalidation", () => {
     // The segment ID format: `${shortCode}D${index}.${loaderId}`
     const segmentId = "L0R0D0.my-loader";
 
-    await resolveLoadersOnlyWithRevalidation(
+    await resolveLoadersOnly(
+      {
+        context: makeContext(),
+        client: new Set([segmentId]), // Must be in clientSegmentIds for evaluateRevalidation to be called
+        params: {},
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+        stale: true,
+      },
       [entry],
-      makeContext(),
-      new Set([segmentId]), // Must be in clientSegmentIds for evaluateRevalidation to be called
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      "test.route",
-      makeDeps(),
-      undefined, // actionContext
-      true, // stale
     );
 
     expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
@@ -203,18 +209,20 @@ describe("stale propagation through resolveLoadersOnlyWithRevalidation", () => {
     const entry = makeEntry("my-loader");
     const segmentId = "L0R0D0.my-loader";
 
-    await resolveLoadersOnlyWithRevalidation(
+    await resolveLoadersOnly(
+      {
+        context: makeContext(),
+        client: new Set([segmentId]),
+        params: {},
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+        // stale omitted
+      },
       [entry],
-      makeContext(),
-      new Set([segmentId]),
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      "test.route",
-      makeDeps(),
-      undefined, // actionContext
-      // stale omitted
     );
 
     expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
@@ -224,29 +232,32 @@ describe("stale propagation through resolveLoadersOnlyWithRevalidation", () => {
   });
 });
 
-describe("stale propagation through resolveAllSegmentsWithRevalidation (full pipeline)", () => {
+describe("stale propagation through resolveAllSegments (full pipeline)", () => {
   it("passes stale=true to evaluateRevalidation for loaders in the pipeline", async () => {
     mockEvaluateRevalidation.mockClear();
 
     const entry = makeEntry("pipeline-loader");
     const segmentId = "L0R0D0.pipeline-loader";
 
-    await resolveAllSegmentsWithRevalidation(
+    await resolveAllSegments(
+      {
+        context: makeContext(),
+        client: new Set([segmentId, "L0R0"]), // loader + route in client set
+        params: { id: "1" },
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+        stale: true,
+      },
       [entry],
-      "test.route",
-      { id: "1" },
-      makeContext(),
-      new Set([segmentId, "L0R0"]), // loader + route in client set
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      undefined, // actionContext
-      null, // interceptResult
-      "test.route",
-      "/test",
-      makeDeps(),
-      true, // stale
+      {
+        interceptResult: null,
+        localRouteName: "test.route",
+        pathname: "/test",
+      },
     );
 
     // evaluateRevalidation should have been called with stale: true
@@ -263,22 +274,25 @@ describe("stale propagation through resolveAllSegmentsWithRevalidation (full pip
     const entry = makeEntry("pipeline-loader-no-stale");
     const segmentId = "L0R0D0.pipeline-loader-no-stale";
 
-    await resolveAllSegmentsWithRevalidation(
+    await resolveAllSegments(
+      {
+        context: makeContext(),
+        client: new Set([segmentId, "L0R0"]),
+        params: { id: "1" },
+        prevParams: { id: "1" },
+        request: new Request("http://localhost/"),
+        prevUrl: new URL("http://localhost/prev"),
+        nextUrl: new URL("http://localhost/next"),
+        routeKey: "test.route",
+        deps: makeDeps(),
+        // stale omitted
+      },
       [entry],
-      "test.route",
-      { id: "1" },
-      makeContext(),
-      new Set([segmentId, "L0R0"]),
-      { id: "1" },
-      new Request("http://localhost/"),
-      new URL("http://localhost/prev"),
-      new URL("http://localhost/next"),
-      undefined,
-      null,
-      "test.route",
-      "/test",
-      makeDeps(),
-      // stale omitted
+      {
+        interceptResult: null,
+        localRouteName: "test.route",
+        pathname: "/test",
+      },
     );
 
     const staleCall = mockEvaluateRevalidation.mock.calls.find(

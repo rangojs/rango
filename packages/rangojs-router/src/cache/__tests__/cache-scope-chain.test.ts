@@ -92,16 +92,21 @@ async function recordKey(
   return store.gets[before];
 }
 
-function resolveIn(scope: CacheScope, defaultKey: string): Promise<string> {
+/** The record key for `defaultKey`, whose request kind is `kind`. */
+function resolveIn(
+  scope: CacheScope,
+  defaultKey: string,
+  kind?: string,
+): Promise<string> {
   return runWithRequestContext(requestFor({}, recordingStore()), () =>
-    scope.resolveKeyFrom(defaultKey),
+    scope.resolveKeyFrom(defaultKey, "", kind),
   );
 }
 
 describe("cache() key() results are namespaced (#975)", () => {
   it("a single key() result is stored as `key:` plus its URI encoding", async () => {
     expect(await recordKey(chain({ key: tierKey }), { "x-tier": "gold" })).toBe(
-      "key:tier%3Agold",
+      "key:tier%3Agold|doc",
     );
     // Composed parts are namespaced the same way; a default key part is
     // encoded without the prefix.
@@ -114,7 +119,30 @@ describe("cache() key() results are namespaced (#975)", () => {
       await recordKey(chain({ key: tierKey }, { key: constant("v:a") }), {
         "x-tier": "gold",
       }),
-    ).toBe("key:tier%3Agold|key:v%3Aa");
+    ).toBe("key:tier%3Agold|key:v%3Aa|doc");
+  });
+
+  it("a key() record keeps the request kind: a document, a navigation and each intercept navigation read their own", async () => {
+    const keyOf = async (url: string, intercept?: string) => {
+      const store = recordingStore();
+      await runWithRequestContext(
+        requestFor({ "x-tier": "gold" }, store, url),
+        () => chain({ key: tierKey }).lookupRoute("/pricing", {}, intercept),
+      );
+      return store.gets[0];
+    };
+
+    expect({
+      document: await keyOf("/pricing"),
+      navigation: await keyOf("/pricing?_rsc_partial=1"),
+      modal: await keyOf("/pricing?_rsc_partial=1", "M0L0.@modal~0"),
+      sheet: await keyOf("/pricing?_rsc_partial=1", "M0L0.@modal~1"),
+    }).toEqual({
+      document: "key:tier%3Agold|doc",
+      navigation: "key:tier%3Agold|partial",
+      modal: "key:tier%3Agold|intercept%3AM0L0.%40modal~0",
+      sheet: "key:tier%3Agold|intercept%3AM0L0.%40modal~1",
+    });
   });
 
   it("a raw key() result cannot name a default key: request input never lands in another route's record", async () => {
@@ -174,9 +202,16 @@ describe("cache() key() results are namespaced (#975)", () => {
     const defaults = [
       "doc:localhost/pricing",
       "partial:localhost/pricing",
-      "intercept:localhost/pricing",
+      "intercept:M0L0.@modal~0:localhost/pricing",
       "doc:localhost/a|b",
       "doc:localhost/key:a",
+    ];
+    // A scope with its own key() keeps its default key's request kind.
+    const requestKinds = [
+      "doc",
+      "partial",
+      "intercept:M0L0.@modal~0",
+      "intercept:M0L0.@modal~1",
     ];
     const kinds = new Map<string, string>();
     const add = (kind: string, key: string) => {
@@ -189,7 +224,16 @@ describe("cache() key() results are namespaced (#975)", () => {
       add("default", await resolveIn(chain({ ttl: 60 }), d));
     }
     for (const v of values) {
-      add("single", await resolveIn(chain({ key: constant(v) }), v));
+      for (const k of requestKinds) {
+        add(
+          "single",
+          await resolveIn(
+            chain({ key: constant(v) }),
+            `${k}:localhost/pricing`,
+            k,
+          ),
+        );
+      }
     }
     for (const outer of values) {
       // Inner scope without key(): the outer result plus the default key.
@@ -201,13 +245,16 @@ describe("cache() key() results are namespaced (#975)", () => {
       }
       // Inner scope with its own key(): both results.
       for (const inner of values) {
-        add(
-          "outer+inner",
-          await resolveIn(
-            chain({ key: constant(outer) }, { key: constant(inner) }),
-            "doc:localhost/pricing",
-          ),
-        );
+        for (const k of requestKinds) {
+          add(
+            "outer+inner",
+            await resolveIn(
+              chain({ key: constant(outer) }, { key: constant(inner) }),
+              `${k}:localhost/pricing`,
+              k,
+            ),
+          );
+        }
       }
     }
     const few = ["a", "|", "a|b", "key:a", ""];
@@ -223,6 +270,7 @@ describe("cache() key() results are namespaced (#975)", () => {
                 { key: constant(c) },
               ),
               "doc:localhost/pricing",
+              "doc",
             ),
           );
         }
@@ -230,9 +278,9 @@ describe("cache() key() results are namespaced (#975)", () => {
     }
     expect(kinds.size).toBe(
       defaults.length +
-        values.length +
+        values.length * requestKinds.length +
         values.length * defaults.length +
-        values.length ** 2 +
+        values.length ** 2 * requestKinds.length +
         few.length ** 3,
     );
   });
@@ -407,8 +455,8 @@ describe("an enclosing scope on another store partitions a nested scope by its k
     const en = await recordKey(scope, { "x-locale": "en" }, "/pricing", storeB);
     const de = await recordKey(scope, { "x-locale": "de" }, "/pricing", storeB);
 
-    expect(en).toBe("key:v%3Aa|doc%3Alocalhost%2Fpricing%7Cen");
-    expect(de).toBe("key:v%3Aa|doc%3Alocalhost%2Fpricing%7Cde");
+    expect(en).toBe("key:v%3Aa|doc%3Alocalhost%2Fpricing%7Cen|doc");
+    expect(de).toBe("key:v%3Aa|doc%3Alocalhost%2Fpricing%7Cde|doc");
   });
 
   it("the shell partition carries A's keyGenerator result", async () => {

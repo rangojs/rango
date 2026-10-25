@@ -49,10 +49,17 @@ vi.mock("../../server/request-context.js", () => ({
 }));
 
 // Mock segment codec — identity transforms for testing
-vi.mock("../segment-codec.js", () => ({
-  serializeResult: vi.fn((v: any) => JSON.stringify(v)),
-  deserializeResult: vi.fn((v: string) => JSON.parse(v)),
-}));
+vi.mock("../segment-codec.js", async () => {
+  const { teeThrough } = await import("./helpers/tee-through.js");
+  const serializeResult = vi.fn((v: any) => JSON.stringify(v));
+  const deserializeResult = vi.fn((v: string) => JSON.parse(v));
+  return {
+    serializeResult,
+    deserializeResult,
+    teeResult: teeThrough(serializeResult, deserializeResult),
+    isUnsupportedValueError: () => false,
+  };
+});
 
 // Mock handle snapshot. encodeHandles/decodeHandles stand in for the Flight
 // codec: encode produces the stored string, decode reverses it. decode tolerates
@@ -930,6 +937,43 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(INSIDE_CACHE_EXEC in requestCtxObj).toBe(false);
   });
 
+  it("never stamps a request context passed as an argument, nor a pass derived from it", async () => {
+    // Every render pass's writers check the request's own context
+    // (server/render-pass.ts): a stamp there failed another pass's writes
+    // while the body ran.
+    const INSIDE_CACHE_EXEC = Symbol.for("rango:inside-cache-exec");
+    const requestCtxObj: any = {
+      [NOCACHE_SYMBOL]: true,
+      params: {},
+      pathname: "/test",
+      _cacheStore: {
+        getItem: vi.fn().mockResolvedValue(null),
+        setItem: vi.fn().mockResolvedValue(undefined),
+      },
+      _cacheProfiles: { default: { ttl: 60 } },
+      _handleStore: {
+        push: vi.fn(),
+        settled: Promise.resolve(),
+        getDataForSegment: vi.fn().mockReturnValue({}),
+      },
+      waitUntil: () => {},
+    };
+    requestCtxObj._requestRoot = requestCtxObj;
+    const pass = Object.create(requestCtxObj);
+    mockGetRequestContext.mockReturnValue(requestCtxObj);
+
+    let stamped: boolean[] = [];
+    const fn = async (...args: object[]) => {
+      stamped = args.map((arg) => INSIDE_CACHE_EXEC in arg);
+      return "value";
+    };
+    const cached = registerCachedFunction(fn, "request-ctx-arg", "default");
+    await cached(requestCtxObj, pass, makeTaintedCtx());
+
+    // A handler ctx argument is still stamped for the body's run.
+    expect(stamped).toEqual([false, false, true]);
+  });
+
   it("does not stamp RequestContext during stale background revalidation", async () => {
     // RequestContext is intentionally not stamped in background revalidation
     // to avoid polluting the shared foreground context. The foreground miss
@@ -974,6 +1018,66 @@ describe("use cache stale revalidation handle preservation", () => {
     // RequestContext must NOT be stamped in background (avoids foreground pollution)
     expect(stampedDuringBgExec).toBe(false);
     expect(INSIDE_CACHE_EXEC in requestCtxObj).toBe(false);
+  });
+
+  it("encodes the value and its handles inside the execution's exec scope, on a miss and on a stale refresh", async () => {
+    // The encodes render the server components in the value and the handle
+    // values: a cookies() or headers() read there must refuse as one in the
+    // body does.
+    const { isInsideCacheExecScope } = await import("../cache-exec-scope.js");
+    const { serializeResult } = await import("../segment-codec.js");
+    const { encodeHandles } = await import("../handle-snapshot.js");
+    const encodeScoped: string[] = [];
+    const scoped = (kind: string) => async (value: unknown) => {
+      encodeScoped.push(`${kind}:${isInsideCacheExecScope()}`);
+      return JSON.stringify(value);
+    };
+    vi.mocked(serializeResult)
+      .mockImplementationOnce(scoped("value"))
+      .mockImplementationOnce(scoped("value"));
+    vi.mocked(encodeHandles)
+      .mockImplementationOnce(scoped("handles"))
+      .mockImplementationOnce(scoped("handles"));
+    const waitUntilFns: Array<() => Promise<void>> = [];
+    const mockStore = {
+      getItem: vi
+        .fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          value: JSON.stringify("stale"),
+          shouldRevalidate: true,
+        }),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60, swr: 120 } },
+      _handleStore: {
+        push: vi.fn(),
+        settled: Promise.resolve(),
+        getDataForSegment: vi.fn().mockReturnValue({}),
+      },
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    });
+
+    const cached = registerCachedFunction(
+      async (_ctx: unknown, key: string) => `fresh-${key}`,
+      "encode-scope",
+      "default",
+    );
+    await cached(makeTaintedCtx(), "miss");
+    await cached(makeTaintedCtx(), "stale");
+    for (const task of waitUntilFns) await task();
+
+    expect(encodeScoped).toEqual([
+      "value:true",
+      "handles:true",
+      "value:true",
+      "handles:true",
+    ]);
+    expect(isInsideCacheExecScope()).toBe(false);
   });
 
   it("produces separate cache entries for different response types at the same URL", async () => {

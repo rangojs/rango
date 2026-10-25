@@ -114,6 +114,7 @@ import { createShellImplicitDocScope } from "../../cache/cache-scope.js";
 import { recordSegmentTags } from "../../cache/cache-tag.js";
 import { executionStart } from "../../cache/tag-invalidation.js";
 import { getRouterContext } from "../router-context.js";
+import { interceptRecordKey } from "../intercept-resolution.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
@@ -284,7 +285,7 @@ export function withCacheStore<TEnv>(
             ctx.pathname,
             ctx.matched.params,
             allSegmentsToCache,
-            ctx.isIntercept,
+            interceptRecordKey(ctx.interceptResult),
             // A capture's doc record lives only in the shell entry, which
             // putShell gates by the capture start; skipping it here would
             // read as a render that produced no record.
@@ -354,7 +355,7 @@ function recordShellCaptureDocRecord<TEnv>(
   segments: ResolvedSegment[],
 ): void {
   const requestCtx = getRequestContext();
-  if (!requestCtx?._shellCaptureRun) return;
+  if (!requestCtx?._shellCaptureState?.run) return;
   const marker = requestCtx._shellImplicitCache;
   if (!marker?.store) return;
   const scope = ctx.cacheScope;
@@ -381,12 +382,7 @@ function recordShellCaptureDocRecord<TEnv>(
   // pushes settled, so the record's handle encode never races them.
   requestCtx.onResponse((response) => {
     requestCtx.waitUntil(() =>
-      docScope.cacheRoute(
-        ctx.pathname,
-        ctx.matched.params,
-        segments,
-        ctx.isIntercept,
-      ),
+      docScope.cacheRoute(ctx.pathname, ctx.matched.params, segments),
     );
     return response;
   });

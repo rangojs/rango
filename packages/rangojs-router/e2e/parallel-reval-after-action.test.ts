@@ -13,7 +13,7 @@ import {
  *
  * Pre-fix: the action's revalidation phase pruned @panel from the client's
  * matched set (the static short-circuit branch in
- * resolveParallelSegmentsWithRevalidation skipped both `matchedIds.push`
+ * resolveParallelSegments skipped both `matchedIds.push`
  * AND the user's revalidate() fns). The next nav arrived without @panel in
  * `_rsc_segments`, took the same short-circuit, and rendered the slot as
  * `component: null`. The user-observable symptom: clicking a sibling link

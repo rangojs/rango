@@ -70,6 +70,9 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
 1. Never change the conditional logic in `renderSegments()` that decides between
    LoaderBoundary/RouteContentWrapper/OutletProvider without verifying all three
    render paths (SSR, navigation, action) produce identical tree structures.
+   `src/__tests__/tree/structure.test.tsx` pins the element types, depth and
+   keys for each `loading` variant on SSR, navigation, back/forward and action
+   renders.
 
 2. Never add or remove wrapper elements (Suspense, div, Fragment) around segment
    content without checking that the same wrappers exist in ALL render paths.

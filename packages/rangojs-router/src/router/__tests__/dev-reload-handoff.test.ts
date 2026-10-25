@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // A runner full reload (#1186) fires vite:beforeFullReload, then clears the
 // runner's evaluated modules. A listener on the router copy's hot channel is
@@ -27,6 +27,12 @@ beforeEach(() => {
 });
 
 describe("a router whose module copy a runner full reload dropped", () => {
+  // Pays the router graph's cold transform (1.4 s alone, 16 s under load) once;
+  // resetModules drops evaluated modules, not the transformed code.
+  beforeAll(async () => {
+    await import("../../router.js");
+  }, 60_000);
+
   it("hands its request to the router the reload re-created", async () => {
     const { createRouter } = await import("../../router.js");
     const { watchRunnerReloads } = await import("../dev-reload-handoff.js");

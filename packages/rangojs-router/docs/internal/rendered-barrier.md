@@ -151,10 +151,10 @@ false") and, through a real request, by
 
 The render barrier is a deferred promise on the request context:
 
-- **Fresh path (non-streaming)**: Resolved after `resolveAllSegments()`
+- **FRESH pass (non-streaming)**: Resolved after `resolveAllSegments()`
   returns. At that point all handlers have completed and all synchronous
   handle data has been pushed.
-- **Fresh path (streaming, `loading()`)**: the barrier still resolves after
+- **FRESH pass (streaming, `loading()`)**: the barrier still resolves after
   `resolveAllSegments()`, but `loading()` handlers are still in flight then.
   Their async execution is tracked in the handle store (`trackHandler` →
   `store.track`), so `rendered()` additionally seals the store and `await`s
@@ -169,8 +169,11 @@ The render barrier is a deferred promise on the request context:
   artifacts. Same as cache hit.
 - **PPR shell capture (bake lane)**: the capture's derived context gets its
   OWN barrier, wired to the capture's fresh handle store
-  (`wireRenderBarrier` in `server/request-context.ts`, called from
-  `deriveShellCaptureContext` in `rsc/shell-capture.ts`). This is scar
+  (`wireRenderBarrier` in `server/request-context.ts`, called by
+  `deriveRenderPass` in `server/render-pass.ts` for the `shell-capture` and
+  `ppr-tail` rows of `RENDER_PASS_FIELDS`; the background re-render's row
+  inherits the request's barrier, and the document cache re-run's row owns
+  one over the request's handle store, see the next two items). This is scar
   tissue (issue #684, plan 009): the derived context is
   `Object.create(reqCtx)`, and before the explicit wiring every
   `_renderBarrier*` read fell through the prototype to the foreground
@@ -183,6 +186,67 @@ The render barrier is a deferred promise on the request context:
   segment resolution, `_treeHasStreaming` is recomputed for the capture's
   tree, and the snapshot is built from the capture's store. Pinned by
   `router/__tests__/shell-capture-barrier-isolation.test.ts`.
+- **Background re-render of a stale route record**: the
+  `background-revalidation` row inherits the request's barrier, and its
+  loaders do call `rendered()` on it. Both of its passes skip loaders
+  (`skipLoaders`): the route's, and an open intercept's, which resolves with
+  `heldNothingPassInput` (`background-revalidation.ts`
+  `rerenderAndCacheRoute`). Each runs only the loaders a handler reads:
+  `resolveOwnerLoaders` registers each, and the read starts it as a DSL
+  loader, as on a MISS. You might expect the inherited barrier to hang
+  them or leak into the record. It does neither:
+  - The barrier has already resolved when the pass starts. A stale HIT
+    resolves it in `cache-lookup.ts` before `withBackgroundRevalidation`
+    starts the refresh, and proactive caching (`cache-store.ts`) runs from
+    `onResponse`, after segment resolution resolved it. So `rendered()`
+    returns at once, and the loader reads the visitor's handle snapshot, not
+    the refresh's store.
+  - No loader's own output reaches the record: `cacheRoute` drops loader
+    segments (`cache/cache-scope.ts`), and `captureHandles` drops loader
+    pushes (`cache/handle-snapshot.ts`). So a loader nothing reads is not
+    run at all. The intercept's pass used to run them, once more per
+    refresh for nothing, side effects and `onError` reports included
+    (`testing/__tests__/cached-intercept-refresh-loaders.rsc-test.tsx`).
+  - A loader a handler reads is different: its value bakes into the
+    handler's output, as on a MISS. Its pushes stay out of the record only
+    because it starts through its registration: started bare, as a
+    handler-invoked loader, they stayed in and every HIT showed them twice,
+    the record's copy and the live run's
+    (`testing/__tests__/cached-route-handler-reads-loader.rsc-test.tsx`, and
+    for an intercept's handler the file above).
+  - A handler awaiting a loader that calls `rendered()` is the deadlock
+    every MISS refuses (the checks in `setupLoaderAccess` and `rendered()`),
+    and the refresh must refuse it too. Those checks read three fields:
+    `_handlerLoaderDeps`, `_renderBarrierWaiters` and
+    `_renderBarrierGuardClosed`. The visitor's are closed once its barrier
+    resolves, so the row owns its own, open, and never closes them: it has
+    no barrier of its own to resolve. Inherited, the handler's read went
+    unrecorded and `rendered()` let it through. On a tree without
+    `loading()` the record then baked the visitor's handle snapshot; on one
+    that streams, `rendered()` awaited the refresh's own handle store, which
+    awaits that handler, and the refresh never settled. Pinned through
+    `serveShellRequest` by the same file ("handler awaits a loader that
+    calls rendered()") and by `server/__tests__/derived-context-shape.rsc-test.tsx`.
+  - A shell capture never takes the intercept branch:
+    `createNavigationCaptureRequest` (`rsc/shell-capture.ts`) strips the
+    intercept source.
+
+  Pinned through `serveShellRequest` by
+  `testing/__tests__/background-revalidation-pass.rsc-test.tsx`.
+
+- **Re-run of a stale document cache entry**: the `document-revalidation`
+  row owns its barrier, wired to the request's handle store. The stale HIT
+  matched and rendered nothing, so the re-run is the request's only render,
+  and its barrier must resolve for its own tree. When it took the background
+  row and inherited the request's barrier, the barrier resolved through the
+  request's closure, which read the request's `_treeHasStreaming` (unset;
+  the re-run set its own on the pass), built the handle snapshot before a
+  `loading()` handler pushed, and a loader that read a handle after
+  `rendered()` got an empty list in the refreshed entry. Its guard fields
+  close on the pass with the barrier, so a handler read of a loader after
+  the barrier resolved is not taken for a deadlock. Pinned through
+  `serveShellRequest` by
+  `testing/__tests__/document-cache-refresh-render.rsc-test.tsx`.
 
 ### Loader `get(handle)` After Barrier
 
@@ -199,7 +263,7 @@ In a streaming tree, handlers behind `loading()` have not finished pushing
 when `resolveAllSegments()` returns — only their _rendered output_ streams
 behind Suspense; the handler function itself runs eagerly and its async
 execution (including its `push()` calls) is tracked in the handle store
-(`fresh.ts`: `trackHandler(handler(context))` → `store.track`). So the signal
+(`revalidation.ts`: `trackStreamedHandler(…)` → `trackHandler` → `store.track`). So the signal
 "all handlers have pushed" already exists: `handleStore.settled` (sealed AND no
 in-flight tracked promises).
 

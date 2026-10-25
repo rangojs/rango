@@ -35,15 +35,20 @@ const { captureShellForBuild } = await import("../build-shell-capture.js");
 
 /**
  * A build capture's match is served from the prerender store (no handler
- * runs, no doc record); cache-lookup.ts tryPrerenderLookup marks that on the
+ * runs, no doc record); cache-lookup.ts decodeStoredEntry marks that on the
  * capture context, which settleCaptureRecord reads.
  */
 function prerenderServed(): {
   routeName: string;
   params: Record<string, string>;
+  segments: [];
 } {
   getRequestContext()._pprReplayPostMatchReason = "prerender-store";
-  return { routeName: "shop.category", params: { category: "power-set" } };
+  return {
+    routeName: "shop.category",
+    params: { category: "power-set" },
+    segments: [],
+  };
 }
 
 /** The 4th arg captureAndStoreShell receives — the shell descriptor + sink. */

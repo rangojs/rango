@@ -1012,10 +1012,11 @@ is a comment.
 
 ### dispatch — request to Response
 
-`dispatch` runs the router's real matching + middleware (reusing
-`previewMatch`), with no RSC render. It covers redirects, 404s, response routes,
-and global + route-level middleware short-circuits. An RSC (component) route
-throws a clear directive error.
+`dispatch` runs the production handler's request stages (classify, the
+terminal plans, the global + route-level middleware), with no RSC render. It
+covers redirects, 404s, reloads (a `_rsc_v` version mismatch, a `_rsc_rid` app
+switch), response routes, and global + route-level middleware short-circuits.
+An RSC (component) route throws a clear directive error.
 
 This means `dispatch` IS the way to exercise a **response** route's real
 route-level middleware chain (the guard stack) against the actual registered

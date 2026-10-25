@@ -137,9 +137,12 @@ export interface CacheOptions<TEnv = unknown> {
   ) => boolean;
 
   /**
-   * Custom cache key function - FULL OVERRIDE.
-   * Bypasses default key generation AND store's keyGenerator. The result is
-   * stored namespaced (`key:` plus its URI encoding), so no value it returns
+   * Custom cache key function. Replaces the URL part of the default key
+   * (host, path, params, search) AND bypasses the store's keyGenerator. The
+   * request kind stays: a document request, a navigation and each intercept
+   * navigation keep their own record under one result, so the result decides
+   * which requests of one kind share a record. It is stored namespaced
+   * (`key:` plus its URI encoding, then the kind), so no value it returns
    * names another route's record; a nested cache() keys its records within
    * this partition.
    *

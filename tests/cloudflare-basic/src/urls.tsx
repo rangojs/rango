@@ -256,6 +256,7 @@ import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
 import { LoaderCacheTagPage } from "./pages/loader-cache-tag.js";
 import { RyowActionPage } from "./pages/ryow-action.js";
 import { NestedUseCachePage } from "./pages/nested-use-cache.js";
+import { ReturnedLazyPage } from "./pages/use-cache-returned-lazy.js";
 import { controlHeldValue, getHeldValue } from "./use-cache-tags-data.js";
 import {
   LoaderCacheIdentityLayout,
@@ -2646,6 +2647,16 @@ export const urlpatterns = urls(
         path("/nested-use-cache/:probe", NestedUseCachePage, {
           name: "nestedUseCache",
         }),
+
+        // A "use cache" function returns a lazy component that reads the
+        // session cookie: the value is encoded inside the "use cache" guard
+        // and the page renders its decoded copy, so the read refuses and no
+        // visitor's session is stored for the next.
+        path(
+          "/use-cache-returned-lazy/:probe",
+          (ctx) => <ReturnedLazyPage probe={ctx.params.probe} />,
+          { name: "useCacheReturnedLazy" },
+        ),
 
         // A cached loader on a store whose KV marker writes land late, and a
         // server action that runs revalidateTag() on its tag: the action's

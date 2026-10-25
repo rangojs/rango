@@ -17,18 +17,15 @@ import { isRouteRootScoped } from "../route-map-builder.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { findInOrphans } from "./error-handling.js";
 import { interceptSlotId } from "./intercept-resolution.js";
+import { localRouteName } from "../route-name.js";
 import { loadManifest } from "./manifest.js";
 import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
-import type { ResolveSegmentOptions } from "./segment-resolution.js";
+import { freshPassInput } from "./segment-resolution/resolution-pass.js";
 import { runWithRouterContext } from "./router-context.js";
 import type { EntryData, InterceptEntry } from "../server/context";
 import type { PartialPrerenderProps } from "../urls/pattern-types.js";
-import type {
-  HandlerContext,
-  InternalHandlerContext,
-  ResolvedSegment,
-} from "../types";
+import type { InternalHandlerContext, ResolvedSegment } from "../types";
 import type {
   SerializedSegmentData,
   SegmentHandleData,
@@ -38,6 +35,21 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+
+/**
+ * An intercept a navigation can select over the route that the build does
+ * not bake: its HIT misses (selectInterceptVariant) and it renders live,
+ * with the request instead of BuildContext.
+ * - `same-slot`: another intercept on its layout fills the same slot.
+ * - `handler-response` / `layout-response`: its handler or layout returned a
+ *   Response for this URL.
+ * - `local-name`: it targets the route's localRouteName, which the build
+ *   never bakes.
+ */
+export interface LiveIntercept {
+  slot: string;
+  reason: "same-slot" | "handler-response" | "layout-response" | "local-name";
+}
 
 export interface PrerenderMatchDeps<TEnv = any> {
   /** Owning router id; scopes bake-time root-scope/search-schema lookups the
@@ -55,14 +67,7 @@ export interface PrerenderMatchDeps<TEnv = any> {
   ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
   buildRouterContext: () => RouterContext<TEnv>;
   mergedRouteMap: Record<string, string>;
-  resolveAllSegments: (
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>,
-    options?: ResolveSegmentOptions,
-  ) => Promise<ResolvedSegment[]>;
+  resolveAllSegments: RouterContext<TEnv>["resolveAllSegments"];
 }
 
 /**
@@ -95,9 +100,13 @@ export async function matchForPrerender<TEnv = any>(
   routeName: string;
   params: Record<string, string>;
   interceptSegments?: SerializedSegmentData[];
-  /** RSC-encoded MERGED (main + intercept) handle map for the intercept artifact;
-   *  the sinks store it as-is (no longer merge raw records). */
+  /** RSC-encoded handle map for the intercept artifact: the intercept's
+   *  pushes and those of the main segments the intercepted route does not
+   *  own; the sinks store it as-is. */
   interceptHandles?: string;
+  /** The intercepts the intercept variant does not hold, for the build's
+   *  warning (warnLiveIntercepts). */
+  liveIntercepts?: LiveIntercept[];
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
@@ -340,16 +349,16 @@ export async function matchForPrerender<TEnv = any>(
         setupBuildUse(buildCtx);
 
         // 8. Resolve all segments with skipLoaders
-        const loaderPromises = new Map<string, Promise<any>>();
-        const allSegments = await deps.resolveAllSegments(
+        const { segments: allSegments } = await deps.resolveAllSegments(
+          freshPassInput(buildCtx, matched.routeKey, matchedParams, {
+            skipLoaders: true,
+            // A render failure (or `throw new Skip()`) must reach the
+            // build/dev caller, not be baked into a frozen error page
+            // (issue #587).
+            throwOnError: true,
+          }),
           entries,
-          matched.routeKey,
-          matchedParams,
-          buildCtx,
-          loaderPromises,
-          // throwOnError: a render failure (or `throw new Skip()`) must reach the
-          // build/dev caller, not be baked into a frozen error page (issue #587).
-          { skipLoaders: true, throwOnError: true },
+          { pathname: buildCtx.pathname },
         );
 
         // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
@@ -375,7 +384,7 @@ export async function matchForPrerender<TEnv = any>(
         // the tree) as an error row and completes normally. Rethrown below like
         // a handler throw, so the caller's policy decides instead of baking the
         // error (#914). On-demand refresh: a deep async child calling
-        // cookies()/headers() throws here, not in resolveAllSegments; a
+        // cookies()/headers() throws here, not in segment resolution; a
         // personalization error is thrown in preference to any other so the
         // trigger maps it to skipped-personalized and keeps the old entry.
         const { serializeSegments } = await import("../cache/segment-codec.js");
@@ -453,18 +462,25 @@ export async function matchForPrerender<TEnv = any>(
           intercept: InterceptEntry;
           entry: EntryData;
         }[] = [];
-        // The entry, then its orphans (nested ones included): the same traversal
-        // findInterceptForRoute uses; the build keeps ALL matches (not just the
-        // innermost) and skips when().
+        const localNamed: InterceptEntry[] = [];
+        const localName = localRouteName(matched.routeKey);
+        // From the route's parent up, each entry then its orphans (nested ones
+        // included): the walk findInterceptForRoute makes at runtime, so an
+        // intercept in the route's own layouts, which it never selects, is not
+        // baked. The build keeps ALL matches (not just the innermost) and skips
+        // when(); a HIT serves the one the match selected
+        // (selectInterceptVariant, prerender/store.ts).
         const collect = (source: EntryData): undefined => {
           for (const ic of source.intercept) {
             if (ic.routeName === matched.routeKey) {
               foundIntercepts.push({ intercept: ic, entry: source });
+            } else if (ic.routeName === localName) {
+              localNamed.push(ic);
             }
           }
           return undefined;
         };
-        let current: EntryData | null = manifestEntry;
+        let current: EntryData | null = manifestEntry.parent;
         let prev: EntryData | null = null;
         while (current) {
           collect(current);
@@ -472,22 +488,50 @@ export async function matchForPrerender<TEnv = any>(
           prev = current;
           current = current.parent;
         }
+        // Two intercepts that fill one slot share its segment id, so a HIT
+        // could not tell which one the variant holds: neither is baked, and
+        // both render live.
+        const slotIds = foundIntercepts.map(({ intercept, entry }) =>
+          interceptSlotId(entry, intercept),
+        );
+        const bakedIntercepts = foundIntercepts.filter(
+          (_, i) =>
+            slotIds.indexOf(slotIds[i]!) === slotIds.lastIndexOf(slotIds[i]!),
+        );
+
+        const liveIntercepts: LiveIntercept[] = [];
+        const live = (
+          intercept: InterceptEntry,
+          reason: LiveIntercept["reason"],
+        ): void => {
+          liveIntercepts.push({ slot: intercept.slotName, reason });
+        };
+        for (const found of foundIntercepts) {
+          if (!bakedIntercepts.includes(found)) {
+            live(found.intercept, "same-slot");
+          }
+        }
+        // The match tries the local name only when no intercept for the full
+        // name applies, and one without when() always applies.
+        if (foundIntercepts.every(({ intercept }) => intercept.when?.length)) {
+          for (const intercept of localNamed) live(intercept, "local-name");
+        }
 
         // V1 writes only the main variant. Do not execute intercept producers
         // whose output would be discarded (and whose personalization/errors
         // must not block an otherwise valid main refresh).
-        if (!onDemand && foundIntercepts.length > 0) {
+        if (!onDemand && bakedIntercepts.length > 0) {
           const interceptResolvedSegments: typeof nonLoaderSegments = [];
 
-          for (const { intercept, entry: parentEntry } of foundIntercepts) {
+          for (const { intercept, entry: parentEntry } of bakedIntercepts) {
             // setupBuildUse keys handle pushes by ctx._currentSegmentId. The main
-            // resolveAllSegments pass left it on the route's segment id, so pin it
+            // segment pass left it on the route's segment id, so pin it
             // to THIS intercept's slot id before resolving the handler/layout --
             // otherwise the intercept's ctx.use() handle pushes land in the wrong
             // bucket and getDataForSegment(seg.id) below drops them from the baked
             // artifact. Re-pinned per iteration so multiple intercepts targeting
-            // the same route each get their own id (mirrors fresh.ts parallel-slot
-            // pinning).
+            // the same route each get their own id (mirrors the walker's
+            // parallel-slot pinning, revalidation.ts).
             const interceptSegmentId = interceptSlotId(parentEntry, intercept);
             (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
               interceptSegmentId;
@@ -500,7 +544,7 @@ export async function matchForPrerender<TEnv = any>(
             const handlerResolved =
               handlerRaw instanceof Promise ? await handlerRaw : handlerRaw;
             if (handlerResolved instanceof Response) {
-              // Handler returned a redirect/response -- skip this intercept
+              live(intercept, "handler-response");
               continue;
             }
             const component: ReactNode = handlerResolved;
@@ -510,7 +554,10 @@ export async function matchForPrerender<TEnv = any>(
             if (intercept.layout) {
               if (typeof intercept.layout === "function") {
                 const layoutResult = await intercept.layout(buildCtx);
-                if (layoutResult instanceof Response) continue;
+                if (layoutResult instanceof Response) {
+                  live(intercept, "layout-response");
+                  continue;
+                }
                 layoutElement = layoutResult;
               } else {
                 layoutElement = intercept.layout;
@@ -548,14 +595,22 @@ export async function matchForPrerender<TEnv = any>(
                   await resolveSegmentHandleValues(segHandles);
               }
             }
-            // The intercept artifact serves main + intercept segments together, so
-            // encode the MERGED handle map here (the sinks no longer merge raw
-            // records — they store this pre-encoded string as-is).
+            // The handle map of exactly the segments the sinks store for the
+            // intercept artifact; they store this string as-is.
+            const { interceptVariantSegments } =
+              await import("../prerender/store.js");
+            const variantHandlesRecord: Record<string, SegmentHandleData> = {};
+            for (const { metadata } of interceptVariantSegments(
+              serializedSegments,
+              interceptSegments,
+            )) {
+              const data =
+                handlesRecord[metadata.id] ??
+                interceptHandlesRecord[metadata.id];
+              if (data) variantHandlesRecord[metadata.id] = data;
+            }
             interceptHandles = await encodeHandles(
-              {
-                ...handlesRecord,
-                ...interceptHandlesRecord,
-              },
+              variantHandlesRecord,
               onFlightError,
             );
           }
@@ -570,6 +625,7 @@ export async function matchForPrerender<TEnv = any>(
           params: matchedParams,
           interceptSegments,
           interceptHandles,
+          liveIntercepts,
           onDemandConfig,
           ppr: routePpr,
         };

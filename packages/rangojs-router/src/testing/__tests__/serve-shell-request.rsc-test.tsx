@@ -395,8 +395,11 @@ const EarlyBakeLoader = createLoader(async (ctx) => {
 /** Reads readRecaptureLive during a capture only. */
 const RecaptureBakeLoader = createLoader(async (ctx) => ({
   baked:
-    (getRequestContext() as unknown as { _shellCaptureRun?: boolean })
-      ._shellCaptureRun === true
+    (
+      getRequestContext() as unknown as {
+        _shellCaptureState?: { run: true };
+      }
+    )._shellCaptureState?.run === true
       ? `baked-${await readRecaptureLive(ctx)}`
       : "baked-none",
 }));
@@ -1102,16 +1105,14 @@ describe("serveShellRequest: request-partitioned shells", () => {
     expect(keyRuns.cookie).toBe(2);
     expect(warn.mock.calls.flat().join("\n")).not.toContain("refused");
 
-    // A client navigation: its shell partition and its record lookup (the
-    // route's own cache() record, which serves it) share the one call.
+    // A client navigation: its shell partition and its record lookup share
+    // the one call. The route's own cache() record is per request kind, so
+    // the navigation's misses and the shell's doc record serves it.
     const nav = await serve("/cookie-tiered", {
       ...gold,
       partial: { from: "/about" },
     });
-    expect(nav.replayStatus).toEqual({
-      outcome: "BYPASS",
-      reason: "explicit-cache-hit",
-    });
+    expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect(nav.flight).toContain("cookie-tiered");
     expect(keyRuns.cookie).toBe(3);
   });
@@ -2254,7 +2255,7 @@ describe("serveShellRequest: tags", () => {
   it("updateTag of a nested cache({ tags }) evicts its composed-key record and the shell captured from it (#970)", async () => {
     const { serve, cacheStore } = setup();
     const goldA = { headers: { "x-tier": "gold", "x-variant": "a" } };
-    const recordKey = "key:tier%3Agold|key:tagged-v%3Aa";
+    const recordKey = "key:tier%3Agold|key:tagged-v%3Aa|doc";
 
     expect((await serve("/nested-tagged", goldA)).shellStatus).toBe("MISS");
     const hit = await serve("/nested-tagged", goldA);

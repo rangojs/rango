@@ -48,7 +48,7 @@ return so asynchronous work cannot outlive the active trace invisibly; put that
 work in a named `step` instead.
 
 Settlement tracking follows the returned value. A scheduler that
-fires-and-forgets internally (`scheduleShellCapture` via `runBackground`)
+fires-and-forgets internally (`planShellCapture` via `runBackground`)
 returns void, so its trace entry settles at the handoff — deliberately: the
 plan's contract ends there, and pretending otherwise would require threading
 capture-internal promises out of `shell-capture.ts` for a debug display.

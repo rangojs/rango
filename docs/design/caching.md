@@ -248,6 +248,47 @@ write and the cache cannot tell. Each renders at the origin, is never stored,
 and answers `private, no-cache`. An app that wants the shared entry refreshed
 after a write tags it and calls `updateTag()`.
 
+A stale entry's refresh re-runs the whole downstream pipeline (`next()`) in a
+`waitUntil` task while the visitor's request is still finishing. It used to
+run on the visitor's request context, so a cookie written in the re-run, or a
+header a route handler wrote that the stored entry lacks, landed on the
+visitor's `STALE` response whenever the global middleware above the cache
+returned after the re-run wrote it, and a cookie the visitor's middleware set
+after `next()` kept the refreshed page out of the store. The re-run now runs
+on its own row of `RENDER_PASS_FIELDS` (`document-revalidation` in
+`server/render-pass.ts`), over a sink copied from the request's response
+stub when the stale hit is served. Its request-context writes build its own
+response, which is stored or refused by the rules above, and it starts from
+what middleware ahead of the cache wrote to the stub before `next()`, as a
+MISS's render does. Its `dynamic()` latch starts from the request's too.
+Unlike a stale `cache()` refresh, which re-resolves segments after the
+request rendered, this re-run is the request's only render: the stale HIT
+matched nothing. So the row owns what the request's own members would get
+wrong: a render barrier over the request's handle store (the request's
+closes over the request, whose `_treeHasStreaming` the re-run never sets, and
+it snapshotted handles before a `loading()` handler pushed), a
+`getRequestContext().use()` that reads the re-run's params, and the
+`dynamic()` latch the render reads. Its loader memo is new, as after a
+rewrite (`rebaseRequestContext`): a loader that middleware ahead of the cache
+started through `getRequestContext().use()` runs again in the re-run. Its
+side effects happen twice per stale hit, and if it reads route-derived
+fields (params, route name), the refreshed entry holds the matched values
+where a MISS reuses the run that started before the match. Sharing the
+request's memo would give exact MISS parity but needs the memo exposed on the
+pass; the divergence needs a loader that middleware ahead of the cache and
+the render both read, so it is documented instead.
+`onResponse()` callbacks the re-run registers apply to its own response, as
+on a MISS; ones registered before the hit are drained onto the `STALE`
+response, as before, and do not reach the re-run.
+The global chain's response holder (`executeMiddleware` in
+`router/middleware.ts`) is the re-run's own as well: the cache returned the
+`STALE` response while the `next()` it called still ran, which detaches that
+run (`DownstreamHolder`). The middleware ahead of the cache keep the `STALE`
+response, so their writes after `next()` land on it and a forgiving one never
+returns the re-run's drained body; the middleware after the cache write to
+the re-run's response. Its handler timing (`_handlerTiming`) is its own too,
+so its `handler-classify` stays off the visitor's `Server-Timing`.
+
 ### Layer 2: Shell Cache + Fresh Streaming
 
 Cache synchronous shell, stream fresh data through Suspense boundaries.
@@ -380,8 +421,8 @@ That holds on a hit too. The route's entry stores only the boundary's subtree:
 `cacheRoute` drops every segment whose id does not extend the boundary entry's
 shortCode (`CacheScope.covers`; shortCodes are hierarchical). On a hit,
 `withCacheLookup` resolves the entries above the boundary as an uncached render
-would (`resolveAllSegments`, or `resolveAllSegmentsWithRevalidation` for a
-partial), then replays the record and runs the loaders below the boundary. So
+would (`resolveAllSegments`: a FRESH pass for a full match, a
+partial pass otherwise), then replays the record and runs the loaders below the boundary. So
 an outer layout's header write lands on every response, and the `ctx.set()`
 values it produces reach the loaders inside the boundary. Nested enabled
 `cache()` entries share the outermost one's boundary. The exception is a `ppr`
@@ -448,7 +489,8 @@ Cache keys combine request type prefix, the serving router's id, host, pathname,
 {prefix}:{routerId}@{host}{pathname}:{sortedParams}?{sortedSearchParams}
 ```
 
-- **Prefix**: `doc` (full page), `partial` (navigation), or `intercept` (modal/overlay).
+- **Prefix**: `doc` (full page), `partial` (navigation), or `intercept:{intercept}` (an intercept navigation). `{intercept}` names the intercept the match selected (`interceptRecordKey`, `src/router/intercept-resolution.ts`): its slot id, `~`, and its position among the intercepts its entry declares for the same slot and target route. See [Intercept Route Cache Namespace](#4-intercept-route-cache-namespace).
+- **Under a `key()`**: a scope with its own `key()` replaces what follows the prefix, never the prefix itself. Its record key is the composed `key()` parts, then the prefix as the last part (`key:tier%3Agold|doc`, `key:tier%3Agold|partial`, `key:tier%3Agold|intercept%3AM0L0.%40modal~0`). See [A key() keeps the request kind](#a-key-keeps-the-request-kind-rango-t201).
 - **Router and host**: `{routerId}@{host}` says whose output the entry is. See [The router part](#the-router-part-whose-output-an-entry-is) below.
 - **Search params**: User-facing params are included (sorted, URL-encoded). Router-internal params are excluded: `_rsc*` by prefix, plus an exact allowlist of `__`-prefixed params (`__no_cache`, `__rsc`, `__html`) — deliberately not a blanket `__*` filter, so consumer params like `__variant` still key the cache (see `src/cache/cache-key-utils.ts`).
 - **Partial response capability**: document-cache entries append a fragment-capable variant when `X-Rango-Fragment-Passthrough: 1` is present. The middleware can return before route matching, so its key must mirror the RSC response's `Vary` contract and never serve fragment envelopes to a legacy or context-less client. `X-Rango-Fragment-Recovery: 1` skips that variant's read so the failed fragment retry reaches segment decode and eviction, then the ordinary write path replaces the corrupt response bytes with the valid fallback.
@@ -459,7 +501,7 @@ Cache keys combine request type prefix, the serving router's id, host, pathname,
 // "doc:a1b2c3d4@shop.example/products"
 // "partial:a1b2c3d4@shop.example/products:slug=shoes"
 // "partial:a1b2c3d4@shop.example/products:slug=shoes?page=2&sort=asc"
-// "intercept:a1b2c3d4@shop.example/products:slug=shoes"
+// "intercept:M0L0.@modal~0:a1b2c3d4@shop.example/products:slug=shoes"
 ```
 
 For `"use cache"` functions, cache keys follow the format `use-cache:{functionId}:{serializedArgs}` where tainted ctx arguments contribute `pathname`, `params`, `_responseType`, and normalized search params to the key.
@@ -517,7 +559,7 @@ key carries a router part exactly when its first `@` comes before its first
 | PPR document shell                                            | `buildShellKey` (`src/rsc/shell-capture-constants.ts`), called from `src/rsc/rsc-rendering.ts`                 | `{routerId}@{host}{path}[?search]:shell`                                                                         | yes                                                               |
 | Navigation-only shell, `key()` partitions                     | `navigationShellKey`, `partitionShellKey` (same module)                                                        | the document shell key + `:navigation` / `\|{partition}`                                                         | yes, inherited from the base key                                  |
 | Build-time shell manifest                                     | `buildShellManifestKey` (`src/prerender/shell-manifest-key.ts`)                                                | `{routerId}@{path}`                                                                                              | yes                                                               |
-| Route `cache()` records                                       | `getDefaultRouteCacheKey` (`src/cache/cache-scope.ts`)                                                         | `doc:\|partial:\|intercept:` + `cacheKeyBase`                                                                    | yes                                                               |
+| Route `cache()` records                                       | `getDefaultRouteCacheKey` (`src/cache/cache-scope.ts`)                                                         | `doc:\|partial:\|intercept:{intercept}:` + `cacheKeyBase`                                                        | yes                                                               |
 | Document cache                                                | `createDocumentCacheMiddleware` (`src/cache/document-cache.ts`)                                                | `cacheKeyBase` + segment hash + `:html` / `:rsc`                                                                 | yes                                                               |
 | Response routes                                               | `serveResponseRouteWithCache` (`src/rsc/response-cache-serve.ts`)                                              | `response:{type}:` + `cacheKeyBase`                                                                              | yes                                                               |
 | Per-isolate shell state                                       | the shell memo, the capture stampede guard and backoff (`src/rsc/shell-capture.ts`, `src/cache/shell-memo.ts`) | the shell key                                                                                                    | yes, they are keyed by the shell key                              |
@@ -527,7 +569,7 @@ key carries a router part exactly when its first `@` comes before its first
 | A loader's `key()`                                            | `loaderKeyFromResult` (`loader-cache.ts`)                                                                      | `loader:{loaderId}:key:{encoded result}`                                                                         | no: a full override, like the row below                           |
 | On-demand prerender overlay                                   | `src/prerender/writable-store.ts`                                                                              | `prerender:{routerId}:{version}:{routeName}:{paramHash}`                                                         | already there                                                     |
 | Tag markers                                                   | the stores                                                                                                     | `__tag__/{tag}`, `rg:tm:{tag}`                                                                                   | no: an invalidation reaches every router and every version        |
-| Your own keys: `cache({ key })`, `keyGenerator(url)`          | your code                                                                                                      | what you return                                                                                                  | no: a full override owns its namespace, as it owns the host       |
+| Your own keys: `cache({ key })`, `keyGenerator(url)`          | your code                                                                                                      | what you return (a route `key()`: namespaced, then the request kind)                                             | no: your key owns its namespace, as it owns the host              |
 
 The three built-in stores add nothing of their own that names a host and path.
 `CFCacheStore` and `VercelCacheStore` wrap the key they are given in a version
@@ -789,7 +831,7 @@ or cheap renders, where the extra get after every invalidation buys nothing.
 Three things keep it safe and bounded:
 
 - The KV entry goes through the reader and the check a plain miss uses
-  (`kvGetSegment` and its siblings, `isGloballyInvalidated`), so a value from
+  (`CFCacheStore.readKv`, `isGloballyInvalidated`), so a value from
   before the marker is never served, however stale KV's answer is. The
   markers that rejected the L1 copy are in the request's memo by then, so a
   KV entry carrying the same tags costs no second marker read.
@@ -899,6 +941,23 @@ On cache HIT:
 4. handleStore.stream() emits replayed data to client
 ```
 
+**A navigation's HIT replays the handler values of the segments it sends.**
+A live navigation runs no handler for a layout the client keeps, so the
+response carries none of its values and the client keeps the ones on screen.
+A `cache()` HIT decides the same per record segment (`cachedSegmentSends`),
+after the entries above the boundary resolved live, and only then restores:
+on a partial request `CacheScope.lookupRouteDetailed` (`deferHandles`) leaves
+the restore to `serveStoredSegments`, which calls the hit's `restoreHandles`
+with the ids it sent. A sent segment gets its bucket whole; a kept one gets
+only its loaders' copies, which follow their loader (below), and none of its
+handler's values (`restoreHandles`' `sent`). It used to restore every
+bucket, so a `/list` to `/item/1` navigation, an intercept's included,
+re-sent the held layout's crumbs from the record, and the browser's merge
+replaced the values on screen with them; a loader's `ctx.get(handle)` after
+`rendered()` read them too, which a live render does not (rango-t195). A
+document request restores everything in the lookup, as before. A
+`Prerender()` bake does the same in `decodeStoredEntry` (rango-t193).
+
 **Loader pushes are not recorded.** A DSL loader body can push handles too, and
 its pushes land in the owning route/layout segment's bucket. A HIT runs
 loaders exactly as an uncached render of the same request would (after the
@@ -913,6 +972,24 @@ the same tag: the capture's push wrapper passes `loaderPush: false` to
 `HandleStore.push` for an `ssr: false` loader's own settled pushes, which its
 record keeps, with the loader's id as `owner`. The record carries those owners
 in `CachedEntryData.handleOwners`.
+
+**A live loader push keeps the MISS's place.** The MISS starts an entry's
+loaders, then runs its handler, so a loader push made before its first
+`await` is ahead of the handler's in the segment, and one made after it is
+behind. A HIT restores the record before any loader starts, and each live
+push used to land after the record's values. `serveStoredSegments` now
+holds them once the restore is done, for a `Prerender()` entry too
+(`HandleStore.holdRecordedValues`):
+a push into a held segment goes in front of its stored values until the
+HIT's loaders-only walk reaches the place where the MISS ran that entry's
+handler (`releaseRecordedValues` in `resolveLoadersOnly`, after the entry's
+own loaders and before its slots'; in `resolveInterceptLoadersOnly`, after
+the intercept's loaders). The record needs no position of its own, so a
+record a background re-render wrote, which runs no loader, orders the same
+way. A `prefetch: false` fill holds nothing: it does not run the held
+segment's handler, so the browser's merge (`mergePartialHandleData`)
+appends what the fill delivers on a MISS, and a HIT must give the same
+order (rango-t189).
 
 **An owned value follows its loader's value.** A copy of a loader's push in a
 record is only right next to the loader data of the same run, so
@@ -1255,6 +1332,98 @@ What stays out of reach, the same as for `"use cache"`: a value computed
 outside any loader execution and handed in, such as a per-request memo a
 handler filled from `cookies()` before the loader awaited it. The read ran in
 no loader's set, so nothing links it to the fill.
+
+#### The server components a `"use cache"` function returns
+
+They render when the value is encoded for the write (`teeResult` and
+`encodeHandles` on a miss, `serializeResult` and `encodeHandles` in the stale
+refresh), after the body returned. That encode used to run inside the execution's tag scope only,
+so `isInsideCacheExecScope()` was false there: a `cookies()` or `headers()`
+read in a returned component went through, the entry stored the first
+visitor's value and every hit served it to the next visitor, and a refresh
+stored the value of the visitor whose request triggered it. `inExecution`
+(`src/cache/cache-runtime.ts`) now enters both of the execution's scopes, for
+the body and for both encodes (`execScope` on a miss, `bgScope` on a
+refresh), so the read refuses as one in the body does, and so does a write
+through a `ctx` (`assertNotInsideCacheExec` probes the same scope). One helper
+for the body and the encodes keeps the two scopes from drifting apart again.
+
+That alone was not enough, because a miss used to hand the caller `result`
+itself while the encode ran in the background: the value was rendered twice,
+once by the caller's response and once by the encode, and the two shared
+every object in it. State the function created and something renders lazily
+(a `React.lazy`, a memoizing thenable) ran once, in whichever render reached
+it first. The caller's render often got there first, for instance when a
+component in the value awaited `React.cache`-deduped data the page had already
+loaded: warm in the page's Flight request, cold in the encode's own. Its read
+then ran outside the scope and succeeded, and the encode stored the settled
+value for the next visitor. So the miss now encodes once and renders a copy:
+`teeResult` (`src/cache/segment-codec.ts`) tees the Flight stream, the caller
+decodes one branch (`createFromReadableStream`, as a hit does) and the write
+takes the other. The caller shares no object with the encode, the returned
+tree renders only inside the scope, and a refusal there reaches the caller as
+a refusal in the body does: at the value's root the decoded root rejects and
+the call throws the encode's own error (not the decoded one, which production
+Flight redacts); below the root the decoded copy holds a Flight error row that
+throws where it renders. Nothing is written, and `reportCacheError` logs it
+and hands it to `onError` (`cache-write`, or `stale-revalidation` for a
+refresh). The miss used to hand a skipped write to `onError` only, so with no
+`onError` wired the refusal was silent and the cache simply never hit.
+
+One exception keeps today's contract for a value Flight cannot encode at all
+(a function, a class instance): its root rejects too, and when every error the
+encode reported is that kind (`isUnsupportedValueError`, matched on the Flight
+server's own messages) the call returns `result`, uncached, as it always has.
+Nothing is stored, so rendering it live leaks nothing. A refusal, or a
+component that throws, never takes that path. The decision is made on the
+root row only: such a value inside a promise in the data, or in a part of the
+tree a server component renders, arrives in a later row after the call
+resolved, so that promise rejects (or that part throws) where the copy is
+used, as on a hit. In an element tree that was already so, since the page's
+own Flight render could not encode it either.
+
+A miss also records the entry's tags onto the request once the encode ends
+(`recordRequestTags` in `finalizeAndWrite`): the returned tree's `cacheTag()`
+calls now run only in the encode, where they tag the entry, and the page's
+render no longer runs them. A hit replays the entry's tags the same way. The
+finalize task is one of the request's tracked background tasks, which the PPR
+shell capture settles before it reads the tags; it records them as the
+encode's stream ends, while the page's render is still taking the copy's last
+rows, and the document cache reads the tags only after the body has drained.
+
+Three edges stay open. First, handle values are not teed: on a miss the
+request's handle store keeps what the body pushed (the capture does not
+divert, unlike the refresh's), the response renders that value, and
+`encodeHandles` encodes it after the value's encode. A handle value that reads
+the request directly is refused there, but a lazy component or a memoized
+promise in a handle value is started by whichever render reaches it first.
+Closing it means diverting a miss's pushes and replaying decoded copies, as a
+hit does, which changes when a miss's handle values arrive; that is its own
+change. Second, the live fallback decides on the root row's errors only:
+`{ a: <Reader />, b: new Money(250) }` fails its root with the class
+instance, so the call returns the live value, the visitor sees their own
+value, nothing is stored, and the refusal in `a` never reaches `onError`
+(only the unsupported-value error does). Third, the tags a miss's tree
+records reach the request when the background encode ends; a response that
+does not render all of the value can finish first, and its document or shell
+then lacks those tags until a hit records them. That is staleness, not a
+leak.
+
+What it costs: the caller now waits for the copy's root row. For a value of
+host elements and client components that row is ready as the encode starts;
+a server component at the root renders before the call resolves instead of in
+the page's render. Measured in the RSC test harness, a miss on a 50-row list
+took 0.16-0.19 ms (p50) against 0.10-0.13 ms before; a value whose root
+component waits 20 ms took 23 ms against 0.02 ms. On a host without
+`waitUntil` the miss already waited for the whole encode and the store write.
+
+Handle capture is unchanged on a miss: the capture stops before the encode,
+and `execScope` chains to an enclosing execution's scope as the caller's
+context did. On a refresh the encode now runs in the root `bgScope`, so an
+enclosing execution's capture no longer accepts pushes made while it encodes,
+as it already did not for the refresh body. A handle a returned component
+pushes during the encode is still not recorded in the entry (the capture has
+stopped); that predates this change.
 
 #### `"use cache"` reading a loader something else started (#1011)
 
@@ -1655,14 +1824,14 @@ appends its own default key (`resolveDefaultKey`: its store's
 joined by `composeCacheKeys` (every `key()` result namespaced since #975, see
 "Key results are namespaced" below):
 
-| The route's scope                                     | Record key                                                         |
-| ----------------------------------------------------- | ------------------------------------------------------------------ |
-| no `key()` on the chain                               | its default key (unchanged)                                        |
-| a single keyed scope (`key()` of its own, none above) | `compose(its key() result)`: `key:` + its URI encoding             |
-| no `key()` of its own, under a keyed scope            | `compose(outer key() results..., its default key)`                 |
-| its own `key()`, under a keyed scope                  | `compose(outer key() results..., its key() result)`                |
-| `cache(false)` innermost                              | no read, no write (unchanged)                                      |
-| `cache()` re-enabled under `cache(false)`             | still in the partition: `compose(outer key() results..., default)` |
+| The route's scope                                     | Record key                                                            |
+| ----------------------------------------------------- | --------------------------------------------------------------------- |
+| no `key()` on the chain                               | its default key (unchanged)                                           |
+| a single keyed scope (`key()` of its own, none above) | `compose(its key() result, kind)`: `key:` + its URI encoding, `\|doc` |
+| no `key()` of its own, under a keyed scope            | `compose(outer key() results..., its default key)`                    |
+| its own `key()`, under a keyed scope                  | `compose(outer key() results..., its key() result, kind)`             |
+| `cache(false)` innermost                              | no read, no write (unchanged)                                         |
+| `cache()` re-enabled under `cache(false)`             | still in the partition: `compose(outer key() results..., default)`    |
 
 Why the default key in the inherit case: a first cut reused the outer
 `key()` result verbatim, and that made a new collision. A `key()` replaces
@@ -1759,6 +1928,72 @@ keyed every family under a per-build version and shells were gated on
 cold after a restart. Only `VercelCacheStore` without a version saw a one-time
 miss for existing keyed entries. (Stores now key by per-router code versions,
 and a rango upgrade changes those too: see "Versions" above.)
+
+#### A key() keeps the request kind (rango-t201)
+
+You might read "`key()` replaces the default key" as harmless: the app said
+what identifies its page, so the router should store the page under that and
+nothing else. The default key carries one more thing than the URL, though:
+its prefix, the request kind (`doc`, `partial`, `intercept:{intercept}`).
+The kinds' records hold different segments. A document record is rendered
+in document mode (`getDocumentModeEntry`, `src/server/context.ts`): a
+`loading(..., { ssr: false })` has no fallback there, and a
+`loader(..., { ssr: false })` is awaited before the first flush. A navigation
+record keeps the fallback, and is completed in the background where the client
+held a layout (proactive caching). An intercept record holds the layouts and
+the intercept's slot and never the route's page (`rerenderAndCacheRoute`
+skips the intercepted route's entry). Before, a scope with its own `key()`
+dropped the prefix with the URL, so every kind read and wrote one record.
+After an intercept navigation stored its record, a navigation from a page
+where the intercept's `when()` failed, and a document GET of the same URL,
+both HIT it: they rendered the intercept's body and no page. A document
+request rendered an intercept. Under a layout's
+`loading(..., { ssr: false })`, a navigation after a document showed no
+fallback, and a document after a navigation streamed one.
+
+So `resolveKeyFrom` takes the kind (`routeRecordKind` in
+`src/cache/cache-scope.ts`, which `getDefaultRouteCacheKey` uses as its
+prefix too) and, for a scope with its own `key()`, appends it as the last
+default part. A scope without a `key()` of its own already appends its whole
+default key, which carries the kind. The record key of a keyed route is
+`key:tier%3Agold|doc` for a document request, `key:tier%3Agold|partial` for a
+navigation and `key:tier%3Agold|intercept%3AM0L0.%40modal~0` for an intercept
+navigation.
+
+Why append the kind rather than drop the custom key's say: the `key()` result
+still decides which requests share a record, within a kind. A `key()` that
+ignores `:id` on purpose still serves one document record for every id, and
+one navigation record, and one record per intercept. It never makes a
+document share an intercept's record, which no app means.
+
+Why it cannot collide: the kind part is the default key's prefix without the
+URL after it, encoded (`doc`, `partial`, `intercept%3A...`), and a default
+key part always carries its URL (`doc%3A{base}`), so the two shapes never
+meet; the collision probe in `src/cache/__tests__/cache-scope-chain.test.ts`
+runs every `key()` value under every kind.
+
+What does not change:
+
+- The ppr shell partition (`resolvePartition`). The shell key already tells
+  a document from a navigation (`:shell` and its `:navigation` sibling), and
+  an intercept never reads a shell.
+- A response route's entry (`resolveKeyFrom(defaultKey, "response:")`): a
+  response route answers every request alike, so it passes no kind.
+- A store's `keyGenerator`. It receives the default key, prefix included, and
+  its result is the key. One that ignores `defaultKey` still gives every kind
+  one record; the `keyGenerator` JSDoc (`src/cache/types.ts`) says to keep it.
+
+The cost is one change of stored key strings for every route under a keyed
+`cache()`: each record misses once after the upgrade (the per-router code
+version already does that on `CFCacheStore` and `VercelCacheStore`). One
+visible effect on a ppr route under a keyed `cache()`: a navigation used to
+HIT the document's record (`explicit-cache-hit`); its own `partial` record now
+misses the first time, and the shell's seeded doc record answers it (a replay
+`HIT`), as on a ppr route without a `key()`. Pinned through
+`serveShellRequest` by
+`packages/rangojs-router/src/testing/__tests__/cached-custom-key-request-kind.rsc-test.tsx`,
+and in the browser by `e2e/cache.test.ts` "cache-intercept-routes", dev and
+production.
 
 #### Loader key results are namespaced (issue #1009)
 
@@ -1904,7 +2139,7 @@ The mask lives in the stores, so three more paths needed the request itself; all
 - not written. With `await updateTag()`, the first call's write landed after the invalidation and the second call read it back.
 - not written by a stale refresh either. A stale hit's background refresh that started before the call read the data from before it; its write used to land after the call and serve `"old"` to the rest of the request and to later requests.
 
-**Nested `"use cache"` ([#980](https://github.com/rangojs/rango/issues/980)).** A `"use cache"` function that calls another bakes the inner value into its own entry, so the entry answers to the inner tags. You might expect the ALS to handle that already, since `cacheTag()` inside the inner body goes to the innermost `runWithCacheTagScope`. It does, and that is the problem: the inner scope closes with the inner body, and the inner wrapper then records its merged tags onto the request (`recordRequestTags`: a miss's tags, a hit's stored tags, a joined execution's envelope tags), which fed `_requestTags`, the #957 segment owner and the #964 loader set, but not the enclosing `"use cache"` scope. `updateTag("stock")` dropped the inner entry and left the outer one serving the old stock until it expired, and the gate above did not see the outer execution as tagged `stock`. `recordOwnedTags` (`cache-tag.ts`) now also adds the tags to the `"use cache"` scope current when they are recorded, which for the inner wrapper is the caller's. The outer entry, its eviction and the gate follow with no further change, as a route `cache()` record (#965) and a loader's own `cache()` entry (#968) already did for the `"use cache"` reads inside them. A `"use cache"` component makes some of its nested calls later still: Flight renders the server components in its value when it encodes the value for the write, after the body returned and its scope closed, so those tags went to whatever scope the caller had. The encode now runs back inside the execution's tag scope (`inTagScope` in `cache-runtime.ts`), and the entry's tags are read after it. One level further, an intermediate call can return a value that holds a nested call still running (`{ stock: getStock(sku) }`, or a promise prop): that call records its tags after the intermediate one already reported its own to its caller. So each scope remembers the scope it opened under (`scopeParents`), and a tag recorded in a scope goes to every scope above it; the outermost encode awaits the same promise, so the tags are in before it reads its own. The other direction is closed too: a stale inner entry's background refresh is scheduled outside the caller's scope (`outsideCacheTagScope`), since the outer entry bakes the stale value, not the refreshed one. An entry written before this carries only its own tags until it expires or is rewritten.
+**Nested `"use cache"` ([#980](https://github.com/rangojs/rango/issues/980)).** A `"use cache"` function that calls another bakes the inner value into its own entry, so the entry answers to the inner tags. You might expect the ALS to handle that already, since `cacheTag()` inside the inner body goes to the innermost `runWithCacheTagScope`. It does, and that is the problem: the inner scope closes with the inner body, and the inner wrapper then records its merged tags onto the request (`recordRequestTags`: a miss's tags, a hit's stored tags, a joined execution's envelope tags), which fed `_requestTags`, the #957 segment owner and the #964 loader set, but not the enclosing `"use cache"` scope. `updateTag("stock")` dropped the inner entry and left the outer one serving the old stock until it expired, and the gate above did not see the outer execution as tagged `stock`. `recordOwnedTags` (`cache-tag.ts`) now also adds the tags to the `"use cache"` scope current when they are recorded, which for the inner wrapper is the caller's. The outer entry, its eviction and the gate follow with no further change, as a route `cache()` record (#965) and a loader's own `cache()` entry (#968) already did for the `"use cache"` reads inside them. A `"use cache"` component makes some of its nested calls later still: Flight renders the server components in its value when it encodes the value for the write, after the body returned and its scope closed, so those tags went to whatever scope the caller had. The encode now runs back inside the execution's tag scope (`inExecution` in `cache-runtime.ts`), and the entry's tags are read after it. One level further, an intermediate call can return a value that holds a nested call still running (`{ stock: getStock(sku) }`, or a promise prop): that call records its tags after the intermediate one already reported its own to its caller. So each scope remembers the scope it opened under (`scopeParents`), and a tag recorded in a scope goes to every scope above it; the outermost encode awaits the same promise, so the tags are in before it reads its own. The other direction is closed too: a stale inner entry's background refresh is scheduled outside the caller's scope (`outsideCacheTagScope`), since the outer entry bakes the stale value, not the refreshed one. An entry written before this carries only its own tags until it expires or is rewritten.
 
 **The write gate: work that started before another request's invalidation ([#977](https://github.com/rangojs/rango/issues/977)).** The request order above only covered the invalidating request. An execution in another request that started before the invalidation still wrote when it finished, and every built-in store accepted that write as newer than the invalidation: `CFCacheStore` stamps `taggedAt` at write time, `VercelCacheStore` stamps `ta` at write time, and `MemorySegmentCacheStore` checks no marker on write (it deletes eagerly on invalidation, so a late write simply repopulates). So the invalidating request, or any later one, read the old value until it expired. Every writer now asks one question before its store write, `predatesInvalidation(store, tags, start)` in `tag-invalidation.ts`: was one of the entry's tags invalidated after the execution started? Either answer skips the write:
 
@@ -2093,9 +2328,15 @@ Concurrent partial requests with null components could both trigger proactive ca
 
 #### 4. Intercept Route Cache Namespace
 
-When `isIntercept` is true, cache operations use the `intercept:` prefix. Intercept requests have their own cache namespace separate from `doc:` and `partial:`.
+An intercept navigation's record is keyed `intercept:{intercept}:` + `cacheKeyBase`, a namespace of its own, apart from `doc:` and `partial:`. `{intercept}` is `interceptRecordKey(ctx.interceptResult)` (`src/router/intercept-resolution.ts`), which every reader and writer passes to `CacheScope` (`readSegmentCacheSource` in `cache-lookup.ts`, `withCacheStore`, `rerenderAndCacheRoute`): the selected intercept's slot id, then `~` and its position among the intercepts its entry declares for the same slot and target route. A scope with its own `key()` keeps the namespace: its record key is the `key()` parts, then `intercept:{intercept}` as the last part (see [A key() keeps the request kind](#a-key-keeps-the-request-kind-rango-t201)).
+
+Why the key names the intercept: several intercepts can target one route, each with its own `when()`, and the match selects one per navigation (`findInterceptForRoute`). Keyed by the URL alone, the record written under one intercept answered a navigation that selected another. With `@modal` (from /list) and `@drawer` (from /other) on one layout, opening `/item/1` from /other after /list served the `@modal` slot and its body, while `metadata.slots` named `@drawer` (`handleCacheHitIntercept` files the stored slot under the selected slot's name). The slot id alone is not enough: two intercepts on one entry that fill the same slot share it, so the position tells them apart. The position counts only intercepts for the same slot and target route, so declaring an intercept for another slot or route does not renumber the rest; it is still positional, like every segment id, so a store that ignores the router version (`getCacheVersions()`) can serve an older build's record after an edit that reorders same-slot intercepts, as it can for any segment. The separator is `~`, not `#`: `~` is unreserved in a URL, so a custom store that maps keys onto URLs without encoding them keeps the whole key, where a `#` would start a fragment and drop the rest. Tags are unaffected: each record carries its own tags, and `updateTag()` / `revalidateTag()` evict every intercept's record. Pinned through `serveShellRequest` by `packages/rangojs-router/src/testing/__tests__/cached-intercept-selection.rsc-test.tsx`.
 
 **Note**: Proactive caching for intercept routes follows the same pattern - it populates the appropriate intercept cache entry when null components are detected.
+
+The re-render behind it and behind a stale HIT's refresh (`rerenderAndCacheRoute`) writes the record a MISS writes: it passes the match's `interceptResult` to the walk, so the intercepted route's own entry is skipped (its id is matched, its handler and loaders do not run). An `intercept:` record holds the layouts and the intercept's slot, never the route's page or its `cacheTag()`s.
+
+A HIT of an `intercept:` record runs the loaders the MISS runs. `serveStoredSegments` (`cache-lookup.ts`) passes the match's `interceptResult` to its loaders-only walk (`resolveLoadersOnly`), which skips the intercepted route's entry as the MISS's walk does, after latching a ppr route's header guard from the whole chain (dropping the route from the walk's entries instead would move that latch's leaf off the route), and `handleCacheHitIntercept` (`intercept-resolution.ts`) runs the intercept's own loaders as loader segments of its slot. A loader the route and the intercept both declare runs once, under the slot, so its handle pushes land in a segment the response matches (through `serveShellRequest`, `packages/rangojs-router/src/testing/__tests__/cached-intercept-hit-route-loaders.rsc-test.tsx`, which pins the `Prerender()` intercept variant as well).
 
 #### 5. MemorySegmentCacheStore SWR Limitation
 

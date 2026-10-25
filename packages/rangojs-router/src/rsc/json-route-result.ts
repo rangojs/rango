@@ -1,10 +1,6 @@
 /**
- * Shared serialization for `json()` response-route results.
- *
- * Kept in its own lightweight module (depends only on `errors.js`) so the
- * `dispatch()` testing primitive can import it WITHOUT dragging in
- * `response-route-handler.ts`'s heavy runtime graph, which transitively reaches
- * a Vite virtual module and breaks a plain (non-Vite) vitest import.
+ * Serialization for `json()` response-route results (depends only on
+ * `errors.js`).
  */
 
 import { RouterError } from "../errors.js";
@@ -16,9 +12,9 @@ import { RouterError } from "../errors.js";
  * the RSC pipeline awaits nested promises but this path does not. Throwing
  * `RESPONSE_NOT_SERIALIZABLE` makes the failure loud.
  *
- * Shared by the production response-route handler and the `dispatch()` testing
- * primitive so a `dispatch` json test of a forgotten await fails exactly where
- * production 500s, instead of going green.
+ * The `dispatch()` testing primitive runs the same response-route handler, so
+ * a `dispatch` json test of a forgotten await fails exactly where production
+ * 500s, instead of going green.
  */
 export function stringifyJsonRouteResult(result: unknown): string {
   return JSON.stringify(result, (_key, value) => {

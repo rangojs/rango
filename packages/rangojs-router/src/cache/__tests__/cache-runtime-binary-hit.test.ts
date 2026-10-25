@@ -42,10 +42,17 @@ vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
 vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 // Identity codec — the value round-trips through the store unchanged.
-vi.mock("../segment-codec.js", () => ({
-  serializeResult: vi.fn(async (v: any) => JSON.stringify(v)),
-  deserializeResult: vi.fn(async (v: string) => JSON.parse(v)),
-}));
+vi.mock("../segment-codec.js", async () => {
+  const { teeThrough } = await import("./helpers/tee-through.js");
+  const serializeResult = vi.fn(async (v: any) => JSON.stringify(v));
+  const deserializeResult = vi.fn(async (v: string) => JSON.parse(v));
+  return {
+    serializeResult,
+    deserializeResult,
+    teeResult: teeThrough(serializeResult, deserializeResult),
+    isUnsupportedValueError: () => false,
+  };
+});
 
 const mockGetRequestContext = vi.fn<() => any>(() => null);
 vi.mock("../../server/request-context.js", () => ({

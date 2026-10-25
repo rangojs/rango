@@ -184,8 +184,9 @@ export async function createMatchContextForFull<TEnv>(
   // A shell capture credits a push under a live-lane loader's body to that
   // loader (shell-capture.ts deriveShellCaptureContext). The lanes are set
   // before any loader runs: a bake-lane loader can start a later one.
-  if (reqCtx?._shellCaptureRun) {
-    reqCtx._shellCaptureLoaderLanes = routeLoaderLanes(snapshot.entries);
+  const captureState = reqCtx?._shellCaptureState;
+  if (captureState?.run) {
+    captureState.loaderLanes = routeLoaderLanes(snapshot.entries);
   }
   // A document never defers; the plan feeds the ctx.rendered() guards.
   (handlerContext as InternalHandlerContext<any, TEnv>)._prefetchDeferral =
@@ -208,7 +209,6 @@ export async function createMatchContextForFull<TEnv>(
     routeKey: matched.routeKey,
     localRouteName: snapshot.localRouteName,
     handlerContext,
-    loaderPromises,
     routeMap: deps.getRouteMap(),
     metricsStore,
     Store,
@@ -492,7 +492,7 @@ export async function createMatchContextForPartial<TEnv>(
       prefetch: kind === "prefetch",
       method: request.method,
       isAction,
-      isShellCapture: reqCtx?._shellCaptureRun === true,
+      isShellCapture: reqCtx?._shellCaptureState?.run === true,
     }),
     matched,
     cacheScope,
@@ -523,7 +523,6 @@ export async function createMatchContextForPartial<TEnv>(
     routeKey: matched.routeKey,
     localRouteName: snapshot.localRouteName,
     handlerContext,
-    loaderPromises,
     routeMap: deps.getRouteMap(),
     metricsStore,
     Store,

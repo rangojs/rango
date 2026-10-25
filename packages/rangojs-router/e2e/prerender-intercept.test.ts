@@ -6,7 +6,7 @@ import { waitForHydration, expectNoPageError, goBack } from "./helper";
  * A server action called from the open modal re-runs FreshTimestampLoader and
  * holds the modal's other loader (revalidate() false). The response serves
  * the modal from the stored intercept variant, the build's in production and
- * the dev store's in dev (cache-lookup.ts yieldFromStore): it must carry the
+ * the dev store's in dev (cache-lookup.ts serveStoredSegments): it must carry the
  * stored modal with its
  * loaders' data. Kept instead (component null), the slot was left out of the
  * response, and the re-run loader's data with it.
@@ -32,6 +32,108 @@ async function expectModalKeptAcrossAction(page: Page, url: string) {
   await expect(modal.getByTestId("fresh-timestamp")).not.toHaveText(timestamp!);
   await expect(modal.getByTestId("pri-modal-title")).toContainText("alpha");
   await expect(modal.getByTestId("pri-held-runs")).toHaveText(heldRuns!);
+}
+
+/**
+ * The navigation that opens the modal is served from the stored intercept
+ * variant, the build's in production and the dev store's in dev. The variant
+ * leaves the intercepted route's own segments out, as a live render under the
+ * intercept does (prerender/store.ts interceptVariantSegments), so the
+ * response carries the modal and not the detail page.
+ */
+async function expectInterceptResponseWithoutDetailPage(
+  page: Page,
+  url: string,
+) {
+  await page.goto(url);
+  await waitForHydration(page);
+  const navigation = page.waitForResponse((response) => {
+    const target = new URL(response.url());
+    return (
+      target.pathname === "/prerender-intercept/alpha" &&
+      target.searchParams.has("_rsc_partial")
+    );
+  });
+  await page.locator('[data-testid="pri-link-alpha"]').click();
+  const body = await (await navigation).text();
+  await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
+  expect(body).toContain("pri-modal-indicator");
+  expect(body).not.toContain("pri-detail-content");
+}
+
+/**
+ * The navigation that opens the modal holds the layout, and is served from
+ * the stored intercept variant, the build's in production and the dev store's
+ * in dev. The layout stays as the index page's live render left it, as a live
+ * render under the intercept keeps it: it does not remount, and neither its
+ * render stamp nor its crumbs (the stamp, pushed by its handler) change, not
+ * even for a frame. The variant used to re-send it and its crumbs from the
+ * bake (cache-lookup.ts storedEntrySends).
+ */
+async function expectHeldLayoutKept(page: Page, url: string) {
+  await page.goto(url);
+  await waitForHydration(page);
+  const stamp = page.locator('[data-testid="pri-layout-render-time"]');
+  const crumbs = page.locator('[data-testid="pri-layout-crumbs"]');
+  const liveStamp = (await stamp.textContent())!;
+  await expect(crumbs).toHaveText(liveStamp);
+  const mounts = () =>
+    page.evaluate(
+      () => (window as { __priLayoutMounts?: number }).__priLayoutMounts,
+    );
+  const mountsBefore = await mounts();
+  expect(mountsBefore).toBeGreaterThan(0);
+  // Every text the crumbs show from here on.
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    (window as { __priCrumbsSeen?: string[] }).__priCrumbsSeen = seen;
+    const el = document.querySelector('[data-testid="pri-layout-crumbs"]')!;
+    new MutationObserver(() => seen.push(el.textContent ?? "")).observe(el, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
+
+  await page.locator('[data-testid="pri-link-alpha"]').click();
+  await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
+  // The modal's crumb lands with the response's handle values.
+  await expect(page.locator('[data-testid="pri-modal-handle"]')).toHaveText(
+    "modal-handle:alpha",
+  );
+
+  await expect(stamp).toHaveText(liveStamp);
+  await expect(crumbs).toHaveText(liveStamp);
+  expect(await mounts()).toBe(mountsBefore);
+  const seen = await page.evaluate(
+    () => (window as { __priCrumbsSeen?: string[] }).__priCrumbsSeen,
+  );
+  expect(seen?.filter((text) => text !== liveStamp)).toEqual([]);
+}
+
+/**
+ * Two intercepts target the detail route: @modal from inside the section
+ * and @drawer from a page that asks for it (when()). The stored intercept
+ * variant holds both, since the build cannot evaluate when(); the navigation
+ * from the index selects @modal, and the response carries only that one
+ * (prerender/store.ts selectInterceptVariant), as a live render does.
+ */
+async function expectOnlySelectedIntercept(page: Page, url: string) {
+  await page.goto(url);
+  await waitForHydration(page);
+  const navigation = page.waitForResponse((response) => {
+    const target = new URL(response.url());
+    return (
+      target.pathname === "/prerender-intercept/alpha" &&
+      target.searchParams.has("_rsc_partial")
+    );
+  });
+  await page.locator('[data-testid="pri-link-alpha"]').click();
+  const body = await (await navigation).text();
+  await expect(page.locator('[data-testid="pri-modal"]')).toBeVisible();
+  expect(body).toContain("pri-modal-indicator");
+  expect(body).not.toContain("pri-drawer");
+  await expect(page.locator('[data-testid="pri-drawer"]')).toHaveCount(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +290,30 @@ test.describe("prerender-intercept (dev mode)", () => {
   }) => {
     using _ = expectNoPageError(page);
     await expectModalKeptAcrossAction(page, f.url("/prerender-intercept"));
+  });
+
+  test("the intercept response carries the modal, not the detail page", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectInterceptResponseWithoutDetailPage(
+      page,
+      f.url("/prerender-intercept"),
+    );
+  });
+
+  test("opening the modal keeps the held layout: no remount, no re-sent render or crumbs", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectHeldLayoutKept(page, f.url("/prerender-intercept"));
+  });
+
+  test("the intercept response carries only the intercept the navigation selected", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectOnlySelectedIntercept(page, f.url("/prerender-intercept"));
   });
 
   test("intercept handler handle push survives into the modal (#567 gap 1)", async ({
@@ -468,6 +594,30 @@ test.describe("prerender-intercept (production build)", () => {
   }) => {
     using _ = expectNoPageError(page);
     await expectModalKeptAcrossAction(page, f.url("/prerender-intercept"));
+  });
+
+  test("the baked intercept response carries the modal, not the detail page", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectInterceptResponseWithoutDetailPage(
+      page,
+      f.url("/prerender-intercept"),
+    );
+  });
+
+  test("opening the baked modal keeps the held layout: no remount, no re-sent render or crumbs", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectHeldLayoutKept(page, f.url("/prerender-intercept"));
+  });
+
+  test("the baked intercept response carries only the intercept the navigation selected", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectOnlySelectedIntercept(page, f.url("/prerender-intercept"));
   });
 
   test("intercept handler handle push survives the baked artifact (#567 gap 1)", async ({

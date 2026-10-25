@@ -5,8 +5,8 @@
  * way a throwing intercept loader does.
  *
  * Also pinned: a thrown/returned Response propagates, the background cache
- * re-render rejects (also for a streamed handler: a fallback
- * there would be cached), and an async handler error under loading() streams,
+ * re-render reports a thrown handler error and rejects (also for a streamed
+ * handler: a fallback there would be cached), and an async handler error under loading() streams,
  * resolves to the declared boundary and records the failure on the request so
  * cacheRoute refuses to store it.
  */
@@ -20,6 +20,7 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 import { resolveInterceptEntry } from "../intercept-resolution.js";
+import { heldNothingPassInput } from "../segment-resolution/resolution-pass.js";
 
 const Layout = () => <div>layout</div>;
 const ModalChrome = () => <div>modal-chrome</div>;
@@ -321,7 +322,7 @@ describe("intercept handler lanes left unchanged", () => {
     });
   });
 
-  it("the background re-render still rejects", async () => {
+  it("the background re-render reports the error, then rejects", async () => {
     const parentEntry = {
       type: "layout",
       shortCode: "L9",
@@ -363,18 +364,23 @@ describe("intercept handler lanes left unchanged", () => {
     await expect(
       runWithRequestContext(reqCtx, () =>
         resolveInterceptEntry(
+          {
+            ...heldNothingPassInput(context, interceptEntry.routeName, {}),
+            deps,
+          },
           interceptEntry,
           parentEntry,
-          {},
-          context,
           true,
-          deps,
-          undefined,
           { background: true },
         ),
       ),
     ).rejects.toThrow("background modal failed");
-    expect(deps.callOnError).not.toHaveBeenCalled();
+    expect(deps.callOnError).toHaveBeenCalledTimes(1);
+    expect(deps.callOnError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "background modal failed" }),
+      "handler",
+      expect.objectContaining({ isPartial: true, segmentId: "L9" }),
+    );
   });
 
   it("the background re-render of a streamed handler rejects and records nothing", async () => {
@@ -419,13 +425,13 @@ describe("intercept handler lanes left unchanged", () => {
 
     const result = await runWithRequestContext(reqCtx, () =>
       resolveInterceptEntry(
+        {
+          ...heldNothingPassInput(context, interceptEntry.routeName, {}),
+          deps,
+        },
         interceptEntry,
         parentEntry,
-        {},
-        context,
         true,
-        deps,
-        undefined,
         { background: true },
       ),
     );

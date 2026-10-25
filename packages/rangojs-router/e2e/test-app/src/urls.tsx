@@ -166,6 +166,9 @@ import heldHandlesClientPatterns from "./urls/held-handles.client-urls.js";
 import { heldHandlesPatterns } from "./urls/held-handles.js";
 import { historyHandlesPatterns } from "./urls/history-handles.js";
 import { interceptHeldPatterns } from "./urls/intercept-held.js";
+import { cacheInterceptCrumbsPatterns } from "./urls/cache-intercept-crumbs.js";
+import { cacheInterceptWhenPatterns } from "./urls/cache-intercept-when.js";
+import { cacheInterceptKeyPatterns } from "./urls/cache-intercept-key.js";
 import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
 import clientUrlsLayoutLoaderPatterns from "./urls/client-urls-layout-loader.js";
 import clientUrlsComponentUsePatterns from "./urls/client-urls-component-use.js";
@@ -1192,6 +1195,18 @@ export const urlpatterns = urls(
       include("/", heldBoundaryPatterns, { name: "" }),
       include("/intercept-held", interceptHeldPatterns, {
         name: "interceptHeld",
+      }),
+      // A cache() intercept HIT shows the MISS's crumbs (rango-t184).
+      include("/cache-intercept-crumbs", cacheInterceptCrumbsPatterns, {
+        name: "cacheInterceptCrumbs",
+      }),
+      // Two intercepts selected by when() keep a cache() record each (rango-t194).
+      include("/cache-intercept-when", cacheInterceptWhenPatterns, {
+        name: "cacheInterceptWhen",
+      }),
+      // A cache({ key }) keeps a record per request kind (rango-t201).
+      include("/cache-intercept-key", cacheInterceptKeyPatterns, {
+        name: "cacheInterceptKey",
       }),
       include("/", lateHistoryPatterns, { name: "" }),
       // An action that does not land on the page on screen: the follow-up

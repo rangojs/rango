@@ -69,15 +69,16 @@ route was pre-rendered.
        a. Create BuildContext (synthetic URL, params, use())
        b. Resolve handler + child layouts/parallels
        c. Serialize segments via RSC Flight protocol
-       d. Walk manifest for intercepts targeting this route
-       e. If found: resolve intercept handler, serialize intercept segments
+       d. Walk manifest for intercepts targeting this route, from its parent up
+       e. If found: resolve each intercept handler, serialize intercept segments
        f. Keep the entries in memory
        |
        v
   Vite closeBundle (rsc environment): evict handlers, stage assets, and write
   the prerender manifest (lazy-loaded module):
           - "routeName/paramHash"     -> asset specifier (main segments + handles)
-          - "routeName/paramHash/i"   -> asset specifier (main + intercept segments + handles)
+          - "routeName/paramHash/i"   -> asset specifier (main segments without the
+                                         route's own, + every intercept's slot + handles)
 ```
 
 ### Runtime
@@ -86,7 +87,7 @@ route was pre-rendered.
   Request arrives
        |
        v
-  cache-lookup middleware
+  cache-lookup middleware (serveStoredSegments)
        |
        v
   Is route marked pr: true?
@@ -104,7 +105,8 @@ route was pre-rendered.
   |    |    +----+----+
   |    |    | miss    | hit
   |    |    |         v
-  |    |    |    yieldFromStore (intercept variant)
+  |    |    |    holds the selected intercept's slot?
+  |    |    |    no: miss | yes: serve the entry narrowed to it
   |    |    |    return
   |    |    |
   |    |    v
@@ -117,7 +119,7 @@ route was pre-rendered.
   |    +----+----+
   |    | miss    | hit
   |    |         v
-  |    |    yieldFromStore (main variant)
+  |    |    serve the entry (main variant)
   |    |    return
   |    |
   |    v
@@ -128,22 +130,47 @@ route was pre-rendered.
   Normal segment resolution
 ```
 
-### yieldFromStore
+### serveStoredSegments
 
-When a prerender store entry is found:
+`readPrerenderSource` returns the entry it found as a `StoredSegmentSource`
+(`prerender-overlay` or `prerender-build`), and `serveStoredSegments` serves it.
+That is the same function that serves a runtime `cache()` record (the
+`segment-cache` source):
 
-1. Deserialize segments from serialized Flight payloads
+1. Deserialize segments from serialized Flight payloads (`decodeStoredEntry`;
+   a `cache()` record arrives decoded from its scope's lookup)
 2. Replay handle data into the request's HandleStore. On a `Prerender` + `ppr`
    shell HIT, then restore the shell entry's `handles` record (see
    [Handle pushes on a shell HIT](#handle-pushes-on-a-shell-hit))
 3. Set `state.cacheHit = true` and `state.cachedMatchedIds`
 4. For partial navigation: nullify components the client already has
-5. Yield cached segments
+5. Yield cached segments, then resolve the render barrier
 6. Resolve loaders fresh (loaders are NEVER pre-rendered)
 7. Yield loader segments
 
-This is identical to the runtime cache hit path, which is the point: pre-rendering
-IS caching, just at build time instead of runtime.
+What differs by source: a prerender entry is decoded here; a `cache()` record
+also resolves the entries above its boundary live and sets
+`state.shouldRevalidate`; and each decides which held segments are sent
+again. A prerender entry (`storedEntrySends`) re-sends the route's own
+segments when the params changed (and an overlay entry, which can be newer
+than the client's copy, also on an action or a stale request). A held layout
+above the route stays held, as a live walk keeps it, unless its
+`revalidate()` asks for it when the params changed. Each decoded segment
+is decided on its own: an intercept variant can hold a layout's parallel and
+the intercept's slot under one id, and the slot is sent while the held
+parallel is kept. On a partial request the entry replays a handle bucket
+only when a segment with its id is sent, so a kept layout keeps the
+client's values. It used to re-send every held segment and all their
+handle values when the params changed: a `/list` to `/item/1`
+navigation, an intercept's included, replaced the layout on screen and its
+crumbs with the build's render. A `cache()` record asks its `revalidate()`
+rules. Pre-rendering IS caching, just at build time instead of runtime.
+
+`serveStoredSegments` is also the middleware itself: `withCacheLookup` returns
+it, and it reads the sources in gate order before it serves. A cache HIT is
+the request hot path, and serving from a second generator behind `yield*`
+would add a microtask turn and two promises for each segment it yields, and
+once more at its end.
 
 ---
 
@@ -300,8 +327,8 @@ the route's error boundary _inside_ segment resolution, turned into a normal
 Status/CI checks saw a valid 200, so a fully broken page looked fine.
 
 The fix: pre-rendering resolves segments with a build-only `throwOnError` flag
-(`matchForPrerender` → `resolveAllSegments` → `resolveWithErrorBoundary`, threaded
-through `ResolveSegmentOptions`). With it set, a thrown render error is re-thrown
+(`matchForPrerender` → `resolveAllSegments` → `resolveWithErrorBoundary`,
+threaded through the pass's `throwOnError`). With it set, a thrown render error is re-thrown
 instead of converted into an error segment, so it reaches the build loop
 (`expandPrerenderRoutes`). The live request path leaves the flag unset, so runtime
 error boundaries are unchanged.
@@ -436,7 +463,7 @@ that hold a loader-owned push, each whole, in the doc record's format
 (`ShellSnapshotHandlesValue`, built by `captureOwnedHandles`). It is written
 even when it is empty, and it is exempt from `ppr.maxSnapshotBytes`, like the
 doc record it stands in for. `serveShellHit` passes it on the tail's marker
-(`prerenderHandles`), and `yieldFromStore` restores it right after the
+(`prerenderHandles`), and `decodeStoredEntry` restores it right after the
 prerender store's handles, the way `CacheScope.lookupRouteDetailed` restores a
 doc record's: `setRecordAuthority(loaderPins(...))`, then `restoreHandles`
 with the owners. A pinned loader's copy stands, a loader without a pin gets a
@@ -490,7 +517,7 @@ The capture must replay the prerender store, as the build phase's does. On the
 Node preset the virtual module sets `__PRERENDER_DEV_URL` in the process the
 capture runs in. On Cloudflare the capture runs in the temp Node server, which
 never evaluates that module, so the plugin sets the global for it when it
-records `devServerOrigin` (`router-discovery.ts`, the Cloudflare branch of
+records `devServerOrigin` (`discovery/dev-server-phase.ts`, the Cloudflare branch of
 `discover`). Before #1057 it did not: the capture found no prerender store,
 rendered the `Prerender` handler live into a doc record, and the worker's HIT
 served the handler layer from the prerender store and lost the loader pushes
@@ -583,47 +610,111 @@ full-page view instead of the intercepted modal.
 ### Solution
 
 At build time, `matchForPrerender()` walks the manifest tree from the target
-route upward, finds all intercepts targeting it, and resolves their handlers
-with BuildContext. The resulting segments are stored alongside main segments
-under an `/i`-suffixed key.
+route's parent upward, finds all intercepts targeting it, and resolves their
+handlers with BuildContext. The resulting segments are stored alongside main
+segments under an `/i`-suffixed key. At runtime a HIT serves only the
+intercept the match selected.
 
 ### Build-time intercept resolution
 
 After main segment serialization in `matchForPrerender()`:
 
-1. Walk manifest tree (`manifestEntry.parent` chain)
+1. Walk the manifest tree from the route's parent up (`manifestEntry.parent`
+   chain), each entry then its orphans: the walk `findInterceptForRoute` makes
+   at runtime. An intercept declared in the route's own layouts is never
+   selected there, so the build does not run or bake it.
 2. Check `entry.intercept[]` and `entry.layout[].intercept[]` for entries where
    `intercept.routeName` matches the target route
-3. For each match: resolve handler and optional layout with BuildContext
+3. For each match: resolve handler and optional layout with BuildContext.
+   Two matches that fill one slot share its segment id (`interceptSlotId`),
+   and a HIT could not tell which one it holds: neither is baked, and both
+   render live
 4. Construct intercept segment: `id: "${parentEntry.shortCode}.${slotName}"`,
    `namespace: "intercept:${routeName}"`, `type: "parallel"`, `slot: slotName`
 5. Serialize and return as `interceptSegments` + `interceptHandles`
 
 `when` config conditions are not evaluated at build time (no `InterceptSelectorContext`
 available). All intercepts are pre-rendered unconditionally. `when` is evaluated
-at runtime by the intercept-resolution middleware.
+at runtime, where the match selects one intercept (`findInterceptForRoute`: the
+innermost whose `when` passes), and a HIT serves only that one.
+
+An intercept a navigation can select but the build does not bake renders live,
+and its handler runs per request with the request's context. A handler that
+only works with BuildContext (a file read, say) fails there, so the build says
+which ones: `matchForPrerender` returns them as `liveIntercepts`, and
+`warnLiveIntercepts` (`src/vite/utils/prerender-utils.ts`) prints one
+`[rango]` warning per router, route and slot (a route in an unnamed
+`include()` has an internal key, so the warning names its URL). Each warning
+ends with what would pre-render the intercept, and the build-only e2e
+`e2e/prerender-onerror.test.ts` pins it through the compiled plugin. There
+are three cases:
+
+- two intercepts on one layout fill the same slot (step 3);
+- the intercept's build handler or layout returned a `Response`, for that URL;
+- the intercept targets the route's last name segment (`"item"` for
+  `"shop.item"`, or for `"$prefix_0.item"`, a route named `"item"` in an
+  unnamed `include()`). The match falls back to that name (`localRouteName`,
+  `src/router/match-api.ts`) when no intercept for the full name applies, and
+  the build, which matches the full name only, never bakes it. An intercept
+  for the full name without `when()` always applies, so with one in the chain
+  the fallback never runs and the build does not warn.
 
 ### Runtime intercept lookup
 
 In `cache-lookup.ts`, when `ctx.isIntercept` is true:
 
 1. Look up `paramHash + "/i"` from prerender store
-2. If found: `yieldFromStore()` yields the combined entry. Downstream
+2. If found: `selectInterceptVariant()` (`src/prerender/store.ts`) keeps the
+   main segments and the selected intercept's slot (`interceptSlotId` of
+   `ctx.interceptResult`, in `intercept:<routeName>`). A variant without that
+   slot (one of two intercepts that share it, an intercept the build did not
+   find, or one whose build handler or layout returned a `Response`) is a
+   miss, and the intercept renders live.
+3. `serveStoredSegments()` yields the narrowed segments, and
+   `decodeStoredEntry()` replays only the handle values of those it sends. Downstream
    `handleCacheHitIntercept()` filters segments by `namespace?.startsWith("intercept:")`
    and sets up `state.slots[slotName]`
-3. If not found: fall through to normal pipeline (skip non-intercept prerender
+4. If not found: fall through to normal pipeline (skip non-intercept prerender
    to let intercept-resolution middleware run live)
 
 ### Storage keys
 
 ```
 "blog.post/a1b2c3"      Main variant (full page segments)
-"blog.post/a1b2c3/i"    Intercept variant (main + intercept segments)
+"blog.post/a1b2c3/i"    Intercept variant (main segments without the route's own,
+                        + the slot of every intercept the build found)
 ```
 
-The intercept variant includes ALL main segments plus the intercept parallel
-segments. This is because `handleCacheHitIntercept()` expects to find both
-in the cached data.
+The intercept variant holds what a live render under the intercept resolves:
+the main segments of the chain above the route, then the intercept parallel
+segments, with the handle pushes of exactly those segments. It holds one slot
+per intercept that can target the route, because the build cannot evaluate
+`when`; a HIT narrows it to the one the match selected. It leaves out the
+intercepted route's own segments (`belongsToRoute`: the route's handler, its
+layouts and its slots) and their pushes, because that render skips the route's
+entry (`resolveAllSegments`). That is also what a runtime `cache()` intercept
+record holds.
+
+`interceptVariantSegments` (`src/prerender/store.ts`) picks the segments for
+both sinks, the build's manifest entries and the dev endpoint's body;
+`matchForPrerender` encodes the matching handle map (`interceptHandles`).
+
+Until the variant left them out, it held ALL main segments. Every intercept
+HIT then sent the route's page in its payload, and with nothing held its
+`matched` listed the route's segments, so the client showed the route's
+crumbs over the source page. Nothing at runtime reads the route's segments
+under an intercept: the variant is read only when the match resolved one
+(`ctx.isIntercept`), and `handleCacheHitIntercept()` takes only the intercept
+segments.
+
+Until a HIT narrowed the variant (`selectInterceptVariant`), it served every
+intercept slot the variant holds. With `@outer` on the root layout and
+`@modal` on the layout that holds the route, a live render shows only
+`@modal`; the HIT also sent `@outer`, listed it in `matched`, and replayed its
+handle values. Two intercepts guarded by different `when` conditions did the
+same. The build also baked the intercepts in the route's own layouts, which
+the runtime walk never reaches. The narrowing reads the stored metadata only,
+so the storage keys and the variant's format are unchanged.
 
 ---
 
@@ -632,8 +723,8 @@ in the cached data.
 ### Loaders
 
 Loaders are NEVER pre-rendered. They run fresh at request time on every
-request. The `resolveLoadersOnly` / `resolveLoadersOnlyWithRevalidation`
-functions handle this after `yieldFromStore` yields cached segments.
+request. The `resolveLoadersOnly`
+function handles this (on a FRESH pass or a partial one) after `serveStoredSegments` yields the stored segments.
 
 ### Runtime Cache (`cache()`)
 
@@ -654,7 +745,7 @@ entry). To make a tag-invalidatable route, serve it from the runtime cache (a
 `Passthrough()` route, or a non-prerendered route with `cache()` / `cacheTag`)
 rather than pre-rendering it.
 
-By the same rule the prerender serve path (`yieldFromStore`) records no
+By the same rule the prerender serve path (`serveStoredSegments`) records no
 `cache({ tags })` into the request-scoped document tag union (`ctx._requestTags`)
 on a hit — so if a pre-rendered route is also wrapped in document caching, its
 document-cache entry carries an empty tag union and is not reached by
@@ -767,14 +858,14 @@ At runtime, the cache-lookup middleware uses these flags:
 
 ## Key Files
 
-| File                                                                                                                                                                 | Role                                                                                                                                                     |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/router/prerender-match.ts` (`matchForPrerender`, `renderStaticSegment`)                                                                                         | Build-time segment resolution + intercept resolution (`src/router.ts` re-exposes `matchForPrerender` as a router method)                                 |
-| `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup                                                                                                                           |
-| `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations                                                                                                      |
-| `src/prerender/param-hash.ts`                                                                                                                                        | Deterministic param hashing for store keys                                                                                                               |
-| `src/cache/segment-codec.ts` (`serializeSegments`, `deserializeSegments`)                                                                                            | RSC serialize/deserialize for segments                                                                                                                   |
-| `src/vite/router-discovery.ts` (`closeBundle`) + `src/vite/discovery/prerender-collection.ts` (`expandPrerenderRoutes`) + `src/vite/discovery/bundle-postprocess.ts` | Collects prerender data, stages assets, writes manifest + injects `__loadPrerenderManifestModule` (`src/vite/index.ts` is only the public-API barrel)    |
-| `src/router/match-middleware/intercept-resolution.ts`                                                                                                                | Runtime intercept handling (`handleCacheHitIntercept`)                                                                                                   |
-| `src/vite/discovery/shell-prerender-phase.ts` (buildApp post) + `src/prerender/build-shell-capture.ts` (`captureShellForBuild`)                                      | Producer B: build-time PPR shell capture + `__ps` asset/manifest staging (#699); replays middleware with `ctx.build === true` and honors `ctx.dynamic()` |
-| `src/rsc/shell-build-manifest.ts` (`lookupBuildShell`) + `src/prerender/shell-manifest-key.ts`                                                                       | Runtime read-through for baked shell entries (production manifest / dev `/__rsc_shell` on-demand)                                                        |
+| File                                                                                                                                                                 | Role                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/router/prerender-match.ts` (`matchForPrerender`, `renderStaticSegment`)                                                                                         | Build-time segment resolution + intercept resolution (`src/router.ts` re-exposes `matchForPrerender` as a router method)                                                                                                                                    |
+| `src/router/match-middleware/cache-lookup.ts`                                                                                                                        | Runtime prerender store lookup (`readPrerenderSource`) and the one stored-segment serve path (`serveStoredSegments`)                                                                                                                                        |
+| `src/prerender/store.ts`                                                                                                                                             | PrerenderStore interface + dev/prod implementations, the manifest entry writer (`prerenderManifestEntries`), the intercept variant's segments (`interceptVariantSegments`), and its narrowing to the selected intercept on a HIT (`selectInterceptVariant`) |
+| `src/prerender/param-hash.ts`                                                                                                                                        | Deterministic param hashing for store keys                                                                                                                                                                                                                  |
+| `src/cache/segment-codec.ts` (`serializeSegments`, `deserializeSegments`)                                                                                            | RSC serialize/deserialize for segments                                                                                                                                                                                                                      |
+| `src/vite/router-discovery.ts` (`closeBundle`) + `src/vite/discovery/prerender-collection.ts` (`expandPrerenderRoutes`) + `src/vite/discovery/bundle-postprocess.ts` | Collects prerender data, stages assets, writes manifest + injects `__loadPrerenderManifestModule` (`src/vite/index.ts` is only the public-API barrel)                                                                                                       |
+| `src/router/match-middleware/intercept-resolution.ts`                                                                                                                | Runtime intercept handling (`handleCacheHitIntercept`)                                                                                                                                                                                                      |
+| `src/vite/discovery/shell-prerender-phase.ts` (buildApp post) + `src/prerender/build-shell-capture.ts` (`captureShellForBuild`)                                      | Producer B: build-time PPR shell capture + `__ps` asset/manifest staging (#699); replays middleware with `ctx.build === true` and honors `ctx.dynamic()`                                                                                                    |
+| `src/rsc/shell-build-manifest.ts` (`lookupBuildShell`) + `src/prerender/shell-manifest-key.ts`                                                                       | Runtime read-through for baked shell entries (production manifest / dev `/__rsc_shell` on-demand)                                                                                                                                                           |

@@ -85,9 +85,15 @@ export type {
  */
 export type {
   RouterContext,
-  RevalidationContext,
   InterceptResult,
 } from "./router/router-context.js";
+
+/**
+ * @internal
+ * The request side of a revalidating resolution pass (RouterContext's
+ * revalidating resolvers take it).
+ */
+export type { ResolutionPassInput } from "./router/segment-resolution/resolution-pass.js";
 
 /**
  * @internal

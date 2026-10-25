@@ -48,6 +48,7 @@ vi.mock("react", async () => {
 import { useContext } from "react";
 import { NavigationStoreContext } from "../browser/react/context.js";
 import { useParams } from "../browser/react/use-params.js";
+import { makeEventController } from "./kit/event-controller.js";
 
 const mockedUseContext = vi.mocked(useContext);
 
@@ -60,18 +61,10 @@ function mockNavigationContext(value: unknown): void {
   );
 }
 
-function createMockEventController() {
-  const params = { productId: "123", slug: "test-item" };
-  return {
-    getState: vi.fn(() => ({
-      state: "idle",
-      location: new URL("http://localhost/products/123"),
-    })),
-    getParams: vi.fn(() => params),
-    getHydrationSnapshot: vi.fn(() => undefined),
-    subscribe: vi.fn((_cb: () => void) => vi.fn()),
-  };
-}
+const PRODUCT = {
+  url: "/products/123",
+  params: { productId: "123", slug: "test-item" },
+};
 
 describe("useParams", () => {
   beforeEach(() => {
@@ -85,7 +78,7 @@ describe("useParams", () => {
   });
 
   it("returns full params from event controller on initial render", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(PRODUCT);
     mockNavigationContext({ eventController: ec } as any);
 
     const result = useParams();
@@ -102,7 +95,7 @@ describe("useParams", () => {
   });
 
   it("applies selector on initial render", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(PRODUCT);
     mockNavigationContext({ eventController: ec } as any);
 
     const result = useParams((p) => p.productId);
@@ -116,21 +109,22 @@ describe("useParams", () => {
   });
 
   it("subscribes to event controller with empty dependency array", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(PRODUCT);
+    const subscribe = vi.spyOn(ec, "subscribe");
     mockNavigationContext({ eventController: ec } as any);
 
     useParams();
 
     capturedEffectFn!();
 
-    expect(ec.subscribe).toHaveBeenCalledOnce();
+    expect(subscribe).toHaveBeenCalledOnce();
     expect(capturedEffectDeps).toEqual([]);
   });
 
   it("effect cleanup unsubscribes", () => {
     const unsub = vi.fn();
-    const ec = createMockEventController();
-    ec.subscribe.mockReturnValue(unsub);
+    const ec = makeEventController(PRODUCT);
+    vi.spyOn(ec, "subscribe").mockReturnValue(unsub);
     mockNavigationContext({ eventController: ec } as any);
 
     useParams();
@@ -153,13 +147,14 @@ describe("useParams", () => {
   });
 
   it("selector ref prevents re-subscription on identity change", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(PRODUCT);
+    const subscribe = vi.spyOn(ec, "subscribe");
     mockNavigationContext({ eventController: ec } as any);
 
     useParams((p) => p.productId);
 
     capturedEffectFn!();
-    expect(ec.subscribe).toHaveBeenCalledOnce();
+    expect(subscribe).toHaveBeenCalledOnce();
 
     // Re-render with new selector identity
     resetHookIndices();
@@ -170,7 +165,8 @@ describe("useParams", () => {
   });
 
   it("subscription callback uses latest selector via ref", () => {
-    const ec = createMockEventController();
+    const ec = makeEventController(PRODUCT);
+    const subscribe = vi.spyOn(ec, "subscribe");
     mockNavigationContext({ eventController: ec } as any);
 
     // First render picks productId
@@ -179,7 +175,7 @@ describe("useParams", () => {
 
     // Run effect to get the subscription callback
     capturedEffectFn!();
-    const subscribeCallback = ec.subscribe.mock.calls[0][0];
+    const subscribeCallback = subscribe.mock.calls[0][0];
 
     // Clear initial-sync setState
     setValue.mockClear();

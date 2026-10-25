@@ -36,6 +36,10 @@ import {
   warnOnce,
 } from "./shell-capture-constants.js";
 import { routerKeyPrefix } from "../cache/cache-key-utils.js";
+import { reportCacheError } from "../cache/cache-error.js";
+import { appendMetric } from "../router/metrics.js";
+import type { MetricsStore } from "../server/context.js";
+import { WIRE } from "../wire-params.js";
 
 export {
   PPR_REPLAY_STATUS_HEADER,
@@ -128,19 +132,13 @@ export function resolvePprConfig(
 }
 
 /**
- * The forced-MISS query marker. A document HIT that cannot finish its tail
- * reloads the page with it (shellReloadScript); the serve gate renders a
- * request carrying it on axis 1, with no shell read and no capture, so the
- * reload can never be a HIT that degrades again. The handler drops it from
- * the request on entry (withoutShellMissMarker) and keeps only the flag
- * (RequestContext._shellForcedMiss), so nothing else sees it.
- */
-export const SHELL_MISS_PARAM: string = "_rsc_shell";
-
-/**
- * The request without the forced-MISS marker, or undefined when it carries
- * none. The handler calls it before anything reads the request: left in, the
- * marker reached `ctx.request.url`, `originalUrl`, middleware, and the SSR
+ * The request without the forced-MISS marker (`WIRE.shellMiss`), or
+ * undefined when it carries none. A document HIT that cannot finish its tail
+ * reloads the page with the marker (shellReloadScript); the serve gate
+ * renders a request carrying it on axis 1, with no shell read and no
+ * capture, so the reload can never be a HIT that degrades again. The handler
+ * calls this on entry, before anything reads the request, and keeps only the
+ * flag (RequestContext._shellForcedMiss): left in, the marker reached `ctx.request.url`, `originalUrl`, middleware, and the SSR
  * search seed (so `useSearchParams` rendered it), and a `"use cache"` key
  * built from the request URL was never read again. GET and HEAD only: the
  * reload is a navigation, and a request with a body cannot be re-created
@@ -148,11 +146,11 @@ export const SHELL_MISS_PARAM: string = "_rsc_shell";
  * other request.
  */
 export function withoutShellMissMarker(request: Request): Request | undefined {
-  if (!request.url.includes(SHELL_MISS_PARAM)) return undefined;
+  if (!request.url.includes(WIRE.shellMiss)) return undefined;
   if (request.method !== "GET" && request.method !== "HEAD") return undefined;
   const url = new URL(request.url);
-  if (!url.searchParams.has(SHELL_MISS_PARAM)) return undefined;
-  url.searchParams.delete(SHELL_MISS_PARAM);
+  if (!url.searchParams.has(WIRE.shellMiss)) return undefined;
+  url.searchParams.delete(WIRE.shellMiss);
   return new Request(url, request);
 }
 
@@ -168,8 +166,8 @@ export function withoutShellMissMarker(request: Request): Request | undefined {
 export function shellReloadScript(): string {
   return inlineShellScript(
     "(function(){var u=new URL(location.href);" +
-      `if(u.searchParams.has(${JSON.stringify(SHELL_MISS_PARAM)}))return;` +
-      `u.searchParams.set(${JSON.stringify(SHELL_MISS_PARAM)},"miss");` +
+      `if(u.searchParams.has(${JSON.stringify(WIRE.shellMiss)}))return;` +
+      `u.searchParams.set(${JSON.stringify(WIRE.shellMiss)},"miss");` +
       "try{window.stop()}catch(e){}location.replace(u.href)})()",
   );
 }
@@ -303,6 +301,111 @@ export function openShellDocument(
     prelude,
     snapshot: whole.snapshot,
   };
+}
+
+/**
+ * A document serve's store read: a getShell entry, or a prelude-first read
+ * (readShellDocument) whose entry is the head and whose snapshot arrives on
+ * its own promise.
+ */
+export type ShellRead =
+  | { entry: ShellCacheEntry; shouldRevalidate?: boolean; read?: undefined }
+  | {
+      entry: ShellEntryHead;
+      shouldRevalidate?: boolean;
+      read: ShellDocumentRead;
+    };
+
+/**
+ * The document serve's shell read from `source`, the app cache store, that
+ * degrades to null on failure (axis 1 MISS, never a 500) and records the raw
+ * `ppr:shell-read` outcome (pre-validity-gates, so a version-mismatch
+ * lifecycle miss stays distinguishable from a store miss). A store with a
+ * prelude-first read (readShellDocument) resolves before the snapshot is
+ * read, so the HIT commits without waiting for it. A build shell is read by
+ * shell-build-manifest.ts lookupBuildShell, which imports this module.
+ */
+export async function readShell(
+  source: SegmentCacheStore & {
+    getShell: NonNullable<SegmentCacheStore["getShell"]>;
+  },
+  key: string,
+  opts: { tagHints?: readonly string[]; metrics?: MetricsStore },
+): Promise<ShellRead | null> {
+  const { tagHints, metrics } = opts;
+  let cached: ShellRead | null = null;
+  const shellReadStart = metrics ? performance.now() : 0;
+  try {
+    if (source.readShellDocument) {
+      const read = await source.readShellDocument(
+        key,
+        tagHints ? { tagHints } : undefined,
+      );
+      cached = read
+        ? { entry: read.entry, shouldRevalidate: read.shouldRevalidate, read }
+        : null;
+    } else {
+      cached = await source.getShell(key);
+    }
+  } catch (error) {
+    reportCacheError(error, "cache-read", "[ShellServe] getShell");
+  }
+  if (metrics) {
+    const stats = cached?.read?.stats;
+    appendMetric(
+      metrics,
+      "ppr:shell-read",
+      shellReadStart,
+      performance.now() - shellReadStart,
+      undefined,
+      cached ? (stats ? `hit ${stats.tier}` : "hit") : "miss",
+    );
+    if (stats) recordShellReadStats(metrics, shellReadStart, stats);
+  }
+  return cached;
+}
+
+/**
+ * A prelude-first read's sub-steps as `debugPerformance` rows under
+ * `ppr:shell-read`. The marker row starts with the prelude row because the
+ * two run in parallel; its desc says how long the read still waited on the
+ * marker once the prelude was in. On a deployed worker the clock only
+ * advances on I/O, so the byte counts are the cost signal for the CPU parts.
+ */
+function recordShellReadStats(
+  store: MetricsStore,
+  readStart: number,
+  stats: ShellReadStats,
+): void {
+  let at = readStart;
+  const row = (label: string, ms: number | undefined, desc: string): void => {
+    if (ms !== undefined) appendMetric(store, label, at, ms, 1, desc);
+  };
+  if (stats.memo) {
+    row(
+      "ppr:shell-memo",
+      0,
+      `${stats.memo.hit ? "hit" : "miss"} size=${stats.memo.bytes}b`,
+    );
+  }
+  // A KV hit after an L1 miss: the L1 attempt first, then the KV read.
+  row("ppr:shell-l1-miss", stats.l1MissMs, stats.l1MissReason ?? "miss");
+  at += stats.l1MissMs ?? 0;
+  row("ppr:shell-match", stats.matchMs, stats.tier);
+  at += stats.matchMs ?? 0;
+  row("ppr:shell-head", stats.headMs, `bytes=${stats.headBytes ?? 0}`);
+  at += stats.headMs ?? 0;
+  row("ppr:shell-prelude", stats.preludeMs, `bytes=${stats.preludeBytes ?? 0}`);
+  let marker = `tags=${stats.tags ?? 0} ${stats.markerSerial ? "serial" : "parallel"} commit-wait=${(stats.markerWaitMs ?? 0).toFixed(2)}ms`;
+  if (stats.markerMemo) marker += ` memo=${stats.markerMemo}`;
+  if (stats.markerHinted) {
+    marker += ` hint=${stats.markerHintHits ?? 0}/${stats.markerHinted.length}`;
+    if (stats.markerLeadMs !== undefined) {
+      marker += ` lead=${stats.markerLeadMs.toFixed(2)}ms`;
+    }
+  }
+  if (stats.freshReads) marker += " fresh-reads";
+  row("ppr:shell-marker", stats.markerMs, marker);
 }
 
 /**

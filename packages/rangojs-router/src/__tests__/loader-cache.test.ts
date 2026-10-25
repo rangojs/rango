@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { LoaderEntry } from "../server/context";
-import type { SegmentCacheStore, CacheItemResult } from "../cache/types";
 
 // Mock segment-codec (RSC serialization)
 vi.mock("../cache/segment-codec.js", () => ({
@@ -42,19 +41,6 @@ import {
   getRequestContext,
   _getRequestContext,
 } from "../server/request-context";
-
-function createMockStore(
-  overrides?: Partial<SegmentCacheStore>,
-): SegmentCacheStore {
-  return {
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => {}),
-    delete: vi.fn(async () => false),
-    getItem: vi.fn(async () => null),
-    setItem: vi.fn(async () => {}),
-    ...overrides,
-  };
-}
 
 function createMockLoader(id: string, returnValue: unknown = { data: "test" }) {
   const fn = vi.fn(async () => returnValue);
@@ -155,13 +141,10 @@ describe("loader-cache", () => {
         // Store returns a cached value -> readThroughItem short-circuits, ctx.use
         // is never called, and no loader metric is recorded (the loader did not
         // run). The hit is a cache.decision fact, not a loader phase.
-        const cacheStore = createMockStore({
-          getItem: vi.fn(
-            async (): Promise<CacheItemResult> => ({
-              value: JSON.stringify({ data: "cached" }),
-              shouldRevalidate: false,
-            }),
-          ),
+        const cacheStore = new MemorySegmentCacheStore();
+        vi.spyOn(cacheStore, "getItem").mockResolvedValue({
+          value: JSON.stringify({ data: "cached" }),
+          shouldRevalidate: false,
         });
         const loader = createMockLoader("Hit#default");
         const entry = createLoaderEntry(loader, { store: cacheStore });
@@ -184,27 +167,29 @@ describe("loader-cache", () => {
 
   describe("cache key resolution", () => {
     it("uses default key: loader:{id}:{pathname}", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const getItem = vi.spyOn(store, "getItem");
       const loader = createMockLoader("my-loader");
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx();
 
       await resolveLoaderData(entry, ctx, "/products");
 
-      expect(store.getItem).toHaveBeenCalledWith(
+      expect(getItem).toHaveBeenCalledWith(
         "loader:my-loader:localhost/products",
       );
     });
 
     it("includes sorted params in default key", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const getItem = vi.spyOn(store, "getItem");
       const loader = createMockLoader("loader-params");
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx({ z: "last", a: "first" });
 
       await resolveLoaderData(entry, ctx, "/items");
 
-      expect(store.getItem).toHaveBeenCalledWith(
+      expect(getItem).toHaveBeenCalledWith(
         "loader:loader-params:localhost/items:a=first&z=last",
       );
     });
@@ -215,14 +200,15 @@ describe("loader-cache", () => {
       // hosts would serve one host's cached loader data to the other.
       const keyFor = async (host: string) => {
         mockRequestCtx.url = { host, searchParams: new URLSearchParams() };
-        const store = createMockStore();
+        const store = new MemorySegmentCacheStore();
+        const getItem = vi.spyOn(store, "getItem");
         const loader = createMockLoader("tenant-loader");
         await resolveLoaderData(
           createLoaderEntry(loader, { store }),
           createMockCtx(),
           "/dashboard",
         );
-        return (store.getItem as any).mock.calls[0][0] as string;
+        return getItem.mock.calls[0][0] as string;
       };
 
       const keyA = await keyFor("a.example.com");
@@ -239,13 +225,14 @@ describe("loader-cache", () => {
       // a hostOverride cookie sends one host and path to two routers.
       const keyFor = async (routerId: string) => {
         mockRequestCtx._routerId = routerId;
-        const store = createMockStore();
+        const store = new MemorySegmentCacheStore();
+        const getItem = vi.spyOn(store, "getItem");
         await resolveLoaderData(
           createLoaderEntry(createMockLoader("shared-loader"), { store }),
           createMockCtx({ id: "1" }),
           "/dashboard",
         );
-        return (store.getItem as any).mock.calls[0][0] as string;
+        return getItem.mock.calls[0][0] as string;
       };
 
       const keyA = await keyFor("app-a");
@@ -259,7 +246,8 @@ describe("loader-cache", () => {
     });
 
     it("priority 1: options.key overrides default", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const getItem = vi.spyOn(store, "getItem");
       const loader = createMockLoader("loader-custom-key");
       const entry = createLoaderEntry(loader, {
         store,
@@ -269,17 +257,18 @@ describe("loader-cache", () => {
 
       await resolveLoaderData(entry, ctx, "/products");
 
-      expect(store.getItem).toHaveBeenCalledWith(
+      expect(getItem).toHaveBeenCalledWith(
         "loader:loader-custom-key:key:custom-key-override",
       );
     });
 
     it("priority 2: store.keyGenerator modifies default key", async () => {
-      const store = createMockStore({
+      const store = new MemorySegmentCacheStore({
         keyGenerator: vi.fn(
           async (_ctx, defaultKey) => `region:us:${defaultKey}`,
         ),
       });
+      const getItem = vi.spyOn(store, "getItem");
       const loader = createMockLoader("loader-keygen");
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx();
@@ -290,15 +279,16 @@ describe("loader-cache", () => {
         mockRequestCtx,
         "loader:loader-keygen:localhost/products",
       );
-      expect(store.getItem).toHaveBeenCalledWith(
+      expect(getItem).toHaveBeenCalledWith(
         "region:us:loader:loader-keygen:localhost/products",
       );
     });
 
     it("options.key takes precedence over store.keyGenerator", async () => {
-      const store = createMockStore({
+      const store = new MemorySegmentCacheStore({
         keyGenerator: vi.fn(async () => "should-not-be-used"),
       });
+      const getItem = vi.spyOn(store, "getItem");
       const loader = createMockLoader("loader-precedence");
       const entry = createLoaderEntry(loader, {
         store,
@@ -309,7 +299,7 @@ describe("loader-cache", () => {
       await resolveLoaderData(entry, ctx, "/test");
 
       expect(store.keyGenerator).not.toHaveBeenCalled();
-      expect(store.getItem).toHaveBeenCalledWith(
+      expect(getItem).toHaveBeenCalledWith(
         "loader:loader-precedence:key:custom-key-wins",
       );
     });
@@ -369,7 +359,8 @@ describe("loader-cache", () => {
       });
 
       it("the result is URI-encoded after loader:<id>:key:", async () => {
-        const store = createMockStore();
+        const store = new MemorySegmentCacheStore();
+        const getItem = vi.spyOn(store, "getItem");
         await resolveLoaderData(
           createLoaderEntry(createMockLoader("enc"), {
             store,
@@ -378,14 +369,15 @@ describe("loader-cache", () => {
           createMockCtx(),
           "/x",
         );
-        expect(store.getItem).toHaveBeenCalledWith(
+        expect(getItem).toHaveBeenCalledWith(
           "loader:enc:key:loader%3Aa%3Ab%2Fc%7Cd",
         );
       });
     });
 
     it("throws when options.key throws (hard-fail, no silent fallback)", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const getItem = vi.spyOn(store, "getItem");
       const loader = createMockLoader("loader-fallback");
       const entry = createLoaderEntry(loader, {
         store,
@@ -398,15 +390,16 @@ describe("loader-cache", () => {
       await expect(resolveLoaderData(entry, ctx, "/fallback")).rejects.toThrow(
         "key function failed",
       );
-      expect(store.getItem).not.toHaveBeenCalled();
+      expect(getItem).not.toHaveBeenCalled();
     });
 
     it("throws when store.keyGenerator throws (hard-fail, no silent fallback)", async () => {
-      const store = createMockStore({
+      const store = new MemorySegmentCacheStore({
         keyGenerator: vi.fn(async () => {
           throw new Error("keyGenerator failed");
         }),
       });
+      const getItem = vi.spyOn(store, "getItem");
       const loader = createMockLoader("loader-keygen-fail");
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx();
@@ -414,7 +407,7 @@ describe("loader-cache", () => {
       await expect(resolveLoaderData(entry, ctx, "/fallback")).rejects.toThrow(
         "keyGenerator failed",
       );
-      expect(store.getItem).not.toHaveBeenCalled();
+      expect(getItem).not.toHaveBeenCalled();
     });
   });
 
@@ -425,13 +418,10 @@ describe("loader-cache", () => {
   describe("cache behavior", () => {
     it("returns cached data on hit (skips loader)", async () => {
       const cachedValue = { name: "cached product" };
-      const store = createMockStore({
-        getItem: vi.fn(
-          async (): Promise<CacheItemResult> => ({
-            value: JSON.stringify(cachedValue),
-            shouldRevalidate: false,
-          }),
-        ),
+      const store = new MemorySegmentCacheStore();
+      vi.spyOn(store, "getItem").mockResolvedValue({
+        value: JSON.stringify(cachedValue),
+        shouldRevalidate: false,
       });
       const loader = createMockLoader("hit-loader", {
         name: "fresh product",
@@ -448,7 +438,8 @@ describe("loader-cache", () => {
 
     it("executes loader and caches on miss", async () => {
       const freshData = { name: "fresh product" };
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("miss-loader", freshData);
       const entry = createLoaderEntry(loader, { ttl: 120, store });
       const ctx = createMockCtx();
@@ -456,7 +447,7 @@ describe("loader-cache", () => {
       const result = await resolveLoaderData(entry, ctx, "/product");
 
       expect(result).toEqual(freshData);
-      expect(store.setItem).toHaveBeenCalledWith(
+      expect(setItem).toHaveBeenCalledWith(
         "loader:miss-loader:localhost/product",
         JSON.stringify(freshData),
         expect.objectContaining({ ttl: 120 }),
@@ -485,14 +476,12 @@ describe("loader-cache", () => {
           });
         },
       });
-      const store = createMockStore({
-        getItem: vi.fn(
-          async (): Promise<CacheItemResult> => ({
-            value: JSON.stringify(staleData),
-            shouldRevalidate: true,
-          }),
-        ),
+      const store = new MemorySegmentCacheStore();
+      vi.spyOn(store, "getItem").mockResolvedValue({
+        value: JSON.stringify(staleData),
+        shouldRevalidate: true,
       });
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("swr-loader", freshData);
       const entry = createLoaderEntry(loader, { ttl: 60, swr: 300, store });
       const ctx = createMockCtx();
@@ -508,7 +497,7 @@ describe("loader-cache", () => {
       await pendingBackground[0]();
 
       expect(loader).toHaveBeenCalledTimes(1);
-      expect(store.setItem).toHaveBeenCalledTimes(1);
+      expect(setItem).toHaveBeenCalledTimes(1);
       expect(spans.map((span) => span.name)).toEqual(["rango.background"]);
       expect(spans[0].attributes["rango.background.kind"]).toBe(
         "loader-revalidation",
@@ -522,7 +511,8 @@ describe("loader-cache", () => {
 
   describe("null result caching", () => {
     it("caches null loader results (does not skip write)", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("null-loader", null);
       const entry = createLoaderEntry(loader, { ttl: 60, store });
       const ctx = createMockCtx();
@@ -534,7 +524,7 @@ describe("loader-cache", () => {
       expect(serializeResult).toHaveBeenCalledWith(null, expect.any(Function));
       // The mock returns "null" (JSON.stringify(null)), which is not null,
       // so setItem should be called
-      expect(store.setItem).toHaveBeenCalledWith(
+      expect(setItem).toHaveBeenCalledWith(
         "loader:null-loader:localhost/nullable",
         "null",
         expect.objectContaining({ ttl: 60 }),
@@ -542,13 +532,10 @@ describe("loader-cache", () => {
     });
 
     it("returns null from cache hit (round-trip)", async () => {
-      const store = createMockStore({
-        getItem: vi.fn(
-          async (): Promise<CacheItemResult> => ({
-            value: "null",
-            shouldRevalidate: false,
-          }),
-        ),
+      const store = new MemorySegmentCacheStore();
+      vi.spyOn(store, "getItem").mockResolvedValue({
+        value: "null",
+        shouldRevalidate: false,
       });
       const loader = createMockLoader("null-hit", "should-not-run");
       const entry = createLoaderEntry(loader, { store });
@@ -561,7 +548,8 @@ describe("loader-cache", () => {
     });
 
     it("skips cache write when serialization fails (returns null)", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("fail-serialize", { data: "test" });
       vi.mocked(serializeResult).mockResolvedValueOnce(null);
       const entry = createLoaderEntry(loader, { ttl: 60, store });
@@ -569,7 +557,7 @@ describe("loader-cache", () => {
 
       await resolveLoaderData(entry, ctx, "/fail");
 
-      expect(store.setItem).not.toHaveBeenCalled();
+      expect(setItem).not.toHaveBeenCalled();
     });
   });
 
@@ -579,7 +567,8 @@ describe("loader-cache", () => {
 
   describe("tags", () => {
     it("passes static tags to store.setItem", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("tags-loader");
       const entry = createLoaderEntry(loader, {
         ttl: 60,
@@ -590,7 +579,7 @@ describe("loader-cache", () => {
 
       await resolveLoaderData(entry, ctx, "/products");
 
-      expect(store.setItem).toHaveBeenCalledWith(
+      expect(setItem).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.objectContaining({ tags: ["products", "catalog"] }),
@@ -598,7 +587,8 @@ describe("loader-cache", () => {
     });
 
     it("resolves function-based tags with request context", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("dynamic-tags");
       const entry = createLoaderEntry(loader, {
         ttl: 60,
@@ -609,7 +599,7 @@ describe("loader-cache", () => {
 
       await resolveLoaderData(entry, ctx, "/product/123");
 
-      expect(store.setItem).toHaveBeenCalledWith(
+      expect(setItem).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.objectContaining({ tags: ["product:123", "products"] }),
@@ -620,7 +610,8 @@ describe("loader-cache", () => {
       const consoleError = vi
         .spyOn(console, "error")
         .mockImplementation(() => {});
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("tags-fail");
       const entry = createLoaderEntry(loader, {
         ttl: 60,
@@ -634,7 +625,7 @@ describe("loader-cache", () => {
       await resolveLoaderData(entry, ctx, "/test");
 
       // Should still cache, just without tags
-      expect(store.setItem).toHaveBeenCalledWith(
+      expect(setItem).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.objectContaining({ tags: undefined }),
@@ -653,14 +644,15 @@ describe("loader-cache", () => {
 
   describe("TTL and SWR resolution", () => {
     it("uses route-level ttl when specified", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("ttl-route");
       const entry = createLoaderEntry(loader, { ttl: 300, store });
       const ctx = createMockCtx();
 
       await resolveLoaderData(entry, ctx, "/test");
 
-      expect(store.setItem).toHaveBeenCalledWith(
+      expect(setItem).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.objectContaining({ ttl: 300 }),
@@ -668,14 +660,15 @@ describe("loader-cache", () => {
     });
 
     it("falls back to store defaults when no route-level ttl", async () => {
-      const store = createMockStore({ defaults: { ttl: 180 } });
+      const store = new MemorySegmentCacheStore({ defaults: { ttl: 180 } });
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("ttl-default");
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx();
 
       await resolveLoaderData(entry, ctx, "/test");
 
-      expect(store.setItem).toHaveBeenCalledWith(
+      expect(setItem).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.objectContaining({ ttl: 180 }),
@@ -683,14 +676,15 @@ describe("loader-cache", () => {
     });
 
     it("uses default 60s TTL when neither route nor store specify", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("ttl-fallback");
       const entry = createLoaderEntry(loader, { store });
       const ctx = createMockCtx();
 
       await resolveLoaderData(entry, ctx, "/test");
 
-      expect(store.setItem).toHaveBeenCalledWith(
+      expect(setItem).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.objectContaining({ ttl: 60 }),
@@ -698,14 +692,15 @@ describe("loader-cache", () => {
     });
 
     it("passes swr from route options", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("swr-route");
       const entry = createLoaderEntry(loader, { ttl: 60, swr: 300, store });
       const ctx = createMockCtx();
 
       await resolveLoaderData(entry, ctx, "/test");
 
-      expect(store.setItem).toHaveBeenCalledWith(
+      expect(setItem).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(String),
         expect.objectContaining({ swr: 300 }),
@@ -719,7 +714,8 @@ describe("loader-cache", () => {
 
   describe("runtime condition", () => {
     it("skips cache when condition returns false", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const getItem = vi.spyOn(store, "getItem");
       const loader = createMockLoader("cond-skip");
       const entry = createLoaderEntry(loader, {
         ttl: 60,
@@ -731,11 +727,12 @@ describe("loader-cache", () => {
       await resolveLoaderData(entry, ctx, "/test");
 
       // Should use ctx.use directly, not check cache
-      expect(store.getItem).not.toHaveBeenCalled();
+      expect(getItem).not.toHaveBeenCalled();
     });
 
     it("uses cache when condition returns true", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const getItem = vi.spyOn(store, "getItem");
       const loader = createMockLoader("cond-use");
       const entry = createLoaderEntry(loader, {
         ttl: 60,
@@ -746,7 +743,7 @@ describe("loader-cache", () => {
 
       await resolveLoaderData(entry, ctx, "/test");
 
-      expect(store.getItem).toHaveBeenCalled();
+      expect(getItem).toHaveBeenCalled();
     });
   });
 
@@ -756,18 +753,20 @@ describe("loader-cache", () => {
 
   describe("store resolution", () => {
     it("uses store from cache options", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const getItem = vi.spyOn(store, "getItem");
       const loader = createMockLoader("store-opts");
       const entry = createLoaderEntry(loader, { ttl: 60, store });
       const ctx = createMockCtx();
 
       await resolveLoaderData(entry, ctx, "/test");
 
-      expect(store.getItem).toHaveBeenCalled();
+      expect(getItem).toHaveBeenCalled();
     });
 
     it("falls back to app-level store from request context", async () => {
-      const appStore = createMockStore();
+      const appStore = new MemorySegmentCacheStore();
+      const getItem = vi.spyOn(appStore, "getItem");
       mockRequestCtx._cacheStore = appStore;
       const loader = createMockLoader("store-app");
       const entry = createLoaderEntry(loader, { ttl: 60 });
@@ -775,7 +774,7 @@ describe("loader-cache", () => {
 
       await resolveLoaderData(entry, ctx, "/test");
 
-      expect(appStore.getItem).toHaveBeenCalled();
+      expect(getItem).toHaveBeenCalled();
     });
 
     it("delegates to ctx.use when no store available", async () => {
@@ -797,13 +796,10 @@ describe("loader-cache", () => {
   describe("ctx.use wrapping", () => {
     it("wraps ctx.use so handler gets cached data", async () => {
       const cachedValue = { name: "cached" };
-      const store = createMockStore({
-        getItem: vi.fn(
-          async (): Promise<CacheItemResult> => ({
-            value: JSON.stringify(cachedValue),
-            shouldRevalidate: false,
-          }),
-        ),
+      const store = new MemorySegmentCacheStore();
+      vi.spyOn(store, "getItem").mockResolvedValue({
+        value: JSON.stringify(cachedValue),
+        shouldRevalidate: false,
       });
       const loader = createMockLoader("wrap-test");
       const entry = createLoaderEntry(loader, { store });
@@ -824,7 +820,7 @@ describe("loader-cache", () => {
     });
 
     it("does not intercept ctx.use for other loaders", async () => {
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
       const loader1 = createMockLoader("loader-1");
       const loader2 = createMockLoader("loader-2", { other: true });
       const entry = createLoaderEntry(loader1, { store });
@@ -845,7 +841,9 @@ describe("loader-cache", () => {
       // a different shortCode -> resolveLoaderData runs twice for the SAME
       // loaderId. Without dedup, getItem/setItem (e.g. a KV round-trip) would
       // run twice for one logical cached loader.
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
+      const getItem = vi.spyOn(store, "getItem");
+      const setItem = vi.spyOn(store, "setItem");
       const loader = createMockLoader("orphan-inherited", { data: "shared" });
       const entry = createLoaderEntry(loader, { ttl: 60, store });
       const ctx = createMockCtx();
@@ -862,8 +860,8 @@ describe("loader-cache", () => {
       expect(b).toEqual({ data: "shared" });
 
       // One getItem and one setItem (and one loader execution) for one loaderId.
-      expect(store.getItem).toHaveBeenCalledTimes(1);
-      expect(store.setItem).toHaveBeenCalledTimes(1);
+      expect(getItem).toHaveBeenCalledTimes(1);
+      expect(setItem).toHaveBeenCalledTimes(1);
       expect(loader).toHaveBeenCalledTimes(1);
     });
 
@@ -872,7 +870,7 @@ describe("loader-cache", () => {
       // re-resolution path calls resolveLoaderData twice for the same loaderId,
       // and a tags() callback doing real work must not fire a second time for one
       // logical cached loader.
-      const store = createMockStore();
+      const store = new MemorySegmentCacheStore();
       const loader = createMockLoader("tags-dedup", { data: "x" });
       const tags = vi.fn(() => ["t1"]);
       const entry = createLoaderEntry(loader, { ttl: 60, store, tags });
@@ -892,8 +890,12 @@ describe("loader-cache", () => {
       const loaderA = createMockLoader("loader-a", { data: "A" });
       const loaderB = createMockLoader("loader-b", { data: "B" });
       const loaderC = createMockLoader("loader-c", { data: "C" }); // not cached
-      const entryA = createLoaderEntry(loaderA, { store: createMockStore() });
-      const entryB = createLoaderEntry(loaderB, { store: createMockStore() });
+      const entryA = createLoaderEntry(loaderA, {
+        store: new MemorySegmentCacheStore(),
+      });
+      const entryB = createLoaderEntry(loaderB, {
+        store: new MemorySegmentCacheStore(),
+      });
       const ctx = createMockCtx();
       const originalUse = ctx.use;
 

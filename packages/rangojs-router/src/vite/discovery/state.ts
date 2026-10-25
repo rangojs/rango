@@ -124,6 +124,9 @@ export interface DiscoveryState {
   resolvedEntryPath: string | undefined;
   projectRoot: string;
   isBuildMode: boolean;
+  /** Vite's resolved command and mode (configResolved), for resolveBuildEnv. */
+  viteCommand: "serve" | "build";
+  viteMode: string;
   userResolveAlias: any;
   /**
    * Data-only slice of the user's resolved config (resolve.* incl. native
@@ -212,6 +215,15 @@ export interface DiscoveryState {
   devDiscoveryEpoch?: number;
   devServerOrigin: string | null;
   devServer: any;
+  /**
+   * Dev: the pending transition({ when }) definition error, re-sent as the
+   * Vite error overlay until a discovery succeeds (dev-server-phase.ts).
+   */
+  transitionWhenOverlay: {
+    message: string;
+    stack: string;
+    plugin: string;
+  } | null;
   selfWrittenGenFiles: Map<string, { at: number; hash: string }>;
   SELF_WRITE_WINDOW_MS: number;
 
@@ -261,6 +273,8 @@ export function createDiscoveryState(
     resolvedEntryPath: entryPath,
     projectRoot: "",
     isBuildMode: false,
+    viteCommand: "build",
+    viteMode: "production",
     userResolveAlias: undefined,
     userRunnerConfig: undefined,
     userResolvePlugins: [],
@@ -300,6 +314,7 @@ export function createDiscoveryState(
     devDiscoveryEpoch: opts?.preset === "cloudflare" ? Date.now() : undefined,
     devServerOrigin: null,
     devServer: null,
+    transitionWhenOverlay: null,
     selfWrittenGenFiles: new Map(),
     SELF_WRITE_WINDOW_MS: 5_000,
     lastDiscoveryError: null,

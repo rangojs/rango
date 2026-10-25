@@ -113,7 +113,7 @@ options (`logger`, function-valued `sources`) do not exist on the native path;
 ## Interaction with build-time prerender
 
 Rango's discovery / prerender step runs a throwaway temp Vite server
-(`createTempRscServer` in `src/vite/router-discovery.ts`) that forwards only your
+(`createTempRscServer` in `src/vite/temp-rsc-server.ts`) that forwards only your
 _resolution_ plugins (`resolveId` / `load`, plus the import rewrite of
 `@rolldown/plugin-transform-imports`) and denies every `vite:*` plugin
 (`selectForwardableResolvePlugins` in `src/vite/utils/forward-user-plugins.ts`),

@@ -4,7 +4,7 @@ import { useFixture } from "./fixture";
 /**
  * Dev-discovery probe short-circuit.
  *
- * The readiness loop in src/vite/router-discovery.ts probes the dev server
+ * The readiness loop in src/vite/discovery/dev-server-phase.ts probes the dev server
  * with DEV_DISCOVERY_PROBE_HEADER after a workerd reload. Every router
  * generation — current or stale — must answer a probe with an empty body and
  * its actual epoch. A stale generation that instead fell through to a full

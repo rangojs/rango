@@ -231,7 +231,6 @@ async function lookup(options: {
   const routerContext = {
     evaluateRevalidation: vi.fn(),
     buildEntryRevalidateMap: undefined,
-    resolveLoadersOnlyWithRevalidation: undefined,
     resolveLoadersOnly: undefined,
   } as any;
   await runWithRouterContext(routerContext, () =>
@@ -241,6 +240,9 @@ async function lookup(options: {
       }
     }),
   );
+  // The loader walk the stub leaves out releases the record's values once
+  // the route's loaders started: the pushes a test makes come after it.
+  reqCtx._handleStore.releaseRecordedValues("R0");
   return { reqCtx, state };
 }
 

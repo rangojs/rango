@@ -543,6 +543,51 @@ function mergeResponse(
 }
 
 /**
+ * The response holder past one middleware. Attached, it reads and writes its
+ * middleware's holder, so a chain shares one response. A middleware that
+ * settles without that run's response while it runs (it returns or throws
+ * its own Response, throws, or rewrites: a timeout fallback, a stale
+ * document cache entry's background re-run, cache/document-cache.ts), or
+ * that calls next() after it returned, detaches that run: the rest of the
+ * chain builds its own response, and the middleware ahead keep what the
+ * middleware settled with. With one holder, a
+ * forgiving middleware ahead of the cache returned the re-run's response,
+ * whose body the cache had drained into the store.
+ */
+class DownstreamHolder implements ResponseHolder {
+  private own: Response | null = null;
+  private attached = true;
+
+  constructor(private readonly parent: ResponseHolder) {}
+
+  get response(): Response | null {
+    return this.attached ? this.parent.response : this.own;
+  }
+
+  set response(response: Response | null) {
+    if (this.attached) this.parent.response = response;
+    else this.own = response;
+  }
+
+  /** From `from`: what the run has seen so far, or a late run's stub. */
+  detach(from: Response | null = this.parent.response): void {
+    this.own = from;
+    this.attached = false;
+  }
+}
+
+/**
+ * A middleware settled without the response of the run its next() started
+ * (its own Response, a throw, a rewrite error) while that run still goes.
+ */
+function detachIfRunning(
+  holder: DownstreamHolder | undefined,
+  nextResolvedAt: number | undefined,
+): void {
+  if (holder && nextResolvedAt === undefined) holder.detach();
+}
+
+/**
  * Execute middleware chain
  *
  * Features:
@@ -575,23 +620,23 @@ export async function executeMiddleware<TEnv>(
   const stubResponse = new Response(null, { status: 200 });
   const responseHolder: ResponseHolder = { response: stubResponse };
 
-  const next = async (): Promise<Response> => {
+  const next = async (holder: ResponseHolder): Promise<Response> => {
     if (index >= middlewares.length) {
       // End of chain - call actual RSC handler
       const response = await finalHandler();
 
       if (isWebSocketUpgradeResponse(response)) {
-        responseHolder.response = response;
+        holder.response = response;
         return response;
       }
 
       // Chain ran to completion: stub headers overwrite (stubOverridesNonCookie)
       // and reqCtx stub headers are merged in.
-      responseHolder.response = mergeResponse(response, stubResponse.headers, {
+      holder.response = mergeResponse(response, stubResponse.headers, {
         stubOverridesNonCookie: true,
       });
 
-      return responseHolder.response;
+      return holder.response;
     }
 
     const middlewareOrdinal = index;
@@ -601,7 +646,7 @@ export async function executeMiddleware<TEnv>(
       env,
       params,
       variables,
-      responseHolder,
+      holder,
       reverse,
     );
     const metricStart = performance.now();
@@ -631,6 +676,8 @@ export async function executeMiddleware<TEnv>(
     // throws after its next(), the render's own error), so a rewrite thrown
     // after it would re-dispatch onto the used handle store.
     let nextRejectedWithRewrite = false;
+    let downstreamHolder: DownstreamHolder | undefined;
+    let settled = false;
     const wrappedNext = (): Promise<Response> => {
       if (nextPromise) {
         throw new Error(
@@ -638,7 +685,9 @@ export async function executeMiddleware<TEnv>(
         );
       }
       finishMiddleware();
-      const downstream = next();
+      downstreamHolder = new DownstreamHolder(holder);
+      if (settled) downstreamHolder.detach(stubResponse);
+      const downstream = next(downstreamHolder);
       nextPromise = downstream.then(
         (res) => {
           nextResolvedAt = performance.now();
@@ -687,10 +736,14 @@ export async function executeMiddleware<TEnv>(
           throw error;
         }
       });
+    } catch (error) {
+      detachIfRunning(downstreamHolder, nextResolvedAt);
+      throw error;
     } finally {
       // Settle the middleware own-time metric once on both the success and
       // error paths (idempotent guard in finishMiddleware).
       finishMiddleware();
+      settled = true;
     }
     // A rewrite after this middleware's next() started the downstream chain
     // (resolved, still running, or failed) would leave that render running
@@ -698,10 +751,14 @@ export async function executeMiddleware<TEnv>(
     // already pushed, and drop the response it built. Only a rewrite after
     // next() rejected with a Rewrite (nothing rendered) unwinds.
     if (rewrite && nextPromise && !nextRejectedWithRewrite) {
+      detachIfRunning(downstreamHolder, nextResolvedAt);
       throw rewriteAfterNextError(entry.handler, rewrite);
     }
     if (rewrite) throw rewrite;
-    if (isRewrite(result)) throw returnedRewriteError(entry.handler);
+    if (isRewrite(result)) {
+      detachIfRunning(downstreamHolder, nextResolvedAt);
+      throw returnedRewriteError(entry.handler);
+    }
 
     // Record post-next() processing time when middleware did work after
     // the downstream chain resolved (e.g. adding headers, logging).
@@ -723,8 +780,9 @@ export async function executeMiddleware<TEnv>(
     // RequestContext stub headers (from cookies().set()) into the
     // returned Response so they are not lost.
     if (result instanceof Response) {
+      detachIfRunning(downstreamHolder, nextResolvedAt);
       if (isWebSocketUpgradeResponse(result)) {
-        responseHolder.response = result;
+        holder.response = result;
         return result;
       }
       // Explicit short-circuit: the returned Response's own headers win
@@ -732,7 +790,7 @@ export async function executeMiddleware<TEnv>(
       const merged = mergeResponse(result, stubResponse.headers, {
         stubOverridesNonCookie: false,
       });
-      responseHolder.response = merged;
+      holder.response = merged;
       return merged;
     }
 
@@ -749,7 +807,7 @@ export async function executeMiddleware<TEnv>(
     // If middleware called next(), await it and return the response
     if (nextPromise) {
       await nextPromise;
-      return responseHolder.response!;
+      return holder.response!;
     }
 
     // Middleware didn't call next() and didn't return a Response - that's an error
@@ -763,7 +821,7 @@ export async function executeMiddleware<TEnv>(
     );
   };
 
-  await next();
+  await next(responseHolder);
 
   // Use the final response from responseHolder (may have been modified by middleware)
   const finalResponse = responseHolder.response;

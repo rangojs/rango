@@ -2,6 +2,783 @@
 
 ## Unreleased
 
+### Changed: `dispatch()` answers as production in a few edge cases
+
+**Before.** `dispatch()` from `@rangojs/router/testing` kept its own copy of
+the handler's steps around a response route: the global middleware passes,
+the response route's timeout, the redirect interception and the response's
+finalization. In a few cases its answer differed from the one `router.fetch`
+sends.
+
+**After.** It runs the production handler's request stages, so these cases
+answer as production does:
+
+- An action request (`?_rsc_action`, not a partial) whose final pass ran no
+  global middleware, answered with a 3xx (a trailing-slash redirect, or a
+  redirect from a response route or its route middleware): the 3xx, through
+  the open-redirect guard, instead of a `204` + `X-RSC-Redirect`.
+- A partial request (`?_rsc_partial`) to a trailing-slash path: a global
+  middleware that reads the response after `next()` sees the `204` +
+  `X-RSC-Redirect` instead of a `308`. The response is unchanged.
+- A response route's `renderStartMs` timeout with no global middleware:
+  `onResponse` callbacks the route registered before the deadline no longer
+  apply to the 504 or `onTimeout` response.
+- A content-negotiated response route whose route middleware short-circuits:
+  the response carries `Vary: Accept`.
+- A response route for a type with no MIME (image, stream, any) whose handler
+  returns a value that is not a `Response`: the 500 carries production's
+  message, `Response route handler for "…" must return a Response object`.
+- A throwing `onTimeout` logs `[RSC] onTimeout callback error:` instead of
+  `[dispatch] onTimeout callback error:`.
+- A response-route timeout on a rewritten pass: `onError`, `onTimeout` and
+  the `request.timeout` event carry the rewrite target's request and URL. The
+  event keeps the `requestId` of `dispatch`'s own `request.start` and
+  `request.end`.
+- A stream-idle timeout's `onError` call and `request.timeout` event carry
+  `routeKey`.
+- The same timeout, stream-idle or rewrite error reaches `onError` once per
+  request.
+
+No change in your code. A test that pinned one of the old answers now gets
+production's.
+
+### Changed: `dispatch()` classifies a request as production does
+
+**Before.** `dispatch()` matched each URL with a lookup of its own before the
+global middleware ran, and set the route's params and name there. It never
+answered a reload, and it served an action that a rewrite moved to a response
+route.
+
+**After.** It classifies each pass with the production handler's classify
+stage and answers its terminal plans inside the global middleware chain:
+
+- A request whose `_rsc_v` names another deploy's document version (see
+  `setBuildVersions`) gets the `X-RSC-Reload` production sends, on any route.
+  On a component route `dispatch()` threw, on an unmatched path it answered
+  404, and on a response route a request that was not a partial got the
+  route's response.
+- A partial request (`?_rsc_partial`) whose `_rsc_rid` names another router (a
+  navigation from another app) gets the `X-RSC-Reload` too, where a component
+  route threw and an unmatched path answered 404.
+- An action request (`?_rsc_action`) that a rewrite moved to a response route,
+  a redirect or an unmatched path rejects with production's error, `A rewrite
+of a server action or form post must target a page route; …`, instead of
+  serving the target.
+- Global middleware sees the route in `ctx.routeName` and the request
+  context's `params` after `await next()`, not before it. A trailing-slash
+  redirect sets neither.
+
+The error a component route throws, and when it throws (before any
+middleware), is unchanged. A test that read `ctx.routeName` before `next()`
+in global middleware reads it after `next()`, or from route middleware.
+
+### Fixed: a rewritten request's telemetry events carry one `requestId`
+
+**Before.** With `createRouter({ telemetry })` and no request-id header
+(`x-rsc-router-request-id`, `x-request-id` or `cf-ray`), a request that
+middleware rewrote with `throw rewrite()` reported two generated ids. The
+rewritten pass's events (`request.start`, `loader.*`, `cache.decision`,
+`request.end`) carried one, and a stream-idle `request.timeout` another, so a
+sink that groups events by `requestId` could not tie the timeout to the
+request it cut off. `dispatch()` from `@rangojs/router/testing` already
+reported one id for a rewritten request, so the testing primitive and
+`router.fetch` disagreed.
+
+**Now.** Every event of a rewritten request, through any number of rewrites,
+carries the visitor's id, in `router.fetch` and `dispatch()` alike. A request
+that sends a request-id header reports that header's value, as before. No
+change in your code.
+
+### Fixed: a no-JS form post's telemetry events carry one `requestId`
+
+**Before.** With `createRouter({ telemetry })` and no request-id header, the
+re-render after a no-JS form post (progressive enhancement), rewritten or not,
+reported its own generated id on `request.start`, `loader.*`,
+`cache.decision` and `request.end`, while a stream-idle `request.timeout`
+carried the visitor's id. A sink that groups events by `requestId` saw two
+requests.
+
+**Now.** The re-render's events carry the visitor's id, the one the
+`request.timeout` carries. A request that sends a request-id header reports
+that header's value, as before. No change in your code.
+
+### Fixed: a PPR shell capture sends no telemetry events
+
+**Before.** With `createRouter({ telemetry })`, a document request or a
+navigation that missed a `ppr` route's shell started a background capture,
+and the capture sent the sink its own `loader.*` events. A live loader, which
+the capture holds back, reported a `loader.start` with no `loader.end`. An
+`ssr: false` loader, which runs in the capture, reported its `loader.start`
+and `loader.end` a second time, and a `loader.error` when it failed only
+there. On a navigation these events carried the id of a request the capture
+builds, so a sink that groups events by `requestId` saw a second request. A
+handle pushed after handle collection completed also reported its
+`handler.error` twice, once from the visitor's render and once from the
+capture.
+
+**Now.** The capture sends nothing to the sink, as its `request.*`,
+`cache.decision`, `revalidation.decision` and other `handler.error` events
+already did not. The visitor's request reports its own `loader.*` and
+`handler.error` events once, under one id. `onError` is unchanged. No change
+in your code.
+
+### Fixed: a stale `cache()` HIT's background refresh sets no fresh-reads cookie on the visitor's response
+
+**Before.** With `CFCacheStore` or `VercelCacheStore`, a handler under a
+stale `cache()` entry that called `revalidateTag()` or `updateTag()` during
+the background refresh could set the fresh-reads cookie
+(`rango-state-fresh` by default) on the response of the visitor whose request
+served the stale entry. It did whenever that response's cookies were merged
+after the refresh reached the call, for example from a global middleware that
+awaits work after `next()` and returns the response. The visitor mutated
+nothing, yet the response carried a `Set-Cookie`, which the document cache
+does not store, and the visitor's next requests skipped the stores' isolate
+memos for a few seconds. Once the response was sent, the same call printed a
+development warning blaming a streaming loader or render.
+
+**Now.** The refresh's invalidation still runs, but sets no cookie and prints
+no warning, as the refresh's other response writes already reach nothing. No
+change in your code.
+
+### Fixed: a stale `"use cache"` entry's, cached loader's or document cache entry's background refresh sets no fresh-reads cookie on the visitor's response
+
+**Before.** With `CFCacheStore` or `VercelCacheStore`, a `"use cache"`
+function, or a loader bound with its own `cache()`, that called
+`revalidateTag()` or `updateTag()` while it refreshed a stale entry in the
+background could set the fresh-reads cookie (`rango-state-fresh` by default)
+on the response of the visitor whose request served the stale entry, as the
+stale `cache()` refresh above could. So could a route handler, middleware or
+render that called it while `createDocumentCacheMiddleware()` re-ran a stale
+page in the background. There the re-run's own response carried the cookie
+too, so the document cache did not store the refreshed page, and later
+requests kept getting the stale one. Each refresh runs on that visitor's
+request context. Once the response was sent, the same call printed the
+development warning blaming a streaming loader or render.
+
+**Now.** The refresh's invalidation still runs, but sets no cookie, prints no
+warning, and no longer keeps the refreshed page out of the document cache. An
+invalidation the request itself makes (in a server action, or in a route
+handler, middleware or render outside a background refresh) sets the cookie
+as before. No change in your code.
+
+### Fixed: a stale document cache entry's background re-run no longer writes cookies or headers on the visitor's response
+
+**Before.** When `createDocumentCacheMiddleware()` served a stale entry, it
+re-ran the page in the background on the visitor's own request context. A
+cookie (`cookies().set()`) that middleware, a route handler or the render
+wrote in that re-run, or a header that a route handler or route middleware
+wrote (`ctx.headers.set()`, `ctx.header()`) and the stored entry lacks, could
+reach the visitor's `STALE` response, for example when a global middleware
+above the cache awaited work after `next()` and then returned the response:
+the visitor got `Set-Cookie` and headers from a render whose body they never
+received. The other way round, a cookie that middleware set on the visitor's
+response after `next()` could land on the re-run's response, and the document
+cache, which stores no response with a `Set-Cookie`, then kept the refreshed
+page out, so later requests kept getting the stale one.
+
+**Now.** The re-run writes to a response of its own. It starts from what
+middleware ahead of the cache wrote to the response before `next()`, as a
+cache miss does, and is stored by the same rules: its headers are kept with
+the entry, and a cookie it sets keeps the refreshed page out of the cache. The
+visitor's `STALE` response carries the stored entry and the visitor's own
+writes. An `invalidateClientCache()` in the re-run rotates no client's state
+cookie, as in a stale `cache()` refresh. A loader that middleware ahead of
+the cache started through `getRequestContext().use()` runs again in the
+re-run, as after a rewrite: its side effects happen twice per stale hit, and
+if it reads the route's params, the refreshed page holds them where a cache
+miss reuses the run that started before the match. No change in your code.
+
+### Fixed: global middleware keeps the `STALE` response while a stale document cache entry re-runs
+
+**Before.** On a stale hit, `createDocumentCacheMiddleware()` returns the
+stored entry and re-runs the rest of the middleware chain in the background
+through its `next()`. That re-run shared the response the visitor's chain
+held, so when a global middleware's post-`next()` work outlasted the re-run:
+
+- A global middleware ahead of the cache that returns nothing after
+  `await next()` answered with the re-run's response, whose body the cache had
+  already read into the store: the request failed with
+  `TypeError: Body is unusable: Body has already been read`.
+- A header that middleware ahead of the cache set after `next()`
+  (`ctx.header()`, `ctx.headers`) went to the re-run's response, not the
+  visitor's.
+- A header that a global middleware after the cache set before `next()`, past
+  an `await`, landed on the visitor's `STALE` response instead of the
+  refreshed entry.
+- The re-run's `handler-classify` entry reached the visitor's
+  `Server-Timing`.
+
+**Now.** The re-run builds its own response. The middleware ahead of the
+cache sees the `STALE` response after `next()`, writes land on it, and the
+re-run's headers go to the refreshed entry. No change in your code.
+
+### Fixed: a middleware that answers while its `next()` still runs keeps its answer
+
+**Before.** A middleware that settled while the `next()` it called was still
+running shared its response with the render it abandoned. It may have
+returned or thrown its own `Response`, thrown an error, or thrown or returned
+a `rewrite()`, which after `next()` is an error. Examples are a timeout
+fallback (`Promise.race([next(), timeout])`), a fire-and-forget `next()`, and
+a throw that a middleware ahead catches. When a middleware ahead was still
+working after `next()` once that render finished, the outcome depended on
+timing:
+
+- A middleware ahead that returns nothing after `await next()` could answer
+  with the abandoned render's page instead of the fallback, or instead of the
+  fallback it answered a caught error with.
+- A header that a middleware ahead set after `next()` could land on the
+  abandoned render's response and be lost.
+
+```ts
+const timeoutFallback: Middleware = (ctx, next) =>
+  Promise.race([
+    next(),
+    new Promise<Response>((resolve) =>
+      setTimeout(
+        () => resolve(new Response("Try again", { status: 503 })),
+        2000,
+      ),
+    ),
+  ]);
+```
+
+**Now.** The middleware ahead get what the middleware settled with: its
+`Response`, which they see after `next()` and write on, or its error, which
+they can catch and answer with a fallback. The abandoned render builds its
+own response, which nothing serves. A middleware that waits for its `next()`
+behaves as before. No change in your code.
+
+### Fixed: a stale `cache()` record a PPR shell recapture reads refreshes under `cache()` rules
+
+**Before.** When a `ppr` route's shell capture read a stale `cache()` record,
+the background refresh it started rendered under the capture's guard instead
+of the `cache()` rules. A loader that a cached handler awaits may read
+`headers()` or `cookies()` under `cache()`, but in that refresh the read threw,
+the refresh failed with `[RSC] Handler error … cannot be called while
+capturing a shared shell`, and the record was not rewritten. A document served
+from the shell does not read the record; its recapture does. So each
+recapture replayed the stale record, and the page showed the old content
+until the record expired or a request outside the shell refreshed it.
+
+**Now.** The refresh renders as any other background refresh of the record,
+under `cache()` rules, and the next recapture replays the refreshed record.
+The capture itself still refuses those reads. No change in your code.
+
+### Fixed: a cached handler's `ctx.dynamic()` in a background refresh no longer refuses the PPR shell capture that started it
+
+**Before.** When a `ppr` route's shell capture read a stale `cache()` record,
+the background refresh it started re-ran the cached handler, and a
+`ctx.dynamic()` call there refused the capture, with the warning
+`Shell capture … was refused: ctx.dynamic() was called while capturing the
+shared shell`. The capture had not run that handler: it replayed the record,
+as a fresh `cache()` HIT does, and a fresh HIT's capture is stored. So the
+route kept its old shell, or had none and served each request as a MISS, for
+as long as its recaptures read the record stale: with `cache({ ttl: 0 })`
+until the shell expired, otherwise until a recapture found the record
+refreshed.
+
+**Now.** The refresh's `ctx.dynamic()` reaches neither the capture nor the
+visitor's request; it renders the record only. A recapture over a stale
+record stores the shell as one over a fresh record does. `ctx.dynamic()` in
+the capture's own render still refuses it. No change in your code.
+
+### Fixed: a `"use cache"` function that takes `getRequestContext()` no longer fails writes outside its body
+
+**Before.** A `"use cache"` function called with the request context
+(`getRequestContext()`) as an argument marked that context while its body ran
+on a miss. The request context's writers check that mark: `set()`,
+`header()`, `setCookie()`, `deleteCookie()`, `setStatus()`, `onResponse()`,
+`setLocationState()`, `cookies().set()` and `.delete()`, and a handler's
+`ctx.setTheme()` and `ctx.setLocationState()`. So a write from code running
+beside the body threw `ctx.set() cannot be called inside a "use cache"
+function`. That included the PPR shell capture and the stale `cache()`
+record's background refresh the request started, whose writes check the
+request's context: the refresh failed and the record stayed stale, and the
+capture rendered the route's error boundary and stored it as the shell every
+later visitor got. A capture or a HIT tail that passed its own context did
+not check the mark, so the same code threw on a MISS only.
+
+**Now.** The request context is not marked as an argument, as it already was
+not when the body reached it through `getRequestContext()`. A write made in
+the body's own async chain still throws, on every pass. A handler or
+middleware `ctx` argument keeps its mark. No change in your code.
+
+### Fixed: a `cache()` route whose handler reads its own loader shows the loader's handle values once
+
+**Before.** Under `cache({ ttl, swr })`, a route or layout handler that
+awaited its own loader, declared with `loader()` (`await ctx.use(ProductLoader)`),
+showed that loader's handle values twice on every cache HIT after a stale
+HIT's background refresh rewrote the record: duplicated breadcrumbs, meta
+tags or any other `useHandle` value the loader pushes. The refresh skips
+loaders, so the handler's read ran the loader as a handler-invoked loader,
+and the record kept its pushes; each HIT then replayed them and the loader's
+live run pushed them again. On a client-side navigation that kept the layout
+mounted, the record written for the navigation already held them, so the
+first HIT showed them twice. The refresh also ran such a loader's body
+instead of reading its own `cache()`. And a layout declared inside a route
+that owns loaders had its handler's handle values filed under the route by
+the refresh, and by the build of a `Prerender` route, so after either they
+came in another order than on a live render.
+
+**Now.** The refresh starts a loader the handler reads as the route declares
+it, its own `cache()` included, as the first render does, so the record holds
+what that render's record holds and every HIT shows the values once. Loaders
+no handler reads still do not run in the refresh. Because such a loader's
+own `cache()` is read again, the refreshed record also carries that
+`cache()`'s tags, as the first render's does, so invalidating one of them
+evicts the route record as well; before, the refreshed record lost them. The
+refresh and the `Prerender` build file a layout's handle values under that
+layout, as a live render does. No change in your code.
+
+### Fixed: a PPR shell capture whose handler fails stores no error page as the shell
+
+**Before.** A `ppr` route's background shell capture runs the route's
+handlers again. When a route, layout or parallel slot handler threw (or threw
+`notFound()`) during the capture only, while the visitor's render of the same
+request succeeded, for example because an upstream failed for a moment, the
+capture stored the boundary that caught it as the shell: a declared
+`errorBoundary()` or `notFoundBoundary()`, or the default error page. Every
+later document request was a HIT that served that page with a 200 until the
+shell expired or a recapture replaced it, and client navigations replayed it
+the same way.
+
+**Now.** The capture stores nothing and reports the failure through
+`onError`, and the route keeps serving MISSes; the next capture after the
+key's backoff stores the healthy page. A stale shell whose recapture fails
+this way keeps serving until its `ttl` + `swr` ends (a build-time shell,
+until a recapture stores), as a failed `cache()` refresh does, and the
+recaptures log and call `onError` once per backoff window: when you delete a
+page, invalidate its tag. A render that fails for the visitor too was never
+captured, and still is not. No change in your code.
+
+### Fixed: a `cache()` route's background re-render runs no intercept loader that nothing reads
+
+**Before.** With an intercept open, the background re-render that writes a
+`cache()` record ran every loader the intercept declares with `loader()`: the refresh a stale HIT starts under
+`cache({ ttl, swr })`, and the re-render that writes the record of a
+client-side navigation that kept the layout mounted. The record never holds a
+loader's value or its handle values, so each of those runs was thrown away:
+one more call to your backend per re-render, its side effects again, and a
+failing loader reported to `onError` a second time.
+
+**Now.** The re-render runs only the intercept loaders its handler reads
+with `ctx.use()`, as it already did for the route's own loaders, and starts
+each as the intercept declares it. The record, its handle values and its tags
+are unchanged, and a loader the intercept's handler reads still shows its
+handle values once. The re-render no longer emits `loader.start`,
+`loader.end`, `loader.error` or `revalidation.decision` telemetry for those
+intercept loaders, and an intercept loader with its own `cache()` is refreshed
+by its next live read rather than by the re-render, as the route's own loaders
+already are. No change in your code.
+
+### Fixed: a `cache()` route's background re-render under an intercept no longer runs the intercepted route's handler
+
+**Before.** With an intercept open over a route under `cache()`, the
+background re-render that writes the intercept's record (the refresh a stale
+HIT starts under `cache({ ttl, swr })`, and the re-render that writes the
+record of a client-side navigation that kept the layout mounted) also rendered
+the intercepted route's own page, which a render under an intercept skips. Its
+handler, and any loader it reads, ran on every such re-render. The record
+stored that page, so every HIT from it sent the page's payload, which the
+browser never shows. The record also carried the page's `cacheTag()`s, which
+a record the visitor's own render wrote does not, so `revalidateTag()` on one
+of them evicted the intercept's record only when a re-render had written it.
+
+**Now.** The re-render skips the intercepted route's page as the visitor's
+render does and writes the record a MISS writes: the record and its HITs no
+longer carry the route's page or its tags. What the intercept shows, and the
+page under it, are unchanged. No change in your code.
+
+### Fixed: `onError` reports `isPartial: true` for an error in the background re-render a navigation starts
+
+**Before.** When a handler threw in the background re-render of a `cache()`
+record (the refresh a stale HIT starts under `cache({ ttl, swr })`, and the
+re-render that writes the record of a client-side navigation that kept the
+layout mounted), `onError` received `isPartial` unset, even when a client
+navigation, an intercept included, started the re-render. The same error in
+the navigation's own render reports `isPartial: true`, so an `onError` that
+tells navigation failures from document failures filed these as document
+failures.
+
+**Now.** The errors the re-render's segment walk catches (a handler that
+throws) carry the `isPartial` of the request that started it, as that
+request's own render reports it: `true` for a client navigation, unset for a
+document request. A streamed (`loading()`) handler's rejection still reports
+it unset, as it does in the navigation's own render. No change in your code.
+
+### Fixed: an intercept handler that throws in a `cache()` record's background re-render reaches `onError`
+
+**Before.** When an intercept's own handler threw only in the background
+re-render of its `cache()` record (the refresh a stale HIT starts, or the
+write of a navigation that kept the layout mounted), the re-render failed and
+wrote nothing, as intended, but neither `onError` nor the `handler.error`
+telemetry event heard of it. The same throw in a route or layout handler, or
+in the intercept's own handler on a navigation, is reported.
+
+**Now.** It is reported as on a navigation (`phase: "handler"`,
+`isPartial: true`), and the re-render still writes nothing, so the stale
+record keeps serving. No change in your code.
+
+### Fixed: a `"use cache"` function that returns a server component reading `cookies()` or `headers()` no longer serves one visitor's value to the next
+
+**Before.** A server component that a `"use cache"` function returns renders
+when the value is stored. That render ran outside the guard that makes
+`cookies()` and `headers()` throw inside a cached function, so the read went
+through: the entry stored the first visitor's value, and every later request
+was served it until the entry expired. A stale entry's background refresh
+stored the value of the visitor whose request triggered it. A write through a
+`ctx` the component received (`ctx.set()`, `ctx.headers.set()`) was not
+refused there either, and was lost on a hit.
+
+```tsx
+async function Session() {
+  const user = cookies().get("session")?.value;
+  return <span>{user}</span>;
+}
+
+async function Account() {
+  "use cache";
+  return <Session />; // stored with the first visitor's session
+}
+```
+
+**After.** What the function returns is encoded once, inside its guard, on a
+miss and on a refresh, and a miss renders the decoded copy of it, as a hit
+does. Every read and write the guard refuses in the function body is refused
+in the returned tree too, with the same error: `cookies()`, `headers()`,
+`ctx.request.headers`, a `{ cache: false }` `ctx.get()`, the theme reads,
+`ctx.rewrittenFrom`, a loader the tree reads whose run made one of those
+reads, and the `ctx` writers. A refused read fails the request as the same
+read in the body does: at the value's root the call throws, and below the
+root that part renders as an error, to its nearest error boundary. Nothing is
+stored, the refusal is logged and goes to `onError` (phase `"cache"`,
+category `cache-write`, or `stale-revalidation` for a refresh), and a stale
+entry keeps serving. A read behind state the page's render could reach
+before the encode did, such as a `React.lazy` or a memoizing thenable created
+in the function, is refused the same way; rendering the value twice had let it
+through.
+
+One case is not covered yet: a handle value the function pushes with
+`ctx.use(Handle)` that holds a lazy component or a memoized promise. A handle
+value that reads the request directly is refused and not stored, but a cached
+function should not push lazy state that reads the request.
+
+Server components that read only their props, client components, and nested
+`"use cache"` calls and `cacheTag()` in the returned tree work as before. A
+value Flight cannot encode (a function, a class instance) in the data the
+function returns is not stored and returns the live value, as before; one
+inside a promise in that data now rejects that promise, as it would on a hit.
+A miss now returns a copy of the value, as a hit always did, and returns once
+the copy's root has arrived: a server component at the root of the value
+renders before the call resolves, not in the page's render. Any other write
+a miss skips (a component in the value that throws) is now logged too, as a
+refresh's already was.
+
+If your app returns such a component, read the value outside the cached
+function and pass it in (it becomes part of the key), or render the component
+outside the cached function:
+
+```tsx
+async function Account(user: string | undefined) {
+  "use cache";
+  return <span>{user}</span>;
+}
+
+// in the handler
+<div>{await Account(cookies().get("session")?.value)}</div>;
+```
+
+### Fixed: a `cache()` HIT under an intercept runs the intercept's loaders, not the intercepted route's
+
+**Before.** With an intercept open over a route under `cache()`, a HIT of the
+intercept's record also ran the loaders the intercepted route declares, which
+the MISS skips with the route's page. A route loader that nothing under the
+intercept reads ran on every HIT: one more call to your backend, its side
+effects, and its `onError` report. Its segment was listed in the response. A
+loader that the route and the intercept both declare ran once, as the
+route's, so the handle values it pushes (a breadcrumb read with `useHandle`)
+showed on the MISS and were missing on every HIT. The intercept variant a
+`Prerender()` route bakes was served the same way.
+
+**Now.** A HIT runs only the intercept's loaders, as the MISS does: it shows
+every handle value the MISS shows, and the route's loaders neither run nor
+appear in the response. No change in your code.
+
+### Fixed: a `cache()` HIT lists a segment's handle values in the order the first render does
+
+**Before.** Under `cache()`, where a route's, a layout's or an intercept's
+handler and its loaders both push to a handle (a breadcrumb read with
+`useHandle`), every HIT listed the loader's value after the handler's, while
+the render that wrote the record listed a value the loader pushed before its
+first `await` ahead of the handler's. Breadcrumbs reordered between the first
+visit and every later one: `["layout", "shared-loader", "modal", "index"]`
+became `["layout", "modal", "shared-loader", "index"]`. A `Prerender()`
+route's page, a PPR shell HIT and the navigation that replays its shell
+listed a live loader's value the same way.
+
+**Now.** A HIT lists them as the first render does: a value the loader pushes
+before its first `await` comes ahead of the handler's, one it pushes after an
+`await` behind it, whether the record was written by that render or by a
+background refresh. The fill after a `prefetch: false` prefetch keeps its
+order: it lists the deferred loader's value after the handler's, from a
+record or not. No change in your code.
+
+### Fixed: an intercept over a `Prerender()` route no longer sends the route's page
+
+**Before.** The intercept variant a `Prerender()` route bakes, at build and on
+the dev server, stored the route's whole page next to the intercept: the
+route's handler output, its own layouts and parallel slots, and the handle
+values they push. A render under an intercept skips all of them. Every
+client-side navigation that opened the intercept from the bake sent the
+page's payload, which the browser never shows, and the page's handle values.
+A request that kept nothing mounted also listed the page's segments as
+matched, so a breadcrumb read with `useHandle` showed the page's values over
+the intercept.
+
+**Now.** The variant stores what a render under the intercept resolves, as a
+`cache()` intercept record does: the layouts above the route and the
+intercept, with their handle values. What the intercept shows, and the page
+under it, are unchanged, and a direct load of the URL still serves the full
+page. The next build bakes the new variant. No change in your code.
+
+### Fixed: a navigation to a `Prerender()` route keeps the layout on screen when the params change
+
+**Before.** A client-side navigation served from a `Prerender()` route's bake,
+at build or on the dev server, sent every segment the browser held again when
+the params changed, the layouts above the route included, with their handle
+values. A `/list` to `/item/1` navigation, or one that opens an intercept over
+`/item/1`, replaced the layout on screen with the copy the build rendered, and
+its breadcrumbs read with `useHandle` with the build's values. A live route
+keeps that layout and its values.
+
+**Now.** The layout stays as it is on screen, with its handle values, as on a
+live route: layouts stay held on navigation, even when the params change. The
+route's own segments are sent as before. A layout whose `revalidate()` asks
+for a re-render when the params change gets the baked copy, as it gets a live
+render on a live route. No change in your code.
+
+### Fixed: a navigation served from a `cache()` record keeps the layout's handle values on screen
+
+**Before.** A client-side navigation served from a route's `cache()` record
+kept the layouts the browser held, but sent their handle values again from
+the record. A `/list` to `/item/1` navigation, or one that opens an intercept
+over `/item/1`, replaced the breadcrumbs a held layout pushed, read with
+`useHandle`, with the values the record stored, which differ from the ones on
+screen when a crumb carries render-time data. A loader that reads a handle
+with `ctx.get()` after `await ctx.rendered()` read those stored values too.
+An uncached navigation sends none of them.
+
+**Now.** A held layout keeps its handle values, as on an uncached navigation:
+the navigation replays the stored handler values of the segments it sends
+only. A layout whose `revalidate()` asks for a re-render is sent with its
+stored values, as before, and a `ppr` route's stored copies of a loader's
+pushes still follow the loader. A loader that reads a handle with `ctx.get()`
+after `await ctx.rendered()` no longer sees a held layout's values on a
+navigation served from the record, as on an uncached one: read the value in
+a loader of its own, or give the layout a `revalidate()` that re-renders it.
+A document request is unchanged. No change in your code.
+
+### Fixed: an orphan layout's parallel slot follows its `revalidate()` on a navigation served from `cache()` or a `Prerender()` bake
+
+**Before.** A parallel slot declared in an orphan layout (a layout with no
+routes, declared among a layout's children or a route's) had its
+`revalidate()` rules ignored when a navigation was served from a `cache()`
+record or a `Prerender()` bake. A held slot whose rule asked for it, such as
+`revalidate(() => true)` on an `/item/1` to `/item/2` navigation, stayed as it
+was on screen, where a live route sends it. Under `cache()` the same happened
+when the params did not change, and the slot of an orphan layout inside a
+`path()` whose rule returned `false` was sent again when the params changed,
+where a live route keeps it. A layout's own slot that shared its name with a
+slot of one of its orphan layouts answered to the orphan's slot's rules on
+those navigations instead of its own.
+
+**Now.** The slot is sent or kept as its rules say, as on a live route, and a
+layout's own slot that shares its name with an orphan's slot keeps its own
+`revalidate()` rules. Two `Prerender()` behaviours are unchanged: a bake
+consults no `revalidate()` rule of a held layout or slot when the params did
+not change, and it sends a route's own segments (an orphan layout inside the
+`path()` and its slots included) whenever the params changed. No change in
+your code.
+
+### Fixed: a navigation reports parallel slot and orphan layout handlers in Server-Timing and traces, as the document does
+
+**Before.** A client navigation or an action's revalidation left out two
+kinds of handler that the document request reports. With `debugPerformance`
+on, it sent no `handler:<id>` Server-Timing row (`d2-handler-…`) for a
+parallel slot's handler (`parallel({ "@side": … })`) or for a layout declared
+among a route's children (an orphan layout, such as a layout after a bare
+`cache()`). With `tracing` on, a slot's handler had no `rango.handler` span.
+A navigation to a route served from the static store (`Static()`) sent a
+`handler:<id>` row for a handler that did not run, where the document sent
+none. In development, a slot handler under `loading()` that returned a
+`Response` (e.g. `redirect()`) printed the "returned a Response … NOT sent as
+an HTTP redirect" warning on navigations only, not on document loads.
+
+**Now.** Every request reports the handlers it runs the same way:
+
+- A parallel slot's handler has its `handler:<parallel id>.<slot>` row and a
+  `rango.handler` span (`rango.handler_id` is `<parallel id>.<slot>`).
+- An orphan layout's handler has its `handler:<id>` row.
+- A route served from the static store has no `handler:<id>` row (a static
+  hit runs no handler), as on the document.
+- The dev warning for a streamed slot handler's `Response` prints on document
+  loads too.
+
+What renders is unchanged. No change in your code. A dashboard that reads the
+per-segment rows of navigations sees the slot and orphan rows appear, and a
+`Static()` route's row disappear (documents never had it).
+
+### Fixed: an intercept over a `Prerender()` route shows only the intercept the navigation selected
+
+**Before.** When several intercepts target a `Prerender()` route, a
+client-side navigation selects one of them: the innermost whose `when()`
+passes. The build cannot evaluate `when()`, so the intercept variant it bakes
+(and the one the dev server renders) holds every intercept that targets the
+route, and every navigation served from it sent all of them with their handle
+values. With two intercepts in different slots guarded by different `when()`
+conditions, the one the navigation did not select rendered in its slot next
+to the selected one. A request that kept nothing mounted also listed the
+other intercepts as matched, so a breadcrumb read with `useHandle` showed
+their values. The same happened with `@outer` on the root layout and `@modal`
+on the layout that holds the route, where a live render shows only `@modal`.
+The build also ran and baked the intercepts declared in the route's own
+layouts, which a navigation never selects.
+
+**Now.** A navigation served from the bake carries only the intercept it
+selected, with that intercept's handle values, as a live render does. The
+build bakes only the intercepts a navigation can select. Two intercepts on one
+layout that fill the same slot share that slot's segment, so the bake cannot
+tell them apart: neither is baked, and they render live, as on a route that is
+not pre-rendered. No change in your code.
+
+### Fixed: a `cache()` route with several intercepts serves each navigation the intercept it selected
+
+**Before.** When several intercepts target one route under `cache()`, each
+with its own `when()`, a client-side navigation selects one of them. The
+intercept's record was keyed by the URL alone, so the record the first
+intercept stored answered every intercept navigation to that URL. With
+`@modal` selected from /list and `@drawer` from /other, opening the item from
+/other after /list returned the `@modal` slot and its content: the browser
+found the `@drawer` slot missing, printed "Missing 1 segments. Refetching
+all...", and fetched the whole page again, a second request on every such
+navigation. Two intercepts on one layout that fill the same slot share its
+segment id, so there the browser showed the other intercept's content.
+
+**Now.** Each intercept keeps its own record, and a navigation gets the
+intercept it selected in one request, from that intercept's record once one is
+stored. `updateTag()` and `revalidateTag()` on the `cache()` tags evict every
+intercept's record. Records stored before this release are not read again: a
+new router version already misses them on `CFCacheStore` and
+`VercelCacheStore`; on a store without the version in its keys
+(`MemorySegmentCacheStore`, a custom store), each intercept navigation renders
+once and stores a new record, and the old one expires with its TTL. No change
+in your code.
+
+### Fixed: under `cache({ key })`, a document request and a plain navigation never render an intercept's record
+
+**Before.** A `cache()` with its own `key()` stored one record per `key()`
+result, whatever the request kind: a document request, a client navigation
+and every intercept navigation to the URL read and wrote the same record. An
+intercept's record holds the layouts and the intercept's slot, not the route's
+page. So after an intercept navigation stored its record, a document GET of
+the item URL, or a navigation from a page where the intercept's `when()`
+fails, rendered the intercept and no page. With two intercepts selected by
+`when()`, each read the other's record. Under a layout's
+`loading(..., { ssr: false })`, which a document renders without its fallback,
+a navigation after a document load showed no fallback while the page
+streamed, and a document load after a navigation streamed the fallback.
+
+```ts
+cache({ ttl: 600, key: (ctx) => `page:${ctx.url.pathname}` }, () => [
+  layout(ShopLayout, () => [
+    path("/list", ListPage),
+    path("/item/:id", ItemPage, { name: "item" }),
+    intercept("@modal", ".item", ItemModal, {
+      when: ({ from }) => from.url.pathname === "/list",
+    }),
+  ]),
+]);
+// /list -> /item/1 stored the intercept's record; a reload of /item/1
+// then rendered ShopLayout with ItemModal and no ItemPage.
+```
+
+**Now.** The `key()` result replaces the URL part of the key, never the
+request kind: a document request, a navigation and each intercept navigation
+keep their own record, as under the default key. The `key()` still decides
+sharing within one kind, so a `key()` that ignores a param still shares one
+document record (and one navigation record) across its values.
+`updateTag()` and `revalidateTag()` evict every kind's record. The stored key
+gains the kind as its last part (`key:page%3A%2Fitem%2F1` is now
+`key:page%3A%2Fitem%2F1|doc`, `|partial` or `|intercept%3A…`), so records
+stored before this release are not read again: `CFCacheStore` and
+`VercelCacheStore` already miss them under the new router version; on
+`MemorySegmentCacheStore` or a custom store each request kind renders once and
+stores a new record, and the old one expires with its TTL. On a `ppr` route
+under a keyed `cache()`, the first navigation after a document request is now
+answered from the PPR shell (`x-rango-ppr-replay: HIT`) instead of the
+document's record (`BYPASS; reason=explicit-cache-hit`), as on a `ppr` route
+without a `key()`. The PPR shell partition and a response route's entry are
+unchanged. No change in your code.
+
+### Added: the build warns when an intercept over a `Prerender()` route renders live
+
+An intercept a navigation selects over a `Prerender()` route is served from
+the build's bake, except in three cases where the build does not bake it and
+it renders live: two intercepts on one layout fill the same slot; its handler
+or layout returned a `Response` at build time; or it targets the route by its
+name inside an `include()` (`"item"` for the route `"shop.item"`, or for a
+route named `"item"` in an unnamed `include()`), which only a fallback
+selects and the build does not bake. Live, its handler
+runs per request with the request's context, so a handler that only works
+with `BuildContext` (a file read, say) fails there. Until now nothing said so.
+
+`vite build` now prints one warning per route and slot (a route in an unnamed
+`include()` is named by its URL):
+
+```
+[rango] Prerender route "item": intercept @modal is not pre-rendered: two intercepts on one layout fill @modal. A navigation that selects it renders it live, and its handler runs per request without BuildContext. To pre-render it, give each intercept its own slot.
+```
+
+Each warning ends with what pre-renders the intercept: give each intercept its
+own slot, return a node from its handler or layout at build time, or declare it
+inside the `include()` as `".item"`. What renders is unchanged, and no change
+in your code is needed.
+
+### Fixed: an orphan layout's handle values belong to that layout
+
+**Before.** An orphan layout (a layout with no routes, declared among a
+layout's children or a route's) whose handler pushed to a handle with
+`ctx.use(Handle)`, and which declared no loader of its own, filed its values
+under the segment that ran before it: the parent layout on a document or on a
+navigation that re-ran that layout, the route when a route declared the
+layout. A `cache()` record and a `Prerender()` bake stored them there too. A
+breadcrumb read with `useHandle` listed a route's orphan layout's value after
+the route's own, though the layout wraps the route. On a navigation that kept
+the parent layout mounted, when the orphan's `revalidate()` re-rendered it,
+the push threw `Handle "…" used outside of handler context` and the
+navigation rendered an error boundary.
+
+**Now.** The orphan layout's values are filed under the orphan layout on every
+request, as a regular layout's are: the document, every navigation, a
+`cache()` record and its HITs, and a `Prerender()` bake (the next build bakes
+them under the layout). No change in your code.
+
+### Fixed: an orphan layout that re-runs and pushes nothing clears its handle values
+
+**Before.** An orphan layout (a layout with no routes, declared among a
+layout's children or a route's) that re-ran on a navigation or a server
+action, and whose handler pushed nothing to a handle this time, kept the
+values it pushed on the previous request: a breadcrumb read with
+`useHandle` still listed its old crumb. The layout re-runs when its
+`revalidate()` says so, and, when it is declared inside a route's `path()`,
+by default on every action and whenever the route's params or search
+change. A regular layout that re-runs and pushes nothing drops its old
+values.
+
+**Now.** The orphan layout replaces its handle values whenever its handler
+re-runs, as a regular layout does: with what it pushes now, or with nothing.
+No change in your code.
+
 ### Fixed: Back/Forward onto an intercept entry restores it over its own source page
 
 **Before.** The browser's history cache kept one entry per intercepted URL,
@@ -43,6 +820,61 @@ boundary, never saw the error.
 **Now.** `useAction(action).error` holds the error once the response finishes
 streaming. Until then the action counts as in flight, as a successful one
 does: `useNavigation().state` reads `"loading"`. No change in your code.
+
+### Fixed: an action that throws into an `errorBoundary()` shows its write above the boundary
+
+**Before.** A layout above a route's `errorBoundary()` shows a loader value,
+such as a cart count. An action writes the cart, then throws, and the user
+stays on the page. The boundary replaced the route, but the layout kept the
+count from before the write, and so did the next page under that layout
+that a link led to, while another tab and a fresh load showed the write. The
+error-boundary response carried the boundary alone: no loader above it ran,
+and the response left out the parallel slots the page held, so the handle
+values a slot pushed (a breadcrumb, a `Meta` value) were dropped. Under a
+boundary declared in a routeless (orphan) layout, it listed that layout
+alone, so the handle values of every layout above it were dropped too.
+
+**Now.** The error-boundary response is the action's own revalidation, cut at
+the boundary. Above it, it re-runs what a successful action would: every
+loader on the page, as its `revalidate()` decides (`isAction(ref)` and
+`actionId` match as on a success, also in a production build), and any
+layout or slot a `revalidate()` opts in. At the boundary it carries the
+boundary, and nothing at or below it runs. A route's `errorBoundary()`
+replaces the route: its handler and loaders do not run. A layout's
+`errorBoundary()` replaces what the layout renders in its outlet: the
+layout's own loaders, slots and orphan layouts revalidate as on a success,
+and nothing inside the outlet runs. The boundary and the fresh data commit
+together, the next page under the layout keeps them, the page's slots keep
+their handle values, and the handle values the re-run loaders push carry the
+write, as their data does. The boundary now shows once the slowest loader
+above it has answered, as a successful action's response does. A loader
+above it that throws reports to `onError` with phase `"loader"` and shows its
+error where it is read, as on a success.
+
+A `revalidate()` above the boundary now runs on a thrown action, with
+`actionResult` set to the thrown value, as thrown (usually an `Error`). A
+predicate that reads fields of `actionResult` must check their shape first.
+Unguarded, a read that throws logs `[revalidate] ... threw` and the segment
+takes the default decision:
+
+```ts
+loader(CartLoader, () => [
+  revalidate(({ actionResult, defaultShouldRevalidate }) =>
+    Array.isArray(actionResult?.items)
+      ? actionResult.items.length > 0
+      : defaultShouldRevalidate,
+  ),
+]);
+```
+
+A `redirect()` a `revalidate()` above the boundary throws now redirects, as
+it does after a successful action. It used to show the boundary.
+
+Unchanged: with no declared boundary the router's default error boundary
+replaces the page alone, an action sent from an intercept gets the boundary
+alone, and a form post without JavaScript renders as before. When the
+revalidation returns nothing or fails with anything but a redirect, the
+boundary shows alone, as before; in development a failure logs a warning.
 
 ## 0.27.0 (2026-10-23)
 

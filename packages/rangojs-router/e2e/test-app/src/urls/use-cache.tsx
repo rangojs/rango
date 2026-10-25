@@ -1,6 +1,7 @@
 import { urls, Meta, Breadcrumbs } from "@rangojs/router";
 import { isCachedFunction } from "@rangojs/router/cache-runtime";
 import { Link, Outlet } from "@rangojs/router/client";
+import { Suspense, type ReactElement } from "react";
 import { getBasicTimestamp, getDataForCategory } from "./use-cache-data.js";
 import {
   getShortCachedData,
@@ -20,6 +21,8 @@ import {
   getSwrTestData,
   getSwrCtxData,
   getSwrActionData,
+  getReturnedLazySession,
+  getReturnedTreeConfig,
 } from "./use-cache-fn.js";
 import { InterleaveActionButton } from "../components/InterleaveActionButton.js";
 import { RevalidateButton } from "../components/RevalidateButton.js";
@@ -71,6 +74,24 @@ const loaderSegmentPages = urls(({ path }) => [
     { name: "loaderSegmentPage", search: { page: "number?" } },
   ),
 ]);
+
+/**
+ * Rendered in the page's Flight render, so getReturnedTreeConfig is warm
+ * (React.cache) by the time the page renders the cached value.
+ */
+async function ReturnedLazyPage({
+  probe,
+}: {
+  probe: string;
+}): Promise<ReactElement> {
+  await getReturnedTreeConfig();
+  const block = await getReturnedLazySession(probe);
+  return (
+    <main data-testid="returned-lazy-page">
+      <Suspense fallback={<i>loading</i>}>{block}</Suspense>
+    </main>
+  );
+}
 
 /**
  * "use cache" test routes.
@@ -698,6 +719,14 @@ export const useCachePatterns = urls(
         );
       },
       { name: "useCacheTest.guardCtxHeadersSet" },
+    ),
+    // A lazy in the returned value reads the session cookie: the value is
+    // encoded inside the "use cache" guard and the page renders its decoded
+    // copy, so the read refuses and no visitor's session is stored.
+    path(
+      "/returned-lazy/:probe",
+      (ctx) => <ReturnedLazyPage probe={ctx.params.probe} />,
+      { name: "useCacheTest.returnedLazy" },
     ),
     // Repro: cached layout with child handler that calls ctx.set().
     // During revalidation the shared request context is stamped by the

@@ -63,7 +63,6 @@
  *
  * Handler Context:
  *   - handlerContext: Context passed to loaders
- *   - loaderPromises: Memoized loader promises
  *
  * Intercepts:
  *   - interceptResult: Detected intercept (if soft navigation)
@@ -118,16 +117,8 @@ import type {
 import type { HandlerContext, ResolvedSegment } from "../types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { InterceptResult } from "./router-context.js";
-
-/**
- * Action context passed to matchPartial
- */
-export interface ActionContext {
-  actionId?: string;
-  actionUrl?: URL;
-  actionResult?: any;
-  formData?: FormData;
-}
+import type { ResolutionPassInput } from "./segment-resolution/resolution-pass.js";
+import type { ActionContext } from "./types.js";
 
 /**
  * Match context containing all state for the match pipeline
@@ -160,7 +151,6 @@ export interface MatchContext<TEnv = any> {
 
   // Handler context (for loaders)
   handlerContext: HandlerContext<any, TEnv>;
-  loaderPromises: Map<string, Promise<any>>;
 
   // Route map for server-side ctx.reverse() resolution
   routeMap: Record<string, string>;
@@ -212,6 +202,24 @@ export function rendersLive(
   ctx: Pick<MatchContext, "isAction" | "stale">,
 ): boolean {
   return ctx.isAction || ctx.stale;
+}
+
+/** This match as the input of a revalidating resolution pass (resolution-pass.ts). */
+export function resolutionPassInput<TEnv>(
+  ctx: MatchContext<TEnv>,
+): ResolutionPassInput<TEnv> {
+  return {
+    context: ctx.handlerContext,
+    client: ctx.clientSegmentSet,
+    params: ctx.matched.params,
+    prevParams: ctx.prevParams,
+    request: ctx.request,
+    prevUrl: ctx.prevUrl,
+    nextUrl: ctx.url,
+    routeKey: ctx.routeKey,
+    actionContext: ctx.actionContext,
+    stale: ctx.stale,
+  };
 }
 
 /**

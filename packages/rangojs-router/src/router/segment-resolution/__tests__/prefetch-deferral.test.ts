@@ -903,7 +903,7 @@ describe("a deferred loader's registration", () => {
     const first = vi.fn(async () => "first");
     registerDeferredLoader(ctx, "deferred", "L0", first);
     registerDeferredLoader(ctx, "deferred", "R1", async () => "second");
-    expect(ctx._prefetchDeferral.deferredLoaders.get("deferred")).toEqual({
+    expect(ctx._deferredLoaders.get("deferred")).toEqual({
       owner: "L0",
       start: first,
     });
@@ -916,9 +916,7 @@ describe("a deferred loader's registration", () => {
     await expect(startDeferredLoader(ctx, "deferred")).resolves.toBe("value");
     expect(startDeferredLoader(ctx, "deferred")).toBeUndefined();
     expect(start).toHaveBeenCalledTimes(1);
-    expect(ctx._prefetchDeferral.deferredLoaders.get("deferred").started).toBe(
-      true,
-    );
+    expect(ctx._deferredLoaders.get("deferred").started).toBe(true);
   });
 
   it("leaves a read to the ordinary path when nothing is registered", () => {

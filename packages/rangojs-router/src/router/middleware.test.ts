@@ -1380,6 +1380,143 @@ describe("middleware", () => {
       expect(mwSpan).toBeDefined();
       expect(mwSpan!.status).toEqual({ code: 2, message: "kaboom" });
     });
+
+    describe("a run of the rest of the chain its middleware no longer waits for", () => {
+      /**
+       * ahead -> detaching -> after -> final. `detaching` returns its own
+       * Response while the next() it called runs (a stale document cache
+       * entry's re-run), or calls next() after it returned (`late`); the run
+       * has its own request context, as the re-run has its render pass.
+       * `ahead` finishes its post-next() work after that run settled.
+       */
+      it.each([
+        { late: false, forgiving: true },
+        { late: false, forgiving: false },
+        { late: true, forgiving: true },
+        { late: true, forgiving: false },
+      ])(
+        "builds its own response, and the middleware ahead keeps the one returned to it (%o)",
+        async ({ late, forgiving }) => {
+          let markRun = (_run: Promise<Response>): void => {};
+          const run = new Promise<Response>((resolve) => {
+            markRun = resolve;
+          });
+          const ahead: MiddlewareFn<unknown> = async (ctx, next) => {
+            const response = await next();
+            await run.catch(() => {});
+            ctx.header("x-ahead-post", "1");
+            return forgiving ? undefined : response;
+          };
+          const request = new Request("http://localhost/doc");
+          const context = () =>
+            createRequestContext({
+              env: {},
+              request,
+              url: new URL(request.url),
+              variables: {},
+            });
+          const runContext = context();
+          const detaching: MiddlewareFn<unknown> = async (_ctx, next) => {
+            const start = () =>
+              markRun(runWithRequestContext(runContext, next));
+            if (late) setTimeout(start, 0);
+            else start();
+            return new Response("own");
+          };
+          const after: MiddlewareFn<unknown> = async (ctx, next) => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            ctx.header("x-after-pre", "1");
+            const response = await next();
+            ctx.header("x-after-post", "1");
+            return response;
+          };
+          const response = await runWithRequestContext(context(), () =>
+            executeMiddleware(
+              [ahead, detaching, after].map(createMockEntry),
+              request,
+              {},
+              {},
+              async () => new Response("final"),
+            ),
+          );
+          const rerun = await run;
+          const read = async (r: Response) => ({
+            body: await r.text(),
+            ahead: r.headers.get("x-ahead-post"),
+            afterPre: r.headers.get("x-after-pre"),
+            afterPost: r.headers.get("x-after-post"),
+          });
+          expect({
+            response: await read(response),
+            rerun: await read(rerun),
+          }).toEqual({
+            response: {
+              body: "own",
+              ahead: "1",
+              afterPre: null,
+              afterPost: null,
+            },
+            rerun: {
+              body: "final",
+              ahead: null,
+              afterPre: "1",
+              afterPost: "1",
+            },
+          });
+        },
+      );
+
+      it("leaves the run of a middleware that throws while its next() runs off the response the middleware ahead catch into", async () => {
+        let markRun = (_run: Promise<Response>): void => {};
+        const run = new Promise<Response>((resolve) => {
+          markRun = resolve;
+        });
+        // Forgiving, its post-next() work outlasts the orphaned run.
+        const ahead: MiddlewareFn<unknown> = async (_ctx, next) => {
+          await next();
+          await run.catch(() => {});
+        };
+        const catcher: MiddlewareFn<unknown> = async (_ctx, next) => {
+          try {
+            return await next();
+          } catch {
+            return new Response("fallback", { status: 500 });
+          }
+        };
+        const thrower: MiddlewareFn<unknown> = async (_ctx, next) => {
+          markRun(next());
+          throw new Error("thrower");
+        };
+        const request = new Request("http://localhost/doc");
+        const response = await runWithRequestContext(
+          createRequestContext({
+            env: {},
+            request,
+            url: new URL(request.url),
+            variables: {},
+          }),
+          () =>
+            executeMiddleware(
+              [ahead, catcher, thrower].map(createMockEntry),
+              request,
+              {},
+              {},
+              async () => {
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                return new Response("final");
+              },
+            ),
+        );
+        const orphan = await run;
+        expect({
+          response: { status: response.status, body: await response.text() },
+          orphan: { status: orphan.status, body: await orphan.text() },
+        }).toEqual({
+          response: { status: 500, body: "fallback" },
+          orphan: { status: 200, body: "final" },
+        });
+      });
+    });
   });
 
   describe("collectRouteMiddleware", () => {

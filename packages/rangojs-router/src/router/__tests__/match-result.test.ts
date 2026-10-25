@@ -48,7 +48,6 @@ function createMockContext(
     routeKey: "test",
     localRouteName: "test",
     handlerContext: {} as any,
-    loaderPromises: new Map(),
     metricsStore: undefined,
     Store: {},
     interceptContextMatch: null,

@@ -63,3 +63,11 @@ export function validateUserRouteName(name: string): void {
     }
   }
 }
+
+/**
+ * The route key's last name segment ("item" for "shop.item"). An intercept
+ * that targets it is selected when none targets the full key (match-api.ts).
+ */
+export function localRouteName(routeKey: string): string {
+  return routeKey.slice(routeKey.lastIndexOf(".") + 1);
+}

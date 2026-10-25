@@ -37,6 +37,7 @@ import {
   finalizeResponse,
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
+import { WIRE } from "../wire-params.js";
 
 export interface LoaderErrorMeta<TEnv> {
   request: Request;
@@ -138,10 +139,10 @@ export async function handleLoaderFetch<TEnv>(
   variables: Record<string, any>,
   routeParams?: Record<string, string>,
 ): Promise<Response> {
-  const loaderId = url.searchParams.get("_rsc_loader");
+  const loaderId = url.searchParams.get(WIRE.loader);
 
   if (!loaderId) {
-    return createResponseWithMergedHeaders("Missing _rsc_loader parameter", {
+    return createResponseWithMergedHeaders(`Missing ${WIRE.loader} parameter`, {
       status: 400,
     });
   }
@@ -192,10 +193,10 @@ export async function handleLoaderFetch<TEnv>(
         // Preserves File objects and binary data.
         loaderFormData = await request.formData();
         // Extract params if provided via the special field
-        const paramsField = loaderFormData.get("_rsc_loader_params");
+        const paramsField = loaderFormData.get(WIRE.loaderParams);
         if (typeof paramsField === "string") {
           loaderParams = JSON.parse(paramsField);
-          loaderFormData.delete("_rsc_loader_params");
+          loaderFormData.delete(WIRE.loaderParams);
         }
       } else if (contentType.includes("application/json")) {
         const jsonBody = (await request.json()) as {
@@ -211,7 +212,7 @@ export async function handleLoaderFetch<TEnv>(
       });
     }
   } else {
-    const loaderParamsJson = url.searchParams.get("_rsc_loader_params");
+    const loaderParamsJson = url.searchParams.get(WIRE.loaderParams);
     if (loaderParamsJson) {
       try {
         loaderParams = JSON.parse(loaderParamsJson);

@@ -16,7 +16,7 @@ declare global {
  *
  * Read flow:  L1 hit → serve | L1 miss → L2 hit → serve + promote to L1 | both miss → render
  *             With `kvFallThrough`, an L1 copy a tag marker rejects reads as
- *             an L1 miss: L2 is checked against the same markers (see get(),
+ *             an L1 miss: L2 is checked against the same markers (see readL1(),
  *             "Tag invalidation"). Off by default: the rejected copy is a miss.
  * Write flow: L1 write + L2 write (both via waitUntil)
  *
@@ -485,6 +485,234 @@ interface KVResponseEnvelope {
   ta?: number;
 }
 
+type CFReadOp = "get" | "getItem" | "getResponse";
+
+/** The deadlines every KV envelope carries (ms epoch). */
+interface KVDeadlines {
+  s: number;
+  e: number;
+}
+
+/**
+ * A family read of CFCacheStore (`get`, `getItem`, `getResponse`, through
+ * readL1 and readKv): its keys, its KV envelope check, what an L1 or KV hit
+ * serves and the L1 entry a KV hit is promoted to. `kvMethod` names the KV
+ * read in errors and evictions.
+ */
+interface CFReadFamily<
+  E extends KVDeadlines,
+  B,
+  V,
+  Err extends CacheReadError | null,
+> {
+  family: "segment" | "item" | "response";
+  debugOp: CFReadOp;
+  /** What a failed read returns. */
+  readError: Err;
+  prefix: "" | "fn:" | "doc:";
+  version: KeyVersion;
+  kvMethod: string;
+  promoteLabel: string;
+  /** The corrupt-L1 label of a read that claims the revalidation. */
+  staleLabel: string;
+  /** Report a tag-marker-namespace key and miss (isReservedSegmentKey). */
+  rejectsReservedKeys: boolean;
+  validate(envelope: E): boolean;
+  /** An L1 hit's value: its parsed body, or the document's client Response. */
+  fromL1(body: B, shouldRevalidate: boolean, tags?: string[]): V;
+  tags(envelope: E): { tags?: string[]; taggedAt?: number };
+  /** A KV hit's value; throws when the envelope does not rebuild. */
+  fromKv(envelope: E, shouldRevalidate: boolean): V;
+  /**
+   * A KV hit's L1 entry: its body and headers, with promoteToL1's
+   * Cache-Control, the envelope's deadlines and its tag headers.
+   */
+  toL1(
+    envelope: E,
+    cacheControl: string,
+    tagHeaders: Record<string, string>,
+  ): Response;
+}
+
+/**
+ * Merge the internal tag headers (tagHeaderEntries) onto an existing Headers
+ * instance. The from-scratch paths spread them into an object-literal init;
+ * the document put/promote paths build a Headers first, so they .set() each
+ * entry instead — except `Cache-Tag`, which is APPENDED: a document author
+ * may have set their own Cache-Tag, and clobbering it would break their CDN
+ * purging. Append produces the comma-merged list CF expects.
+ */
+function setTagHeaders(
+  headers: Headers,
+  tagHeaders: Record<string, string>,
+): void {
+  for (const [name, value] of Object.entries(tagHeaders)) {
+    if (name === "Cache-Tag") headers.append(name, value);
+    else headers.set(name, value);
+  }
+}
+
+/**
+ * A JSON family's promoted L1 entry, marked HIT as set() marks it. A plain
+ * header record: building a Headers and set()-ing each entry costs the KV-hit
+ * path a second validation pass per header.
+ */
+function jsonL1Entry(
+  body: string,
+  e: KVDeadlines,
+  cacheControl: string,
+  tagHeaders: Record<string, string>,
+): Response {
+  return new Response(body, {
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": cacheControl,
+      [CACHE_STALE_AT_HEADER]: String(e.s),
+      [CACHE_EXPIRES_AT_HEADER]: String(e.e),
+      [CACHE_STATUS_HEADER]: "HIT",
+      ...tagHeaders,
+    },
+  });
+}
+
+const SEGMENT_READ: CFReadFamily<
+  KVSegmentEnvelope,
+  CachedEntryData,
+  CacheGetResult,
+  CacheReadError
+> = {
+  family: "segment",
+  debugOp: "get",
+  // A KV read TIMEOUT stays a miss: a bounded-latency degrade of a
+  // likely-healthy read, unlike a failed one.
+  readError: CACHE_READ_ERROR,
+  prefix: "",
+  version: "data",
+  kvMethod: "kvGetSegment",
+  promoteLabel: "[CFCacheStore] promoteSegmentToL1",
+  staleLabel: "get(revalidating)",
+  rejectsReservedKeys: true,
+  validate: (e) =>
+    typeof e.e === "number" && typeof e.s === "number" && e.d != null,
+  tags: (e) => e.d,
+  fromL1: (data, shouldRevalidate) => ({ data, shouldRevalidate }),
+  fromKv: (e, shouldRevalidate) => ({ data: e.d, shouldRevalidate }),
+  toL1: (e, cacheControl, tagHeaders) =>
+    jsonL1Entry(JSON.stringify(e.d), e, cacheControl, tagHeaders),
+};
+
+const ITEM_READ: CFReadFamily<
+  KVItemEnvelope,
+  { value: string; handles?: string },
+  CacheItemResult,
+  null
+> = {
+  family: "item",
+  debugOp: "getItem",
+  readError: null,
+  prefix: "fn:",
+  version: "data",
+  kvMethod: "kvGetItem",
+  promoteLabel: "[CFCacheStore] promoteItemToL1",
+  staleLabel: "getItem",
+  rejectsReservedKeys: false,
+  validate: (e) =>
+    typeof e.v === "string" &&
+    typeof e.e === "number" &&
+    typeof e.s === "number",
+  tags: (e) => ({ tags: e.t, taggedAt: e.ta }),
+  fromL1: (data, shouldRevalidate, tags) => ({
+    value: data.value,
+    handles: data.handles,
+    shouldRevalidate,
+    tags,
+  }),
+  fromKv: (e, shouldRevalidate) => ({
+    value: e.v,
+    handles: e.h,
+    shouldRevalidate,
+    tags: e.t,
+  }),
+  toL1: (e, cacheControl, tagHeaders) =>
+    jsonL1Entry(
+      JSON.stringify({ value: e.v, handles: e.h }),
+      e,
+      cacheControl,
+      tagHeaders,
+    ),
+};
+
+const RESPONSE_READ: CFReadFamily<
+  KVResponseEnvelope,
+  Response,
+  { response: Response; shouldRevalidate: boolean },
+  null
+> = {
+  family: "response",
+  debugOp: "getResponse",
+  readError: null,
+  prefix: "doc:",
+  version: "document",
+  kvMethod: "kvGetResponse",
+  promoteLabel: "[CFCacheStore] promoteResponseToL1",
+  // Never read: the document returns before the body read.
+  staleLabel: "getResponse",
+  rejectsReservedKeys: false,
+  validate: (e) =>
+    typeof e.b === "string" &&
+    typeof e.st === "number" &&
+    typeof e.e === "number" &&
+    typeof e.s === "number" &&
+    // stx is optional but, if present, must be a string (feeds Response).
+    (e.stx === undefined || typeof e.stx === "string") &&
+    // hd must be an array of [name, value] string tuples; a malformed
+    // shape would otherwise throw in `new Headers(hd)`. Validate it here
+    // so a faulty envelope is a fail-open MISS, never a thrown read.
+    Array.isArray(e.hd) &&
+    e.hd.every(
+      (entry) =>
+        Array.isArray(entry) &&
+        entry.length === 2 &&
+        typeof entry[0] === "string" &&
+        typeof entry[1] === "string",
+    ),
+  tags: (e) => ({ tags: e.t, taggedAt: e.ta }),
+  fromL1: (response, shouldRevalidate) => ({ response, shouldRevalidate }),
+  // Corrupt/partial base64 throws in atob, an out-of-range `st` in new
+  // Response: a faulty entry, which readKv evicts. Per-client signals a stale
+  // envelope may carry are stripped (Finding #3), in place so the promotion
+  // re-seeds from the filtered `hd`.
+  fromKv: (e, shouldRevalidate) => {
+    e.hd = e.hd.filter(([name]) => !isPerClientSignalHeader(name));
+    return {
+      response: new Response(base64ToBuffer(e.b), {
+        status: e.st,
+        statusText: e.stx,
+        headers: new Headers(e.hd),
+      }),
+      shouldRevalidate,
+    };
+  },
+  // `hd` is client-facing: the internal headers are re-attached and the
+  // author's Cache-Control is stashed for toClientResponse, as putResponse does.
+  toL1: (e, cacheControl, tagHeaders) => {
+    const headers = new Headers(e.hd);
+    const originalCacheControl = headers.get("Cache-Control");
+    if (originalCacheControl !== null) {
+      headers.set(CACHE_ORIG_CC_HEADER, originalCacheControl);
+    }
+    headers.set("Cache-Control", cacheControl);
+    headers.set(CACHE_STALE_AT_HEADER, String(e.s));
+    headers.set(CACHE_EXPIRES_AT_HEADER, String(e.e));
+    setTagHeaders(headers, tagHeaders);
+    return new Response(base64ToBuffer(e.b), {
+      status: e.st,
+      statusText: e.stx,
+      headers,
+    });
+  },
+};
+
 // ============================================================================
 // CFCacheStore Implementation
 // ============================================================================
@@ -936,8 +1164,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     // A FAST json() rejection (a corrupt body, or a foreign 200 non-JSON
     // response that collided on this key) is caught at the thunk and turned into
     // a miss, so the caller falls through to L2/KV exactly like a body-timeout
-    // -- instead of escaping to get()/getItem()'s outer catch, which returns
-    // null WITHOUT ever consulting KV. The catch lives here, not in
+    // -- instead of escaping to readL1()'s outer catch, which returns the
+    // family's read error WITHOUT ever consulting KV. The catch lives here, not in
     // readWithTimeout, so the L2/KV tier keeps propagating a genuine kv.get
     // rejection to its own error sink. The `errored` flag lets the caller emit a
     // distinct "body-error" debug outcome rather than masquerading as a timeout.
@@ -967,7 +1195,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * the faulty per-colo entry ONLY when that fall-through found no good copy.
    *
    * The conditional evict is the load-bearing detail: when KV DOES serve a copy,
-   * kvGet* has already scheduled a same-key promote (`cache.put`); an eager
+   * readKv has already scheduled a same-key promote (`cache.put`); an eager
    * `cache.delete` here would race that put with no CF Cache API ordering
    * guarantee and could clobber the freshly-restored entry. So in that case we
    * lean on #558's heal-by-overwrite (the non-suppressed fall-through promotes /
@@ -1011,7 +1239,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
   /**
    * Re-put a stale L1 entry marked REVALIDATING, so concurrent requests serve it
-   * without each triggering a revalidation. Shared by get()/getItem().
+   * without each triggering a revalidation (readL1). A JSON family re-puts its
+   * parsed body as a string, without a status text as set() writes it; the
+   * document re-puts a clone (`source`) whose original body still streams to
+   * the client.
    *
    * The write is NON-BLOCKING (waitUntil) and best-effort by design:
    * - It runs in waitUntil, so it never adds the put latency to the served stale
@@ -1034,61 +1265,26 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private markRevalidating(
     cache: Cache,
     request: Request,
-    sourceHeaders: Headers,
-    status: number,
-    body: string,
+    source: Response,
+    body: BodyInit | null = source.body,
+    statusText = source.statusText,
   ): void {
     const reputNow = Date.now();
-    const headers = new Headers(sourceHeaders);
+    const headers = new Headers(source.headers);
     headers.set(CACHE_STATUS_HEADER, "REVALIDATING");
     headers.set(CACHE_REVALIDATING_AT_HEADER, String(reputNow));
     headers.set("Cache-Control", remainingCacheControl(headers, reputNow));
-    const markerResponse = new Response(body, { status, headers });
-    const write = async (): Promise<void> => {
-      try {
-        await cache.put(request, markerResponse);
-      } catch {
-        // Best-effort: a failed marker write must not affect the served read;
-        // the entry simply re-arms on the next stale read.
-      }
-    };
-    if (this.waitUntil) this.waitUntil(write);
-    else void write();
-  }
-
-  /**
-   * Document-tier counterpart of markRevalidating for getResponse's herd guard.
-   * The segment/item tiers JSON-parse the body, so they re-put with a string
-   * body; document bodies are streamed verbatim, so we re-put with a CLONED
-   * response body (`response.clone()`) supplied by the caller -- the original
-   * body still streams to the client while the marker carries the clone. Same
-   * REVALIDATING status header, same revalidating-at stamp, same
-   * remainingCacheControl re-put math as markRevalidating, so the document tier
-   * suppresses concurrent revalidation for the identical MAX_REVALIDATION_INTERVAL
-   * window the segment tier does. Best-effort and non-blocking: a failed marker
-   * write must not affect the served stale read.
-   * @internal
-   */
-  private markResponseRevalidating(
-    cache: Cache,
-    request: Request,
-    clonedResponse: Response,
-  ): void {
-    const reputNow = Date.now();
-    const headers = new Headers(clonedResponse.headers);
-    headers.set(CACHE_STATUS_HEADER, "REVALIDATING");
-    headers.set(CACHE_REVALIDATING_AT_HEADER, String(reputNow));
-    headers.set("Cache-Control", remainingCacheControl(headers, reputNow));
-    const markerResponse = new Response(clonedResponse.body, {
-      status: clonedResponse.status,
-      statusText: clonedResponse.statusText,
+    const markerResponse = new Response(body, {
+      status: source.status,
+      statusText,
       headers,
     });
     const write = async (): Promise<void> => {
       try {
         await cache.put(request, markerResponse);
       } catch {
-        // Best-effort: see markRevalidating.
+        // Best-effort: a failed marker write must not affect the served read;
+        // the entry simply re-arms on the next stale read.
       }
     };
     if (this.waitUntil) this.waitUntil(write);
@@ -1133,84 +1329,89 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   }
 
   /**
-   * Get cached entry data by key.
-   *
-   * Handles SWR atomically:
+   * Get cached entry data by key (readL1). On L1 miss, falls back to KV (L2)
+   * if configured; KV hits are promoted to L1 in the background.
+   */
+  get(key: string): Promise<CacheGetResult | null | CacheReadError> {
+    return this.readL1(key, SEGMENT_READ);
+  }
+
+  /**
+   * The family's debug sink for one read; the document family is outside the
+   * debug surface (op is only get/getItem). Undefined when debug is off, so
+   * the hot path allocates no event.
+   * @internal
+   */
+  private debugSink(
+    op: CFReadOp,
+    key: string,
+  ): ((event: Omit<CFCacheReadDebugEvent, "op" | "key">) => void) | undefined {
+    return this.debug && op !== "getResponse"
+      ? (event) => this.emitDebug({ op, key, ...event })
+      : undefined;
+  }
+
+  /**
+   * The L1 read of a family, which handles SWR atomically:
    * - If stale and not already revalidating, marks as REVALIDATING and returns shouldRevalidate: true
    * - If already REVALIDATING (and recent), returns shouldRevalidate: false
    * - If fresh, returns shouldRevalidate: false
    *
-   * On L1 miss, falls back to KV (L2) if configured.
-   * KV hits are promoted to L1 in the background.
+   * Every degraded L1 read falls through to KV (readKv). The family methods
+   * return it unwrapped: an async wrapper adds two promises and two microtask
+   * ticks to every read.
+   * @internal
    */
-  async get(key: string): Promise<CacheGetResult | null | CacheReadError> {
-    if (this.isReservedSegmentKey(key, "cache-read")) return null;
+  private async readL1<
+    E extends KVDeadlines,
+    V,
+    Err extends CacheReadError | null,
+  >(key: string, f: CFReadFamily<E, unknown, V, Err>): Promise<V | null | Err> {
+    if (f.rejectsReservedKeys && this.isReservedSegmentKey(key, "cache-read"))
+      return null;
+    const debug = this.debugSink(f.debugOp, key);
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(key, "data");
-      const matchStart = Date.now();
+      const request = this.keyToRequest(f.prefix + key, f.version);
+      const matchStart = debug ? Date.now() : 0;
       const {
         response,
         timedOut,
         error: matchError,
       } = await this.matchWithTimeout(cache, request);
-      const matchMs = Date.now() - matchStart;
+      const matchMs = debug ? Date.now() - matchStart : 0;
 
       if (!response) {
-        if (matchError) {
-          // A match REJECTION is reported as cache-read and still degrades to
-          // L2/KV -- a real KV value (or KV's own CACHE_READ_ERROR) stands on
-          // its own. But a null KV result (unconfigured namespace, kv-miss,
-          // kv-timeout) is NOT proof of absence under a rejected L1 match:
-          // the only real signal this read produced is the failure, so
-          // surface CACHE_READ_ERROR instead of a replayable miss (the PPR
-          // seeded fallback must render uncached, not substitute the doc
-          // record for a partition the store could not actually read).
+        // A match REJECTION is reported as cache-read and still degrades to
+        // L2/KV, but a null KV result is not proof of absence under it: the
+        // only real signal this read produced is the failure, so it returns
+        // the family's read error (CACHE_READ_ERROR for segments). An
+        // abandoned slow match keeps the fail-open latency-budget policy.
+        if (matchError)
           reportCacheError(
             matchError,
             "cache-read",
-            "[CFCacheStore] get L1 match",
+            `[CFCacheStore] ${f.debugOp} L1 match`,
           );
-          if (this.debug)
-            this.emitDebug({
-              op: "get",
-              key,
-              // Distinct from a genuine absence: surface it as match-error so
-              // debug agrees with the cache-read already routed to onError,
-              // instead of masquerading as l1-miss.
-              outcome: "match-error",
-              matchMs,
-            });
-          const kvResult = await this.kvGetSegment(key);
-          return kvResult ?? CACHE_READ_ERROR;
-        }
-        // An abandoned slow match (timedOut) keeps the fail-open latency-budget
-        // policy: degrade to L2/KV, and a KV null stays a miss.
-        if (this.debug)
-          this.emitDebug({
-            op: "get",
-            key,
-            outcome: timedOut ? "match-timeout" : "l1-miss",
-            matchMs,
-          });
-        return this.kvGetSegment(key);
+        debug?.({
+          outcome: matchError
+            ? "match-error"
+            : timedOut
+              ? "match-timeout"
+              : "l1-miss",
+          matchMs,
+        });
+        if (!matchError) return this.readKv(key, f);
+        return (await this.readKv(key, f)) ?? f.readError;
       }
 
       // A non-200 entry (a cached error response, or a foreign response that
-      // landed on this key) is not valid segment data; treat it as a miss
-      // rather than JSON-parsing garbage and serving it as a hit.
+      // landed on this key) is not valid data: a miss. Its KV read suppresses
+      // revalidation, so a broken L1 entry hit concurrently serves KV-stale,
+      // not a herd (the document read never did).
       if (response.status !== 200) {
-        if (this.debug)
-          this.emitDebug({
-            op: "get",
-            key,
-            outcome: "non-200",
-            status: response.status,
-            matchMs,
-          });
-        // Degraded fall-through: suppress revalidation so a broken L1 entry hit
-        // concurrently serves KV-stale, not a herd. See kvGetSegment.
-        return this.kvGetSegment(key, { suppressRevalidate: true });
+        debug?.({ outcome: "non-200", status: response.status, matchMs });
+        return this.readKv(key, f, f.family !== "response");
       }
 
       // Tag invalidation: a copy whose tags were invalidated after it was
@@ -1218,39 +1419,31 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // colo re-renders. With it, it reads as an L1 miss, because the tiers can
       // diverge: another colo may have written KV after the marker (its own
       // re-render, or a router.prerender() warm after updateTag()), and this
-      // colo then serves that entry instead of rendering it again.
-      // kvGetSegment checks the KV entry against the same markers (this
-      // request's memo: no second marker read) and promotes a valid one over
-      // this copy. When KV still holds the twin written with this copy, the
-      // read costs one KV get and misses as before. The request that
-      // invalidated the tag itself keeps the plain miss (declinesKvFallThrough).
+      // colo then serves that entry instead of rendering it again. readKv
+      // checks it against the same markers (this request's memo: no second
+      // marker read). The request that invalidated the tag itself keeps the
+      // plain miss (declinesKvFallThrough). The marker-resolution tail is
+      // measured only under debug.
       const tagInfo = this.readTagInfo(response.headers);
-      // Measure the marker-resolution tail (memo -> L1 marker cache -> KV) only
-      // when debug is on, so the hot path pays nothing. It is the serial read
-      // that sits between matchMs and bodyReadMs for a tagged entry.
-      const markerStart = this.debug ? Date.now() : 0;
+      const markerStart = debug ? Date.now() : 0;
       const invalidated = await this.isL1Invalidated(
         tagInfo.tags,
         tagInfo.taggedAt,
         response.headers,
       );
-      const markerMs = this.debug ? Date.now() - markerStart : undefined;
+      const markerMs = debug ? Date.now() - markerStart : undefined;
       if (invalidated) {
-        if (this.debug)
-          this.emitDebug({
-            op: "get",
-            key,
-            outcome: "tag-invalidated",
-            status: response.status,
-            matchMs,
-            markerMs,
-          });
+        debug?.({
+          outcome: "tag-invalidated",
+          status: response.status,
+          matchMs,
+          markerMs,
+        });
         return this.declinesKvFallThrough(tagInfo.tags, tagInfo.taggedAt)
           ? null
-          : this.kvGetSegment(key);
+          : this.readKv(key, f);
       }
 
-      // Read status headers
       const status = response.headers.get(CACHE_STATUS_HEADER);
       const staleAt = Number(
         response.headers.get(CACHE_STALE_AT_HEADER) ?? "0",
@@ -1258,7 +1451,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       const revalidatingAt = Number(
         response.headers.get(CACHE_REVALIDATING_AT_HEADER) ?? "0",
       );
-
       const now = Date.now();
       const isStale = staleAt > 0 && now > staleAt;
       // Recency comes from our explicit revalidating-at stamp, not CF's `Age`
@@ -1268,19 +1460,37 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         status === "REVALIDATING" &&
         revalidatingAt > 0 &&
         now - revalidatingAt < MAX_REVALIDATION_INTERVAL * 1000;
+      const shouldRevalidate = isStale && !isRevalidating;
 
-      // Single emitter for the post-header L1 outcomes. Undefined (so the event
-      // object is never allocated) when debug is off; the informational-only
-      // `age` header is read lazily inside for the same reason.
-      const debugRead = this.debug
+      if (f.family === "response") {
+        // The document body streams through verbatim, so its marker re-put
+        // carries a clone. Integrity relies on the Cache API: cache.put
+        // stores a response atomically or fails, so a truncated body is not
+        // served back; buffering + hashing it would defeat streaming and add
+        // a full read to every hit.
+        if (shouldRevalidate)
+          this.markRevalidating(cache, request, response.clone());
+        return f.fromL1(this.toClientResponse(response), shouldRevalidate);
+      }
+
+      // Read the body under the edge-read budget BEFORE writing the
+      // REVALIDATING marker: CF can resolve match() fast but stall the body
+      // stream, and reading first bounds the stall and skips marking an entry
+      // that could not be read.
+      const bodyStart = debug ? Date.now() : 0;
+      const {
+        value: body,
+        errored,
+        error,
+      } = await this.readJsonWithTimeout(response);
+      const bodyReadMs = debug ? Date.now() - bodyStart : 0;
+      // The informational-only `age` header is read only under debug.
+      const debugL1 = debug
         ? (
             outcome: CFCacheReadDebugEvent["outcome"],
-            bodyReadMs: number,
             shouldRevalidate?: boolean,
           ) =>
-            this.emitDebug({
-              op: "get",
-              key,
+            debug({
               outcome,
               status: response.status,
               cacheStatus: status,
@@ -1295,88 +1505,44 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
               bodyReadMs,
             })
         : undefined;
-
-      // Case 1: Fresh or already being revalidated - just return data
-      if (!isStale || isRevalidating) {
-        const bodyStart = Date.now();
-        const {
-          value: data,
-          errored,
-          error,
-        } = await this.readJsonWithTimeout<CachedEntryData>(response);
-        const bodyReadMs = Date.now() - bodyStart;
-        if (data === undefined) {
-          debugRead?.(errored ? "body-error" : "body-timeout", bodyReadMs);
-          // A body-ERROR (corrupt/foreign body) self-heals via healCorruptL1:
-          // report cache-corrupt, fall through to L2/KV (which overwrites the
-          // bad entry), and evict only if KV had no good copy to promote. A
-          // body-TIMEOUT is a degraded read of a likely-valid entry: leave it
-          // intact and suppress revalidation so a stalling colo cannot herd.
-          if (errored)
-            return this.healCorruptL1(cache, request, error, "get", () =>
-              this.kvGetSegment(key, { suppressRevalidate: false }),
-            );
-          return this.kvGetSegment(key, { suppressRevalidate: true });
-        }
-        debugRead?.(
-          isRevalidating ? "l1-revalidating-guarded" : "l1-fresh",
-          bodyReadMs,
-          false,
-        );
-        return { data, shouldRevalidate: false };
-      }
-
-      // Case 2: Stale and needs revalidation.
-      // Read the body under the edge-read budget BEFORE writing the REVALIDATING
-      // marker. CF can resolve match() fast but stall the body stream; the prior
-      // approach teed the stream and awaited cache.put(b1) first, which blocked
-      // on that same stalled stream so the read budget could never fire on a
-      // stale hit. Reading first bounds the stall and lets us skip marking an
-      // entry we could not even read.
-      const bodyStart = Date.now();
-      const {
-        value: data,
-        errored,
-        error,
-      } = await this.readJsonWithTimeout<CachedEntryData>(response);
-      const bodyReadMs = Date.now() - bodyStart;
-      if (data === undefined) {
-        debugRead?.(errored ? "body-error" : "body-timeout", bodyReadMs);
-        // Heal + conditionally evict a body-error, suppress a body-timeout; see
-        // Case 1.
+      if (body === undefined) {
+        debugL1?.(errored ? "body-error" : "body-timeout");
+        // A body-ERROR (corrupt/foreign body) self-heals: healCorruptL1
+        // reports it and evicts only if KV had no good copy to promote. A
+        // body-TIMEOUT is a degraded read of a likely-valid entry: leave it
+        // and suppress revalidation so a stalling colo cannot herd.
         if (errored)
           return this.healCorruptL1(
             cache,
             request,
             error,
-            "get(revalidating)",
-            () => this.kvGetSegment(key, { suppressRevalidate: false }),
+            shouldRevalidate ? f.staleLabel : f.debugOp,
+            () => this.readKv(key, f),
           );
-        return this.kvGetSegment(key, { suppressRevalidate: true });
+        return this.readKv(key, f, true);
       }
 
-      // Mark REVALIDATING so concurrent requests don't all revalidate, then
-      // return the stale data. The marker write is non-blocking and best-effort
-      // (see markRevalidating) -- it must not add latency to, or fail, the served
-      // stale read.
-      this.markRevalidating(
-        cache,
-        request,
-        response.headers,
-        response.status,
-        JSON.stringify(data),
+      if (shouldRevalidate)
+        this.markRevalidating(
+          cache,
+          request,
+          response,
+          JSON.stringify(body),
+          "",
+        );
+      debugL1?.(
+        shouldRevalidate
+          ? "l1-stale-revalidate"
+          : isRevalidating
+            ? "l1-revalidating-guarded"
+            : "l1-fresh",
+        shouldRevalidate,
       );
-
-      debugRead?.("l1-stale-revalidate", bodyReadMs, true);
-      return { data, shouldRevalidate: true };
+      return f.fromL1(body, shouldRevalidate, tagInfo.tags);
     } catch (error) {
-      // reportCacheError logs and routes to onError (cache-read); the debug
-      // emit is the separate wrangler-tail signal. Keep both observability paths.
-      reportCacheError(error, "cache-read", "[CFCacheStore] get");
-      if (this.debug) this.emitDebug({ op: "get", key, outcome: "error" });
-      // Distinct from a miss so the PPR replay composition renders uncached
-      // instead of substituting the seeded doc record (CACHE_READ_ERROR).
-      return CACHE_READ_ERROR;
+      reportCacheError(error, "cache-read", `[CFCacheStore] ${f.debugOp}`);
+      debug?.({ outcome: "error" });
+      return f.readError;
     }
   }
 
@@ -1497,104 +1663,14 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   // ============================================================================
 
   /**
-   * Get a cached Response by key (for document-level caching).
-   * Returns the response and whether it should be revalidated (SWR).
-   * Falls back to KV (L2) on L1 miss.
+   * Get a cached Response by key (for document-level caching): see readL1.
+   * Its body streams to the client unread, outside the debug surface. Falls
+   * back to KV (L2) on L1 miss.
    */
-  async getResponse(
+  getResponse(
     key: string,
   ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
-    try {
-      const cache = await this.getCache();
-      const request = this.keyToRequest(`doc:${key}`, "document");
-      // The document path is outside the debug surface (op is only get/getItem),
-      // so the match-timeout flag is not surfaced as an event here -- though
-      // matchWithTimeout still warns on a slow match. A miss or timeout falls
-      // through to the KV document path and then render.
-      const { response, error: matchError } = await this.matchWithTimeout(
-        cache,
-        request,
-      );
-
-      if (!response || response.status !== 200) {
-        // A transient L1 match rejection (matchError set; only ever set when
-        // response is undefined) is surfaced as cache-read before degrading to
-        // L2/KV -- matching get()/getItem(). A genuine miss or a non-200 hit
-        // carries no matchError and reports nothing.
-        if (matchError)
-          reportCacheError(
-            matchError,
-            "cache-read",
-            "[CFCacheStore] getResponse L1 match",
-          );
-        return this.kvGetResponse(key);
-      }
-
-      // Tag invalidation check: a rejected copy reads as an L1 miss (see get()).
-      const tagInfo = this.readTagInfo(response.headers);
-      if (
-        await this.isL1Invalidated(
-          tagInfo.tags,
-          tagInfo.taggedAt,
-          response.headers,
-        )
-      ) {
-        return this.declinesKvFallThrough(tagInfo.tags, tagInfo.taggedAt)
-          ? null
-          : this.kvGetResponse(key);
-      }
-
-      // Check staleness
-      const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER) || 0);
-      const now = Date.now();
-      const isStale = staleAt > 0 && now > staleAt;
-
-      // Thundering-herd guard, mirroring the segment (get) and item (getItem)
-      // tiers. Without it, every concurrent stale reader returned
-      // shouldRevalidate=true and document-cache.ts scheduled a fresh render for
-      // each one. Recency comes from our own revalidating-at stamp, not CF's Age
-      // header (see CACHE_REVALIDATING_AT_HEADER); an absent/zero stamp counts as
-      // "not recent" so a dropped revalidation re-arms instead of pinning.
-      const status = response.headers.get(CACHE_STATUS_HEADER);
-      const revalidatingAt = Number(
-        response.headers.get(CACHE_REVALIDATING_AT_HEADER) ?? "0",
-      );
-      const isRevalidating =
-        status === "REVALIDATING" &&
-        revalidatingAt > 0 &&
-        now - revalidatingAt < MAX_REVALIDATION_INTERVAL * 1000;
-
-      // L1 document bodies are streamed through verbatim - unlike the segment/
-      // item tiers (which JSON-parse and so structurally detect corruption) and
-      // the KV doc tier (validated in kvGetResponse, KV being the real partial-
-      // read vector). Integrity here relies on the Cache API: cache.put stores a
-      // response atomically or fails, so a truncated body is not served back. We
-      // deliberately do NOT buffer+hash the body to re-verify it: that would
-      // defeat streaming the document and add a full read to every cache hit.
-
-      if (isStale && !isRevalidating) {
-        // First stale reader within the window: mark REVALIDATING (non-blocking,
-        // best-effort) so concurrent readers below see the guard and suppress,
-        // then return shouldRevalidate=true so this caller revalidates. Clone the
-        // matched response for the marker since its original body must still
-        // stream to the client.
-        this.markResponseRevalidating(cache, request, response.clone());
-        return {
-          response: this.toClientResponse(response),
-          shouldRevalidate: true,
-        };
-      }
-
-      // Fresh, or stale-but-already-REVALIDATING: serve without scheduling a
-      // (re-)revalidation. A recent marker already has a render in flight.
-      return {
-        response: this.toClientResponse(response),
-        shouldRevalidate: false,
-      };
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[CFCacheStore] getResponse");
-      return null;
-    }
+    return this.readL1(key, RESPONSE_READ);
   }
 
   /**
@@ -1684,7 +1760,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // toClientResponse before serving.
       headers.set(CACHE_EXPIRES_AT_HEADER, String(staleAt + swrWindow * 1000));
       // Internal tag headers (stripped by toClientResponse before serving).
-      this.setTagHeaders(headers, tags, taggedAt);
+      setTagHeaders(headers, this.tagHeaderEntries(tags, taggedAt));
 
       const toCache = new Response(l1Body, {
         status: response.status,
@@ -1756,185 +1832,11 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
 
   /**
    * Get a cached function result by key.
-   * Follows the same SWR pattern as get() for segment caching.
+   * Follows the same SWR pattern as get() for segment caching (readL1).
    * Falls back to KV (L2) on L1 miss.
    */
-  async getItem(key: string): Promise<CacheItemResult | null> {
-    try {
-      const cache = await this.getCache();
-      const request = this.keyToRequest(`fn:${key}`, "data");
-      const matchStart = Date.now();
-      const {
-        response,
-        timedOut,
-        error: matchError,
-      } = await this.matchWithTimeout(cache, request);
-      const matchMs = Date.now() - matchStart;
-
-      if (!response) {
-        // Transient match error reported cache-read; still degrades to L2/KV.
-        if (matchError)
-          reportCacheError(
-            matchError,
-            "cache-read",
-            "[CFCacheStore] getItem L1 match",
-          );
-        if (this.debug)
-          this.emitDebug({
-            op: "getItem",
-            key,
-            // match-error (rejection) vs l1-miss (absence); see get().
-            outcome: matchError
-              ? "match-error"
-              : timedOut
-                ? "match-timeout"
-                : "l1-miss",
-            matchMs,
-          });
-        return this.kvGetItem(key);
-      }
-
-      // Non-200 entry is not a valid cached function result; treat as a miss.
-      if (response.status !== 200) {
-        if (this.debug)
-          this.emitDebug({
-            op: "getItem",
-            key,
-            outcome: "non-200",
-            status: response.status,
-            matchMs,
-          });
-        // Degraded fall-through: suppress revalidation so a broken L1 entry hit
-        // concurrently serves KV-stale instead of spawning a herd (see get()).
-        return this.kvGetItem(key, { suppressRevalidate: true });
-      }
-
-      // Tag invalidation check: a rejected copy reads as an L1 miss (see
-      // get()). Measure the marker-resolution tail only under debug.
-      const tagInfo = this.readTagInfo(response.headers);
-      const markerStart = this.debug ? Date.now() : 0;
-      const invalidated = await this.isL1Invalidated(
-        tagInfo.tags,
-        tagInfo.taggedAt,
-        response.headers,
-      );
-      const markerMs = this.debug ? Date.now() - markerStart : undefined;
-      if (invalidated) {
-        if (this.debug)
-          this.emitDebug({
-            op: "getItem",
-            key,
-            outcome: "tag-invalidated",
-            status: response.status,
-            matchMs,
-            markerMs,
-          });
-        return this.declinesKvFallThrough(tagInfo.tags, tagInfo.taggedAt)
-          ? null
-          : this.kvGetItem(key);
-      }
-
-      const staleAt = Number(
-        response.headers.get(CACHE_STALE_AT_HEADER) ?? "0",
-      );
-      const status = response.headers.get(CACHE_STATUS_HEADER);
-      const revalidatingAt = Number(
-        response.headers.get(CACHE_REVALIDATING_AT_HEADER) ?? "0",
-      );
-
-      const now = Date.now();
-      const isStale = staleAt > 0 && now > staleAt;
-      // Recency from our explicit stamp, not CF's `Age` header (see get()).
-      const isRevalidating =
-        status === "REVALIDATING" &&
-        revalidatingAt > 0 &&
-        now - revalidatingAt < MAX_REVALIDATION_INTERVAL * 1000;
-
-      // Single emitter for the post-header L1 outcomes (see get()). Undefined
-      // when debug is off, so the event object is never allocated on the hot
-      // path; the informational-only `age` header is read lazily inside.
-      const debugRead = this.debug
-        ? (
-            outcome: CFCacheReadDebugEvent["outcome"],
-            bodyReadMs: number,
-            shouldRevalidate?: boolean,
-          ) =>
-            this.emitDebug({
-              op: "getItem",
-              key,
-              outcome,
-              status: response.status,
-              cacheStatus: status,
-              staleAt,
-              revalidatingAt,
-              ageHeader: response.headers.get("age"),
-              isStale,
-              isRevalidating,
-              shouldRevalidate,
-              matchMs,
-              markerMs,
-              bodyReadMs,
-            })
-        : undefined;
-
-      const bodyStart = Date.now();
-      const {
-        value: data,
-        errored,
-        error,
-      } = await this.readJsonWithTimeout<{
-        value: string;
-        handles?: string;
-      }>(response);
-      const bodyReadMs = Date.now() - bodyStart;
-      if (data === undefined) {
-        debugRead?.(errored ? "body-error" : "body-timeout", bodyReadMs);
-        // Heal + conditionally evict a body-error, suppress a body-timeout; see
-        // get().
-        if (errored)
-          return this.healCorruptL1(cache, request, error, "getItem", () =>
-            this.kvGetItem(key, { suppressRevalidate: false }),
-          );
-        return this.kvGetItem(key, { suppressRevalidate: true });
-      }
-
-      if (!isStale || isRevalidating) {
-        debugRead?.(
-          isRevalidating ? "l1-revalidating-guarded" : "l1-fresh",
-          bodyReadMs,
-          false,
-        );
-        return {
-          value: data.value,
-          handles: data.handles,
-          shouldRevalidate: false,
-          tags: tagInfo.tags,
-        };
-      }
-
-      // Stale and needs revalidation -- mark REVALIDATING (non-blocking,
-      // best-effort, remaining-ttl) and return the stale value. See get() /
-      // markRevalidating for the full rationale.
-      this.markRevalidating(
-        cache,
-        request,
-        response.headers,
-        200,
-        JSON.stringify(data),
-      );
-
-      debugRead?.("l1-stale-revalidate", bodyReadMs, true);
-      return {
-        value: data.value,
-        handles: data.handles,
-        shouldRevalidate: true,
-        tags: tagInfo.tags,
-      };
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[CFCacheStore] getItem");
-      if (this.debug) this.emitDebug({ op: "getItem", key, outcome: "error" });
-      return null;
-    }
+  getItem(key: string): Promise<CacheItemResult | null> {
+    return this.readL1(key, ITEM_READ);
   }
 
   /**
@@ -2340,7 +2242,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    * caller's `tagHints`: cfTagHints may have evicted the key while the memo
    * still holds it. A shell a tag marker rejects is dropped and read from
    * the store too, which may hold a capture from after the marker (see
-   * get(), "Tag invalidation"), unless the request's own mask rejected it
+   * readL1(), "Tag invalidation"), unless the request's own mask rejected it
    * (declinesKvFallThrough).
    */
   private async readMemoizedShell(
@@ -3222,27 +3124,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     return true;
   }
 
-  /**
-   * Merge the internal tag headers onto an existing Headers instance. The
-   * from-scratch paths spread tagHeaderEntries() into an object-literal init;
-   * the document put/promote paths build a Headers first, so they .set() each
-   * entry instead — except `Cache-Tag`, which is APPENDED: a document author
-   * may have set their own Cache-Tag, and clobbering it would break their CDN
-   * purging. Append produces the comma-merged list CF expects.
-   */
-  private setTagHeaders(
-    headers: Headers,
-    tags: string[] | undefined,
-    taggedAt: number | undefined,
-  ): void {
-    for (const [name, value] of Object.entries(
-      this.tagHeaderEntries(tags, taggedAt),
-    )) {
-      if (name === "Cache-Tag") headers.append(name, value);
-      else headers.set(name, value);
-    }
-  }
-
   /** Read an entry's tags/taggedAt back from its headers. */
   private readTagInfo(headers: Headers): {
     tags?: string[];
@@ -4024,93 +3905,128 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   // ============================================================================
 
   /**
-   * KV fallback for segment cache reads.
-   * Returns null if KV is not configured, entry is missing, or expired.
-   * Promotes hits to L1 via waitUntil.
+   * The KV (L2) read behind an L1 miss, for every family: a missing,
+   * timed-out, corrupt (kvGetOrEvict reports and evicts it), expired or
+   * tag-invalidated envelope is a miss, a read failure is the family's read
+   * error, and a hit is promoted to L1 in the background.
+   *
+   * A degraded L1 fall-through (body-timeout / non-200) passes
+   * `suppressRevalidate`: KV has no REVALIDATING herd guard, so N concurrent
+   * degraded reads would otherwise each spawn a render exactly when the colo
+   * is already struggling. The stale data is still served and promoted; only
+   * the revalidation is withheld.
    * @internal
    */
-  private async kvGetSegment(
+  private async readKv<
+    E extends KVDeadlines,
+    V,
+    Err extends CacheReadError | null,
+  >(
     key: string,
-    opts?: { suppressRevalidate?: boolean },
-  ): Promise<CacheGetResult | null | CacheReadError> {
+    f: CFReadFamily<E, unknown, V, Err>,
+    suppressRevalidate = false,
+  ): Promise<V | null | Err> {
     if (!this.kv) return null;
-
+    const debug = this.debugSink(f.debugOp, key);
     try {
-      const kvKey = await this.toKVKey(key, "data");
-      const { value: envelope, timedOut } =
-        await this.kvGetOrEvict<KVSegmentEnvelope>(
-          kvKey,
-          (e) =>
-            typeof e.e === "number" && typeof e.s === "number" && e.d != null,
-          "kvGetSegment",
-        );
-      if (timedOut) {
-        // Abandoned slow KV read: no envelope, so no promote-to-L1. Distinct
-        // from a genuine kv-miss so the degradation is visible on wrangler tail.
-        if (this.debug)
-          this.emitDebug({ op: "get", key, outcome: "kv-timeout" });
-        return null;
-      }
+      const kvKey = await (f.family === "response"
+        ? this.toDocKVKey(key)
+        : this.toKVKey(f.prefix + key, f.version));
+      const { value: envelope, timedOut } = await this.kvGetOrEvict(
+        kvKey,
+        f.validate,
+        f.kvMethod,
+      );
+      // An abandoned slow read is distinct from a genuine kv-miss, so the
+      // degradation is visible on wrangler tail.
       if (!envelope) {
-        // Missing key, or a corrupt entry already evicted + reported by
-        // kvGetOrEvict. Either way a miss.
-        if (this.debug) this.emitDebug({ op: "get", key, outcome: "kv-miss" });
+        debug?.({ outcome: timedOut ? "kv-timeout" : "kv-miss" });
         return null;
       }
-
       const now = Date.now();
-
-      // Hard-expired — treat as miss
+      // Hard-expired: a miss.
       if (now > envelope.e) {
-        if (this.debug) this.emitDebug({ op: "get", key, outcome: "kv-miss" });
+        debug?.({ outcome: "kv-miss" });
         return null;
       }
-
-      // Tag invalidation check (also covers the KV tier, not just L1).
-      if (
-        await this.isGloballyInvalidated(envelope.d.tags, envelope.d.taggedAt)
-      ) {
-        if (this.debug)
-          this.emitDebug({ op: "get", key, outcome: "tag-invalidated" });
+      // KV entries answer to tag invalidation as L1 copies do.
+      const { tags, taggedAt } = f.tags(envelope);
+      if (await this.isGloballyInvalidated(tags, taggedAt)) {
+        debug?.({ outcome: "tag-invalidated" });
         return null;
       }
-
-      // When this is a degraded L1 fall-through (body-timeout / non-200), the
-      // caller asks us to suppress revalidation: KV has no REVALIDATING herd
-      // guard, so N concurrent degraded reads would otherwise each spawn a
-      // render exactly when the colo is already struggling. We still serve the
-      // stale data and still promote to L1; only the revalidation is withheld.
       const stale = now > envelope.s;
-      const shouldRevalidate = stale && !opts?.suppressRevalidate;
-
-      // Promote to L1 in background
-      this.promoteSegmentToL1(key, envelope);
-
-      if (this.debug)
-        this.emitDebug({
-          op: "get",
-          key,
-          outcome: !stale
-            ? "kv-fresh"
-            : opts?.suppressRevalidate
-              ? "kv-stale-suppressed"
-              : "kv-stale",
-          shouldRevalidate,
-        });
-      return { data: envelope.d, shouldRevalidate };
+      const shouldRevalidate = stale && !suppressRevalidate;
+      let value: V;
+      try {
+        value = f.fromKv(envelope, shouldRevalidate);
+      } catch (error) {
+        // Only a document envelope can fail to rebuild (RESPONSE_READ).
+        reportCacheError(
+          error,
+          "cache-corrupt",
+          `[CFCacheStore] ${f.kvMethod}: corrupt response envelope, evicting`,
+        );
+        this.scheduleKvEvict(kvKey, f.kvMethod);
+        return null;
+      }
+      this.promoteToL1(key, f, envelope);
+      debug?.({
+        outcome: !stale
+          ? "kv-fresh"
+          : suppressRevalidate
+            ? "kv-stale-suppressed"
+            : "kv-stale",
+        shouldRevalidate,
+      });
+      return value;
     } catch (error) {
-      reportCacheError(error, "cache-read", "[CFCacheStore] kvGetSegment");
-      if (this.debug) this.emitDebug({ op: "get", key, outcome: "error" });
-      // A KV failure is NOT proof of absence: returning null classified it a
-      // real miss and let the PPR seeded fallback substitute the doc record
-      // for a key partition the store could not actually read. Same sentinel
-      // as get()'s own catch — lookupRouteDetailed classifies it `error` and
-      // the render stays uncached. (A kvGetOrEvict TIMEOUT above stays null
-      // by design: it is a bounded-latency degrade of a likely-healthy read,
-      // and serving the equivalent seeded record there is the fallback
-      // working as intended, not a masked failure.)
-      return CACHE_READ_ERROR;
+      // A failed KV read (5xx/429/network, left intact), or a promotion that
+      // throws (ctx.waitUntil).
+      reportCacheError(error, "cache-read", `[CFCacheStore] ${f.kvMethod}`);
+      debug?.({ outcome: "error" });
+      return f.readError;
     }
+  }
+
+  /**
+   * Promote a KV hit to L1 in the background, under its remaining ttl, with
+   * its deadlines (so a promoted entry that later goes stale re-puts with the
+   * correct remaining ttl, see set()) and its tags (so it stays
+   * tag-invalidatable). The family builds the entry (toL1).
+   * @internal
+   */
+  private promoteToL1<E extends KVDeadlines>(
+    key: string,
+    f: CFReadFamily<E, unknown, unknown, CacheReadError | null>,
+    envelope: E,
+  ): void {
+    if (!this.waitUntil) return;
+
+    this.waitUntil(() =>
+      reportingAsync(
+        async () => {
+          const now = Date.now();
+          const remainingTtl = Math.max(
+            1,
+            Math.floor((envelope.e - now) / 1000),
+          );
+          const cache = await this.getCache();
+          const request = this.keyToRequest(f.prefix + key, f.version);
+          const { tags, taggedAt } = f.tags(envelope);
+          await cache.put(
+            request,
+            f.toL1(
+              envelope,
+              `public, max-age=${remainingTtl}`,
+              this.tagHeaderEntries(tags, taggedAt),
+            ),
+          );
+        },
+        "cache-write",
+        f.promoteLabel,
+      ),
+    );
   }
 
   /**
@@ -4143,310 +4059,6 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
           }),
         "cache-write",
         "[CFCacheStore] kvSetSegment",
-      ),
-    );
-  }
-
-  /**
-   * Promote segment data from KV to L1 Cache API.
-   * @internal
-   */
-  private promoteSegmentToL1(key: string, envelope: KVSegmentEnvelope): void {
-    if (!this.waitUntil) return;
-
-    this.waitUntil(() =>
-      reportingAsync(
-        async () => {
-          const now = Date.now();
-          const remainingTtl = Math.max(
-            1,
-            Math.floor((envelope.e - now) / 1000),
-          );
-          const cache = await this.getCache();
-          const request = this.keyToRequest(key, "data");
-
-          const response = new Response(JSON.stringify(envelope.d), {
-            headers: {
-              "Content-Type": "application/json",
-              "Cache-Control": `public, max-age=${remainingTtl}`,
-              [CACHE_STALE_AT_HEADER]: String(envelope.s),
-              // Carry the hard-expiry deadline so a promoted entry that later
-              // goes stale re-puts with the correct remaining ttl (see set()).
-              [CACHE_EXPIRES_AT_HEADER]: String(envelope.e),
-              [CACHE_STATUS_HEADER]: "HIT",
-              // Preserve tags across KV->L1 promotion so the promoted entry
-              // stays tag-invalidatable.
-              ...this.tagHeaderEntries(envelope.d.tags, envelope.d.taggedAt),
-            },
-          });
-
-          await cache.put(request, response);
-        },
-        "cache-write",
-        "[CFCacheStore] promoteSegmentToL1",
-      ),
-    );
-  }
-
-  /**
-   * KV fallback for function cache reads.
-   * @internal
-   */
-  private async kvGetItem(
-    key: string,
-    opts?: { suppressRevalidate?: boolean },
-  ): Promise<CacheItemResult | null> {
-    if (!this.kv) return null;
-
-    try {
-      const kvKey = await this.toKVKey(`fn:${key}`, "data");
-      const { value: envelope, timedOut } =
-        await this.kvGetOrEvict<KVItemEnvelope>(
-          kvKey,
-          (e) =>
-            typeof e.v === "string" &&
-            typeof e.e === "number" &&
-            typeof e.s === "number",
-          "kvGetItem",
-        );
-      if (timedOut) {
-        if (this.debug)
-          this.emitDebug({ op: "getItem", key, outcome: "kv-timeout" });
-        return null;
-      }
-      if (!envelope) {
-        if (this.debug)
-          this.emitDebug({ op: "getItem", key, outcome: "kv-miss" });
-        return null;
-      }
-
-      const now = Date.now();
-
-      if (now > envelope.e) {
-        if (this.debug)
-          this.emitDebug({ op: "getItem", key, outcome: "kv-miss" });
-        return null;
-      }
-
-      // Tag invalidation check (also covers the KV tier, not just L1).
-      if (await this.isGloballyInvalidated(envelope.t, envelope.ta)) {
-        if (this.debug)
-          this.emitDebug({ op: "getItem", key, outcome: "tag-invalidated" });
-        return null;
-      }
-
-      // Degraded fall-through suppresses revalidation (no KV herd guard); see
-      // kvGetSegment. Still serves stale and still promotes.
-      const stale = now > envelope.s;
-      const shouldRevalidate = stale && !opts?.suppressRevalidate;
-
-      // Promote to L1
-      this.promoteItemToL1(key, envelope);
-
-      if (this.debug)
-        this.emitDebug({
-          op: "getItem",
-          key,
-          outcome: !stale
-            ? "kv-fresh"
-            : opts?.suppressRevalidate
-              ? "kv-stale-suppressed"
-              : "kv-stale",
-          shouldRevalidate,
-        });
-      return {
-        value: envelope.v,
-        handles: envelope.h,
-        shouldRevalidate,
-        tags: envelope.t,
-      };
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[CFCacheStore] kvGetItem");
-      if (this.debug) this.emitDebug({ op: "getItem", key, outcome: "error" });
-      return null;
-    }
-  }
-
-  /**
-   * Promote function cache data from KV to L1.
-   * @internal
-   */
-  private promoteItemToL1(key: string, envelope: KVItemEnvelope): void {
-    if (!this.waitUntil) return;
-
-    this.waitUntil(() =>
-      reportingAsync(
-        async () => {
-          const now = Date.now();
-          const remainingTtl = Math.max(
-            1,
-            Math.floor((envelope.e - now) / 1000),
-          );
-          const cache = await this.getCache();
-          const request = this.keyToRequest(`fn:${key}`, "data");
-
-          const body = JSON.stringify({
-            value: envelope.v,
-            handles: envelope.h,
-          });
-          const response = new Response(body, {
-            headers: {
-              "Content-Type": "application/json",
-              "Cache-Control": `public, max-age=${remainingTtl}`,
-              [CACHE_STALE_AT_HEADER]: String(envelope.s),
-              // Carry the hard-expiry deadline; see promoteSegmentToL1 / set().
-              [CACHE_EXPIRES_AT_HEADER]: String(envelope.e),
-              [CACHE_STATUS_HEADER]: "HIT",
-              // Preserve tags across KV->L1 promotion (the item tier previously
-              // dropped them, permanently disabling tag invalidation here).
-              ...this.tagHeaderEntries(envelope.t, envelope.ta),
-            },
-          });
-
-          await cache.put(request, response);
-        },
-        "cache-write",
-        "[CFCacheStore] promoteItemToL1",
-      ),
-    );
-  }
-
-  /**
-   * KV fallback for document cache reads.
-   * @internal
-   */
-  private async kvGetResponse(
-    key: string,
-  ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
-    if (!this.kv) return null;
-
-    try {
-      const kvKey = await this.toDocKVKey(key);
-      // The document path is debug-silent (op is only get/getItem): a KV-read
-      // timeout here is bounded for resilience parity (kvGetOrEvict applies the
-      // budget) but emits no kv-timeout event, so its absence from the debug
-      // stream is expected. A null envelope is a miss -- missing key, a budget
-      // timeout, or a corrupt entry already evicted + reported by kvGetOrEvict.
-      const { value: envelope } = await this.kvGetOrEvict<KVResponseEnvelope>(
-        kvKey,
-        (e) =>
-          typeof e.b === "string" &&
-          typeof e.st === "number" &&
-          typeof e.e === "number" &&
-          typeof e.s === "number" &&
-          // stx is optional but, if present, must be a string (feeds Response).
-          (e.stx === undefined || typeof e.stx === "string") &&
-          // hd must be an array of [name, value] string tuples; a malformed
-          // shape would otherwise throw in `new Headers(hd)`. Validate it here
-          // so a faulty envelope is a fail-open MISS, never a thrown read.
-          Array.isArray(e.hd) &&
-          e.hd.every(
-            (entry) =>
-              Array.isArray(entry) &&
-              entry.length === 2 &&
-              typeof entry[0] === "string" &&
-              typeof entry[1] === "string",
-          ),
-        "kvGetResponse",
-      );
-      if (!envelope) return null;
-
-      const now = Date.now();
-
-      if (now > envelope.e) return null;
-
-      // Tag invalidation check (also covers the KV tier, not just L1).
-      if (await this.isGloballyInvalidated(envelope.t, envelope.ta)) {
-        return null;
-      }
-
-      const shouldRevalidate = now > envelope.s;
-
-      // Reconstruct Response: decode base64 -> binary, rebuild headers/status.
-      // Corrupt/partial base64 throws in atob; malformed `hd` or an out-of-range
-      // `st` throws in new Headers/new Response. Any of these is a faulty entry,
-      // so evict it and miss rather than re-failing every read until TTL.
-      let response: Response;
-      try {
-        // Finding #3 (read side): strip per-client signals a stale envelope may
-        // carry. Inside the try so a malformed `hd` evicts (not throws through);
-        // mutates `hd` in place so promoteResponseToL1 re-seeds from it too.
-        envelope.hd = envelope.hd.filter(
-          ([name]) => !isPerClientSignalHeader(name),
-        );
-        const bodyBuffer = base64ToBuffer(envelope.b);
-        const headers = new Headers(envelope.hd);
-        response = new Response(bodyBuffer, {
-          status: envelope.st,
-          statusText: envelope.stx,
-          headers,
-        });
-      } catch (error) {
-        reportCacheError(
-          error,
-          "cache-corrupt",
-          "[CFCacheStore] kvGetResponse: corrupt response envelope, evicting",
-        );
-        this.scheduleKvEvict(kvKey, "kvGetResponse");
-        return null;
-      }
-
-      // Promote to L1
-      this.promoteResponseToL1(key, envelope);
-
-      return { response, shouldRevalidate };
-    } catch (error) {
-      reportCacheError(error, "cache-read", "[CFCacheStore] kvGetResponse");
-      return null;
-    }
-  }
-
-  /**
-   * Promote document cache data from KV to L1.
-   * @internal
-   */
-  private promoteResponseToL1(key: string, envelope: KVResponseEnvelope): void {
-    if (!this.waitUntil) return;
-
-    this.waitUntil(() =>
-      reportingAsync(
-        async () => {
-          const now = Date.now();
-          const remainingTtl = Math.max(
-            1,
-            Math.floor((envelope.e - now) / 1000),
-          );
-          const cache = await this.getCache();
-          const request = this.keyToRequest(`doc:${key}`, "document");
-
-          const headers = new Headers(envelope.hd);
-          const originalCacheControl = headers.get("Cache-Control");
-          if (originalCacheControl !== null) {
-            headers.set(CACHE_ORIG_CC_HEADER, originalCacheControl);
-          }
-          headers.set("Cache-Control", `public, max-age=${remainingTtl}`);
-          headers.set(CACHE_STALE_AT_HEADER, String(envelope.s));
-          // Carry the hard-expiry deadline so the document herd guard's
-          // markResponseRevalidating re-put can compute the remaining window
-          // (matches promoteSegmentToL1/promoteItemToL1); without it a stale
-          // re-put would floor to max-age=1 and churn the KV-promoted twin.
-          headers.set(CACHE_EXPIRES_AT_HEADER, String(envelope.e));
-          // Re-attach the internal tag headers (envelope.hd is client-facing
-          // and intentionally excludes them) so the promoted entry stays
-          // invalidatable.
-          this.setTagHeaders(headers, envelope.t, envelope.ta);
-
-          const bodyBuffer = base64ToBuffer(envelope.b);
-          const response = new Response(bodyBuffer, {
-            status: envelope.st,
-            statusText: envelope.stx,
-            headers,
-          });
-
-          await cache.put(request, response);
-        },
-        "cache-write",
-        "[CFCacheStore] promoteResponseToL1",
       ),
     );
   }

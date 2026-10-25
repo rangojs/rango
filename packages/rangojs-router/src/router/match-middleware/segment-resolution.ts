@@ -29,13 +29,14 @@
  *  yes          no
  *   |           |
  *   v           v
- * resolveAll  resolveAllWithRevalidation
- * Segments    Segments
- *   |           |
+ * FRESH pass  partial pass
  *   |           | (compares with prev state)
  *   |           | (handles null components)
  *   |           |
  *   +-----------+
+ *         |
+ *         v
+ *   resolveAllSegments()
  *         |
  *         v
  *   +---------------------------+
@@ -54,13 +55,14 @@
  * RESOLUTION MODES
  * ================
  *
+ * Both use resolveAllSegments().
+ *
  * Full Match (document request):
- *   - Uses resolveAllSegments()
- *   - No revalidation logic (nothing to compare against)
+ *   - A FRESH pass (freshPassInput): no revalidation logic (nothing to
+ *     compare against)
  *   - Simple resolution of all route entries
  *
  * Partial Match (navigation):
- *   - Uses resolveAllSegmentsWithRevalidation()
  *   - Compares current vs previous params/URL
  *   - Sets component = null for segments client already has
  *   - Respects custom revalidation rules
@@ -90,6 +92,8 @@ import type { ResolvedSegment } from "../../types.js";
 import type { EntryData } from "../../server/context.js";
 import { _getRequestContext } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
+import { resolutionPassInput } from "../match-context.js";
+import { freshPassInput } from "../segment-resolution/resolution-pass.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 
@@ -155,64 +159,33 @@ export function withSegmentResolution<TEnv>(
       reqCtx._treeHasStreaming = treeHasStreaming(ctx.entries);
     }
 
-    const { resolveAllSegmentsWithRevalidation, resolveAllSegments } =
-      getRouterContext<TEnv>();
+    const { resolveAllSegments } = getRouterContext<TEnv>();
 
-    const Store = ctx.Store;
+    // A full match (interceptResult null) is a FRESH pass.
+    const result = await ctx.Store.run(() =>
+      resolveAllSegments(
+        ctx.isFullMatch
+          ? freshPassInput(ctx.handlerContext, ctx.routeKey, ctx.matched.params)
+          : resolutionPassInput(ctx),
+        ctx.entries,
+        {
+          interceptResult: ctx.interceptResult,
+          localRouteName: ctx.localRouteName,
+          pathname: ctx.pathname,
+        },
+      ),
+    );
 
-    if (ctx.isFullMatch) {
-      const segments = await Store.run(() =>
-        resolveAllSegments(
-          ctx.entries,
-          ctx.routeKey,
-          ctx.matched.params,
-          ctx.handlerContext,
-          ctx.loaderPromises,
-        ),
-      );
+    state.segments = result.segments;
+    state.matchedIds = ctx.isFullMatch
+      ? result.segments.map((s: { id: string }) => s.id)
+      : result.matchedIds;
 
-      state.segments = segments;
-      state.matchedIds = segments.map((s: { id: string }) => s.id);
-
-      if (reqCtx) {
-        reqCtx._resolveRenderBarrier(segments);
-      }
-      for (const segment of segments) {
-        yield segment;
-      }
-    } else {
-      // Partial match (navigation) - resolution with revalidation logic
-      const result = await Store.run(() =>
-        resolveAllSegmentsWithRevalidation(
-          ctx.entries,
-          ctx.routeKey,
-          ctx.matched.params,
-          ctx.handlerContext,
-          ctx.clientSegmentSet,
-          ctx.prevParams,
-          ctx.request,
-          ctx.prevUrl,
-          ctx.url,
-          ctx.actionContext,
-          ctx.interceptResult,
-          ctx.localRouteName,
-          ctx.pathname,
-          ctx.stale,
-        ),
-      );
-
-      // Update state with resolved segments
-      state.segments = result.segments;
-      state.matchedIds = result.matchedIds;
-
-      if (reqCtx) {
-        reqCtx._resolveRenderBarrier(result.segments);
-      }
-
-      // Yield all resolved segments
-      for (const segment of result.segments) {
-        yield segment;
-      }
+    if (reqCtx) {
+      reqCtx._resolveRenderBarrier(result.segments);
+    }
+    for (const segment of result.segments) {
+      yield segment;
     }
 
     if (ms) {

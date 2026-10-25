@@ -52,6 +52,7 @@ import { stampLocationState } from "./react/location-state-shared.js";
 import { classifyActionOutcome } from "./action-coordinator.js";
 import { revalidationErrorOf } from "../decode-loader-results.js";
 import { getAppVersion } from "./app-version.js";
+import { writePartialParams } from "./wire-protocol.js";
 import {
   decideCommitGatedOff,
   findActionFormData,
@@ -487,28 +488,16 @@ export function createServerActionBridge(
       // Create temporary references for serialization
       const temporaryReferences = deps.createTemporaryReferenceSet();
 
-      // Build action request URL with current segments
-      const url = new URL(window.location.href);
-      url.searchParams.set("_rsc_action", id);
-      url.searchParams.set(
-        "_rsc_segments",
-        segmentState.currentSegmentIds.join(","),
-      );
-      // Add version param for version mismatch detection
-      const version = getAppVersion();
-      if (version) {
-        url.searchParams.set("_rsc_v", version);
-      }
-      // Add router ID for app switch detection
-      const rid = store.getRouterId?.();
-      if (rid) {
-        url.searchParams.set("_rsc_rid", rid);
-      }
-      // The page's rewrite target: the server diffs the re-render against it.
-      const rewriteTarget = store.getHistoryEntryMemory()?.rewriteTarget;
-      if (rewriteTarget) {
-        url.searchParams.set("_rsc_rt", rewriteTarget);
-      }
+      // Build action request URL with current segments; the server diffs the
+      // re-render against the page's rewrite target.
+      const url = writePartialParams(new URL(window.location.href), {
+        action: id,
+        segmentIds: segmentState.currentSegmentIds,
+        emptySegments: "send",
+        version: getAppVersion(),
+        routerId: store.getRouterId?.(),
+        rewriteTarget: store.getHistoryEntryMemory()?.rewriteTarget,
+      });
 
       // Encode arguments
       const encodedBody = await deps.encodeReply(args, { temporaryReferences });
@@ -740,7 +729,7 @@ export function createServerActionBridge(
       }
 
       // Handle error responses with error boundary UI
-      if (isError && isPartial && segments && diff) {
+      if (isError && isPartial && segments) {
         log("processing error boundary response");
 
         // transition({ when }) sees action.error on the boundary commit and on
@@ -802,16 +791,16 @@ export function createServerActionBridge(
 
         if (pageLeft()) return dropBoundary();
 
-        // Update segment tracking to exclude error segment IDs
-        const errorSegmentIds = new Set(diff);
-        const segmentIdsAfterError = segmentState.currentSegmentIds.filter(
-          (id) => !errorSegmentIds.has(id),
-        );
-
         // Cache (and bump the nav instance) BEFORE the UI update so a deferred
         // handle pushed by the error-boundary render still applies — see the
-        // "normal" case below for why caching after onUpdate dropped it.
-        store.setSegmentIds(segmentIdsAfterError);
+        // "normal" case below for why caching after onUpdate dropped it. The
+        // page stops claiming the error segments only: the loaders the
+        // response re-ran above the boundary stay held.
+        store.setSegmentIds(
+          segmentState.currentSegmentIds.filter(
+            (id) => !segments.some((s) => s.id === id && s.type === "error"),
+          ),
+        );
         const currentHandleData = liveHandleDataForCache(
           eventController,
           store,

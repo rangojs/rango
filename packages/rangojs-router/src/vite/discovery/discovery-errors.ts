@@ -209,7 +209,7 @@ export interface DiscoveryFailureReport {
  *   - a transient artifact of a Vite dependency re-optimization racing with boot
  *     discovery (a module read before the entry import resolves to the
  *     pre-optimize copy of the runner graph while createRouter() populated the
- *     post-optimize copy — see router-discovery.ts).
+ *     post-optimize copy — see dev-server-phase.ts).
  *
  * We can only tell them apart when the caller observed the dep optimizer's
  * `browserHash` change across the discovery attempt (`reoptimizeObserved`): a

@@ -19,27 +19,9 @@ import type {
 } from "../types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { TelemetrySink } from "./telemetry.js";
-import type { ResolveSegmentOptions } from "./segment-resolution.js";
 import type { EvaluateRevalidationOptions } from "./revalidation.js";
-
-/**
- * Revalidation context passed to segment resolution
- */
-export interface RevalidationContext {
-  clientSegmentIds: ReadonlySet<string>;
-  prevParams: Record<string, string>;
-  request: Request;
-  prevUrl: URL;
-  nextUrl: URL;
-  routeKey: string;
-  actionContext?: {
-    actionId?: string;
-    actionUrl?: URL;
-    actionResult?: any;
-    formData?: FormData;
-  };
-  stale?: boolean;
-}
+import type { ResolutionPassInput } from "./segment-resolution/resolution-pass.js";
+import type { RevalidatingWalkOptions } from "./segment-resolution/revalidation.js";
 
 /**
  * Result from intercept lookup
@@ -118,54 +100,21 @@ export interface RouterContext<TEnv = any> {
     isAction: boolean,
   ) => InterceptResult | null;
 
-  resolveAllSegmentsWithRevalidation: (
+  /** The segment walker; a full match passes freshPassInput (FRESH). */
+  resolveAllSegments: (
+    pass: ResolutionPassInput<TEnv>,
     entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    handlerContext: HandlerContext<any, TEnv>,
-    clientSegmentSet: Set<string>,
-    prevParams: Record<string, string>,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    actionContext: any | undefined,
-    interceptResult: InterceptResult | null,
-    localRouteName: string,
-    pathname: string,
-    stale?: boolean,
-    /** The matched route's full chain when `entries` is part of it (ResolveSegmentOptions.chain). */
-    chain?: readonly EntryData[],
+    walk: RevalidatingWalkOptions,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
-
-  // Generator-based segment resolution (for pipeline)
-  resolveAllSegmentsWithRevalidationGenerator?: (
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    handlerContext: HandlerContext<any, TEnv>,
-    clientSegmentSet: Set<string>,
-    prevParams: Record<string, string>,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    loaderPromises: Map<string, Promise<any>>,
-    actionContext?: any,
-  ) => AsyncGenerator<ResolvedSegment | { __type: "id"; id: string }>;
 
   // Intercept resolution
   resolveInterceptEntry: (
+    pass: ResolutionPassInput<TEnv>,
     intercept: InterceptEntry,
     entry: EntryData,
-    params: Record<string, string>,
-    handlerContext: HandlerContext<any, TEnv>,
     belongsToRoute: boolean,
-    revalidationContext?: RevalidationContext,
     options?: { background?: boolean },
   ) => Promise<ResolvedSegment[]>;
-
-  collectWithMarkers?: <T>(
-    gen: AsyncGenerator<T | { __type: "id"; id: string }>,
-  ) => Promise<{ items: T[]; matchedIds: string[] }>;
 
   evaluateRevalidation: (
     params: EvaluateRevalidationOptions<TEnv>,
@@ -178,45 +127,12 @@ export interface RouterContext<TEnv = any> {
       }
     | undefined;
 
-  resolveAllSegments: (
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    handlerContext: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>,
-    options?: ResolveSegmentOptions,
-  ) => Promise<ResolvedSegment[]>;
-
-  resolveAllSegmentsGenerator?: (
-    entries: EntryData[],
-    routeKey: string,
-    params: Record<string, string>,
-    handlerContext: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>,
-  ) => AsyncGenerator<ResolvedSegment | { __type: "id"; id: string }>;
-
-  collectSegmentsFromGenerator?: <T>(
-    gen: AsyncGenerator<T | { __type: "id"; id: string }>,
-  ) => Promise<T[]>;
-
   createHandleStore: () => any;
 
   resolveLoadersOnly?: (
+    pass: ResolutionPassInput<TEnv>,
     entries: EntryData[],
-    handlerContext: HandlerContext<any, TEnv>,
-  ) => Promise<ResolvedSegment[]>;
-
-  resolveLoadersOnlyWithRevalidation?: (
-    entries: EntryData[],
-    handlerContext: HandlerContext<any, TEnv>,
-    clientSegmentSet: Set<string>,
-    prevParams: Record<string, string>,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    routeKey: string,
-    actionContext?: any,
-    stale?: boolean,
+    walk?: Pick<RevalidatingWalkOptions, "interceptResult">,
   ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
   // Entry revalidation map
@@ -230,11 +146,10 @@ export interface RouterContext<TEnv = any> {
   requestId?: string;
 
   resolveInterceptLoadersOnly?: (
+    pass: ResolutionPassInput<TEnv>,
     intercept: InterceptEntry,
     entry: EntryData,
-    handlerContext: HandlerContext<any, TEnv>,
     belongsToRoute: boolean,
-    revalidationContext: RevalidationContext,
   ) => Promise<ResolvedSegment[]>;
 }
 

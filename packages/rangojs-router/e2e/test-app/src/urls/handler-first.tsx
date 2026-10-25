@@ -13,6 +13,9 @@ const HandlerFirstPage: Handler<"handlerFirst.index"> = (ctx) => {
       <Link to="/handler-first/cache-scope" data-testid="link-to-cached">
         Go to cached
       </Link>
+      <Link to="/handler-first" data-testid="link-to-self">
+        Same page
+      </Link>
     </div>
   );
 };

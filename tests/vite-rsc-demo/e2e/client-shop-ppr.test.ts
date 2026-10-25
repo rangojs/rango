@@ -12,7 +12,7 @@ import { waitForHydration, prodDescribe } from "./helper";
  *   background.
  * - HIT document: the stored shell carries the baked loader's data AND its
  *   handle pushes — the <title> element and the Meta echo are captured HTML
- *   (the capture awaits flagged loaders since the fresh.ts capture-await fix,
+ *   (the capture awaits flagged loaders since the resolveOwnerLoaders capture-await fix,
  *   so their pushes beat the capture's barrier snapshot). The sidecar is a
  *   live hole: skeleton in the prelude, fresh value streamed per request.
  *

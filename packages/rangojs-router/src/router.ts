@@ -546,18 +546,21 @@ export function createRouter<TEnv = any>(
     },
     useDefaultErrorBoundary?: boolean,
   ): Promise<LoaderDataResult<T>> {
-    const loaderStart = telemetrySink ? performance.now() : 0;
-    const loaderRequestId = telemetrySink
+    // A PPR shell capture sends nothing to the sink: the same switch as match().
+    const emitTelemetry =
+      !!telemetrySink && !_getRequestContext()?._shellCaptureState?.run;
+    const loaderStart = emitTelemetry ? performance.now() : 0;
+    const loaderRequestId = emitTelemetry
       ? errorContext?.request
         ? getRequestId(errorContext.request)
         : undefined
       : undefined;
     // Derived once here for both the loader.start and loader.end emits (the
     // loader.error emit uses ctx.loaderName from wrapLoaderWithErrorHandling).
-    const loaderName = telemetrySink
+    const loaderName = emitTelemetry
       ? segmentId.split(".").pop() || "unknown"
       : "";
-    if (telemetrySink) {
+    if (emitTelemetry) {
       safeEmit(telemetry, {
         type: "loader.start",
         timestamp: loaderStart,
@@ -591,7 +594,7 @@ export function createRouter<TEnv = any>(
               handledByBoundary: ctx.handledByBoundary,
               requestStartTime: errorContext.requestStartTime,
             });
-            if (telemetrySink) {
+            if (emitTelemetry) {
               const errorObj =
                 error instanceof Error ? error : new Error(String(error));
               safeEmit(telemetry, {
@@ -618,7 +621,7 @@ export function createRouter<TEnv = any>(
     );
 
     // Emit loader.end after the promise settles (fire-and-forget)
-    if (telemetrySink) {
+    if (emitTelemetry) {
       result.then((r) => {
         safeEmit(telemetry, {
           type: "loader.end",
@@ -663,11 +666,9 @@ export function createRouter<TEnv = any>(
 
   // Create segment resolution wrappers bound to segmentDeps
   const {
-    resolveAllSegments,
     resolveLoadersOnly,
-    resolveLoadersOnlyWithRevalidation,
     buildEntryRevalidateMap,
-    resolveAllSegmentsWithRevalidation,
+    resolveAllSegments,
     findInterceptForRoute,
     resolveInterceptEntry,
     resolveInterceptLoadersOnly,
@@ -713,16 +714,14 @@ export function createRouter<TEnv = any>(
       getMetricsStore,
       createCacheScope,
       findInterceptForRoute,
-      resolveAllSegmentsWithRevalidation,
+      resolveAllSegments,
       resolveInterceptEntry,
       evaluateRevalidation,
       getRequestContext,
-      resolveAllSegments,
       createHandleStore,
       buildEntryRevalidateMap,
-      resolveLoadersOnlyWithRevalidation,
-      resolveInterceptLoadersOnly,
       resolveLoadersOnly,
+      resolveInterceptLoadersOnly,
       telemetry: telemetrySink,
     };
   }

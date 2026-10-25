@@ -862,10 +862,10 @@ too short and rested on an unverified platform claim:
   the write fix.
   Two CF read chokepoints strip defensively so such an entry can never replay
   one client's `Set-Cookie` to another: `toClientResponse` (the L1 serve path)
-  and the `kvGetResponse` `hd` filter (which also cleans the array
-  `promoteResponseToL1` re-seeds L1 from). The `hd` filter lives _inside_ the
-  corrupt-envelope `try`, so a malformed `hd` evicts rather than throwing
-  through. All sites share `stripPerClientSignals`/`isPerClientSignalHeader`
+  and the KV document read's `hd` filter (`RESPONSE_READ.fromKv`, which also
+  cleans the array `promoteToL1` re-seeds L1 from). The `hd` filter lives
+  _inside_ the corrupt-envelope `try`, so a malformed `hd` evicts rather than
+  throwing through. All sites share `stripPerClientSignals`/`isPerClientSignalHeader`
   from `cookie-name.ts` (one `PER_CLIENT_SIGNAL_HEADERS` source).
 
 ## Degradation: same-tab experience never degrades

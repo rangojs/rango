@@ -36,7 +36,7 @@
  *         |
  *         v
  *   +---------------------------+
- *   | resolveAllSegments()    |  Fresh resolution (no revalidation)
+ *   | FRESH segment pass      |  Fresh resolution (no revalidation)
  *   | + resolveIntercepts()   |  Ensures complete components
  *   +---------------------------+
  *         |
@@ -94,14 +94,17 @@
  * FRESH RESOLUTION (NO REVALIDATION)
  * ===================================
  *
- * Both full and partial requests use resolveAllSegments() (without
+ * Both full and partial requests resolve with a FRESH pass (without
  * revalidation logic) to ensure all segments have complete components.
  * Using revalidation-aware resolution would produce null components
- * for skipped segments, which would corrupt the cache entry.
+ * for skipped segments, which would corrupt the cache entry. Under an
+ * intercept the walk still skips the intercepted route's entry, as the MISS
+ * does: an intercept: record never holds the route's page.
  */
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
+import { interceptRecordKey } from "../intercept-resolution.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
@@ -109,12 +112,16 @@ import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { getContext } from "../../server/context.js";
 import { executionStart } from "../../cache/tag-invalidation.js";
 import {
-  bindRes,
   createRequestContext,
   runWithRequestContext,
   type RequestContext,
 } from "../../server/request-context.js";
+import { deriveRenderPass } from "../../server/render-pass.js";
 import { recordUse } from "../segment-resolution/prefetch-deferral.js";
+import {
+  freshPassInput,
+  heldNothingPassInput,
+} from "../segment-resolution/resolution-pass.js";
 
 /**
  * Re-render a cached route in the background and write it with
@@ -129,23 +136,11 @@ import { recordUse } from "../segment-resolution/prefetch-deferral.js";
  * MAX_REVALIDATION_INTERVAL, as after a refresh that throws.
  *
  * Runs on a DERIVED request context that owns the per-render state the
- * foreground reads while it is still producing the page (a stale HIT re-runs
- * its loaders; a proactive render starts once the Response exists, while its
- * body streams):
- *   - _handleStore: read late (loader pushes and aux-lane tracking in
- *     loader-resolution.ts, nested cache restores and captures in
- *     cache-scope.ts), so a swap sent live pushes into this render.
- *     setupLoaderAccess binds the store at setup, so it runs inside the
- *     derived context too.
- *   - _metricsStore: undefined, and the DSL store below has `metrics` unset
- *     (track() reads that one), so nothing lands on the foreground's perf
- *     timeline. ctx.Store.run closes over ctx.Store, so the derived store
- *     needs its own run.
- *   - response writes (headers, cookies, status, onResponse callbacks) go to
- *     a throwaway context (whose status gates the write, above) and are
- *     dropped: a layout above the cache() boundary is outside the header
- *     guard and an error boundary sets a status, so they would otherwise
- *     reach the live response.
+ * foreground reads while it is still producing the page:
+ * RENDER_PASS_FIELDS["background-revalidation"] (server/render-pass.ts) lists
+ * each field and why. The DSL store below has `metrics` unset too (track()
+ * reads that one), so nothing lands on the foreground's perf timeline;
+ * ctx.Store.run closes over ctx.Store, so the derived store needs its own run.
  * runWithRequestContext also re-establishes the request ALS, which a waitUntil
  * task on workerd loses; the DSL store is a different ALS (build context).
  */
@@ -157,8 +152,7 @@ export async function rerenderAndCacheRoute<TEnv>(
 ): Promise<number> {
   const start = executionStart();
   const handleStore = routerCtx.createHandleStore();
-  // Response writes land in a throwaway context nothing merges or drains. Its
-  // mutators are closures over its own stub, and they keep the same guards.
+  // Response writes land in a throwaway context nothing merges or drains.
   const sink = createRequestContext({
     env: ctx.env,
     request: ctx.request,
@@ -166,26 +160,10 @@ export async function rerenderAndCacheRoute<TEnv>(
     variables: {},
     themeConfig: requestCtx._themeConfig,
   });
-  const renderCtx: RequestContext<TEnv> = Object.assign(
-    Object.create(requestCtx),
-    {
-      _handleStore: handleStore,
-      _metricsStore: undefined,
-      _renderErrors: [],
-      _recoveredHandlerErrors: undefined,
-      _onResponseCallbacks: [],
-      header: sink.header,
-      setCookie: sink.setCookie,
-      deleteCookie: sink.deleteCookie,
-      setStatus: sink.setStatus,
-      _setStatus: sink._setStatus,
-      setTheme: sink.setTheme,
-      _rotateStateCookie: sink._rotateStateCookie,
-      _setKeepCacheDirective: sink._setKeepCacheDirective,
-    },
-  );
-  // ctx.res reads the sink's stub, not the live request's.
-  bindRes(renderCtx, () => sink.res);
+  const renderCtx = deriveRenderPass(requestCtx, "background-revalidation", {
+    handleStore,
+    sink,
+  });
   const store = Object.assign(Object.create(ctx.Store), { metrics: undefined });
   const runInStore = <T>(fn: () => T): T =>
     getContext().runWithStore(
@@ -210,26 +188,36 @@ export async function rerenderAndCacheRoute<TEnv>(
     const loaderPromises = new Map<string, Promise<any>>();
     routerCtx.setupLoaderAccess(handlerContext, loaderPromises);
 
-    const segments = await runInStore(() =>
+    const { segments } = await runInStore(() =>
       routerCtx.resolveAllSegments(
+        freshPassInput(handlerContext, ctx.routeKey, ctx.matched.params, {
+          skipLoaders: true,
+          partialRequest: !ctx.isFullMatch,
+        }),
         ctx.entries,
-        ctx.routeKey,
-        ctx.matched.params,
-        handlerContext,
-        loaderPromises,
-        { skipLoaders: true },
+        // Under an intercept the route's own entry is skipped, as on a MISS.
+        {
+          interceptResult: ctx.interceptResult,
+          localRouteName: ctx.localRouteName,
+          pathname: handlerContext.pathname,
+        },
       ),
     );
     if (ctx.interceptResult) {
       segments.push(
         ...(await runInStore(() =>
           routerCtx.resolveInterceptEntry(
+            // Nothing held: render fresh. Its loaders are skipped as the
+            // route's are: the record drops them.
+            heldNothingPassInput(
+              handlerContext,
+              ctx.interceptResult!.intercept.routeName,
+              ctx.matched.params,
+              { skipLoaders: true },
+            ),
             ctx.interceptResult!.intercept,
             ctx.interceptResult!.entry,
-            ctx.matched.params,
-            handlerContext,
             true, // belongsToRoute
-            undefined, // no revalidationContext: render fresh
             // A handler error rejects, so the failure is never cached.
             { background: true },
           ),
@@ -251,7 +239,7 @@ export async function rerenderAndCacheRoute<TEnv>(
       ctx.pathname,
       ctx.matched.params,
       segments,
-      ctx.isIntercept,
+      interceptRecordKey(ctx.interceptResult),
       start,
     );
     return segments.length;
