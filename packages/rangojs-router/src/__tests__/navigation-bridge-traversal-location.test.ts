@@ -435,3 +435,119 @@ describe("navigation-bridge: a server redirect loop", () => {
     expect(updates).toEqual([]);
   });
 });
+
+describe("navigation-bridge: Back/Forward onto an intercept entry the history cache holds", () => {
+  const ITEM = "http://localhost/item/1";
+  const LIST = "http://localhost/list";
+  const SEARCH = "http://localhost/search";
+
+  /**
+   * /item/1 opened as an intercept from /list, then again from /search: two
+   * entries for one URL. The page on screen is /search.
+   */
+  function setupIntercepts(sourceUrl: string) {
+    vi.stubGlobal("window", {
+      location: { href: ITEM, origin: "http://localhost" },
+      history: {
+        state: { key: "entry", idx: 1, intercept: true, sourceUrl },
+        replaceState: vi.fn(),
+        pushState: vi.fn(),
+      },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    });
+    const store = createNavigationStore({
+      initialLocation: { href: SEARCH },
+      initialHistoryKey: generateHistoryKey(SEARCH),
+      initialSegments: [seg("search-page")],
+      initialSegmentIds: ["search-page"],
+      crossTabSync: false,
+    });
+    for (const [source, page] of [
+      [LIST, "list-page"],
+      [SEARCH, "search-page"],
+    ]) {
+      store.cacheSegmentsForHistory(
+        generateHistoryKey(ITEM, { intercept: true, interceptSource: source }),
+        [seg(page), seg("modal", { namespace: "intercept:@modal" })],
+        { handle: {} },
+      );
+    }
+    const eventController = createEventController({
+      initialLocation: new URL(SEARCH),
+    });
+    const onUpdate = vi.fn();
+    const renderSegments = vi.fn(async (segments: ResolvedSegment[]) =>
+      segments.map((s) => s.id).join(","),
+    );
+    const bridge = createNavigationBridge({
+      store,
+      client: {} as any,
+      eventController,
+      onUpdate,
+      renderSegments,
+    });
+    return { store, bridge, onUpdate };
+  }
+
+  it.each([
+    { label: "the first source", sourceUrl: LIST, page: "list-page" },
+    { label: "the later source", sourceUrl: SEARCH, page: "search-page" },
+  ])(
+    "restores the entry opened from $label over that page, with no fetch",
+    async ({ sourceUrl, page }) => {
+      const { store, bridge, onUpdate } = setupIntercepts(sourceUrl);
+
+      await bridge.handlePopstate();
+
+      expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+      expect(onUpdate).toHaveBeenCalledTimes(1);
+      expect(onUpdate.mock.calls[0][0]).toMatchObject({
+        root: `${page},modal`,
+      });
+      expect(store.getHistoryKey()).toBe(
+        generateHistoryKey(ITEM, {
+          intercept: true,
+          interceptSource: sourceUrl,
+        }),
+      );
+      expect(store.getInterceptSourceUrl()).toBe(sourceUrl);
+    },
+  );
+
+  it("a stale background refresh of the entry opened from one page leaves the same URL's entry from the other page alone", async () => {
+    const { store, bridge } = setupIntercepts(LIST);
+    const keyOf = (source: string) =>
+      generateHistoryKey(ITEM, { intercept: true, interceptSource: source });
+    const searchBefore = store.getCachedSegments(keyOf(SEARCH))!.segments;
+    store.updateCacheHandleData(keyOf(LIST), { handle: {} }, true);
+    const fresh = [
+      seg("fresh-list"),
+      seg("modal", { namespace: "intercept:@modal" }),
+    ];
+    fetchPartialUpdateMock.mockImplementation(
+      async (
+        _url: string,
+        _ids: unknown,
+        _retry: boolean,
+        _signal: AbortSignal,
+        tx: BoundTransaction,
+      ) => {
+        tx.commit(["fresh-list", "modal"], fresh);
+      },
+    );
+
+    await bridge.handlePopstate();
+    await vi.waitFor(() => expect(fetchPartialUpdateMock).toHaveBeenCalled());
+
+    expect(fetchPartialUpdateMock.mock.calls[0][5]).toEqual({
+      type: "stale-revalidation",
+      interceptSourceUrl: LIST,
+    });
+    await vi.waitFor(() =>
+      expect(store.getCachedSegments(keyOf(LIST))!.segments).toBe(fresh),
+    );
+    expect(store.getCachedSegments(keyOf(SEARCH))!.segments).toBe(searchBefore);
+  });
+});
