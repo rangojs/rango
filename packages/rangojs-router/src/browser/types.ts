@@ -718,6 +718,8 @@ export interface FetchPartialOptions {
   signal?: AbortSignal;
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;
+  /** Sent as `_rsc_boundary` (wire-params.ts WIRE.boundary). */
+  boundary?: string;
   interceptSourceUrl?: string;
   /** RSC version for cache invalidation detection */
   version?: string;

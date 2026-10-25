@@ -4,9 +4,11 @@
  * matchError's segment on the action context: the entries above the
  * segment's outlet resolve as on a success, the segment takes the outlet's
  * place with the outlet's loader ids still claimed, and nothing at or below
- * the outlet runs.
+ * the outlet runs. An earlier action's follow-up (a stale partial that holds
+ * nothing) names that boundary while the page shows it (`_rsc_boundary`): the
+ * walk stops at the same place and sends no segment for it.
  */
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock(
   "@vitejs/plugin-rsc/rsc/server",
@@ -22,6 +24,7 @@ import { createLoader } from "../../../loader.rsc.js";
 import { buildRouterTrieFromUrlpatterns } from "../../../rsc/manifest-init.js";
 import { runWithRequestContext } from "../../../server/request-context.js";
 import { writePartialParams } from "../../../browser/wire-protocol.js";
+import { idsAboveBoundary } from "../../../browser/segment-reconciler.js";
 import { makeRequestContext } from "../../../__tests__/kit/request-context.js";
 import type { MatchResult, ResolvedSegment } from "../../../types.js";
 
@@ -66,6 +69,7 @@ beforeAll(async () => {
         h.layout(handler("shelf"), () => [
           h.loader(Shelf),
           h.path("/shelf", handler("shelf route"), { name: "shelf" }),
+          h.path("/shelf2", handler("shelf2 route"), { name: "shelf2" }),
         ]),
       ]),
     ]),
@@ -159,5 +163,126 @@ describe("a thrown action's boundary pass", () => {
     expect(result.matched).toContain(boundary.id);
     expect(result.matched).toContain(shelfLoader);
     expect(result.matched.at(-1)).toBe(shelfLoader);
+  });
+});
+
+/** The follow-up of the page at `pathname`: it holds nothing but `boundary`. */
+async function followUp(
+  pathname: string,
+  boundary: string,
+): Promise<MatchResult> {
+  const url = writePartialParams(new URL(`https://example.com${pathname}`), {
+    segmentIds: [],
+    emptySegments: "send",
+    stale: true,
+    boundary,
+  });
+  const request = new Request(url, {
+    headers: { "X-RSC-Router-Client-Path": `https://example.com${pathname}` },
+  });
+  ran.length = 0;
+  return inRequest(request, () => router.matchPartial(request, { env: {} }));
+}
+
+describe("a follow-up that holds an action's boundary", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("renders every entry above the boundary, claims it and its loaders, and stops", async () => {
+    const { boundary, page } = await boundaryPass("/shelf");
+    const result = await followUp("/shelf", boundary.id);
+    // Held nothing: every entry above renders, the slot included.
+    expect(ran).toEqual(
+      expect.arrayContaining(["shop", "cart", "side", "section"]),
+    );
+    // Nothing at or below the boundary: the shelf layout, loader and route.
+    expect(ran.filter((id) => id.startsWith("shelf"))).toEqual([]);
+    expect(result.segments.map((s) => s.id)).not.toContain(boundary.id);
+    expect(result.resolvedIds).not.toContain(boundary.id);
+    const shelfLoader = loaderId(boundary.id, 0, "shelf");
+    expect(result.matched.slice(-2)).toEqual([boundary.id, shelfLoader]);
+    expect(page).toEqual(expect.arrayContaining(result.matched));
+  });
+
+  it("at a route's boundary, runs no route code", async () => {
+    const { boundary } = await boundaryPass("/item");
+    const result = await followUp("/item", boundary.id);
+    expect(ran).toEqual(expect.arrayContaining(["shop", "cart", "side"]));
+    expect(ran).not.toContain("item route");
+    expect(ran).not.toContain("item");
+    expect(result.matched.slice(-2)).toEqual([
+      boundary.id,
+      loaderId(boundary.id, 0, "item"),
+    ]);
+  });
+
+  it("an id that matches no entry of the route's chain renders the page whole and warns in development", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const result = await followUp("/item", "M9L9R9");
+    expect(ran).toEqual(
+      expect.arrayContaining(["shop", "cart", "item route", "item"]),
+    );
+    expect(result.segments.map((s) => s.type)).toContain("route");
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('held the error boundary "M9L9R9"'),
+    );
+  });
+});
+
+/** A link from `from` to `to` while the client holds `held`. */
+async function link(
+  from: string,
+  to: string,
+  held: string[],
+): Promise<MatchResult> {
+  const url = writePartialParams(new URL(`https://example.com${to}`), {
+    segmentIds: held,
+    emptySegments: "send",
+  });
+  const request = new Request(url, {
+    headers: { "X-RSC-Router-Client-Path": `https://example.com${from}` },
+  });
+  ran.length = 0;
+  return inRequest(request, () => router.matchPartial(request, { env: {} }));
+}
+
+/** Whether `result` sent the loader `id` of the entry `owner`. */
+const sent = (result: MatchResult, owner: string, id: string) =>
+  result.segments.some((s) => s.id === loaderId(owner, 0, id));
+
+describe("the next link after an action's boundary, with the ids the client then holds (idsAboveBoundary)", () => {
+  it("a route's boundary: a link to the page re-runs the route and its loader", async () => {
+    const { boundary, page } = await boundaryPass("/item");
+    const result = await link(
+      "/item",
+      "/item",
+      idsAboveBoundary(page, boundary.id),
+    );
+    expect(ran).toEqual(expect.arrayContaining(["item route", "item"]));
+    expect(sent(result, boundary.id, "item")).toBe(true);
+  });
+
+  it("the router's default boundary at the root: a link re-runs the layout's loader read before the write", async () => {
+    const { boundary, page } = await boundaryPass("/plain");
+    const held = idsAboveBoundary(page, boundary.id);
+    expect(held).toEqual([]);
+    const result = await link("/plain", "/item", held);
+    const cart = page.find((id) => id.endsWith(".cut#cart"))!;
+    expect(result.segments.map((s) => s.id)).toContain(cart);
+  });
+
+  it("after the follow-up held a layout's boundary: a link to a sibling route under it re-runs that layout's loader", async () => {
+    const { boundary } = await boundaryPass("/shelf");
+    const fu = await followUp("/shelf", boundary.id);
+    const result = await link(
+      "/shelf",
+      "/shelf2",
+      idsAboveBoundary(fu.matched, boundary.id),
+    );
+    expect(sent(result, boundary.id, "shelf")).toBe(true);
+    expect(ran).toContain("shelf2 route");
   });
 });

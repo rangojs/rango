@@ -136,6 +136,8 @@ export interface MatchContext<TEnv = any> {
   clientSegmentIds: string[];
   clientSegmentSet: Set<string>;
   stale: boolean;
+  /** NavigationSnapshot.heldBoundary: the walk stops above it. */
+  heldBoundary?: string;
 
   // Previous navigation state
   prevUrl: URL;
@@ -219,6 +221,7 @@ export function resolutionPassInput<TEnv>(
     routeKey: ctx.routeKey,
     actionContext: ctx.actionContext,
     stale: ctx.stale,
+    heldBoundary: ctx.heldBoundary,
   };
 }
 

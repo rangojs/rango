@@ -3318,3 +3318,157 @@ describe("an action refetch whose loader throws on its rerun", () => {
     expect(nav.result).toBeUndefined();
   });
 });
+
+describe("an action refetch that holds an error boundary", () => {
+  // The follow-up an earlier action owes a page that shows a later action's
+  // error boundary (server-action-bridge.ts followUp): it names the boundary,
+  // and the server renders every segment above it and nothing at or below it.
+  it("keeps the cached error segment, stops holding its id, and commits a loader that failed above it at its read", async () => {
+    const boundary = seg("R0", { type: "error", component: "fallback" });
+    const failed = seg("L0D0.cart", {
+      type: "loader",
+      loaderId: "cart",
+      loaderData: Promise.resolve({
+        __loaderResult: true,
+        ok: false,
+        error: { message: "cart service unavailable" },
+        fallback: null,
+      }),
+    } as Partial<ResolvedSegment>);
+    const store = makeNavigationStore({
+      initialSegments: [
+        seg("L0", { type: "layout" }),
+        seg("L0D0.cart", { type: "loader", loaderId: "cart" }),
+        boundary,
+      ],
+    });
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: true,
+        segments: [seg("L0", { type: "layout", component: "fresh" }), failed],
+        matched: ["L0", "L0D0.cart", "R0"],
+        diff: ["L0", "L0D0.cart"],
+      },
+    });
+    const renderSegments = vi.fn(
+      async (_segments: ResolvedSegment[], _options?: unknown) => "tree",
+    );
+    const tx = createMockTx();
+    const result = await createPartialUpdater({
+      getVersion: () => undefined,
+      store,
+      client: client as any,
+      onUpdate: vi.fn(),
+      renderSegments,
+    })("http://localhost/", [], false, undefined, tx as any, {
+      type: "action",
+      boundary: "R0",
+    });
+
+    expect(client.fetchPartial).toHaveBeenCalledWith(
+      expect.objectContaining({
+        segmentIds: [],
+        staleRevalidation: true,
+        boundary: "R0",
+      }),
+    );
+    const [rendered] = renderSegments.mock.calls[0]!;
+    expect(rendered[0]).toMatchObject({ id: "L0", component: "fresh" });
+    expect(rendered[1]).toBe(failed);
+    expect(rendered[2]).toBe(boundary);
+    expect(tx.commit).toHaveBeenCalledWith(
+      ["L0", "L0D0.cart"],
+      [expect.objectContaining({ component: "fresh" }), failed, boundary],
+      expect.anything(),
+    );
+    expect(result).toMatchObject({ message: "cart service unavailable" });
+  });
+
+  it("a layout's boundary: its loaders stay in the list but are let go with it", async () => {
+    const boundary = seg("L0L1", { type: "error", component: "fallback" });
+    const shelf = seg("L0L1D0.shelf", { type: "loader", loaderId: "shelf" });
+    const store = makeNavigationStore({
+      initialSegments: [
+        seg("L0", { type: "layout" }),
+        seg("L0D0.cart", { type: "loader", loaderId: "cart" }),
+        boundary,
+        shelf,
+      ],
+    });
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: true,
+        segments: [
+          seg("L0", { type: "layout", component: "fresh" }),
+          seg("L0D0.cart", {
+            type: "loader",
+            loaderId: "cart",
+            loaderData: Promise.resolve({
+              __loaderResult: true,
+              ok: true,
+              data: 1,
+            }),
+          } as Partial<ResolvedSegment>),
+        ],
+        // What the server claims at the cut: the boundary and its loaders.
+        matched: ["L0", "L0D0.cart", "L0L1", "L0L1D0.shelf"],
+        diff: ["L0", "L0D0.cart"],
+      },
+    });
+    const tx = createMockTx();
+    await createPartialUpdater({
+      getVersion: () => undefined,
+      store,
+      client: client as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    })("http://localhost/", [], false, undefined, tx as any, {
+      type: "action",
+      boundary: "L0L1",
+    });
+
+    expect(tx.commit).toHaveBeenCalledWith(
+      ["L0", "L0D0.cart"],
+      [
+        expect.objectContaining({ component: "fresh" }),
+        expect.objectContaining({ id: "L0D0.cart" }),
+        boundary,
+        shelf,
+      ],
+      expect.anything(),
+    );
+  });
+
+  it("a refetch that names none keeps holding every matched id", async () => {
+    const store = makeNavigationStore({
+      initialSegments: [seg("L0", { type: "layout" }), seg("R0")],
+    });
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: true,
+        segments: [seg("L0", { type: "layout" }), seg("R0")],
+        matched: ["L0", "R0"],
+        diff: ["L0", "R0"],
+      },
+    });
+    const tx = createMockTx();
+    await createPartialUpdater({
+      getVersion: () => undefined,
+      store,
+      client: client as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    })("http://localhost/", [], false, undefined, tx as any, {
+      type: "action",
+    });
+    const [[request]] = client.fetchPartial.mock.calls as unknown as [
+      [{ boundary?: string }],
+    ];
+    expect(request.boundary).toBeUndefined();
+    expect(tx.commit).toHaveBeenCalledWith(
+      ["L0", "R0"],
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+});

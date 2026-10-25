@@ -17,3 +17,15 @@ export function bumpActionBoundaryCart(): number {
   carts.set(key(), cart);
   return cart;
 }
+
+const notes = new Map<string, number>();
+
+export function readActionBoundaryNote(): number {
+  return notes.get(key()) ?? 0;
+}
+
+export function bumpActionBoundaryNote(): number {
+  const note = readActionBoundaryNote() + 1;
+  notes.set(key(), note);
+  return note;
+}

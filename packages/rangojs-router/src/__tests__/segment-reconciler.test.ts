@@ -7,6 +7,7 @@ vi.mock("../browser/segment-structure-assert.js", () => ({
 }));
 
 import {
+  idsAboveBoundary,
   reconcileSegments,
   reconcileErrorSegments,
 } from "../browser/segment-reconciler";
@@ -914,5 +915,31 @@ describe("segment-reconciler", () => {
 
       expect(result.segments[0].loaderDataPromise).toBe(freshPromise);
     });
+  });
+});
+
+describe("idsAboveBoundary", () => {
+  it("lets go of the boundary, its loaders and slots and everything under it, and keeps a sibling with a longer index", () => {
+    expect(
+      idsAboveBoundary(
+        [
+          "M0L0",
+          "M0L0D0.cart",
+          "M0L0.@aside",
+          "M0L0L1D0.shelf",
+          "M0L0L1",
+          "M0L0L1.@banner",
+          "M0L0L1R0D0.item",
+          "M0L0L1R0",
+          "M0L0L10",
+        ],
+        "M0L0L1",
+      ),
+    ).toEqual(["M0L0", "M0L0D0.cart", "M0L0.@aside", "M0L0L10"]);
+  });
+
+  it("holds every id when no boundary is named", () => {
+    const ids = ["M0L0", "M0L0R0"];
+    expect(idsAboveBoundary(ids, undefined)).toBe(ids);
   });
 });

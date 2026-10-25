@@ -1,6 +1,9 @@
 "use server";
 
-import { bumpActionBoundaryCart } from "./action-boundary.store.js";
+import {
+  bumpActionBoundaryCart,
+  bumpActionBoundaryNote,
+} from "./action-boundary.store.js";
 
 /** Adds an item to the cart and returns the count. */
 export async function addToActionBoundaryCart(): Promise<number> {
@@ -26,4 +29,17 @@ export async function failLateActionBoundaryCart(): Promise<never> {
 export async function slowActionBoundaryAction(): Promise<string> {
   await sleep(3500);
   return "y-done";
+}
+
+/** Adds an item to the cart, then throws after 4.5 s: it outlasts slowActionBoundaryAction. */
+export async function failSlowActionBoundaryCart(): Promise<never> {
+  await sleep(4500);
+  bumpActionBoundaryCart();
+  throw new Error("ab-slow-out-of-stock");
+}
+
+/** Writes a note after 3.5 s; only it re-runs the layout's note loader. */
+export async function slowActionBoundaryNote(): Promise<number> {
+  await sleep(3500);
+  return bumpActionBoundaryNote();
 }

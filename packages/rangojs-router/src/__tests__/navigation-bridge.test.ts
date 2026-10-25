@@ -26,7 +26,7 @@ function createStore() {
     getHistoryKey: vi.fn(() => "http://localhost/current"),
     rememberDisplayedEntry: vi.fn(),
     getHistoryEntryMemory: vi.fn(() => undefined),
-    getCachedSegments: vi.fn((): any => undefined),
+    getCachedSegments: vi.fn((_key: string): any => undefined),
     hasInterceptCache: vi.fn(() => false),
     cacheSegmentsForHistory: vi.fn(),
     updateCacheHandleData: vi.fn(),
@@ -703,6 +703,75 @@ describe("navigation-bridge stale cache handling", () => {
     expect(createNavigationTransactionMock).toHaveBeenCalled();
     const options = createNavigationTransactionMock.mock.calls[0][3];
     expect(options.skipLoadingState).toBe(false);
+  });
+});
+
+describe("navigation-bridge link to an entry whose cached list holds an error boundary", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  /** A link to /page while its entry caches `segments`, fresh. */
+  async function linkTo(segments: unknown[]) {
+    vi.stubGlobal("window", {
+      location: { href: "http://localhost/other", origin: "http://localhost" },
+      history: { state: {}, pushState: vi.fn(), replaceState: vi.fn() },
+    });
+    const store = createStore();
+    store.getCachedSegments.mockImplementation((key: string) =>
+      key === "http://localhost/current"
+        ? undefined
+        : { segments, stale: false, handleData: {} },
+    );
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: new AbortController().signal },
+      commit: vi.fn(),
+      with: vi.fn(() => ({})),
+      [Symbol.dispose]: vi.fn(),
+    });
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+    await createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    }).navigate("/page");
+    const [, segmentIds, , , , mode] = fetchPartialUpdateMock.mock.calls[0]!;
+    return { segmentIds, mode };
+  }
+
+  it("does not hold the list: the request holds the page on screen, so the route the error replaced renders again", async () => {
+    const { segmentIds, mode } = await linkTo([
+      { id: "L0", type: "layout" },
+      { id: "L0R0D0.item", type: "loader" },
+      { id: "L0R0", type: "error" },
+    ]);
+    expect(segmentIds).toBeUndefined();
+    expect(mode).toEqual({ type: "navigate" });
+  });
+
+  it("a parallel slot's error segment, the list's only one, also keeps the link from holding it", async () => {
+    const { segmentIds, mode } = await linkTo([
+      { id: "L0", type: "layout" },
+      { id: "L0.@side", type: "error" },
+      { id: "L0R0", type: "route" },
+    ]);
+    expect(segmentIds).toBeUndefined();
+    expect(mode).toEqual({ type: "navigate" });
+  });
+
+  it("control: a list without one is held, as before", async () => {
+    const { segmentIds, mode } = await linkTo([
+      { id: "L0", type: "layout" },
+      { id: "L0R0", type: "route" },
+    ]);
+    expect(segmentIds).toEqual(["L0", "L0R0"]);
+    expect(mode).toMatchObject({ type: "navigate" });
+    expect(mode.targetCacheSegments).toHaveLength(2);
   });
 });
 

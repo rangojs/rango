@@ -431,13 +431,15 @@ async function* serveStoredSegments<TEnv>(
   // route is the same case, served from the overlay first (an overlay entry
   // is newer than the build one, and may be the only one). Passthrough
   // routes keep a liveHandler, so a live render (rendersLive) re-renders
-  // them fresh. A thrown action's boundary pass walks live too
-  // (ActionContext.boundary).
+  // them fresh. A pass cut at an error boundary walks live too
+  // (ActionContext.boundary, a follow-up's held one): the evicted handler is
+  // under the cut.
   if (
     (prerenderStoreShortCircuits(ctx.matched.pr, ctx.request) ||
       overlayEligible) &&
     (!rendersLive(ctx) || !isPassthroughPrerenderRoute) &&
-    !ctx.actionContext?.boundary
+    !ctx.actionContext?.boundary &&
+    !ctx.heldBoundary
   ) {
     await ensurePrerenderDeps();
     stored = await readPrerenderSource(

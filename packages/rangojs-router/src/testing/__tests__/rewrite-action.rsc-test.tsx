@@ -375,6 +375,43 @@ describe("a JS action from a page route middleware rewrote", () => {
     expect(errors.map((e) => e.phase)).toEqual(["action"]);
   });
 
+  it("an earlier action's follow-up holds the target's boundary through the rewrite: no target route code runs", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const shown = await showPage("/public-1", cacheStore);
+    const thrown = await serveShellRequest(router, "/public-1", {
+      cacheStore,
+      action: {
+        ref: failingSave,
+        id: "actions.ts#failingSaveHeld",
+        segments: shown.matched,
+      },
+    });
+    const { metadata: answer } = await deserializeResult<{
+      metadata: { segments: Array<{ id: string; type: string }> };
+    }>(thrown.flight!);
+    const boundary = answer.segments.find((s) => s.type === "error")!.id;
+    seen.length = 0;
+
+    // The follow-up the page is owed, sent to the visitor's URL as the
+    // browser sends it: `_rsc_boundary` rides the rewrite pass.
+    const result = await serveShellRequest(router, "/public-1", {
+      cacheStore,
+      partial: {
+        from: "/public-1",
+        rewriteTarget: shown.rewriteTarget,
+        segments: [],
+        stale: true,
+        boundary,
+      },
+    });
+    expect(result.response.status).toBe(200);
+    expect(seen).toContain("route:GET:no-body");
+    const followUp = metadata(result.flight);
+    expect(followUp.matched).toContain(boundary);
+    expect(result.flight).not.toContain("item 1 guard=");
+    expect(result.flight).not.toContain("item boundary");
+  });
+
   it("renders the target's error boundary when the rewriting route has none", async () => {
     const cacheStore = new MemorySegmentCacheStore();
     const shown = await showPage("/bare/3", cacheStore);

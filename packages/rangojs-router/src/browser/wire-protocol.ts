@@ -13,6 +13,7 @@ export interface PartialRequestInit {
    */
   emptySegments: "send" | "omit";
   stale?: boolean;
+  boundary?: string;
   version?: string;
   routerId?: string;
   rewriteTarget?: string;
@@ -33,6 +34,7 @@ export function writePartialParams(url: URL, init: PartialRequestInit): URL {
     params.set(WIRE.segments, init.segmentIds.join(","));
   }
   if (init.stale) params.set(WIRE.stale, "true");
+  if (init.boundary) params.set(WIRE.boundary, init.boundary);
   if (init.version) params.set(WIRE.version, init.version);
   if (init.routerId) params.set(WIRE.routerId, init.routerId);
   if (init.rewriteTarget) params.set(WIRE.rewriteTarget, init.rewriteTarget);
