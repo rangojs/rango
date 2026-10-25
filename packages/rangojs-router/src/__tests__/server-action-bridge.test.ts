@@ -525,6 +525,102 @@ describe("server-action-bridge loader that fails on its rerun", () => {
   });
 });
 
+// An error-boundary response carries, above the boundary, what the action's
+// revalidation re-ran (rsc/server-action.ts): the boundary commits with the
+// fresh loader data, a layout it re-sends keeps its cached structure, and the
+// page goes on holding the loaders while it stops holding the error segment.
+describe("server-action-bridge error-boundary response", () => {
+  it("commits the boundary with what re-ran above it, still holds the re-run loaders and stops holding the error segment only", async () => {
+    stubWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const cart = (data: number) => ({
+      id: "L0D0.cart",
+      type: "loader",
+      loaderId: "cart",
+      component: null,
+      loaderData: Promise.resolve({ __loaderResult: true, ok: true, data }),
+    });
+    const layout = {
+      id: "L0",
+      type: "layout",
+      component: "layout",
+      loading: "spinner",
+      mountPath: "/shop",
+    };
+    const route = { id: "L0R0", type: "route", component: "route" };
+    // A layout its revalidate() re-rendered, the cart loader re-run, and
+    // the boundary at the route.
+    const reRendered = { id: "L0", type: "layout", component: "layout v2" };
+    const fresh = cart(1);
+    const boundary = { id: "L0R0", type: "error", component: "failed" };
+    const failure = new Error("out of stock");
+    const store = {
+      ...createMockStore(),
+      getSegmentState: vi.fn(() => ({
+        path: "/",
+        currentUrl: "http://localhost/",
+        currentSegmentIds: ["L0", "L0D0.cart", "L0R0"],
+      })),
+      getHistoryKey: vi.fn(() => "/"),
+      getCachedSegments: vi.fn(() => ({
+        segments: [layout, cart(0), route],
+        stale: false,
+      })),
+      setSegmentIds: vi.fn(),
+      cacheSegmentsForHistory: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const setServerCallback = vi.fn();
+    const rendered: unknown[][] = [];
+    const onUpdate = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController(),
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async () => ({
+          metadata: {
+            pathname: "/",
+            segments: [reRendered, fresh, boundary],
+            matched: ["L0", "L0D0.cart", "L0R0"],
+            diff: ["L0", "L0D0.cart", "L0R0"],
+            resolvedIds: ["L0", "L0D0.cart", "L0R0"],
+            isPartial: true,
+            isError: true,
+          },
+          returnValue: { ok: false, data: failure },
+        })),
+        setServerCallback,
+      } as any,
+      onUpdate,
+      renderSegments: vi.fn(async (segments: unknown[]) => {
+        rendered.push(segments);
+        return "tree";
+      }),
+    }).register();
+
+    await expect(
+      setServerCallback.mock.calls[0]![0]("hash#fail", []),
+    ).rejects.toBe(failure);
+
+    expect(rendered[0]).toEqual([
+      { ...reRendered, loading: "spinner", mountPath: "/shop" },
+      fresh,
+      boundary,
+    ]);
+    expect(store.cacheSegmentsForHistory.mock.calls[0]![1][1]).toBe(fresh);
+    expect(store.setSegmentIds).toHaveBeenCalledWith(["L0", "L0D0.cart"]);
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("server-action-bridge action on a page with a prefetch: false hole", () => {
   // The page adopted a prefetch: false prefetch and its fill has not landed:
   // one loader is a hole (browser/partial-update.ts armHoles). An action that

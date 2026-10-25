@@ -729,7 +729,7 @@ export function createServerActionBridge(
       }
 
       // Handle error responses with error boundary UI
-      if (isError && isPartial && segments && diff) {
+      if (isError && isPartial && segments) {
         log("processing error boundary response");
 
         // transition({ when }) sees action.error on the boundary commit and on
@@ -791,16 +791,16 @@ export function createServerActionBridge(
 
         if (pageLeft()) return dropBoundary();
 
-        // Update segment tracking to exclude error segment IDs
-        const errorSegmentIds = new Set(diff);
-        const segmentIdsAfterError = segmentState.currentSegmentIds.filter(
-          (id) => !errorSegmentIds.has(id),
-        );
-
         // Cache (and bump the nav instance) BEFORE the UI update so a deferred
         // handle pushed by the error-boundary render still applies — see the
-        // "normal" case below for why caching after onUpdate dropped it.
-        store.setSegmentIds(segmentIdsAfterError);
+        // "normal" case below for why caching after onUpdate dropped it. The
+        // page stops claiming the error segments only: the loaders the
+        // response re-ran above the boundary stay held.
+        store.setSegmentIds(
+          segmentState.currentSegmentIds.filter(
+            (id) => !segments.some((s) => s.id === id && s.type === "error"),
+          ),
+        );
         const currentHandleData = liveHandleDataForCache(
           eventController,
           store,

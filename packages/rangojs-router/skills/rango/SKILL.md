@@ -249,7 +249,11 @@ identity".
 The predicate arg carries the action's full context, not just its identity. Match
 _which_ action with `ctx.isAction(addToCart)` (rename-safe); branch on _what it
 returned_ with `ctx.actionResult` — the value your `"use server"` function
-returned, for outcome-conditional revalidation. The arg also exposes `actionId`
+returned, for outcome-conditional revalidation. When the action threw into an
+`errorBoundary()`, a predicate above the boundary still runs, with
+`actionResult` set to the thrown value: check a field's shape before reading
+it (`Array.isArray(actionResult?.items)`). A `redirect()` it throws then redirects, as
+after a success. The arg also exposes `actionId`
 (raw `path#export`), `actionUrl`, `formData` (form-based actions only), `method`,
 and `stale` (the `_rsc_stale` signal that an action ran in this or another tab;
 that Back/Forward revalidation takes an action's defaults, but `isAction()` is

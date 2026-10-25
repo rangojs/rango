@@ -40,6 +40,7 @@ import {
   type OnErrorContext,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
+import { deserializeResult } from "../../cache/segment-codec.js";
 
 const Guard = createVar<string>();
 
@@ -755,5 +756,80 @@ describe("a route-middleware rewrite that disallows mutations", () => {
     } finally {
       logged.mockRestore();
     }
+  });
+});
+
+describe("a thrown action's boundary on the rewrite target", () => {
+  let stock = 0;
+  const StockLoader = createLoader(async () => stock);
+  async function sellThenFail(): Promise<string> {
+    stock++;
+    throw new Error("sold out");
+  }
+  // The target's layout reads what the action wrote; the target's route
+  // declares the boundary.
+  const shop = createRouter({}).routes(
+    urls(({ layout, path, loader, middleware, errorBoundary }) => [
+      path(
+        "/deal/:id",
+        () => <main>deal</main>,
+        { name: "deal" },
+        () => [
+          middleware((ctx) => {
+            throw rewrite(`/goods/${ctx.params.id}`);
+          }),
+        ],
+      ),
+      layout(
+        () => <div>goods layout</div>,
+        () => [
+          loader(StockLoader),
+          path(
+            "/goods/:id",
+            () => <main>goods</main>,
+            { name: "goods" },
+            () => [errorBoundary(<p>goods boundary</p>)],
+          ),
+        ],
+      ),
+    ]),
+  );
+
+  it("carries the target's layout loader with the write beside the target's boundary", async () => {
+    stock = 0;
+    const cacheStore = new MemorySegmentCacheStore();
+    const page = await serveShellRequest(shop, "/deal/1", {
+      cacheStore,
+      partial: { from: "/" },
+    });
+    const result = await serveShellRequest(shop, "/deal/1", {
+      cacheStore,
+      action: {
+        ref: sellThenFail,
+        id: "actions.ts#sellThenFail",
+        segments: metadata(page.flight).matched,
+      },
+    });
+
+    expect(result.response.status).toBe(500);
+    expect(result.response.headers.get("x-rango-rewrite")).toBe("/goods/1");
+    expect(result.flight).toContain("goods boundary");
+    const { metadata: sent } = await deserializeResult<{
+      metadata: {
+        segments: Array<{
+          type: string;
+          loaderId?: string;
+          loaderData?: unknown;
+        }>;
+      };
+    }>(result.flight!);
+    const stockSegment = sent.segments.find(
+      (s) => s.loaderId === StockLoader.$$id,
+    );
+    expect(await stockSegment?.loaderData).toMatchObject({
+      ok: true,
+      data: 1,
+    });
+    expect(sent.segments.filter((s) => s.type === "error")).toHaveLength(1);
   });
 });

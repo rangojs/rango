@@ -1850,9 +1850,11 @@ change (see Contract Change Process).
   An action that throws on a matched route gets an error-boundary response
   instead. It holds the nearest `errorBoundary()`, or the router's default
   error boundary at the root when the app declares none (`matchError` in
-  `router/match-api.ts`). It commits on the same terms. When it commits, it
-  aborts the other actions in flight, so none completes over it, and the
-  failing action keeps its error for `useAction()`
+  `router/match-api.ts`). It is the action's revalidation cut at the
+  boundary (`ActionContext.boundary`; the R2 case table below). It commits on
+  the same terms: its loader values commit in the boundary's commit. When it
+  commits, it aborts the other actions in flight, so none completes over it,
+  and the failing action keeps its error for `useAction()`
   (`abortAllActions(except)` in `browser/event-controller.ts`). One that
   arrives after the user left its page is dropped before it aborts anything:
   its call rejects with the error, `useAction()` records it, and its exit owes
@@ -1919,6 +1921,37 @@ because the client cannot know which loaders on the page it navigated to read
 the action's write; `segments: []` is the only shape that re-runs all of them.
 It is the same request `refresh()` sends. A user who stayed gets no second
 request: the action's response already re-ran every loader on that page.
+
+What an action that throws gets back (R2), case by case. Before rango-t124
+the error-boundary response carried the error segment alone, so a layout
+loader above the boundary kept its pre-write value on the page the user
+stayed on, and on the next page under that layout.
+
+| Case                                                                              | What the response carries                                                                                                                                                                                                                                                                  | Pinned by                                                                                                             |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| Throws under its route's `errorBoundary()`, the user stays                        | every loader above the route, as its `revalidate()` decides; layouts and slots a `revalidate()` opts in; the error at the route; the route's loaders stay held                                                                                                                             | `action-boundary-revalidation.rsc-test.tsx`, the `action-boundary` scenario (both apps)                               |
+| Throws under a layout's `errorBoundary()`                                         | the same above that layout's chain child, the error at the child; nothing under the child runs, and its loader ids stay held                                                                                                                                                               | `action-boundary-revalidation.rsc-test.tsx`, `segment-resolution/__tests__/boundary-cut.test.tsx`                     |
+| Throws under an orphan (routeless) layout's `errorBoundary()`                     | the cut at the chain child of the layout that declares the orphan; the orphan, its loaders and its slots are above it and revalidate as on a success, and `matched` lists the whole chain (it listed the orphan alone, so the chain's handle values were dropped); no route code runs      | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| Throws, no declared boundary                                                      | the router's default boundary at the root alone, as before: nothing above the root                                                                                                                                                                                                         | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| Throws on a `Prerender()` or on-demand route                                      | the same, resolved live: the prerender store is skipped, and the evicted handler sits below the cut (`match-middleware/cache-lookup.ts`)                                                                                                                                                   | `match-middleware/__tests__/stored-source.rsc-test.tsx`                                                               |
+| Throws on a rewrite target (#1145)                                                | the target's boundary, cut on the target's chain                                                                                                                                                                                                                                           | `rewrite-action.rsc-test.tsx`                                                                                         |
+| The arguments do not decode, under a boundary (`actionStatus` 400)                | the same as a throw: the loaders above re-run though nothing wrote, and `isAction(ref)` compares the raw request id, since no action loaded. The HTTP status is 500: `matchError`'s status wins over the continuation's (`createResponseWithMergedHeaders` in `rsc/helpers.ts`), as before | the continuation: `rsc/__tests__/server-action.test.ts`; the response has no pin                                      |
+| A `revalidate()` above the boundary throws `redirect()`                           | the redirect, as from a success's revalidation (`X-RSC-Redirect`, 204); no boundary. Before, the boundary showed                                                                                                                                                                           | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| A loader above the boundary throws on its rerun                                   | that loader's error at its `useLoader` read, reported with phase `loader`; the action's error reported once with phase `action`                                                                                                                                                            | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| Sent from an intercept (`X-RSC-Router-Intercept-Source`)                          | the error segment alone, as before (rango-t151)                                                                                                                                                                                                                                            | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| `matchPartial` returns null, throws anything but a redirect, or misses the outlet | the error segment alone, as before, and no handle values: the abandoned walk's pushes are dropped. A throw or a miss warns in development                                                                                                                                                  | null and a thrown non-redirect `Response`: `action-boundary-revalidation.rsc-test.tsx`; the miss (a guard) has no pin |
+| A form post without JavaScript                                                    | unchanged (`rsc/progressive-enhancement.ts`)                                                                                                                                                                                                                                               | `[A3]`                                                                                                                |
+
+The browser reconciles it with `reconcileErrorSegments`
+(`browser/segment-reconciler.ts`): the error segment replaces its cached
+copy, and every other segment merges as an action's does (`mergeCached`),
+keeping the cached component of a held layout and the cached `loading` and
+`mountPath`. It then stops holding the error segments only
+(`browser/server-action-bridge.ts`): the loaders the response re-ran stay
+held, so the next navigation keeps their fresh data and a `revalidate(() =>
+false)` still holds them. Pinned by `segment-reconciler.test.ts` and
+`server-action-bridge.test.ts` ("server-action-bridge error-boundary
+response").
 
 The document cache never answers a stale request, so it never answers the
 follow-up either. Its key cannot see the write, so the cache neither stores nor

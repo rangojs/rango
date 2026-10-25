@@ -821,6 +821,61 @@ boundary, never saw the error.
 streaming. Until then the action counts as in flight, as a successful one
 does: `useNavigation().state` reads `"loading"`. No change in your code.
 
+### Fixed: an action that throws into an `errorBoundary()` shows its write above the boundary
+
+**Before.** A layout above a route's `errorBoundary()` shows a loader value,
+such as a cart count. An action writes the cart, then throws, and the user
+stays on the page. The boundary replaced the route, but the layout kept the
+count from before the write, and so did the next page under that layout
+that a link led to, while another tab and a fresh load showed the write. The
+error-boundary response carried the boundary alone: no loader above it ran,
+and the response left out the parallel slots the page held, so the handle
+values a slot pushed (a breadcrumb, a `Meta` value) were dropped. Under a
+boundary declared in a routeless (orphan) layout, it listed that layout
+alone, so the handle values of every layout above it were dropped too.
+
+**Now.** The error-boundary response is the action's own revalidation, cut at
+the boundary. Above it, it re-runs what a successful action would: every
+loader on the page, as its `revalidate()` decides (`isAction(ref)` and
+`actionId` match as on a success, also in a production build), and any
+layout or slot a `revalidate()` opts in. At the boundary it carries the
+boundary, and nothing at or below it runs. A route's `errorBoundary()`
+replaces the route: its handler and loaders do not run. A layout's
+`errorBoundary()` replaces what the layout renders in its outlet: the
+layout's own loaders, slots and orphan layouts revalidate as on a success,
+and nothing inside the outlet runs. The boundary and the fresh data commit
+together, the next page under the layout keeps them, the page's slots keep
+their handle values, and the handle values the re-run loaders push carry the
+write, as their data does. The boundary now shows once the slowest loader
+above it has answered, as a successful action's response does. A loader
+above it that throws reports to `onError` with phase `"loader"` and shows its
+error where it is read, as on a success.
+
+A `revalidate()` above the boundary now runs on a thrown action, with
+`actionResult` set to the thrown value, as thrown (usually an `Error`). A
+predicate that reads fields of `actionResult` must check their shape first.
+Unguarded, a read that throws logs `[revalidate] ... threw` and the segment
+takes the default decision:
+
+```ts
+loader(CartLoader, () => [
+  revalidate(({ actionResult, defaultShouldRevalidate }) =>
+    Array.isArray(actionResult?.items)
+      ? actionResult.items.length > 0
+      : defaultShouldRevalidate,
+  ),
+]);
+```
+
+A `redirect()` a `revalidate()` above the boundary throws now redirects, as
+it does after a successful action. It used to show the boundary.
+
+Unchanged: with no declared boundary the router's default error boundary
+replaces the page alone, an action sent from an intercept gets the boundary
+alone, and a form post without JavaScript renders as before. When the
+revalidation returns nothing or fails with anything but a redirect, the
+boundary shows alone, as before; in development a failure logs a warning.
+
 ## 0.27.0 (2026-10-23)
 
 ### Breaking: Back or Forward onto a page a server action made stale re-runs its loaders and route, as the action's own revalidation does, and every stale request renders live ([#1231](https://github.com/rangojs/rango/pull/1231))

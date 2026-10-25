@@ -15,7 +15,10 @@
  * An action re-renders live, past the segment cache, except on a Prerender
  * route that is not a passthrough: its handler is evicted at build, so the
  * re-render serves the stored entry (cache-lookup.ts, the gate in front of
- * readPrerenderSource). Both Prerender sources must keep answering it.
+ * readPrerenderSource). Both Prerender sources must keep answering it. An
+ * action that throws into the route's boundary is the exception: the entries
+ * above the boundary resolve live and the walk stops at the route, so the
+ * evicted handler never runs.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React, { isValidElement } from "react";
@@ -66,13 +69,18 @@ const buildPage = (ctx: BuildContext<{ id: string }>): React.ReactNode =>
 
 const StockLoader = createLoader(async () => ({ stock: 3 }));
 
+/** Counts the writes saveThenFail makes before it throws. */
+let writes = 0;
+const WritesLoader = createLoader(async () => writes);
+
 type Source = "segment cache" | "prerender build" | "on-demand overlay";
 
 /**
  * The same tree on every router: a layout around /item/:id with a loader.
- * Only how the route stores its handler output differs.
+ * Only how the route stores its handler output differs. `boundary` gives the
+ * layout a loader and the route an errorBoundary().
  */
-function makeRouter(source: Source) {
+function makeRouter(source: Source, boundary = false) {
   const handler =
     source === "segment cache"
       ? page
@@ -86,13 +94,15 @@ function makeRouter(source: Source) {
       ? { prerender: { store: createMemoryPrerenderStore() } }
       : {}),
   }).routes(
-    urls(({ layout, path, loader, cache }) => [
+    urls(({ layout, path, loader, cache, errorBoundary }) => [
       layout(
         () => <main>shell</main>,
         () => [
+          ...(boundary ? [loader(WritesLoader)] : []),
           path("/item/:id", handler, { name: "item" }, () => [
             loader(StockLoader),
             ...(source === "segment cache" ? [cache({ ttl: 300 })] : []),
+            ...(boundary ? [errorBoundary(<p>item failed</p>)] : []),
           ]),
         ],
       ),
@@ -112,8 +122,11 @@ interface Served {
  * every field of every segment, a rendered element by its text and a
  * loader's data settled.
  */
-async function served(result: ServeShellRequestResult): Promise<Served> {
-  expect(result.response.status).toBe(200);
+async function served(
+  result: ServeShellRequestResult,
+  status = 200,
+): Promise<Served> {
+  expect(result.response.status).toBe(status);
   const payload = await deserializeResult<{
     metadata: { segments: Array<Record<string, unknown>> };
   }>(result.flight!);
@@ -142,12 +155,17 @@ async function save(): Promise<string> {
   return "saved";
 }
 
-/** Stores the page in `source` the way production fills it, then serves it. */
+/**
+ * Stores the page in `source` the way production fills it, then serves it.
+ * With `boundary` (makeRouter), an action is sent with the segments the page
+ * holds after a navigation, and the response is expected to have `status`.
+ */
 async function serveFrom(
   source: Source,
   options: ServeShellRequestOptions = {},
+  { boundary = false, status = 200 } = {},
 ): Promise<Served> {
-  const router = makeRouter(source);
+  const router = makeRouter(source, boundary);
   const cacheStore = new MemorySegmentCacheStore();
   if (source === "segment cache") {
     // The first request of the same kind renders and writes the record (a
@@ -161,6 +179,20 @@ async function serveFrom(
       ok: true,
       status: "rendered",
     });
+  }
+  if (boundary && options.action) {
+    const page = await deserializeResult<{ metadata: { matched: string[] } }>(
+      (
+        await serveShellRequest(router, "/item/1", {
+          cacheStore,
+          partial: { from: "/" },
+        })
+      ).flight!,
+    );
+    options = {
+      ...options,
+      action: { ...options.action, segments: page.metadata.matched },
+    };
   }
   const runsBefore = pageRuns;
   const result = await serveShellRequest(router, "/item/1", {
@@ -180,7 +212,7 @@ async function serveFrom(
     return served(again);
   }
   expect(pageRuns).toBe(runsBefore);
-  return served(result);
+  return served(result, status);
 }
 
 beforeEach(async () => {
@@ -233,6 +265,36 @@ describe("an action re-render of a Prerender route", () => {
         { type: "loader", loaderData: { ok: true, data: { stock: 3 } } },
       ]);
       expect(action).toEqual(navigation);
+    },
+  );
+});
+
+describe("a thrown action's error boundary on a Prerender route", () => {
+  async function saveThenFail(): Promise<never> {
+    writes += 1;
+    throw new Error("save failed");
+  }
+
+  it.each(["prerender build", "on-demand overlay"] as const)(
+    "%s: the entries above the boundary resolve live, past the stored entry, and the page handler does not run",
+    async (source) => {
+      writes = 0;
+      // serveFrom fails when the page handler runs for the action.
+      const { segments } = await serveFrom(
+        source,
+        {
+          action: { ref: saveThenFail, id: "src/item.actions.ts#saveThenFail" },
+        },
+        { boundary: true, status: 500 },
+      );
+      expect(segments).toMatchObject([
+        {
+          type: "loader",
+          loaderId: WritesLoader.$$id,
+          loaderData: { ok: true, data: 1 },
+        },
+        { type: "error", component: "text: item failed" },
+      ]);
     },
   );
 });
