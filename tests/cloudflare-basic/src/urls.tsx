@@ -347,6 +347,7 @@ import { heldHandlesPatterns } from "./pages/held-handles.js";
 import { historyHandlesPatterns } from "./pages/history-handles.js";
 import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
 import { staleDefaultsPatterns } from "./pages/stale-defaults.js";
+import { actionBoundaryPatterns } from "./pages/action-boundary.js";
 import actionFailureClientPatterns from "./pages/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -3210,6 +3211,11 @@ export const urlpatterns = urls(
         // made stale, and an intercept (e2e/stale-defaults.test.ts).
         include("/stale-defaults", staleDefaultsPatterns, {
           name: "staleDefaults",
+        }),
+        // An action that throws on a route with its own errorBoundary(), under a
+        // layout whose loader reads its write (action-boundary.test.ts).
+        include("/action-boundary", actionBoundaryPatterns, {
+          name: "actionBoundary",
         }),
         // A link to a page the history cache holds keeps that page's handle
         // pushes when the response re-renders part of it.

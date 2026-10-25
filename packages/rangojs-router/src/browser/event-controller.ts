@@ -258,7 +258,8 @@ export interface EventController {
     /** Originating history entry key; scopes location-state arbitration. */
     cohort?: string,
   ): ActionHandle;
-  abortAllActions(): void;
+  /** Abort every action in flight except `except` (an ActionHandle id). */
+  abortAllActions(except?: string): void;
 
   // State access
   getState(): DerivedNavigationState;
@@ -1108,13 +1109,14 @@ export function createEventController(
     };
   }
 
-  function abortAllActions() {
+  /** Abort every action in flight except `except` (an ActionHandle id). */
+  function abortAllActions(except?: string) {
     for (const [id, entry] of inflightActions) {
       // Preserve settling entries — they have already been handled by
       // fail()/complete() and will self-cleanup via the settlement timeout.
       // Clearing them here would prevent debounced notifications from
       // delivering the error/result state to subscribers.
-      if (entry.phase === "settling") continue;
+      if (entry.phase === "settling" || id === except) continue;
       entry.abort.abort();
       inflightActions.delete(id);
     }

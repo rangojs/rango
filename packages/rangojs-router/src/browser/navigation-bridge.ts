@@ -273,15 +273,18 @@ export function createNavigationBridge(
         targetUrl.pathname === new URL(window.location.href).pathname
       ) {
         // Preserve intercept context from the current history entry so that
-        // popstate uses the correct cache key (:intercept suffix) and restores
-        // the right full-page vs modal semantics.
+        // popstate uses the same cache key and restores the right full-page
+        // vs intercept semantics.
         const currentHistoryState = window.history.state;
         const isIntercept = currentHistoryState?.intercept === true;
         const interceptSourceUrl = isIntercept
           ? currentHistoryState?.sourceUrl
           : undefined;
 
-        const historyKey = generateHistoryKey(url, { intercept: isIntercept });
+        const historyKey = generateHistoryKey(url, {
+          intercept: isIntercept,
+          interceptSource: interceptSourceUrl,
+        });
 
         // Copy current segments to the new history key so back/forward restores instantly.
         // The array itself, not a clone: getPageHistoryKeys reads a shared
@@ -405,12 +408,6 @@ export function createNavigationBridge(
         });
       }
 
-      // Also check if there's an intercept cache entry for this URL
-      // If so, this URL CAN be intercepted, and we shouldn't use the non-intercept cache
-      // because the navigation might result in an intercept (depending on source URL)
-      const interceptHistoryKey = generateHistoryKey(url, { intercept: true });
-      const hasInterceptCache = store.hasHistoryCache(interceptHistoryKey);
-
       // Skip cached SWR for:
       // 1. intercept caches - interception depends on source page context
       // 2. routes that CAN be intercepted - we don't know if this navigation will intercept
@@ -420,10 +417,12 @@ export function createNavigationBridge(
       const hasUsableCache =
         isRestorable(cachedSegments) &&
         !isInterceptOnlyCache(cachedSegments) &&
-        !hasInterceptCache &&
         !isLeavingIntercept &&
         !cached?.stale &&
-        !options?._skipCache;
+        !options?._skipCache &&
+        // A cached intercept entry for this URL (from any source page) means
+        // the navigation might intercept, depending on the source URL.
+        !store.hasInterceptCache(historyKey);
 
       // Forward navigations always await fetchPartialUpdate before rendering,
       // so useNavigation should always report "loading". skipLoadingState is
@@ -664,8 +663,10 @@ export function createNavigationBridge(
       const isLeavingIntercept =
         !isIntercept && currentInterceptSource !== null;
 
-      // Compute history key from URL (with intercept suffix if applicable)
-      const historyKey = generateHistoryKey(url, { intercept: isIntercept });
+      const historyKey = generateHistoryKey(url, {
+        intercept: isIntercept,
+        interceptSource: interceptSourceUrl,
+      });
 
       debugLog(
         "[Browser] Popstate -",

@@ -649,7 +649,8 @@ export interface NavigationStore {
         handlesPending?: boolean;
       }
     | undefined;
-  hasHistoryCache(historyKey: string): boolean;
+  /** Whether an intercept entry is cached for the plain `historyKey`, from any source page. */
+  hasInterceptCache(historyKey: string): boolean;
   /**
    * Update only the handleData (and optionally the stale / handlesPending flags)
    * of an existing cache entry. When a flag is omitted the entry's current value
