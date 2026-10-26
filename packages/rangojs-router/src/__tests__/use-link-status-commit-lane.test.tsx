@@ -31,7 +31,8 @@ import type { NavigationUpdate } from "../browser/types.js";
  * When useLinkStatus().pending commits, against a real event controller and
  * production's commitInTransition (browser/partial-update.ts), with an
  * update subscriber that does what NavigationProvider's does: the tree, then
- * the controller's queued notification flushed inside the update. Each link
+ * the controller's queued notification flushed inside the update, and the
+ * release once that tree commits. Each link
  * sits in the chrome, outside the tree each commit replaces, in a component
  * that reads useLinkStatus() and useNavigation() together; every one of its
  * commits is logged as "<pending|idle>:<state>:<page on screen>". Each case
@@ -49,6 +50,9 @@ let controller: EventController;
 let loaders: LoaderStore;
 let log: string[];
 let setTree!: (tree: ReactNode) => void;
+// The last tree handed over, until it commits (NavigationProvider's
+// committingRef).
+let committing: ReactNode | undefined;
 
 function onScreen(): string {
   if (document.querySelector('[data-testid="skeleton"]')) return "skeleton";
@@ -76,6 +80,13 @@ function Hold({ until }: { until: Promise<void> }): ReactNode {
 function Shell(): ReactNode {
   const [tree, set] = useState<ReactNode>(<Page id="1" />);
   setTree = set;
+  // NavigationProvider's layout effect: the tree handed over has committed.
+  useLayoutEffect(() => {
+    if (tree === committing) {
+      committing = undefined;
+      controller.releaseRouteState();
+    }
+  });
   return (
     <>
       {["/items/1", "/items/2", "/items/3"].map((to) => (
@@ -104,7 +115,8 @@ function mount() {
 
 /** NavigationProvider's update subscriber, reduced to what readers read. */
 const onUpdate = (update: NavigationUpdate): void => {
-  setTree(update.root as ReactNode);
+  committing = update.root as ReactNode;
+  setTree(committing);
   controller.flushRouteState(update.inTransition ? "anchor" : "release");
 };
 
@@ -158,6 +170,7 @@ function frames(to: string): string[] {
 
 beforeEach(() => {
   log = [];
+  committing = undefined;
   loaders = new LoaderStore();
   controller = createEventController({
     initialLocation: new URL("/items/1", ORIGIN),
@@ -247,7 +260,13 @@ describe("useLinkStatus commit lane: a notification flushed inside another flow'
 });
 
 describe("useLinkStatus commit lane", () => {
-  it("a navigation aborted while another flow's commit is held, its notification on its own task, ends its pending at once", async () => {
+  // Each hook answers its own question here, so the middle frame is not a
+  // contradiction. The link's navigation ended with no page, and nothing on
+  // screen will ever be its: pending ends at once. useNavigation() is the
+  // router's: a tree it handed React (another flow's) is still held, and its
+  // idle commits with that tree (S9, S10). "Not this link, the router still
+  // loading" is the frame every other link reads during any navigation.
+  it("a navigation aborted while another flow's commit is held, its notification on its own task, ends its pending at once; useNavigation's idle waits for that commit", async () => {
     mount();
     const foreign = deferred();
 
@@ -259,13 +278,14 @@ describe("useLinkStatus commit lane", () => {
     expect(frames("/items/2")).toEqual([
       "idle:idle:1",
       "pending:loading:1",
-      "idle:idle:1",
+      "idle:loading:1",
     ]);
 
     await release(foreign);
     expect(frames("/items/2")).toEqual([
       "idle:idle:1",
       "pending:loading:1",
+      "idle:loading:1",
       "idle:idle:1",
     ]);
   });
