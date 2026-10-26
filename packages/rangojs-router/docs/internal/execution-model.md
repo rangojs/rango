@@ -128,6 +128,14 @@ that cancels the reload leaves the store describing the page on screen. In
 dev, an edit that changes the version clears the history cache, so a
 Back/Forward onto an intercept entry after it takes the same path.
 
+A refresh reloads the intercept's URL the same way. `router.refresh()`, and
+the refresh another tab's action triggers (`navigation-bridge.ts` `refresh`),
+send no intercept source and hold nothing, so the server renders the URL's
+full page and the commit replaces the entry with it. An intercept is a page
+in the middle of a navigation: reloading its URL, by a document load or a
+refresh, renders the main page. Pinned by the `intercept-boundary` e2e (both
+apps, dev and production; rango-t215).
+
 ### 5) Prefetch, then fill (`prefetch: false`)
 
 A prefetch is a partial request sent early (`X-Rango-Prefetch`). Without the

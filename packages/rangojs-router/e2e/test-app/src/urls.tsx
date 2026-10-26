@@ -154,6 +154,7 @@ import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
 import { staleDefaultsPatterns } from "./urls/stale-defaults.js";
 import { actionBoundaryPatterns } from "./urls/action-boundary.js";
+import { interceptBoundaryPatterns } from "./urls/intercept-boundary.js";
 import actionFailureClientPatterns from "./urls/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -1142,6 +1143,11 @@ export const urlpatterns = urls(
       // layout whose loader reads its write (action-boundary.test.ts).
       include("/action-boundary", actionBoundaryPatterns, {
         name: "actionBoundary",
+      }),
+      // An action that throws inside an intercept, under the layout's
+      // errorBoundary() (intercept-boundary.test.ts).
+      include("/intercept-boundary", interceptBoundaryPatterns, {
+        name: "interceptBoundary",
       }),
       // A no-script document whose inline <Suspense> draws a client component
       // from a loader's answer (client-urls-loader-element.test.ts).
