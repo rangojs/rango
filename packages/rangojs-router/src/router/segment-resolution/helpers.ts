@@ -207,6 +207,38 @@ export interface ErrorReportContext {
   telemetry?: TelemetrySink;
 }
 
+type Thrower = { id: string; type: ErrorInfo["segmentType"] };
+
+/**
+ * Note that `id` threw `error`, for an error its owning entry's boundary
+ * catches (a parallel slot's sync throw, an orphan layout's): onError names
+ * the segment that threw, as a streamed slot's rejection does. Kept on the
+ * request context, never the module: a reused error object (a constant, a
+ * memoized rejection) can be thrown by another request, or by a Prerender
+ * pass that rethrows before catchSegmentError reads it. Returns `error`, to
+ * rethrow.
+ */
+export function noteThrower(
+  error: unknown,
+  id: string,
+  type: ErrorInfo["segmentType"],
+): unknown {
+  const reqCtx = _getRequestContext();
+  if (reqCtx && error !== null && typeof error === "object") {
+    (reqCtx._throwers ??= new WeakMap()).set(error, { id, type });
+  }
+  return error;
+}
+
+/** The segment noteThrower recorded for `error`, read once. */
+function takeThrower(error: unknown): Thrower | undefined {
+  const throwers = _getRequestContext()?._throwers;
+  if (!throwers || error === null || typeof error !== "object") return;
+  const noted = throwers.get(error) as Thrower | undefined;
+  throwers.delete(error);
+  return noted;
+}
+
 /**
  * Handle a caught error during segment resolution by creating an
  * error or not-found segment with the nearest boundary.
@@ -223,10 +255,11 @@ export function catchSegmentError<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
   report?: ErrorReportContext,
   pathname?: string,
-  thrower?: { id: string; type: ErrorInfo["segmentType"] },
+  thrower?: Thrower,
 ): ResolvedSegment {
-  const segmentId = thrower?.id ?? entry.shortCode;
-  const segmentType: ErrorInfo["segmentType"] = thrower?.type ?? entry.type;
+  const named = thrower ?? takeThrower(error);
+  const segmentId = named?.id ?? entry.shortCode;
+  const segmentType: ErrorInfo["segmentType"] = named?.type ?? entry.type;
   const reportError = (
     handledByBoundary: boolean,
     metadata?: Record<string, unknown>,
