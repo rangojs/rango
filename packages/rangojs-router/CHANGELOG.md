@@ -37,6 +37,56 @@ revalidation re-renders the page over the boundary.
 
 No change in your code.
 
+### Added: `onError` marks an error from a background refresh with `background: true`
+
+**Before.** A stale `cache()` record, document cache entry, PPR shell,
+`"use cache"` function or cached loader is served stale and refreshed beside
+the request. An error in that refresh reached `onError` like the visitor's
+own: the same `request`, `url` and `phase`, and `handledByBoundary: true` for
+a fallback no one saw. An error tracker counted a refresh that failed behind a
+page that rendered fine as a failed page view. A PPR route whose recapture
+failed reported the same handler error a visitor's own render would.
+
+**Now.** `OnErrorContext.background` is `true` for an error from work whose
+output goes only to a cache: a stale record's refresh, the write of a
+navigation that kept a layout mounted, a stale document's re-run, a shell
+capture, a stale `"use cache"` function's or cached loader's refresh. The
+refresh's own failure, reported with `phase: "cache"`, carries it too.
+`handledByBoundary` is `false` on such an error: the failed render is not
+stored, and the stale entry keeps serving. Every other error leaves
+`background` unset and reports as before, a `router.prerender()` warm's own
+render included.
+
+An error object both the visitor's render and a refresh reach, such as a
+memoized rejection, is now reported by each. Before, whichever reported first
+took the place of the other, so a refresh's report could stand in for the
+visitor's.
+
+```ts
+createRouter({
+  onError: ({ error, background }) => {
+    errorTracker.capture(error, { level: background ? "warning" : "error" });
+  },
+});
+```
+
+### Fixed: `onError` reports `duration`, `env`, an intercept's slot and a streamed handler's `isPartial`
+
+- `duration` was never set. It is now the time from the request's start to
+  the error, `dispatch()` from `@rangojs/router/testing` included. A
+  `background` error counts from the start of the request that started it.
+- `env` was unset on an error the segment walk catches (a route, layout or
+  slot handler that throws). It is now the request's `env`.
+- An intercept handler's error reported the layout that declares the
+  intercept (`segmentType: "layout"`, its `segmentId`). It now reports the
+  intercept's slot (`segmentType: "parallel"`, `segmentId` ending in the
+  slot name), as a streamed intercept handler already did. The error
+  boundary's fallback and the `handler.error` telemetry event receive the
+  same `segmentType` and `segmentId`.
+- A streamed (`loading()`) handler's rejection on a navigation reported
+  `isPartial` unset. It now reports `true`, as a handler that throws before it
+  returns does.
+
 ## 0.28.0 (2026-10-25)
 
 ### Fixed: a rewritten request's telemetry events carry one `requestId` ([#1269](https://github.com/rangojs/rango/pull/1269))

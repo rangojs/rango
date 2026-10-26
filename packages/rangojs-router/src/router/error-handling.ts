@@ -8,6 +8,10 @@
 import { createElement, type ReactNode } from "react";
 import type { EntryData } from "../server/context.js";
 import { runIdentityExempt } from "../cache/cache-exec-scope.js";
+import {
+  _getRequestContext,
+  isBackgroundWork,
+} from "../server/request-context.js";
 import type {
   ResolvedSegment,
   ErrorInfo,
@@ -39,7 +43,7 @@ export interface InvokeOnErrorContext<TEnv = any> {
   isPartial?: boolean;
   handledByBoundary?: boolean;
   metadata?: Record<string, unknown>;
-  /** Request start time from performance.now() for duration calculation */
+  /** performance.now() at request entry; the request context's by default. */
   requestStartTime?: number;
 }
 
@@ -49,6 +53,12 @@ export interface InvokeOnErrorContext<TEnv = any> {
  *
  * This is a shared utility used by both the router and RSC handler to ensure
  * consistent error callback behavior across the codebase.
+ *
+ * `background` is set inside runAsBackgroundWork (server/request-context.ts),
+ * and `duration` and `env` come from the request context on the ALS
+ * (`_handlerStart`, `env`) when the call site leaves them out, so no call
+ * site has to know. A Prerender pass's ctx.env throws without buildEnv, so
+ * the walk never reads it eagerly.
  *
  * @param onError - The onError callback to invoke (may be undefined)
  * @param error - The error that occurred
@@ -66,9 +76,10 @@ export function invokeOnError<TEnv = any>(
   if (!onError) return;
 
   const errorObj = error instanceof Error ? error : new Error(String(error));
-  const duration = context.requestStartTime
-    ? performance.now() - context.requestStartTime
-    : undefined;
+  const reqCtx = _getRequestContext();
+  const background = isBackgroundWork() || undefined;
+  const start = context.requestStartTime ?? reqCtx?._handlerStart;
+  const duration = start !== undefined ? performance.now() - start : undefined;
 
   const errorContext: OnErrorContext<TEnv> = {
     error: errorObj,
@@ -84,10 +95,11 @@ export function invokeOnError<TEnv = any>(
     loaderName: context.loaderName,
     middlewareId: context.middlewareId,
     actionId: context.actionId,
-    env: context.env,
+    env: context.env ?? (reqCtx?.env as TEnv | undefined),
     duration,
     isPartial: context.isPartial,
-    handledByBoundary: context.handledByBoundary,
+    background,
+    handledByBoundary: background ? false : context.handledByBoundary,
     stack: errorObj.stack,
     metadata: context.metadata,
   };

@@ -127,12 +127,13 @@ describe("intercept declared in a routeless layout: ancestor boundaries", () => 
     const { modal, status } = await navigate("/throw/1");
     expect(modal.component).toBe(RootError);
     expect(status).toBe(500);
-    // Reported on the declaring (orphan) entry, not the boundary's owner.
+    // Reported on the intercept's slot, not the boundary's owner.
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0]).toMatchObject({
       phase: "handler",
       handledByBoundary: true,
-      segmentId: modal.id.slice(0, -".@modal".length),
+      segmentId: modal.id,
+      segmentType: "parallel",
     });
   });
 

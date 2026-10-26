@@ -813,6 +813,7 @@ async function resolveParallelSlotComponent<TEnv>(
             context,
             routeKey,
             params,
+            isPartial: reportsPartial(pass),
             recover: !pass.throwOnError,
           });
         } else {
@@ -1180,6 +1181,7 @@ async function resolveRouteComponent<TEnv>(
           context,
           routeKey,
           params,
+          isPartial: reportsPartial(pass),
           recover: !pass.throwOnError,
         }),
       };
@@ -1598,6 +1600,15 @@ export interface RevalidatingWalkOptions {
   readonly chain?: readonly EntryData[];
 }
 
+/**
+ * The onError `isPartial` of an error the walk catches. FRESH: a full match
+ * reports it unset. A re-render a navigation started reports it true
+ * (partialRequest).
+ */
+function reportsPartial(pass: ResolutionPass<any>): true | undefined {
+  return pass.client !== FRESH || pass.partialRequest ? true : undefined;
+}
+
 /** An entry's error or not-found segment, as its whole result. */
 function boundaryResult(seg: ResolvedSegment): SegmentRevalidationResult {
   return { segments: [seg], matchedIds: [seg.id] };
@@ -1633,14 +1644,12 @@ export async function resolveAllSegments<TEnv>(
   try {
     telemetry = getRouterContext()?.telemetry;
   } catch {}
-  // FRESH: a full match reports an entry's error without isPartial, and a
-  // build-time pass rethrows it (throwOnError). A re-render a navigation
-  // started reports it with isPartial (partialRequest).
+  // A build-time pass rethrows an entry's error (throwOnError).
   const report = {
     request,
     url: context.url,
     routeKey,
-    isPartial: pass.client !== FRESH || pass.partialRequest ? true : undefined,
+    isPartial: reportsPartial(pass),
     telemetry,
   };
   const fillMatch = {

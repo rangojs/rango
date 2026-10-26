@@ -4012,3 +4012,5 @@ export async function expectDeclinedBakedParamServedLive(
 }
 export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
 export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
+export { runOnErrorBackgroundTests } from "./onerror-background-scenario.js";
+export type { OnErrorBackgroundScenarioOptions } from "./onerror-background-scenario.js";

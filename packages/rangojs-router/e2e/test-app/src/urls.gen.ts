@@ -207,6 +207,7 @@ export const routes = {
   "dhNav.start": "/dh-nav",
   docs: "/docs",
   "docs.article": "/docs/:slug",
+  "errors.captureFails": "/errors/capture-fails/:k",
   "errors.clientError": "/errors/client-error",
   "errors.flakyCache": "/errors/flaky-cache",
   "errors.flakyHeal": "/errors/flaky/heal",

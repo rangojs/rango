@@ -25,6 +25,8 @@ vi.mock("../server/request-context.js", () => ({
   // The loader-cache read-through re-establishes the request-context ALS around
   // the background revalidation execute(); the mock just invokes the callback.
   runWithRequestContext: <T>(_ctx: unknown, fn: () => T): T => fn(),
+  runAsBackgroundWork: <T>(_ctx: unknown, fn: () => T): T => fn(),
+  isBackgroundWork: () => false,
 }));
 
 // Mock internal debug

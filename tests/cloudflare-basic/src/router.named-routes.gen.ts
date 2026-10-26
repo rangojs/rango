@@ -83,6 +83,7 @@ export const NamedRoutes = {
   "docs.search": "/docs/api/search",
   documentCache: "/document-cache",
   documentCacheNoCache: "/document-cache-no-cache",
+  errorsCaptureFails: "/errors/capture-fails/:k",
   fast: "/slow/fast",
   featuresDetail: "/features/:slug",
   filesWildcard: "/files/*",

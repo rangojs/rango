@@ -22,7 +22,7 @@ import {
 import {
   createRequestContext,
   getRequestContext,
-  runWithRequestContext,
+  runAsBackgroundWork,
   type RequestContext,
 } from "../server/request-context.js";
 import { deriveRenderPass } from "../server/render-pass.js";
@@ -378,24 +378,25 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           }),
         });
 
-        runBackground(requestCtx, async () => {
-          try {
-            // Re-establish the request-context ALS around the whole background
-            // task: next() re-runs the full handler pipeline, and on workerd a
-            // waitUntil task runs detached from the request's I/O context, so a
-            // handler/component reading getRequestContext() would otherwise
-            // throw. Same fix as the route-level/use-cache background
-            // revalidation paths. The rango.background span (kind=
-            // document-revalidation) wraps the re-render AND the store write so
-            // the task's spans — the re-run's own rango.* set and the drain/put
-            // platform spans — nest under one explanatory parent instead of
-            // dangling under the ended foreground phases. Running the put
-            // inside the ALS matches the MISS path, where putResponse already
-            // executes within the foreground request context. No visitor made
-            // the invalidations the re-run makes: the pass's fresh-reads
-            // writer is the sink's, which sets nothing.
-            await runWithRequestContext(rerunCtx, () =>
-              observePhase(
+        // Re-establish the request-context ALS around the whole background
+        // task: next() re-runs the full handler pipeline, and on workerd a
+        // waitUntil task runs detached from the request's I/O context, so a
+        // handler/component reading getRequestContext() would otherwise
+        // throw. Same fix as the route-level/use-cache background
+        // revalidation paths. The rango.background span (kind=
+        // document-revalidation) wraps the re-render AND the store write so
+        // the task's spans — the re-run's own rango.* set and the drain/put
+        // platform spans — nest under one explanatory parent instead of
+        // dangling under the ended foreground phases. Running the put
+        // inside the ALS matches the MISS path, where putResponse already
+        // executes within the foreground request context. No visitor made
+        // the invalidations the re-run makes: the pass's fresh-reads
+        // writer is the sink's, which sets nothing. onError marks the
+        // re-run's errors `background`, the failure caught below included.
+        runBackground(requestCtx, () =>
+          runAsBackgroundWork(rerunCtx, async () => {
+            try {
+              await observePhase(
                 PHASES.background("document-revalidation"),
                 async () => {
                   const fresh = await next();
@@ -425,24 +426,20 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                     `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
                   );
                 },
-              ),
-            );
-          } catch (error) {
-            // The route now rewrites (route middleware): nothing to refresh
-            // this entry with.
-            if (isRewrite(error)) return;
-            // Pass requestCtx explicitly: this runs in a detached waitUntil task
-            // where the ALS context is gone, so onError only fires if we hand it
-            // the captured context (reportCacheError falls back to _getRequestContext
-            // otherwise, which is null here).
-            reportCacheError(
-              error,
-              "cache-write",
-              "[DocumentCache] revalidation",
-              requestCtx,
-            );
-          }
-        });
+              );
+            } catch (error) {
+              // The route now rewrites (route middleware): nothing to refresh
+              // this entry with.
+              if (isRewrite(error)) return;
+              reportCacheError(
+                error,
+                "cache-write",
+                "[DocumentCache] revalidation",
+                requestCtx,
+              );
+            }
+          }),
+        );
 
         return drainOnResponseCallbacks(
           addCacheStatusHeader(cached.response, "STALE"),

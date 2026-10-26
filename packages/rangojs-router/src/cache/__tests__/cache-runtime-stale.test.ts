@@ -32,12 +32,8 @@ vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 // must observe the DERIVED context (own isolated _handleStore), not the shared
 // foreground one — a passthrough mock would hide the isolation under test.
 const mockGetRequestContext = vi.fn<() => any>(() => null);
-vi.mock("../../server/request-context.js", () => ({
-  getRequestContext: () => mockGetRequestContext(),
-  // observePhase (instrument.ts) reads the underscore variant for the
-  // rango.background wrapper around the revalidation body.
-  _getRequestContext: () => mockGetRequestContext(),
-  runWithRequestContext: <T>(ctx: unknown, fn: () => T): T => {
+vi.mock("../../server/request-context.js", () => {
+  const runWithRequestContext = <T>(ctx: unknown, fn: () => T): T => {
     const prev = mockGetRequestContext.getMockImplementation();
     mockGetRequestContext.mockImplementation(() => ctx);
     try {
@@ -45,8 +41,17 @@ vi.mock("../../server/request-context.js", () => ({
     } finally {
       mockGetRequestContext.mockImplementation(prev ?? (() => null));
     }
-  },
-}));
+  };
+  return {
+    getRequestContext: () => mockGetRequestContext(),
+    // observePhase (instrument.ts) reads the underscore variant for the
+    // rango.background wrapper around the revalidation body.
+    _getRequestContext: () => mockGetRequestContext(),
+    runWithRequestContext,
+    runAsBackgroundWork: runWithRequestContext,
+    isBackgroundWork: () => false,
+  };
+});
 
 // Mock segment codec — identity transforms for testing
 vi.mock("../segment-codec.js", async () => {
