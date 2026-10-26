@@ -50,13 +50,13 @@ import { useNavigation } from "@rangojs/router/client";
 function NavIndicator() {
   const nav = useNavigation();
   // nav.state: 'idle' | 'loading'    nav.isStreaming: boolean
-  // nav.location: current URL        nav.pendingUrl: target URL or null
+  // nav.location: page on screen     nav.pendingUrl: page being fetched or null
   return nav.state === "loading" ? <Spinner /> : null;
 }
 const isLoading = useNavigation((nav) => nav.state === "loading"); // selector
 ```
 
-A link click, `router.push()` and a Back/Forward that has to fetch its entry report a pending navigation the same way. `state === "loading"` and `pendingUrl` (the URL being fetched) cover the network wait. `isStreaming` is true from the start of the request until the response's stream ends, so it also covers the part where the response has arrived and React still holds the page being left behind a loader that is streaming; use it for a progress indicator that should last until the new page is complete. `location` is the page on screen while the request is out, and moves when the response arrives. A Back/Forward served from the client's history cache restores its page in one commit and reports no pending state.
+A link click, `router.push()` and a Back/Forward that has to fetch its entry report a pending navigation the same way. `state === "loading"` and `pendingUrl` (the URL being fetched) cover the network wait. `isStreaming` is true from the start of the request until the response's stream ends, so it also covers the part where the response has arrived and React still holds the page being left behind a loader that is streaming; use it for a progress indicator that should last until the new page is complete. `location` is the page on screen, and moves when the next page shows: a second click while React holds the first click's page shows its `"loading"` and `pendingUrl` at once and leaves `location` on the page on screen. A Back/Forward served from the client's history cache restores its page in one commit and reports no pending state.
 
 ### useRouter()
 

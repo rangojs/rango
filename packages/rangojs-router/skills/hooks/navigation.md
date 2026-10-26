@@ -15,8 +15,8 @@ function NavIndicator() {
   nav.state; // 'idle' | 'loading' — loading during a navigation AND a server action
   nav.isNavigating; // boolean — a navigation is in flight (false during an action)
   nav.isStreaming; // boolean — RSC data is still streaming (navigation or action)
-  nav.location; // Current URL
-  nav.pendingUrl; // Target URL during navigation (or null)
+  nav.location; // The page on screen, until the next page shows
+  nav.pendingUrl; // The page being fetched (or null)
 
   return nav.state === "loading" ? <Spinner /> : null;
 }
@@ -72,8 +72,9 @@ part: `"idle"` commits with the destination's `useSearchParams()`,
 `usePathname()` and `useParams()`, so a component that reads both does not
 see the navigation finished on the URL it is leaving. That holds when a
 server action settles, or a newer navigation ends with no page (an external
-redirect, a failed request), while React holds the page: `"idle"` waits for
-the page. A newer click shows at once (`"loading"`, its `pendingUrl`), also
+redirect, a reload), while React holds the page: `"idle"` waits for the page.
+A newer navigation that fails shows the error screen, and `"idle"` arrives
+with it. A newer click shows at once (`"loading"`, its `pendingUrl`), also
 while an action is in flight. After a server action, `"idle"` arrives with
 the action's revalidated content.
 `isStreaming` can outlast that commit (a loader still streaming below a
@@ -89,6 +90,12 @@ no pending state.
 `location` moves in that commit too. A component that first mounts while
 React holds the page being left reads the destination's `location` and URL
 hooks (issue #1046).
+
+A second click while React holds the first click's page works the same way:
+`"loading"` and the second click's `pendingUrl` show at once, and `location`
+stays the page on screen. It moves to the first click's page only if that
+page shows before the second one arrives; if the second page replaces it
+first, the first page never shows and its URL is never `location`.
 
 **One exception: inside an optimistic `clientUrls()` frame.** When a
 cross-route navigation shows the destination's `loading()` frame at the click,
@@ -271,6 +278,13 @@ click's notification goes out, the notification commits with that commit.
 If React holds it, the spinner, and `useNavigation()`'s `loading`, show when
 it lands; a newer click or an abort delivered that way ends an earlier
 spinner when it lands too.
+
+The two hooks answer different questions. `pending` is this link's
+navigation; `useNavigation()` is the router's, and its `"idle"` waits for any
+page or tree React holds. So a link whose navigation is aborted while React
+holds another flow's commit reads `pending: false` while `state` stays
+`"loading"` until that commit lands: the frame any link that is not the
+destination reads during a navigation.
 
 `pending` lasts longer than `useNavigation().pendingUrl`, which turns `null`
 when the response arrives. While the response streams, a link reads `pending`
