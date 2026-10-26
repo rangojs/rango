@@ -119,6 +119,22 @@ slot's id, or the orphan layout's id. The owning entry's error boundary still
 renders the fallback in the same place, and its fallback receives the same
 `segmentType` and `segmentId`. No change in your code.
 
+### Added: `useNavigation().isNavigating` is typed
+
+**Before.** `useNavigation()` always returned `isNavigating`, but
+`NavigationState` did not declare it, so `useNavigation((n) => n.isNavigating)`
+failed to typecheck. The docs said `state` reads `"loading"` during a
+navigation; it also reads `"loading"` while a server action runs, so a
+progress bar driven by `state` ran on every action.
+
+**Now.** `isNavigating` is part of `NavigationState`: `true` only while a
+navigation is in flight. Drive a navigation progress bar from it, and an
+action spinner from `state`. The values are unchanged.
+
+```tsx
+const isNavigating = useNavigation((n) => n.isNavigating);
+```
+
 ### Fixed: `useAction()` follows the latest call when an earlier call returns after it
 
 **Before.** With the same action called twice and the later call returning
