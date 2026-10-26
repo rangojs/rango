@@ -5,7 +5,7 @@ import { useLayoutEffect, type ReactNode } from "react";
 import { useAction } from "../../browser/react/use-action.js";
 import { renderRoute } from "../render-route.js";
 
-// Hook lock row A3 (dc-t84): "If the same action fires several times, the
+// Hook lock row A3 (rango-t84): "If the same action fires several times, the
 // hook reports the latest call" (skills/hooks/handle-and-actions.md). Two
 // calls of one action, the later one settling first: the AddToCart reader
 // shows the later call's result when it returns, and the earlier call

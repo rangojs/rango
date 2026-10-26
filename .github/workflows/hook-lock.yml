@@ -2,7 +2,7 @@ name: Hook lock
 
 # Required check. Fails when a PR touches a file listed in tools/hook-lock.json
 # unless the PR has the label "hook-lock: approved" (owner only) and its body
-# links the hooks design (dc-t84 or dc-d152). Every new push drops the label, so
+# links the hooks design (rango-t84 or rango-d152). Every new push drops the label, so
 # an approval covers only the diff that was reviewed.
 #
 # pull_request_target runs with a write token and the BASE branch's workflow

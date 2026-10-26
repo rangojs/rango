@@ -1,5 +1,5 @@
 {
-  "design": ["dc-t84", "dc-d152"],
+  "design": ["rango-t84", "rango-d152"],
   "label": "hook-lock: approved",
   "commitFiles": [
     "packages/rangojs-router/src/browser/react/use-*.ts",

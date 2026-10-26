@@ -22,7 +22,7 @@ import type { LoaderDefinition, TransitionConfig } from "../../types.js";
 import { renderRoute } from "../dom.entry.js";
 import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 
-// Consumer contract (hooks review dc-d152, W2): optimistic hook values show
+// Consumer contract (hooks review rango-d152, W2): optimistic hook values show
 // the work at once and settle in the page's commit, and they never take the
 // page's transition types.
 // - useLinkStatus().pending is true from the call until the page commits,

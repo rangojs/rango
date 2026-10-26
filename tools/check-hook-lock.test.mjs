@@ -42,7 +42,11 @@ test("label without design link fails", () => {
 
 test("design link without label fails", () => {
   const r = evaluate(
-    { changedFiles: [`${R}/use-loader.tsx`], labels: [], body: "see dc-d152" },
+    {
+      changedFiles: [`${R}/use-loader.tsx`],
+      labels: [],
+      body: "see rango-d152",
+    },
     config,
   );
   assert.equal(r.ok, false);
@@ -51,9 +55,9 @@ test("design link without label fails", () => {
 
 test("label and design link pass (id or URL form)", () => {
   for (const body of [
-    "Design: dc-t84@rangojs",
-    "https://devcorner.devcorner.workers.dev/t/dc-t84@rangojs",
-    "dc-d152",
+    "Design: rango-t84",
+    "https://devcorner.devcorner.workers.dev/t/rango-t84",
+    "rango-d152",
   ]) {
     const r = evaluate(
       {
@@ -69,7 +73,11 @@ test("label and design link pass (id or URL form)", () => {
 
 test("a longer id is not a design link", () => {
   const r = evaluate(
-    { changedFiles: [`${R}/use-loader.tsx`], labels: [LABEL], body: "dc-t841" },
+    {
+      changedFiles: [`${R}/use-loader.tsx`],
+      labels: [LABEL],
+      body: "rango-t841",
+    },
     config,
   );
   assert.equal(r.ok, false);
