@@ -150,11 +150,14 @@ whole wait. A Back/Forward served from the history cache has no wait.
 `setSearchParams((prev) => ...)` builds on the same location: called during a
 pending Back/Forward, `prev` is the search of the page on screen.
 
-One gap (issue #1046): a component that first mounts in the page being left
-after the navigation's response has arrived, while React still holds the
-destination behind a loader or a `transition()`, reads the destination's URL
-and params from these hooks. Components that were already mounted are not
-affected. It applies to a push and to Back/Forward alike.
+A component that first mounts in the page being left after the navigation's
+response has arrived, while React still holds the destination behind a loader
+or a `transition()`, reads the destination's URL and params from these hooks
+(issue #1046; by design). Every router hook seeds its first value from the
+router's live state, so a menu opened while a click's page is held highlights
+the destination link. Components already on screen keep the values of the
+page on screen until the destination commits, and then every hook agrees. It
+applies to a push and to Back/Forward alike.
 
 ### useHref()
 

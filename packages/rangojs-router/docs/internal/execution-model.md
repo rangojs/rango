@@ -1927,6 +1927,16 @@ Here is how each hook gets there:
   lane at the response's start, so the spinner ended before the page
   showed.
 
+One case is outside this rule on purpose (rango-t96, #1046): a component
+that first mounts while a transition page is held (a dropdown opened on the
+old page, a lazy component or a `<Suspense>` resolving during the hold) reads
+the destination's values from every hook, because each hook seeds its first
+value from the router's live state (for example the `useState` initializer in
+`browser/react/use-navigation.ts`). Components already mounted are not
+affected. A fix would give every hook a second path to its value and an extra
+render after paint on every fully prefetched click's new page. Pinned by
+`src/testing/__tests__/render-route-late-reader-commit.test.tsx`.
+
 You might wonder why the payload's values are not simply put in the tree's
 lane, where React would commit them with the page. We tried that: a crumb whose
 `content` is a promise read with `use()` inside a `<Suspense>` that is

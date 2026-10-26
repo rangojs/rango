@@ -88,8 +88,13 @@ from the client's history cache restores its page in one commit and reports
 no pending state.
 
 `location` moves in that commit too. A component that first mounts while
-React holds the page being left reads the destination's `location` and URL
-hooks (issue #1046).
+React holds the page being left (a dropdown opened on the old page, a lazy
+component or a `<Suspense>` there that resolves during the hold) reads the
+destination's `state`, `location` and URL hooks, because each hook seeds its
+first value from the router's live state (issue #1046; by design). A menu
+opened while a click's page is held therefore highlights the destination
+link. Components already mounted keep the page on screen's values until the
+destination commits.
 
 A second click while React holds the first click's page works the same way:
 `"loading"` and the second click's `pendingUrl` show at once, and `location`
