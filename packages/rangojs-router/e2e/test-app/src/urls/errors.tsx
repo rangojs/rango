@@ -13,6 +13,7 @@ import {
   ErrorsFlakyHealHandler,
   ErrorsFlakyPprHandler,
   ErrorsFlakyResetHandler,
+  ErrorsCaptureFailsHandler,
   ErrorsSlotFailingHandler,
 } from "./errors.handlers.js";
 
@@ -131,6 +132,17 @@ export const errorsPatterns = urls(
         loading(<div data-testid="flaky-loading">Loading...</div>),
         errorBoundary(() => (
           <div data-testid="flaky-fallback">Declared flaky fallback</div>
+        )),
+      ],
+    ),
+    // onError's `background`: only the shell capture after the MISS throws.
+    path(
+      "/errors/capture-fails/:k",
+      ErrorsCaptureFailsHandler,
+      { name: "errors.captureFails", ppr: true },
+      () => [
+        errorBoundary(() => (
+          <div data-testid="capture-fails-fallback">Capture fallback</div>
         )),
       ],
     ),

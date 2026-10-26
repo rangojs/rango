@@ -979,8 +979,9 @@ Rules that are easy to break:
 - No status write. The status line is committed at first flush (or races
   Response construction). Sync handler errors still set 500 / 404 through
   `catchSegmentError`.
-- No `onError` call. `trackHandler` (`router.ts`) reports each rejection once;
-  recovery must not be folded into it, because the shell capture and handle
+- No `onError` call. `trackHandler` (`router.ts`) reports each rejection once,
+  with the walk's `isPartial` (`reportsPartial`); recovery must not be folded
+  into it, because the shell capture and handle
   store need the rejection to propagate.
 - The recovered promise resolves, so Flight reports no error and every writer
   that refuses on Flight errors would store the fallback. Recovery therefore
@@ -1156,6 +1157,57 @@ Pinned by `router/__tests__/server-error-print.test.ts`,
 `cache/__tests__/report-cache-error-print.test.ts`, the userland
 `loader-default-error-boundary.rsc-test.tsx`, and the `ssr shell error` e2e
 (the server's own output, both apps, dev and production).
+
+### onError fills its context from the request context
+
+Several renders run beside a visitor's request and send their output only to
+a cache: a stale `cache()` record's refresh and a navigation MISS's proactive
+write (`rerenderAndCacheRoute`), a stale document's re-run, a PPR shell
+capture, and a stale `"use cache"` function's or cached loader's refresh.
+Their errors reach `onError` with the starting request's `request` and `url`.
+Before `background`, a consumer could not tell those errors from the
+visitor's own: an error tracker counted a refresh that failed behind a stale
+HIT as a failed page view, with `handledByBoundary: true` for a fallback no one
+saw.
+
+Each of those lanes runs inside `runAsBackgroundWork` (`server/request-context.ts`),
+an ALS scope over the request context. `invokeOnError`
+(`router/error-handling.ts`) reads it and the request context for what a call
+site leaves out, so no site has to remember it:
+
+- `background`: `isBackgroundWork()`. `handledByBoundary` becomes `false` with
+  it: a failed background render is never stored, so its fallback never
+  reaches anyone. Every report inside a lane is marked, nested ones included
+  (a cached read that fails inside a `"use cache"` refresh).
+- `duration`: from `_handlerStart`. No call site ever passed a start time, so
+  the field was always unset. A background error counts from the starting
+  request's entry.
+- `env`: the request context's `env`. The walk cannot read `ctx.env` when it
+  builds its report: on a Prerender pass without `buildEnv` the getter throws
+  (`createPrerenderContext`), even though that pass rethrows before it reports.
+
+Rules that are easy to break:
+
+- A lane reports its own failure inside the scope. `waitUntil` re-enters the
+  context the task was scheduled under, so a catch placed outside the scope
+  runs on the visitor's frame and reports unmarked. `cache-runtime.ts`,
+  `document-cache.ts` and `shell-capture.ts` catch inside it;
+  `read-through-swr.ts` reports inside `wrapBackground`'s frame and rethrows
+  so the `rango.background` span still records the failure.
+- The scope carries its own dedupe set (`reportedErrorsOf`). An error object
+  both the visitor's render and a lane reach (a memoized rejection) is
+  reported by each; sharing the visitor's `_reportedErrors` let the lane's
+  report take the place of the visitor's.
+- Invalidations inside the scope set no fresh-reads cookie (`markFreshReads`,
+  `cache/tag-invalidation.ts`): no visitor made them.
+- A cache I/O error outside a lane, such as a MISS's deferred write, stays
+  unmarked: its `metadata.category` says what it is. A `router.prerender()`
+  warm's own render is a request, not a lane.
+
+Pinned by `testing/__tests__/on-error-context.rsc-test.tsx`, which also pins an
+intercept handler's error naming its slot (`parallel`) and a streamed
+handler's `isPartial`, and by the `onerror-background` e2e (a shell capture's
+error, both apps, dev and production).
 
 ## Loader Context: params vs routeParams
 

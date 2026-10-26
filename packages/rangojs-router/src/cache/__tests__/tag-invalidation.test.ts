@@ -4,13 +4,15 @@ import {
   executionStart,
   invalidatedSince,
   predatesInvalidation,
-  runAsBackgroundRefresh,
   updateTag,
   revalidateTag,
 } from "../tag-invalidation.js";
 import { resolveCacheStore } from "../cache-policy.js";
 import type { SegmentCacheStore } from "../types.js";
-import { runWithRequestContext } from "../../server/request-context.js";
+import {
+  runAsBackgroundWork,
+  runWithRequestContext,
+} from "../../server/request-context.js";
 import { makeRequestContext } from "../../__tests__/kit/request-context.js";
 
 const EXAMPLE_URL = "https://example.com/";
@@ -608,7 +610,7 @@ describe("the fresh-reads cookie", () => {
         );
         let release!: () => void;
         const held = new Promise<void>((resolve) => (release = resolve));
-        const refresh = runAsBackgroundRefresh(ctx, async () => {
+        const refresh = runAsBackgroundWork(ctx, async () => {
           await Promise.resolve();
           revalidateTag("refreshed");
           invalidated();
@@ -628,7 +630,7 @@ describe("the fresh-reads cookie", () => {
 
       const sent = ctxFor(store);
       sent._responseSent = true;
-      await runAsBackgroundRefresh(sent, () => updateTag("refreshed"));
+      await runAsBackgroundWork(sent, () => updateTag("refreshed"));
       expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();

@@ -1140,6 +1140,46 @@ export function runWithRequestContext<TEnv, T>(
   return requestContextStorage.run(context, fn);
 }
 
+/** Inside background work: the errors its onError reports named. */
+const backgroundWork = new AsyncLocalStorage<WeakSet<object>>();
+
+/**
+ * Run work whose output goes only to a cache, never to the response of the
+ * request that started it, on `context`: a stale entry's refresh (a "use
+ * cache" function, a cached loader, a cache() record, a document), a
+ * navigation's proactive cache() write, a PPR shell capture. No visitor made
+ * the invalidations in it, so they set no fresh-reads cookie
+ * (cache/tag-invalidation.ts), and onError marks every error reported inside
+ * it `background` (router/error-handling.ts invokeOnError). Its failure is
+ * reported inside it too: a catch outside runs on the visitor's frame.
+ */
+export function runAsBackgroundWork<TEnv, T>(
+  context: RequestContext<TEnv>,
+  fn: () => T,
+): T {
+  const reported = backgroundWork.getStore() ?? new WeakSet<object>();
+  return requestContextStorage.run(context, () =>
+    backgroundWork.run(reported, fn),
+  );
+}
+
+/** Whether the caller runs inside runAsBackgroundWork. */
+export function isBackgroundWork(): boolean {
+  return backgroundWork.getStore() !== undefined;
+}
+
+/**
+ * The set onError's dedupe records a reported error in. Background work keeps
+ * its own: an error object both the visitor's render and background work
+ * reach (a memoized rejection, a thrown constant) is reported by each, so a
+ * background report never takes the place of the visitor's.
+ */
+export function reportedErrorsOf(
+  context: RequestContext<any>,
+): WeakSet<object> {
+  return backgroundWork.getStore() ?? context._reportedErrors;
+}
+
 /**
  * Get the current request context
  * Throws if called outside of a request context

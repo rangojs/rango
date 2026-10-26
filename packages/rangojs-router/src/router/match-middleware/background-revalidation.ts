@@ -113,7 +113,7 @@ import { getContext } from "../../server/context.js";
 import { executionStart } from "../../cache/tag-invalidation.js";
 import {
   createRequestContext,
-  runWithRequestContext,
+  runAsBackgroundWork,
   type RequestContext,
 } from "../../server/request-context.js";
 import { deriveRenderPass } from "../../server/render-pass.js";
@@ -141,8 +141,9 @@ import {
  * each field and why. The DSL store below has `metrics` unset too (track()
  * reads that one), so nothing lands on the foreground's perf timeline;
  * ctx.Store.run closes over ctx.Store, so the derived store needs its own run.
- * runWithRequestContext also re-establishes the request ALS, which a waitUntil
- * task on workerd loses; the DSL store is a different ALS (build context).
+ * runAsBackgroundWork also re-establishes the request ALS, which a waitUntil
+ * task on workerd loses, and marks the pass's onError reports `background`;
+ * the DSL store is a different ALS (build context).
  */
 export async function rerenderAndCacheRoute<TEnv>(
   ctx: MatchContext<TEnv>,
@@ -172,7 +173,7 @@ export async function rerenderAndCacheRoute<TEnv>(
       store.parent,
       fn,
     );
-  return runWithRequestContext(renderCtx, async () => {
+  return runAsBackgroundWork(renderCtx, async () => {
     const handlerContext = routerCtx.createHandlerContext(
       ctx.matched.params,
       ctx.request,

@@ -21,6 +21,8 @@ import {
   bindRes,
   createRequestContext,
   createUseFunction,
+  isBackgroundWork,
+  runAsBackgroundWork,
   runWithRequestContext,
   wireRenderBarrier,
 } from "../../server/request-context.js";
@@ -149,6 +151,8 @@ describe("createDocumentCacheMiddleware", () => {
       getRequestContext: () => mockRequestCtx,
       _getRequestContext: () => mockRequestCtx,
       runWithRequestContext,
+      runAsBackgroundWork,
+      isBackgroundWork,
       // A stale refresh's derived pass and its response sink (render-pass.ts).
       createRequestContext,
       createUseFunction,
@@ -177,6 +181,8 @@ describe("createDocumentCacheMiddleware", () => {
       getRequestContext: () => mockRequestCtx,
       _getRequestContext: () => mockRequestCtx,
       runWithRequestContext,
+      runAsBackgroundWork,
+      isBackgroundWork,
       // A stale refresh's derived pass and its response sink (render-pass.ts).
       createRequestContext,
       createUseFunction,

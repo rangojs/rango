@@ -542,6 +542,20 @@ const PersonalizedGuideTrigger: Handler<{ slug: string }> = async (ctx) => {
 /** Consumer-mirror template layout: server component between the chrome-loader
  *  layout and the clientUrls include, reading params from getRequestContext —
  *  the CategoryTemplate shape from the consumer app. */
+const captureFailsRuns = new Map<string, number>();
+
+/**
+ * Renders on its first run per :k and throws on every later one: the
+ * visitor's MISS renders, the PPR shell capture that follows it fails.
+ */
+const CaptureFailsPage: Handler<{ k: string }> = (ctx) => {
+  const k = ctx.params.k;
+  const run = (captureFailsRuns.get(k) ?? 0) + 1;
+  captureFailsRuns.set(k, run);
+  if (run > 1) throw new Error(`capture fails (k=${k})`);
+  return <div data-testid="capture-fails-page">rendered</div>;
+};
+
 function MirrorTemplateLayout(): ReactNode {
   const params: Record<string, string | undefined> = getRequestContext().params;
   if (params.slug === undefined) return <Outlet />;
@@ -716,6 +730,17 @@ export const urlpatterns = urls(
     // An ssr: false loader that throws with no errorBoundary() (dc-t92).
     include("/", holeyThrowsPatterns, { name: "" }),
 
+    // onError's `background`: only the shell capture after the MISS throws.
+    path(
+      "/errors/capture-fails/:k",
+      CaptureFailsPage,
+      { name: "errorsCaptureFails", ppr: true },
+      () => [
+        errorBoundary(() => (
+          <div data-testid="capture-fails-fallback">Capture fallback</div>
+        )),
+      ],
+    ),
     // Test utils: read the onError log (non-destructive). Imports from
     // error-log.js (not router.js) so the read uses a static import and avoids
     // the dynamic-import / module-graph race that can return an empty log.

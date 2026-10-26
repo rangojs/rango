@@ -57,7 +57,6 @@ export interface SegmentResolutionDeps<TEnv = any> {
       params?: Record<string, string>;
       env?: TEnv;
       isPartial?: boolean;
-      requestStartTime?: number;
     },
     /** An `ssr: false` loader on a document or capture render. */
     useDefaultErrorBoundary?: boolean,
@@ -67,6 +66,7 @@ export interface SegmentResolutionDeps<TEnv = any> {
     errorContext?: {
       segmentId?: string;
       segmentType?: string;
+      isPartial?: boolean;
     },
   ) => Promise<T>;
   findNearestErrorBoundary: (

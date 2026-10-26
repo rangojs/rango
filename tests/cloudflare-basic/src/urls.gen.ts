@@ -77,6 +77,7 @@ export const routes = {
   "dhNav.start": "/dh-nav",
   documentCache: "/document-cache",
   documentCacheNoCache: "/document-cache-no-cache",
+  errorsCaptureFails: "/errors/capture-fails/:k",
   fast: "/slow/fast",
   featuresDetail: "/features/:slug",
   filesWildcard: "/files/*",
