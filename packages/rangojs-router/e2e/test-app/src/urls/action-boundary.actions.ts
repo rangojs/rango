@@ -1,5 +1,6 @@
 "use server";
 
+import { keepClientCache } from "@rangojs/router";
 import {
   bumpActionBoundaryCart,
   bumpActionBoundaryNote,
@@ -14,6 +15,12 @@ export async function addToActionBoundaryCart(): Promise<number> {
 export async function failActionBoundaryCart(): Promise<never> {
   bumpActionBoundaryCart();
   throw new Error("ab-out-of-stock");
+}
+
+/** A rejected form: writes nothing, keeps the client cache, throws. */
+export async function rejectActionBoundaryForm(): Promise<never> {
+  keepClientCache();
+  throw new Error("ab-invalid");
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

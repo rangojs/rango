@@ -7,6 +7,8 @@ vi.mock("../browser/segment-structure-assert.js", () => ({
 }));
 
 import {
+  actionBoundaries,
+  actionBoundaryAt,
   idsAboveBoundary,
   reconcileSegments,
   reconcileErrorSegments,
@@ -941,5 +943,31 @@ describe("idsAboveBoundary", () => {
   it("holds every id when no boundary is named", () => {
     const ids = ["M0L0", "M0L0R0"];
     expect(idsAboveBoundary(ids, undefined)).toBe(ids);
+  });
+});
+
+describe("actionBoundaryAt", () => {
+  const seg = (id: string, type: ResolvedSegment["type"]) =>
+    ({ id, type }) as ResolvedSegment;
+
+  it("finds the deepest action boundary by identity, not by id", () => {
+    const outer = seg("L0", "error");
+    const inner = seg("L0R0", "error");
+    actionBoundaries.add(outer);
+    actionBoundaries.add(inner);
+    const list = [outer, seg("L0D0.cart", "loader"), inner];
+    expect(actionBoundaryAt(list)).toBe(2);
+    // A copy with the same id is not the boundary the action committed.
+    expect(actionBoundaryAt([seg("L0", "layout"), seg("L0R0", "error")])).toBe(
+      -1,
+    );
+  });
+
+  it("finds none once the boundary is deleted", () => {
+    const boundary = seg("L0R0", "error");
+    actionBoundaries.add(boundary);
+    const list = [seg("L0", "layout"), boundary];
+    actionBoundaries.delete(boundary);
+    expect(actionBoundaryAt(list)).toBe(-1);
   });
 });
