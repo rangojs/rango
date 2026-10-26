@@ -302,8 +302,10 @@ const router = createRouter({
 
 `duration` is the time from the request's start to the error; for a
 `background` error, from the start of the request that started the refresh.
-An intercept handler's error reports the intercept's slot
-(`segmentType: "parallel"`).
+`segmentId` and `segmentType` name the segment that threw: an intercept's or
+a parallel slot's error reports the slot (`segmentType: "parallel"`), an
+orphan layout's error the orphan layout, even when the owning layout's
+boundary renders the fallback.
 
 ## Debugging revalidation and stale data
 

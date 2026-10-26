@@ -62,6 +62,7 @@ import {
   resolveLayoutComponent,
   resolveWithErrorBoundary,
   buildLoaderErrorContext,
+  noteThrower,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { isLayoutLoaderCopy } from "../../client-urls/layout-loader-copies.js";
@@ -801,29 +802,34 @@ async function resolveParallelSlotComponent<TEnv>(
               handler,
               slotContext,
             );
-      if (hasLoadingFallback) {
-        const result = run();
-        if (result instanceof Promise) {
-          warnOnStreamedResponse(result, parallelId);
-          result.finally(doneHandler).catch(() => {});
-          component = trackStreamedHandler(deps, result, {
-            boundaryEntry,
-            segmentId: parallelId,
-            segmentType: "parallel",
-            context,
-            routeKey,
-            params,
-            isPartial: reportsPartial(pass),
-            recover: !pass.throwOnError,
-          });
+      // A throw before the slot streams reaches the owning entry's boundary.
+      try {
+        if (hasLoadingFallback) {
+          const result = run();
+          if (result instanceof Promise) {
+            warnOnStreamedResponse(result, parallelId);
+            result.finally(doneHandler).catch(() => {});
+            component = trackStreamedHandler(deps, result, {
+              boundaryEntry,
+              segmentId: parallelId,
+              segmentType: "parallel",
+              context,
+              routeKey,
+              params,
+              isPartial: reportsPartial(pass),
+              recover: !pass.throwOnError,
+            });
+          } else {
+            doneHandler();
+            component = result as ReactNode;
+          }
         } else {
+          // A static value (a Promise included) goes to render as is.
+          component = typeof handler === "function" ? await run() : handler;
           doneHandler();
-          component = result as ReactNode;
         }
-      } else {
-        // A static value (a Promise included) goes to render as is.
-        component = typeof handler === "function" ? await run() : handler;
-        doneHandler();
+      } catch (error) {
+        throw noteThrower(error, parallelId, "parallel");
       }
     }
   }
@@ -1506,6 +1512,9 @@ export async function resolveOrphanLayout<TEnv>(
       const doneHandler = track(`handler:${orphan.id}`, 2);
       try {
         component = await resolveLayoutComponent(orphan, context);
+      } catch (error) {
+        // Its owning entry's boundary catches it.
+        throw noteThrower(error, orphan.shortCode, orphan.type);
       } finally {
         internal._currentSegmentId = pinned;
       }

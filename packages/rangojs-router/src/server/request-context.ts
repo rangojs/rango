@@ -834,6 +834,13 @@ export interface RequestContext<
   _reportedErrors: WeakSet<object>;
 
   /**
+   * @internal The segment a parallel slot's or orphan layout's error came
+   * from, for the owning entry's catch (segment-resolution/helpers.ts
+   * noteThrower). Per request: an error object can be thrown by several.
+   */
+  _throwers?: WeakMap<object, { id: string; type: string }>;
+
+  /**
    * @internal The errors this request printed to the server console, so a
    * failure prints once where it originated (server/print-server-error.ts). A derived context shares it through the prototype.
    */
@@ -1005,6 +1012,7 @@ export type PublicRequestContext<
   | "_inActionRevalidation"
   | "_actionRan"
   | "_reportedErrors"
+  | "_throwers"
   | "_printedErrors"
   | "_renderErrors"
   | "_recoveredHandlerErrors"
@@ -1785,6 +1793,7 @@ export function createRequestContext<TEnv>(
     _locationState: undefined,
 
     _reportedErrors: new WeakSet<object>(),
+    _throwers: undefined,
     _printedErrors: new WeakSet<object>(),
     _renderErrors: [],
     _metricsStore: undefined,

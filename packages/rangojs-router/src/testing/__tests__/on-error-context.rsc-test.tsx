@@ -545,3 +545,107 @@ describe("a streamed (loading()) handler's rejection", () => {
     ]);
   });
 });
+
+describe("a parallel slot's or orphan layout's handler error", () => {
+  let slotFails: false | "throw" | "after-await" | "shared" = false;
+  let orphanThrows = false;
+  /** One error object two requests throw. */
+  const SLOT_ERROR = new Error("slot down, shared");
+  const router = createRouter({ onError }).routes(
+    urls(({ path, layout, parallel, errorBoundary }) => [
+      layout(<main>shell</main>, () => [
+        errorBoundary(({ error }) => (
+          <p>{`boundary:${error.segmentType}:${error.segmentId}`}</p>
+        )),
+        parallel({
+          "@side": async () => {
+            if (slotFails === "after-await") {
+              await new Promise((r) => setTimeout(r, 5));
+            }
+            if (slotFails === "shared") throw SLOT_ERROR;
+            if (slotFails) throw new Error("slot down");
+            return <aside>side-slot</aside>;
+          },
+        }),
+        layout(() => {
+          if (orphanThrows) throw new Error("orphan down");
+          return <nav>orphan-layout</nav>;
+        }),
+        path("/sl", () => <p>page</p>, { name: "sl" }),
+      ]),
+    ]),
+  );
+
+  /** A healthy render's id for the segment whose output contains `marker`. */
+  async function idOf(marker: string): Promise<string> {
+    slotFails = false;
+    orphanThrows = false;
+    const { flight } = await serveShellRequest(router, "/sl", {
+      partial: true,
+    });
+    const { metadata } = await deserializeResult<{
+      metadata: { segments: { id: string; component: unknown }[] };
+    }>(flight!);
+    return metadata.segments.find((s) =>
+      JSON.stringify(s.component).includes(marker),
+    )!.id;
+  }
+
+  const named = () =>
+    reports.map((r) => ({
+      segmentType: r.segmentType,
+      segmentId: r.segmentId,
+    }));
+
+  it.each([
+    [
+      "a parallel slot",
+      "side-slot",
+      "parallel",
+      (): void => {
+        slotFails = "throw";
+      },
+    ],
+    [
+      "a parallel slot that awaits first",
+      "side-slot",
+      "parallel",
+      (): void => {
+        slotFails = "after-await";
+      },
+    ],
+    [
+      "an orphan layout",
+      "orphan-layout",
+      "layout",
+      (): void => {
+        orphanThrows = true;
+      },
+    ],
+  ] as const)(
+    "%s's throw names the segment that threw, not the layout that owns it",
+    async (_, marker, segmentType, fail) => {
+      const segmentId = await idOf(marker);
+      fail();
+      const { flight } = await serveShellRequest(router, "/sl", {
+        partial: true,
+      });
+      expect(named()).toStrictEqual([{ segmentType, segmentId }]);
+      // The owning layout's boundary still renders, told the same segment.
+      expect(flight).toContain(`boundary:${segmentType}:${segmentId}`);
+    },
+  );
+
+  it("names the slot in each of two requests that throw one error object", async () => {
+    const segmentId = await idOf("side-slot");
+    slotFails = "shared";
+    await Promise.all([
+      serveShellRequest(router, "/sl", { partial: true }),
+      serveShellRequest(router, "/sl", { partial: true }),
+    ]);
+    expect(named()).toStrictEqual([
+      { segmentType: "parallel", segmentId },
+      { segmentType: "parallel", segmentId },
+    ]);
+  });
+});

@@ -87,6 +87,19 @@ createRouter({
   `isPartial` unset. It now reports `true`, as a handler that throws before it
   returns does.
 
+### Fixed: `onError` names a parallel slot or orphan layout that throws, not the entry that owns it
+
+**Before.** A parallel slot handler that threw (with no `loading()`, or before
+it streamed under one), or a routeless (orphan) layout's handler that threw,
+reached `onError` as an error of the layout or route that owns it: that
+entry's `segmentType` and `segmentId`. A slot's rejection under `loading()`
+reported the slot, so one slot showed up under two identities.
+
+**Now.** Both report the segment that threw: `segmentType: "parallel"` and the
+slot's id, or the orphan layout's id. The owning entry's error boundary still
+renders the fallback in the same place, and its fallback receives the same
+`segmentType` and `segmentId`. No change in your code.
+
 ## 0.28.0 (2026-10-25)
 
 ### Fixed: a rewritten request's telemetry events carry one `requestId` ([#1269](https://github.com/rangojs/rango/pull/1269))

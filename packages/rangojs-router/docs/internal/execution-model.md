@@ -1204,9 +1204,23 @@ Rules that are easy to break:
   unmarked: its `metadata.category` says what it is. A `router.prerender()`
   warm's own render is a request, not a lane.
 
+One more report rule: an error names the segment that threw. A parallel
+slot's throw before it streams (any throw without `loading()`, a sync one
+under it) and an orphan layout's have no catch of their own: they reach the
+owning entry's `resolveWithErrorBoundary`. Their call sites in
+`segment-resolution/revalidation.ts` record the thrower with `noteThrower`
+(`segment-resolution/helpers.ts`), and `catchSegmentError` reads it back. The
+record lives on the request context (`_throwers`), never the module: a reused
+error object (a constant, a memoized rejection) thrown in two requests, or in
+a Prerender pass that rethrows before the read, would name another request's
+segment. The boundary is still the owning entry's; the report, the telemetry
+event, the server print and the `ErrorInfo`/`NotFoundInfo` name the slot or
+orphan, as a streamed rejection's do. An intercept passes its slot to
+`catchSegmentError` directly.
+
 Pinned by `testing/__tests__/on-error-context.rsc-test.tsx`, which also pins an
-intercept handler's error naming its slot (`parallel`) and a streamed
-handler's `isPartial`, and by the `onerror-background` e2e (a shell capture's
+intercept handler's, a parallel slot's and an orphan layout's error naming the
+segment that threw, and a streamed handler's `isPartial`, and by the `onerror-background` e2e (a shell capture's
 error, both apps, dev and production).
 
 ## Loader Context: params vs routeParams
