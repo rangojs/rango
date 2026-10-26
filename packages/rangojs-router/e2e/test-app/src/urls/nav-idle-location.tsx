@@ -7,6 +7,7 @@ import {
 } from "@rangojs/router";
 import { NavIdleFilters } from "../components/NavIdleFilters.js";
 import {
+  NavIdleLocation,
   NavIdleOverlapControls,
   NavIdleServerTags,
 } from "../components/NavIdleOverlapControls.js";
@@ -50,7 +51,11 @@ const NavIdleOverlapPage: Handler = () => (
   <div data-testid="nav-idle-page">
     <NavIdleServerTags loader={NavIdleOverlapTagsLoader} />
     <NavIdleFilters />
-    <NavIdleOverlapControls away="/nav-idle-overlap?away=1" />
+    <NavIdleLocation />
+    <NavIdleOverlapControls
+      away="/nav-idle-overlap?away=1"
+      newer="/nav-idle-overlap?tag=c&newer=1"
+    />
   </div>
 );
 
@@ -63,7 +68,8 @@ const skipOnAction: Revalidate = (ctx) => (ctx.isAction() ? false : undefined);
  * same-structure hold (no transition()), /nav-idle-vt through transition()
  * (a view transition where the browser has one). /nav-idle-overlap holds the
  * page for 1.5 s, while an action settles or a newer navigation ends with no
- * page (?away answers with an external redirect after 300 ms).
+ * page (?away answers with an external redirect after 300 ms), or a newer
+ * navigation to another page is out (?newer answers after 400 ms).
  */
 export const navIdleLocationPatterns = urls(
   ({ path, loader, transition, middleware, revalidate }) => [
@@ -80,6 +86,7 @@ export const navIdleLocationPatterns = urls(
       { name: "navIdleOverlap" },
       () => [
         middleware(async (ctx, next) => {
+          if (ctx.searchParams.has("newer")) await delay(NAV_IDLE_DELAY);
           if (!ctx.searchParams.has("away")) return next();
           await delay(300);
           return redirect(NAV_IDLE_EXTERNAL, { external: true });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useLoader, useRouter } from "@rangojs/router/client";
+import { useLoader, useNavigation, useRouter } from "@rangojs/router/client";
 import type { LoaderDefinition } from "@rangojs/router";
 import { navIdleOverlapAction } from "../actions/nav-idle-overlap.js";
 
@@ -23,13 +23,15 @@ function record(event: string): void {
 
 /**
  * Work that overlaps a held filter navigation on /nav-idle-overlap: a server
- * action, and a newer navigation that the server answers with an external
- * redirect (no page commits for it).
+ * action, a newer navigation that the server answers with an external
+ * redirect (no page commits for it), and a newer navigation to another page.
  */
 export function NavIdleOverlapControls({
   away,
+  newer,
 }: {
   away: string;
+  newer: string;
 }): React.ReactNode {
   const router = useRouter();
   return (
@@ -54,7 +56,40 @@ export function NavIdleOverlapControls({
       >
         away
       </button>
+      <button
+        type="button"
+        data-testid="nav-idle-newer"
+        onClick={() => {
+          record("newer");
+          void router.push(newer);
+        }}
+      >
+        newer
+      </button>
     </div>
+  );
+}
+
+const searchOf = (url: string | null): string =>
+  url === null ? "" : new URL(url, "http://localhost").search;
+
+/**
+ * useNavigation()'s location and pendingUrl, through the full state and
+ * through selectors: location is the page on screen, pendingUrl the page
+ * being fetched.
+ */
+export function NavIdleLocation(): React.ReactNode {
+  const nav = useNavigation();
+  const selected = useNavigation((n) => n.location.href);
+  return (
+    <p
+      data-testid="nav-idle-location"
+      data-location={nav.location.search}
+      data-selected-location={searchOf(selected)}
+      data-pending-url={searchOf(nav.pendingUrl)}
+    >
+      {`${nav.location.search} ${searchOf(nav.pendingUrl)}`}
+    </p>
   );
 }
 

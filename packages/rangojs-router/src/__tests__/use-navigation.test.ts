@@ -189,7 +189,9 @@ describe("useNavigation", () => {
     // it, even though no notify has fired yet.
     capturedEffectFn!();
 
-    expect(setBaseValue).toHaveBeenCalledWith("loading");
+    expect(setBaseValue).toHaveBeenCalledWith(
+      expect.objectContaining({ value: "loading" }),
+    );
     // And it still subscribes for subsequent changes.
     expect(ec.subscribe).toHaveBeenCalledOnce();
   });

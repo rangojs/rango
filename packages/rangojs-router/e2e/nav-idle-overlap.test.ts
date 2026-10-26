@@ -5,7 +5,8 @@ import { expectNoPageError, waitForHydration } from "./helper";
 
 /**
  * #1164's filter chips while an action settles, or a newer navigation ends
- * with no page, during the held page (hook-lock rows S10 and S8). Body:
+ * with no page, during the held page (hook-lock rows S10 and S8), and
+ * useNavigation().location while a newer click waits on it (row L2). Body:
  * tests/shared-e2e/src/nav-idle-overlap-scenario.ts. Fixture:
  * test-app/src/urls/nav-idle-location.tsx (/nav-idle-overlap),
  * test-app/src/components/NavIdleOverlapControls.tsx and

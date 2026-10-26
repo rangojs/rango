@@ -221,7 +221,7 @@ export interface NavigationState {
    */
   isNavigating: boolean;
 
-  /** Current location */
+  /** The page on screen; moves when the next page shows (`pendingUrl` is the page being fetched) */
   location: NavigationLocation;
 
   /** URL being navigated to (null when idle) */

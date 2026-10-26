@@ -3,19 +3,23 @@ import { expect, test, type Page } from "@playwright/test";
 /**
  * #1164's filter chips while other work overlaps the held page (hook-lock
  * rows S10 and S8): useNavigation() reaches idle only with the page that
- * brings the new search, so a removed chip never comes back.
+ * brings the new search, so a removed chip never comes back. Row L2:
+ * useNavigation().location is the page on screen until the next page shows,
+ * also when a newer click goes out while React holds a page.
  *
  * Fixture in each app: /nav-idle-overlap, a transition() route whose loader
  * takes 1.5 s and is read on the client (React holds the page until it
  * answers), renders NavIdleFilters (the issue's chips) and
- * NavIdleOverlapControls: a server action that answers after 300 ms, and a
+ * NavIdleOverlapControls: a server action that answers after 300 ms, a
  * newer navigation (?away) the server answers with an external redirect after
- * 300 ms. The external host answers 204 here, so the document stays while
- * React still holds the page.
+ * 300 ms, and a newer navigation to ?tag=c (?newer) it answers after 400 ms.
+ * The external host answers 204 here, so the document stays while React still
+ * holds the page. NavIdleLocation shows useNavigation()'s location and
+ * pendingUrl (data-location, data-selected-location, data-pending-url).
  *
- * A recorder samples the chips, the server's tags and useNavigation's state
- * (NavIdleFilters' data-idle, data-full-idle) on every animation frame and
- * after every DOM mutation: once chip a is gone, no sample may show it again,
+ * A recorder samples the chips, the server's tags, useNavigation's state
+ * (NavIdleFilters' data-idle, data-full-idle) and NavIdleLocation's reads on
+ * every animation frame and after every DOM mutation: once chip a is gone, no sample may show it again,
  * no sample shows idle over the page being left, and no animation frame shows
  * loading over the new page.
  */
@@ -35,6 +39,9 @@ type Sample = {
   tags: string;
   idle: string;
   fullIdle: string;
+  location: string;
+  selectedLocation: string;
+  pendingUrl: string;
 };
 type Overlap = { event: string; tags: string; search: string };
 type NavIdleEntry = { idle: boolean; fullIdle: boolean; search: string };
@@ -84,12 +91,18 @@ async function open(
       const list = document.querySelector<HTMLElement>(
         '[data-testid="nav-idle-chips"]',
       );
+      const nav = document.querySelector<HTMLElement>(
+        '[data-testid="nav-idle-location"]',
+      );
       w.__chipSamples!.push({
         kind,
         chips,
         tags,
         idle: list?.dataset.idle ?? "",
         fullIdle: list?.dataset.fullIdle ?? "",
+        location: nav?.dataset.location ?? "",
+        selectedLocation: nav?.dataset.selectedLocation ?? "",
+        pendingUrl: nav?.dataset.pendingUrl ?? "",
       });
     };
     new MutationObserver(() => sample("mutation")).observe(document.body, {
@@ -97,7 +110,13 @@ async function open(
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ["data-idle", "data-full-idle"],
+      attributeFilter: [
+        "data-idle",
+        "data-full-idle",
+        "data-location",
+        "data-selected-location",
+        "data-pending-url",
+      ],
     });
     const frame = (): void => {
       sample("frame");
@@ -180,6 +199,11 @@ async function waitForHeldPage(page: Page): Promise<void> {
   await expect(testId(page, "nav-idle-server-tags")).toHaveText("a,b");
 }
 
+/** The tags a search names, as nav-idle-server-tags shows them. */
+function tagsOf(search: string): string {
+  return new URLSearchParams(search).getAll("tag").join(",") || "none";
+}
+
 export function runNavIdleOverlapTests(
   options: NavIdleOverlapScenarioOptions,
 ): void {
@@ -248,6 +272,62 @@ export function runNavIdleOverlapTests(
       ).toBe("a,b");
 
       await expectChipNeverReturns(page);
+    });
+
+    test(`${variant.name}: a newer click while the page is held reads the page on screen as location, and the click's URL as pendingUrl`, async ({
+      page,
+    }) => {
+      using _ = options.expectNoPageError(page);
+      await open(page, options, variant.vt);
+
+      await testId(page, "nav-idle-remove-a").click();
+      await waitForHeldPage(page);
+      const from = (await page.evaluate(
+        () => (window as unknown as ProbeWindow).__chipSamples!.length,
+      )) as number;
+      // Its request is out 400 ms, then React holds its page. The held ?tag=b
+      // page is not on screen, so its URL is not the location.
+      await testId(page, "nav-idle-newer").click();
+      await expect(testId(page, "nav-idle-server-tags")).toHaveText("c", {
+        timeout: 15000,
+      });
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+          ),
+      );
+      const samples = (
+        await page.evaluate(
+          () => (window as unknown as ProbeWindow).__chipSamples ?? [],
+        )
+      ).slice(from);
+
+      expect(
+        samples.some(
+          (s) => s.tags === "a,b" && s.pendingUrl === "?tag=c&newer=1",
+        ),
+        "the click's pendingUrl showed over the page on screen",
+      ).toBe(true);
+      for (const read of ["location", "selectedLocation"] as const) {
+        const wrong = samples.filter((s) => tagsOf(s[read]) !== s.tags);
+        expect(
+          { wrong: wrong.length, first: wrong[0] },
+          `screens whose ${read} is not the page on screen`,
+        ).toEqual({ wrong: 0, first: undefined });
+      }
+      const end = samples[samples.length - 1];
+      expect({
+        tags: end.tags,
+        location: end.location,
+        selectedLocation: end.selectedLocation,
+        pendingUrl: end.pendingUrl,
+      }).toEqual({
+        tags: "c",
+        location: "?tag=c&newer=1",
+        selectedLocation: "?tag=c&newer=1",
+        pendingUrl: "",
+      });
     });
   }
 }

@@ -11,6 +11,7 @@ import {
 import { NavIdleFilters } from "../components/NavIdleFilters.js";
 import { NavIdleStatus } from "../components/NavIdleStatus.js";
 import {
+  NavIdleLocation,
   NavIdleOverlapControls,
   NavIdleServerTags,
 } from "../components/NavIdleOverlapControls.js";
@@ -36,19 +37,30 @@ export const NavIdlePage: Handler = async (ctx) => {
 };
 
 /**
- * /nav-idle-overlap: the page is held for 1.5 s, while an action settles or
- * a newer navigation ends with no page (navIdleOverlapAway).
+ * /nav-idle-overlap: the page is held for 1.5 s, while an action settles, a
+ * newer navigation ends with no page (navIdleOverlapAway), or a newer
+ * navigation to another page is out.
  */
 export const NavIdleOverlapPage: Handler = () => (
   <div data-testid="nav-idle-page">
     <NavIdleServerTags loader={NavIdleOverlapTagsLoader} />
     <NavIdleFilters />
-    <NavIdleOverlapControls away="/nav-idle-overlap?away=1" />
+    <NavIdleLocation />
+    <NavIdleOverlapControls
+      away="/nav-idle-overlap?away=1"
+      newer="/nav-idle-overlap?tag=c&newer=1"
+    />
   </div>
 );
 
-/** ?away answers with an external redirect after 300 ms. */
+/**
+ * ?away answers with an external redirect after 300 ms; ?newer answers after
+ * 400 ms.
+ */
 export const navIdleOverlapAway: Middleware = async (ctx, next) => {
+  if (ctx.searchParams.has("newer")) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
   if (!ctx.searchParams.has("away")) return next();
   await new Promise((resolve) => setTimeout(resolve, 300));
   return redirect(NAV_IDLE_EXTERNAL, { external: true });
