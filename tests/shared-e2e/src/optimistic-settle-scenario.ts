@@ -6,7 +6,7 @@ import {
 
 /**
  * Optimistic hook values show the work at once, settle in the page's commit,
- * and never take the page's transition types (hooks review dc-d152, W2: rows
+ * and never take the page's transition types (hooks review rango-d152, W2: rows
  * LS1, LS6, TT4, A2).
  *
  * Fixture in each app: /opt-settle/<variant>/:id (test-app

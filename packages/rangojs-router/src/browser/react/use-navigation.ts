@@ -24,9 +24,9 @@ function toPublicState(state: DerivedNavigationState): PublicNavigationState {
   return publicState;
 }
 
-/** A value of the hook, the state it was selected from, and its set's number. */
+/** A value of the hook, the location it was selected with, and its set's number. */
 interface Snapshot<T> {
-  state: PublicNavigationState;
+  location: PublicNavigationState["location"];
   value: T;
   seq: number;
 }
@@ -62,7 +62,11 @@ export function useNavigation<T>(
         ctx.eventController.getHydrationSnapshot()?.state ??
           ctx.eventController.getState(),
       );
-      return { state, value: selector ? selector(state) : state, seq: 0 };
+      return {
+        location: state.location,
+        value: selector ? selector(state) : state,
+        seq: 0,
+      };
     },
   );
   // The last value set, and the value on screen. The screen's lags while
@@ -125,10 +129,8 @@ export function useNavigation<T>(
       if (shallowEqual(value, prev.value)) return;
 
       const screen = onScreen.current;
-      const held =
-        screen.seq !== prev.seq ||
-        screen.state.location !== prev.state.location;
-      const next = { state, value, seq: prev.seq + 1 };
+      const held = screen.seq !== prev.seq || screen.location !== prev.location;
+      const next = { location: state.location, value, seq: prev.seq + 1 };
       latest.current = next;
       if (held && quiet) startTransition(() => setSnapshot(next));
       else if (held && !moved) {
@@ -137,10 +139,11 @@ export function useNavigation<T>(
         // page's) is not on screen, so the value keeps the location of the
         // one it replaces in React's queue: the screen's when it renders
         // urgently, the held page's when React rebases it onto that page.
-        setSnapshot((base) => {
-          const kept = { ...state, location: base.state.location };
-          return { state: kept, value: select(kept), seq: next.seq };
-        });
+        setSnapshot((base) => ({
+          location: base.location,
+          value: select({ ...state, location: base.location }),
+          seq: next.seq,
+        }));
       } else setSnapshot(next);
     };
 

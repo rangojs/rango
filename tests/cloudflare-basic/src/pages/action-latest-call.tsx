@@ -9,7 +9,7 @@ const ActionLatestPage: Handler = () => (
 
 /**
  * Cloudflare-basic mirror of the router e2e app's /action-latest* fixture
- * (urls/action-latest-call.tsx). Hook lock row A3 (dc-t84): useAction()
+ * (urls/action-latest-call.tsx). Hook lock row A3 (rango-t84): useAction()
  * reports the latest call of an action called twice, the later call
  * returning first.
  * /action-latest has no transition(); /action-latest-vt has one, so the

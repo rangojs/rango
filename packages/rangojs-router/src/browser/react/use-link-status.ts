@@ -112,21 +112,12 @@ export function useLinkStatus(): LinkStatus {
   );
 
   // The value commits in the lane of the notification that carries it, as
-  // useNavigation's does: urgent from the click's notification (a task of its
-  // own), so it shows at once; in the page's lane when the commit clears the
-  // navigation (NavigationProvider flushes it inside the page's update), so
-  // it settles with the page, which React may hold. A notification flushed
-  // inside another flow's commit commits with that commit, for this hook and
-  // useNavigation alike. A transition of its own would commit on its own,
-  // take the transition types queued for a held page, and could start a view
-  // transition with none.
-  //
-  // Set once per navigation: a newer one re-derives every reader in the lane
-  // of its notification, so a link whose settle React holds with an earlier
-  // page ends there instead of spinning beside the newer link. A reader whose
-  // value did not move bails out in React. A background navigation is not a
-  // newer one: an action's refetch while a page is held leaves its link
-  // pending.
+  // useNavigation's does: at once from the click's task, and with the page
+  // when its commit clears the navigation (NavigationProvider flushes that
+  // notification inside the page's update). Set once per navigation: a
+  // repeated urgent set would commit ahead of a held page's settle. A
+  // background navigation (an action's refetch) is not a newer one, so a
+  // held link stays pending.
   useEffect(() => {
     if (!ctx || linkTo === null) {
       return;

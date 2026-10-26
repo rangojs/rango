@@ -109,7 +109,7 @@ export interface DerivedNavigationState {
   isStreaming: boolean;
   /** Whether a navigation is active (fetching or streaming, before commit) */
   isNavigating: boolean;
-  /** Current committed location */
+  /** The location of the last page flushed to React (useNavigation keeps the page on screen) */
   location: NavigationLocation;
   /** URL being navigated to (null if idle) */
   pendingUrl: string | null;
@@ -724,8 +724,7 @@ export function createEventController(
     for (const a of inflightActions.values()) {
       if (
         matchesActionId(actionId, a.actionId) &&
-        a.supersededBy !== "id" &&
-        !(byName && a.supersededBy === "name")
+        (byName ? !a.supersededBy : a.supersededBy !== "id")
       ) {
         entry = a;
       }

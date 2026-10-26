@@ -136,11 +136,9 @@ export function useAction<T>(
       ? getActionId(action)
       : "";
 
-  // The value commits in the lane of the notification that carries it, which
-  // runs outside any transition (notifyAction's task), so it shows at once,
-  // also while React holds a page. A transition of its own would commit on
-  // its own, take the transition types queued for a held page, and could
-  // start a view transition with none.
+  // Set urgently from notifyAction's task, also while React holds a page: a
+  // transition of its own would take the held page's transition types (see
+  // useNavigation).
   const [value, setValue] = useState<T | TrackedActionState>(() => {
     if (!ctx) {
       return selector ? selector(DEFAULT_ACTION_STATE) : DEFAULT_ACTION_STATE;
@@ -165,35 +163,17 @@ export function useAction<T>(
   useEffect(() => {
     if (!ctx) return;
 
+    const sync = (state: TrackedActionState) => {
+      const selected = selectorRef.current ? selectorRef.current(state) : state;
+      if (!shallowEqual(selected, prevSelected.current)) {
+        prevSelected.current = selected;
+        setValue(selected);
+      }
+    };
     // Sync current state for the (possibly new) actionId so that switching
     // actions on an idle page doesn't leave stale data from the old action.
-    const currentState = ctx.eventController.getActionState(actionId);
-    const currentSelected = selectorRef.current
-      ? selectorRef.current(currentState)
-      : currentState;
-    if (!shallowEqual(currentSelected, prevSelected.current)) {
-      prevSelected.current = currentSelected;
-      setValue(currentSelected);
-    }
-
-    // Subscribe to action-specific updates
-    const unsubscribe = ctx.eventController.subscribeToAction(
-      actionId,
-      (state) => {
-        const selectedState = selectorRef.current
-          ? selectorRef.current(state)
-          : state;
-
-        if (!shallowEqual(selectedState, prevSelected.current)) {
-          prevSelected.current = selectedState;
-          setValue(selectedState);
-        }
-      },
-    );
-
-    return () => {
-      unsubscribe();
-    };
+    sync(ctx.eventController.getActionState(actionId));
+    return ctx.eventController.subscribeToAction(actionId, sync);
   }, [actionId]);
 
   return value;
