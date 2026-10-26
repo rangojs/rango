@@ -514,6 +514,7 @@ export async function createMatchContextForPartial<TEnv>(
     clientSegmentIds: nav.clientSegmentIds,
     clientSegmentSet,
     stale: nav.stale,
+    heldBoundary: nav.heldBoundary,
     prevUrl: nav.prevUrl,
     prevParams: nav.prevParams,
     prevMatch: nav.prevMatch,

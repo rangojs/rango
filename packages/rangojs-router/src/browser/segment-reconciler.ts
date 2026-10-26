@@ -260,3 +260,23 @@ export function reconcileErrorSegments(
     interceptSegments: intercept,
   };
 }
+
+/**
+ * The ids a page holds once an action's error boundary `boundary` shows: the
+ * ones above it. Nothing at or below the boundary ran after the action's
+ * write (its response and the follow-up cut there), so the next request must
+ * not hold it. ShortCodes nest, so those ids start with the boundary's: the
+ * boundary, its loaders (`${id}D…`), its slots and every entry under it. A
+ * sibling with a longer index (`…R10` beside `…R1`) is kept.
+ */
+export function idsAboveBoundary(
+  ids: string[],
+  boundary: string | undefined,
+): string[] {
+  return boundary
+    ? ids.filter(
+        (id) =>
+          !id.startsWith(boundary) || /\d/.test(id.charAt(boundary.length)),
+      )
+    : ids;
+}

@@ -159,6 +159,22 @@ describe("navigation URL (navigation-client.ts)", () => {
       `${ORIGIN}/products?_rsc_partial=true&_rsc_segments=M0L0&_rsc_stale=true&_rsc_v=v7&_rsc_rid=rid&_rsc_rt=%2Fitem%2F1&_rsc_fill=1`,
     ]);
   });
+
+  it("puts the follow-up's held error boundary right after _rsc_stale", async () => {
+    await navigationClient().fetchPartial({
+      targetUrl: "/products",
+      previousUrl: `${ORIGIN}/current`,
+      segmentIds: [],
+      staleRevalidation: true,
+      boundary: "M0L0L0R0",
+      version: "v7",
+      routerId: "rid",
+    });
+
+    expect(sentUrls()).toEqual([
+      `${ORIGIN}/products?_rsc_partial=true&_rsc_segments=&_rsc_stale=true&_rsc_boundary=M0L0L0R0&_rsc_v=v7&_rsc_rid=rid`,
+    ]);
+  });
 });
 
 describe("prefetch URL (prefetch/fetch.ts)", () => {

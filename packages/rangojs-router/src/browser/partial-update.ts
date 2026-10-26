@@ -14,7 +14,7 @@ export const addTransitionType: ((type: string) => void) | undefined =
   "addTransitionType" in React ? (React as any).addTransitionType : undefined;
 
 import type { RenderSegmentsOptions } from "../segment-system.js";
-import { reconcileSegments } from "./segment-reconciler.js";
+import { idsAboveBoundary, reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
 import { Defer } from "./defer.js";
 import {
@@ -245,6 +245,8 @@ export type UpdateMode =
       actionId?: string;
       /** The action's FormData and result, for transition({ when }) `action`. */
       action?: TransitionWhenActionInput;
+      /** The follow-up's held boundary: its cached segment stays, unheld. */
+      boundary?: string;
     };
 
 /**
@@ -569,6 +571,7 @@ export function createPartialUpdater(
     const historyKeyAtStart = store.getHistoryKey();
 
     const interceptSourceUrl = mode.interceptSourceUrl;
+    const boundary = mode.type === "action" ? mode.boundary : undefined;
 
     let segments: string[];
     if (mode.type === "leave-intercept") {
@@ -690,6 +693,7 @@ export function createPartialUpdater(
         : store.getHistoryEntryMemory()?.rewriteTarget,
       staleRevalidation:
         mode.type === "stale-revalidation" || segments.length === 0,
+      boundary,
       version: getVersion(),
       routerId: store.getRouterId?.(),
     });
@@ -874,14 +878,14 @@ export function createPartialUpdater(
       // in place of each missing value, and this navigation fills them from
       // one fill request once it has committed the tree.
       let defers: Holes["defers"] | undefined;
-      let heldIds = matchedIds;
+      let heldIds = idsAboveBoundary(matchedIds, boundary);
       const placeholders = serverSegments.filter(isPlaceholder);
       if (placeholders.length > 0) {
         defers = armHoles(placeholders);
         // A placeholder is not held: every later request from this page
         // leaves its id out, so the server renders it.
         const deferredIds = new Set(placeholders.map((s) => s.id));
-        heldIds = matchedIds.filter((id) => !deferredIds.has(id));
+        heldIds = heldIds.filter((id) => !deferredIds.has(id));
       }
 
       const reconcile = () =>

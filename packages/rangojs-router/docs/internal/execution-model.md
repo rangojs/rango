@@ -1880,10 +1880,39 @@ change (see Contract Change Process).
   fill or its Flight stream is still open (`NavigationEntry.settled`,
   `EventController.getUnsettledNavigation()`). It never cancels that
   navigation, and no repair refetch starts while one is open. It refetches the
-  page on screen
-  whole: it holds no segments, so every segment renders and no `revalidate()`
+  page on screen as the user sees it. Everything the page read re-renders: the
+  request holds no segments, so every segment renders and no `revalidate()`
   predicate runs (the first-render guarantee); `partial-update.ts` marks the
-  request `_rsc_stale`, which keeps it out of the document cache. It commits
+  request `_rsc_stale`, which keeps it out of the document cache. An action's
+  error boundary on screen is not something the page read. It is that
+  action's outcome (R2), which no GET can reproduce. So the follow-up names it
+  (`_rsc_boundary`, read only beside `_rsc_stale`), and the server renders
+  every segment above it and nothing at or below it, the cut an
+  error-boundary response makes (`ActionContext.boundary`). The boundary stays
+  on screen, and the loaders above it show the write. When nothing is above
+  it (the router's default boundary at the root), there is nothing to
+  refetch, and the debt is dropped. The client finds the boundary by
+  identity: the deepest segment in the cached list of the history entry on
+  screen that is the error segment of a boundary an action committed
+  (`actionBoundaries` in `browser/server-action-bridge.ts`, a `WeakSet` that
+  no hook reads). A navigation's error boundary is a read, so the follow-up
+  re-renders it. A repair never names a boundary, whether it runs at once or
+  is owed to the batch's end: it stands in for a later successful action's
+  commit, and that success supersedes the earlier boundary. So a success that
+  lands on the page takes the boundary its entry shows out of
+  `actionBoundaries`. After a follow-up that held the boundary, the page
+  holds only what is above it, as after the boundary's own commit (R2). Its
+  history entry caches a list that still holds the boundary, and a handle
+  stream marks the entry fresh again (`NavigationProvider.tsx`
+  processHandles), so a link never serves a list that holds an error
+  segment: it requests the page with the ids the page on screen holds
+  (`navigation-bridge.ts` hasUsableCache), and the route the error replaced
+  renders again. Back is not covered. It restores the entry with the
+  boundary and the ids at and below it held, and revalidates it (R1 marked
+  it stale, or an action is in flight, R7). That revalidation holds the whole
+  cached list and names no boundary, so it re-renders the route over the
+  boundary (rango-d207 case B1). Only a follow-up that supersedes it before
+  it commits (R6) names the restored entry's boundary. It commits
   with kind `action` (in a transition unless `transition({ when })` gates it
   off), and `useNavigation().state` stays `idle`. If an intercept is on screen
   when it would run, the debt is dropped. A request that holds no segments gets
@@ -1919,7 +1948,10 @@ Why only one follow-up, and why whole? One per batch, because three actions
 used to mean three refetches, each superseding the user's click. Whole,
 because the client cannot know which loaders on the page it navigated to read
 the action's write; `segments: []` is the only shape that re-runs all of them.
-It is the same request `refresh()` sends. A user who stayed gets no second
+It is the same request `refresh()` sends. Whole above an action's error
+boundary, which it holds: refetched whole, the route re-rendered over the
+boundary a later action had just shown, and the user saw the error vanish one
+round trip after it appeared (rango-t154). A user who stayed gets no second
 request: the action's response already re-ran every loader on that page.
 
 What an action that throws gets back (R2), case by case. Before rango-t124
@@ -1941,17 +1973,29 @@ stayed on, and on the next page under that layout.
 | Sent from an intercept (`X-RSC-Router-Intercept-Source`)                          | the error segment alone, as before (rango-t151)                                                                                                                                                                                                                                            | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
 | `matchPartial` returns null, throws anything but a redirect, or misses the outlet | the error segment alone, as before, and no handle values: the abandoned walk's pushes are dropped. A throw or a miss warns in development                                                                                                                                                  | null and a thrown non-redirect `Response`: `action-boundary-revalidation.rsc-test.tsx`; the miss (a guard) has no pin |
 | A form post without JavaScript                                                    | unchanged (`rsc/progressive-enhancement.ts`)                                                                                                                                                                                                                                               | `[A3]`                                                                                                                |
+| An earlier action's follow-up runs while the boundary shows (R4)                  | the follow-up holds the boundary: every segment above it renders, as in a request that holds nothing (no `revalidate()` runs, so a loader whose rule skipped the throwing action re-runs); nothing at or below it. The boundary stays mounted, the same node, and its stream continues     | `action-boundary-revalidation.rsc-test.tsx`, `server-action-bridge.test.ts`, the `action-boundary` e2e (both apps)    |
+| The same, the boundary is the router's default one at the root                    | no follow-up: nothing is above the boundary, so the debt is dropped; the page holds nothing, so the next link re-renders all of it                                                                                                                                                         | `server-action-bridge.test.ts`                                                                                        |
 
 The browser reconciles it with `reconcileErrorSegments`
 (`browser/segment-reconciler.ts`): the error segment replaces its cached
 copy, and every other segment merges as an action's does (`mergeCached`),
 keeping the cached component of a held layout and the cached `loading` and
-`mountPath`. It then stops holding the error segments only
-(`browser/server-action-bridge.ts`): the loaders the response re-ran stay
-held, so the next navigation keeps their fresh data and a `revalidate(() =>
-false)` still holds them. Pinned by `segment-reconciler.test.ts` and
-`server-action-bridge.test.ts` ("server-action-bridge error-boundary
-response").
+`mountPath`. It then holds only what is above the action's boundary
+(`idsAboveBoundary` in `browser/segment-reconciler.ts`, applied in
+`browser/server-action-bridge.ts`), and no error segment. The loaders the
+response re-ran above it stay held, so the next link keeps their fresh data
+and a `revalidate(() => false)` still holds them. The boundary, its loaders
+and everything under it ran nothing after the write, so the next link
+re-renders them; under the router's default boundary at the root, the page
+holds nothing and the next link re-renders all of it. Before rango-t154 the
+page kept holding them, and a link served a layout and its loader under the
+boundary from before the write. Back onto the entry later is not covered: it
+restores the cached list's ids, the boundary's included, and its
+revalidation re-renders the route over the boundary (R4). Pinned by
+`segment-reconciler.test.ts`, `server-action-bridge.test.ts`
+("server-action-bridge error-boundary response", "server-action-bridge ids
+the page holds after an action's boundary") and
+`segment-resolution/__tests__/boundary-cut.test.tsx` (the next link).
 
 The document cache never answers a stale request, so it never answers the
 follow-up either. Its key cannot see the write, so the cache neither stores nor
@@ -1983,7 +2027,11 @@ write. Three cases changed in kind:
   successful one does, so `useNavigation().state` reads `loading` until then;
   main went `idle` at the abort.
 
-Pinned by `src/__tests__/server-action-bridge.test.ts` (the follow-up cases),
+Pinned by `src/__tests__/server-action-bridge.test.ts` (the follow-up cases,
+"an action's error boundary on screen" among them),
+`src/__tests__/partial-update.test.ts` ("an action refetch that holds an
+error boundary"), `segment-resolution/__tests__/boundary-cut.test.tsx`,
+`src/testing/__tests__/action-boundary-revalidation.rsc-test.tsx`,
 `src/__tests__/event-controller.test.ts` (`settled`, `abortAllActions(except)`),
 the shared scenarios `action-follow-up`, `action-stale-navigation`,
 `action-held-segments` and `action-boundary` in `tests/shared-e2e/src/` (both
@@ -2249,7 +2297,14 @@ should not be treated as equivalent.
   (`cacheStale`) and never seeds the action defaults. A request that holds
   no segments (`refresh()`, the cross-tab refresh, an action's refetch or
   redirect) renders every segment by the first-render guarantee below, so the
-  seed changes nothing for it. Pinned by semantic-matrix row R5,
+  seed changes nothing for it. A stale request may hold an action's error
+  boundary (`_rsc_boundary`, the action follow-up's R4): the walk stops there,
+  as an error-boundary response's does, claims the boundary and its outlet's
+  loader ids in `matched`, and sends no segment for it; an id on no entry of
+  the route's chain renders the page whole and warns in development
+  (`resolveAllSegments`; pinned by `boundary-cut.test.tsx` and, on a
+  `Prerender()` route, `stored-source.rsc-test.tsx`). The stale defaults are
+  pinned by semantic-matrix row R5,
   `src/testing/__tests__/stale-revalidation-defaults.rsc-test.tsx` (a cache()
   route and a ppr route included), `src/router/__tests__/revalidation-stale-defaults.test.ts`
   and the `stale-defaults` e2e (both apps, dev and production).

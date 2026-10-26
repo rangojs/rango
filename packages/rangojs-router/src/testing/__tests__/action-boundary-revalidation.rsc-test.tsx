@@ -11,6 +11,12 @@
  * action sent from an intercept, and one whose revalidation returns null or
  * throws anything else, gets the error segment alone (matchError,
  * router/match-api.ts).
+ *
+ * An earlier action's follow-up, owed to the page that shows the boundary,
+ * holds it (`partial.boundary` beside `stale`): it re-renders every segment
+ * above the boundary, as a request that holds nothing does, and nothing at
+ * or below it. The boundary stays on screen, and the layout above shows the
+ * earlier write.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -84,8 +90,9 @@ const RatesLoader = createLoader(async () => {
   if (ratesFail) throw new Error("rates unavailable");
   return "rates";
 });
-const ProductLoader = createLoader(async () => {
+const ProductLoader = createLoader(async (ctx) => {
   runs.productLoader++;
+  ctx.use(Badge)(`product:${runs.productLoader}`);
   return "product data";
 });
 const SectionLoader = createLoader(async () => `section:${cart}`);
@@ -579,5 +586,151 @@ describe("a thrown action that keeps the error segment alone", () => {
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("whose revalidation threw a 403 Response"),
     );
+  });
+});
+
+/**
+ * The follow-up an earlier action owes the page at `url` while it shows a
+ * thrown action's boundary: a stale partial that holds nothing but the
+ * boundary.
+ */
+function followUpHolding(
+  url: string,
+  boundary: string,
+  partial: { stale?: boolean } = { stale: true },
+): Promise<ServeShellRequestResult> {
+  return serveShellRequest(router, url, {
+    cacheStore: new MemorySegmentCacheStore(),
+    partial: { from: url, segments: [], boundary, ...partial },
+  });
+}
+
+describe("an earlier action's follow-up while a thrown action's boundary is on screen", () => {
+  /** The page at `url` after `addThenFail` threw: its boundary's id. */
+  async function boundaryOn(url: string): Promise<string> {
+    const { answer } = await readAnswer(
+      await throwOn(url, await documentOf(url)),
+    );
+    const [id] = errorIds(answer);
+    expect(id).toBeDefined();
+    return id!;
+  }
+
+  it("a stale partial that names the error boundary on screen re-renders the layout loader, holds the boundary and runs no route code", async () => {
+    const boundary = await boundaryOn("/product/1");
+    // An earlier action's write, which the boundary's response did not read.
+    cart = 7;
+    const before = { ...runs };
+    const runsBefore = cartRuns;
+    const result = await followUpHolding("/product/1", boundary);
+
+    expect(result.response.status).toBe(200);
+    const { answer, handles } = await readAnswer(result);
+    expect(cartRuns).toBe(runsBefore + 1);
+    expect(await sent(answer, CartLoader)).toBe(7);
+    expect(runs).toEqual(before);
+    expect(result.flight).not.toContain("product failed");
+    // The boundary and the route's loader stay claimed, and are not sent.
+    const productLoader = `${boundary}D0.${ProductLoader.$$id}`;
+    expect(answer.matched.slice(-2)).toEqual([boundary, productLoader]);
+    expect(answer.segments.map((s) => s.id)).not.toContain(boundary);
+    expect(answer.resolvedIds).not.toContain(boundary);
+    // The slot above the boundary re-renders, and pushes its handle values.
+    expect(answer.matched.some((id) => id.endsWith(".@aside"))).toBe(true);
+    expect(
+      collectHandleData(Badge, handles, filterSegmentOrder(answer.matched)),
+    ).toEqual(["cart:7"]);
+  });
+
+  it("a layout's boundary: the loaders above it re-run, the ones below do not", async () => {
+    const boundary = await boundaryOn("/shelf");
+    cart = 7;
+    const before = { ...runs };
+    const { answer } = await readAnswer(
+      await followUpHolding("/shelf", boundary),
+    );
+
+    expect(await sent(answer, CartLoader)).toBe(7);
+    expect(await sent(answer, SectionLoader)).toBe("section:7");
+    expect(await sent(answer, ShelfLoader)).toBeUndefined();
+    expect(runs).toEqual(before);
+    const shelfLoader = `${boundary}D0.${ShelfLoader.$$id}`;
+    expect(answer.matched.slice(-2)).toEqual([boundary, shelfLoader]);
+  });
+
+  it("an orphan layout's boundary: the orphan and its slot re-render, and no route code runs", async () => {
+    const boundary = await boundaryOn("/deal");
+    cart = 7;
+    const before = { ...runs };
+    const { answer } = await readAnswer(
+      await followUpHolding("/deal", boundary),
+    );
+
+    expect(await sent(answer, PromoLoader)).toBe("promo:7");
+    expect(await sent(answer, CartLoader)).toBe(7);
+    expect(await sent(answer, DealLoader)).toBeUndefined();
+    expect(runs).toEqual(before);
+    expect(answer.matched.some((id) => id.endsWith(".@banner"))).toBe(true);
+    expect(answer.matched.at(-2)).toBe(boundary);
+    expect(answer.segments.map((s) => s.id)).not.toContain(boundary);
+  });
+
+  it("the handle values at the boundary stay through the follow-up (no route loader re-ran), and the ones above it take the write", async () => {
+    const page = await documentOf("/product/1");
+    const thrown = await readAnswer(await throwOn("/product/1", page));
+    const [boundary] = errorIds(thrown.answer);
+    // Merged as the browser merges each partial response's handle data.
+    const merge = (
+      previous: HandleData,
+      next: { answer: Answer; handles: HandleData },
+    ) =>
+      mergePartialHandleData(
+        previous,
+        next.handles,
+        filterSegmentOrder(next.answer.matched),
+        next.answer.matched,
+        next.answer.resolvedIds,
+      );
+    const afterBoundary = merge(page.handles, thrown);
+    expect(
+      collectHandleData(
+        Badge,
+        afterBoundary,
+        filterSegmentOrder(thrown.answer.matched),
+      ),
+    ).toEqual(["cart:1", "product:1"]);
+
+    cart = 7;
+    const followUp = await readAnswer(
+      await followUpHolding("/product/1", boundary!),
+    );
+    expect(
+      collectHandleData(
+        Badge,
+        merge(afterBoundary, followUp),
+        filterSegmentOrder(followUp.answer.matched),
+      ),
+    ).toEqual(["cart:7", "product:1"]);
+  });
+
+  it("a layout loader whose revalidate() returns false re-runs: the request holds nothing above the boundary", async () => {
+    const boundary = await boundaryOn("/product/1");
+    cartRule = () => false;
+    cart = 7;
+    const { answer } = await readAnswer(
+      await followUpHolding("/product/1", boundary),
+    );
+    expect(await sent(answer, CartLoader)).toBe(7);
+  });
+
+  it("without stale, the boundary is not read: the page renders whole", async () => {
+    const boundary = await boundaryOn("/product/1");
+    const before = runs.product;
+    const result = await followUpHolding("/product/1", boundary, {
+      stale: false,
+    });
+    const { answer } = await readAnswer(result);
+    expect(runs.product).toBe(before + 1);
+    expect(answer.segments.map((s) => s.id)).toContain(boundary);
   });
 });

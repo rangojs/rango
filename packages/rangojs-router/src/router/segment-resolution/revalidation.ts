@@ -1650,16 +1650,19 @@ export async function resolveAllSegments<TEnv>(
   };
 
   const boundary = pass.actionContext?.boundary;
-  const boundaryId = boundary?.id;
+  const cutId = boundary?.id ?? pass.heldBoundary;
+  let cut = false;
   for (const entry of entries) {
-    if (entry.shortCode === boundaryId) {
+    if (entry.shortCode === cutId) {
       // The outlet's loader ids stay claimed. _handlerRan makes the browser
-      // clear the outlet's handle values.
-      allSegments.push({ ...boundary!, _handlerRan: true });
-      matchedIds.push(boundaryId);
+      // clear the outlet's handle values. A held boundary sends no segment:
+      // the client keeps its own, with its handle values.
+      if (boundary) allSegments.push({ ...boundary, _handlerRan: true });
+      matchedIds.push(cutId);
       entry.loader?.forEach((loaderEntry, i) =>
         matchedIds.push(`${entry.shortCode}D${i}.${loaderEntry.loader.$$id}`),
       );
+      cut = true;
       break;
     }
     if (entry.type === "route" && interceptResult) {
@@ -1721,6 +1724,14 @@ export async function resolveAllSegments<TEnv>(
     }
   }
 
+  // A held boundary that names no entry (HMR rewrote the routes since the
+  // page rendered): the page renders whole, as without one.
+  if (pass.heldBoundary && !cut && process.env.NODE_ENV !== "production") {
+    console.warn(
+      `[@rangojs/router] A refetch held the error boundary "${pass.heldBoundary}", ` +
+        `which is not on the route's chain (${routeKey}): the page renders whole.`,
+    );
+  }
   deliverStartedLoaders(context, allSegments);
   return { segments: allSegments, matchedIds };
 }

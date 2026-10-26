@@ -2,12 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { useAction, useLoader, useNavigation } from "@rangojs/router/client";
-import { ActionBoundaryCartLoader } from "./action-boundary.defs.js";
+import {
+  ActionBoundaryCartLoader,
+  ActionBoundaryNoteLoader,
+} from "./action-boundary.defs.js";
 import {
   addToActionBoundaryCart,
   failActionBoundaryCart,
   failLateActionBoundaryCart,
+  failSlowActionBoundaryCart,
   slowActionBoundaryAction,
+  slowActionBoundaryNote,
 } from "./action-boundary.actions.js";
 
 // <html data-ab-result> holds what the last call settled with.
@@ -27,6 +32,7 @@ async function run(call: () => Promise<unknown>): Promise<void> {
  */
 export function ActionBoundaryBar() {
   const { data: cart } = useLoader(ActionBoundaryCartLoader);
+  const { data: note } = useLoader(ActionBoundaryNoteLoader);
   const { error } = useAction(failActionBoundaryCart);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -41,6 +47,7 @@ export function ActionBoundaryBar() {
   return (
     <div>
       <p data-testid="ab-cart">{`cart:${cart}`}</p>
+      <p data-testid="ab-note">{`note:${note}`}</p>
       <p data-testid="ab-action-error">{failed ? "error" : ""}</p>
       <p data-testid="ab-late-error">{lateFailed ? "error" : ""}</p>
       <p data-testid="ab-nav-state">{navState}</p>
@@ -68,6 +75,12 @@ export function ActionBoundaryControls() {
         onClick={() => void run(() => failLateActionBoundaryCart())}
       >
         Add, then fail late
+      </button>
+      <button
+        data-testid="ab-fail-slow"
+        onClick={() => void run(() => failSlowActionBoundaryCart())}
+      >
+        Add, then fail slow
       </button>
     </div>
   );
@@ -99,6 +112,12 @@ export function ActionBoundarySlowControls() {
       <p data-testid="ab-slow-state">{state}</p>
       <p data-testid="ab-slow-result">{seenResult}</p>
       <p data-testid="ab-slow-error">{failed ? "error" : ""}</p>
+      <button
+        data-testid="ab-slow-note"
+        onClick={() => void run(() => slowActionBoundaryNote())}
+      >
+        Slow note
+      </button>
     </div>
   );
 }

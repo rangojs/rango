@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: an earlier action's background revalidation keeps the error boundary a later action shows
+
+**Before.** The user fires a slow action on one page and moves to another
+before it lands. Its response is not shown, so the page on screen gets one
+background revalidation once the last action in flight ends. On that page the
+user fires a second action, which throws into the page's `errorBoundary()`.
+The boundary showed, and about one round trip later the revalidation brought
+the page back over it: the error vanished without explanation, though the
+second action's `await` rejected.
+
+**Now.** The revalidation keeps the boundary on screen, as the same node: its
+`<Suspense>` content keeps streaming, and the handle values it pushed stay.
+Every layout, slot and loader above the boundary re-renders with the earlier
+action's write, as a revalidation that holds nothing does, whatever their
+`revalidate()` decides for the second action. Nothing at or below the
+boundary runs. When nothing is above it (the router's default error boundary
+at the root), no request is sent. A navigation's error boundary (a handler
+that threw on a GET) is a read, and the revalidation re-renders it as before.
+
+A link to a page whose history entry shows an action's error boundary now
+renders the page again, from that page or another one. So does a link from
+another page to a page whose GET failed into a boundary. Before, either could
+serve the entry's cached copy and show the old error.
+
+After an action's boundary shows, the next link from the page re-runs what is
+at or below the boundary: the route or layout it replaced, their loaders and
+everything under them, so they show data read after the write. Before, the page kept holding them, so a link
+could show a loader at the boundary with its data from before the action.
+Under the router's default error boundary at the root, a link re-renders the
+whole page; before, it kept every layout loader's data from before the
+action. Back to an entry that shows a boundary is unchanged: its
+revalidation re-renders the page over the boundary.
+
+No change in your code.
+
 ## 0.28.0 (2026-10-25)
 
 ### Fixed: a rewritten request's telemetry events carry one `requestId` ([#1269](https://github.com/rangojs/rango/pull/1269))

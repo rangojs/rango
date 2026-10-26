@@ -414,8 +414,11 @@ export function createNavigationBridge(
       // 3. when leaving intercept - we need fresh non-intercept segments from server
       // 4. redirect-with-state - force re-render so hooks read fresh state
       // 5. stale cache - server action invalidated it, need fresh data with loading state
+      // 6. an error boundary in the list - a link renders the page again; its
+      //    ids would tell the server the client holds what the error replaced
       const hasUsableCache =
         isRestorable(cachedSegments) &&
+        !cachedSegments.some((s) => s.type === "error") &&
         !isInterceptOnlyCache(cachedSegments) &&
         !isLeavingIntercept &&
         !cached?.stale &&

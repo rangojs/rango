@@ -569,6 +569,10 @@ A few details:
   until a request re-runs them.
 - It holds no segments, so every loader on the page re-runs whatever its
   `revalidate()` says, and the document cache never answers it.
+- If a later action on that page threw into its `errorBoundary()`, the
+  revalidation keeps the boundary on screen: everything above it re-runs,
+  nothing at or below it. Under the router's default boundary at the root,
+  nothing runs. A link from the page re-runs what is at or below the boundary.
 - Going Back or Forward out of an intercept does not abort an action sent from
   the intercept. `useAction()` and your `await` get its real result.
 
@@ -710,7 +714,10 @@ decides, so a cart count shows what the action wrote before it threw. A
 route's `errorBoundary()` replaces the route: its handler and loaders do not
 run. A layout's `errorBoundary()` replaces what the layout renders in its
 outlet: the layout's own loaders, slots and orphan layouts revalidate as on a
-success, and nothing inside the outlet runs. An action sent from an intercept
+success, and nothing inside the outlet runs. A link from the page re-runs
+what the boundary replaced and everything under it; under the router's
+default boundary at the root, the whole page. Back to the page later
+restores it and revalidates it, which replaces the boundary with the route. An action sent from an intercept
 gets the boundary alone.
 
 ```typescript

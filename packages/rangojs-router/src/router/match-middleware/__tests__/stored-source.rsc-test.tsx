@@ -18,7 +18,8 @@
  * readPrerenderSource). Both Prerender sources must keep answering it. An
  * action that throws into the route's boundary is the exception: the entries
  * above the boundary resolve live and the walk stops at the route, so the
- * evicted handler never runs.
+ * evicted handler never runs. So is an earlier action's follow-up that holds
+ * that boundary (a stale partial with `_rsc_boundary`).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React, { isValidElement } from "react";
@@ -294,6 +295,60 @@ describe("a thrown action's error boundary on a Prerender route", () => {
           loaderData: { ok: true, data: 1 },
         },
         { type: "error", component: "text: item failed" },
+      ]);
+    },
+  );
+});
+
+describe("an earlier action's follow-up that holds the error boundary on a Prerender route", () => {
+  it.each(["prerender build", "on-demand overlay"] as const)(
+    "%s: the entries above the boundary resolve live, past the stored entry, and the page handler does not run",
+    async (source) => {
+      writes = 1;
+      const router = makeRouter(source, true);
+      const cacheStore = new MemorySegmentCacheStore();
+      if (source === "prerender build") {
+        await serveShellRequest(router, "/item/1", { cacheStore });
+      } else {
+        expect(await router.prerender({ env: {} })("/item/1")).toMatchObject({
+          ok: true,
+          status: "rendered",
+        });
+      }
+      const page = await deserializeResult<{
+        metadata: { segments: Array<{ id: string; type: string }> };
+      }>(
+        (
+          await serveShellRequest(router, "/item/1", {
+            cacheStore,
+            partial: { from: "/" },
+          })
+        ).flight!,
+      );
+      const route = page.metadata.segments.find((s) => s.type === "route")!;
+
+      const runsBefore = pageRuns;
+      const followUp = await served(
+        await serveShellRequest(router, "/item/1", {
+          cacheStore,
+          partial: {
+            from: "/item/1",
+            segments: [],
+            stale: true,
+            boundary: route.id,
+          },
+        }),
+      );
+      expect(pageRuns).toBe(runsBefore);
+      // Above the boundary, rendered live; the route is not sent.
+      expect(followUp.segments).toMatchObject([
+        { type: "layout" },
+        {
+          type: "loader",
+          loaderId: WritesLoader.$$id,
+          loaderData: { ok: true, data: 1 },
+        },
+        { type: "layout", component: "text: shell" },
       ]);
     },
   );

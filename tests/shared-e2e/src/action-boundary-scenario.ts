@@ -11,6 +11,8 @@ import { waitForShellHydration } from "./shell-request.js";
  * re-run (the layout's loader); at it, the boundary. So the page shows the
  * boundary and the write together, and a link under the same layout keeps
  * the fresh count. Other tabs refresh and a fresh load read the write too.
+ * An earlier action's follow-up, owed to the page while it shows the
+ * boundary, holds the boundary and re-renders what is above it (rango-t154).
  * Fixture: action-boundary.tsx in each app, mounted at /action-boundary; both
  * apps call this from a dev and a (production) describe.
  */
@@ -186,5 +188,189 @@ export function runActionBoundaryTests(
       timeout: 3000,
     });
     await expect(page.getByTestId("ab-nav-state")).toHaveText("idle");
+  });
+
+  /**
+   * W (fails after 4.5 s) is sent on the page after an earlier action X
+   * (sent before the user moved) has landed unseen, so X owes the page the
+   * follow-up when W, the last action, exits. Resolves with the follow-up's
+   * URL once the page settled.
+   */
+  async function boundaryThenFollowUp(
+    page: Page,
+    startEarlierAction: () => Promise<void>,
+  ): Promise<URL> {
+    await startEarlierAction();
+    const followUp = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname.endsWith(PAGE) &&
+        url.searchParams.get("_rsc_stale") === "true"
+      );
+    });
+
+    // W throws into the page's errorBoundary() after X has landed. An
+    // observer records the boundary's node the first time it is in the DOM,
+    // and every time it leaves: with the defect it is on screen for one
+    // frame only.
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        __abBoundary: Element | null;
+        __abBoundaryLeft: number;
+      };
+      w.__abBoundary = null;
+      w.__abBoundaryLeft = 0;
+      const note = () => {
+        const shown = document.querySelector('[data-testid="ab-boundary"]');
+        if (shown && !w.__abBoundary) w.__abBoundary = shown;
+        if (w.__abBoundary && !w.__abBoundary.isConnected) {
+          w.__abBoundaryLeft++;
+        }
+      };
+      new MutationObserver(note).observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+    });
+    await page.getByTestId("ab-fail-slow").click();
+    await page.waitForFunction(
+      () =>
+        (window as unknown as { __abBoundary: Element | null }).__abBoundary !==
+        null,
+      undefined,
+      { timeout: 10_000 },
+    );
+
+    // W's exit runs the follow-up; the page settles.
+    const response = await followUp;
+    await response.finished();
+    await expect(page.getByTestId("ab-nav-state")).toHaveText("idle", {
+      timeout: 10_000,
+    });
+    await page.waitForTimeout(1000);
+    return new URL(response.url());
+  }
+
+  /**
+   * The boundary W showed is on screen after the follow-up, as the same
+   * node, and its Suspense tail streamed into it; the follow-up held it and
+   * nothing else.
+   */
+  async function expectBoundaryKept(page: Page, followUp: URL): Promise<void> {
+    await expect(page.getByTestId("ab-boundary")).toBeVisible();
+    await expect(page.getByTestId("ab-page")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => {
+        const w = window as unknown as {
+          __abBoundary: Element | null;
+          __abBoundaryLeft: number;
+        };
+        return {
+          connected: w.__abBoundary?.isConnected,
+          left: w.__abBoundaryLeft,
+        };
+      }),
+    ).toEqual({ connected: true, left: 0 });
+    await expect(page.getByTestId("ab-boundary-tail")).toHaveText("done");
+    expect(followUp.searchParams.get("_rsc_segments")).toBe("");
+    expect(followUp.searchParams.get("_rsc_boundary")).toBeTruthy();
+  }
+
+  test("an error boundary a later action shows stays on screen after an earlier action's follow-up", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+    await page.getByTestId("ab-to-other").click();
+    await expect(page.getByTestId("ab-other")).toBeVisible();
+
+    const followUp = await boundaryThenFollowUp(page, async () => {
+      // X (3.5 s, succeeds) is sent from /other; the user moves to the page
+      // before it lands, so its response is not shown.
+      await page.getByTestId("ab-slow").click();
+      await expect(page.getByTestId("ab-slow-state")).not.toHaveText("idle");
+      await page.getByTestId("ab-to-page").click();
+      await expect(page.getByTestId("ab-page")).toBeVisible();
+    });
+
+    // rango-t154: the follow-up held W's boundary and re-rendered above it.
+    await expectBoundaryKept(page, followUp);
+    await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
+  });
+
+  test("a link back to the page after the follow-up held its boundary shows the page, not the boundary", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+    await page.getByTestId("ab-to-other").click();
+    await expect(page.getByTestId("ab-other")).toBeVisible();
+
+    const followUp = await boundaryThenFollowUp(page, async () => {
+      await page.getByTestId("ab-slow").click();
+      await expect(page.getByTestId("ab-slow-state")).not.toHaveText("idle");
+      await page.getByTestId("ab-to-page").click();
+      await expect(page.getByTestId("ab-page")).toBeVisible();
+    });
+    await expectBoundaryKept(page, followUp);
+
+    // Both links are prefetch="none": the page's history entry, not a
+    // prefetch, decides what the link back holds.
+    await page.getByTestId("ab-to-other").click();
+    await expect(page.getByTestId("ab-other")).toBeVisible();
+    await page.getByTestId("ab-to-page").click();
+    await expect(page.getByTestId("ab-page")).toBeVisible();
+    await expect(page.getByTestId("ab-boundary")).toHaveCount(0);
+    await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
+  });
+
+  test("an error boundary a later action shows stays on screen after the follow-up an earlier action's dropped boundary owes", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+
+    const followUp = await boundaryThenFollowUp(page, async () => {
+      // X (throws into the boundary after 1 s) is sent; the user moves to
+      // /other and back to the page, a new entry, before it lands.
+      await page.getByTestId("ab-fail-late").click();
+      await page.getByTestId("ab-to-other").click();
+      await expect(page.getByTestId("ab-other")).toBeVisible();
+      await page.getByTestId("ab-to-page").click();
+      await expect(page.getByTestId("ab-page")).toBeVisible();
+    });
+
+    await expectBoundaryKept(page, followUp);
+    // Both writes, above the boundary.
+    await expect(page.getByTestId("ab-cart")).toHaveText("cart:2");
+  });
+
+  test("an earlier action's follow-up re-reads a layout loader that a later action's boundary response held", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+    await page.getByTestId("ab-to-other").click();
+    await expect(page.getByTestId("ab-other")).toBeVisible();
+    await expect(page.getByTestId("ab-note")).toHaveText("note:0");
+
+    const followUp = await boundaryThenFollowUp(page, async () => {
+      // X (3.5 s) writes the note, which only X's revalidation re-reads; the
+      // user moves to the page before it lands.
+      await page.getByTestId("ab-slow-note").click();
+      await page.getByTestId("ab-to-page").click();
+      await expect(page.getByTestId("ab-page")).toBeVisible();
+    });
+
+    // W's boundary response skipped the note loader (its revalidate() is
+    // X's only); the follow-up holds nothing above the boundary, so it
+    // re-ran it.
+    await expectBoundaryKept(page, followUp);
+    await expect(page.getByTestId("ab-note")).toHaveText("note:1");
+    await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
   });
 }

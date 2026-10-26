@@ -230,7 +230,22 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // handlePopstate), and a document load drops the entry's intercept marks
 // (history-state.ts clearLocationStateOnDocumentLoad). Both run on every
 // popstate and every boot, so neither can load lazily.
-const ROUTER_CHUNK_GZIP_MAX = 50 * 1024;
+//
+// Raised 50KB -> 50.25KB on 2026-10-25 for rango-t154, measured on
+// cloudflare-basic from main f514d4e41 51182B -> 51389B (+207B gzip): an
+// earlier action's follow-up revalidation keeps the error boundary a later
+// action shows. The bridge records action boundaries at their commit, a
+// success on the page drops its boundary, and the follow-up names the one on
+// screen (server-action-bridge.ts followUp, the `_rsc_boundary` wire param);
+// after a boundary shows, the page holds only the ids above it
+// (segment-reconciler.ts idsAboveBoundary); and a link never reuses a cached
+// list that holds an error segment (navigation-bridge.ts).
+// None of it can load lazily: it runs at every action's exit, on every
+// action response and on every link, and the action bridge is not split
+// (AGENTS.md Bundle hygiene). Smaller forms that weaken it were not taken
+// (rango-t154-c5, rango-t154-c7). Two 128B steps, the owner's call: main
+// sat 18B under the old limit.
+const ROUTER_CHUNK_GZIP_MAX = 50.25 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

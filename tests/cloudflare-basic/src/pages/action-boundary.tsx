@@ -1,7 +1,11 @@
 import { Suspense } from "react";
 import { urls } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
-import { ActionBoundaryCartLoader } from "./action-boundary.defs.js";
+import {
+  ActionBoundaryCartLoader,
+  ActionBoundaryNoteLoader,
+} from "./action-boundary.defs.js";
+import { slowActionBoundaryNote } from "./action-boundary.actions.js";
 import {
   ActionBoundaryBar,
   ActionBoundaryControls,
@@ -22,6 +26,9 @@ function ActionBoundaryLayout() {
         data-testid="ab-to-other"
       >
         Other
+      </Link>
+      <Link to="/action-boundary/page" prefetch="none" data-testid="ab-to-page">
+        Page
       </Link>
       <Outlet />
     </div>
@@ -47,9 +54,12 @@ function ActionBoundaryFallback() {
 }
 
 export const actionBoundaryPatterns = urls(
-  ({ layout, path, loader, errorBoundary }) => [
+  ({ layout, path, loader, errorBoundary, revalidate }) => [
     layout(ActionBoundaryLayout, () => [
       loader(ActionBoundaryCartLoader),
+      loader(ActionBoundaryNoteLoader, () => [
+        revalidate(({ isAction }) => isAction(slowActionBoundaryNote)),
+      ]),
       path(
         "/page",
         () => (

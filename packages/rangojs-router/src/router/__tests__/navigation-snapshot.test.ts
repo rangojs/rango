@@ -512,6 +512,23 @@ describe("resolveNavigation", () => {
     expect(result!.stale).toBe(false);
   });
 
+  it("reads the held error boundary (_rsc_boundary) only beside _rsc_stale", async () => {
+    const read = async (search: string) => {
+      const { request, url } = makeRequest(`http://localhost/page?${search}`, {
+        "X-RSC-Router-Client-Path": "/prev",
+      });
+      const result = await resolveNavigation(request, url, "page", {
+        findMatch: () => makeMatch(),
+      });
+      return result!.heldBoundary;
+    };
+
+    expect(await read("_rsc_stale=true&_rsc_boundary=M0L0R1")).toBe("M0L0R1");
+    expect(await read("_rsc_boundary=M0L0R1")).toBeUndefined();
+    expect(await read("_rsc_stale=true&_rsc_boundary=")).toBeUndefined();
+    expect(await read("_rsc_stale=true")).toBeUndefined();
+  });
+
   it("detects HMR header", async () => {
     const { request, url } = makeRequest("http://localhost/page", {
       "X-RSC-Router-Client-Path": "/prev",
