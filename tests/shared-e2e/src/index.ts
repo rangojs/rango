@@ -62,6 +62,8 @@ export type { HandlesAfterAwaitScenarioOptions } from "./handles-after-await-sce
 export { runActionFailureTests } from "./action-failure-scenario.js";
 export { runActionBoundaryTests } from "./action-boundary-scenario.js";
 export type { ActionBoundaryScenarioOptions } from "./action-boundary-scenario.js";
+export { runInterceptBoundaryTests } from "./intercept-boundary-scenario.js";
+export type { InterceptBoundaryScenarioOptions } from "./intercept-boundary-scenario.js";
 export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
 export {
   expectBackOntoAStalePageShowsTheWrite,

@@ -68,6 +68,7 @@ export const urlpatterns = urls(({ path, layout, intercept, loader, loading }) =
 | ----------------------------------------------------- | ---------------------------------------------------- |
 | Click link `/shop/product/abc`                        | `<ProductModal />` in `@modal`, background preserved |
 | Direct URL `/shop/product/abc`, or a reload           | Full `<ProductPage />` page                          |
+| `router.refresh()`, or another tab's action           | Full `<ProductPage />` page, as a reload             |
 | Back from the open intercept                          | The intercept closes; the source page stays          |
 | Back/Forward onto the intercept's entry               | The intercept over its source page                   |
 | The same, uncached, from a page other than the source | Full `<ProductPage />` page, as a document load      |
@@ -80,6 +81,11 @@ it costs a full page load, from the top, which drops `clearOnReload` location
 state like any document load, and the entry is a full page from then on. In
 dev, an edit that changes the app version clears the history cache, so the
 next Back/Forward onto an intercept entry takes that path.
+
+An intercept is a page in the middle of a navigation. A refresh reloads its
+URL, so `router.refresh()` with the intercept open, and the refresh another
+tab's action triggers, render the full page, as a document load does. The
+entry is a full page from then on.
 
 A server action on `/shop` that calls `redirect("/shop/product/abc")` opens the
 intercept too, and so does a link from `/shop` to a route that redirects
