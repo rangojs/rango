@@ -15,6 +15,8 @@ import {
 import { KEEP_CACHE_HEADER } from "./cookie-name.js";
 import { createNavigationTransaction } from "./navigation-transaction.js";
 import {
+  actionBoundaries,
+  actionBoundaryAt,
   idsAboveBoundary,
   reconcileSegments,
   reconcileErrorSegments,
@@ -259,14 +261,6 @@ export function createServerActionBridge(
   /** The newest follow-up, until it ends: leaveFollowUp() aborts it. */
   let followUpRunning: { handle: NavigationHandle; due: FollowUp } | undefined;
   /**
-   * The error segment of every action error boundary committed, by identity.
-   * An entry shows one while its cached list still holds that object: a later
-   * commit on the entry replaces the list, and a follow-up that holds it keeps
-   * it. Weak, so a replaced boundary is not kept alive.
-   */
-  const actionBoundaries = new WeakSet<ResolvedSegment>();
-
-  /**
    * The follow-up revalidation: the rules are R1-R7 in
    * docs/internal/execution-model.md. Once the batch's last action exited,
    * the page on screen that missed a write is refetched once, whole (no
@@ -282,7 +276,7 @@ export function createServerActionBridge(
    *   keeps its error on screen, and the debt is dropped.
    * - Runs again when it is left before its commit (a navigation, or an action
    *   that started: leaveFollowUp), for the page then on screen.
-   * - Holds the action error boundary the page shows (actionBoundaries): it
+   * - Holds the action error boundary the page shows (actionBoundaryAt): it
    *   is that action's outcome, which no GET reproduces, so the server
    *   renders every segment above it and nothing at or below it. With
    *   nothing above it (the page's first segment), the debt is dropped.
@@ -304,8 +298,7 @@ export function createServerActionBridge(
     // page whole, the first segment (0) leaves nothing above it.
     const shown =
       store.getCachedSegments(store.getHistoryKey())?.segments ?? [];
-    let at = shown.length - 1;
-    while (at >= 0 && !actionBoundaries.has(shown[at])) at--;
+    const at = actionBoundaryAt(shown);
     if (at === 0) return;
     // Not on `due`: a run owed again (owed ??= due) looks again.
     const held = { ...due, boundary: shown[at]?.id };

@@ -236,16 +236,27 @@ export type UpdateMode =
        * transition({ when }) sees kind "revalidate", not "replace".
        */
       refresh?: boolean;
+      /** The cross-tab refresh's held boundary (see `action`). */
+      boundary?: string;
     }
-  | { type: "leave-intercept"; interceptSourceUrl?: string }
-  | { type: "stale-revalidation"; interceptSourceUrl?: string }
+  | { type: "leave-intercept"; interceptSourceUrl?: string; boundary?: never }
+  | {
+      type: "stale-revalidation";
+      interceptSourceUrl?: string;
+      /** Back/Forward's held boundary (see `action`). */
+      boundary?: string;
+    }
   | {
       type: "action";
       interceptSourceUrl?: string;
       actionId?: string;
       /** The action's FormData and result, for transition({ when }) `action`. */
       action?: TransitionWhenActionInput;
-      /** The follow-up's held boundary: its cached segment stays, unheld. */
+      /**
+       * An action's error boundary the page shows (actionBoundaryAt): the
+       * server renders above it, its cached segment stays, and the page
+       * holds only the ids above it.
+       */
       boundary?: string;
     };
 
@@ -571,7 +582,7 @@ export function createPartialUpdater(
     const historyKeyAtStart = store.getHistoryKey();
 
     const interceptSourceUrl = mode.interceptSourceUrl;
-    const boundary = mode.type === "action" ? mode.boundary : undefined;
+    const boundary = mode.boundary;
 
     let segments: string[];
     if (mode.type === "leave-intercept") {
@@ -899,7 +910,10 @@ export function createPartialUpdater(
         });
       let reconciled = reconcile();
 
-      const missing = missingIds(matchedIds, reconciled.segments);
+      // Not the ids at or below a held boundary: its loaders may never have
+      // reached the client (the route failed on its GET), and nothing renders
+      // them under the error.
+      const missing = missingIds(heldIds, reconciled.segments);
 
       if (missing.length > 0) {
         const missingCount = missing.length;
@@ -1123,6 +1137,15 @@ export function createPartialUpdater(
         }),
         ...(serverLocationState && { serverState: serverLocationState }),
       };
+      // A refetch that held an action's boundary commits only while the page
+      // on screen still shows it: a later commit there (an action's success)
+      // replaced it, and this response would put the error back.
+      if (
+        boundary &&
+        !entryOnScreen()?.includes(cachedSegs.find((s) => s.id === boundary)!)
+      ) {
+        return;
+      }
       const cachedHandleData = readCachedHandleData?.();
       const { scroll: navScroll } = tx.commit(
         heldIds,

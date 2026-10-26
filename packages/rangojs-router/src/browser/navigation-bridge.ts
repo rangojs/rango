@@ -45,6 +45,7 @@ import {
 } from "./navigation-store.js";
 import type { EventController } from "./event-controller.js";
 import { isInterceptOnlyCache } from "./intercept-utils.js";
+import { actionBoundaryAt, idsAboveBoundary } from "./segment-reconciler.js";
 import {
   toNetworkError,
   emitNetworkError,
@@ -572,9 +573,19 @@ export function createNavigationBridge(
     },
 
     /**
-     * Refresh current route
+     * Refresh current route. A cross-tab refresh holds the action error
+     * boundary the page shows (actionBoundaryAt), as the follow-up does: it
+     * is this tab's own outcome, not a read another tab's write changed. A
+     * refresh the app asks for renders it again.
      */
-    async refresh(): Promise<void> {
+    async refresh(crossTab?: boolean): Promise<void> {
+      const shown =
+        (crossTab &&
+          !store.getInterceptSourceUrl() &&
+          store.getCachedSegments(store.getHistoryKey())?.segments) ||
+        [];
+      const at = actionBoundaryAt(shown);
+      if (at === 0) return;
       eventController.abortNavigation();
 
       const tx = createNavigationTransaction(
@@ -592,7 +603,7 @@ export function createNavigationBridge(
           false,
           tx.handle.signal,
           tx.with({ url: window.location.href, replace: true, scroll: false }),
-          { type: "navigate", refresh: true },
+          { type: "navigate", refresh: true, boundary: shown[at]?.id },
         );
       } catch (error) {
         // Aborted or superseded: bail without rendering a boundary (see navigate()).
@@ -720,9 +731,20 @@ export function createNavigationBridge(
             }),
           });
 
+        // An action error boundary the entry shows (actionBoundaryAt) is
+        // held: the page holds the ids above it, so a link renders it again,
+        // and the revalidation below renders above it. Never under an
+        // intercept, as the follow-up (server-action-bridge.ts).
+        const boundaryAt = isIntercept ? -1 : actionBoundaryAt(cachedSegments);
+        const boundary = cachedSegments[boundaryAt]?.id;
+        const heldIds = idsAboveBoundary(
+          cachedSegments.map((s) => s.id),
+          boundary,
+        );
+
         // Update store to point to this history entry
         store.setHistoryKey(historyKey);
-        store.setSegmentIds(cachedSegments.map((s) => s.id));
+        store.setSegmentIds(heldIds);
         store.setCurrentUrl(url);
         store.setPath(new URL(url).pathname);
 
@@ -801,8 +823,9 @@ export function createNavigationBridge(
                 onUpdate({ ...popstateUpdate, inTransition: true });
               });
             }
-            // SWR: If stale, trigger background revalidation
-            if (isStale) {
+            // SWR: If stale, trigger background revalidation. Nothing is
+            // above a boundary at the page's first segment.
+            if (isStale && boundaryAt !== 0) {
               debugLog("[Browser] Cache is stale, background revalidating...");
               // Background revalidation - don't await, just fire and forget.
               // When the entry's handles are incomplete (a deferred Meta was still
@@ -814,9 +837,7 @@ export function createNavigationBridge(
               // would stay the pre-resolution carry. handlesPending is set only for
               // the deferred-Meta-aborted case, so action/cross-tab SWR keeps the
               // cheap diff path.
-              const segmentIds = cached?.handlesPending
-                ? []
-                : cachedSegments.map((s) => s.id);
+              const segmentIds = cached?.handlesPending ? [] : heldIds;
 
               const tx = createNavigationTransaction(
                 store,
@@ -838,7 +859,7 @@ export function createNavigationBridge(
                   interceptSourceUrl,
                   cacheOnly: true,
                 }),
-                { type: "stale-revalidation", interceptSourceUrl },
+                { type: "stale-revalidation", interceptSourceUrl, boundary },
               )
                 .catch((error) => {
                   if (isBackgroundSuppressible(error)) return;
@@ -993,7 +1014,7 @@ export function createNavigationBridge(
 
       // Register cross-tab refresh callback with the store
       store.setCrossTabRefreshCallback(() => {
-        this.refresh();
+        this.refresh(true);
       });
 
       window.addEventListener("popstate", handlePopstate);
