@@ -169,6 +169,45 @@ sets `pending` urgently and ends it with the page; neither starts a
 transition of its own, so the page's commit carries its types. A
 `useAction()` value never waits for the page.
 
+### Fixed: `useNavigation()` reaches `idle` with the page React holds
+
+**Before.** On a `transition()` route, a filter UI that reads
+`useSearchParams()` and `useNavigation()` (#1164) removes a chip; React holds
+the new page while its data loads. If a server action settled during that
+wait, or a newer navigation ended with no page (an external redirect, a
+blocked redirect payload, a reload), `useNavigation()` committed `idle` while
+the old page and its search were still on screen, and the removed chip came
+back until the new page arrived.
+
+**Now.** While React holds a page, `idle` arrives with that page. The same
+holds for an action's revalidated content: the `idle` that ends an action
+arrives with it. A newer navigation that fails shows the error screen, and
+`idle` arrives with it; while a `<form action>` is still pending, React holds
+that error screen until the action ends, and `state` reads `"loading"` until
+then. Work that starts during the wait still shows at once: a newer click's
+`"loading"` and `pendingUrl`, also while an action is in flight.
+`useLinkStatus()` answers for its own link: a link whose navigation is
+aborted ends its `pending` at once, while `useNavigation()` keeps `"loading"`
+until a tree React holds for another flow lands.
+
+No change in your code.
+
+### Fixed: `useNavigation().location` stays the page on screen when a second click goes out
+
+**Before.** Click a link to item 2 on a `transition()` route; React holds item
+2's page while its data loads. Click item 3 during the wait: the full
+`useNavigation()` state showed `pendingUrl` item 3 and `location` item 2,
+while item 1 was still on screen. If item 3's page replaced item 2's first,
+item 2 never showed, yet `location` had named it.
+
+**Now.** `location` is the page on screen until the next page shows, and
+`pendingUrl` is the page being fetched. The second click shows `"loading"`
+and its `pendingUrl` at once and keeps `location` on item 1. `location` moves
+to item 2 only if item 2's page shows, and to item 3 with item 3's page. A
+selector that reads only `location.href` already behaved this way.
+
+No change in your code.
+
 ## 0.28.0 (2026-10-25)
 
 ### Fixed: a rewritten request's telemetry events carry one `requestId` ([#1269](https://github.com/rangojs/rango/pull/1269))
