@@ -125,6 +125,8 @@ export { runHandlesCommitTests } from "./handles-commit-scenario.js";
 export { runVtBackTests } from "./vt-back-scenario.js";
 export type { VtBackScenarioOptions } from "./vt-back-scenario.js";
 export type { HandlesCommitScenarioOptions } from "./handles-commit-scenario.js";
+export { runHandlesOverlapTests } from "./handles-overlap-scenario.js";
+export type { HandlesOverlapScenarioOptions } from "./handles-overlap-scenario.js";
 export type { TxIdleViewTransitionScenarioOptions } from "./tx-idle-view-transition-scenario.js";
 export { runTransitionKindsTests } from "./transition-kinds-scenario.js";
 export { runOptimisticSettleTests } from "./optimistic-settle-scenario.js";
