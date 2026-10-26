@@ -17,11 +17,17 @@ import type { LoaderDefinition } from "../../types.js";
 import { renderRoute } from "../render-route.js";
 import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 
-// Userland (#1046, hooks review card p1): a component that first mounts
-// while React holds a transition() page (a quick menu opened during the wait)
-// reads the page on screen from every router hook, as the header beside it
-// does, until that page commits; then it moves with it. A reader that mounts
-// with the page, after it, or in a page shown at once starts on that page.
+// Documented behaviour (rango-t96, owner decision C; #1046): a component that
+// FIRST MOUNTS while React holds a transition() page (a menu opened on the
+// page being left, a lazy component or a <Suspense> there resolving during
+// the hold) seeds every router hook from the router's live state, so it reads
+// the destination's values while the page is held. Components already mounted
+// (the header) keep the page on screen's values until the page commits. Once
+// it commits every hook agrees. Not fixed: a second path to each hook's value
+// would add a render after paint on every fully prefetched click's new page.
+// A reader that mounts with the page, after it, or in a page shown at once
+// starts on that page. Keep the docs (skills/hooks, execution-model.md
+// "Client Route-State Commits") in step with this file.
 
 const Titles = createHandle<string, string[]>(
   (segments) => segments.flat(),
@@ -134,7 +140,7 @@ describe.each([
   { variant: "with a view transition", vt: true },
   { variant: "without a view transition", vt: false },
 ])(
-  "renderRoute: a reader that mounts while a page is held reads the page on screen ($variant)",
+  "renderRoute: a reader that mounts while a page is held reads the destination ($variant)",
   ({ vt }) => {
     async function mount() {
       if (vt) stub = installViewTransitionStub();
@@ -151,9 +157,7 @@ describe.each([
       );
     }
 
-    // Expected failure until W1 lands (dc-t96): today the menu starts on the
-    // destination. Turns red when fixed; then make it an `it`.
-    it.fails("a quick menu opened during the wait shows the page being left, then moves with the page", async () => {
+    it("a menu opened during the wait reads the destination while the header keeps the page on screen, then both agree", async () => {
       const { router } = await mount();
       expect(text("header")).toBe(ONE_IDLE);
 
@@ -170,7 +174,7 @@ describe.each([
 
       await open();
       await settle();
-      expect(text("menu")).toBe(ONE);
+      expect(text("menu")).toBe(TWO);
       expect(text("header")).toBe(ONE);
 
       await act(async () => {
@@ -180,14 +184,6 @@ describe.each([
       await waitFor(() => expect(text("item")).toBe("two"));
       expect(text("header")).toBe(TWO);
       expect(text("menu")).toBe(TWO);
-
-      // No committed frame pairs the page being left with the destination.
-      expect(
-        frames.filter((f) => f.endsWith("# one") && f.includes("/items/2")),
-      ).toEqual([]);
-      expect(
-        frames.filter((f) => f.endsWith("# two") && f.includes("/items/1")),
-      ).toEqual([]);
     });
 
     it("a reader that mounts after the page commits starts on it", async () => {
