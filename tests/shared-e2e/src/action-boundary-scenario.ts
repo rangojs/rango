@@ -112,18 +112,120 @@ export function runActionBoundaryTests(
     // The action marked the page's entry stale: Back revalidates it.
     await page.getByTestId("ab-to-other").click();
     await expect(page.getByTestId("ab-other")).toBeVisible();
-    const revalidated = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return (
-        url.pathname.endsWith(PAGE) &&
-        url.searchParams.get("_rsc_stale") === "true"
-      );
-    });
+    const revalidated = staleRefetch(page);
     await page.goBack();
     await expect(page).toHaveURL(options.url(PAGE));
     await (await revalidated).finished();
 
     await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
+  });
+
+  test("Back to a page whose action threw keeps its boundary on screen, and the revalidation refreshes the layout's count above it", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+    await addThenFail(page);
+    await page.getByTestId("ab-to-other").click();
+    await expect(page.getByTestId("ab-other")).toBeVisible();
+    // Another tab writes while the user is on /other.
+    const otherTab = await context.newPage();
+    await show(otherTab);
+    await otherTab.getByTestId("ab-add").click();
+    await expect(otherTab.getByTestId("ab-cart")).toHaveText("cart:2");
+    await expect(page.getByTestId("ab-cart")).toHaveText("cart:2");
+
+    await watchBoundary(page);
+    const revalidated = staleRefetch(page);
+    await page.goBack();
+    await expect(page.getByTestId("ab-boundary")).toBeVisible();
+    const response = await revalidated;
+    await response.finished();
+    await expect(page.getByTestId("ab-nav-state")).toHaveText("idle");
+    await page.waitForTimeout(500);
+
+    // rango-t213: Back restores the boundary the user left; its
+    // revalidation holds it and refreshes what is above it.
+    await expectSameBoundary(page);
+    await expect(page.getByTestId("ab-cart")).toHaveText("cart:2");
+    const url = new URL(response.url());
+    expect(url.searchParams.get("_rsc_boundary")).toBeTruthy();
+
+    // The page holds only what is above the boundary: a link to it
+    // renders the page.
+    await page.getByTestId("ab-to-page").click();
+    await expect(page.getByTestId("ab-page")).toBeVisible();
+    await expect(page.getByTestId("ab-boundary")).toHaveCount(0);
+  });
+
+  test("a link to the page after Back to its action's boundary shows the page, not the boundary", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+    // keepClientCache(): the page's entry stays fresh, so Back restores it
+    // with no revalidation.
+    await page.getByTestId("ab-reject").click();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-ab-result",
+      "error",
+    );
+    await expect(page.getByTestId("ab-boundary")).toBeVisible();
+    await page.getByTestId("ab-to-other").click();
+    await expect(page.getByTestId("ab-other")).toBeVisible();
+    let revalidations = 0;
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      if (
+        url.pathname.endsWith(PAGE) &&
+        url.searchParams.get("_rsc_stale") === "true"
+      ) {
+        revalidations++;
+      }
+    });
+    await page.goBack();
+    await expect(page.getByTestId("ab-boundary")).toBeVisible();
+    await page.waitForTimeout(500);
+    expect(revalidations).toBe(0);
+
+    // rango-t213: the restored page holds only what is above the boundary.
+    await page.getByTestId("ab-to-page").click();
+    await expect(page.getByTestId("ab-page")).toBeVisible();
+    await expect(page.getByTestId("ab-boundary")).toHaveCount(0);
+  });
+
+  test("another tab's action refreshes the layout's count above an action's boundary and keeps the boundary on screen", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+    await addThenFail(page);
+    await expect(page.getByTestId("ab-boundary-tail")).toHaveText("done");
+    await watchBoundary(page);
+
+    const refreshed = staleRefetch(page);
+    const otherTab = await context.newPage();
+    await show(otherTab);
+    await otherTab.getByTestId("ab-add").click();
+    await expect(otherTab.getByTestId("ab-cart")).toHaveText("cart:2");
+    const response = await refreshed;
+    await response.finished();
+    await expect(page.getByTestId("ab-cart")).toHaveText("cart:2");
+    await expect(page.getByTestId("ab-nav-state")).toHaveText("idle");
+    await page.waitForTimeout(500);
+
+    // rango-t209: the cross-tab refresh holds the boundary, as the
+    // follow-up does, and refreshes what is above it.
+    await expectSameBoundary(page);
+    const url = new URL(response.url());
+    expect(url.searchParams.get("_rsc_boundary")).toBeTruthy();
+
+    await page.getByTestId("ab-to-page").click();
+    await expect(page.getByTestId("ab-page")).toBeVisible();
+    await expect(page.getByTestId("ab-boundary")).toHaveCount(0);
   });
 
   test("a late boundary response for the page the user left keeps the useAction() of an action started on the page they moved to", async ({
@@ -191,28 +293,10 @@ export function runActionBoundaryTests(
   });
 
   /**
-   * W (fails after 4.5 s) is sent on the page after an earlier action X
-   * (sent before the user moved) has landed unseen, so X owes the page the
-   * follow-up when W, the last action, exits. Resolves with the follow-up's
-   * URL once the page settled.
+   * Records the boundary's node the first time it is in the DOM, and counts
+   * every time that node leaves it.
    */
-  async function boundaryThenFollowUp(
-    page: Page,
-    startEarlierAction: () => Promise<void>,
-  ): Promise<URL> {
-    await startEarlierAction();
-    const followUp = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return (
-        url.pathname.endsWith(PAGE) &&
-        url.searchParams.get("_rsc_stale") === "true"
-      );
-    });
-
-    // W throws into the page's errorBoundary() after X has landed. An
-    // observer records the boundary's node the first time it is in the DOM,
-    // and every time it leaves: with the defect it is on screen for one
-    // frame only.
+  async function watchBoundary(page: Page): Promise<void> {
     await page.evaluate(() => {
       const w = window as unknown as {
         __abBoundary: Element | null;
@@ -227,11 +311,59 @@ export function runActionBoundaryTests(
           w.__abBoundaryLeft++;
         }
       };
+      note();
       new MutationObserver(note).observe(document.documentElement, {
         childList: true,
         subtree: true,
       });
     });
+  }
+
+  /** The boundary watchBoundary() first saw is on screen, never having left. */
+  async function expectSameBoundary(page: Page): Promise<void> {
+    await expect(page.getByTestId("ab-boundary")).toBeVisible();
+    await expect(page.getByTestId("ab-page")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => {
+        const w = window as unknown as {
+          __abBoundary: Element | null;
+          __abBoundaryLeft: number;
+        };
+        return {
+          connected: w.__abBoundary?.isConnected,
+          left: w.__abBoundaryLeft,
+        };
+      }),
+    ).toEqual({ connected: true, left: 0 });
+  }
+
+  /** The page's next stale refetch (SWR, a follow-up or a refresh). */
+  function staleRefetch(page: Page) {
+    return page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname.endsWith(PAGE) &&
+        url.searchParams.get("_rsc_stale") === "true"
+      );
+    });
+  }
+
+  /**
+   * W (fails after 4.5 s) is sent on the page after an earlier action X
+   * (sent before the user moved) has landed unseen, so X owes the page the
+   * follow-up when W, the last action, exits. Resolves with the follow-up's
+   * URL once the page settled.
+   */
+  async function boundaryThenFollowUp(
+    page: Page,
+    startEarlierAction: () => Promise<void>,
+  ): Promise<URL> {
+    await startEarlierAction();
+    const followUp = staleRefetch(page);
+
+    // W throws into the page's errorBoundary() after X has landed: with the
+    // defect its boundary is on screen for one frame only.
+    await watchBoundary(page);
     await page.getByTestId("ab-fail-slow").click();
     await page.waitForFunction(
       () =>
@@ -257,20 +389,7 @@ export function runActionBoundaryTests(
    * nothing else.
    */
   async function expectBoundaryKept(page: Page, followUp: URL): Promise<void> {
-    await expect(page.getByTestId("ab-boundary")).toBeVisible();
-    await expect(page.getByTestId("ab-page")).toHaveCount(0);
-    expect(
-      await page.evaluate(() => {
-        const w = window as unknown as {
-          __abBoundary: Element | null;
-          __abBoundaryLeft: number;
-        };
-        return {
-          connected: w.__abBoundary?.isConnected,
-          left: w.__abBoundaryLeft,
-        };
-      }),
-    ).toEqual({ connected: true, left: 0 });
+    await expectSameBoundary(page);
     await expect(page.getByTestId("ab-boundary-tail")).toHaveText("done");
     expect(followUp.searchParams.get("_rsc_segments")).toBe("");
     expect(followUp.searchParams.get("_rsc_boundary")).toBeTruthy();

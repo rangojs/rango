@@ -11,6 +11,7 @@ import {
   failActionBoundaryCart,
   failLateActionBoundaryCart,
   failSlowActionBoundaryCart,
+  rejectActionBoundaryForm,
   slowActionBoundaryAction,
   slowActionBoundaryNote,
 } from "./action-boundary.actions.js";
@@ -81,6 +82,12 @@ export function ActionBoundaryControls() {
         onClick={() => void run(() => failSlowActionBoundaryCart())}
       >
         Add, then fail slow
+      </button>
+      <button
+        data-testid="ab-reject"
+        onClick={() => void run(() => rejectActionBoundaryForm())}
+      >
+        Reject
       </button>
     </div>
   );

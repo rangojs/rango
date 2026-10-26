@@ -14,7 +14,10 @@ vi.mock("../browser/partial-update.js", () => ({
 vi.mock("../browser/navigation-transaction.js", () => ({
   createNavigationTransaction: vi.fn(),
 }));
-vi.mock("../browser/segment-reconciler.js", () => ({
+vi.mock("../browser/segment-reconciler.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../browser/segment-reconciler.js")
+  >()),
   reconcileSegments: vi.fn(),
   reconcileErrorSegments: vi.fn(),
 }));

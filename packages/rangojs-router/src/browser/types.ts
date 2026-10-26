@@ -805,7 +805,8 @@ export interface ServerActionBridgeConfig {
  */
 export interface NavigationBridge {
   navigate(url: string, options?: NavigateOptionsInternal): Promise<void>;
-  refresh(): Promise<void>;
+  /** `crossTab`: another tab's write; an action's error boundary stays. */
+  refresh(crossTab?: boolean): Promise<void>;
   /** `event`: the popstate event; a traversal the browser animated itself (hasUAVisualTransition) is not animated again. */
   handlePopstate(event?: PopStateEvent): Promise<void>;
   registerLinkInterception(): () => void;

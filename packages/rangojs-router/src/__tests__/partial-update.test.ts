@@ -3439,6 +3439,96 @@ describe("an action refetch that holds an error boundary", () => {
     );
   });
 
+  for (const mode of [
+    { type: "action", boundary: "R0" },
+    { type: "stale-revalidation", boundary: "R0" },
+    { type: "navigate", refresh: true, boundary: "R0" },
+  ] as const) {
+    it(`${mode.type}: a loader at the boundary the client never held is not missing, so it commits with no retry`, async () => {
+      // The route failed on its GET: its loader never reached the client.
+      const boundary = seg("R0", { type: "error", component: "fallback" });
+      const store = makeNavigationStore({
+        initialSegments: [
+          seg("L0", { type: "layout" }),
+          seg("L0D0.cart", { type: "loader", loaderId: "cart" }),
+          boundary,
+        ],
+      });
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [seg("L0", { type: "layout", component: "fresh" })],
+          matched: ["L0", "L0D0.cart", "R0", "R0D0.item"],
+          diff: ["L0"],
+        },
+      });
+      const tx = createMockTx();
+      await createPartialUpdater({
+        getVersion: () => undefined,
+        store,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments: vi.fn(async () => "tree"),
+      })("http://localhost/", [], false, undefined, tx as any, mode);
+
+      expect(client.fetchPartial).toHaveBeenCalledOnce();
+      expect(tx.commit).toHaveBeenCalledWith(
+        ["L0", "L0D0.cart"],
+        [
+          expect.objectContaining({ component: "fresh" }),
+          expect.objectContaining({ id: "L0D0.cart" }),
+          boundary,
+        ],
+        expect.anything(),
+      );
+    });
+  }
+
+  it("commits nothing once a later commit on the entry replaced the boundary it held", async () => {
+    const boundary = seg("R0", { type: "error", component: "fallback" });
+    const store = makeNavigationStore({
+      initialSegments: [seg("L0", { type: "layout" }), boundary],
+    });
+    let respond!: (value: unknown) => void;
+    const client = {
+      fetchPartial: vi.fn(() => new Promise((resolve) => (respond = resolve))),
+    };
+    const tx = createMockTx();
+    const onUpdate = vi.fn();
+    const refetch = createPartialUpdater({
+      getVersion: () => undefined,
+      store,
+      client: client as any,
+      onUpdate,
+      renderSegments: vi.fn(async () => "tree"),
+    })("http://localhost/", ["L0"], false, undefined, tx as any, {
+      type: "stale-revalidation",
+      boundary: "R0",
+    });
+
+    // An action succeeds on the entry while the refetch is in flight.
+    store.cacheSegmentsForHistory(
+      store.getHistoryKey(),
+      [seg("L0", { type: "layout" }), seg("R0", { component: "the page" })],
+      {},
+    );
+    respond({
+      payload: {
+        metadata: {
+          isPartial: true,
+          segments: [seg("L0", { type: "layout", component: "fresh" })],
+          matched: ["L0", "R0"],
+          diff: ["L0"],
+        },
+      },
+      streamComplete: Promise.resolve(),
+    });
+    await refetch;
+
+    expect(tx.commit).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
   it("a refetch that names none keeps holding every matched id", async () => {
     const store = makeNavigationStore({
       initialSegments: [seg("L0", { type: "layout" }), seg("R0")],

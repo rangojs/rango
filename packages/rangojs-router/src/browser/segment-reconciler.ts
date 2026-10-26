@@ -280,3 +280,26 @@ export function idsAboveBoundary(
       )
     : ids;
 }
+
+/**
+ * The error segment of every action error boundary committed, by identity
+ * (server-action-bridge.ts adds and deletes). An entry shows one while its
+ * cached list still holds that object: a later commit on the entry replaces
+ * the list, and a refetch that holds the boundary keeps it. Weak, so a
+ * replaced boundary is not kept alive. Two routers never share a segment
+ * object. No hook reads it.
+ */
+export const actionBoundaries: WeakSet<ResolvedSegment> = new WeakSet();
+
+/**
+ * The index of the deepest action error boundary in `segments`, -1 for none.
+ * It is that action's outcome, which no GET reproduces: a background refetch
+ * of the page (the follow-up, Back/Forward's stale revalidation, the
+ * cross-tab refresh) holds it and renders what is above it. At 0 nothing is
+ * above it.
+ */
+export function actionBoundaryAt(segments: readonly ResolvedSegment[]): number {
+  let at = segments.length;
+  while (at-- && !actionBoundaries.has(segments[at]));
+  return at;
+}

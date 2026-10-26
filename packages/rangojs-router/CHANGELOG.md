@@ -32,8 +32,27 @@ everything under them, so they show data read after the write. Before, the page 
 could show a loader at the boundary with its data from before the action.
 Under the router's default error boundary at the root, a link re-renders the
 whole page; before, it kept every layout loader's data from before the
-action. Back to an entry that shows a boundary is unchanged: its
-revalidation re-renders the page over the boundary.
+action.
+
+No change in your code.
+
+### Fixed: Back, Forward and another tab's action keep the error boundary an action shows
+
+**Before.** An action threw into the page's `errorBoundary()`, and the user
+followed a link away, then went Back. The boundary came back from the history
+cache, and about one round trip later the page's background revalidation
+rendered the page over it. When the entry was not revalidated (the action
+called `keepClientCache()`), the boundary stayed, but a link to the page
+itself left the error on screen. In another tab, any action made this tab
+refresh, and the refresh rendered the page over the boundary.
+
+**Now.** Back and Forward keep the boundary on screen, as the same node. The
+revalidation re-renders every layout, slot and loader above it with what was
+written since, and nothing at or below it. Another tab's action refreshes
+the page the same way. A link to the page renders it again. A
+`router.refresh()` your code calls still renders the whole page, the
+boundary included, and a navigation's error boundary (a handler that threw on
+a GET) is re-rendered as before.
 
 No change in your code.
 
