@@ -20,6 +20,11 @@ import { expect, test, type Page } from "@playwright/test";
  * the destination with the first click's title or crumb, a page that never
  * shows (rango-t218 class), as a `frames` annotation with the late count.
  *
+ * useSegments: the multi reader also reads it. Segment ids and location
+ * cannot suspend, so it commits with its page, unlike a handle value.
+ * Asserted: its segments match its pathname in every sampled frame and in
+ * every effect (the fixture logs each committed pair to window.__hoEffects).
+ *
  * How the probe sees frames (init script, window.__ho):
  * - A requestAnimationFrame loop samples the DOM at the start of every
  *   rendering step that runs animation frame callbacks. Paint follows in the
@@ -52,6 +57,7 @@ interface Shown {
   crumb: string | null;
   content: string | null;
   path: string | null;
+  segments: string | null;
 }
 
 interface Logged extends Shown {
@@ -75,7 +81,12 @@ interface Probe {
   frame: number;
 }
 
-type ProbeWindow = { __ho?: Probe };
+interface Pair {
+  path: string | null;
+  segments: string | null;
+}
+
+type ProbeWindow = { __ho?: Probe; __hoEffects?: Pair[] };
 
 async function installProbe(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -99,10 +110,11 @@ async function installProbe(page: Page): Promise<void> {
           ? "loading"
           : (content?.textContent ?? null),
         path: one("ho-trail")?.getAttribute("data-path") ?? null,
+        segments: one("ho-trail")?.getAttribute("data-segments") ?? null,
       };
     };
     const key = (s: Shown): string =>
-      [s.title, s.page, s.crumb, s.content, s.path].join("|");
+      [s.title, s.page, s.crumb, s.content, s.path, s.segments].join("|");
     const push = (log: Logged[], kind: string, t: number): void => {
       const s = snap();
       const last = log[log.length - 1];
@@ -118,7 +130,7 @@ async function installProbe(page: Page): Promise<void> {
       childList: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ["style", "data-path"],
+      attributeFilter: ["style", "data-path", "data-segments"],
     });
     const tick = (ts: number): void => {
       probe.frame++;
@@ -171,9 +183,16 @@ async function installProbe(page: Page): Promise<void> {
   });
 }
 
-async function readProbe(page: Page): Promise<Probe> {
-  return page.evaluate(() => (window as unknown as ProbeWindow).__ho!);
+async function readProbe(page: Page): Promise<Probe & { effects: Pair[] }> {
+  return page.evaluate(() => {
+    const w = window as unknown as ProbeWindow;
+    return { ...w.__ho!, effects: w.__hoEffects ?? [] };
+  });
 }
+
+// The URL path useSegments reports for a pathname.
+const segmentsOf = (path: string | null): string | null =>
+  path === null ? null : path.split("/").filter(Boolean).join("/");
 
 const testId = (page: Page, id: string) =>
   page.locator(`[data-testid="${id}"]`);
@@ -368,6 +387,21 @@ export function runHandlesOverlapTests(
                 description: `${judge(v.ready)} ${JSON.stringify(v.ready)}; frames ${v.doneF}->${v.readyF}`,
               });
             }
+          }
+
+          if (reader === "multi") {
+            expect(
+              probe.frames.filter((s) => s.segments !== segmentsOf(s.path)),
+              trace,
+            ).toEqual([]);
+            expect(
+              probe.effects.filter((e) => e.segments !== segmentsOf(e.path)),
+              JSON.stringify(probe.effects),
+            ).toEqual([]);
+            expect(probe.effects[probe.effects.length - 1]).toEqual({
+              path: destPath,
+              segments: segmentsOf(destPath),
+            });
           }
         });
       }

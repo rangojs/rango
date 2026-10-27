@@ -7,11 +7,12 @@ import { HO_CRUMB_HREF, HoTrail } from "./handles-overlap.client.js";
 // rows HD2, HD4 and HD13). Every request waits HO_SERVER_DELAY first, as a
 // real server would.
 // /handles-overlap/:reader/:vt/:id: `reader` picks the crumb reader in the
-// layout (multi: useHandle and usePathname; full: useHandle; select:
-// useHandle with a selector), `vt` the route's transition() (vt: with the
-// router's <ViewTransition>; novt: viewTransition: false). Every page's crumb
-// has the same href, so the crumb's content <Suspense> stays mounted and
-// revealed across pages. Every page pushes its title and crumb first.
+// layout (multi: useHandle, useSegments and usePathname; full: useHandle;
+// select: useHandle with a selector), `vt` the route's transition() (vt:
+// with the router's <ViewTransition>; novt: viewTransition: false). Every
+// page's crumb has the same href, so the crumb's content <Suspense> stays
+// mounted and revealed across pages. Every page pushes its title and crumb
+// first.
 // - 1: the page a test starts on.
 // - held, held-pending: the page returns HO_HOLD ms later, so its handles
 //   reach the client long before it. held-pending's crumb content resolves

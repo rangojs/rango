@@ -282,10 +282,12 @@ describe.each(
 
 /**
  * Userland (hook lock rows HD13 and the abort/failure rows): a page React
- * holds in a transition has a handle value that waits for its commit. When the
- * navigation does not commit as a page (a newer one takes over, or the page
- * fails into an error boundary), the reader never shows the value of a page
- * that is not on screen and settles on the page that is.
+ * holds in a transition has a handle value that waits for its commit. When a
+ * newer navigation takes over, neither page's value shows over the page being
+ * left, the newer page ends on its own value, and the held page's late
+ * response is ignored; one frame of the held page's value over the newer page
+ * is tracked as rango-t218 and not asserted here. When the held page fails
+ * into an error boundary, its value shows only with the boundary.
  */
 class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -338,7 +340,7 @@ describe.each([
       );
     }
 
-    it("a newer navigation takes over a held page: the reader shows the newer page's value, never the held page's", async () => {
+    it("a newer navigation takes over a held page: neither title shows over page one, the newer page ends on its own, the late response is ignored", async () => {
       const { router } = await mountHeld();
       const two = deferred();
       await router.navigate("/items/2", {

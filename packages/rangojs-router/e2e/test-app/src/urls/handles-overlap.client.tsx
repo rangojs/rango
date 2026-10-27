@@ -4,9 +4,10 @@ import {
   Breadcrumbs,
   useHandle,
   usePathname,
+  useSegments,
   type BreadcrumbItem,
 } from "@rangojs/router/client";
-import { Suspense, use, type ReactNode } from "react";
+import { Suspense, use, useEffect, type ReactNode } from "react";
 
 export const HO_CRUMB_HREF = "/handles-overlap/crumb";
 
@@ -23,12 +24,14 @@ function CrumbContent({
 function Trail({
   crumb,
   path,
+  segments,
 }: {
   crumb: BreadcrumbItem | undefined;
   path?: string;
+  segments?: string;
 }) {
   return (
-    <nav data-testid="ho-trail" data-path={path}>
+    <nav data-testid="ho-trail" data-path={path} data-segments={segments}>
       <span data-testid="ho-crumb">{crumb?.label}</span>
       <Suspense fallback={<span data-testid="ho-crumb-fallback">loading</span>}>
         <span data-testid="ho-crumb-content">
@@ -44,8 +47,16 @@ const ours = (crumbs: BreadcrumbItem[]) =>
 
 function MultiTrail() {
   const crumb = ours(useHandle(Breadcrumbs));
+  const segments = useSegments((s) => s.path.join("/"));
   const path = usePathname();
-  return <Trail crumb={crumb} path={path} />;
+  // Every committed pair, for the e2e (window.__hoEffects).
+  useEffect(() => {
+    const w = window as unknown as {
+      __hoEffects?: { path: string; segments: string }[];
+    };
+    (w.__hoEffects ??= []).push({ path, segments });
+  }, [path, segments]);
+  return <Trail crumb={crumb} path={path} segments={segments} />;
 }
 
 function FullTrail() {

@@ -179,7 +179,9 @@ describe("renderRoute: a prefetch: false fill's handle value", () => {
     // The value belongs to the destination: it never shows with the page
     // being left, and the first frame that shows it is after the click's.
     expect(log).not.toContain("Unit title|home");
-    expect(log.indexOf("Home|skeleton")).toBeLessThan(
+    const clicked = log.indexOf("Home|skeleton");
+    expect(clicked).toBeGreaterThanOrEqual(0);
+    expect(clicked).toBeLessThan(
       log.findIndex((l) => l.startsWith("Unit title|")),
     );
     expect(log.at(-1)).toBe("Unit title|content");
