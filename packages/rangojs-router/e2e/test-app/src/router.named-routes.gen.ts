@@ -273,6 +273,7 @@ export const NamedRoutes = {
   holeyThrowsBump: "/holey-throws/__bump",
   holeyThrowsDocument: "/holey-throws/document",
   holeyThrowsPlain: "/holey-throws/plain",
+  hookFields: "/hook-fields/:id",
   "hookTests.formAction": "/hook-tests/form-action",
   "hookTests.index": "/hook-tests",
   "hookTests.noLoader": "/hook-tests/no-loader",

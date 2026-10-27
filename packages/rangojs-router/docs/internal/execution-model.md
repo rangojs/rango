@@ -1796,38 +1796,80 @@ Here is how each hook gets there:
   update, so the controller's notification runs in that update's lane rather
   than on its debounce timer (#1164; see the route-state atomicity entry in
   `feature-map.md`).
-- One `useNavigation` case is different: a value that moves while neither the
-  state nor the location does, and no newer request starts (`pendingUrl`
-  clearing as the response starts streaming, `isStreaming` clearing as it
-  ends). There is no location to commit it with. It goes in a transition only
-  while the reader has a value React has not committed yet, which React then
-  entangles with it; otherwise it is set urgently. A transition of its own
-  would start a view transition inside any `<ViewTransition>` whose class does
-  not resolve to `none` for a commit with no types (`transition({})` does),
-  and would commit ahead of a held page and take its types. A newer click's
-  `pendingUrl` is not quiet, even while `state` already reads `"loading"` (an
-  action in flight): it is work starting, and entangled with the held page it
-  would wait for that page.
-- `idle` is the page's, so `useNavigation` never sets it ahead of a held
-  page. It listens for the same "anchor" and "release" signals as
-  `useHandle` (below). Between them, a state notification that brings `idle`
-  and carries no signal waits: one from the controller's debounce task, or
-  the state half of a `flushRouteState()`, whose signal re-reads the
-  controller right after it (a newer page's "anchor" sets that page's `idle`
-  in its own transition). The release re-reads the controller in the task
-  that commits the page. The cases: an action that settles, and a newer
-  navigation that ends with no page (an external redirect, a redirect payload
-  the client blocks, a router reload, a failure whose error tree is handed
-  over in a transition and anchors like any other tree,
-  `network-error-handler.ts`). Set urgently, that idle committed over the
-  page being left with that page's URL, and #1164's filter chips showed the
+- While React holds a page, `useNavigation` applies one rule per field. It
+  listens for the same "anchor" and "release" signals as `useHandle`
+  (below). Between them, every notification that carries no signal goes
+  through `hold()` in `browser/react/use-navigation.ts`: work that starts
+  shows at once, what settles waits for the page.
+
+  | Field          | Shows at once                                  | Waits for the held page |
+  | -------------- | ---------------------------------------------- | ----------------------- |
+  | `state`        | `"loading"`                                    | `"idle"`                |
+  | `isStreaming`  | `true`                                         | `false`                 |
+  | `isNavigating` | `true`                                         | `false`                 |
+  | `pendingUrl`   | a URL (a newer click)                          | `null`                  |
+  | `location`     | a location the notification moves (a commit's) | the page on screen's    |
+
+  The hook sets the merge as an urgent updater,
+  `base => hold(base.state, live, moved)`. The urgent render folds it over
+  what the screen shows, so a newer click's `"loading"` and `pendingUrl`
+  appear at once; React rebases the same updater onto the held page's state
+  when that page commits; and the release re-reads the controller in the
+  provider's layout effect for that commit, so the settled values commit in
+  the same task as the page, as a nested update. Never a transition of its
+  own: one would start a view transition inside any `<ViewTransition>` whose
+  class does not resolve to `none` for a commit with no types
+  (`transition({})` does), and could commit ahead of the held page and take
+  its types.
+
+  The release's value is compared with the state React renders it on,
+  never with what the hook set last. The anchor's set is held with its
+  page, so it is not on screen: an urgent page that ends the hold (a
+  gated-off commit, a back/forward without `transition()`, a fill whose
+  answer changes the tree) brings values equal to it. Compared with that
+  set, the release was dropped, and the urgent page showed with a selector
+  still reading the held screen's `"loading"` or location until React
+  committed the anchor's set after it. A release that finds every set the
+  reader made committed, with the release's value, sets nothing: the
+  updater would render each reader once more, on every page, only to bail
+  out. The hook tells by a ref its layout effect writes with the committed
+  value (`committed` in `use-navigation.ts`).
+
+  The anchor's value is compared with what the hook set last, as an
+  ordinary notification's is. It sets inside its page's transition, and
+  that render processes every set so far, so the last set is the state it
+  lands on. What needs the anchor's set is a second anchor while a page is
+  held (a newer click's page): the hook's last set is then the held merge,
+  and the anchor's set brings that page's own values into its commit. Without it, the page
+  committed beside the held `"loading"` and its layout effects ran before
+  the release brought idle. Comparing the anchor with the rendered state
+  too had every reader set state inside that transition, changed or not,
+  and React's dev-only warning "Detected a large number of updates inside
+  startTransition" fired on a page with more than 10 readers.
+
+  You might ask why a rule per field, and not per reader. That is what this
+  replaced, and it tore: whether a field settled with the page depended on
+  whether that reader happened to have a value React had not committed yet
+  (it then entangled the settle with the page) or not (it set it urgently).
+  A progress bar reading `isStreaming` through a selector had nothing held
+  at the anchor, so it dropped when the response stream ended, while a
+  status line reading the full state kept `isStreaming: true` over the same
+  page until it committed (rango-t219, the `hook-fields` e2e).
+
+  `idle` waiting is the case that found the rule. The idle that arrives
+  between anchor and release comes from an action that settles, or a newer
+  navigation that ends with no page (an external redirect, a redirect
+  payload the client blocks, a router reload, a failure whose error tree is
+  handed over in a transition and anchors like any other tree,
+  `network-error-handler.ts`). Set urgently, it committed over the page
+  being left with that page's URL, and #1164's filter chips showed the
   removed chip again until the page arrived (hook-lock rows S10 and S8, the
   `nav-idle-overlap` e2e). An action's own commit anchors too, so the idle
-  that ends an action arrives with the action's revalidated tree (S9), at
-  most a commit later than before. A failure's idle arrives with its error
-  screen; while a `<form action>` is pending, React entangles the error
-  tree's transition with it, so `loading` lasts until the action ends and the
-  error screen commits.
+  that ends an action arrives with the action's revalidated tree (S9). A
+  failure's idle arrives with its error screen; while a `<form action>` is
+  pending, React entangles the error tree's transition with it, so
+  `loading` lasts until the action ends and the error screen commits.
+
 - `location` is the page on screen until the next page shows; `pendingUrl` is
   the page being fetched. The controller's location moves when a navigation
   hands React its page, and that page's flush carries it in the page's lane.
@@ -1955,12 +1997,17 @@ that takes its kind (`push`, `replace`, `pop`, `action`, `revalidate`, #1165).
 A transition the app starts itself while a page is held can still take them.
 Pinned by `src/__tests__/use-handle-commit-lane.test.tsx`,
 `src/__tests__/navigation-provider-cached-handles.test.tsx`,
-`src/__tests__/use-navigation-commit-lane.test.tsx` ("a quiet notification"),
+`src/__tests__/use-navigation-commit-lane.test.tsx` ("a notification that
+moves neither state nor location starts no transition"),
 `src/testing/__tests__/render-route-handles-commit.test.tsx`,
+`src/testing/__tests__/render-route-navigation-fields.test.tsx`,
+`src/testing/__tests__/navigation-adoption-loading.test.tsx` ("a fill that
+ends the hold urgently"),
 `src/testing/__tests__/render-route-optimistic-settle.test.tsx`,
 `src/testing/__tests__/render-route-navigation-idle.test.tsx`, and the
-`handles-commit`, `nav-idle-location`, `nav-idle-overlap`, `transition-kinds`
-and `optimistic-settle` e2e (both apps, dev and production).
+`handles-commit`, `hook-fields`, `nav-idle-location`, `nav-idle-overlap`,
+`transition-kinds` and `optimistic-settle` e2e (both apps, dev and
+production).
 
 ### Back and Forward from the history cache
 

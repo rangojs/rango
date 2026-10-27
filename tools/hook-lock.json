@@ -48,7 +48,12 @@
     "packages/rangojs-router/src/testing/__tests__/render-route-navigation-idle.test.tsx",
     "packages/rangojs-router/e2e/nav-idle-overlap.test.ts",
     "tests/cloudflare-basic/e2e/nav-idle-overlap.test.ts",
-    "tests/shared-e2e/src/nav-idle-overlap-scenario.ts"
+    "tests/shared-e2e/src/nav-idle-overlap-scenario.ts",
+    "packages/rangojs-router/src/testing/__tests__/render-route-navigation-fields.test.tsx",
+    "packages/rangojs-router/e2e/hook-fields.test.ts",
+    "tests/cloudflare-basic/e2e/hook-fields.test.ts",
+    "tests/shared-e2e/src/hook-fields-scenario.ts",
+    "packages/rangojs-router/src/testing/__tests__/navigation-adoption-loading.test.tsx"
   ],
   "guardFiles": [
     "tools/hook-lock.json",
