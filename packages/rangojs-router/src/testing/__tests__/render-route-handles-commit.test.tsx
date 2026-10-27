@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Profiler, Suspense, use, type ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Component, Profiler, Suspense, use, type ReactNode } from "react";
 import { act, cleanup, waitFor } from "@testing-library/react";
 import { Outlet } from "../../client.js";
 import { createHandle } from "../../handle.js";
@@ -133,10 +133,15 @@ const settled = (value: string): Promise<string> =>
 function deferred(): {
   promise: Promise<string>;
   resolve: (v: string) => void;
+  reject: (e: Error) => void;
 } {
   let resolve!: (v: string) => void;
-  const promise = new Promise<string>((r) => (resolve = r));
-  return { promise, resolve };
+  let reject!: (e: Error) => void;
+  const promise = new Promise<string>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function CrumbContent({ content }: { content: Promise<string> }): ReactNode {
@@ -271,6 +276,123 @@ describe.each(
       expect(text("crumb")).toBe("three");
       expect(text("content")).toBe("c3");
       expect(log.filter((l) => l.startsWith("two|"))).toEqual([]);
+    });
+  },
+);
+
+/**
+ * Userland (hook lock rows HD13 and the abort/failure rows): a page React
+ * holds in a transition has a handle value that waits for its commit. When the
+ * navigation does not commit as a page (a newer one takes over, or the page
+ * fails into an error boundary), the reader never shows the value of a page
+ * that is not on screen and settles on the page that is.
+ */
+class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+  render(): ReactNode {
+    return this.state.failed ? (
+      <p data-testid="item">failed</p>
+    ) : (
+      this.props.children
+    );
+  }
+}
+
+describe.each([
+  { variant: "with a view transition", vt: true },
+  { variant: "without a view transition", vt: false },
+])(
+  "renderRoute: handle values of a held page that does not show ($variant)",
+  ({ vt }) => {
+    function Held(): ReactNode {
+      return (
+        <Profiler
+          id="held"
+          onRender={() => log.push(`${text("title")}|${text("item")}`)}
+        >
+          <Title />
+          <Boundary>
+            <Suspense fallback={<p data-testid="skeleton">skeleton</p>}>
+              <Outlet />
+            </Suspense>
+          </Boundary>
+        </Profiler>
+      );
+    }
+
+    async function mountHeld() {
+      if (vt) stub = installViewTransitionStub();
+      return renderRoute(
+        [
+          { path: "/", Component: Held },
+          { path: "/items/:id", Component: Item, transition: {} },
+        ],
+        {
+          request: "/items/1",
+          loaders: [[ItemLoader, "one"]],
+          handles: [[Titles, ["Item one"]]],
+        },
+      );
+    }
+
+    it("a newer navigation takes over a held page: the reader shows the newer page's value, never the held page's", async () => {
+      const { router } = await mountHeld();
+      const two = deferred();
+      await router.navigate("/items/2", {
+        loaders: [[ItemLoader, two.promise]],
+        handles: [[Titles, ["Item two"]]],
+      });
+      await tick();
+      // Page two is held with its value waiting.
+      expect(text("item")).toBe("one");
+      expect(text("title")).toBe("Item one");
+
+      await act(async () => {
+        await router.navigate("/items/3", {
+          transition: false,
+          loaders: [[ItemLoader, "three"]],
+          handles: [[Titles, ["Item three"]]],
+        });
+      });
+      await tick();
+      expect(text("item")).toBe("three");
+      expect(text("title")).toBe("Item three");
+
+      // The held page's response arrives late and is ignored.
+      await act(async () => two.resolve("two"));
+      await tick();
+      expect(text("item")).toBe("three");
+      expect(text("title")).toBe("Item three");
+      expect(log.filter((l) => l === "Item two|one")).toEqual([]);
+      expect(log.filter((l) => l === "Item three|one")).toEqual([]);
+    });
+
+    it("a held page that fails into an error boundary: the reader shows the failed page's value only with it", async () => {
+      const { router } = await mountHeld();
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const two = deferred();
+        await router.navigate("/items/2", {
+          loaders: [[ItemLoader, two.promise]],
+          handles: [[Titles, ["Item two"]]],
+        });
+        await tick();
+        expect(text("item")).toBe("one");
+        expect(text("title")).toBe("Item one");
+
+        two.promise.catch(() => {});
+        await act(async () => two.reject(new Error("down")));
+        await tick();
+        // The page on screen is the error boundary's, at the new location.
+        expect(text("item")).toBe("failed");
+        expect(text("title")).toBe("Item two");
+        expect(log.filter((l) => l === "Item two|one")).toEqual([]);
+      } finally {
+        spy.mockRestore();
+      }
     });
   },
 );

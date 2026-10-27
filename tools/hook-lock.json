@@ -53,7 +53,12 @@
     "packages/rangojs-router/e2e/hook-fields.test.ts",
     "tests/cloudflare-basic/e2e/hook-fields.test.ts",
     "tests/shared-e2e/src/hook-fields-scenario.ts",
-    "packages/rangojs-router/src/testing/__tests__/navigation-adoption-loading.test.tsx"
+    "packages/rangojs-router/src/testing/__tests__/navigation-adoption-loading.test.tsx",
+    "packages/rangojs-router/src/testing/__tests__/render-route-handles-commit.test.tsx",
+    "packages/rangojs-router/src/testing/__tests__/render-route-handles-fill.test.tsx",
+    "packages/rangojs-router/e2e/handles-overlap.test.ts",
+    "tests/cloudflare-basic/e2e/handles-overlap.test.ts",
+    "tests/shared-e2e/src/handles-overlap-scenario.ts"
   ],
   "guardFiles": [
     "tools/hook-lock.json",

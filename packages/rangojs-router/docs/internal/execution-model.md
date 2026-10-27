@@ -1908,11 +1908,17 @@ Here is how each hook gets there:
   e2e failed on a version that held these too). A page in a transition
   (`NavigationUpdate.inTransition`, set by `commitInTransition`, an action's
   commit, a cached back/forward's and an error tree's) gets an "anchor"
-  signal: a value that arrives from there on waits. `NavigationProvider`'s
-  layout effect, in the commit that brings that payload, calls
-  `releaseRouteState()`, and the readers apply what waited there,
-  synchronously, in the task that commits
-  the page. The page's own effects have run by then and read the previous
+  signal: from the anchor, every value waits, including one the anchor's own
+  flush carries (a superseded page's stream, or the left page's late
+  stream). `NavigationProvider`'s layout effect, in the commit that brings
+  that payload, calls `releaseRouteState()`, and the readers apply what
+  waited there, synchronously, in the task that commits the page. Letting the
+  anchor's own change through (it used to) put it in the page's lane, and on
+  a second click over a held page a crumb whose `content` suspends in an
+  already-revealed `<Suspense>` held the whole page (HD4). With view
+  transitions on, the transition's snapshot holds the left page's crumb and
+  title until the page commits, and a value that settles at `ready` is the
+  left page's, late, and never painted. The page's own effects have run by then and read the previous
   values. A transition entangled with the page's would put the value in its
   commit, but one set after React rendered the page and before its view
   transition's mutation misses that commit and starts a view transition of

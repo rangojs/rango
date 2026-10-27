@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Fixed: a second click over a held page no longer waits on a breadcrumb's pending content
+
+**Before.** On a `transition()` route, clicking a second link before the
+first page showed could keep the old page on screen until a handle value's
+promise content resolved: a breadcrumb whose `content` is read with `use()` in
+a `<Suspense>` that was already revealed. The new page was ready, and the
+screen stayed on the old one for seconds.
+
+**Now.** Every handle value for a page React holds in a transition, its own
+included, is applied when that page commits, before paint, so a handle never
+holds a page. A crumb's pending content waits in its own boundary and the page
+shows when its response arrives.
+
+Unchanged: a page that commits at once gets its values in its commit, and late
+values (`push(promise)`, streaming) still arrive when they settle. With view
+transitions, the transition's snapshot holds the page being left's crumb and
+title until the page commits; it never shows the clicked-through page's any
+more.
+
+No change in your code.
+
 ### Fixed: `useNavigation()` readers agree while React holds a page
 
 **Before.** On a `transition()` route, React holds the next page until it is
