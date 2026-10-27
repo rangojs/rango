@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.29.0 (2026-10-27)
 
-### Fixed: a second click over a held page no longer waits on a breadcrumb's pending content
+### Fixed: a second click over a held page no longer waits on a breadcrumb's pending content ([#1311](https://github.com/rangojs/rango/pull/1311))
 
 **Before.** On a `transition()` route, clicking a second link before the
 first page showed could keep the old page on screen until a handle value's
@@ -24,7 +24,7 @@ A page that commits at once gets its handle values in its commit, and late value
 
 No change in your code.
 
-### Fixed: `useNavigation()` readers agree while React holds a page
+### Fixed: `useNavigation()` readers agree while React holds a page ([#1310](https://github.com/rangojs/rango/pull/1310))
 
 **Before.** On a `transition()` route, React holds the next page until it is
 ready. A progress bar reading `useNavigation((n) => n.isStreaming)` dropped
@@ -52,7 +52,159 @@ held.
 
 No change in your code.
 
-### Changed: `renderRoute` restores the page on back/forward, and `navigate()` takes `streamUntil`
+### Fixed: an earlier action's background revalidation keeps the error boundary a later action shows ([#1303](https://github.com/rangojs/rango/pull/1303))
+
+**Before.** The user fires a slow action on one page and moves to another
+before it lands. Its response is not shown, so the page on screen gets one
+background revalidation once the last action in flight ends. On that page the
+user fires a second action, which throws into the page's `errorBoundary()`.
+The boundary showed, and about one round trip later the revalidation brought
+the page back over it: the error vanished without explanation, though the
+second action's `await` rejected.
+
+**Now.** The revalidation keeps the boundary on screen, as the same node: its
+`<Suspense>` content keeps streaming, and the handle values it pushed stay.
+Every layout, slot and loader above the boundary re-renders with the earlier
+action's write, as a revalidation that holds nothing does, whatever their
+`revalidate()` decides for the second action. Nothing at or below the
+boundary runs. When nothing is above it (the router's default error boundary
+at the root), no request is sent. A navigation's error boundary (a handler
+that threw on a GET) is a read, and the revalidation re-renders it as before.
+
+A link to a page whose history entry shows an action's error boundary now
+renders the page again, from that page or another one. So does a link from
+another page to a page whose GET failed into a boundary. Before, either could
+serve the entry's cached copy and show the old error.
+
+After an action's boundary shows, the next link from the page re-runs what is
+at or below the boundary: the route or layout it replaced, their loaders and
+everything under them, so they show data read after the write. Before, the page kept holding them, so a link
+could show a loader at the boundary with its data from before the action.
+Under the router's default error boundary at the root, a link re-renders the
+whole page; before, it kept every layout loader's data from before the
+action.
+
+No change in your code.
+
+### Fixed: Back, Forward and another tab's action keep the error boundary an action shows ([#1306](https://github.com/rangojs/rango/pull/1306))
+
+**Before.** An action threw into the page's `errorBoundary()`, and the user
+followed a link away, then went Back. The boundary came back from the history
+cache, and about one round trip later the page's background revalidation
+rendered the page over it. When the entry was not revalidated (the action
+called `keepClientCache()`), the boundary stayed, but a link to the page
+itself left the error on screen. In another tab, any action made this tab
+refresh, and the refresh rendered the page over the boundary.
+
+**Now.** Back and Forward keep the boundary on screen, as the same node. The
+revalidation re-renders every layout, slot and loader above it with what was
+written since, and nothing at or below it. Another tab's action refreshes
+the page the same way. A link to the page renders it again. A
+`router.refresh()` your code calls still renders the whole page, the
+boundary included, and a navigation's error boundary (a handler that threw on
+a GET) is re-rendered as before.
+
+No change in your code.
+
+### Fixed: `onError` reports `duration`, `env`, an intercept's slot and a streamed handler's `isPartial` ([#1304](https://github.com/rangojs/rango/pull/1304))
+
+- `duration` was never set. It is now the time from the request's start to
+  the error, `dispatch()` from `@rangojs/router/testing` included. A
+  `background` error counts from the start of the request that started it.
+- `env` was unset on an error the segment walk catches (a route, layout or
+  slot handler that throws). It is now the request's `env`.
+- An intercept handler's error reported the layout that declares the
+  intercept (`segmentType: "layout"`, its `segmentId`). It now reports the
+  intercept's slot (`segmentType: "parallel"`, `segmentId` ending in the
+  slot name), as a streamed intercept handler already did. The error
+  boundary's fallback and the `handler.error` telemetry event receive the
+  same `segmentType` and `segmentId`.
+- A streamed (`loading()`) handler's rejection on a navigation reported
+  `isPartial` unset. It now reports `true`, as a handler that throws before it
+  returns does.
+
+### Fixed: `onError` names a parallel slot or orphan layout that throws, not the entry that owns it ([#1305](https://github.com/rangojs/rango/pull/1305))
+
+**Before.** A parallel slot handler that threw (with no `loading()`, or before
+it streamed under one), or a routeless (orphan) layout's handler that threw,
+reached `onError` as an error of the layout or route that owns it: that
+entry's `segmentType` and `segmentId`. A slot's rejection under `loading()`
+reported the slot, so one slot showed up under two identities.
+
+**Now.** Both report the segment that threw: `segmentType: "parallel"` and the
+slot's id, or the orphan layout's id. The owning entry's error boundary still
+renders the fallback in the same place, and its fallback receives the same
+`segmentType` and `segmentId`. No change in your code.
+
+### Fixed: `useAction()` follows the latest call when an earlier call returns after it ([#1309](https://github.com/rangojs/rango/pull/1309))
+
+**Before.** With the same action called twice and the later call returning
+first, `useAction()` went back to the earlier call, which was still running:
+an AddToCart button showed "Adding…" again, never showed the later call's
+result, and ended on the earlier call's result.
+
+**Now.** The hook reports the last call to start. It shows that call's result
+when it returns, and an earlier call that settles afterwards changes nothing
+the hook reports, a result or an error alike (its revalidation still
+re-renders the page, and an error-boundary response still replaces it). A
+latest call that was aborted reports `idle` with nothing, never an earlier
+call. A string id (`useAction("addToCart")`) follows the latest call of any
+action with that export name; a function or a full id follows the latest call
+of that action. The hook tracks one call at a time, so a reader that filters
+on `payload` cannot track an earlier call once a later one starts.
+
+### Fixed: a server action during a held navigation leaves the page its transition types ([#1309](https://github.com/rangojs/rango/pull/1309))
+
+**Before.** With `transition()` and a view transition, a `useAction()` state
+change while React held the next page (a Save pressed during the wait)
+committed in a transition of its own and took the page's transition types,
+so a `<ViewTransition>` keyed by `push` did not animate the page.
+
+**Now.** `useAction()` sets every state urgently, and `useLinkStatus()`
+sets `pending` urgently and ends it with the page; neither starts a
+transition of its own, so the page's commit carries its types. A
+`useAction()` value never waits for the page.
+
+### Fixed: `useNavigation()` reaches `idle` with the page React holds ([#1309](https://github.com/rangojs/rango/pull/1309))
+
+**Before.** On a `transition()` route, a filter UI that reads
+`useSearchParams()` and `useNavigation()` (#1164) removes a chip; React holds
+the new page while its data loads. If a server action settled during that
+wait, or a newer navigation ended with no page (an external redirect, a
+blocked redirect payload, a reload), `useNavigation()` committed `idle` while
+the old page and its search were still on screen, and the removed chip came
+back until the new page arrived.
+
+**Now.** While React holds a page, `idle` arrives with that page. The same
+holds for an action's revalidated content: the `idle` that ends an action
+arrives with it. A newer navigation that fails shows the error screen, and
+`idle` arrives with it; while a `<form action>` is still pending, React holds
+that error screen until the action ends, and `state` reads `"loading"` until
+then. Work that starts during the wait still shows at once: a newer click's
+`"loading"` and `pendingUrl`, also while an action is in flight.
+`useLinkStatus()` answers for its own link: a link whose navigation is
+aborted ends its `pending` at once, while `useNavigation()` keeps `"loading"`
+until a tree React holds for another flow lands.
+
+No change in your code.
+
+### Fixed: `useNavigation().location` stays the page on screen when a second click goes out ([#1309](https://github.com/rangojs/rango/pull/1309))
+
+**Before.** Click a link to item 2 on a `transition()` route; React holds item
+2's page while its data loads. Click item 3 during the wait: the full
+`useNavigation()` state showed `pendingUrl` item 3 and `location` item 2,
+while item 1 was still on screen. If item 3's page replaced item 2's first,
+item 2 never showed, yet `location` had named it.
+
+**Now.** `location` is the page on screen until the next page shows, and
+`pendingUrl` is the page being fetched. The second click shows `"loading"`
+and its `pendingUrl` at once and keeps `location` on item 1. `location` moves
+to item 2 only if item 2's page shows, and to item 3 with item 3's page. A
+selector that reads only `location.href` already behaved this way.
+
+No change in your code.
+
+### Changed: `renderRoute` restores the page on back/forward, and `navigate()` takes `streamUntil` ([#1310](https://github.com/rangojs/rango/pull/1310))
 
 **Before.** `renderRoute` kept the tree on one page. A `popstate` after
 `router.navigate(url, { state })`, such as `window.history.back()`, left the
@@ -89,61 +241,7 @@ A navigation started while React holds a page goes inside
 `await act(async () => { ... })`. A synchronous `act()` drops React's retry
 of the held page, and an urgent commit after it never renders.
 
-### Fixed: an earlier action's background revalidation keeps the error boundary a later action shows
-
-**Before.** The user fires a slow action on one page and moves to another
-before it lands. Its response is not shown, so the page on screen gets one
-background revalidation once the last action in flight ends. On that page the
-user fires a second action, which throws into the page's `errorBoundary()`.
-The boundary showed, and about one round trip later the revalidation brought
-the page back over it: the error vanished without explanation, though the
-second action's `await` rejected.
-
-**Now.** The revalidation keeps the boundary on screen, as the same node: its
-`<Suspense>` content keeps streaming, and the handle values it pushed stay.
-Every layout, slot and loader above the boundary re-renders with the earlier
-action's write, as a revalidation that holds nothing does, whatever their
-`revalidate()` decides for the second action. Nothing at or below the
-boundary runs. When nothing is above it (the router's default error boundary
-at the root), no request is sent. A navigation's error boundary (a handler
-that threw on a GET) is a read, and the revalidation re-renders it as before.
-
-A link to a page whose history entry shows an action's error boundary now
-renders the page again, from that page or another one. So does a link from
-another page to a page whose GET failed into a boundary. Before, either could
-serve the entry's cached copy and show the old error.
-
-After an action's boundary shows, the next link from the page re-runs what is
-at or below the boundary: the route or layout it replaced, their loaders and
-everything under them, so they show data read after the write. Before, the page kept holding them, so a link
-could show a loader at the boundary with its data from before the action.
-Under the router's default error boundary at the root, a link re-renders the
-whole page; before, it kept every layout loader's data from before the
-action.
-
-No change in your code.
-
-### Fixed: Back, Forward and another tab's action keep the error boundary an action shows
-
-**Before.** An action threw into the page's `errorBoundary()`, and the user
-followed a link away, then went Back. The boundary came back from the history
-cache, and about one round trip later the page's background revalidation
-rendered the page over it. When the entry was not revalidated (the action
-called `keepClientCache()`), the boundary stayed, but a link to the page
-itself left the error on screen. In another tab, any action made this tab
-refresh, and the refresh rendered the page over the boundary.
-
-**Now.** Back and Forward keep the boundary on screen, as the same node. The
-revalidation re-renders every layout, slot and loader above it with what was
-written since, and nothing at or below it. Another tab's action refreshes
-the page the same way. A link to the page renders it again. A
-`router.refresh()` your code calls still renders the whole page, the
-boundary included, and a navigation's error boundary (a handler that threw on
-a GET) is re-rendered as before.
-
-No change in your code.
-
-### Added: `onError` marks an error from a background refresh with `background: true`
+### Added: `onError` marks an error from a background refresh with `background: true` ([#1304](https://github.com/rangojs/rango/pull/1304))
 
 **Before.** A stale `cache()` record, document cache entry, PPR shell,
 `"use cache"` function or cached loader is served stale and refreshed beside
@@ -176,37 +274,7 @@ createRouter({
 });
 ```
 
-### Fixed: `onError` reports `duration`, `env`, an intercept's slot and a streamed handler's `isPartial`
-
-- `duration` was never set. It is now the time from the request's start to
-  the error, `dispatch()` from `@rangojs/router/testing` included. A
-  `background` error counts from the start of the request that started it.
-- `env` was unset on an error the segment walk catches (a route, layout or
-  slot handler that throws). It is now the request's `env`.
-- An intercept handler's error reported the layout that declares the
-  intercept (`segmentType: "layout"`, its `segmentId`). It now reports the
-  intercept's slot (`segmentType: "parallel"`, `segmentId` ending in the
-  slot name), as a streamed intercept handler already did. The error
-  boundary's fallback and the `handler.error` telemetry event receive the
-  same `segmentType` and `segmentId`.
-- A streamed (`loading()`) handler's rejection on a navigation reported
-  `isPartial` unset. It now reports `true`, as a handler that throws before it
-  returns does.
-
-### Fixed: `onError` names a parallel slot or orphan layout that throws, not the entry that owns it
-
-**Before.** A parallel slot handler that threw (with no `loading()`, or before
-it streamed under one), or a routeless (orphan) layout's handler that threw,
-reached `onError` as an error of the layout or route that owns it: that
-entry's `segmentType` and `segmentId`. A slot's rejection under `loading()`
-reported the slot, so one slot showed up under two identities.
-
-**Now.** Both report the segment that threw: `segmentType: "parallel"` and the
-slot's id, or the orphan layout's id. The owning entry's error boundary still
-renders the fallback in the same place, and its fallback receives the same
-`segmentType` and `segmentId`. No change in your code.
-
-### Added: `useNavigation().isNavigating` is typed
+### Added: `useNavigation().isNavigating` is typed ([#1309](https://github.com/rangojs/rango/pull/1309))
 
 **Before.** `useNavigation()` always returned `isNavigating`, but
 `NavigationState` did not declare it, so `useNavigation((n) => n.isNavigating)`
@@ -222,24 +290,7 @@ action spinner from `state`. The values are unchanged.
 const isNavigating = useNavigation((n) => n.isNavigating);
 ```
 
-### Fixed: `useAction()` follows the latest call when an earlier call returns after it
-
-**Before.** With the same action called twice and the later call returning
-first, `useAction()` went back to the earlier call, which was still running:
-an AddToCart button showed "Adding…" again, never showed the later call's
-result, and ended on the earlier call's result.
-
-**Now.** The hook reports the last call to start. It shows that call's result
-when it returns, and an earlier call that settles afterwards changes nothing
-the hook reports, a result or an error alike (its revalidation still
-re-renders the page, and an error-boundary response still replaces it). A
-latest call that was aborted reports `idle` with nothing, never an earlier
-call. A string id (`useAction("addToCart")`) follows the latest call of any
-action with that export name; a function or a full id follows the latest call
-of that action. The hook tracks one call at a time, so a reader that filters
-on `payload` cannot track an earlier call once a later one starts.
-
-### Changed: `useLinkStatus()` stays pending until the page shows
+### Changed: `useLinkStatus()` stays pending until the page shows ([#1309](https://github.com/rangojs/rango/pull/1309))
 
 **Before.** A link's `pending` ended when the response started streaming.
 Under `transition()`, React then held the page being left for the rest of the
@@ -259,57 +310,6 @@ or a newer click or an abort ends it, when that commit lands. `useNavigation().p
 turns `null` when the response arrives, so while the response streams a
 link reads `pending` and `pendingUrl` is `null`. `renderRoute` does the
 same: `pending` is held with a `transition` navigate()'s commit.
-
-### Fixed: a server action during a held navigation leaves the page its transition types
-
-**Before.** With `transition()` and a view transition, a `useAction()` state
-change while React held the next page (a Save pressed during the wait)
-committed in a transition of its own and took the page's transition types,
-so a `<ViewTransition>` keyed by `push` did not animate the page.
-
-**Now.** `useAction()` sets every state urgently, and `useLinkStatus()`
-sets `pending` urgently and ends it with the page; neither starts a
-transition of its own, so the page's commit carries its types. A
-`useAction()` value never waits for the page.
-
-### Fixed: `useNavigation()` reaches `idle` with the page React holds
-
-**Before.** On a `transition()` route, a filter UI that reads
-`useSearchParams()` and `useNavigation()` (#1164) removes a chip; React holds
-the new page while its data loads. If a server action settled during that
-wait, or a newer navigation ended with no page (an external redirect, a
-blocked redirect payload, a reload), `useNavigation()` committed `idle` while
-the old page and its search were still on screen, and the removed chip came
-back until the new page arrived.
-
-**Now.** While React holds a page, `idle` arrives with that page. The same
-holds for an action's revalidated content: the `idle` that ends an action
-arrives with it. A newer navigation that fails shows the error screen, and
-`idle` arrives with it; while a `<form action>` is still pending, React holds
-that error screen until the action ends, and `state` reads `"loading"` until
-then. Work that starts during the wait still shows at once: a newer click's
-`"loading"` and `pendingUrl`, also while an action is in flight.
-`useLinkStatus()` answers for its own link: a link whose navigation is
-aborted ends its `pending` at once, while `useNavigation()` keeps `"loading"`
-until a tree React holds for another flow lands.
-
-No change in your code.
-
-### Fixed: `useNavigation().location` stays the page on screen when a second click goes out
-
-**Before.** Click a link to item 2 on a `transition()` route; React holds item
-2's page while its data loads. Click item 3 during the wait: the full
-`useNavigation()` state showed `pendingUrl` item 3 and `location` item 2,
-while item 1 was still on screen. If item 3's page replaced item 2's first,
-item 2 never showed, yet `location` had named it.
-
-**Now.** `location` is the page on screen until the next page shows, and
-`pendingUrl` is the page being fetched. The second click shows `"loading"`
-and its `pendingUrl` at once and keeps `location` on item 1. `location` moves
-to item 2 only if item 2's page shows, and to item 3 with item 3's page. A
-selector that reads only `location.href` already behaved this way.
-
-No change in your code.
 
 ## 0.28.0 (2026-10-25)
 
