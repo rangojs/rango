@@ -53,7 +53,7 @@ export function useHandle<T, A, S>(
     return selectorRef.current ? selectorRef.current(collected) : collected;
   };
 
-  const [value, setValue] = useCommitAnchoredState(collect);
+  const [value, setValue] = useCommitAnchoredState(collect, true);
 
   useEffect(() => {
     if (!ctx) return;
@@ -68,29 +68,29 @@ export function useHandle<T, A, S>(
 }
 
 /**
- * Route state the controller's handle notifications drive (useHandle,
- * useSegments) lands in the task that commits the page it belongs to, and is
- * never set inside a page's transition. NavigationProvider flushes the
- * controller inside every payload update. A page handed over urgently (signal
- * "release") takes a value that arrives before it commits at default
- * priority: it renders in the page's lane, and the page's effects read it. A
- * page in a transition (signal "anchor") does not: from the anchor until the
- * page commits (releaseRouteState() from the provider's layout effect, signal
- * "release"), every value waits, the anchor's own included, and is applied in
- * the commit's task, right after the page's own commit, before paint. In the
- * page's lane, a value that suspends in a revealed <Suspense> (a crumb's
- * content, or one a page that never shows left behind, HD4) would hold the
- * page; in a lane of its own, it commits over the page being left and takes
- * the page's transition types (#1165); and a transition entangled with the
- * page misses its commit when it is set after React rendered the page, before
- * its view transition's mutation, and starts a view transition of its own.
- * useSegments' location arrives on the state channel, flushed before the
- * anchor: with no earlier page held, it is set in the page's lane. A value
- * shallow-equal to the last one sets nothing, so a reader renders only when
- * its value moves.
+ * Route state the controller's handle notifications drive commits with the
+ * page it belongs to. NavigationProvider flushes the controller inside every
+ * payload update, with signal "anchor" for a page in a transition and
+ * "release" for an urgent one, so the page's own change is set in the page's
+ * lane and the page's effects read it. From the anchor until the page commits
+ * (releaseRouteState() from the provider's layout effect, signal "release"),
+ * a later change waits and is applied in the commit's task, right after the
+ * page's own commit: set in a lane of its own, it would commit over the page
+ * being left (#1165).
+ *
+ * `waitForRelease`, set by useHandle only: the anchor's own change waits too,
+ * so a handle value lands right after its page's commit, never in its lane. A
+ * handle value can carry a promise that suspends, and in the page's lane one
+ * that suspends in a revealed <Suspense> would hold the page. Nothing
+ * useSegments reads can suspend, so it leaves it off and its path and
+ * location commit with their page.
+ *
+ * A value shallow-equal to the last one sets nothing, so a reader renders only
+ * when its value moves.
  */
 export function useCommitAnchoredState<T>(
   init: () => T,
+  waitForRelease?: boolean,
 ): [T, (value: T, signal?: RouteStateSignal) => void] {
   // An app that enables the React Compiler compiles the router too; its memo
   // cache gains nothing here and cost 107 B gzip in the router chunk.
@@ -106,7 +106,8 @@ export function useCommitAnchoredState<T>(
       r.last = next;
       r.held = true;
     }
-    if (!r.held || r.waiting) return;
+    if (!r.held || (r.waiting && (waitForRelease || signal !== "anchor")))
+      return;
     r.held = false;
     setValue(() => r.last);
   });

@@ -1898,9 +1898,11 @@ Here is how each hook gets there:
   it; the new image is live, and sampling cannot tell whether the animation's
   first painted frame shows it (recorded as unproven, not worked around).
 - `useHandle` and `useSegments` learn from the same flush how the page is
-  handed over (`useCommitAnchoredState`, `browser/react/use-handle.ts`). The
-  payload's own handle data comes after it: a history-cache page's pushes
-  (`cachedHandleData`) are set right after the flush and flushed again, and
+  handed over (`useCommitAnchoredState`, `browser/react/use-handle.ts`), and
+  one rule covers both: route state commits with its page, and handle values
+  are the exception, because they can carry a promise that suspends. The
+  payload's own handle data comes after the flush: a history-cache page's
+  pushes (`cachedHandleData`) are set right after it and flushed again, and
   streamed ones arrive a little later. An urgent page gets a "release"
   signal: a value that arrives before React renders it is set at default
   priority, in the page's lane, and commits with it, where the page's effects
@@ -1908,24 +1910,33 @@ Here is how each hook gets there:
   e2e failed on a version that held these too). A page in a transition
   (`NavigationUpdate.inTransition`, set by `commitInTransition`, an action's
   commit, a cached back/forward's and an error tree's) gets an "anchor"
-  signal: from the anchor, every value waits, including one the anchor's own
-  flush carries (a superseded page's stream, or the left page's late
-  stream). `NavigationProvider`'s layout effect, in the commit that brings
-  that payload, calls `releaseRouteState()`, and the readers apply what
-  waited there, synchronously, in the task that commits the page. Letting the
-  anchor's own change through (it used to) put it in the page's lane, and on
-  a second click over a held page a crumb whose `content` suspends in an
-  already-revealed `<Suspense>` held the whole page (HD4). With view
-  transitions on, the transition's snapshot holds the left page's crumb and
-  title until the page commits, and a value that settles at `ready` is the
-  left page's, late, and never painted. The page's own effects have run by then and read the previous
-  values. A transition entangled with the page's would put the value in its
-  commit, but one set after React rendered the page and before its view
-  transition's mutation misses that commit and starts a view transition of
-  its own. A reader whose value did not move sets nothing and does not render
-  (the `hook-render-stability` e2e pins that: an earlier version gave every
-  reader an update in the page's lane and re-rendered all of them on a search
-  change).
+  signal. `useSegments` sets the anchor's own change in the page's lane, so
+  its path and location commit with the page and its effects read them; a
+  value that arrives after the anchor waits. Segment ids are such a value:
+  they come with the payload's handle data, after the flush, so a reader
+  whose value did not move at the anchor gets them right after the page's
+  commit (recorded as rango-t225). `useHandle` passes
+  `waitForRelease`: from the anchor every handle value waits, the anchor's
+  own included. In the page's lane, a crumb whose `content` suspends in an
+  already-revealed `<Suspense>` would hold the whole page, and on a second
+  click over a held page it did (HD4, rango-t224). Location cannot suspend,
+  so `useSegments` keeps it with the page; when it waited too, a layout's
+  effect read the new pathname with the clicked-through page's path. `NavigationProvider`'s layout effect, in the commit that
+  brings the payload, calls `releaseRouteState()`, and the readers apply
+  what waited, synchronously, in the task that commits the page. The page's
+  own effects have run by then and read the previous handle values. Without
+  view transitions the browser has not painted yet. With view transitions
+  on, React renders the release's update when the transition's `ready`
+  resolves: the transition captures the new page with the page being left's
+  crumb and title (never the clicked-through page's), and the value applied
+  at `ready` is the latest the controller holds: the destination's once its
+  handles have arrived (rango-t218). A transition entangled with the page's
+  would put a waiting value in its commit, but one set after React rendered
+  the page and before its view transition's mutation misses that commit and
+  starts a view transition of its own. A reader whose value did not move
+  sets nothing and does not render (the `hook-render-stability` e2e pins
+  that: an earlier version gave every reader an update in the page's lane
+  and re-rendered all of them on a search change).
 - `useLinkStatus` shows work at once and settles with the page. It sets its
   value in the lane of the notification that carries it and starts no
   transition of its own. The click's notification runs in a task of its

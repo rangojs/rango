@@ -10,16 +10,17 @@ promise content resolved: a breadcrumb whose `content` is read with `use()` in
 a `<Suspense>` that was already revealed. The new page was ready, and the
 screen stayed on the old one for seconds.
 
-**Now.** Every handle value for a page React holds in a transition, its own
-included, is applied when that page commits, before paint, so a handle never
-holds a page. A crumb's pending content waits in its own boundary and the page
-shows when its response arrives.
+**Now.** A handle value that changes while React holds a page no longer holds
+that page: every handle value for a page React holds in a transition, its own
+included, is applied right after that page commits. A crumb's pending content
+waits in its own boundary and the page shows when its response arrives.
+Without view transitions the values land before paint. With view transitions,
+the transition captures the page being left's crumb and title, never the
+clicked-through page's any more, and the new values apply right after.
 
-Unchanged: a page that commits at once gets its values in its commit, and late
-values (`push(promise)`, streaming) still arrive when they settle. With view
-transitions, the transition's snapshot holds the page being left's crumb and
-title until the page commits; it never shows the clicked-through page's any
-more.
+Unchanged: `useSegments()`'s path and location still commit with their page.
+A page that commits at once gets its handle values in its commit, and late values
+(`push(promise)`, streaming) still arrive when they settle.
 
 No change in your code.
 
