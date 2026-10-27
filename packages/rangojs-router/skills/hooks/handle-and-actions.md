@@ -193,7 +193,34 @@ tracking actions called outside a `<form action={...}>` flow.
 ### useAction()
 
 Track the lifecycle of a server action, wherever on the page it was invoked.
-If the same action fires several times, the hook reports the latest call.
+If the same action fires several times, the hook reports the latest call: the
+last one to start.
+
+- When the latest call returns before an earlier one, the hook shows its
+  result. The earlier call settling afterwards changes nothing the hook
+  reports, a result or an error alike. That call still runs to its end: its
+  promise resolves or rejects for its caller, its revalidation re-renders the
+  page, and an error-boundary response replaces it.
+- A latest call that was aborted reports nothing: `idle`, with no result or
+  error. The hook does not fall back to an earlier call. The router aborts
+  calls in flight when another call's response is an error boundary, and on
+  Back/Forward into or out of an intercept.
+- `useNavigation()` stays `loading` while any call runs.
+
+Which calls count as the same action depends on what you pass:
+
+- A function, or a full id (`"src/actions/cart.ts#addToCart"`): that action
+  only.
+- A string name (`"addToCart"`): every action with that export name, in any
+  `"use server"` file. The hook follows the latest call among all of them.
+
+The hook tracks one call at a time, not one per argument. Every
+`AddToCartButton` below reads the same `useAction(addToCart)`, so each shows
+the latest call from any button, whatever its `productId`. A reader that
+filters on `payload` (`payload?.[0] === productId`) cannot track an earlier
+call once a later one starts: from then on the hook reports the later call
+only. For per-call state, keep it with the call: `useActionState` or
+`useTransition` in the component that makes it.
 
 ```tsx
 "use client";
@@ -230,6 +257,10 @@ const isLoading = useAction(addToCart, (s) => s.state === "loading");
 // "use server" files export the same name)
 const isAdding = useAction("addToCart", (s) => s.state === "loading");
 ```
+
+Each state change commits urgently, so it shows at once, also while React
+holds a navigation's page. It starts no transition of its own, so it never
+takes that page's transition types.
 
 Pass an action imported directly into the client component, or its export
 name as a string. An action received as a prop from a server component has

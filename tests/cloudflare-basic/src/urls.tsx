@@ -38,7 +38,10 @@ import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
-import { NavIdleTagsLoader } from "./loaders/nav-idle.js";
+import {
+  NavIdleOverlapTagsLoader,
+  NavIdleTagsLoader,
+} from "./loaders/nav-idle.js";
 import { LoadMoreLoader } from "./loaders/location-state.js";
 import {
   DepCrumbProductLoader,
@@ -204,7 +207,12 @@ import {
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { LoaderParamsProbe } from "./components/LoaderParamsProbe.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
-import { NavIdlePage } from "./pages/nav-idle.js";
+import {
+  NavIdleOverlapPage,
+  NavIdlePage,
+  navIdleOverlapAway,
+  navIdleSkipOnAction,
+} from "./pages/nav-idle.js";
 import { FeatureDetailPage, FeaturesShell } from "./pages/features.js";
 import {
   BlogLayout,
@@ -360,9 +368,11 @@ import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { transitionKindsPatterns } from "./pages/transition-kinds.js";
+import { optimisticSettlePatterns } from "./pages/optimistic-settle.js";
 import { asyncHandlesPatterns } from "./pages/async-handles.js";
 import { handlesCommitPatterns } from "./pages/handles-commit.js";
 import { vtBackPatterns } from "./pages/vt-back.js";
+import { actionLatestCallPatterns } from "./pages/action-latest-call.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -2223,6 +2233,21 @@ export const urlpatterns = urls(
           loader(NavIdleTagsLoader),
           transition(),
         ]),
+        // #1164's chips while an action settles, or a newer navigation ends
+        // with no page, during a 1.5 s hold (hook-lock rows S10, S8).
+        path(
+          "/nav-idle-overlap",
+          NavIdleOverlapPage,
+          { name: "navIdleOverlap" },
+          () => [
+            middleware(navIdleOverlapAway),
+            loader(NavIdleOverlapTagsLoader, () => [
+              revalidate(navIdleSkipOnAction),
+            ]),
+            revalidate(navIdleSkipOnAction),
+            transition(),
+          ],
+        ),
         path("/scripts-demo", ScriptsDemoPage, { name: "scriptsDemo" }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
 
@@ -3264,6 +3289,9 @@ export const urlpatterns = urls(
         // #1165: each transition commit carries its kind as a transition
         // type (mirrors the router e2e app's /vt-kinds/*).
         include("/", transitionKindsPatterns, { name: "" }),
+        // Optimistic hook values settle in the page's commit (mirrors the
+        // router e2e app's /opt-settle/*).
+        include("/", optimisticSettlePatterns, { name: "" }),
         // A navigation's title and crumbs commit with its page (mirrors the
         // router e2e app's /handles-commit/*).
         include("/", handlesCommitPatterns, { name: "" }),
@@ -3272,6 +3300,9 @@ export const urlpatterns = urls(
         // A cached back/forward animates under transition() (mirrors the
         // router e2e app's /vt-back/*).
         include("/", vtBackPatterns, { name: "" }),
+        // useAction() reports the latest call of an action called twice
+        // (mirrors the router e2e app's /action-latest*).
+        include("/", actionLatestCallPatterns, { name: "" }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {

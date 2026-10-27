@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  useContext,
-  useState,
-  useEffect,
-  useRef,
-  useOptimistic,
-  startTransition,
-} from "react";
+import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
 import type { TrackedActionState } from "../types.js";
@@ -83,14 +76,19 @@ export type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
  * Features:
  * - Tracks action lifecycle: idle → loading → streaming → idle
  * - Captures result/error locally (React handles cleanup)
- * - If multiple actions fire, tracks only the last one
+ * - If the same action fires several times, reports the latest call to
+ *   start. An earlier call that settles later changes nothing it reports;
+ *   a latest call that was aborted reports idle with nothing. One call at a
+ *   time, not one per argument: a reader filtering on `payload` cannot track
+ *   an earlier call once a later one starts.
  * - Supports selector pattern like useNavigation
  *
  * Matching behavior:
  * - **Function reference**: Uses full $$id for exact matching. This is precise
  *   and distinguishes between actions with the same name in different files.
  * - **String**: Matches by suffix (action name after #). This is convenient
- *   but may be ambiguous if multiple files export the same action name.
+ *   but may be ambiguous if multiple files export the same action name: it
+ *   follows the latest call of any action with that export name.
  *
  * @param action - Either a server action function or a string action name.
  *   - **Function**: Must be directly imported in the client component.
@@ -138,8 +136,10 @@ export function useAction<T>(
       ? getActionId(action)
       : "";
 
-  // Base state for useOptimistic
-  const [baseState, setBaseState] = useState<T | TrackedActionState>(() => {
+  // Set urgently from notifyAction's task, also while React holds a page: a
+  // transition of its own would take the held page's transition types (see
+  // useNavigation).
+  const [value, setValue] = useState<T | TrackedActionState>(() => {
     if (!ctx) {
       return selector ? selector(DEFAULT_ACTION_STATE) : DEFAULT_ACTION_STATE;
     }
@@ -149,11 +149,8 @@ export function useAction<T>(
       : ctx.eventController.getActionState(actionId);
     return selector ? selector(state) : state;
   });
-  const prevSelected = useRef(baseState);
-  prevSelected.current = baseState;
-  const [optimisticState, setOptimisticState] = useOptimistic<
-    T | TrackedActionState
-  >(null!);
+  const prevSelected = useRef(value);
+  prevSelected.current = value;
 
   // Ref keeps the latest selector for subscription callbacks without
   // re-subscribing on every render. Selector changes themselves are not
@@ -166,41 +163,20 @@ export function useAction<T>(
   useEffect(() => {
     if (!ctx) return;
 
+    const sync = (state: TrackedActionState) => {
+      const selected = selectorRef.current ? selectorRef.current(state) : state;
+      if (!shallowEqual(selected, prevSelected.current)) {
+        prevSelected.current = selected;
+        setValue(selected);
+      }
+    };
     // Sync current state for the (possibly new) actionId so that switching
     // actions on an idle page doesn't leave stale data from the old action.
-    const currentState = ctx.eventController.getActionState(actionId);
-    const currentSelected = selectorRef.current
-      ? selectorRef.current(currentState)
-      : currentState;
-    if (!shallowEqual(currentSelected, prevSelected.current)) {
-      prevSelected.current = currentSelected;
-      setBaseState(currentSelected);
-    }
-
-    // Subscribe to action-specific updates
-    const unsubscribe = ctx.eventController.subscribeToAction(
-      actionId,
-      (state) => {
-        const selectedState = selectorRef.current
-          ? selectorRef.current(state)
-          : state;
-
-        if (!shallowEqual(selectedState, prevSelected.current)) {
-          prevSelected.current = selectedState;
-          setBaseState(selectedState);
-          startTransition(() => {
-            setOptimisticState(selectedState);
-          });
-        }
-      },
-    );
-
-    return () => {
-      unsubscribe();
-    };
+    sync(ctx.eventController.getActionState(actionId));
+    return ctx.eventController.subscribeToAction(actionId, sync);
   }, [actionId]);
 
-  return (optimisticState ?? baseState) as T | TrackedActionState;
+  return value;
 }
 
 export type { TrackedActionState };

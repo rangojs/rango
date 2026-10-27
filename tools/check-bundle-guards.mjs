@@ -245,7 +245,24 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // (AGENTS.md Bundle hygiene). Smaller forms that weaken it were not taken
 // (rango-t154-c5, rango-t154-c7). Two 128B steps, the owner's call: main
 // sat 18B under the old limit.
-const ROUTER_CHUNK_GZIP_MAX = 50.25 * 1024;
+//
+// Raised 50.25KB -> 51.125KB on 2026-10-26 for the hooks review stack
+// (rango-t84), measured on cloudflare-basic from main 8c0a12573 51451B ->
+// 52011B (+560B gzip), in two parts. Router code +186B (+175B in an app that
+// already calls useLinkStatus): useNavigation's idle waits for a page React
+// holds and its location stays the page on screen during a newer click
+// (browser/react/use-navigation.ts +246B), useAction follows the latest call
+// (event-controller.ts startAction/getActionState +76B), a server redirect
+// keeps the clicked link pending (navigation-bridge.ts _redirectFrom +22B),
+// and useAction and useLinkStatus drop their useOptimistic pins (-100B,
+// -53B). None of it can load lazily: it runs on every navigation and action
+// commit. The other +374B is not router code: cloudflare-basic's
+// optimistic-settle fixture calls useLinkStatus for the first time (the chunk
+// drops it in an app that never calls it; main with one call measures
+// 51836B), to pin the link's pending in both apps. The owner's rule
+// (rango-t84-q2): the measured size plus 256B, rounded up to the next 128B
+// step.
+const ROUTER_CHUNK_GZIP_MAX = 51.125 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

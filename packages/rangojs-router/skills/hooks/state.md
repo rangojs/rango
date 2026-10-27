@@ -132,10 +132,12 @@ The URL hooks follow the same rule for a component that is mounted across the
 navigation: on back/forward too, `usePathname()` and `useSearchParams()`
 change with the page, not at the `popstate` event (see
 [`./urls.md`](./urls.md), "When the URL hooks change"). One difference
-remains (issue #1046): a component that first mounts in the page being left,
-after the response arrived and while React still holds the destination, reads
-its own entry's location state from `useLocationState` and the destination's
-URL and params from `usePathname()`, `useSearchParams()` and `useParams()`.
+is by design (issue #1046): a component that first mounts in the page being
+left, after the response arrived and while React still holds the destination,
+reads its own entry's location state from `useLocationState` and the
+destination's URL and params from `usePathname()`, `useSearchParams()` and
+`useParams()`. Components already on screen keep the page on screen's values
+until the destination commits.
 
 ### State on router.push() / router.replace()
 

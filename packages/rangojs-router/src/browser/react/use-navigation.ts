@@ -11,7 +11,10 @@ import {
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
 import type { PublicNavigationState } from "../types.js";
-import type { DerivedNavigationState } from "../event-controller.js";
+import type {
+  DerivedNavigationState,
+  RouteStateSignal,
+} from "../event-controller.js";
 
 /**
  * Convert derived state to public version (strips inflightActions)
@@ -19,6 +22,13 @@ import type { DerivedNavigationState } from "../event-controller.js";
 function toPublicState(state: DerivedNavigationState): PublicNavigationState {
   const { inflightActions: _, ...publicState } = state;
   return publicState;
+}
+
+/** A value of the hook, the location it was selected with, and its set's number. */
+interface Snapshot<T> {
+  location: PublicNavigationState["location"];
+  value: T;
+  seq: number;
 }
 
 /**
@@ -46,18 +56,25 @@ export function useNavigation<T>(
     throw new Error("useNavigation must be used within NavigationProvider");
   }
 
-  const [value, setValue] = useState<T | PublicNavigationState>(() => {
-    const publicState = toPublicState(
-      ctx.eventController.getHydrationSnapshot()?.state ??
-        ctx.eventController.getState(),
-    );
-    return selector ? selector(publicState) : publicState;
-  });
-  const prevState = useRef(value);
-  // The value on screen: a set value that differs has not committed yet.
-  const committedRef = useRef(value);
+  const [snapshot, setSnapshot] = useState<Snapshot<T | PublicNavigationState>>(
+    () => {
+      const state = toPublicState(
+        ctx.eventController.getHydrationSnapshot()?.state ??
+          ctx.eventController.getState(),
+      );
+      return {
+        location: state.location,
+        value: selector ? selector(state) : state,
+        seq: 0,
+      };
+    },
+  );
+  // The last value set, and the value on screen. The screen's lags while
+  // React holds a set, or shows a location a held set has moved past.
+  const latest = useRef(snapshot);
+  const onScreen = useRef(snapshot);
   useLayoutEffect(() => {
-    committedRef.current = value;
+    onScreen.current = snapshot;
   });
 
   // Store selector in a ref so the subscription callback always uses the
@@ -78,30 +95,56 @@ export function useNavigation<T>(
   // transition, and put idle on screen with the location being left (#1164).
   useEffect(() => {
     let last: DerivedNavigationState | undefined;
-    const update = () => {
+    // A page handed to React in a transition is held: from its
+    // flushRouteState("anchor") to its release (useCommitAnchoredState).
+    let pageHeld = false;
+    const select = (state: PublicNavigationState) =>
+      selectorRef.current ? selectorRef.current(state) : state;
+    const update = (signal?: RouteStateSignal) => {
       const currentState = ctx.eventController.getState();
-      // Neither the state nor the location moved (the stream starting or
-      // ending): while a value of this hook's is held, a transition, which
-      // React entangles with it, so it never commits ahead of the location.
-      // Otherwise urgent: a transition of its own would start a view
-      // transition, and could commit ahead of a held page and take its
-      // transition types.
+      const moved = currentState.location !== last?.location;
+      // Only isStreaming or isNavigating changed, or pendingUrl cleared: no
+      // newer request. While a value of this hook's is held, a transition,
+      // which React entangles with it, so it never commits ahead of the
+      // location. Otherwise urgent: a transition of its own would start a
+      // view transition, and could commit ahead of a held page and take its
+      // transition types. A newer click's pendingUrl is work starting, shown
+      // at once even while the state already reads loading (an action in
+      // flight).
       const quiet =
+        !moved &&
         currentState.state === last?.state &&
-        currentState.location === last.location;
+        (currentState.pendingUrl ?? last.pendingUrl) === last.pendingUrl;
+      // idle is the page's. While one is held, idle from an action that
+      // settles or a newer navigation that ends with no page would commit
+      // urgently over the page being left, with its URL (#1164's chips come
+      // back): it waits, and the page's release brings it in the commit's
+      // task. Work that starts (loading, a newer pendingUrl) shows at once.
+      if (signal) pageHeld = signal === "anchor";
+      else if (pageHeld && !quiet && currentState.state === "idle") return;
       last = currentState;
-      const publicState = toPublicState(currentState);
-      const nextSelected = selectorRef.current
-        ? selectorRef.current(publicState)
-        : publicState;
+      const state = toPublicState(currentState);
+      const value = select(state);
+      const prev = latest.current;
+      if (shallowEqual(value, prev.value)) return;
 
-      // Check if selected value has changed
-      if (!shallowEqual(nextSelected, prevState.current)) {
-        const held = prevState.current !== committedRef.current;
-        prevState.current = nextSelected;
-        if (quiet && held) startTransition(() => setValue(nextSelected));
-        else setValue(nextSelected);
-      }
+      const screen = onScreen.current;
+      const held = screen.seq !== prev.seq || screen.location !== prev.location;
+      const next = { location: state.location, value, seq: prev.seq + 1 };
+      latest.current = next;
+      if (held && quiet) startTransition(() => setSnapshot(next));
+      else if (held && !moved) {
+        // location is the page on screen until the next page shows. This
+        // update did not move it: the location a held set brings (a held
+        // page's) is not on screen, so the value keeps the location of the
+        // one it replaces in React's queue: the screen's when it renders
+        // urgently, the held page's when React rebases it onto that page.
+        setSnapshot((base) => ({
+          location: base.location,
+          value: select({ ...state, location: base.location }),
+          seq: next.seq,
+        }));
+      } else setSnapshot(next);
     };
 
     // Catch-up: re-read state synchronously on mount before subscribing, so a
@@ -110,8 +153,15 @@ export function useNavigation<T>(
     // useSearchParams.
     update();
 
-    return ctx.eventController.subscribe(update);
+    const unsubscribe = ctx.eventController.subscribe(update);
+    // The anchor and release signals ride the handle channel. One without a
+    // signal re-reads the same state, as the state channel's own would.
+    const unsubscribeSignals = ctx.eventController.subscribeToHandles(update);
+    return () => {
+      unsubscribe();
+      unsubscribeSignals();
+    };
   }, []);
 
-  return value as T | PublicNavigationState;
+  return snapshot.value as T | PublicNavigationState;
 }

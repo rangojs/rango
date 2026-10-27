@@ -5,6 +5,7 @@ import {
   startTransition,
   Suspense,
   use,
+  useLayoutEffect,
   useState,
   ViewTransition,
   type ReactNode,
@@ -22,6 +23,8 @@ import { useParams } from "../browser/react/use-params.js";
 import { usePathname } from "../browser/react/use-pathname.js";
 import { useSearchParams } from "../browser/react/use-search-params.js";
 import { commitInTransition } from "../browser/partial-update.js";
+import { emitNetworkError } from "../browser/network-error-handler.js";
+import { NetworkError } from "../errors.js";
 import { LoaderStore } from "../loader-store.js";
 import type { NavigationUpdate } from "../browser/types.js";
 import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
@@ -50,7 +53,12 @@ const ORIGIN = "http://localhost";
 let controller: EventController;
 let loaders: LoaderStore;
 let log: string[];
+// What each commit put on screen (Location's layout effect).
+let commits: string[];
 let setTree!: (tree: ReactNode) => void;
+// The last tree handed over, until it commits (NavigationProvider's
+// committingRef).
+let committing: ReactNode | undefined;
 let stub: ReturnType<typeof installViewTransitionStub> | undefined;
 let form: "selector" | "full state";
 // Rendered next to the tree, inside its <ViewTransition>.
@@ -74,8 +82,26 @@ function Location({ idle }: { idle: boolean }): ReactNode {
   const id = useParams((params) => params.id);
   const entry = `${idle ? "idle" : "loading"} ${pathname}?${search} id=${id}`;
   log.push(entry);
+  useLayoutEffect(() => {
+    commits.push(entry);
+  });
   return <p data-testid="reader">{entry}</p>;
 }
+
+/**
+ * A reader in chrome no tree replaces (render it as `extra`): each commit as
+ * "<idle|loading> <page|error>", the error screen being on screen or not.
+ */
+function ChromeReader(): ReactNode {
+  const idle = useNavigation((nav) => nav.state === "idle");
+  useLayoutEffect(() => {
+    const error = document.querySelector('[data-testid="error-screen"]');
+    chrome.push(`${idle ? "idle" : "loading"} ${error ? "error" : "page"}`);
+  });
+  return null;
+}
+
+let chrome: string[];
 
 function Hold({ until }: { until: Promise<void> }): ReactNode {
   use(until);
@@ -84,7 +110,18 @@ function Hold({ until }: { until: Promise<void> }): ReactNode {
 
 function Shell({ vt }: { vt: boolean }): ReactNode {
   const [tree, set] = useState<ReactNode>(<Reader />);
-  setTree = set;
+  setTree = (next) => {
+    committing = next;
+    set(next);
+  };
+  // NavigationProvider's layout effect: the last tree handed over has
+  // committed.
+  useLayoutEffect(() => {
+    if (tree === committing) {
+      committing = undefined;
+      controller.releaseRouteState();
+    }
+  });
   const content = (
     <>
       <Suspense fallback={<p data-testid="skeleton">skeleton</p>}>
@@ -119,7 +156,8 @@ async function notified(): Promise<void> {
  * The navigation's commit: the transaction's commit (handle.complete), then
  * the tree through production's commitInTransition with an update subscriber
  * that does what NavigationProvider's does (the tree, the params, the
- * flushed notification).
+ * notification flushed with "anchor" or "release"; Shell releases the anchor
+ * when the tree commits).
  */
 async function commit(
   handle: ReturnType<EventController["startNavigation"]>,
@@ -134,7 +172,7 @@ async function commit(
     const onUpdate = (update: NavigationUpdate) => {
       setTree(update.root as ReactNode);
       controller.setParams(update.metadata.params!);
-      controller.flushRouteState();
+      controller.flushRouteState(update.inTransition ? "anchor" : "release");
     };
     const update = {
       root: (
@@ -178,7 +216,8 @@ async function startInsideHeldCommit(
         </>,
       );
       handle = controller.startNavigation("/items/1?tag=b");
-      controller.flushRouteState();
+      // NavigationProvider's flush for a tree handed over in a transition.
+      controller.flushRouteState("anchor");
     });
   });
   return handle;
@@ -214,8 +253,11 @@ function dedupe(list: string[]): string[] {
 
 beforeEach(() => {
   log = [];
+  commits = [];
   extra = null;
   stub = undefined;
+  committing = undefined;
+  chrome = [];
   loaders = new LoaderStore();
   controller = createEventController({
     initialLocation: new URL("/items/1?tag=a&tag=b", ORIGIN),
@@ -429,7 +471,7 @@ describe.each([
       expect(reader()).toBe("idle /items/1?tag=a&tag=b id=1");
     });
 
-    it("a navigation aborted while another commit is held reports idle at once, and nothing reports loading once that commit lands", async () => {
+    it("a navigation aborted while another commit is held reports idle at once, and idle again once that commit lands", async () => {
       const result = mount(vt);
       const reader = () => result.getByTestId("reader").textContent;
       const hold = deferred();
@@ -440,6 +482,175 @@ describe.each([
       expect(reader()).toBe("idle /items/1?tag=a&tag=b id=1");
 
       await release(hold, reader, "idle /items/1?tag=a&tag=b id=1");
+      // The abort's idle came from the timer while the commit was held: it
+      // waited, and that commit lands with the start flushed inside it
+      // (loading), then its release brings idle in the same task.
+      expect(dedupe(commits)).toEqual([
+        "idle /items/1?tag=a&tag=b id=1",
+        "loading /items/1?tag=a&tag=b id=1",
+        "idle /items/1?tag=a&tag=b id=1",
+      ]);
+    });
+
+    // A newer navigation that fails while a page is held: the bridge hands
+    // the error tree over in a transition (emitNetworkError), then disposes
+    // the navigation. The hand-over anchors like any page, so idle waits for
+    // the error tree's commit instead of landing on the page being left. The
+    // error tree is held here so its commit is still pending when the
+    // dispose's notification runs, as a view transition or the scheduler's
+    // order can leave it in a browser.
+    it("a newer navigation that fails while a page is held never shows idle with the old search", async () => {
+      const result = mount(vt);
+      const reader = () => result.getByTestId("reader").textContent;
+      const hold = deferred();
+
+      const handle = controller.startNavigation("/items/1?tag=b");
+      await notified();
+      await commit(handle, "/items/1?tag=b", { id: "1" }, hold.promise, vt);
+      const second = controller.startNavigation("/items/1?tag=c");
+      await notified();
+      await act(async () => {
+        emitNetworkError(
+          (update) => {
+            setTree(
+              <>
+                <p data-testid="error-screen">error</p>
+                <Hold until={hold.promise} />
+              </>,
+            );
+            controller.flushRouteState(
+              update.inTransition ? "anchor" : "release",
+            );
+          },
+          new NetworkError("offline", { url: "/items/1?tag=c" }),
+          "/items/1",
+        );
+        second[Symbol.dispose]();
+      });
+      await notified();
+      expect(reader()).toBe("loading /items/1?tag=a&tag=b id=1");
+
+      await act(async () => {
+        hold.resolve();
+        await hold.promise;
+      });
+      await waitFor(() =>
+        expect(result.queryByTestId("error-screen")).not.toBeNull(),
+      );
+      expect(sinceStart()).not.toContain("idle /items/1?tag=a&tag=b id=1");
+    });
+
+    // Row S9: an action's revalidated tree is handed over in a transition
+    // (server-action-bridge.ts commitAction) and anchors like a page. The
+    // action settles while React still holds that tree: its idle waits and
+    // arrives with the tree, never over the content the action replaces.
+    it("an action whose revalidated tree React holds stays loading until that tree commits", async () => {
+      extra = <ChromeReader />;
+      const result = mount(vt);
+      const hold = deferred();
+
+      const action = controller.startAction("src/actions.ts#save", []);
+      await notified();
+      await act(async () => {
+        commitInTransition(
+          loaders,
+          (update) => {
+            setTree(update.root as ReactNode);
+            controller.flushRouteState(
+              update.inTransition ? "anchor" : "release",
+            );
+          },
+          [],
+          {
+            root: (
+              <>
+                <p data-testid="revalidated">revalidated</p>
+                <Hold until={hold.promise} />
+              </>
+            ),
+            metadata: {},
+          } as unknown as NavigationUpdate,
+          "action",
+          [],
+        );
+      });
+      action.complete(undefined);
+      action[Symbol.dispose]();
+      // The action's 100 ms settle window, then its idle notification.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 150));
+      });
+      expect(controller.getState().state).toBe("idle");
+      expect(result.queryByTestId("revalidated")).toBeNull();
+      expect(chrome.at(-1)).toBe("loading page");
+
+      await act(async () => {
+        hold.resolve();
+        await hold.promise;
+      });
+      await waitFor(() =>
+        expect(result.queryByTestId("revalidated")).not.toBeNull(),
+      );
+      expect(chrome.at(-1)).toBe("idle page");
+      // The tree commits with loading and its release brings idle in that
+      // task; no idle commit came before it.
+      expect(dedupe(chrome)).toEqual([
+        "idle page",
+        "loading page",
+        "idle page",
+      ]);
+      expect(sinceStart()).toEqual(["loading /items/1?tag=a&tag=b id=1"]);
+    });
+
+    // A navigation that fails while a React async action is pending (a
+    // <form action>): the bridge hands the error tree over in a transition,
+    // which React entangles with the action, so it commits when the action
+    // ends. The navigation's idle waits for that commit and arrives with the
+    // error screen.
+    it("a navigation that fails while a React async action is pending stays loading until the error screen commits", async () => {
+      extra = <ChromeReader />;
+      const result = mount(vt);
+      const reader = () => result.getByTestId("reader").textContent;
+      const formAction = deferred();
+      await act(async () => {
+        startTransition(async () => {
+          await formAction.promise;
+        });
+      });
+
+      const handle = controller.startNavigation("/items/1?tag=b");
+      await notified();
+      expect(reader()).toBe("loading /items/1?tag=a&tag=b id=1");
+      await act(async () => {
+        emitNetworkError(
+          (update) => {
+            setTree(<p data-testid="error-screen">error</p>);
+            controller.flushRouteState(
+              update.inTransition ? "anchor" : "release",
+            );
+          },
+          new NetworkError("offline", { url: "/items/1?tag=b" }),
+          "/items/1",
+        );
+        handle[Symbol.dispose]();
+      });
+      await notified();
+      expect(result.queryByTestId("error-screen")).toBeNull();
+      expect(reader()).toBe("loading /items/1?tag=a&tag=b id=1");
+
+      await act(async () => {
+        formAction.resolve();
+        await formAction.promise;
+      });
+      await waitFor(() =>
+        expect(result.queryByTestId("error-screen")).not.toBeNull(),
+      );
+      expect(dedupe(chrome)).toEqual([
+        "idle page",
+        "loading page",
+        "idle error",
+      ]);
+      expect(sinceStart()).toEqual(["loading /items/1?tag=a&tag=b id=1"]);
     });
   },
 );

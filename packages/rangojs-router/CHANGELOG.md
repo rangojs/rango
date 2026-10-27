@@ -119,6 +119,111 @@ slot's id, or the orphan layout's id. The owning entry's error boundary still
 renders the fallback in the same place, and its fallback receives the same
 `segmentType` and `segmentId`. No change in your code.
 
+### Added: `useNavigation().isNavigating` is typed
+
+**Before.** `useNavigation()` always returned `isNavigating`, but
+`NavigationState` did not declare it, so `useNavigation((n) => n.isNavigating)`
+failed to typecheck. The docs said `state` reads `"loading"` during a
+navigation; it also reads `"loading"` while a server action runs, so a
+progress bar driven by `state` ran on every action.
+
+**Now.** `isNavigating` is part of `NavigationState`: `true` only while a
+navigation is in flight. Drive a navigation progress bar from it, and an
+action spinner from `state`. The values are unchanged.
+
+```tsx
+const isNavigating = useNavigation((n) => n.isNavigating);
+```
+
+### Fixed: `useAction()` follows the latest call when an earlier call returns after it
+
+**Before.** With the same action called twice and the later call returning
+first, `useAction()` went back to the earlier call, which was still running:
+an AddToCart button showed "Adding…" again, never showed the later call's
+result, and ended on the earlier call's result.
+
+**Now.** The hook reports the last call to start. It shows that call's result
+when it returns, and an earlier call that settles afterwards changes nothing
+the hook reports, a result or an error alike (its revalidation still
+re-renders the page, and an error-boundary response still replaces it). A
+latest call that was aborted reports `idle` with nothing, never an earlier
+call. A string id (`useAction("addToCart")`) follows the latest call of any
+action with that export name; a function or a full id follows the latest call
+of that action. The hook tracks one call at a time, so a reader that filters
+on `payload` cannot track an earlier call once a later one starts.
+
+### Changed: `useLinkStatus()` stays pending until the page shows
+
+**Before.** A link's `pending` ended when the response started streaming.
+Under `transition()`, React then held the page being left for the rest of the
+wait, with the spinner already gone. Through a server redirect, the clicked
+link's spinner ended before the redirect was read.
+
+**Now.** `pending` is `true` from the click's notification until the commit
+that shows the destination: its `loading()` skeleton, or under
+`transition()` the page itself, which React holds until it is ready.
+Through a server redirect the clicked link stays pending until the target
+page commits. A newer navigation or an abort ends it at once, and a failure
+ends it with the error. Like `useNavigation()`, a change commits in the lane
+of the notification that carries it: one that another flow's commit flushes
+inside its transition (a server action's, handed to React in the click's
+task) commits with that commit, so in that narrow case the spinner shows,
+or a newer click or an abort ends it, when that commit lands. `useNavigation().pendingUrl` is unchanged: it still
+turns `null` when the response arrives, so while the response streams a
+link reads `pending` and `pendingUrl` is `null`. `renderRoute` does the
+same: `pending` is held with a `transition` navigate()'s commit.
+
+### Fixed: a server action during a held navigation leaves the page its transition types
+
+**Before.** With `transition()` and a view transition, a `useAction()` state
+change while React held the next page (a Save pressed during the wait)
+committed in a transition of its own and took the page's transition types,
+so a `<ViewTransition>` keyed by `push` did not animate the page.
+
+**Now.** `useAction()` sets every state urgently, and `useLinkStatus()`
+sets `pending` urgently and ends it with the page; neither starts a
+transition of its own, so the page's commit carries its types. A
+`useAction()` value never waits for the page.
+
+### Fixed: `useNavigation()` reaches `idle` with the page React holds
+
+**Before.** On a `transition()` route, a filter UI that reads
+`useSearchParams()` and `useNavigation()` (#1164) removes a chip; React holds
+the new page while its data loads. If a server action settled during that
+wait, or a newer navigation ended with no page (an external redirect, a
+blocked redirect payload, a reload), `useNavigation()` committed `idle` while
+the old page and its search were still on screen, and the removed chip came
+back until the new page arrived.
+
+**Now.** While React holds a page, `idle` arrives with that page. The same
+holds for an action's revalidated content: the `idle` that ends an action
+arrives with it. A newer navigation that fails shows the error screen, and
+`idle` arrives with it; while a `<form action>` is still pending, React holds
+that error screen until the action ends, and `state` reads `"loading"` until
+then. Work that starts during the wait still shows at once: a newer click's
+`"loading"` and `pendingUrl`, also while an action is in flight.
+`useLinkStatus()` answers for its own link: a link whose navigation is
+aborted ends its `pending` at once, while `useNavigation()` keeps `"loading"`
+until a tree React holds for another flow lands.
+
+No change in your code.
+
+### Fixed: `useNavigation().location` stays the page on screen when a second click goes out
+
+**Before.** Click a link to item 2 on a `transition()` route; React holds item
+2's page while its data loads. Click item 3 during the wait: the full
+`useNavigation()` state showed `pendingUrl` item 3 and `location` item 2,
+while item 1 was still on screen. If item 3's page replaced item 2's first,
+item 2 never showed, yet `location` had named it.
+
+**Now.** `location` is the page on screen until the next page shows, and
+`pendingUrl` is the page being fetched. The second click shows `"loading"`
+and its `pendingUrl` at once and keeps `location` on item 1. `location` moves
+to item 2 only if item 2's page shows, and to item 3 with item 3's page. A
+selector that reads only `location.href` already behaved this way.
+
+No change in your code.
+
 ## 0.28.0 (2026-10-25)
 
 ### Fixed: a rewritten request's telemetry events carry one `requestId` ([#1269](https://github.com/rangojs/rango/pull/1269))

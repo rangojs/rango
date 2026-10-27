@@ -92,6 +92,11 @@ export interface ActionEntry {
   startedAt: number;
   /** Whether action processing is complete (may still be streaming) */
   completed?: boolean;
+  /**
+   * Set when a later call started (see startAction): "id" hides this call
+   * from every reader, "name" from readers that match by export name.
+   */
+  supersededBy?: "id" | "name";
 }
 
 /**
@@ -104,7 +109,7 @@ export interface DerivedNavigationState {
   isStreaming: boolean;
   /** Whether a navigation is active (fetching or streaming, before commit) */
   isNavigating: boolean;
-  /** Current committed location */
+  /** The location of the last page flushed to React (useNavigation keeps the page on screen) */
   location: NavigationLocation;
   /** URL being navigated to (null if idle) */
   pendingUrl: string | null;
@@ -712,15 +717,18 @@ export function createEventController(
     // idle snapshot (the same reference use-action falls back to).
     if (inflightActions.size === 0) return DEFAULT_ACTION_STATE;
 
-    const entry = [...inflightActions.values()]
-      .filter((a) => matchesActionId(actionId, a.actionId))
-      .reduce<ActionEntry | undefined>((best, a) => {
-        if (!best) return a;
-        const aActive = a.phase !== "settling";
-        const bActive = best.phase !== "settling";
-        if (aActive !== bActive) return aActive ? a : best;
-        return a.startedAt > best.startedAt ? a : best;
-      }, undefined);
+    // The latest call this reader matches, or none once a later call left the
+    // map: an earlier call still running is never reported again.
+    const byName = !actionId.includes("#");
+    let entry: ActionEntry | undefined;
+    for (const a of inflightActions.values()) {
+      if (
+        matchesActionId(actionId, a.actionId) &&
+        (byName ? !a.supersededBy : a.supersededBy !== "id")
+      ) {
+        entry = a;
+      }
+    }
 
     if (!entry) {
       return { ...DEFAULT_ACTION_STATE };
@@ -911,6 +919,20 @@ export function createEventController(
     );
     if (hadConcurrent) {
       hadAnyConcurrentActions = true;
+    }
+
+    // useAction reports the latest call. Every earlier call that a reader of
+    // this one also matches is hidden from that reader for good, so it never
+    // shows again after this call settles and leaves the map: a call of the
+    // same action from every reader, a call of another action with the same
+    // export name from readers that match by name (matchesActionId).
+    const hash = actionId.lastIndexOf("#");
+    const name = hash === -1 ? null : actionId.slice(hash + 1);
+    for (const a of inflightActions.values()) {
+      if (a.actionId === actionId) a.supersededBy = "id";
+      else if (name !== null && matchesActionId(name, a.actionId)) {
+        a.supersededBy ??= "name";
+      }
     }
 
     const entry: ActionEntry = {

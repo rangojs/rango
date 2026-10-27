@@ -75,6 +75,7 @@ function createMockEventController(overrides?: {
     ),
     getHydrationSnapshot: vi.fn(() => undefined),
     subscribe: vi.fn((_cb: () => void) => vi.fn()),
+    subscribeToHandles: vi.fn((_cb: () => void) => vi.fn()),
   };
 }
 
@@ -112,8 +113,10 @@ describe("useNavigation", () => {
 
   it("effect cleanup unsubscribes", () => {
     const unsub = vi.fn();
+    const unsubSignals = vi.fn();
     const ec = createMockEventController();
     ec.subscribe.mockReturnValue(unsub);
+    ec.subscribeToHandles.mockReturnValue(unsubSignals);
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
     useNavigation();
@@ -122,6 +125,7 @@ describe("useNavigation", () => {
     cleanup();
 
     expect(unsub).toHaveBeenCalledOnce();
+    expect(unsubSignals).toHaveBeenCalledOnce();
   });
 
   it("applies selector on initial render", () => {
@@ -169,6 +173,7 @@ describe("useNavigation", () => {
       getInflightActions: vi.fn(() => inflight),
       getHydrationSnapshot: vi.fn(() => undefined),
       subscribe: vi.fn((_cb: () => void) => vi.fn()),
+      subscribeToHandles: vi.fn((_cb: () => void) => vi.fn()),
     };
     mockedUseContext.mockReturnValue({ eventController: ec } as any);
 
@@ -184,7 +189,9 @@ describe("useNavigation", () => {
     // it, even though no notify has fired yet.
     capturedEffectFn!();
 
-    expect(setBaseValue).toHaveBeenCalledWith("loading");
+    expect(setBaseValue).toHaveBeenCalledWith(
+      expect.objectContaining({ value: "loading" }),
+    );
     // And it still subscribes for subsequent changes.
     expect(ec.subscribe).toHaveBeenCalledOnce();
   });

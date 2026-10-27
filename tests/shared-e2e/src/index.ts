@@ -113,6 +113,10 @@ export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
 export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario.js";
 export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
+export { runActionLatestCallTests } from "./action-latest-call-scenario.js";
+export type { ActionLatestCallScenarioOptions } from "./action-latest-call-scenario.js";
+export { runNavIdleOverlapTests } from "./nav-idle-overlap-scenario.js";
+export type { NavIdleOverlapScenarioOptions } from "./nav-idle-overlap-scenario.js";
 export { runAsyncHandlesTests } from "./async-handles-scenario.js";
 export type { AsyncHandlesScenarioOptions } from "./async-handles-scenario.js";
 export { runHandlesCommitTests } from "./handles-commit-scenario.js";
@@ -121,6 +125,8 @@ export type { VtBackScenarioOptions } from "./vt-back-scenario.js";
 export type { HandlesCommitScenarioOptions } from "./handles-commit-scenario.js";
 export type { TxIdleViewTransitionScenarioOptions } from "./tx-idle-view-transition-scenario.js";
 export { runTransitionKindsTests } from "./transition-kinds-scenario.js";
+export { runOptimisticSettleTests } from "./optimistic-settle-scenario.js";
+export type { OptimisticSettleScenarioOptions } from "./optimistic-settle-scenario.js";
 export type { TransitionKindsScenarioOptions } from "./transition-kinds-scenario.js";
 export {
   countViewTransitions,

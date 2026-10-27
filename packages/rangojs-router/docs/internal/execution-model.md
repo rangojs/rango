@@ -1797,14 +1797,64 @@ Here is how each hook gets there:
   than on its debounce timer (#1164; see the route-state atomicity entry in
   `feature-map.md`).
 - One `useNavigation` case is different: a value that moves while neither the
-  state nor the location does (`pendingUrl` clearing as the response starts
-  streaming, `isStreaming` clearing as it ends). There is no location to
-  commit it with. It goes in a transition only while the reader has a value
-  React has not committed yet, which React then entangles with it; otherwise
-  it is set urgently. A transition of its own would start a view transition
-  inside any `<ViewTransition>` whose class does not resolve to `none` for a
-  commit with no types (`transition({})` does), and would commit ahead of a
-  held page and take its types.
+  state nor the location does, and no newer request starts (`pendingUrl`
+  clearing as the response starts streaming, `isStreaming` clearing as it
+  ends). There is no location to commit it with. It goes in a transition only
+  while the reader has a value React has not committed yet, which React then
+  entangles with it; otherwise it is set urgently. A transition of its own
+  would start a view transition inside any `<ViewTransition>` whose class does
+  not resolve to `none` for a commit with no types (`transition({})` does),
+  and would commit ahead of a held page and take its types. A newer click's
+  `pendingUrl` is not quiet, even while `state` already reads `"loading"` (an
+  action in flight): it is work starting, and entangled with the held page it
+  would wait for that page.
+- `idle` is the page's, so `useNavigation` never sets it ahead of a held
+  page. It listens for the same "anchor" and "release" signals as
+  `useHandle` (below). Between them, a state notification that brings `idle`
+  and carries no signal waits: one from the controller's debounce task, or
+  the state half of a `flushRouteState()`, whose signal re-reads the
+  controller right after it (a newer page's "anchor" sets that page's `idle`
+  in its own transition). The release re-reads the controller in the task
+  that commits the page. The cases: an action that settles, and a newer
+  navigation that ends with no page (an external redirect, a redirect payload
+  the client blocks, a router reload, a failure whose error tree is handed
+  over in a transition and anchors like any other tree,
+  `network-error-handler.ts`). Set urgently, that idle committed over the
+  page being left with that page's URL, and #1164's filter chips showed the
+  removed chip again until the page arrived (hook-lock rows S10 and S8, the
+  `nav-idle-overlap` e2e). An action's own commit anchors too, so the idle
+  that ends an action arrives with the action's revalidated tree (S9), at
+  most a commit later than before. A failure's idle arrives with its error
+  screen; while a `<form action>` is pending, React entangles the error
+  tree's transition with it, so `loading` lasts until the action ends and the
+  error screen commits.
+- `location` is the page on screen until the next page shows; `pendingUrl` is
+  the page being fetched. The controller's location moves when a navigation
+  hands React its page, and that page's flush carries it in the page's lane.
+  A newer click while React holds that page sends an urgent update
+  (`loading`, its `pendingUrl`) whose state already names the held page's
+  location. While a value of the reader's is held, an update that does not
+  move the location itself is an updater that keeps the `location` of the
+  value it replaces in React's queue: the screen's in the urgent render, the
+  held page's when React rebases the update onto that page. So the click
+  shows its `loading` and `pendingUrl` at once over the page on screen, and
+  the location moves only with a page that shows; a held page the newer page
+  supersedes never shows, and its URL is never `location` (hook-lock row L2,
+  `render-route-navigation-idle.test.tsx` and the `nav-idle-overlap` e2e). A
+  selector of the location alone was never affected: its value does not
+  change at the click, so nothing is set.
+- Work that starts during the hold (`loading`, a newer click's `pendingUrl`)
+  and reaches the hook from the timer is still set urgently: it is shown at
+  once, and React rebases it over the held page's update, so the page commits
+  with `loading` and the release brings `idle` right after it. Without a view
+  transition that is the same task, before the browser paints. In a view
+  transition the release runs in React's layout phase inside the
+  transition's update callback, and React renders it when the transition's
+  `ready` resolves. The DOM holds `loading` over the new page from the update
+  callback to `ready`, so the browser captures the new state with it. The
+  `nav-idle-overlap` e2e samples every animation frame and has seen none with
+  it; the new image is live, and sampling cannot tell whether the animation's
+  first painted frame shows it (recorded as unproven, not worked around).
 - `useHandle` and `useSegments` learn from the same flush how the page is
   handed over (`useCommitAnchoredState`, `browser/react/use-handle.ts`). The
   payload's own handle data comes after it: a history-cache page's pushes
@@ -1815,10 +1865,11 @@ Here is how each hook gets there:
   read it (an analytics page view keyed on the URL; the vite-rsc-demo `gtm`
   e2e failed on a version that held these too). A page in a transition
   (`NavigationUpdate.inTransition`, set by `commitInTransition`, an action's
-  commit and a cached back/forward's) gets an "anchor" signal: a value that
-  arrives from there on waits. `NavigationProvider`'s layout effect, in the
-  commit that brings that payload, calls `releaseRouteState()`, and the
-  readers apply what waited there, synchronously, in the task that commits
+  commit, a cached back/forward's and an error tree's) gets an "anchor"
+  signal: a value that arrives from there on waits. `NavigationProvider`'s
+  layout effect, in the commit that brings that payload, calls
+  `releaseRouteState()`, and the readers apply what waited there,
+  synchronously, in the task that commits
   the page. The page's own effects have run by then and read the previous
   values. A transition entangled with the page's would put the value in its
   commit, but one set after React rendered the page and before its view
@@ -1827,6 +1878,64 @@ Here is how each hook gets there:
   (the `hook-render-stability` e2e pins that: an earlier version gave every
   reader an update in the page's lane and re-rendered all of them on a search
   change).
+- `useLinkStatus` shows work at once and settles with the page. It sets its
+  value in the lane of the notification that carries it and starts no
+  transition of its own. The click's notification runs in a task of its
+  own, so `pending: true` commits urgently. A link's `pending` ends when
+  `tx.commit()` clears the navigation, which the flush above delivers
+  inside the page's update, so it ends with the page. A link reads the
+  visible navigation in flight (`getCurrentNavigation()`, none for a
+  `skipLoadingState` one): its URL, or the URL a server redirect led it from
+  (`_redirectFrom`, set in `followServerRedirect`), so the clicked link stays
+  pending through the hop. It sets its value once per navigation, so a
+  newer visible one ends a link whose `false` React still holds with an
+  earlier page; an action's background refetch does not.
+- One rule covers `useLinkStatus` and `useNavigation` alike: a notification
+  commits in the lane that carries it. The click's own notification, an
+  abort's and a newer click's go out on the controller's timer, in a task of
+  their own, so they commit urgently. One that another flow's commit (an
+  action's, handed to React before the timer fired) flushes inside its
+  transition commits with that commit, which React may hold: a start, a
+  newer click and an abort alike, for both hooks in the same frame
+  (`src/__tests__/use-link-status-commit-lane.test.tsx`). That is a known
+  trade, not the design: a click whose start notification is flushed inside
+  another flow's held commit shows its spinner, and `loading`, when that
+  commit lands, even if it was aborted meanwhile; the release then brings
+  `idle`.
+- Where the two differ, each answers its own question. A link's `pending` is
+  that link's navigation: one aborted on its own task ends it at once, since
+  nothing React holds is that link's page.
+  `useNavigation` is the router's: while React holds a tree the router handed
+  it (a page, an action's tree, an error screen), `idle` waits for that tree
+  (above). So a link aborted on its own task while another flow's commit is
+  held reads `pending: false` beside `state: "loading"` until that commit
+  lands. That frame is not a contradiction: it is the one every link that is
+  not the destination reads during any navigation ("a navigation aborted
+  while another flow's commit is held" in the same test file).
+- `useAction` values never wait for a page. Action notifications go out on
+  `notifyAction`'s timer, which `flushRouteState()` does not flush, and
+  synchronously from `abortAllActions()` (called from a back/forward that
+  changes the intercept context in `navigation-bridge.ts` and from an
+  action's error path in `server-action-bridge.ts`); neither runs inside a
+  transition. So every state commits urgently, also while React holds a page,
+  and the hook starts no transition of its own.
+- Both hooks used to pin with `useOptimistic` in a `startTransition` of
+  their own. React commits the revert of such a pin on its own, as a
+  transition-only commit, which took the types queued for a held page (a
+  server action during the wait left the page with none) and could start a
+  view transition with no types; the link's release also ran in the sync
+  lane at the response's start, so the spinner ended before the page
+  showed.
+
+One case is outside this rule on purpose (rango-t96, #1046): a component
+that first mounts while a transition page is held (a dropdown opened on the
+old page, a lazy component or a `<Suspense>` resolving during the hold) reads
+the destination's values from every hook, because each hook seeds its first
+value from the router's live state (for example the `useState` initializer in
+`browser/react/use-navigation.ts`). Components already mounted are not
+affected. A fix would give every hook a second path to its value and an extra
+render after paint on every fully prefetched click's new page. Pinned by
+`src/testing/__tests__/render-route-late-reader-commit.test.tsx`.
 
 You might wonder why the payload's values are not simply put in the tree's
 lane, where React would commit them with the page. We tried that: a crumb whose
@@ -1847,9 +1956,11 @@ A transition the app starts itself while a page is held can still take them.
 Pinned by `src/__tests__/use-handle-commit-lane.test.tsx`,
 `src/__tests__/navigation-provider-cached-handles.test.tsx`,
 `src/__tests__/use-navigation-commit-lane.test.tsx` ("a quiet notification"),
-`src/testing/__tests__/render-route-handles-commit.test.tsx`, and the
-`handles-commit`, `nav-idle-location` and `transition-kinds` e2e (both apps,
-dev and production).
+`src/testing/__tests__/render-route-handles-commit.test.tsx`,
+`src/testing/__tests__/render-route-optimistic-settle.test.tsx`,
+`src/testing/__tests__/render-route-navigation-idle.test.tsx`, and the
+`handles-commit`, `nav-idle-location`, `nav-idle-overlap`, `transition-kinds`
+and `optimistic-settle` e2e (both apps, dev and production).
 
 ### Back and Forward from the history cache
 
