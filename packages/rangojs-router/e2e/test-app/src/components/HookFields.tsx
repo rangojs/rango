@@ -2,7 +2,13 @@
 
 import { use, type ReactNode } from "react";
 import { invalidateClientCache } from "@rangojs/router";
-import { Link, useLinkStatus, useNavigation } from "@rangojs/router/client";
+import {
+  Link,
+  useAction,
+  useLinkStatus,
+  useNavigation,
+} from "@rangojs/router/client";
+import { hookFieldsSave } from "../actions/hook-fields.js";
 
 /** How long a page the client has not seen yet holds its commit. */
 const HOOK_FIELDS_HOLD = 900;
@@ -77,7 +83,25 @@ function HookFieldsLinkChrome(): ReactNode {
   );
 }
 
-/** The chrome around /hook-fields/:id: every reader shape of the hook. */
+/** A save button: the action's state and result beside the page's state. */
+function HookFieldsSave(): ReactNode {
+  const action = useAction(hookFieldsSave);
+  const navState = useNavigation((n) => n.state);
+  return (
+    <button
+      type="button"
+      data-testid="hook-fields-save"
+      data-action-state={action.state}
+      data-action-result={String(action.result ?? "-")}
+      data-nav-state={navState}
+      onClick={() => void hookFieldsSave()}
+    >
+      save
+    </button>
+  );
+}
+
+/** The chrome around /hook-fields/:id: every reader shape of the hooks. */
 export function HookFieldsChrome(): ReactNode {
   return (
     <header>
@@ -100,6 +124,7 @@ export function HookFieldsChrome(): ReactNode {
           </Link>
         ))}
       </nav>
+      <HookFieldsSave />
       {/* Marks the history cache stale: Back restores, then revalidates. */}
       <button
         type="button"

@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 /**
  * useNavigation()'s fields read the same in every reader shape while React
- * holds a page (rango-t219).
+ * holds a page, and useAction() settles with its page (rango-t219).
  *
  * Fixture in each app: /hook-fields/:id, a transition() route behind a
  * 400 ms server delay. Each render of the page brings a new stamp that holds
@@ -15,8 +15,11 @@ import { expect, test, type Page } from "@playwright/test";
  * hook-fields-bar, pendingUrl in hook-fields-pending, state, isNavigating,
  * location), the full state (hook-fields-status), and a link's
  * useLinkStatus() beside a selector for isStreaming
- * (hook-fields-link-chrome). Its invalidate button marks the history cache
- * stale, so Back restores the cached page and revalidates it.
+ * (hook-fields-link-chrome), and a save button's useAction() beside a
+ * selector for state (hook-fields-save; the action answers after 300 ms and
+ * re-renders the page, so React holds its commit too). Its invalidate button
+ * marks the history cache stale, so Back restores the cached page and
+ * revalidates it.
  *
  * A recorder samples every reader on each animation frame and after each
  * DOM mutation.
@@ -46,6 +49,9 @@ type Sample = {
   location: string;
   linkPending: string;
   linkStreaming: string;
+  actionState: string;
+  actionResult: string;
+  actionNavState: string;
 };
 type ProbeWindow = { __hookFieldsSamples?: Sample[] };
 
@@ -81,6 +87,7 @@ async function open(
     const sample = (kind: Sample["kind"]): void => {
       const status = data("hook-fields-status");
       const link = data("hook-fields-link-chrome");
+      const save = data("hook-fields-save");
       w.__hookFieldsSamples!.push({
         kind,
         id:
@@ -100,6 +107,9 @@ async function open(
         location: status.location ?? "",
         linkPending: link.linkPending ?? "",
         linkStreaming: link.streaming ?? "",
+        actionState: save.actionState ?? "",
+        actionResult: save.actionResult ?? "",
+        actionNavState: save.navState ?? "",
       });
     };
     new MutationObserver(() => sample("mutation")).observe(
@@ -155,6 +165,7 @@ const screenOf = (s: Sample): string =>
     `selectors=${s.selState} navigating=${s.selNavigating} streaming=${s.bar} pending=${s.pending} location=${s.selLocation}`,
     `status=${s.state} navigating=${s.navigating} streaming=${s.streaming} pending=${s.statusPending} location=${s.location}`,
     `link=${s.linkPending} streaming=${s.linkStreaming}`,
+    `action=${s.actionState}:${s.actionResult} nav=${s.actionNavState}`,
   ].join(" | ");
 
 /** The distinct screens, in order. */
@@ -165,7 +176,7 @@ const screensOf = (samples: Sample[]): string[] =>
 
 /** Each field's selector readers, against the full state's value. */
 const FIELDS: [string, (s: Sample) => string[], (s: Sample) => string][] = [
-  ["state", (s) => [s.selState], (s) => s.state],
+  ["state", (s) => [s.selState, s.actionNavState], (s) => s.state],
   ["isNavigating", (s) => [s.selNavigating], (s) => s.navigating],
   ["isStreaming", (s) => [s.bar, s.linkStreaming], (s) => s.streaming],
   ["pendingUrl", (s) => [s.pending], (s) => s.statusPending],
@@ -344,6 +355,65 @@ export function runHookFieldsTests(options: HookFieldsScenarioOptions): void {
         ),
         "React held page 1's revalidation under the restored page 1",
       ).toBe(true);
+      expectReadersAgree(samples);
+    });
+
+    test(`${variant.name}: an action whose page is held: useAction() settles with that page`, async ({
+      page,
+    }) => {
+      using _ = options.expectNoPageError(page);
+      await open(page, options, variant.vt);
+      const before = await testId(page, "hook-fields-stamp").getAttribute(
+        "data-stamp",
+      );
+      const from = await sampleCount(page);
+
+      await testId(page, "hook-fields-save").click();
+      await expect(testId(page, "hook-fields-stamp")).not.toHaveAttribute(
+        "data-stamp",
+        before!,
+        { timeout: 15000 },
+      );
+      await expect(testId(page, "hook-fields-status")).toHaveAttribute(
+        "data-state",
+        "idle",
+      );
+      const samples = await samplesFrom(page, from);
+
+      expect(
+        samples.some(
+          (s) =>
+            s.stamp === before && s.actionState !== "idle" && s.holding !== "0",
+        ),
+        "React held the action's page under the page it re-renders",
+      ).toBe(true);
+      // The action's result, or its idle, over the page the action replaces,
+      // beside the page's own loading.
+      const early = samples.filter(
+        (s) =>
+          s.stamp === before &&
+          (s.actionResult === "saved" ||
+            (s.actionState === "idle" && s.actionNavState === "loading")),
+      );
+      expect(
+        early.length
+          ? { early: early.length, first: screenOf(early[0]) }
+          : { early: 0, first: undefined },
+        "screens with the action settled over the page it replaces",
+      ).toEqual({ early: 0, first: undefined });
+      expect(
+        samples.some((s) => s.stamp !== before && s.actionResult === "saved"),
+        "the action's result showed with its page",
+      ).toBe(true);
+      expect(
+        samples.filter(
+          (s) =>
+            s.kind === "frame" &&
+            s.stamp !== before &&
+            s.actionState !== "idle",
+        ).length,
+        "animation frames with the action's page and the action in flight",
+      ).toBe(0);
       expectReadersAgree(samples);
     });
   }

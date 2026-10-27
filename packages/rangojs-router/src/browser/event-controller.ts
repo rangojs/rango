@@ -663,9 +663,22 @@ export function createEventController(
 
   const notifyHandles = makeDebouncedNotifier(handleListeners);
 
+  // From a page's "anchor" to its release, the settle windows of the actions
+  // that settled meanwhile: they start at the release, so readers read each
+  // result in the page's commit (useAction).
+  let heldSettles: (() => void)[] | null = null;
+
   function flushRouteState(signal?: RouteStateSignal): void {
     notifyStateListeners.flush();
+    if (signal === "anchor") heldSettles ??= [];
+    else if (signal) releaseSettles();
     notifyHandles.flush(signal);
+  }
+
+  function releaseSettles(): void {
+    const settles = heldSettles;
+    heldSettles = null;
+    settles?.forEach((start) => start());
   }
 
   function getState(): DerivedNavigationState {
@@ -979,20 +992,24 @@ export function createEventController(
       settled = true;
 
       // Cleanup after brief delay (allow useAction to read result)
-      setTimeout(() => {
-        inflightActions.delete(id);
-        // Free this cohort's arbitration once its last action has settled, so
-        // a long-running action elsewhere cannot pin keys from a drained entry.
-        releaseCohort();
-        // Check for consolidation
-        if (inflightActions.size === 0) {
-          // All actions done - reset tracking
-          hadAnyConcurrentActions = false;
-          concurrentRevalidatedSegments.clear();
-        }
-        notify();
-        notifyAction(actionId);
-      }, 100);
+      const start = () => setTimeout(cleanup, 100);
+      if (heldSettles) heldSettles.push(start);
+      else start();
+    }
+
+    function cleanup() {
+      inflightActions.delete(id);
+      // Free this cohort's arbitration once its last action has settled, so
+      // a long-running action elsewhere cannot pin keys from a drained entry.
+      releaseCohort();
+      // Check for consolidation
+      if (inflightActions.size === 0) {
+        // All actions done - reset tracking
+        hadAnyConcurrentActions = false;
+        concurrentRevalidatedSegments.clear();
+      }
+      notify();
+      notifyAction(actionId);
     }
 
     // Called when both action is done AND streaming has ended
@@ -1343,7 +1360,10 @@ export function createEventController(
     subscribeToAction,
     subscribeToHandles,
     flushRouteState,
-    releaseRouteState: () => notifyHandles.flush("release"),
+    releaseRouteState: () => {
+      releaseSettles();
+      notifyHandles.flush("release");
+    },
 
     // Direct access
     getCurrentNavigation: () => currentNavigation,

@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import {
   Link,
   Outlet,
+  useAction,
   useLinkStatus,
   useNavigation,
   usePathname,
@@ -607,6 +608,97 @@ describe("renderRoute: a reader that mounts while a transition() page is held", 
       "1 | loading /items/1 streaming=true | idle /items/2 streaming=true",
       "1 | loading /items/1 streaming=true | idle /items/2 streaming=false",
       "2 | idle /items/2 streaming=false | idle /items/2 streaming=false",
+    ]);
+  });
+});
+
+// useAction() follows the same rule: a call's idle waits for the held page in
+// a reader mounted before the hand-over, beside useNavigation()'s, and the
+// controller keeps the call's entry for it past the 100 ms settle window. A
+// reader that mounts during the hold reads the live values.
+describe("renderRoute: useAction() while a transition() page is held", () => {
+  function useRoute(): string {
+    const nav = useNavigation();
+    const save = useAction("save", (s) => s.state);
+    return `${nav.state} ${nav.location.pathname} save=${save}`;
+  }
+
+  function Header(): ReactNode {
+    return <p data-testid="header">{useRoute()}</p>;
+  }
+
+  function Menu(): ReactNode {
+    return <p data-testid="menu">{useRoute()}</p>;
+  }
+
+  let actionScreens: string[];
+
+  function MenuShell(): ReactNode {
+    const [open, setOpen] = useState(false);
+    const text = (id: string) =>
+      document.querySelector(`[data-testid="${id}"]`)?.textContent ?? "-";
+    return (
+      <Profiler
+        id="action-shell"
+        onRender={(_id, phase) => {
+          if (phase === "nested-update") actionScreens.pop();
+          actionScreens.push(
+            `${text("item")} | ${text("header")} | ${text("menu")}`,
+          );
+        }}
+      >
+        <Header />
+        <button data-testid="open" onClick={() => setOpen(true)} />
+        {open && <Menu />}
+        <Suspense fallback={<p data-testid="skeleton">skeleton</p>}>
+          <Outlet />
+        </Suspense>
+      </Profiler>
+    );
+  }
+
+  it("an action settles during the hold: the menu reads the live values at once, the header waits for the page", async () => {
+    actionScreens = [];
+    const mounted = await renderRoute(
+      [
+        { path: "/items/:id", Component: MenuShell },
+        { path: "/items/:id", Component: Item, transition: {} },
+      ],
+      { request: "/items/1", loaders: [[ItemLoader, "1"]] },
+    );
+    const action = mounted.router.eventController.startAction(
+      "src/actions.ts#save",
+      [],
+    );
+    await task();
+    const page = deferred();
+    await mounted.router.navigate("/items/2", {
+      loaders: [[ItemLoader, page.promise]],
+    });
+    await task();
+    await act(async () => {
+      fireEvent.click(mounted.getByTestId("open"));
+    });
+    await task();
+    await act(async () => {
+      action.complete(undefined);
+      action[Symbol.dispose]();
+    });
+    await task();
+    // Past the action's settle window: the hold keeps its entry.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 150));
+    });
+    await showPage2(mounted, page);
+
+    expect(
+      actionScreens.filter((v, i) => i === 0 || actionScreens[i - 1] !== v),
+    ).toEqual([
+      "1 | idle /items/1 save=idle | -",
+      "1 | loading /items/1 save=loading | -",
+      "1 | loading /items/1 save=loading | loading /items/2 save=loading",
+      "1 | loading /items/1 save=loading | idle /items/2 save=idle",
+      "2 | idle /items/2 save=idle | idle /items/2 save=idle",
     ]);
   });
 });

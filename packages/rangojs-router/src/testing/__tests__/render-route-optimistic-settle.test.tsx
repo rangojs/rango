@@ -377,7 +377,7 @@ describe("renderRoute: optimistic hook values settle in the page's commit (frame
     action[Symbol.dispose]();
   });
 
-  it("a full-state useAction reader: each action state commits at once while React holds a page, and the page keeps its types", async () => {
+  it("a full-state useAction reader: work shows at once while React holds a page, its settle commits with the page, and the page keeps its types", async () => {
     const { router } = await render(true);
     const item = deferred();
 
@@ -399,11 +399,13 @@ describe("renderRoute: optimistic hook values settle in the page's commit (frame
     await waitFor(() => expect(onScreen()).toBe("2:two"));
     await settle();
 
+    // The action settles during the hold: idle waits for the page, as
+    // useNavigation()'s does, and the release brings it in the commit's task.
     expect(dedupe(actions)).toEqual([
       "idle 1:one",
       "loading 1:one",
       "streaming 1:one",
-      "idle 1:one",
+      "streaming 2:two",
       "idle 2:two",
     ]);
     expect(pushAnimated).toEqual([["push", "navigation"]]);

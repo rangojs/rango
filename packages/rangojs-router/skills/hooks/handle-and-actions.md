@@ -206,6 +206,11 @@ last one to start.
   calls in flight when another call's response is an error boundary, and on
   Back/Forward into or out of an intercept.
 - `useNavigation()` stays `loading` while any call runs.
+- A call shows `loading` and `streaming` at once. While React holds a page
+  (the call's revalidated page, or a navigation's), the `idle` that ends the
+  call, with its result or error, waits for that page and commits with it,
+  as `useNavigation()`'s `"idle"` does. A result is never shown over the
+  page the action replaces.
 
 Which calls count as the same action depends on what you pass:
 

@@ -4,7 +4,10 @@ import { useContext, useState, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
 import type { TrackedActionState } from "../types.js";
-import { DEFAULT_ACTION_STATE } from "../event-controller.js";
+import {
+  DEFAULT_ACTION_STATE,
+  type RouteStateSignal,
+} from "../event-controller.js";
 import { invariant } from "../../errors.js";
 
 /**
@@ -54,6 +57,12 @@ Solutions:
 The string must match the exported function name from your "use server" file.`
       : "useAction: Cannot extract action ID from function reference.",
   );
+}
+
+/** The state a value was selected from, and the value. */
+interface Snapshot<T> {
+  state: TrackedActionState;
+  value: T;
 }
 
 /**
@@ -136,21 +145,20 @@ export function useAction<T>(
       ? getActionId(action)
       : "";
 
-  // Set urgently from notifyAction's task, also while React holds a page: a
-  // transition of its own would take the held page's transition types (see
-  // useNavigation).
-  const [value, setValue] = useState<T | TrackedActionState>(() => {
-    if (!ctx) {
-      return selector ? selector(DEFAULT_ACTION_STATE) : DEFAULT_ACTION_STATE;
-    }
-    // The document renders no action in flight.
-    const state = ctx.eventController.getHydrationSnapshot()
-      ? DEFAULT_ACTION_STATE
-      : ctx.eventController.getActionState(actionId);
-    return selector ? selector(state) : state;
-  });
-  const prevSelected = useRef(value);
-  prevSelected.current = value;
+  // Set urgently, never in a transition of its own: it would take a held
+  // page's transition types (see useNavigation).
+  const [snapshot, setSnapshot] = useState<Snapshot<T | TrackedActionState>>(
+    () => {
+      // The document renders no action in flight.
+      const state =
+        !ctx || ctx.eventController.getHydrationSnapshot()
+          ? DEFAULT_ACTION_STATE
+          : ctx.eventController.getActionState(actionId);
+      return { state, value: selector ? selector(state) : state };
+    },
+  );
+  // What React ends on once every set so far commits.
+  const latest = useRef(snapshot);
 
   // Ref keeps the latest selector for subscription callbacks without
   // re-subscribing on every render. Selector changes themselves are not
@@ -159,24 +167,48 @@ export function useAction<T>(
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
-  // Subscribe to action state changes from event controller
+  // Subscribe to action state changes from event controller. While React
+  // holds a page (its anchor until its release, as useNavigation reads
+  // them), a call that starts or streams shows at once, and one that settles
+  // waits for the page's commit (rango-d152): the release brings it in the
+  // commit's task, and the controller keeps the call's entry until then.
   useEffect(() => {
     if (!ctx) return;
 
-    const sync = (state: TrackedActionState) => {
-      const selected = selectorRef.current ? selectorRef.current(state) : state;
-      if (!shallowEqual(selected, prevSelected.current)) {
-        prevSelected.current = selected;
-        setValue(selected);
-      }
+    let pageHeld = false;
+    const select = (state: TrackedActionState) =>
+      selectorRef.current ? selectorRef.current(state) : state;
+    const update = (signal?: RouteStateSignal) => {
+      if (signal) pageHeld = signal === "anchor";
+      const live = ctx.eventController.getActionState(actionId);
+      const held = pageHeld && !signal;
+      const next = (
+        base: Snapshot<T | TrackedActionState>,
+      ): Snapshot<T | TrackedActionState> => {
+        const state = held && live.state === "idle" ? base.state : live;
+        return { state, value: select(state) };
+      };
+      const target = next(latest.current);
+      if (shallowEqual(target.value, latest.current.value)) return;
+      latest.current = target;
+      setSnapshot(held ? next : target);
     };
     // Sync current state for the (possibly new) actionId so that switching
     // actions on an idle page doesn't leave stale data from the old action.
-    sync(ctx.eventController.getActionState(actionId));
-    return ctx.eventController.subscribeToAction(actionId, sync);
+    update();
+    const unsubscribe = ctx.eventController.subscribeToAction(actionId, () =>
+      update(),
+    );
+    const unsubscribeSignals = ctx.eventController.subscribeToHandles(
+      (signal) => signal && update(signal),
+    );
+    return () => {
+      unsubscribe();
+      unsubscribeSignals();
+    };
   }, [actionId]);
 
-  return value;
+  return snapshot.value;
 }
 
 export type { TrackedActionState };

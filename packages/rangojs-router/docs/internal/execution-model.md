@@ -1954,13 +1954,18 @@ Here is how each hook gets there:
   lands. That frame is not a contradiction: it is the one every link that is
   not the destination reads during any navigation ("a navigation aborted
   while another flow's commit is held" in the same test file).
-- `useAction` values never wait for a page. Action notifications go out on
-  `notifyAction`'s timer, which `flushRouteState()` does not flush, and
-  synchronously from `abortAllActions()` (called from a back/forward that
-  changes the intercept context in `navigation-bridge.ts` and from an
-  action's error path in `server-action-bridge.ts`); neither runs inside a
-  transition. So every state commits urgently, also while React holds a page,
-  and the hook starts no transition of its own.
+- `useAction` follows the same rule. It listens for the anchor and release
+  signals too: `loading` and `streaming` commit at once, also while React
+  holds a page, and the `idle` that settles a call (with its result or
+  error) waits for the page's commit. The controller keeps the call's entry
+  for it: `doSettle`'s 100 ms window, after which a reader reads the idle
+  default, starts at the release when the call settled during a hold.
+  Before, an action whose revalidated page React held showed its result
+  over the page it replaced, beside `useNavigation()`'s `"loading"`, and
+  lost it 100 ms later, before its page showed (the `hook-fields` e2e).
+  Action notifications go out on `notifyAction`'s timer and synchronously
+  from `abortAllActions()`; neither runs inside a transition, and the hook
+  starts no transition of its own.
 - Both hooks used to pin with `useOptimistic` in a `startTransition` of
   their own. React commits the revert of such a pin on its own, as a
   transition-only commit, which took the types queued for a held page (a

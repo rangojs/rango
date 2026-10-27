@@ -30,6 +30,20 @@ held.
 
 No change in your code.
 
+### Fixed: `useAction()` settles with the page React holds
+
+**Before.** A `useAction()` reader of an action whose revalidated page React
+held showed the action's result over the page the action was replacing,
+beside `useNavigation()`'s `"loading"`, and lost it 100 ms later, before the
+new page showed.
+
+**Now.** `useAction()` follows `useNavigation()`'s rule: `loading` and
+`streaming` show at once, and the `idle` that ends a call, with its result
+or error, commits with the held page, whether that page is the action's own
+or a navigation's.
+
+No change in your code.
+
 ### Changed: `renderRoute` restores the page on back/forward, and `navigate()` takes `streamUntil`
 
 **Before.** `renderRoute` kept the tree on one page. A `popstate` after
