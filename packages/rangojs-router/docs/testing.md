@@ -111,8 +111,16 @@ bound to `useNavigation()` and a stale indicator bound to
 `testing/client-components.md`, "Held navigation"). `navigate(url, { handles })`
 hands the destination's handle pushes over the response's handle stream, so a
 title or crumbs read with `useHandle()` keep the page being left's values while
-React holds the page. A back/forward restored from the history cache is not
-modeled: renderRoute keeps one URL and caches no entries.
+React holds the page. `navigate(url, { streamUntil })` gives the navigation a
+response stream that stays open past the commit until the promise settles
+(or a newer navigation aborts it, as in production), so a progress bar bound
+to `useNavigation().isStreaming` is testable. A back/forward onto the
+mounted entry or one a navigate() wrote restores that entry's page, as the
+history-cache restore does; a stale entry's revalidation and a restore that
+fetches stay at e2e. A navigation started while React holds a page goes
+inside `await act(async () => ...)`: its first update makes React retry the
+held page, and a synchronous `act()` drops that retry, after which React
+renders no later update of the same priority.
 
 The rango **cache-invalidation directives** are an exception worth calling out,
 because they used to look like a trap and no longer are. A handler/action/loader
@@ -642,9 +650,11 @@ commits through production's `commitInTransition`, so the assertion between
 the call and the promise settling sees the page being left with its own state.
 A reader that mounts during that window reads the entry on screen too. A
 `popstate` event on `window` is a back/forward onto the entry `history.state`
-holds: readers take that entry as it is (the tree has one location, so no page
-is restored with it). `router.navigate()` writes history only for `state` or
-`replace: true`; `navigate(url)` and `navigate(url, { replace: false })` leave
+holds: when it is the mounted entry or one a navigate() wrote, history still
+holds the state written there, and another page is on screen, that entry's
+page is restored with it; otherwise (an entry the test wrote, such as a
+`history.replaceState()` over it) readers take that entry as it is.
+`router.navigate()` writes history only for `state` or `replace: true`; `navigate(url)` and `navigate(url, { replace: false })` leave
 it alone. The skill's "State while a navigation is pending" has the worked
 example.
 

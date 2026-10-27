@@ -2,6 +2,71 @@
 
 ## Unreleased
 
+### Fixed: `useNavigation()` readers agree while React holds a page
+
+**Before.** On a `transition()` route, React holds the next page until it is
+ready. A progress bar reading `useNavigation((n) => n.isStreaming)` dropped
+when the response stream ended, while a status line reading the full
+`useNavigation()` kept `isStreaming: true` and `"loading"` over the same old
+page until the new one showed. Which one you got depended on whether the
+reader happened to have a value React had not committed yet. A page that
+ended the hold urgently (a Back to a page without `transition()`, a link with
+`transition={false}`) could show with a selector still reading the held
+page's `"loading"` or location.
+
+**Now.** While React holds a page, every field commits by one rule, for every
+`useNavigation()` reader mounted before the page was handed over, through a
+selector or the full state: work that starts shows at once (`"loading"`,
+`isStreaming` and `isNavigating` turning `true`, a newer click's
+`pendingUrl`), and what settles commits with the page (`"idle"`, `false`, a
+`null` `pendingUrl`). A page that ends the hold urgently shows with its own
+values in every `useNavigation()` reader.
+
+Two readers still differ. A `useNavigation()` reader that mounts while the
+page is held reads the live values, the destination's. And when a page ends
+the hold urgently, `usePathname()` can read the path of the page being left
+on that page's first screen, until React finishes the render of the page it
+held.
+
+No change in your code.
+
+### Changed: `renderRoute` restores the page on back/forward, and `navigate()` takes `streamUntil`
+
+**Before.** `renderRoute` kept the tree on one page. A `popstate` after
+`router.navigate(url, { state })`, such as `window.history.back()`, left the
+destination on screen and only handed readers the entry's location state. A
+navigation had no response stream, so `useNavigation().isStreaming` stayed
+`false`.
+
+**Now.** A back/forward onto the entry `renderRoute` mounted, or one a
+`navigate()` wrote, restores that entry's page with its params, location
+state and handle values, as production's history-cache restore does;
+`transition({ when })` decides it as kind `"pop"`. An entry the test writes
+over with `history.replaceState()` restores nothing: readers take it as
+history holds it, as before. A stale entry's revalidation and a restore that
+fetches stay at e2e.
+
+`navigate(url, { streamUntil })` keeps the navigation's response stream open
+past the commit until the promise settles, or until a newer navigation aborts
+it, as in production:
+
+```tsx
+const tail = deferred<void>();
+await router.navigate("/items/2", { streamUntil: tail.promise });
+// useNavigation(): "idle", isStreaming true
+await act(async () => tail.resolve());
+// useNavigation(): "idle", isStreaming false
+```
+
+A test that went back after a `navigate()` with `state` and expected the
+destination to stay on screen now sees the page it went back to. A test that
+only checks the entry's location state writes it with
+`history.replaceState(entry, "")` before the `popstate`.
+
+A navigation started while React holds a page goes inside
+`await act(async () => { ... })`. A synchronous `act()` drops React's retry
+of the held page, and an urgent commit after it never renders.
+
 ### Fixed: an earlier action's background revalidation keeps the error boundary a later action shows
 
 **Before.** The user fires a slow action on one page and moves to another

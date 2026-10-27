@@ -81,6 +81,25 @@ the action's revalidated content.
 boundary that already showed), so use it for a progress indicator that should
 last until the new page is complete.
 
+While React holds a page, every field follows one rule, whatever the reader
+reads (a selector, the full state): work that starts shows at once
+(`"loading"`, `isStreaming` and `isNavigating` turning `true`, a newer click's
+`pendingUrl`), and what settles waits for the page (`"idle"`, `false`, a
+`null` `pendingUrl`). So a progress bar that reads
+`useNavigation((n) => n.isStreaming)` stays up until the held page shows, even
+when the response stream ended earlier, and agrees with every other
+`useNavigation()` reader on the screen. A page that ends the hold urgently (a
+Back to a page without `transition()`, a link with `transition={false}`)
+shows with its own values in every `useNavigation()` reader. `usePathname()`
+can read the path of the page being left on that page's first screen, until
+React finishes the render of the page it held.
+
+The rule holds for readers mounted before the page was handed to React. A
+reader that mounts while the page is held (a menu opened during the wait)
+never saw the hand-over and reads the live values, the destination's `idle`
+and location, until the page shows. This is by design (#1046): its first
+render has no page of its own to wait for.
+
 On Back/Forward the address bar changes at once, before any of this: during
 the wait `window.location` is the entry being fetched, the same URL as
 `pendingUrl`, and `location` is the page on screen. A Back/Forward served
