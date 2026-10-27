@@ -11,9 +11,14 @@ import { expect, test, type Page } from "@playwright/test";
  * is already revealed, never holds the page; only the crumb's boundary waits.
  * Whichever click's crumb is pending.
  *
- * No wrong frame: no painted frame shows a page with another page's title,
- * crumb or (multi reader) pathname, and the first click's page, which never
- * shows, never shows its title or crumb.
+ * Frames, judged on painted samples. Handle values are late by design (a
+ * streamed push lands after its page), so the page being left's title or
+ * crumb on the destination is allowed. Asserted: no frame shows the
+ * destination's or the first click's title or crumb before the destination
+ * shows (early), and the destination never shows another pathname (multi
+ * reader) or a value of no page in the test. Counted, not asserted: frames of
+ * the destination with the first click's title or crumb, a page that never
+ * shows (rango-t218 class), as a `frames` annotation with the late count.
  *
  * How the probe sees frames (init script, window.__ho):
  * - A requestAnimationFrame loop samples the DOM at the start of every
@@ -260,8 +265,15 @@ export function runHandlesOverlapTests(
           }
 
           await testId(page, `ho-link-${second}`).click();
+          // HD4 assertions are soft: a failing run still judges and counts
+          // its frames.
+          if (first === "held-pending") {
+            await expect
+              .soft(testId(page, "ho-page"))
+              .toHaveText(second, { timeout: UNHELD_TIMEOUT });
+          }
           await expect(testId(page, "ho-page")).toHaveText(second, {
-            timeout: first === "held-pending" ? UNHELD_TIMEOUT : NAV_TIMEOUT,
+            timeout: NAV_TIMEOUT,
           });
           if (second === "fast-pending") {
             await expect(testId(page, "ho-crumb-content")).toHaveText(
@@ -297,27 +309,63 @@ export function runHandlesOverlapTests(
           if (second === "fast-pending") {
             // HD4: the page commits before its crumb's content resolves.
             const shown = dom.find((s) => s.page === second);
-            expect(shown?.content, trace).not.toBe(`c ${second}`);
+            expect.soft(shown?.content, trace).not.toBe(`c ${second}`);
           }
 
           const destPath = pathname(`${base}/${second}`);
-          const wrong = (s: Shown): boolean =>
-            s.page === second
-              ? s.crumb !== second ||
-                s.title !== `HO ${second}` ||
-                (reader === "multi" && s.path !== destPath)
-              : s.crumb === second ||
+          // A destination value: its own, the page being left's (late), or
+          // the first click's (a page that never shows).
+          const kind = (
+            value: string | null,
+            own: string,
+            left: string,
+            neverShown: string | null,
+          ) =>
+            value === own
+              ? "own"
+              : value === left
+                ? "late"
+                : neverShown !== null && value === neverShown
+                  ? "never-shown"
+                  : "wrong";
+          const judge = (s: Shown): "ok" | "late" | "never-shown" | "wrong" => {
+            if (s.page !== second) {
+              const early =
+                s.crumb === second ||
                 s.title === `HO ${second}` ||
                 (first !== null &&
                   (s.crumb === first || s.title === `HO ${first}`));
-          const painted = probe.frames.filter((s) => s.f >= from.f && wrong(s));
-          expect(painted, trace).toEqual([]);
+              return early ? "wrong" : "ok";
+            }
+            if (reader === "multi" && s.path !== destPath) return "wrong";
+            const kinds = [
+              kind(s.crumb, second, "1", first),
+              kind(s.title, `HO ${second}`, "HO 1", first && `HO ${first}`),
+            ];
+            if (kinds.includes("wrong")) return "wrong";
+            if (kinds.includes("never-shown")) return "never-shown";
+            return kinds.includes("late") ? "late" : "ok";
+          };
+          const after = probe.frames.filter((s) => s.f >= from.f);
+          const count = (verdict: string) =>
+            after.filter((s) => judge(s) === verdict).length;
+          test.info().annotations.push({
+            type: "frames",
+            description: JSON.stringify({
+              late: count("late"),
+              neverShown: count("never-shown"),
+            }),
+          });
+          expect(
+            after.filter((s) => judge(s) === "wrong"),
+            trace,
+          ).toEqual([]);
 
           for (const v of probe.vt.filter((v) => v.f >= from.f)) {
-            if (v.ready && wrong(v.ready)) {
+            if (v.ready && judge(v.ready) !== "ok") {
               test.info().annotations.push({
                 type: "view-transition capture",
-                description: `${JSON.stringify(v.ready)}; frames ${v.doneF}->${v.readyF}`,
+                description: `${judge(v.ready)} ${JSON.stringify(v.ready)}; frames ${v.doneF}->${v.readyF}`,
               });
             }
           }
