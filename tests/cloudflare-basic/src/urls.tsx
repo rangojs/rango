@@ -371,6 +371,7 @@ import { transitionKindsPatterns } from "./pages/transition-kinds.js";
 import { optimisticSettlePatterns } from "./pages/optimistic-settle.js";
 import { asyncHandlesPatterns } from "./pages/async-handles.js";
 import { handlesCommitPatterns } from "./pages/handles-commit.js";
+import { handlesOverlapPatterns } from "./pages/handles-overlap.js";
 import { vtBackPatterns } from "./pages/vt-back.js";
 import { actionLatestCallPatterns } from "./pages/action-latest-call.js";
 import { hookFieldsPatterns } from "./pages/hook-fields.js";
@@ -3296,6 +3297,9 @@ export const urlpatterns = urls(
         // A navigation's title and crumbs commit with its page (mirrors the
         // router e2e app's /handles-commit/*).
         include("/", handlesCommitPatterns, { name: "" }),
+        // A second click over a held page (mirrors the router e2e app's
+        // /handles-overlap/*).
+        include("/", handlesOverlapPatterns, { name: "" }),
         // Async handle values (mirrors the router e2e app's /async-handles/*).
         include("/", asyncHandlesPatterns, { name: "" }),
         // A cached back/forward animates under transition() (mirrors the

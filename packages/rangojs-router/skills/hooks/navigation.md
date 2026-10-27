@@ -254,8 +254,11 @@ const segments = useSegments();
 const part = segments.path[depth];
 ```
 
-Like `useHandle`, it commits with the page: while React holds the page being
-left, `useSegments()` keeps that page's path and segments.
+While React holds the page being left, `useSegments()` keeps that page's
+values. The new page's `path` and `location` commit with it, so its effects
+read them; `segmentIds` come with the page's handle data and can land right
+after its commit, as handle values do (see
+[handle-and-actions](./handle-and-actions.md#when-handle-values-change-by-design)).
 
 ### useLinkStatus()
 

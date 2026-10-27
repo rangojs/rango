@@ -33,6 +33,7 @@ import { actionLatestCallPatterns } from "./urls/action-latest-call.js";
 import { asyncHandlesPatterns } from "./urls/async-handles.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
 import { hookFieldsPatterns } from "./urls/hook-fields.js";
+import { handlesOverlapPatterns } from "./urls/handles-overlap.js";
 import { vtBackPatterns } from "./urls/vt-back.js";
 import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
@@ -1263,6 +1264,8 @@ export const urlpatterns = urls(
       include("/", handlesCommitPatterns, { name: "" }),
       // useNavigation()'s fields in every reader shape while a page is held.
       include("/", hookFieldsPatterns, { name: "" }),
+      // A second click over a held page: no page held by a pending crumb.
+      include("/", handlesOverlapPatterns, { name: "" }),
       // Async handle values: awaited in SSR, held then swapped on navs.
       include("/", asyncHandlesPatterns, { name: "" }),
       // A cached back/forward animates under transition().
