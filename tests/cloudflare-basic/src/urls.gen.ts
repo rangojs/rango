@@ -125,6 +125,7 @@ export const routes = {
   holeyThrowsDocument: "/holey-throws/document",
   holeyThrowsPlain: "/holey-throws/plain",
   home: "/",
+  hookFields: "/hook-fields/:id",
   identityRawCached: "/identity-raw/cached",
   identityRawCopies: "/identity-raw/copies",
   identityRawKeyed: "/identity-raw/keyed",

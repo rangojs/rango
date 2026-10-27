@@ -32,6 +32,7 @@ import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
 import { actionLatestCallPatterns } from "./urls/action-latest-call.js";
 import { asyncHandlesPatterns } from "./urls/async-handles.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
+import { hookFieldsPatterns } from "./urls/hook-fields.js";
 import { vtBackPatterns } from "./urls/vt-back.js";
 import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
@@ -1260,6 +1261,8 @@ export const urlpatterns = urls(
       include("/", actionLatestCallPatterns, { name: "" }),
       // A navigation's title and crumbs commit with its page.
       include("/", handlesCommitPatterns, { name: "" }),
+      // useNavigation()'s fields in every reader shape while a page is held.
+      include("/", hookFieldsPatterns, { name: "" }),
       // Async handle values: awaited in SSR, held then swapped on navs.
       include("/", asyncHandlesPatterns, { name: "" }),
       // A cached back/forward animates under transition().

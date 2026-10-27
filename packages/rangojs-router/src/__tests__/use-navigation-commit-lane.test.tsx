@@ -657,14 +657,13 @@ describe.each([
 
 /**
  * A notification that moves neither the state nor the location (the stream
- * starting, which clears pendingUrl, or ending, which clears isStreaming)
- * goes in a transition only while a value of the reader's is held, so React
- * entangles it with that value. Otherwise it is urgent: a transition of its
- * own starts a view transition inside a <ViewTransition> that resolves a
- * class for a commit with no types (transition({}) does), and commits ahead
- * of a held page, taking the page's transition types.
+ * starting, which clears pendingUrl, or ending, which clears isStreaming) is
+ * set urgently, also while a page is held: a transition of its own starts a
+ * view transition inside a <ViewTransition> that resolves a class for a
+ * commit with no types (transition({}) does), and commits ahead of a held
+ * page, taking the page's transition types.
  */
-describe("useNavigation: a quiet notification", () => {
+describe("useNavigation: a notification that moves neither state nor location starts no transition", () => {
   let vtTypes: string[][];
 
   function QuietReader(): ReactNode {
@@ -723,16 +722,18 @@ describe("useNavigation: a quiet notification", () => {
     const stream = handle.startStreaming();
     await notified();
     await commit(handle, "/items/1?tag=b", { id: "1" }, hold.promise, true);
-    // The stream ends while React holds the page.
+    // The stream ends while React holds the page: isStreaming settles with
+    // the page, as the full state's does (rango-t219).
     stream.end();
     await notified();
-    await waitFor(() => expect(quiet()).toBe("none false"));
+    expect(quiet()).toBe("none true");
 
     await release(
       hold,
       () => result.getByTestId("reader").textContent,
       "idle /items/1?tag=b id=1",
     );
+    expect(quiet()).toBe("none false");
     // One view transition: the page's, with the types its commit added.
     expect(vtTypes).toHaveLength(1);
     expect(vtTypes[0]).toContain("navigation");

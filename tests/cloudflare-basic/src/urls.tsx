@@ -373,6 +373,7 @@ import { asyncHandlesPatterns } from "./pages/async-handles.js";
 import { handlesCommitPatterns } from "./pages/handles-commit.js";
 import { vtBackPatterns } from "./pages/vt-back.js";
 import { actionLatestCallPatterns } from "./pages/action-latest-call.js";
+import { hookFieldsPatterns } from "./pages/hook-fields.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -3303,6 +3304,9 @@ export const urlpatterns = urls(
         // useAction() reports the latest call of an action called twice
         // (mirrors the router e2e app's /action-latest*).
         include("/", actionLatestCallPatterns, { name: "" }),
+        // useNavigation()'s fields in every reader shape while a page is
+        // held (mirrors the router e2e app's /hook-fields/:id).
+        include("/", hookFieldsPatterns, { name: "" }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {
