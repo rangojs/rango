@@ -475,15 +475,15 @@ export interface TestRouterHandle {
    * await act(async () => tail.resolve());
    * // useNavigation(): idle, isStreaming false
    *
-   * A navigation started while React holds a page goes inside
-   * `await act(async () => ...)`. Its first update makes React retry the held
-   * page, which suspends again; a synchronous act() scope drops that retry
-   * and React renders no later update of the same priority.
+   * A navigation started while React holds a page shows its page once the
+   * call resolves, with or without act(). A `<Link>` click over a held page
+   * still goes inside `await act(async () => ...)` (docs/testing.md).
    *
    * @example
-   * await act(async () => {
-   *   await router.navigate("/products/3", { transition: false });
-   * });
+   * await router.navigate("/products/2", { loaders: [[ProductLoader, next]] });
+   * // React holds /products/2
+   * await router.navigate("/products/3", { transition: false });
+   * // /products/3 is on screen
    */
   navigate(
     url: string,
@@ -914,9 +914,10 @@ export async function renderRoute(
     const handle = eventController.startNavigation(
       new URL(target, TEST_ORIGIN).href,
     );
-    // Synchronous, in the caller's task: a <Link> click's own act() scope
-    // takes it, and no act() of the caller's can overlap it.
-    act(() => eventController.flushRouteState());
+    // Runs in the caller's task, so a <Link> click's own act() takes it.
+    // Awaited: React retries a held page with this update, and an unawaited
+    // act() drops that suspended retry for good.
+    await act(() => eventController.flushRouteState());
     try {
       const streamUntil = navOptions?.streamUntil;
       if (streamUntil) {
@@ -927,18 +928,19 @@ export async function renderRoute(
         });
         if (handle.signal.aborted) return;
         const stream = handle.startStreaming();
-        act(() => eventController.flushRouteState());
+        await act(() => eventController.flushRouteState());
         // A navigation that is left stops counting as streaming at the abort
         // (partial-update.ts endStream); the abort's notification goes out
         // with the newer navigation's.
         handle.signal.addEventListener("abort", () => stream.end(), {
           once: true,
         });
-        const end = (): void =>
-          act(() => {
+        const end = async (): Promise<void> => {
+          await act(() => {
             stream.end();
             eventController.flushRouteState();
           });
+        };
         void streamUntil.then(end, end);
       }
       await commitNavigation(handle, target, navOptions);
