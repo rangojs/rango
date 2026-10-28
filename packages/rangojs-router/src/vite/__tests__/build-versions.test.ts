@@ -11,6 +11,7 @@
  * `*` is a "use client" module: a leaf in the server graph, and in the client
  * graph the importer of a/actions (a server action only client code imports).
  */
+import { posix } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   classifyExternal,
@@ -564,6 +565,35 @@ describe("computeRouterVersions", () => {
       `var refs = { "id-a": () => import("./actions-CCCCCCCC.js"), "id-new": () => import("./actions-CCCCCCCC.js") };`,
     );
     expect(compute({ files }).table).toEqual(before);
+  });
+
+  // rolldown 1.2.15 marks only where each module starts: no `//#endregion`
+  // closes the map (rolldown#11235).
+  it("does not hash the server-reference map under a start-only marker, and hashes the code after it", () => {
+    const runtime = (refs: string, code = "runtime();") => ({
+      ...serverFiles(),
+      "assets/runtime-RRRRRRRR.js": [
+        "// \\0virtual:vite-rsc/server-references",
+        `var refs = { ${refs} };`,
+        "// src/runtime.ts",
+        code,
+        "// \\0@rangojs/router:version",
+        `var ROUTER_VERSIONS = ${ROUTER_VERSIONS_PLACEHOLDER};`,
+      ].join("\n"),
+    });
+    const action = (id: string) =>
+      `"${id}": () => import("./actions-CCCCCCCC.js")`;
+    const before = compute({ files: runtime(action("id-a")) }).table;
+    expect(
+      compute({
+        files: runtime(`${action("id-a")}, ${action("id-new")}`),
+      }).table,
+    ).toEqual(before);
+    const after = compute({
+      files: runtime(action("id-a"), "runtimeChanged();"),
+    }).table;
+    expect(after["router-a"]![0]).not.toBe(before["router-a"]![0]);
+    expect(after["router-b"]![0]).not.toBe(before["router-b"]![0]);
   });
 
   it("hashes the code around the server-reference map", () => {
@@ -1253,6 +1283,34 @@ describe("stripServerReferenceMap", () => {
     const source = "var refs={a:1};after();";
     expect(stripServerReferenceMap(source)).toBe(source);
   });
+
+  // rolldown 1.2.15 marks only where each module starts (rolldown#11235).
+  it("drops the map's body up to the next module's start-only marker", () => {
+    const source = [
+      "before();",
+      "// \\0virtual:vite-rsc/server-references",
+      "var refs = { a: 1 };",
+      "// ../node_modules/@vitejs/plugin-rsc/dist/rsc.js",
+      "after();",
+    ].join("\n");
+    expect(stripServerReferenceMap(source)).toBe(
+      [
+        "before();",
+        "// \\0virtual:vite-rsc/server-references",
+        "// ../node_modules/@vitejs/plugin-rsc/dist/rsc.js",
+        "after();",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps a start-only marked map that no marker follows", () => {
+    const source = [
+      "// \\0virtual:vite-rsc/server-references",
+      "var refs = { a: 1 };",
+      "export { refs };",
+    ].join("\n");
+    expect(stripServerReferenceMap(source)).toBe(source);
+  });
 });
 
 describe("what the ssr-and-client input is a digest of", () => {
@@ -1550,6 +1608,62 @@ describe("digestBundle", () => {
     expect(base(`load("dep-AAAAAAAA.js", "~");`)).not.toBe(
       base(`load("~", "dep-AAAAAAAA.js");`),
     );
+  });
+
+  // rolldown 1.2.15 prints `// <id>` where each module starts, a path relative
+  // to the working directory (rolldown#11235): the same source checked out
+  // elsewhere and built from another directory printed other markers.
+  it("digests a chunk the same whatever directory its start-only markers are relative to", () => {
+    const base = (root: string, cwd: string, typescript: string) => {
+      const moduleIds = [
+        `\0virtual:vite-rsc/css?type=rsc&id=${encodeURIComponent(`${root}/src/note.tsx`)}&lang.js`,
+        `${root}/node_modules/.pnpm/dep@1.0.0_typescript@${typescript}/node_modules/dep/index.js`,
+        `${root}/src/note.tsx`,
+      ];
+      const source = moduleIds
+        .flatMap((id, index) => [
+          id.startsWith("\0")
+            ? `// \\0${id.slice(1)}`
+            : `// ${posix.relative(cwd, id)}`,
+          `code${index}();`,
+        ])
+        .join("\n");
+      return digestBundle(
+        {
+          chunks: [{ fileName: "note.js", name: "note", moduleIds }],
+          assets: [],
+        },
+        root,
+        read({ "note.js": source }),
+        "RSC",
+      )[0]!.base;
+    };
+    // `vite build` in the app, and `vite build app` from the directory above.
+    expect(base("/Users/dev/app", "/Users/dev", "5.9.2")).toBe(
+      base("/home/ci/checkout/app", "/home/ci/checkout/app", "5.8.3"),
+    );
+  });
+
+  // A kept comment or a line of a multi-line string can start like a marker.
+  it("hashes a `// ` line that names no module of its chunk", () => {
+    const base = (line: string) =>
+      digestBundle(
+        {
+          chunks: [
+            {
+              fileName: "a.js",
+              name: "a",
+              moduleIds: ["/project/src/a.ts", "/project/src/b.ts"],
+            },
+          ],
+          assets: [],
+        },
+        ROOT,
+        read({ "a.js": `// src/a.ts\nconst text = \`\n${line}\n\`;` }),
+        "RSC",
+      )[0]!.base;
+    expect(base("// one")).not.toBe(base("// two"));
+    expect(base("// src/c.ts")).not.toBe(base("// src/d.ts"));
   });
 
   it("throws for a listed file the output directory does not have", () => {
