@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.30.1 (2026-10-28)
 
-### Fixed: per-app cache versions stay the same across build directories with rolldown 1.2.15
+### Fixed: per-app cache versions stay the same across build directories with rolldown 1.2.15 ([#1320](https://github.com/rangojs/rango/pull/1320))
 
 **Before.** rolldown 1.2.15, which a fresh install of vite 8.2 or later
 resolves to, changed the comment it prints above each module of the server
