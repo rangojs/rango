@@ -79,7 +79,7 @@ describe("renderRoute: useAction() reports the latest call", () => {
       second.complete({ name: "second" });
     });
     await waitFor(() => expect(getByTestId("cart").textContent).toBe("second"));
-    // The later call's settle window ends while the earlier call still runs.
+    // The later call is past its 100 ms cleanup while the earlier call still runs.
     await settleWindow();
 
     await act(async () => {

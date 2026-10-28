@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Component, useEffect, useState } from "react";
+import { Component, useState } from "react";
 import {
   Link,
   useAction,
@@ -45,29 +45,22 @@ function useOutcome(): [string, (saved: Promise<string>) => void] {
   return [outcome, settle];
 }
 
-// The draft is a form's React state. The revalidation line keeps the last
-// useAction `revalidationError` either action reported (useAction drops it
-// once the action has settled), the slow line the slow action's. The reload
-// link navigates to the page's own URL. The concurrent button calls the
-// switch and the slow action together.
+// The draft is a form's React state. The revalidation line shows the
+// useAction `revalidationError` of either switch action, the slow line the
+// slow action's. The reload link navigates to the page's own URL. The
+// concurrent button calls the switch and the slow action together.
 function ActionFailureControls(): ReactNode {
   const [search] = useSearchParams();
   const pathname = usePathname();
   const run = search.get("run") ?? "none";
   const [draft, setDraft] = useState("");
   const [outcome, settle] = useOutcome();
-  const [revalidation, setRevalidation] = useState("none");
-  const [slowRevalidation, setSlowRevalidation] = useState("none");
   const callFailure = useAction(actionFailureSwitch).revalidationError;
   const formFailure = useAction(actionFailureSwitchForm).revalidationError;
   const slowFailure = useAction(actionFailureSlow).revalidationError;
-  useEffect(() => {
-    const failure = callFailure ?? formFailure;
-    if (failure != null) setRevalidation(message(failure));
-  }, [callFailure, formFailure]);
-  useEffect(() => {
-    if (slowFailure != null) setSlowRevalidation(message(slowFailure));
-  }, [slowFailure]);
+  const failure = callFailure ?? formFailure;
+  const revalidation = failure != null ? message(failure) : "none";
+  const slowRevalidation = slowFailure != null ? message(slowFailure) : "none";
   const call = (fail: boolean): void =>
     settle(actionFailureSwitch(run, fail).then((result) => result.saved));
   const callConcurrent = (): void =>

@@ -426,11 +426,12 @@ describe("renderRoute: a settled call stays through navigations", () => {
         distinct(chrome.slice(from).map(actionOf)),
         "the layout's reader through the navigations",
       ).toEqual(["idle one - -"]);
-      expect(
-        chrome.some((frame) => frame.endsWith("| loading /items/1")) ||
-          !variant.held,
-        "useNavigation() read loading while the page was held",
-      ).toBe(true);
+      if (variant.held) {
+        expect(
+          chrome.some((frame) => frame.endsWith("| loading /items/1")),
+          "useNavigation() read loading while the page was held",
+        ).toBe(true);
+      }
       expect(distinct(errors)).toEqual(["-"]);
       expect(
         distinct(pages),

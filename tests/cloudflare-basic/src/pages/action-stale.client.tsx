@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useAction, useLoader, useNavigation } from "@rangojs/router/client";
 import {
   ActionStaleCartDefaultLoader,
@@ -28,15 +27,10 @@ function run(call: () => Promise<unknown>): void {
     .finally(() => html.removeAttribute("data-as-pending"));
 }
 
-// The last result useAction() reported for the add action: it holds one only
-// while the action settles.
+// The add action's result as useAction() reports it: kept until its next call.
 function ActionStaleActionResult() {
   const { result } = useAction(addToActionStaleCart);
-  const [last, setLast] = useState<unknown>(null);
-  useEffect(() => {
-    if (result != null) setLast(result);
-  }, [result]);
-  return <p data-testid="as-action-result">{String(last ?? "")}</p>;
+  return <p data-testid="as-action-result">{String(result ?? "")}</p>;
 }
 
 export function ActionStaleBar() {

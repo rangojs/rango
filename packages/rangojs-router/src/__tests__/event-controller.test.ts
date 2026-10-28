@@ -1110,15 +1110,15 @@ describe("createEventController", () => {
       const ctrl = createController();
       const first = ctrl.startAction("src/cart.ts#save", ["first"]);
       const second = ctrl.startAction("src/cart.ts#save", ["second"]);
+      second.complete("r2");
+      vi.advanceTimersByTime(1000);
+      expect(ctrl.getActionState("save").result).toBe("r2");
       first.complete("r1");
       vi.advanceTimersByTime(1000);
       expect(ctrl.getActionState("save")).toMatchObject({
-        state: "loading",
         payload: ["second"],
+        result: "r2",
       });
-      ctrl.abortAllActions();
-      second[Symbol.dispose]();
-      expect(ctrl.getActionState("save").result).toBeNull();
     });
   });
 
