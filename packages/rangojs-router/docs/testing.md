@@ -117,10 +117,11 @@ response stream that stays open past the commit until the promise settles
 to `useNavigation().isStreaming` is testable. A back/forward onto the
 mounted entry or one a navigate() wrote restores that entry's page, as the
 history-cache restore does; a stale entry's revalidation and a restore that
-fetches stay at e2e. A navigation started while React holds a page goes
-inside `await act(async () => ...)`: its first update makes React retry the
-held page, and a synchronous `act()` drops that retry, after which React
-renders no later update of the same priority.
+fetches stay at e2e. A `router.navigate()` started while React holds a page
+shows its page once the call resolves, with or without `act()`. A `<Link>`
+click over a held page goes inside `await act(async () => ...)`: RTL's
+`fireEvent` runs the click in a synchronous `act()`, which drops React's retry
+of the held page, and an urgent commit after it never renders.
 
 The rango **cache-invalidation directives** are an exception worth calling out,
 because they used to look like a trap and no longer are. A handler/action/loader

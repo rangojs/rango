@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed: `renderRoute`'s `navigate()` shows its page while React holds one, without `act()`
+
+**Before.** While React held a `transition()` page, a `router.navigate()`
+that committed urgently (`transition: false`, or with `streamUntil`) kept
+the old page on screen, and React printed "A component suspended inside an
+`act` scope", unless the test wrapped the call in
+`await act(async () => { ... })`.
+
+**Now.** `await router.navigate(...)` shows its page with or without `act()`,
+and React prints no warning. A `<Link>` click over a held page still goes
+inside `await act(async () => { ... })`.
+
 ## 0.29.0 (2026-10-27)
 
 ### Fixed: a second click over a held page no longer waits on a breadcrumb's pending content ([#1311](https://github.com/rangojs/rango/pull/1311))

@@ -31,9 +31,9 @@ import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 // Browser proof: e2e hook-fields.test.ts (tests/shared-e2e/src/
 // hook-fields-scenario.ts), both apps, dev and production.
 //
-// A navigation started while React holds a page runs inside
-// `await act(async () => ...)`: React retries the held page with it, and a
-// synchronous act() would drop that retry (skills/testing).
+// A `<Link>` click over a held page runs inside `await act(async () => ...)`:
+// fireEvent's synchronous act() would drop React's retry of the held page
+// (skills/testing).
 
 const ItemLoader = { __brand: "loader" } as unknown as LoaderDefinition<string>;
 
