@@ -209,7 +209,7 @@ describe("per-router cache versions of a real build", () => {
   });
 
   // The bundler prints module paths relative to the directory vite was
-  // started from, into region comments and so into the content hashes in
+  // started from, into module markers and so into the content hashes in
   // chunk names, of the RSC and the SSR output alike.
   it("builds the same source from another working directory to the same versions", () => {
     expect(builds.otherWorkingDirectory.output).not.toContain("could not be");

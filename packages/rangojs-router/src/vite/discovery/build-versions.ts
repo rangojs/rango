@@ -593,11 +593,23 @@ export function isSourceMap(fileName: string): boolean {
 }
 
 /**
- * The bundler's region comments around plugin-rsc's server-reference map, as
- * they appear in an unminified chunk (`\0` is printed as two characters).
+ * The bundler's module marker: the comment line before each module's code in
+ * an unminified chunk, naming the module (`\0` printed as two characters).
+ * rolldown before 1.2.15 wraps the code in `//#region <id>` and
+ * `//#endregion`; 1.2.15 (rolldown/rolldown#11235) prints only `// <id>`
+ * where the module starts.
  */
-const SERVER_REFERENCES_REGION_START = `//#region \\0${SERVER_REFERENCES_MODULE_ID.slice(1)}\n`;
-const REGION_END = "//#endregion";
+const MODULE_MARKER = /^\/\/(#region)? (.+)$/gm;
+/**
+ * plugin-rsc's server-reference map: its marker in either form (group 1), and
+ * its body up to the next `// ` line or the region's end. The body stops at
+ * any `// ` line, a comment of its own included, so it never takes in the
+ * code of the module after it.
+ */
+const SERVER_REFERENCE_MAP = new RegExp(
+  `(^//(?:#region)? ${escapeRegExp(`\\0${SERVER_REFERENCES_MODULE_ID.slice(1)}`)}\n)[\\s\\S]*?(?=^//(?: |#endregion))`,
+  "m",
+);
 
 /**
  * Drop the body of the server-reference map from a chunk's source.
@@ -609,33 +621,61 @@ const REGION_END = "//#endregion";
  * hashed by the routers that reach it (resolveRouterMembers), so nothing the
  * map says is lost by skipping it.
  *
- * Works on the region comments, so a minified server build (which has none)
- * keeps the map in every router's hash: more clearing, never less.
+ * Works on the module markers, so a minified server build (which has none),
+ * or a map no marker follows, keeps the map in every router's hash: more
+ * clearing, never less.
  */
 export function stripServerReferenceMap(source: string): string {
-  const start = source.indexOf(SERVER_REFERENCES_REGION_START);
-  if (start === -1) return source;
-  const bodyStart = start + SERVER_REFERENCES_REGION_START.length;
-  const end = source.indexOf(REGION_END, bodyStart);
-  if (end === -1) return source;
-  return source.slice(0, bodyStart) + source.slice(end);
+  return source.replace(SERVER_REFERENCE_MAP, "$1");
 }
 
-const REGION_LINE = /^\/\/#region .*$/gm;
+/**
+ * Every way the bundler can print one of `moduleIds` in a marker. rolldown
+ * prints a path relative to its working directory (`stabilize_id`), so any
+ * trailing run of the path's segments, and any other id as it is.
+ */
+function printedModuleIds(moduleIds: readonly string[]): Set<string> {
+  const printed = new Set<string>();
+  for (const id of moduleIds) {
+    if (!isAbsolutePath(id)) {
+      printed.add(id.replaceAll("\0", "\\0"));
+      continue;
+    }
+    const segments = id.replaceAll("\\", "/").split("/");
+    for (let index = 0; index < segments.length; index++) {
+      printed.add(segments.slice(index).join("/"));
+    }
+  }
+  return printed;
+}
 
 /**
- * Take the module paths out of a chunk's region comments.
+ * Take the module paths out of a chunk's module markers.
  *
- * The bundler prints one before each module's code, and the path says where
- * the build ran, not what it built: it is relative to the directory `vite
- * build` was started from (`vite build apps/web` from a repository root
- * prints other paths than `vite build` in the app), it holds the pnpm store
- * directory with its peer suffix, and a virtual id is printed verbatim,
- * absolute paths in its query included. The code under the comment is hashed
- * either way.
+ * The path says where the build ran, not what it built: it is relative to the
+ * directory `vite build` was started from (`vite build apps/web` from a
+ * repository root prints other paths than `vite build` in the app), it holds
+ * the pnpm store directory with its peer suffix, and a virtual id is printed
+ * verbatim, absolute paths in its query included. The code after the marker
+ * is hashed either way.
+ *
+ * A `//#region` line is always a marker. A `// ` line is one only when it
+ * names a module of the chunk (`moduleIds`): a kept comment or a line of a
+ * multi-line string can start the same way, and is hashed.
  */
-export function stripRegionPaths(source: string): string {
-  return source.replace(REGION_LINE, "//#region");
+export function stripModulePaths(
+  source: string,
+  moduleIds: readonly string[],
+): string {
+  let printed: Set<string> | undefined;
+  return source.replace(
+    MODULE_MARKER,
+    (line, region: string | undefined, name: string) => {
+      if (region) return "//#region";
+      printed ??= printedModuleIds(moduleIds);
+      return printed.has(name.replace(/^(?:\.\.\/)+/, "")) ? "//" : line;
+    },
+  );
 }
 
 /** One thing a version is a hash of: its name and the digest of its bytes. */
@@ -676,8 +716,8 @@ const FOREIGN_FILE = "~";
  *
  * Three things are taken out of a chunk's text first, each because it says
  * where or how the build ran: the server-reference map's body
- * ({@link stripServerReferenceMap}), the paths in region comments
- * ({@link stripRegionPaths}), and the hashed names of bundle files. A name
+ * ({@link stripServerReferenceMap}), the paths in module markers
+ * ({@link stripModulePaths}), and the hashed names of bundle files. A name
  * carries the content hash of its file, and every chunk importing the file
  * has the name in its bytes, so one router's change would otherwise move the
  * digest of every chunk naming its chunk. Only names with a content hash are
@@ -756,8 +796,9 @@ export function digestBundle(
       };
     }
     const references: string[] = [];
-    const text = stripRegionPaths(
+    const text = stripModulePaths(
       stripServerReferenceMap(decoder.decode(bytes)),
+      chunk.moduleIds,
     );
     const blanked = reference
       ? text.replace(reference, (name) => {
