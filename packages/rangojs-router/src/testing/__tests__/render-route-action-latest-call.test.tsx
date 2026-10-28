@@ -79,7 +79,7 @@ describe("renderRoute: useAction() reports the latest call", () => {
       second.complete({ name: "second" });
     });
     await waitFor(() => expect(getByTestId("cart").textContent).toBe("second"));
-    // The later call's settle window ends while the earlier call still runs.
+    // The later call is past its 100 ms cleanup while the earlier call still runs.
     await settleWindow();
 
     await act(async () => {
@@ -88,11 +88,9 @@ describe("renderRoute: useAction() reports the latest call", () => {
     });
     await settleWindow();
 
-    expect(distinct(frames.map((f) => f.shown))).toEqual([
-      "Adding…",
-      "second",
-      "",
-    ]);
+    // The later call's result stays: an action's last settled call stays
+    // until its next call (rango-t223).
+    expect(distinct(frames.map((f) => f.shown))).toEqual(["Adding…", "second"]);
     expect(distinct(frames.map((f) => f.pending))).toEqual([true, false]);
     expect(frames.every((f) => f.error === null)).toBe(true);
   });
@@ -109,11 +107,7 @@ describe("renderRoute: useAction() reports the latest call", () => {
     });
     await settleWindow();
 
-    expect(distinct(frames.map((f) => f.shown))).toEqual([
-      "Adding…",
-      "second",
-      "",
-    ]);
+    expect(distinct(frames.map((f) => f.shown))).toEqual(["Adding…", "second"]);
     expect(frames.every((f) => f.error === null)).toBe(true);
   });
 
@@ -133,7 +127,6 @@ describe("renderRoute: useAction() reports the latest call", () => {
     expect(distinct(frames.map((f) => f.error))).toEqual([
       null,
       "out of stock",
-      null,
     ]);
   });
 });

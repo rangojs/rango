@@ -1973,11 +1973,20 @@ Here is how each hook gets there:
   while another flow's commit is held" in the same test file).
 - `useAction` values never wait for a page. Action notifications go out on
   `notifyAction`'s timer, which `flushRouteState()` does not flush, and
-  synchronously from `abortAllActions()` (called from a back/forward that
-  changes the intercept context in `navigation-bridge.ts` and from an
-  action's error path in `server-action-bridge.ts`); neither runs inside a
+  synchronously from `abortAllActions()` (called from an action's error path
+  in `server-action-bridge.ts`); neither runs inside a
   transition. So every state commits urgently, also while React holds a page,
   and the hook starts no transition of its own.
+- A settled call stays until its action's next call starts (rango-t223).
+  `doSettle`'s 100 ms cleanup takes it out of `inflightActions`, which the
+  concurrent-action bookkeeping reads (#675), unless a later call of the same
+  action already started, and keeps a trimmed snapshot in `settledActions`,
+  one entry per action id; `getActionState` reads both maps and `startAction`
+  deletes the action's entry. `startAction` flags every earlier call it
+  hides, so at most one call matches a reader. So
+  `result`, `error` and `revalidationError` read the same in every reader,
+  one that mounts after the settle included, through navigations and
+  Back/Forward. The next call reads `loading` with none of them.
 - Both hooks used to pin with `useOptimistic` in a `startTransition` of
   their own. React commits the revert of such a pin on its own, as a
   transition-only commit, which took the types queued for a held page (a

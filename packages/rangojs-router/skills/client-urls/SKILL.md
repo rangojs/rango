@@ -450,16 +450,12 @@ function StockPanel() {
 }
 
 function SaveStock({ sku }: { sku: string }) {
+  // Kept until the next save starts.
   const { revalidationError } = useAction(saveStock);
-  const [stale, setStale] = useState(false);
-  // useAction resets to idle once the action has settled: keep the notice.
-  useEffect(() => {
-    if (revalidationError) setStale(true);
-  }, [revalidationError]);
   return (
     <form action={saveStock.bind(null, sku)}>
       <button>Save</button>
-      {stale && (
+      {revalidationError != null && (
         <p role="status">Saved. The stock count could not be refreshed.</p>
       )}
     </form>

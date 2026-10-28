@@ -30,6 +30,7 @@ import { hooksPatterns } from "./urls/hooks.js";
 import { renderStabilityPatterns } from "./urls/render-stability.js";
 import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
 import { actionLatestCallPatterns } from "./urls/action-latest-call.js";
+import { actionPersistsPatterns } from "./urls/action-persists.js";
 import { asyncHandlesPatterns } from "./urls/async-handles.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
 import { hookFieldsPatterns } from "./urls/hook-fields.js";
@@ -1260,6 +1261,8 @@ export const urlpatterns = urls(
       include("/", navIdleLocationPatterns, { name: "" }),
       // useAction() reports the latest call of an action called twice.
       include("/", actionLatestCallPatterns, { name: "" }),
+      // useAction() keeps a settled call until the action's next call.
+      include("/", actionPersistsPatterns, { name: "" }),
       // A navigation's title and crumbs commit with its page.
       include("/", handlesCommitPatterns, { name: "" }),
       // useNavigation()'s fields in every reader shape while a page is held.

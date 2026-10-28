@@ -196,6 +196,14 @@ Track the lifecycle of a server action, wherever on the page it was invoked.
 If the same action fires several times, the hook reports the latest call: the
 last one to start.
 
+- Once the call settles, `state` is `idle` and the rest of its state
+  (`result`, `error`, `revalidationError`, `payload`, `actionId`) stays until
+  the same action is called again: through navigations and Back/Forward, and
+  in a component that mounts after the call settled. Every reader of the
+  same action (a function or a full id) reads the same call; a string reader
+  follows the latest call of any action with that export name. The next
+  call reads `loading` with none of them, then its own. A document load
+  starts with nothing.
 - When the latest call returns before an earlier one, the hook shows its
   result. The earlier call settling afterwards changes nothing the hook
   reports, a result or an error alike. That call still runs to its end: its
@@ -203,8 +211,7 @@ last one to start.
   page, and an error-boundary response replaces it.
 - A latest call that was aborted reports nothing: `idle`, with no result or
   error. The hook does not fall back to an earlier call. The router aborts
-  calls in flight when another call's response is an error boundary, and on
-  Back/Forward into or out of an intercept.
+  the other calls in flight when a call's response is an error boundary.
 - `useNavigation()` stays `loading` while any call runs.
 
 Which calls count as the same action depends on what you pass:

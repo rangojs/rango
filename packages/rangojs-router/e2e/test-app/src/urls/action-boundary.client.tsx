@@ -29,7 +29,7 @@ async function run(call: () => Promise<unknown>): Promise<void> {
 
 /**
  * The layout's cart count, the fail action's error as useAction() reports
- * it (it holds one only while the action settles), and useNavigation().
+ * it (kept until the action's next call), and useNavigation().
  */
 export function ActionBoundaryBar() {
   const { data: cart } = useLoader(ActionBoundaryCartLoader);
@@ -93,21 +93,9 @@ export function ActionBoundaryControls() {
   );
 }
 
-/**
- * The slow action's useAction() state on the page the user moved to. Its
- * result and error are kept once seen: useAction() holds them only while
- * the action settles.
- */
+/** The slow action's useAction() state on the page the user moved to. */
 export function ActionBoundarySlowControls() {
   const { state, result, error } = useAction(slowActionBoundaryAction);
-  const [seenResult, setSeenResult] = useState("");
-  useEffect(() => {
-    if (result != null) setSeenResult(String(result));
-  }, [result]);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    if (error != null) setFailed(true);
-  }, [error]);
   return (
     <div>
       <button
@@ -117,8 +105,8 @@ export function ActionBoundarySlowControls() {
         Slow
       </button>
       <p data-testid="ab-slow-state">{state}</p>
-      <p data-testid="ab-slow-result">{seenResult}</p>
-      <p data-testid="ab-slow-error">{failed ? "error" : ""}</p>
+      <p data-testid="ab-slow-result">{result == null ? "" : String(result)}</p>
+      <p data-testid="ab-slow-error">{error != null ? "error" : ""}</p>
       <button
         data-testid="ab-slow-note"
         onClick={() => void run(() => slowActionBoundaryNote())}
