@@ -25,7 +25,7 @@ import {
   recordServerGraph,
   recordVersionModuleFiles,
   resolveRouterMembers,
-  stripRegionPaths,
+  stripModulePaths,
   stripServerReferenceMap,
   type BuildDataRecord,
   type BuildModuleEdges,
@@ -1499,17 +1499,20 @@ describe("portableModuleId", () => {
   });
 });
 
-describe("stripRegionPaths", () => {
+describe("stripModulePaths", () => {
+  const css = `\0virtual:vite-rsc/css?type=rsc&id=${encodeURIComponent("/project/src/note.tsx")}&lang.js`;
+  const dep = "/project/node_modules/.pnpm/x@1_y@2/node_modules/x/i.js";
+
   it("takes the path out of every region comment and leaves the code", () => {
     const source = [
-      `//#region \\0virtual:vite-rsc/css?type=rsc&id=${encodeURIComponent("/project/src/note.tsx")}&lang.js`,
+      `//#region \\0${css.slice(1)}`,
       `var a = "/project/src/kept.ts";`,
       "//#endregion",
       "//#region ../../node_modules/.pnpm/x@1_y@2/node_modules/x/i.js",
       `var b = "//#region not at the start of a line";`,
       "//#endregion",
     ].join("\n");
-    expect(stripRegionPaths(source)).toBe(
+    expect(stripModulePaths(source, [])).toBe(
       [
         "//#region",
         `var a = "/project/src/kept.ts";`,
@@ -1521,9 +1524,36 @@ describe("stripRegionPaths", () => {
     );
   });
 
-  it("returns a source without regions (a minified chunk) as it is", () => {
+  it("takes the path out of every start-only marker that names a module of the chunk", () => {
+    const source = [
+      `// \\0${css.slice(1)}`,
+      "var a = 1;",
+      "// ../../../project/node_modules/.pnpm/x@1_y@2/node_modules/x/i.js",
+      "var b = 2;",
+      "// src/note.tsx",
+      "var c = `",
+      "// src/other.tsx",
+      "// @license MIT",
+      "`;",
+    ].join("\n");
+    expect(stripModulePaths(source, [css, dep, "/project/src/note.tsx"])).toBe(
+      [
+        "//",
+        "var a = 1;",
+        "//",
+        "var b = 2;",
+        "//",
+        "var c = `",
+        "// src/other.tsx",
+        "// @license MIT",
+        "`;",
+      ].join("\n"),
+    );
+  });
+
+  it("returns a source without markers (a minified chunk) as it is", () => {
     const source = "a();b();";
-    expect(stripRegionPaths(source)).toBe(source);
+    expect(stripModulePaths(source, ["/project/src/a.ts"])).toBe(source);
   });
 });
 
@@ -1610,9 +1640,19 @@ describe("digestBundle", () => {
     );
   });
 
-  // rolldown 1.2.15 prints `// <id>` where each module starts, a path relative
-  // to the working directory (rolldown#11235): the same source checked out
-  // elsewhere and built from another directory printed other markers.
+  const oneChunkBase = (
+    moduleIds: string[],
+    source: string,
+    root: string = ROOT,
+  ): string =>
+    digestBundle(
+      { chunks: [{ fileName: "a.js", name: "a", moduleIds }], assets: [] },
+      root,
+      read({ "a.js": source }),
+      "RSC",
+    )[0]!.base;
+
+  // A start-only marker is relative to the directory the build started in.
   it("digests a chunk the same whatever directory its start-only markers are relative to", () => {
     const base = (root: string, cwd: string, typescript: string) => {
       const moduleIds = [
@@ -1628,15 +1668,7 @@ describe("digestBundle", () => {
           `code${index}();`,
         ])
         .join("\n");
-      return digestBundle(
-        {
-          chunks: [{ fileName: "note.js", name: "note", moduleIds }],
-          assets: [],
-        },
-        root,
-        read({ "note.js": source }),
-        "RSC",
-      )[0]!.base;
+      return oneChunkBase(moduleIds, source, root);
     };
     // `vite build` in the app, and `vite build app` from the directory above.
     expect(base("/Users/dev/app", "/Users/dev", "5.9.2")).toBe(
@@ -1647,21 +1679,10 @@ describe("digestBundle", () => {
   // A kept comment or a line of a multi-line string can start like a marker.
   it("hashes a `// ` line that names no module of its chunk", () => {
     const base = (line: string) =>
-      digestBundle(
-        {
-          chunks: [
-            {
-              fileName: "a.js",
-              name: "a",
-              moduleIds: ["/project/src/a.ts", "/project/src/b.ts"],
-            },
-          ],
-          assets: [],
-        },
-        ROOT,
-        read({ "a.js": `// src/a.ts\nconst text = \`\n${line}\n\`;` }),
-        "RSC",
-      )[0]!.base;
+      oneChunkBase(
+        ["/project/src/a.ts", "/project/src/b.ts"],
+        `// src/a.ts\nconst text = \`\n${line}\n\`;`,
+      );
     expect(base("// one")).not.toBe(base("// two"));
     expect(base("// src/c.ts")).not.toBe(base("// src/d.ts"));
   });

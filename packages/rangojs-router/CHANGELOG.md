@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: per-app cache versions stay the same across build directories with rolldown 1.2.15
+
+**Before.** rolldown 1.2.15, which a fresh install of vite 8.2 or later
+resolves to, changed the comment it prints above each module of the server
+build, and the per-app cache versions hashed the new comments. Building
+unchanged code with `vite build` started from another directory gave every
+app a new data and document version, and building it from a checkout at
+another path did so for every app with a server component that imports CSS,
+so the deploy threw away caches that were still valid. Adding a server action
+to one app also changed the versions of the other apps.
+
+**Now.** The same source builds to the same versions in any directory, on
+vite 8.0.16 through 8.3.5, and a new action changes only the apps that reach
+it. With rolldown 1.2.15, the first deploy with this fix gives every app a new
+version once; builds on an earlier rolldown keep their versions.
+
+No change in your code.
+
 ## 0.30.0 (2026-10-28)
 
 ### Fixed: the URL hooks show the page's URL when an urgent page ends a hold ([#1316](https://github.com/rangojs/rango/pull/1316))
