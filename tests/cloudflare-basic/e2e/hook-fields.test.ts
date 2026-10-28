@@ -4,8 +4,8 @@ import { useFixture } from "./fixture";
 import { expectNoPageError, waitForHydration } from "./helper";
 
 /**
- * useNavigation()'s fields in every reader shape while React holds a
- * transition() page. Body: tests/shared-e2e/src/hook-fields-scenario.ts.
+ * useNavigation()'s fields and the URL hooks in every reader shape while React
+ * holds a transition() page. Body: tests/shared-e2e/src/hook-fields-scenario.ts.
  * Fixture: src/components/HookFields.tsx and src/pages/hook-fields.tsx.
  */
 const OPTIONS = { waitForHydration, expectNoPageError };

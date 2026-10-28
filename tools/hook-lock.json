@@ -61,6 +61,7 @@
     "packages/rangojs-router/src/testing/__tests__/render-route-handles-commit.test.tsx",
     "packages/rangojs-router/src/testing/__tests__/render-route-handles-fill.test.tsx",
     "packages/rangojs-router/src/testing/__tests__/render-route-segments-commit.test.tsx",
+    "packages/rangojs-router/src/testing/__tests__/render-route-url-hooks-commit.test.tsx",
     "packages/rangojs-router/e2e/handles-overlap.test.ts",
     "tests/cloudflare-basic/e2e/handles-overlap.test.ts",
     "tests/shared-e2e/src/handles-overlap-scenario.ts"

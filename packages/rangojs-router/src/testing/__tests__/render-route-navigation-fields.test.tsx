@@ -229,11 +229,6 @@ function torn(from = 0): string[] {
   });
 }
 
-/** torn() of the useNavigation() readers: usePathname() left out. */
-function tornNavigation(from = 0): string[] {
-  return torn(from).filter((t) => !t.includes(": usePathname() "));
-}
-
 /** The last screen: its full state (torn() holds the others to it). */
 function last(): Fields & { page: string; linkPending: string } {
   const s = screens.at(-1)!;
@@ -441,8 +436,7 @@ describe.each([
       });
       await task();
       expect(mounted.getByTestId("item").textContent).toBe("2");
-      // usePathname() is pinned on its own below (rango-t221).
-      expect(tornNavigation(), mounted.held).toEqual([]);
+      expect(torn(), mounted.held).toEqual([]);
       // The gated-off navigation aborted the held one, whose stream stopped
       // counting at the abort.
       expect(last()).toEqual({
@@ -463,33 +457,6 @@ describe.each([
         ...idle("/items/2"),
         linkPending: "false",
       });
-    });
-
-    // usePathname() dedupes against its own last set, the held page's, which
-    // React has not committed when an urgent page ends the hold: it reads the
-    // page being left until that set commits. Today's behaviour, the same on
-    // 6dce6b112: a fix for rango-t221 updates this pin.
-    it("usePathname lags one screen when an urgent page ends a hold (rango-t221)", async () => {
-      const mounted = await holdPage2(vt);
-      await act(async () => {
-        await mounted.router.navigate("/items/2", {
-          loaders: [[ItemLoader, "2"]],
-          transition: false,
-        });
-      });
-      await task();
-      expect(mounted.getByTestId("item").textContent).toBe("2");
-      expect(torn(), mounted.held).toEqual([
-        "page 2: usePathname() /items/1 | full state /items/2",
-      ]);
-
-      const urgent = screens.length;
-      await act(async () => {
-        mounted.page.resolve("late");
-        mounted.tail.resolve();
-      });
-      await task();
-      expect(torn(urgent)).toEqual([]);
     });
 
     // A list page without transition(): Back to it restores its entry

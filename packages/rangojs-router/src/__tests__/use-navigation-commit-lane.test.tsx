@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import {
+  Profiler,
   startTransition,
   Suspense,
   use,
@@ -22,6 +23,7 @@ import { useNavigation } from "../browser/react/use-navigation.js";
 import { useParams } from "../browser/react/use-params.js";
 import { usePathname } from "../browser/react/use-pathname.js";
 import { useSearchParams } from "../browser/react/use-search-params.js";
+import { useSegments } from "../browser/react/use-segments.js";
 import { commitInTransition } from "../browser/partial-update.js";
 import { emitNetworkError } from "../browser/network-error-handler.js";
 import { NetworkError } from "../errors.js";
@@ -102,6 +104,75 @@ function ChromeReader(): ReactNode {
 }
 
 let chrome: string[];
+
+const chromeValue = (id: string): string =>
+  document.querySelector<HTMLElement>(`[data-testid="${id}"]`)?.dataset.value ??
+  "-";
+
+function FullLocation(): ReactNode {
+  const { location } = useNavigation();
+  return (
+    <i data-testid="full" data-value={location.pathname + location.search} />
+  );
+}
+
+function ParamsWhole(): ReactNode {
+  const params = useParams();
+  return <i data-testid="params" data-value={params.id ?? "-"} />;
+}
+
+function SegmentsSelector(): ReactNode {
+  const url = useSegments((s) => s.location.pathname + s.location.search);
+  return <i data-testid="segments" data-value={url} />;
+}
+
+function SegmentsWhole(): ReactNode {
+  const { path, location } = useSegments();
+  return (
+    <i
+      data-testid="segments-whole"
+      data-value={`${path.join("/")} ${location.search}`}
+    />
+  );
+}
+
+/**
+ * URL readers in chrome no tree replaces (render it as `extra`): the whole
+ * params map, a useSegments() selector and the whole segments state, each
+ * commit recorded as "<full state URL> | id=… segments=… whole=…".
+ */
+function UrlChrome(): ReactNode {
+  return (
+    <Profiler
+      id="url-chrome"
+      onRender={(_id, phase) => {
+        if (phase === "nested-update") urlChrome.pop();
+        urlChrome.push(
+          `${chromeValue("full")} | id=${chromeValue("params")} segments=${chromeValue("segments")} whole=${chromeValue("segments-whole")}`,
+        );
+      }}
+    >
+      <FullLocation />
+      <ParamsWhole />
+      <SegmentsSelector />
+      <SegmentsWhole />
+    </Profiler>
+  );
+}
+
+let urlChrome: string[];
+
+/** Each UrlChrome screen whose readers disagree with the full state's URL. */
+function tornUrlChrome(): string[] {
+  return urlChrome.filter((screen) => {
+    const full = screen.split(" | ")[0]!;
+    const url = new URL(full, ORIGIN);
+    return (
+      screen !==
+      `${full} | id=${url.pathname.split("/")[2]} segments=${full} whole=${url.pathname.slice(1)} ${url.search}`
+    );
+  });
+}
 
 function Hold({ until }: { until: Promise<void> }): ReactNode {
   use(until);
@@ -258,6 +329,7 @@ beforeEach(() => {
   stub = undefined;
   committing = undefined;
   chrome = [];
+  urlChrome = [];
   loaders = new LoaderStore();
   controller = createEventController({
     initialLocation: new URL("/items/1?tag=a&tag=b", ORIGIN),
@@ -500,6 +572,7 @@ describe.each([
     // dispose's notification runs, as a view transition or the scheduler's
     // order can leave it in a browser.
     it("a newer navigation that fails while a page is held never shows idle with the old search", async () => {
+      extra = <UrlChrome />;
       const result = mount(vt);
       const reader = () => result.getByTestId("reader").textContent;
       const hold = deferred();
@@ -538,6 +611,8 @@ describe.each([
         expect(result.queryByTestId("error-screen")).not.toBeNull(),
       );
       expect(sinceStart()).not.toContain("idle /items/1?tag=a&tag=b id=1");
+      expect(urlChrome).not.toEqual([]);
+      expect(tornUrlChrome()).toEqual([]);
     });
 
     // Row S9: an action's revalidated tree is handed over in a transition
@@ -608,7 +683,12 @@ describe.each([
     // ends. The navigation's idle waits for that commit and arrives with the
     // error screen.
     it("a navigation that fails while a React async action is pending stays loading until the error screen commits", async () => {
-      extra = <ChromeReader />;
+      extra = (
+        <>
+          <ChromeReader />
+          <UrlChrome />
+        </>
+      );
       const result = mount(vt);
       const reader = () => result.getByTestId("reader").textContent;
       const formAction = deferred();
@@ -651,6 +731,8 @@ describe.each([
         "idle error",
       ]);
       expect(sinceStart()).toEqual(["loading /items/1?tag=a&tag=b id=1"]);
+      expect(urlChrome).not.toEqual([]);
+      expect(tornUrlChrome()).toEqual([]);
     });
   },
 );

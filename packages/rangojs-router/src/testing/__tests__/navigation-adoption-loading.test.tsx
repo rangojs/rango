@@ -16,6 +16,10 @@ import { createPartialUpdater } from "../../browser/partial-update.js";
 import { NavigationStoreContext } from "../../browser/react/context.js";
 import { consumeHandles } from "../../browser/react/NavigationProvider.js";
 import { useNavigation } from "../../browser/react/use-navigation.js";
+import { useParams } from "../../browser/react/use-params.js";
+import { usePathname } from "../../browser/react/use-pathname.js";
+import { useSearchParams } from "../../browser/react/use-search-params.js";
+import { useSegments } from "../../browser/react/use-segments.js";
 import type { NavigationUpdate } from "../../browser/types.js";
 import { OutletProvider } from "../../outlet-provider.js";
 import type { LoaderDefinition, ResolvedSegment } from "../../types.js";
@@ -211,7 +215,9 @@ describe("a click that adopts a prefetch, and its fill", () => {
    * response. `sameStructure`: the adopted segments are the page's own
    * (renderRoute's "/" is the one route segment "R0"), so the click commits
    * in a transition (partial-update.ts isSameStructureNav). `initial`
-   * replaces the page on screen before the click.
+   * replaces the page on screen before the click. `to`: the URL the click
+   * goes to (default: the one on screen). `params`: the route params both
+   * responses carry.
    */
   async function adopt(options: {
     adopted: ResolvedSegment[];
@@ -220,6 +226,8 @@ describe("a click that adopts a prefetch, and its fill", () => {
     plain?: boolean;
     sameStructure?: boolean;
     initial?: ReactNode;
+    to?: string;
+    params?: Record<string, string>;
     render: (find: (id: string) => ResolvedSegment) => ReactNode;
   }) {
     const { router, getByTestId } = await renderRoute(
@@ -243,6 +251,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
         matched: options.sameStructure ? held : [...held, ...added],
         diff: added,
         segments,
+        params: options.params,
       },
     });
     const answer = deferred<void>();
@@ -296,7 +305,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
         flush: router.eventController.flushRouteState,
       },
     });
-    const here = window.location.href;
+    const here = new URL(options.to ?? "", window.location.href).href;
     const tx = createNavigationTransaction(
       router.store,
       router.eventController,
@@ -628,6 +637,64 @@ describe("a click that adopts a prefetch, and its fill", () => {
       "home | idle false | idle false",
       "home | loading true | loading true",
       "failed | idle false | idle false",
+    ]);
+  });
+
+  // The same click, to the page's own route with a new search: the click's
+  // anchor set the new URL in every URL hook reader, and the fill's tree
+  // ends the hold before React commits that set (rango-t221).
+  it("a fill that ends the hold urgently shows with its URL in every URL hook reader", async () => {
+    const screens: string[] = [];
+    function Readers(): ReactNode {
+      const pathname = usePathname();
+      const [search] = useSearchParams();
+      const { id = "-" } = useParams();
+      const segments = useSegments(
+        (s) => s.location.pathname + s.location.search,
+      );
+      const { location } = useNavigation();
+      return (
+        <Profiler
+          id="readers"
+          onRender={(_id, phase) => {
+            if (phase === "nested-update") screens.pop();
+            screens.push(
+              `${document.querySelector('[data-testid="page"]')?.textContent} | ${pathname}?tab=${search.get("tab")} id=${id} ${segments} | ${location.pathname}${location.search}`,
+            );
+          }}
+        >
+          <i />
+        </Profiler>
+      );
+    }
+    const { shown, fill, updates, navigation } = await adopt({
+      sameStructure: true,
+      to: "/?tab=2",
+      initial: (
+        <>
+          <Readers key="readers" />
+          <p data-testid="page">home</p>
+        </>
+      ),
+      params: { id: "2" },
+      adopted: [segment("R0", "route", { deferred: true })],
+      filled: [segment("R0", "error", { component: "failed" })],
+      render: (find) => (
+        <>
+          <Readers key="readers" />
+          <Unit content={find("R0").component} />
+        </>
+      ),
+    });
+    expect(shown(), "React holds the click").toBe("home");
+    expect(updates()).toBe(1);
+
+    await fill(0);
+    await navigation;
+    expect(shown()).toBe("failed");
+    expect(screens.filter((v, i) => i === 0 || screens[i - 1] !== v)).toEqual([
+      "home | /?tab=null id=- / | /",
+      "failed | /?tab=2 id=2 /?tab=2 | /?tab=2",
     ]);
   });
 
