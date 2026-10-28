@@ -72,13 +72,12 @@ export function runActionLatestCallTests(
       const log = await page.evaluate(
         () => (window as unknown as ProbeWindow).__actionLatestLog ?? [],
       );
-      // Through the full state: the later call's result, then the idle
-      // default once its settle window ends. "Adding…" never comes back and
+      // Through the full state: the later call's result, which stays until
+      // the action's next call (rango-t223). "Adding…" never comes back and
       // the earlier call's result never shows.
       expect(distinct(log.map((entry) => entry.shown))).toEqual([
         "Adding…",
         "second",
-        "",
       ]);
       // Through a selector: pending from the first click until the later
       // call returns, once.

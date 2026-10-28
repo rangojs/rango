@@ -374,6 +374,7 @@ import { handlesCommitPatterns } from "./pages/handles-commit.js";
 import { handlesOverlapPatterns } from "./pages/handles-overlap.js";
 import { vtBackPatterns } from "./pages/vt-back.js";
 import { actionLatestCallPatterns } from "./pages/action-latest-call.js";
+import { actionPersistsPatterns } from "./pages/action-persists.js";
 import { hookFieldsPatterns } from "./pages/hook-fields.js";
 import {
   includeScopeCollisionPatterns,
@@ -3308,6 +3309,9 @@ export const urlpatterns = urls(
         // useAction() reports the latest call of an action called twice
         // (mirrors the router e2e app's /action-latest*).
         include("/", actionLatestCallPatterns, { name: "" }),
+        // useAction() keeps a settled call until the action's next call
+        // (mirrors the router e2e app's /action-persists*).
+        include("/", actionPersistsPatterns, { name: "" }),
         // useNavigation()'s fields in every reader shape while a page is
         // held (mirrors the router e2e app's /hook-fields/:id).
         include("/", hookFieldsPatterns, { name: "" }),

@@ -16,6 +16,8 @@ export const NamedRoutes = {
   "actionFailureServer.throwLoading": "/action-failure-server/throw-loading",
   actionLatest: "/action-latest",
   actionLatestVt: "/action-latest-vt",
+  actionPersists: "/action-persists/:id",
+  actionPersistsVt: "/action-persists-vt/:id",
   "actionRedirectRevalidation.index": "/action-redirect-revalidation",
   "actionRedirectRevalidation.login": "/action-redirect-revalidation/login",
   "actionRouteMw.index": "/action-route-mw",
