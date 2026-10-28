@@ -1,8 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.30.0 (2026-10-28)
 
-### Changed: `renderRoute`'s `navigate()` shows its page while React holds one, without `act()`
+### Fixed: the URL hooks show the page's URL when an urgent page ends a hold ([#1316](https://github.com/rangojs/rango/pull/1316))
+
+**Before.** While React held a `transition()` page, an urgent commit to the
+URL it held (a `transition={false}` link, a `prefetch: false` fill whose
+answer changed the tree) showed the new page for one screen with
+`usePathname()`, `useParams()`, `useSearchParams()` and `useSegments()`
+selectors still reading the page being left.
+
+**Now.** Every reader shows the new page's URL on its first screen. Each such
+reader renders once more on that page, and React bails out of it.
+
+No change in your code.
+
+### Changed: `renderRoute`'s `navigate()` shows its page while React holds one, without `act()` ([#1313](https://github.com/rangojs/rango/pull/1313))
 
 **Before.** While React held a `transition()` page, a `router.navigate()`
 that committed urgently (`transition: false`, or with `streamUntil`) kept
@@ -14,7 +27,7 @@ the old page on screen, and React printed "A component suspended inside an
 and React prints no warning. A `<Link>` click over a held page still goes
 inside `await act(async () => { ... })`.
 
-### Changed: `useAction()` keeps a call's result and error until the action's next call
+### Changed: `useAction()` keeps a call's result and error until the action's next call ([#1314](https://github.com/rangojs/rango/pull/1314))
 
 **Before.** `result`, `error` and `revalidationError` cleared about 100 ms
 after the call settled. A form that rendered `useAction(save).error.message`
@@ -38,19 +51,6 @@ router keeps one settled call per action.
 If you copied `result` or `error` into local state to keep it, you can read
 the hook directly. To clear a message before the next call, keep a
 dismissed flag in your component.
-
-### Fixed: the URL hooks show the page's URL when an urgent page ends a hold
-
-**Before.** While React held a `transition()` page, an urgent commit to the
-URL it held (a `transition={false}` link, a `prefetch: false` fill whose
-answer changed the tree) showed the new page for one screen with
-`usePathname()`, `useParams()`, `useSearchParams()` and `useSegments()`
-selectors still reading the page being left.
-
-**Now.** Every reader shows the new page's URL on its first screen. Each such
-reader renders once more on that page, and React bails out of it.
-
-No change in your code.
 
 ## 0.29.0 (2026-10-27)
 
