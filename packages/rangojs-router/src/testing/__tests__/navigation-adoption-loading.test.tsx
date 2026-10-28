@@ -25,6 +25,7 @@ import { OutletProvider } from "../../outlet-provider.js";
 import type { LoaderDefinition, ResolvedSegment } from "../../types.js";
 import { useLoader } from "../../use-loader.js";
 import { renderRoute } from "../render-route.js";
+import { auditTreeCause } from "../../suspense-audit.js";
 import { Defer, readDefer } from "../../browser/defer.js";
 
 // A click that adopts a payload with deferred segments (`prefetch: false`),
@@ -71,7 +72,11 @@ async function mount() {
     ),
     metadata: { pathname: "/", segments: [] },
   });
-  const emit = (u: NavigationUpdate) => router.store.emitUpdate(u);
+  // Named as the navigation bridge names it (suspense-audit.ts I6).
+  const emit = (u: NavigationUpdate) => {
+    auditTreeCause("navigation");
+    router.store.emitUpdate(u);
+  };
   await act(async () => emit(update(<p data-testid="page">home</p>)));
   return {
     emit,
@@ -235,12 +240,13 @@ describe("a click that adopts a prefetch, and its fill", () => {
       { request: "/" },
     );
     if (options.initial) {
-      await act(async () =>
+      await act(async () => {
+        auditTreeCause("navigation");
         router.store.emitUpdate({
           root: options.initial,
           metadata: { pathname: "/", segments: [] },
-        }),
-      );
+        });
+      });
     }
     const held = router.store.getSegmentState().currentSegmentIds;
     const added = options.adopted.map((s) => s.id);
@@ -289,6 +295,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
       } as any,
       onUpdate: (update) => {
         updates++;
+        auditTreeCause("navigation");
         router.store.emitUpdate(update);
       },
       renderSegments: (segments) =>

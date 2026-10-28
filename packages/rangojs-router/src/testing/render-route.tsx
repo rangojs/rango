@@ -128,7 +128,7 @@ import { isUnderTestRunner } from "../runtime-env.js";
 import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-bridge.js";
 import { resetPrefetchObserverForTesting } from "../browser/prefetch/observer.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
-import { auditTreeCause } from "../suspense-audit.js";
+import { auditTreeCause, forgetSuspenseAudit } from "../suspense-audit.js";
 
 const TEST_ORIGIN = "http://localhost";
 let activePrefetchRegistrations = 0;
@@ -1186,6 +1186,10 @@ export async function renderRoute(
     ...makeMetadata(url.pathname, initialSegments, initialMatch.params),
     defaultPrefetch: options.defaultPrefetch,
   };
+  // The suspense audit holds one document's tree and mounts: a root an earlier
+  // renderRoute mounted is gone (a test unmounts its root, production never
+  // does). A no-op unless this repo's tests run the audit.
+  forgetSuspenseAudit();
   const initialTree = await renderSegments(initialSegments, {
     outletPending: options.outletPending,
   });

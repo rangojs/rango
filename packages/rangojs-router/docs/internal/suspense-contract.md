@@ -408,6 +408,39 @@ with StrictMode on and off, including a streaming navigation the audit must stay
 on, and the #1079 shape itself (an awaited render, then an urgent render of the same
 boundaries).
 
+**The unit-test lock.** The audit keeps its records in module state, and vitest keeps
+one module per file, not per test. So a root one test unmounted used to stay in the
+audit's records, and the next test's first mount of the same outlet read as an I4
+remount. Nobody saw it: the default reporter drops console output, and at router 0.30.0
+the router's suite printed 368 reports (316 I4, 20 I5, 32 I6) that no test failed on
+(rango-t226). Two resets and a check close that:
+
+- `renderRoute` calls `forgetSuspenseAudit()` before it builds its first tree
+  (`src/testing/render-route.tsx`), so each root starts clean, also several in one test
+  with `cleanup()` between them. A test unmounts
+  its root; production never does. One audited root at a time: two roots mounted at
+  once share one held tree.
+- `src/__tests__/kit/suspense-audit-lock.ts`, the vitest setup file of the router's
+  suite, forgets before each test and fails a test whose report has a violation
+  counter above zero, once the audit's queued judgments have run. It reaches the audit
+  through `window.__rangoSuspenseAudits`, one entry per loaded copy of the module: a
+  test file that re-imports it after `vi.resetModules()` holds two, and its static
+  imports use the older one, not the one on `__rangoSuspenseAudit`. It imports no
+  router module at runtime (the file says why). With the flag off the audit creates no
+  report and the lock does nothing.
+
+A test that provokes violations on purpose opts out with
+`allowSuspenseAuditViolations(reason)` from the kit: at the file's top level for every
+test in it (`suspense-audit.test.tsx`), or inside one test, which must then report one,
+so the allowance goes once its cause is fixed. Its reason names the router defect's
+ticket. Neither changes e2e, which reads `__rangoSuspenseAudit` through the console
+guard, or a build, which carries no audit.
+
+A tree a test hands React itself (`store.emitUpdate`, `commitInTransition`, a
+`setState` standing in for the provider) names its cause with `auditTreeCause` and,
+without the provider, hands its root over with `auditTreeUpdate`, as production's
+emitters do.
+
 ## Dev is not production
 
 Two things a dev build does that a build does not. Both are encoded, and both decide
