@@ -123,6 +123,7 @@ click or `router.push()`.
 | Back/Forward, entry fetched again                 | when the fetched page commits; until then the page being left is on screen |
 | a Back/Forward whose fetch fails                  | with the error boundary: they report the entry the browser is on           |
 | `router.push(url, { revalidate: false })`         | at once: nothing is fetched and the page stays                             |
+| `transition={false}` over a held page             | with that page's first screen, also on the URL React was holding           |
 | inside an optimistic `clientUrls()` destination   | at the click, for that branch only (see `/client-urls`)                    |
 
 **A newer click that fails while a page is held.** Click a link, and while

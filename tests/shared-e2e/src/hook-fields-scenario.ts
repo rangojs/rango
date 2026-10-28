@@ -2,7 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 
 /**
  * useNavigation()'s fields read the same in every reader shape while React
- * holds a page (rango-t219).
+ * holds a page (rango-t219), and the URL hooks read the URL the full state
+ * reads (rango-t221).
  *
  * Fixture in each app: /hook-fields/:id, a transition() route behind a
  * 400 ms server delay. Each render of the page brings a new stamp that holds
@@ -15,8 +16,13 @@ import { expect, test, type Page } from "@playwright/test";
  * hook-fields-bar, pendingUrl in hook-fields-pending, state, isNavigating,
  * location), the full state (hook-fields-status), and a link's
  * useLinkStatus() beside a selector for isStreaming
- * (hook-fields-link-chrome). Its invalidate button marks the history cache
- * stale, so Back restores the cached page and revalidates it.
+ * (hook-fields-link-chrome). Beside them the URL hooks: usePathname(), a
+ * useParams() selector, useSearchParams(), a useSegments() selector, and a
+ * component that reads all three (hook-fields-crumb). Its invalidate button
+ * marks the history cache stale, so Back restores the cached page and
+ * revalidates it. hook-fields-link-tab goes to /hook-fields/2?tab=2 under
+ * transition(); hook-fields-link-urgent goes to the same URL with transition()
+ * gated off.
  *
  * A recorder samples every reader on each animation frame and after each
  * DOM mutation.
@@ -46,6 +52,12 @@ type Sample = {
   location: string;
   linkPending: string;
   linkStreaming: string;
+  search: string;
+  pathname: string;
+  param: string;
+  tab: string;
+  segments: string;
+  crumb: string;
 };
 type ProbeWindow = { __hookFieldsSamples?: Sample[] };
 
@@ -100,6 +112,12 @@ async function open(
         location: status.location ?? "",
         linkPending: link.linkPending ?? "",
         linkStreaming: link.streaming ?? "",
+        search: status.search ?? "",
+        pathname: data("hook-fields-pathname").pathname ?? "",
+        param: data("hook-fields-param").id ?? "",
+        tab: data("hook-fields-tab").tab ?? "",
+        segments: data("hook-fields-segments").path ?? "",
+        crumb: data("hook-fields-crumb").crumb ?? "",
       });
     };
     new MutationObserver(() => sample("mutation")).observe(
@@ -148,14 +166,25 @@ async function waitForPage(page: Page, id: string): Promise<void> {
   await expect(status).toHaveAttribute("data-streaming", "false");
 }
 
-/** One screen, compact: page | holds | each selector | status | link. */
+/**
+ * One screen, compact: page | holds | each selector | status | link | each
+ * URL hook reader.
+ */
 const screenOf = (s: Sample): string =>
   [
     `page=${s.id} stamp=${s.stamp} holds=${s.holding}`,
     `selectors=${s.selState} navigating=${s.selNavigating} streaming=${s.bar} pending=${s.pending} location=${s.selLocation}`,
-    `status=${s.state} navigating=${s.navigating} streaming=${s.streaming} pending=${s.statusPending} location=${s.location}`,
+    `status=${s.state} navigating=${s.navigating} streaming=${s.streaming} pending=${s.statusPending} location=${s.location}${s.search}`,
     `link=${s.linkPending} streaming=${s.linkStreaming}`,
+    `url=${s.pathname} param=${s.param} tab=${s.tab} segments=${s.segments} crumb=${s.crumb}`,
   ].join(" | ");
+
+/** The page id in the full state's location. */
+const idOf = (s: Sample): string => s.location.split("/")[2] ?? "-";
+
+/** The tab in the full state's location. */
+const tabOf = (s: Sample): string =>
+  new URLSearchParams(s.search).get("tab") ?? "-";
 
 /** The distinct screens, in order. */
 const screensOf = (samples: Sample[]): string[] =>
@@ -163,13 +192,25 @@ const screensOf = (samples: Sample[]): string[] =>
     .map(screenOf)
     .filter((screen, i, all) => i === 0 || all[i - 1] !== screen);
 
-/** Each field's selector readers, against the full state's value. */
+/**
+ * Each field's selector readers, and each URL hook reader, against the full
+ * state's value.
+ */
 const FIELDS: [string, (s: Sample) => string[], (s: Sample) => string][] = [
   ["state", (s) => [s.selState], (s) => s.state],
   ["isNavigating", (s) => [s.selNavigating], (s) => s.navigating],
   ["isStreaming", (s) => [s.bar, s.linkStreaming], (s) => s.streaming],
   ["pendingUrl", (s) => [s.pending], (s) => s.statusPending],
   ["location", (s) => [s.selLocation], (s) => s.location],
+  ["usePathname", (s) => [s.pathname], (s) => s.location],
+  ["useParams", (s) => [s.param], idOf],
+  ["useSearchParams", (s) => [s.tab], tabOf],
+  ["useSegments", (s) => [s.segments], (s) => s.location.slice(1)],
+  [
+    "several URL hooks",
+    (s) => [s.crumb],
+    (s) => `${s.location} ${idOf(s)} ${tabOf(s)}`,
+  ],
 ];
 
 /**
@@ -314,6 +355,44 @@ export function runHookFieldsTests(options: HookFieldsScenarioOptions): void {
         workOverPage(samples, "4", "open"),
         "animation frames with page 4 and its navigation's work",
       ).toBe(0);
+    });
+
+    // A click to the URL React holds, with transition() gated off. It renders
+    // the held page's segments from the history cache, so its commit waits
+    // for the same hold; when the hold ends, React commits the urgent page
+    // before the click's transition (rango-t221).
+    test(`${variant.name}: a gated-off click to the held page's URL: every reader shape reads each field alike`, async ({
+      page,
+    }) => {
+      using _ = options.expectNoPageError(page);
+      await open(page, options, variant.vt);
+      const from = await sampleCount(page);
+
+      await testId(page, "hook-fields-link-tab").click();
+      await page.waitForFunction(
+        () =>
+          (document.documentElement.dataset.hookFieldsHolding ?? "0") !== "0",
+      );
+      await expect(testId(page, "hook-fields-id")).toHaveText("1");
+      await testId(page, "hook-fields-link-urgent").click();
+      await waitForPage(page, "2");
+      await expect(testId(page, "hook-fields-status")).toHaveAttribute(
+        "data-search",
+        "?tab=2",
+      );
+      const samples = await samplesFrom(page, from);
+
+      expect(
+        samples.some(
+          (s) =>
+            s.id === "1" &&
+            s.holding !== "0" &&
+            s.location === "/hook-fields/1" &&
+            s.state === "loading",
+        ),
+        "React held page 2 under page 1",
+      ).toBe(true);
+      expectReadersAgree(samples);
     });
 
     test(`${variant.name}: a stale Back whose revalidation holds: every reader shape reads each field alike`, async ({

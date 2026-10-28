@@ -6,6 +6,7 @@ import { collectHandleData } from "../../handle.js";
 import type { HandleData } from "../types.js";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
+import { useCommitted } from "./use-route-state.js";
 import type { RouteStateSignal } from "../event-controller.js";
 
 /**
@@ -86,7 +87,8 @@ export function useHandle<T, A, S>(
  * location commit with their page.
  *
  * A value shallow-equal to the last one sets nothing, so a reader renders only
- * when its value moves.
+ * when its value moves. A release is compared with what React committed, as in
+ * useRouteState.
  */
 export function useCommitAnchoredState<T>(
   init: () => T,
@@ -99,11 +101,14 @@ export function useCommitAnchoredState<T>(
   const ref = useRef<{ last: T; held?: boolean; waiting?: boolean }>({
     last: value,
   });
+  const committed = useCommitted(value);
   const [set] = useState(() => (next: T, signal?: RouteStateSignal): void => {
     const r = ref.current;
     if (signal) r.waiting = signal === "anchor";
     if (!shallowEqual(next, r.last)) {
       r.last = next;
+      r.held = true;
+    } else if (signal === "release" && r.last !== committed.current) {
       r.held = true;
     }
     if (!r.held || (r.waiting && (waitForRelease || signal !== "anchor")))

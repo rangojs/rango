@@ -2,7 +2,15 @@
 
 import { use, type ReactNode } from "react";
 import { invalidateClientCache } from "@rangojs/router";
-import { Link, useLinkStatus, useNavigation } from "@rangojs/router/client";
+import {
+  Link,
+  useLinkStatus,
+  useNavigation,
+  useParams,
+  usePathname,
+  useSearchParams,
+  useSegments,
+} from "@rangojs/router/client";
 
 /** How long a page the client has not seen yet holds its commit. */
 const HOOK_FIELDS_HOLD = 900;
@@ -58,9 +66,48 @@ function HookFieldsStatus(): ReactNode {
       data-streaming={String(nav.isStreaming)}
       data-pending={pathOf(nav.pendingUrl)}
       data-location={nav.location.pathname}
+      data-search={nav.location.search}
     >
       {`${nav.state} ${nav.location.pathname}`}
     </p>
+  );
+}
+
+/** A nav menu's active link: usePathname(). */
+function HookFieldsPathname(): ReactNode {
+  return <p data-testid="hook-fields-pathname" data-pathname={usePathname()} />;
+}
+
+/** A detail header: one param, through a selector. */
+function HookFieldsParam(): ReactNode {
+  const id = useParams((p) => p.id ?? "-");
+  return <p data-testid="hook-fields-param" data-id={id} />;
+}
+
+/** A tab bar: useSearchParams(). */
+function HookFieldsTab(): ReactNode {
+  const [search] = useSearchParams();
+  return (
+    <p data-testid="hook-fields-tab" data-tab={search.get("tab") ?? "-"} />
+  );
+}
+
+/** A breadcrumb: the path, through a useSegments() selector. */
+function HookFieldsSegments(): ReactNode {
+  const path = useSegments((s) => s.path.join("/"));
+  return <p data-testid="hook-fields-segments" data-path={path} />;
+}
+
+/** A header that reads several URL hooks, the whole params map among them. */
+function HookFieldsCrumb(): ReactNode {
+  const pathname = usePathname();
+  const { id } = useParams<{ id?: string }>();
+  const [search] = useSearchParams();
+  return (
+    <p
+      data-testid="hook-fields-crumb"
+      data-crumb={`${pathname} ${id ?? "-"} ${search.get("tab") ?? "-"}`}
+    />
   );
 }
 
@@ -87,6 +134,11 @@ export function HookFieldsChrome(): ReactNode {
       <HookFieldsNavigating />
       <HookFieldsLocation />
       <HookFieldsStatus />
+      <HookFieldsPathname />
+      <HookFieldsParam />
+      <HookFieldsTab />
+      <HookFieldsSegments />
+      <HookFieldsCrumb />
       <nav>
         {["1", "2", "3", "4"].map((id) => (
           <Link
@@ -99,6 +151,23 @@ export function HookFieldsChrome(): ReactNode {
             {id === "2" ? <HookFieldsLinkChrome /> : null}
           </Link>
         ))}
+        <Link
+          to="/hook-fields/2?tab=2"
+          prefetch="none"
+          data-testid="hook-fields-link-tab"
+        >
+          2, tab 2
+        </Link>
+        {/* The same URL with transition() gated off: its page commits
+            urgently. */}
+        <Link
+          to="/hook-fields/2?tab=2"
+          prefetch="none"
+          transition={false}
+          data-testid="hook-fields-link-urgent"
+        >
+          2, tab 2, now
+        </Link>
       </nav>
       {/* Marks the history cache stale: Back restores, then revalidates. */}
       <button
