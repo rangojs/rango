@@ -1,7 +1,7 @@
 "use client";
 
-import { useContext, useState, useEffect, useRef } from "react";
-import { NavigationStoreContext } from "./context.js";
+import { useContext } from "react";
+import { useUrlValue } from "./use-route-state.js";
 import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
 
 /**
@@ -19,36 +19,7 @@ import { OptimisticLocationContext } from "../../client-urls/optimistic-location
  * ```
  */
 export function usePathname(): string {
-  const ctx = useContext(NavigationStoreContext);
   const optimistic = useContext(OptimisticLocationContext);
-
-  const [pathname, setPathname] = useState<string>(() => {
-    if (!ctx) {
-      return "/";
-    }
-    const state =
-      ctx.eventController.getHydrationSnapshot()?.state ??
-      ctx.eventController.getState();
-    return (state.location as URL).pathname;
-  });
-
-  const prevPathname = useRef(pathname);
-
-  useEffect(() => {
-    if (!ctx) return;
-
-    const update = () => {
-      const next = (ctx.eventController.getState().location as URL).pathname;
-      if (next !== prevPathname.current) {
-        prevPathname.current = next;
-        setPathname(next);
-      }
-    };
-
-    update();
-
-    return ctx.eventController.subscribe(update);
-  }, []);
-
+  const pathname = useUrlValue((route) => route.location.pathname, Object.is);
   return optimistic ? optimistic.pathname : pathname;
 }

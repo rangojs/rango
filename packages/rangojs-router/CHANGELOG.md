@@ -39,6 +39,19 @@ If you copied `result` or `error` into local state to keep it, you can read
 the hook directly. To clear a message before the next call, keep a
 dismissed flag in your component.
 
+### Fixed: the URL hooks show the page's URL when an urgent page ends a hold
+
+**Before.** While React held a `transition()` page, an urgent commit to the
+URL it held (a `transition={false}` link, a `prefetch: false` fill whose
+answer changed the tree) showed the new page for one screen with
+`usePathname()`, `useParams()`, `useSearchParams()` and `useSegments()`
+selectors still reading the page being left.
+
+**Now.** Every reader shows the new page's URL on its first screen. Each such
+reader renders once more on that page, and React bails out of it.
+
+No change in your code.
+
 ## 0.29.0 (2026-10-27)
 
 ### Fixed: a second click over a held page no longer waits on a breadcrumb's pending content ([#1311](https://github.com/rangojs/rango/pull/1311))

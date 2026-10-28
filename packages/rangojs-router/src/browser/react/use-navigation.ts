@@ -1,14 +1,9 @@
 "use client";
 
-import {
-  useContext,
-  useState,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-} from "react";
+import { useContext, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
+import { useRouteState } from "./use-route-state.js";
 import type { PublicNavigationState } from "../types.js";
 import type {
   DerivedNavigationState,
@@ -74,7 +69,11 @@ export function useNavigation<T>(
     throw new Error("useNavigation must be used within NavigationProvider");
   }
 
-  const [snapshot, setSnapshot] = useState<Snapshot<T | PublicNavigationState>>(
+  // A release is compared with the state React renders it on
+  // (useRouteState). The anchor is compared with the last set, as an
+  // ordinary notification is: it sets inside its page's transition, which
+  // renders every set so far.
+  const [snapshot, set] = useRouteState<Snapshot<T | PublicNavigationState>>(
     () => {
       const state = toPublicState(
         ctx.eventController.getHydrationSnapshot()?.state ??
@@ -82,13 +81,8 @@ export function useNavigation<T>(
       );
       return { state, value: selector ? selector(state) : state };
     },
+    (a, b) => shallowEqual(a.value, b.value),
   );
-  // What React ends on once every set so far commits, and what it committed.
-  const latest = useRef(snapshot);
-  const committed = useRef(snapshot);
-  useLayoutEffect(() => {
-    committed.current = snapshot;
-  });
 
   // Store selector in a ref so the subscription callback always uses the
   // latest selector without re-subscribing on every render (inline functions
@@ -118,34 +112,14 @@ export function useNavigation<T>(
       const moved = live.location !== location;
       location = live.location;
       const held = pageHeld && !signal;
-      const next = (
-        base: Snapshot<T | PublicNavigationState>,
-      ): Snapshot<T | PublicNavigationState> => {
-        const state = held ? hold(base.state, live, moved) : live;
-        return { state, value: select(state) };
-      };
-      const target = next(latest.current);
-      // A release is compared with the state React renders it on, not
-      // `latest`: an urgent page can end the hold before React commits the
-      // anchor's set. An anchor sets inside its page's transition, which
-      // renders every set so far, so `latest` is that state. A release that
-      // finds every set committed with its value sets nothing: the updater
-      // would render the reader again only to bail out.
-      if (signal === "release") {
-        if (
-          latest.current === committed.current &&
-          shallowEqual(target.value, latest.current.value)
-        )
-          return;
-        latest.current = target;
-        setSnapshot((prev) =>
-          shallowEqual(prev.value, target.value) ? prev : target,
-        );
-        return;
-      }
-      if (shallowEqual(target.value, latest.current.value)) return;
-      latest.current = target;
-      setSnapshot(held ? next : target);
+      set(
+        (base) => {
+          const state = held ? hold(base.state, live, moved) : live;
+          return { state, value: select(state) };
+        },
+        signal,
+        held,
+      );
     };
 
     // Catch-up: re-read state synchronously on mount before subscribing, so a

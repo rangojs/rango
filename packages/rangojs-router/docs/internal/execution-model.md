@@ -1795,7 +1795,10 @@ Here is how each hook gets there:
   subscriber calls `EventController.flushRouteState()` inside the payload
   update, so the controller's notification runs in that update's lane rather
   than on its debounce timer (#1164; see the route-state atomicity entry in
-  `feature-map.md`).
+  `feature-map.md`). The three URL hooks take the release too, on the
+  handle channel, and compare it as `useNavigation` does (below). The four
+  share one setter, `useRouteState` in `browser/react/use-route-state.ts`;
+  the URL hooks read through its `useUrlValue`.
 - While React holds a page, `useNavigation` applies one rule per field. It
   listens for the same "anchor" and "release" signals as `useHandle`
   (below). Between them, every notification that carries no signal goes
@@ -1833,7 +1836,31 @@ Here is how each hook gets there:
   reader made committed, with the release's value, sets nothing: the
   updater would render each reader once more, on every page, only to bail
   out. The hook tells by a ref its layout effect writes with the committed
-  value (`committed` in `use-navigation.ts`).
+  value (`useCommitted` in `use-route-state.ts`).
+
+  The rule is every route-state reader's, not `useNavigation`'s alone. The
+  URL hooks compared the release with their own last set, and so did
+  `useCommitAnchoredState`: on a gated-off commit to the URL React held, the
+  page's first screen showed `usePathname()`, `useParams()`,
+  `useSearchParams()` and a `useSegments()` selector reading the page being
+  left, while `useNavigation().location` read the page's (rango-t221). They
+  now share the setter above, and `useCommitAnchoredState` sets its value
+  again when a release finds it not committed. `useHandle` never showed that
+  frame, since from the anchor it sets nothing in the page's lane
+  (`waitForRelease`, below), and takes the same check. The cost is React's
+  queue: the urgent page renders each such reader once, and React renders it
+  again for the held lane it still has queued, to bail out.
+
+  For that bail-out to hold, a URL hook's read that equals the value it is
+  set over keeps that value (`useUrlValue`). The release that ends the hold
+  then sets the held page's own object, not a fresh read of the same URL,
+  and React's render of the held lane ends on that object too. With a fresh
+  read, `useParams()`, `useSearchParams()[0]` and an object selector changed
+  identity twice for one value, once with the urgent page and once with the
+  held lane, and an effect keyed on one of them ran twice.
+  `render-route-url-hooks-commit.test.tsx` pins every reader shape, the
+  render counts and those identities; the `hook-fields` e2e samples every
+  frame.
 
   The anchor's value is compared with what the hook set last, as an
   ordinary notification's is. It sets inside its page's transition, and

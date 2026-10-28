@@ -90,9 +90,9 @@ reads (a selector, the full state): work that starts shows at once
 when the response stream ended earlier, and agrees with every other
 `useNavigation()` reader on the screen. A page that ends the hold urgently (a
 Back to a page without `transition()`, a link with `transition={false}`)
-shows with its own values in every `useNavigation()` reader. `usePathname()`
-can read the path of the page being left on that page's first screen, until
-React finishes the render of the page it held.
+shows with its own values in every `useNavigation()` reader, and with its URL
+in `usePathname()`, `useParams()`, `useSearchParams()` and `useSegments()`,
+also when it is the URL React was holding.
 
 The rule holds for readers mounted before the page was handed to React. A
 reader that mounts while the page is held (a menu opened during the wait)
