@@ -71,11 +71,12 @@ export type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
  * tracks the state of individual server action invocations.
  *
  * Uses the event controller for reactive state management.
- * State is derived from the inflight actions tracked by the controller.
+ * State is derived from the calls the controller tracks: those in flight,
+ * and each action's last settled call.
  *
  * Features:
  * - Tracks action lifecycle: idle → loading → streaming → idle
- * - Captures result/error locally (React handles cleanup)
+ * - Keeps the settled call's state until the action is called again.
  * - If the same action fires several times, reports the latest call to
  *   start. An earlier call that settles later changes nothing it reports;
  *   a latest call that was aborted reports idle with nothing. One call at a

@@ -115,6 +115,8 @@ export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario
 export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
 export { runActionLatestCallTests } from "./action-latest-call-scenario.js";
 export type { ActionLatestCallScenarioOptions } from "./action-latest-call-scenario.js";
+export { runActionPersistsTests } from "./action-persists-scenario.js";
+export type { ActionPersistsScenarioOptions } from "./action-persists-scenario.js";
 export { runHookFieldsTests } from "./hook-fields-scenario.js";
 export type { HookFieldsScenarioOptions } from "./hook-fields-scenario.js";
 export { runNavIdleOverlapTests } from "./nav-idle-overlap-scenario.js";

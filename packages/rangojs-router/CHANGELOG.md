@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Changed: `renderRoute`'s `navigate()` shows its page while React holds one, without `act()`
+
+**Before.** While React held a `transition()` page, a `router.navigate()`
+that committed urgently (`transition: false`, or with `streamUntil`) kept
+the old page on screen, and React printed "A component suspended inside an
+`act` scope", unless the test wrapped the call in
+`await act(async () => { ... })`.
+
+**Now.** `await router.navigate(...)` shows its page with or without `act()`,
+and React prints no warning. A `<Link>` click over a held page still goes
+inside `await act(async () => { ... })`.
+
+### Changed: `useAction()` keeps a call's result and error until the action's next call
+
+**Before.** `result`, `error` and `revalidationError` cleared about 100 ms
+after the call settled. A form that rendered `useAction(save).error.message`
+showed the message for a blink, and a "Saved" line rendered from `result`
+vanished on its own, on a `transition()` page even before the page the
+action refreshed had shown. A component that mounted after the call settled
+read nothing. To keep a value, you copied it into local state from an
+effect.
+
+**Now.** The call's state (`result`, `error`, `revalidationError`, and its
+`payload` and `actionId`) stays until the same action is called again: past
+the settle, through navigations and Back/Forward, and in every reader, one
+that mounts later included. The next call reads `loading` with no `result`,
+`error` or `revalidationError`, then its own. A call that settles after a
+later call of the same action started still changes nothing the hook
+reports, and a latest call that was aborted still reads `idle` with nothing.
+A string id (`useAction("save")`) reads the latest call of any action with
+that export name, settled or not. A document load starts with nothing. The
+router keeps one settled call per action.
+
+If you copied `result` or `error` into local state to keep it, you can read
+the hook directly. To clear a message before the next call, keep a
+dismissed flag in your component.
+
 ## 0.29.0 (2026-10-27)
 
 ### Fixed: a second click over a held page no longer waits on a breadcrumb's pending content ([#1311](https://github.com/rangojs/rango/pull/1311))

@@ -17,6 +17,8 @@ export const routes = {
   actionLatest: "/action-latest",
   actionLatestVt: "/action-latest-vt",
   actionLocationState: "/action-location-state",
+  actionPersists: "/action-persists/:id",
+  actionPersistsVt: "/action-persists-vt/:id",
   "api.cacheInvalidate": "/api/cache/invalidate",
   "api.health": "/api/health",
   "api.productDetail": "/api/products/:id",

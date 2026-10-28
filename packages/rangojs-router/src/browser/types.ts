@@ -253,7 +253,11 @@ export type ActionLifecycleState = "idle" | "loading" | "streaming";
  * @internal This type is an implementation detail and may change without notice.
  */
 export interface TrackedActionState {
-  /** Current lifecycle state of the action */
+  /**
+   * Current lifecycle state of the action. Once the call settles it is
+   * "idle" and the rest of the call's state is kept until the action's next
+   * call.
+   */
   state: ActionLifecycleState;
 
   /** Server action function ID (e.g., "addToCart") */
@@ -265,13 +269,13 @@ export interface TrackedActionState {
   /** Error if action failed */
   error: unknown | null;
 
-  /** Result data from the action (preserved after completion) */
+  /** Result data from the action */
   result: unknown | null;
 
   /**
    * The error of a loader that threw while it re-ran after this successful
-   * action (the first, when several did). The loader also throws at its
-   * useLoader read, where the nearest error boundary catches it.
+   * action (the first, when several did). The loader also throws at its useLoader read, where the nearest
+   * error boundary catches it.
    */
   revalidationError: unknown | null;
 }
