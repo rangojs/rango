@@ -13,14 +13,10 @@ import {
   type InterceptEntry,
   type InterceptSelectorContext,
 } from "../server/context.js";
-import type { MatchApiDeps } from "./types.js";
+import type { ActionContext, MatchApiDeps } from "./types.js";
 import type { RouterContext } from "./router-context.js";
 import { runWithRouterContext } from "./router-context.js";
-import {
-  type ActionContext,
-  type MatchContext,
-  createPipelineState,
-} from "./match-context.js";
+import { type MatchContext, createPipelineState } from "./match-context.js";
 import { createMatchPartialPipeline } from "./match-pipelines.js";
 import { collectMatchResult } from "./match-result.js";
 import {
@@ -256,12 +252,7 @@ export function createMatchHandlers<TEnv = any>(
   async function createMatchContextForPartial(
     request: Request,
     env: TEnv,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    },
+    actionContext?: ActionContext,
   ): Promise<MatchContext<TEnv> | null> {
     return _createMatchContextForPartial(
       request,
@@ -274,13 +265,13 @@ export function createMatchHandlers<TEnv = any>(
 
   async function match(request: Request, env: TEnv): Promise<MatchResult> {
     // Silence telemetry for the PPR background shell capture: it re-runs match()
-    // under a derived request context flagged _shellCaptureRun (shell-capture.ts
+    // under a derived request context with _shellCaptureState (shell-capture.ts
     // attemptCapture), re-using the foreground Request — a second request.start/
     // cache.decision/request.end stamped with the same WeakMap-keyed requestId
     // would double-count dashboards. Derived here (inside the capture's active
     // request-context ALS) so the read sees the derived context, not module state.
     const emitTelemetry =
-      hasTelemetry && !_getRequestContext()?._shellCaptureRun;
+      hasTelemetry && !_getRequestContext()?._shellCaptureState?.run;
     const requestId = emitTelemetry ? getRequestId(request) : undefined;
     return runWithRouterLogContext({ request, transaction: "match" }, () => {
       const routerCtx = buildRouterContext();
@@ -406,9 +397,9 @@ export function createMatchHandlers<TEnv = any>(
     actionContext?: ActionContext,
   ): Promise<MatchResult | null> {
     // See match() above: the PPR shell capture re-runs matchPartial() under a
-    // _shellCaptureRun context and must stay invisible to the sink.
+    // _shellCaptureState context and must stay invisible to the sink.
     const emitTelemetry =
-      hasTelemetry && !_getRequestContext()?._shellCaptureRun;
+      hasTelemetry && !_getRequestContext()?._shellCaptureState?.run;
     const partialRequestId = emitTelemetry ? getRequestId(request) : undefined;
     return runWithRouterLogContext(
       { request, transaction: "matchPartial" },

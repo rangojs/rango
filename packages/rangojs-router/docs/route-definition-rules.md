@@ -220,8 +220,8 @@ layout(<AppShell />, () => [
 ```
 
 For a route after the marker the entry is both an orphan of the parent and a
-chain entry. It resolves once, as the chain entry (`ResolveSegmentOptions.chain`
-in `segment-resolution/fresh.ts`, `collectRouteMiddleware` in
+chain entry. It resolves once, as the chain entry (the `chain` walk option
+in `segment-resolution/revalidation.ts`, `collectRouteMiddleware` in
 `router/middleware.ts`), below the `cache()` header latch and never in a hit's
 live pass. Before issue #918 a `layout()` after the marker never rendered on
 the routes before it, and on the routes after it a `parallel()` after the

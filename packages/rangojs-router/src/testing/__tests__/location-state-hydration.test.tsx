@@ -15,6 +15,7 @@ import type {
   RscPayload,
 } from "../../browser/types.js";
 import { withLocationStateKey } from "../index.js";
+import { auditTreeCause } from "../../suspense-audit.js";
 
 // #992: a reader that hydrates after the root must still render the server
 // snapshot (`undefined`) on that hydration pass. These cases hand-write the
@@ -73,6 +74,7 @@ async function commitEntry(state?: object): Promise<void> {
 /** Swaps the provider's tree through the store, as a navigation does. */
 async function show(node: ReactNode): Promise<void> {
   await act(async () => {
+    auditTreeCause("navigation");
     app.store.emitUpdate({
       root: node,
       metadata: app.initialPayload.metadata!,

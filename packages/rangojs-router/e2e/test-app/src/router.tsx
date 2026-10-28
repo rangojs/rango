@@ -288,6 +288,7 @@ export const router = createRouter<AppEnv>({
       pathname: context.pathname,
       actionId: context.actionId,
       handledByBoundary: context.handledByBoundary,
+      background: context.background,
       metadata: context.metadata,
     });
   },

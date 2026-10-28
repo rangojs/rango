@@ -87,7 +87,7 @@ nothing. Know these traps, and the seeds that close the easy ones:
 
 | Looks testable, but…                                                                         | Reality                                                                                                                                                                                                                                                                                                                                               | What to do                                                                                                                                                                                                  |
 | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `useAction()` **non-idle** states (loading/streaming, action result/error) in `renderRoute`  | `renderRoute.navigate()` runs no server action, so `useAction()` stays `idle`. It does drive the navigation lifecycle: `useNavigation()` reads `loading` from the call to the commit (held for a `transition` spec with a pending loader seed), and `useLinkStatus().pending` is true for the destination's link until the commit                     | Test action pending/result UI at **e2e**; assert `useNavigation()` across a held `navigate()` in `renderRoute`                                                                                              |
+| `useAction()` **non-idle** states (loading/streaming, action result/error) in `renderRoute`  | `renderRoute.navigate()` runs no server action, so `useAction()` stays `idle`. It does drive the navigation lifecycle: `useNavigation()` reads `loading` from the call to the commit (held for a `transition` spec with a pending loader seed), and `useLinkStatus().pending` is true for the destination's link until the commit, held with it       | Test action pending/result UI at **e2e**; assert `useNavigation()` across a held `navigate()` in `renderRoute`                                                                                              |
 | `ctx.search` (typed search schema) in a loader                                               | Defaults to `{}`; `opts.search` only sets the raw `ctx.searchParams`                                                                                                                                                                                                                                                                                  | Seed the typed object with **`searchData`** on `runLoader`                                                                                                                                                  |
 | `ctx.theme` / `ctx.setTheme` in a handler                                                    | Always `undefined` — the real handler injects the theme config                                                                                                                                                                                                                                                                                        | Pass **`theme`** (the `createRouter({ theme })` shape) to `runLoader`/`runMiddleware`/`renderRoute`                                                                                                         |
 | `redirect()` basename prefixing                                                              | Defaults to no prefix                                                                                                                                                                                                                                                                                                                                 | Seed **`basename`** on `runLoader`/`runMiddleware`; `dispatch` uses the router's own basename                                                                                                               |
@@ -111,8 +111,17 @@ bound to `useNavigation()` and a stale indicator bound to
 `testing/client-components.md`, "Held navigation"). `navigate(url, { handles })`
 hands the destination's handle pushes over the response's handle stream, so a
 title or crumbs read with `useHandle()` keep the page being left's values while
-React holds the page. A back/forward restored from the history cache is not
-modeled: renderRoute keeps one URL and caches no entries.
+React holds the page. `navigate(url, { streamUntil })` gives the navigation a
+response stream that stays open past the commit until the promise settles
+(or a newer navigation aborts it, as in production), so a progress bar bound
+to `useNavigation().isStreaming` is testable. A back/forward onto the
+mounted entry or one a navigate() wrote restores that entry's page, as the
+history-cache restore does; a stale entry's revalidation and a restore that
+fetches stay at e2e. A `router.navigate()` started while React holds a page
+shows its page once the call resolves, with or without `act()`. A `<Link>`
+click over a held page goes inside `await act(async () => ...)`: RTL's
+`fireEvent` runs the click in a synchronous `act()`, which drops React's retry
+of the held page, and an urgent commit after it never renders.
 
 The rango **cache-invalidation directives** are an exception worth calling out,
 because they used to look like a trap and no longer are. A handler/action/loader
@@ -642,9 +651,11 @@ commits through production's `commitInTransition`, so the assertion between
 the call and the promise settling sees the page being left with its own state.
 A reader that mounts during that window reads the entry on screen too. A
 `popstate` event on `window` is a back/forward onto the entry `history.state`
-holds: readers take that entry as it is (the tree has one location, so no page
-is restored with it). `router.navigate()` writes history only for `state` or
-`replace: true`; `navigate(url)` and `navigate(url, { replace: false })` leave
+holds: when it is the mounted entry or one a navigate() wrote, history still
+holds the state written there, and another page is on screen, that entry's
+page is restored with it; otherwise (an entry the test wrote, such as a
+`history.replaceState()` over it) readers take that entry as it is.
+`router.navigate()` writes history only for `state` or `replace: true`; `navigate(url)` and `navigate(url, { replace: false })` leave
 it alone. The skill's "State while a navigation is pending" has the worked
 example.
 

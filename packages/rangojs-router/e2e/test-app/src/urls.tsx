@@ -15,6 +15,7 @@ import { suspenseCasesPatterns } from "./urls/suspense-cases.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
 import { transitionKindsPatterns } from "./urls/transition-kinds.js";
+import { optimisticSettlePatterns } from "./urls/optimistic-settle.js";
 
 import { errorsPatterns } from "./urls/errors.js";
 import {
@@ -28,8 +29,12 @@ import {
 import { hooksPatterns } from "./urls/hooks.js";
 import { renderStabilityPatterns } from "./urls/render-stability.js";
 import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
+import { actionLatestCallPatterns } from "./urls/action-latest-call.js";
+import { actionPersistsPatterns } from "./urls/action-persists.js";
 import { asyncHandlesPatterns } from "./urls/async-handles.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
+import { hookFieldsPatterns } from "./urls/hook-fields.js";
+import { handlesOverlapPatterns } from "./urls/handles-overlap.js";
 import { vtBackPatterns } from "./urls/vt-back.js";
 import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
@@ -153,6 +158,8 @@ import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
 import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
 import { staleDefaultsPatterns } from "./urls/stale-defaults.js";
+import { actionBoundaryPatterns } from "./urls/action-boundary.js";
+import { interceptBoundaryPatterns } from "./urls/intercept-boundary.js";
 import actionFailureClientPatterns from "./urls/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -165,6 +172,9 @@ import heldHandlesClientPatterns from "./urls/held-handles.client-urls.js";
 import { heldHandlesPatterns } from "./urls/held-handles.js";
 import { historyHandlesPatterns } from "./urls/history-handles.js";
 import { interceptHeldPatterns } from "./urls/intercept-held.js";
+import { cacheInterceptCrumbsPatterns } from "./urls/cache-intercept-crumbs.js";
+import { cacheInterceptWhenPatterns } from "./urls/cache-intercept-when.js";
+import { cacheInterceptKeyPatterns } from "./urls/cache-intercept-key.js";
 import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
 import clientUrlsLayoutLoaderPatterns from "./urls/client-urls-layout-loader.js";
 import clientUrlsComponentUsePatterns from "./urls/client-urls-component-use.js";
@@ -1134,6 +1144,16 @@ export const urlpatterns = urls(
       include("/stale-defaults", staleDefaultsPatterns, {
         name: "staleDefaults",
       }),
+      // An action that throws on a route with its own errorBoundary(), under a
+      // layout whose loader reads its write (action-boundary.test.ts).
+      include("/action-boundary", actionBoundaryPatterns, {
+        name: "actionBoundary",
+      }),
+      // An action that throws inside an intercept, under the layout's
+      // errorBoundary() (intercept-boundary.test.ts).
+      include("/intercept-boundary", interceptBoundaryPatterns, {
+        name: "interceptBoundary",
+      }),
       // A no-script document whose inline <Suspense> draws a client component
       // from a loader's answer (client-urls-loader-element.test.ts).
       include("/client-urls-loader-element", clientUrlsLoaderElementPatterns, {
@@ -1180,12 +1200,27 @@ export const urlpatterns = urls(
       include("/", conditionalTransitionPatterns, { name: "" }),
       // #1165: each transition commit carries its kind as a transition type.
       include("/", transitionKindsPatterns, { name: "" }),
+      // Optimistic hook values settle in the page's commit and leave it its
+      // transition types (useLinkStatus, useAction).
+      include("/", optimisticSettlePatterns, { name: "" }),
 
       // #622 follow-up (HIGH): shared layout + client-mount-suspense children
       include("/", clientSuspensePatterns, { name: "" }),
       include("/", heldBoundaryPatterns, { name: "" }),
       include("/intercept-held", interceptHeldPatterns, {
         name: "interceptHeld",
+      }),
+      // A cache() intercept HIT shows the MISS's crumbs (rango-t184).
+      include("/cache-intercept-crumbs", cacheInterceptCrumbsPatterns, {
+        name: "cacheInterceptCrumbs",
+      }),
+      // Two intercepts selected by when() keep a cache() record each (rango-t194).
+      include("/cache-intercept-when", cacheInterceptWhenPatterns, {
+        name: "cacheInterceptWhen",
+      }),
+      // A cache({ key }) keeps a record per request kind (rango-t201).
+      include("/cache-intercept-key", cacheInterceptKeyPatterns, {
+        name: "cacheInterceptKey",
       }),
       include("/", lateHistoryPatterns, { name: "" }),
       // An action that does not land on the page on screen: the follow-up
@@ -1224,8 +1259,16 @@ export const urlpatterns = urls(
       // Hook render-stability fixture (render/commit tracking)
       include("/", renderStabilityPatterns, { name: "" }),
       include("/", navIdleLocationPatterns, { name: "" }),
+      // useAction() reports the latest call of an action called twice.
+      include("/", actionLatestCallPatterns, { name: "" }),
+      // useAction() keeps a settled call until the action's next call.
+      include("/", actionPersistsPatterns, { name: "" }),
       // A navigation's title and crumbs commit with its page.
       include("/", handlesCommitPatterns, { name: "" }),
+      // useNavigation()'s fields in every reader shape while a page is held.
+      include("/", hookFieldsPatterns, { name: "" }),
+      // A second click over a held page: no page held by a pending crumb.
+      include("/", handlesOverlapPatterns, { name: "" }),
       // Async handle values: awaited in SSR, held then swapped on navs.
       include("/", asyncHandlesPatterns, { name: "" }),
       // A cached back/forward animates under transition().

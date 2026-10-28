@@ -17,7 +17,15 @@ import type { MiddlewareContext } from "../../router/middleware.js";
 // render call the render-callable cacheTag() and land the tag on the same
 // _requestTags the middleware collects (#648).
 import { cacheTag } from "../cache-tag.js";
-import { runWithRequestContext } from "../../server/request-context.js";
+import {
+  bindRes,
+  createRequestContext,
+  createUseFunction,
+  isBackgroundWork,
+  runAsBackgroundWork,
+  runWithRequestContext,
+  wireRenderBarrier,
+} from "../../server/request-context.js";
 import { createWarmRecord } from "../../prerender/warm-request.js";
 
 // ============================================================================
@@ -143,6 +151,13 @@ describe("createDocumentCacheMiddleware", () => {
       getRequestContext: () => mockRequestCtx,
       _getRequestContext: () => mockRequestCtx,
       runWithRequestContext,
+      runAsBackgroundWork,
+      isBackgroundWork,
+      // A stale refresh's derived pass and its response sink (render-pass.ts).
+      createRequestContext,
+      createUseFunction,
+      bindRes,
+      wireRenderBarrier,
     }));
     await import("../document-cache.js");
   }, 60_000);
@@ -166,6 +181,13 @@ describe("createDocumentCacheMiddleware", () => {
       getRequestContext: () => mockRequestCtx,
       _getRequestContext: () => mockRequestCtx,
       runWithRequestContext,
+      runAsBackgroundWork,
+      isBackgroundWork,
+      // A stale refresh's derived pass and its response sink (render-pass.ts).
+      createRequestContext,
+      createUseFunction,
+      bindRes,
+      wireRenderBarrier,
     }));
   });
 

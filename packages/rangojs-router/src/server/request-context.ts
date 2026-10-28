@@ -66,6 +66,7 @@ import {
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import type { RoutineTrace } from "../rsc/routine-plan.js";
 import type { ActionContinuation } from "../rsc/server-action.js";
+import type { ShellCaptureState } from "../rsc/shell-capture.js";
 import type { FormActionOutcome } from "../rsc/progressive-enhancement.js";
 import { NOCACHE_SYMBOL, assertNotInsideCacheExec } from "../cache/taint.js";
 import {
@@ -334,56 +335,13 @@ export interface RequestContext<
   _searchParamsFilter?: import("../cache/search-params-filter.js").SearchParamsFilter;
 
   /**
-   * @internal PPR shell-capture ACTIVE marker. True ONLY inside the background
-   * capture task's derived request context (built by shell-capture.ts). This is
-   * the switch every capture-specific behavior reads: loader masking
-   * (loader-mask.ts isShellCaptureActive / fresh.ts emitStreaming) and the
-   * identity-read capture guard (server/context.ts guardIdentityRead). The
-   * foreground render never sets it, so the
-   * served response is byte-identical to axis 1. The capture descriptor itself
-   * (key/ttl/swr/tags/store) is NOT threaded through the request context — the
-   * integrated PPR serve path (rsc/shell-serve.ts + rsc-rendering.ts) builds it
-   * locally and passes it to scheduleShellCapture directly.
+   * @internal A PPR shell capture's own state (rsc/shell-capture.ts
+   * ShellCaptureState): created by RENDER_PASS_FIELDS["shell-capture"]
+   * (server/render-pass.ts) on the capture's derived context. The foreground
+   * render and every background re-render never have one, so
+   * `_shellCaptureState?.run` is the capture switch.
    */
-  _shellCaptureRun?: boolean;
-
-  /**
-   * @internal Set beside `_shellCaptureRun` when the shell is keyed by the
-   * visitor's URL (`rewrite(...).shell("visitor")`): the capture renders the
-   * visitor's location and `ctx.rewrittenFrom`; the theme stays the default.
-   */
-  _shellCaptureForVisitor?: boolean;
-
-  /**
-   * @internal Bake-lane loader containers collected DURING a shell capture:
-   * segment-key -> the loader's (pre-wrap) result promise. Populated by
-   * resolveLoaderData for bake-lane loaders (lane rule: see its JSDoc in
-   * loader-cache.ts). Drained by captureAndStoreShell after the shell
-   * quiesces: settled containers are promise-elided, Flight-serialized, and
-   * pinned into the snapshot's loader family; a REJECTED container refuses
-   * the capture (error UI must never bake into the shared shell). Own
-   * property of the capture's derived context only.
-   */
-  _shellCaptureLoaderRecords?: Map<string, Promise<unknown>>;
-
-  /**
-   * @internal Set on a capture's derived context when a loader pushed a
-   * value the record cannot keep (masked nested promises, a pushed promise
-   * that settled to one, a live-lane loader's push, or a push outside a
-   * loader body): the loader records then carry `runs: 1`, so a HIT still
-   * runs their bodies for those pushes.
-   */
-  _shellCaptureUnrecordedLoaderPush?: true;
-
-  /**
-   * @internal The lane of each loader the capture's matched route registers
-   * (loader-cache.ts routeLoaderLanes), set by createMatchContextForFull
-   * before any loader runs. The capture's push funnel credits a push made
-   * under a live-lane loader's body, at any depth, to that loader
-   * (shell-capture.ts deriveShellCaptureContext). Own property of the
-   * capture's derived context only.
-   */
-  _shellCaptureLoaderLanes?: ReadonlyMap<string, "live" | "bake">;
+  _shellCaptureState?: ShellCaptureState;
 
   /**
    * @internal Record keys resolved for this request (CacheScope
@@ -424,17 +382,6 @@ export interface RequestContext<
    * runtime has no AsyncLocalStorage.snapshot.
    */
   _runAtRequestEntry?: <T>(fn: () => T) => T;
-
-  /**
-   * @internal The freshness window of the route cache() records this
-   * request read or wrote (cache-scope.ts noteRouteRecordWindow), as ms
-   * timestamps: `freshUntil` is the record's `expiresAt`, `staleUntil` adds
-   * its scope's swr. The narrowest record wins. A shell capture caps its
-   * entry's ttl and ttl+swr to it (shell-capture.ts capShellWindow), so a
-   * shell is never fresher, or served longer, than the route cache() entry
-   * it replayed or wrote.
-   */
-  _routeRecordWindow?: RouteRecordWindow;
 
   /**
    * @internal Loader-family snapshot seed for a shell HIT's tail render:
@@ -562,29 +509,6 @@ export interface RequestContext<
    * it as an own property for exactly that reason.
    */
   _shellFragmentPayload?: boolean;
-
-  /**
-   * @internal Set by the capture guard (server/context.ts
-   * guardIdentityRead) when it throws DURING a capture render: the read
-   * ("cookies()", "headers()", `ctx.get() for a non-cacheable variable`,
-   * "ctx.theme") and the fix the
-   * refusal warning gives for it. Load-bearing for the
-   * bake lane: a guard throw inside an executing loader is swallowed by
-   * wrapLoaderPromise into per-loader error UI, which would otherwise bake
-   * silently into the shared shell — the capture checks this flag after the
-   * render and refuses instead. Deterministic, so the capture does not retry.
-   */
-  _shellCaptureGuardTripped?: { surface: string; fix: string };
-
-  /**
-   * @internal The loader $$id whose BODY was executing when the capture guard
-   * tripped (read off the loader-body ALS scope at trip time), or undefined
-   * when the read came from handler/render code. Only used to make the
-   * once-per-key refusal warning name the real source — the old text
-   * hardcoded "a bake-lane loader", which misattributed handler-land reads
-   * and sent users debugging the wrong lane (issue #672, secondary).
-   */
-  _shellCaptureGuardTrippedLoaderId?: string;
 
   /**
    * @internal Handler-owned registry of explicit per-scope stores from
@@ -882,8 +806,8 @@ export interface RequestContext<
    * (loader(Def, { ssr: false })): segment resolution awaits these
    * before returning, so the render barrier cannot resolve until they settle.
    * rendered() checks this set to fail fast — a flagged loader awaiting the
-   * barrier is a guaranteed cycle, not a race. Registered by resolveLoaders
-   * (fresh.ts) before loader kickoff; only ever populated on document renders
+   * barrier is a guaranteed cycle, not a race. Registered by resolveOwnerLoaders
+   * before loader kickoff; only ever populated on document renders
    * (the flag is stamped per-isSSR at DSL evaluation).
    */
   _awaitBeforeFlushLoaderIds?: Set<string>;
@@ -908,6 +832,13 @@ export interface RequestContext<
 
   /** @internal Per-request error dedup set for onError reporting */
   _reportedErrors: WeakSet<object>;
+
+  /**
+   * @internal The segment a parallel slot's or orphan layout's error came
+   * from, for the owning entry's catch (segment-resolution/helpers.ts
+   * noteThrower). Per request: an error object can be thrown by several.
+   */
+  _throwers?: WeakMap<object, { id: string; type: string }>;
 
   /**
    * @internal The errors this request printed to the server console, so a
@@ -978,6 +909,13 @@ export interface RequestContext<
    */
   _handlerStart?: number;
 
+  /**
+   * @internal Handler-level Server-Timing entries (rsc/handler.ts): the
+   * bootstrap timings, then the core handler's classify. A stale document
+   * cache entry's re-run has its own (render-pass.ts).
+   */
+  _handlerTiming?: string[];
+
   /** @internal Resolved platform phase-span tracing for this request (Cloudflare or OTel) */
   _tracing?: ResolvedTracing;
 
@@ -1021,21 +959,6 @@ export interface RequestContext<
 }
 
 /**
- * @internal The freshness window of a route cache() record, as ms
- * timestamps: fresh until `freshUntil` (its `expiresAt`), stale until
- * `staleUntil` (plus its scope's swr). `ttl`, `swr` and `written` describe
- * the record that sets `staleUntil`: its cache() config, and whether this
- * request wrote it (cacheRoute) rather than read it.
- */
-export interface RouteRecordWindow {
-  freshUntil: number;
-  staleUntil: number;
-  ttl: number;
-  swr: number;
-  written: boolean;
-}
-
-/**
  * Public view of RequestContext, without internal methods and fields.
  *
  * This is the type exported to library consumers. Internal code should
@@ -1059,22 +982,15 @@ export type PublicRequestContext<
   | "_prerender"
   | "_onDemandProducer"
   | "_searchParamsFilter"
-  | "_shellCaptureRun"
-  | "_shellCaptureForVisitor"
+  | "_shellCaptureState"
   | "_shellImplicitCache"
   | "_shellLoaderSeed"
-  | "_shellCaptureLoaderRecords"
-  | "_shellCaptureUnrecordedLoaderPush"
-  | "_shellCaptureLoaderLanes"
   | "_resolvedCacheKeys"
   | "_shellKey"
   | "_shellForcedMiss"
   | "_prerenderWarm"
   | "_runAtRequestEntry"
-  | "_routeRecordWindow"
   | "_shellFragmentPayload"
-  | "_shellCaptureGuardTripped"
-  | "_shellCaptureGuardTrippedLoaderId"
   | "_explicitTaggedStores"
   | "_requestTags"
   | "_recordTagOwners"
@@ -1096,6 +1012,7 @@ export type PublicRequestContext<
   | "_inActionRevalidation"
   | "_actionRan"
   | "_reportedErrors"
+  | "_throwers"
   | "_printedErrors"
   | "_renderErrors"
   | "_recoveredHandlerErrors"
@@ -1115,6 +1032,7 @@ export type PublicRequestContext<
   | "_activeRoutine"
   | "_renderDiagnosticsEnabled"
   | "_handlerStart"
+  | "_handlerTiming"
   | "_tracing"
   | "_basename"
   | "_routerId"
@@ -1228,6 +1146,46 @@ export function runWithRequestContext<TEnv, T>(
   fn: () => T,
 ): T {
   return requestContextStorage.run(context, fn);
+}
+
+/** Inside background work: the errors its onError reports named. */
+const backgroundWork = new AsyncLocalStorage<WeakSet<object>>();
+
+/**
+ * Run work whose output goes only to a cache, never to the response of the
+ * request that started it, on `context`: a stale entry's refresh (a "use
+ * cache" function, a cached loader, a cache() record, a document), a
+ * navigation's proactive cache() write, a PPR shell capture. No visitor made
+ * the invalidations in it, so they set no fresh-reads cookie
+ * (cache/tag-invalidation.ts), and onError marks every error reported inside
+ * it `background` (router/error-handling.ts invokeOnError). Its failure is
+ * reported inside it too: a catch outside runs on the visitor's frame.
+ */
+export function runAsBackgroundWork<TEnv, T>(
+  context: RequestContext<TEnv>,
+  fn: () => T,
+): T {
+  const reported = backgroundWork.getStore() ?? new WeakSet<object>();
+  return requestContextStorage.run(context, () =>
+    backgroundWork.run(reported, fn),
+  );
+}
+
+/** Whether the caller runs inside runAsBackgroundWork. */
+export function isBackgroundWork(): boolean {
+  return backgroundWork.getStore() !== undefined;
+}
+
+/**
+ * The set onError's dedupe records a reported error in. Background work keeps
+ * its own: an error object both the visitor's render and background work
+ * reach (a memoized rejection, a thrown constant) is reported by each, so a
+ * background report never takes the place of the visitor's.
+ */
+export function reportedErrorsOf(
+  context: RequestContext<any>,
+): WeakSet<object> {
+  return backgroundWork.getStore() ?? context._reportedErrors;
 }
 
 /**
@@ -1835,6 +1793,7 @@ export function createRequestContext<TEnv>(
     _locationState: undefined,
 
     _reportedErrors: new WeakSet<object>(),
+    _throwers: undefined,
     _printedErrors: new WeakSet<object>(),
     _renderErrors: [],
     _metricsStore: undefined,
@@ -1842,6 +1801,7 @@ export function createRequestContext<TEnv>(
     _activeRoutine: undefined,
     _renderDiagnosticsEnabled: undefined,
     _handlerStart: undefined,
+    _handlerTiming: undefined,
 
     _resolveRenderBarrier: null as any,
     _renderBarrierSegmentOrder: undefined,

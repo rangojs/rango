@@ -254,6 +254,45 @@ describe("restoreHandles: a record's loader-owned values follow the loader's pin
   });
 });
 
+// A partial cache() HIT names the segments it sends (cache-lookup.ts
+// serveStoredSegments): a kept segment's handler values stay the client's.
+describe("restoreHandles: a segment the response does not send keeps its handler's values", () => {
+  const SENT = new Set(["seg2"]);
+
+  it("a kept segment without owners restores nothing; a sent one restores whole", () => {
+    const store = createHandleStore();
+    restoreHandles(
+      { seg1: { crumbs: ["layout"] }, seg2: { crumbs: ["page"] } },
+      store,
+      undefined,
+      undefined,
+      SENT,
+    );
+
+    expect(store.getDataForSegment("seg1")).toEqual({});
+    expect(store.getDataForSegment("seg2").crumbs).toEqual(["page"]);
+  });
+
+  it("a kept segment restores only its loaders' copies, which follow the pin", () => {
+    const store = createHandleStore();
+    store.setRecordAuthority(PINNED);
+    restoreHandles(
+      { ...RECORD, seg1: { ...RECORD.seg1, titles: ["handler-title"] } },
+      store,
+      OWNERS,
+      PINNED,
+      SENT,
+    );
+
+    livePush(store, "Bake", "bake-live");
+    livePush(store, "Live", "live-live");
+
+    expect(store.getDataForSegment("seg1")).toEqual({
+      crumbs: ["bake-captured", "live-live"],
+    });
+  });
+});
+
 describe("appendHandles: a cached unit's HIT over a record's placeholders", () => {
   const ENTRY = {
     "1:": { crumbs: ["own"] },

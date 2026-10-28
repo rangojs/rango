@@ -5,6 +5,7 @@ import { renderSegments } from "../segment-system";
 import { LoaderStore } from "../loader-store";
 import { Defer } from "../browser/defer";
 import { __resetActionFence } from "../browser/action-fence";
+import type { ResolvedSegment } from "../browser/types";
 
 function createMockStore() {
   return {
@@ -522,6 +523,202 @@ describe("server-action-bridge loader that fails on its rerun", () => {
         revalidationError: null,
       }),
     );
+  });
+});
+
+// An error-boundary response carries, above the boundary, what the action's
+// revalidation re-ran (rsc/server-action.ts): the boundary commits with the
+// fresh loader data, a layout it re-sends keeps its cached structure, and the
+// page goes on holding the loaders above the boundary while it stops holding
+// the boundary.
+describe("server-action-bridge error-boundary response", () => {
+  it("commits the boundary with what re-ran above it, still holds the re-run loaders and stops holding the boundary", async () => {
+    stubWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const cart = (data: number) => ({
+      id: "L0D0.cart",
+      type: "loader",
+      loaderId: "cart",
+      component: null,
+      loaderData: Promise.resolve({ __loaderResult: true, ok: true, data }),
+    });
+    const layout = {
+      id: "L0",
+      type: "layout",
+      component: "layout",
+      loading: "spinner",
+      mountPath: "/shop",
+    };
+    const route = { id: "L0R0", type: "route", component: "route" };
+    // A layout its revalidate() re-rendered, the cart loader re-run, and
+    // the boundary at the route.
+    const reRendered = { id: "L0", type: "layout", component: "layout v2" };
+    const fresh = cart(1);
+    const boundary = { id: "L0R0", type: "error", component: "failed" };
+    const failure = new Error("out of stock");
+    const store = {
+      ...createMockStore(),
+      getSegmentState: vi.fn(() => ({
+        path: "/",
+        currentUrl: "http://localhost/",
+        currentSegmentIds: ["L0", "L0D0.cart", "L0R0"],
+      })),
+      getHistoryKey: vi.fn(() => "/"),
+      getCachedSegments: vi.fn(() => ({
+        segments: [layout, cart(0), route],
+        stale: false,
+      })),
+      setSegmentIds: vi.fn(),
+      cacheSegmentsForHistory: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const setServerCallback = vi.fn();
+    const rendered: unknown[][] = [];
+    const onUpdate = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController(),
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async () => ({
+          metadata: {
+            pathname: "/",
+            segments: [reRendered, fresh, boundary],
+            matched: ["L0", "L0D0.cart", "L0R0"],
+            diff: ["L0", "L0D0.cart", "L0R0"],
+            resolvedIds: ["L0", "L0D0.cart", "L0R0"],
+            isPartial: true,
+            isError: true,
+          },
+          returnValue: { ok: false, data: failure },
+        })),
+        setServerCallback,
+      } as any,
+      onUpdate,
+      renderSegments: vi.fn(async (segments: unknown[]) => {
+        rendered.push(segments);
+        return "tree";
+      }),
+    }).register();
+
+    await expect(
+      setServerCallback.mock.calls[0]![0]("hash#fail", []),
+    ).rejects.toBe(failure);
+
+    expect(rendered[0]).toEqual([
+      { ...reRendered, loading: "spinner", mountPath: "/shop" },
+      fresh,
+      boundary,
+    ]);
+    expect(store.cacheSegmentsForHistory.mock.calls[0]![1][1]).toBe(fresh);
+    expect(store.setSegmentIds).toHaveBeenCalledWith(["L0", "L0D0.cart"]);
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("server-action-bridge ids the page holds after an action's boundary", () => {
+  /**
+   * The ids the page holds once an action that threw into the boundary at
+   * `errorId` commits it, from a page holding `held`. Nothing at or below the
+   * boundary ran after the write, so the next request re-renders it.
+   */
+  async function heldAfter(held: string[], errorId: string) {
+    stubWindow();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const segment = (id: string) => ({
+      id,
+      type: id.includes("D") ? "loader" : "layout",
+      component: id,
+    });
+    const store = {
+      ...createMockStore(),
+      getSegmentState: vi.fn(() => ({
+        path: "/",
+        currentUrl: "http://localhost/",
+        currentSegmentIds: held,
+      })),
+      getHistoryKey: vi.fn(() => "/"),
+      getCachedSegments: vi.fn(() => ({
+        segments: held.map(segment),
+        stale: false,
+      })),
+      setSegmentIds: vi.fn(),
+      cacheSegmentsForHistory: vi.fn(),
+      rememberDisplayedEntry: vi.fn(),
+      getRouterId: vi.fn(() => undefined),
+    };
+    const failure = new Error("out of stock");
+    const setServerCallback = vi.fn();
+    createServerActionBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController(),
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async () => ({
+          metadata: {
+            pathname: "/",
+            segments: [{ id: errorId, type: "error", component: "failed" }],
+            matched: held,
+            diff: [errorId],
+            isPartial: true,
+            isError: true,
+          },
+          returnValue: { ok: false, data: failure },
+        })),
+        setServerCallback,
+      } as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    }).register();
+    await expect(
+      setServerCallback.mock.calls[0]![0]("hash#fail", []),
+    ).rejects.toBe(failure);
+    return store.setSegmentIds.mock.calls.at(-1)![0] as string[];
+  }
+
+  it("a route's boundary: the route's loaders are let go with it", async () => {
+    expect(
+      await heldAfter(
+        ["M0L0", "M0L0D0.cart", "M0L0R0D0.item", "M0L0R0"],
+        "M0L0R0",
+      ),
+    ).toEqual(["M0L0", "M0L0D0.cart"]);
+  });
+
+  it("a layout's boundary: everything under its chain child is let go, a sibling with a longer index stays", async () => {
+    expect(
+      await heldAfter(
+        [
+          "M0L0",
+          "M0L0D0.cart",
+          "M0L0L1D0.shelf",
+          "M0L0L1",
+          "M0L0L1.@aside",
+          "M0L0L1R0",
+          "M0L0L10",
+        ],
+        "M0L0L1",
+      ),
+    ).toEqual(["M0L0", "M0L0D0.cart", "M0L0L10"]);
+  });
+
+  it("the router's default boundary at the root: the page holds nothing", async () => {
+    expect(
+      await heldAfter(["M0L0", "M0L0D0.cart", "M0L0L0", "M0L0L0R0"], "M0L0"),
+    ).toEqual([]);
   });
 });
 
@@ -1191,16 +1388,22 @@ describe("server-action-bridge follow-up", () => {
     metadata: answer,
     returnValue: { ok: true, data },
   });
+  const boundary = (failure: unknown) => ({
+    metadata: { ...answer, isError: true },
+    returnValue: { ok: false, data: failure },
+  });
 
   interface Sent {
     /**
      * Answer the action. `decoded` holds its Flight decode after the
-     * response arrived (the response counts as received).
+     * response arrived (the response counts as received); `body` keeps its
+     * stream open until the test closes it.
      */
     respond(
       payload: unknown,
       headers?: Record<string, string>,
       decoded?: Promise<void>,
+      body?: ReadableStream<Uint8Array>,
     ): void;
   }
 
@@ -1255,10 +1458,10 @@ describe("server-action-bridge follow-up", () => {
           new Promise<Response>((resolve) => {
             const index = String(sent.length);
             sent.push({
-              respond(payload, headers = {}, decoded) {
+              respond(payload, headers = {}, decoded, body) {
                 answered.set(index, { payload, decoded });
                 resolve(
-                  new Response(null, {
+                  new Response(body ?? null, {
                     status: 200,
                     headers: { ...headers, "x-test-call": index },
                   }),
@@ -1275,15 +1478,19 @@ describe("server-action-bridge follow-up", () => {
       () => new Promise((resolve) => answers.push(resolve)),
     );
     const onUpdate = vi.fn();
+    const renderTree = vi.fn(
+      async (_segments: ResolvedSegment[], _options?: unknown) => "tree",
+    );
     const onNavigate = vi.fn(async () => {});
     const setServerCallback = vi.fn();
+    const encodeReply = vi.fn(async () => "");
     createServerActionBridge({
       store: store as any,
       client: { fetchPartial } as any,
       eventController,
       deps: {
         createTemporaryReferenceSet: vi.fn(() => ({})),
-        encodeReply: vi.fn(async () => ""),
+        encodeReply,
         createFromFetch: vi.fn(async (response: Promise<Response>) => {
           const index = (await response).headers.get("x-test-call")!;
           const { payload, decoded } = answered.get(index)!;
@@ -1293,7 +1500,7 @@ describe("server-action-bridge follow-up", () => {
         setServerCallback,
       } as any,
       onUpdate,
-      renderSegments: vi.fn(async () => "tree"),
+      renderSegments: renderTree,
       onNavigate,
     }).register();
     const callback = setServerCallback.mock.calls[0]![0] as (
@@ -1315,12 +1522,20 @@ describe("server-action-bridge follow-up", () => {
       payload: unknown,
       headers?: Record<string, string>,
       decoded?: Promise<void>,
+      body?: ReadableStream<Uint8Array>,
     ) => {
       while (!sent[index]) await flush();
-      sent[index]!.respond(payload, headers, decoded);
+      sent[index]!.respond(payload, headers, decoded, body);
     };
-    /** A page is on screen: `pathname` under its own history entry. */
-    const show = (pathname: string, source: string | null = null) => {
+    /**
+     * A page is on screen: `pathname` under its own history entry, with a
+     * fresh cached list unless `restored` keeps the one its entry holds.
+     */
+    const show = (
+      pathname: string,
+      source: string | null = null,
+      restored = false,
+    ) => {
       Object.assign(window.location, {
         href: `http://localhost${pathname}`,
         pathname,
@@ -1328,7 +1543,9 @@ describe("server-action-bridge follow-up", () => {
       window.history.state.key = pathname;
       historyKey = pathname;
       interceptSource = source;
-      cache.set(pathname, { segments: [layout, route], stale: false });
+      if (!restored || !cache.has(pathname)) {
+        cache.set(pathname, { segments: [layout, route], stale: false });
+      }
     };
     /** A navigation the user started, and its commit or failure. */
     const navigate = (
@@ -1351,18 +1568,29 @@ describe("server-action-bridge follow-up", () => {
     /** Back/Forward to an entry restored from the history cache. */
     const back = (pathname: string, source: string | null = null) => {
       eventController.abortNavigation();
-      show(pathname, source);
+      show(pathname, source, true);
     };
-    /** Answer refetch `index` with the page as it is; it commits. */
-    const answerRefetch = (index: number) =>
+    /**
+     * Answer refetch `index` with `metadata`, by default the page as it is;
+     * it commits.
+     */
+    const answerRefetch = (
+      index: number,
+      metadata: unknown = { ...answer, matched: ["L0", "R0"] },
+    ) =>
       answers[index]!({
-        payload: { metadata: { ...answer, matched: ["L0", "R0"] } },
+        payload: { metadata },
         streamComplete: Promise.resolve(),
       });
     const refetches = () =>
       fetchPartial.mock.calls.map((args) => {
         const [request] = args as unknown as [
-          { targetUrl: string; segmentIds: string[]; previousUrl: string },
+          {
+            targetUrl: string;
+            segmentIds: string[];
+            previousUrl: string;
+            boundary?: string;
+          },
         ];
         return request;
       });
@@ -1385,6 +1613,9 @@ describe("server-action-bridge follow-up", () => {
       onNavigate,
       store,
       eventController,
+      renderTree,
+      cache,
+      encodeReply,
     };
   }
 
@@ -1574,6 +1805,66 @@ describe("server-action-bridge follow-up", () => {
     await t.flush();
     expect(t.onUpdate).toHaveBeenCalledTimes(1);
     expect(t.fetchPartial).not.toHaveBeenCalled();
+  });
+
+  it("drops a late error boundary for a page the user left: it aborts nothing, its call rejects, useAction() records the error, and the page on screen is followed up", async () => {
+    const t = setup();
+    const failure = new Error("out of stock");
+    const failing = t.act("hash#failing");
+    t.show("/other");
+    const sibling = t.act("hash#sibling");
+
+    await t.respond(0, boundary(failure));
+    await expect(failing).rejects.toBe(failure);
+    expect(t.eventController.getActionState("hash#failing").error).toBe(
+      failure,
+    );
+    expect(t.eventController.getActionState("hash#sibling").state).toBe(
+      "loading",
+    );
+    expect(t.onUpdate).not.toHaveBeenCalled();
+
+    await t.respond(1, saved("sibling"));
+    await expect(sibling).resolves.toBe("sibling");
+    expect(t.eventController.getActionState("hash#sibling").result).toBe(
+      "sibling",
+    );
+    await t.flush();
+    expect(t.onUpdate).toHaveBeenCalledTimes(1);
+    expect(t.followUps()).toEqual(["http://localhost/other"]);
+  });
+
+  it("an error boundary that shows aborts the other actions and keeps its own error for useAction() while its response streams", async () => {
+    const t = setup();
+    const failure = new Error("out of stock");
+    const sibling = t.act("hash#sibling");
+    const failing = t.act("hash#failing");
+    let end!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        end = () => controller.close();
+      },
+    });
+
+    await t.respond(1, boundary(failure), {}, undefined, body);
+    await expect(failing).rejects.toBe(failure);
+    expect(t.onUpdate).toHaveBeenCalledTimes(1);
+    expect(t.eventController.getActionState("hash#sibling").state).toBe("idle");
+    expect(t.eventController.getActionState("hash#failing")).toMatchObject({
+      state: "streaming",
+      error: null,
+    });
+
+    end();
+    await t.flush();
+    expect(t.eventController.getActionState("hash#failing")).toMatchObject({
+      state: "idle",
+      error: failure,
+    });
+
+    await t.respond(0, saved("sibling"));
+    await expect(sibling).resolves.toBeUndefined();
+    expect(t.onUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("owes the follow-up again when an action starts during it", async () => {
@@ -1965,5 +2256,412 @@ describe("server-action-bridge follow-up", () => {
       "http://localhost/other",
       "http://localhost/other",
     ]);
+  });
+
+  describe("an action's error boundary on screen", () => {
+    /** An action's boundary response: the error segment at `id`. */
+    const thrown = (failure: unknown, id = "R0") => {
+      const error = { id, type: "error", component: "fallback" };
+      return {
+        error,
+        payload: {
+          metadata: { ...answer, segments: [error], isError: true },
+          returnValue: { ok: false, data: failure },
+        },
+      };
+    };
+    /** A response body that stays open until `end()`. */
+    const openBody = () => {
+      let end!: () => void;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          end = () => controller.close();
+        },
+      });
+      return { body, end: () => end() };
+    };
+    /** The follow-up's answer: the layout above the boundary, re-rendered. */
+    const above = {
+      pathname: "/page",
+      segments: [{ id: "L0", type: "layout", component: "fresh layout" }],
+      matched: ["L0", "R0"],
+      diff: ["L0"],
+      isPartial: true,
+    };
+
+    /**
+     * X, sent from /other, lands unseen while the user is on /page, so it
+     * owes /page the follow-up; W, sent on /page, then throws into its
+     * boundary there. W's exit runs the follow-up while W's response still
+     * streams.
+     */
+    async function boundaryAfterDebt(headers?: Record<string, string>) {
+      const t = setup();
+      t.show("/other");
+      const x = t.act("hash#x");
+      t.show("/page");
+      const w = t.act("hash#w");
+      await t.respond(0, saved("x"));
+      await expect(x).resolves.toBe("x");
+      await t.flush();
+      expect(t.fetchPartial).not.toHaveBeenCalled();
+
+      const failure = new Error("out of stock");
+      const { error, payload } = thrown(failure);
+      const { body, end } = openBody();
+      await t.respond(1, payload, headers, undefined, body);
+      await expect(w).rejects.toBe(failure);
+      await t.flush();
+      return { t, error, end };
+    }
+
+    it("holds the boundary: the follow-up holds no segment, names the boundary, and its commit keeps the boundary and stops holding its id", async () => {
+      const { t, error, end } = await boundaryAfterDebt();
+      expect(t.onUpdate).toHaveBeenCalledTimes(1);
+      expect(t.eventController.getActionState("hash#w").state).toBe(
+        "streaming",
+      );
+      expect(t.refetches()).toEqual([
+        expect.objectContaining({
+          targetUrl: "http://localhost/page",
+          segmentIds: [],
+          staleRevalidation: true,
+          boundary: "R0",
+        }),
+      ]);
+
+      t.answerRefetch(0, above);
+      await t.flush();
+      await t.flush();
+      expect(t.onUpdate).toHaveBeenCalledTimes(2);
+      const [tree] = t.renderTree.mock.calls.at(-1)!;
+      expect(tree.map((s) => [s.id, s.type, s.component])).toEqual([
+        ["L0", "layout", "fresh layout"],
+        ["R0", "error", "fallback"],
+      ]);
+      // The same object: its key and wrapper stay, so its stream keeps
+      // rendering into the node on screen.
+      expect(tree[1]).toBe(error);
+      expect(t.cache.get("/page")!.segments[1]).toBe(error);
+      expect(t.store.setSegmentIds).toHaveBeenLastCalledWith(["L0"]);
+      end();
+    });
+
+    it("names no boundary for a page that shows none", async () => {
+      const t = setup();
+      const call = t.act();
+      t.show("/other");
+      await t.respond(0, saved());
+      await expect(call).resolves.toBe("saved");
+      await t.flush();
+      expect(t.refetches().map((r) => [r.segmentIds, r.boundary])).toEqual([
+        [[], undefined],
+      ]);
+    });
+
+    it("names none for a navigation's error boundary: it is a read, which the follow-up heals", async () => {
+      const t = setup();
+      const call = t.act();
+      t.show("/other");
+      // The handler threw on the GET that rendered the page.
+      t.cache.set("/other", {
+        segments: [layout, { id: "R0", type: "error", component: "fallback" }],
+        stale: false,
+      });
+      await t.respond(0, saved());
+      await expect(call).resolves.toBe("saved");
+      await t.flush();
+      expect(t.refetches().map((r) => [r.segmentIds, r.boundary])).toEqual([
+        [[], undefined],
+      ]);
+    });
+
+    it("an action that starts during the follow-up leaves it; the next run names the boundary only while the page still shows it", async () => {
+      const { t, end } = await boundaryAfterDebt();
+      expect(t.refetches().map((r) => r.boundary)).toEqual(["R0"]);
+
+      // V succeeds on the page: its commit replaces the boundary.
+      const v = t.act("hash#v");
+      await t.respond(2, saved("v"));
+      await expect(v).resolves.toBe("v");
+      await t.flush();
+      expect(t.cache.get("/page")!.segments[1]).toMatchObject({
+        type: "route",
+      });
+      expect(t.refetches().map((r) => [r.targetUrl, r.boundary])).toEqual([
+        ["http://localhost/page", "R0"],
+        ["http://localhost/page", undefined],
+      ]);
+      end();
+    });
+
+    it("drops the debt when the boundary is the page's first segment: nothing is above it", async () => {
+      const t = setup();
+      t.show("/other");
+      const x = t.act("hash#x");
+      t.show("/page");
+      const w = t.act("hash#w");
+      await t.respond(0, saved("x"));
+      await expect(x).resolves.toBe("x");
+      // The router's default boundary, at the root.
+      const failure = new Error("out of stock");
+      await t.respond(1, thrown(failure, "L0").payload);
+      await expect(w).rejects.toBe(failure);
+      await t.flush();
+      expect(t.onUpdate).toHaveBeenCalledTimes(1);
+      expect(t.fetchPartial).not.toHaveBeenCalled();
+    });
+
+    it("names none for the page a click commits", async () => {
+      const t = setup();
+      t.show("/other");
+      const x = t.act("hash#x");
+      t.show("/page");
+      const w = t.act("hash#w");
+      await t.respond(0, saved("x"));
+      await expect(x).resolves.toBe("x");
+      const click = t.navigate("/next");
+      const failure = new Error("out of stock");
+      await t.respond(1, thrown(failure).payload);
+      await expect(w).rejects.toBe(failure);
+      await t.flush();
+      // The follow-up waits for the click, then refetches its page.
+      expect(t.fetchPartial).not.toHaveBeenCalled();
+      click.commit();
+      await t.flush();
+      expect(t.refetches().map((r) => [r.targetUrl, r.boundary])).toEqual([
+        ["http://localhost/next", undefined],
+      ]);
+    });
+
+    it("Back onto the boundary's entry while the follow-up runs: the run that takes over the entry names the boundary it shows", async () => {
+      const { t, error, end } = await boundaryAfterDebt();
+      // A click leaves the follow-up; it runs again for the click's page.
+      const click = t.navigate("/third");
+      t.answerRefetch(0, above);
+      click.commit();
+      await t.flush();
+      // Back, restored from the history cache: its list still holds the
+      // boundary. The run for /third is left (its late answer is ignored)
+      // and runs again for /page.
+      t.back("/page");
+      t.answerRefetch(1);
+      await t.flush();
+      expect(t.cache.get("/page")!.segments[1]).toBe(error);
+      expect(t.refetches().map((r) => [r.targetUrl, r.boundary])).toEqual([
+        ["http://localhost/page", "R0"],
+        ["http://localhost/third", undefined],
+        ["http://localhost/page", "R0"],
+      ]);
+      end();
+    });
+
+    it("an action that starts during the follow-up and replaces nothing: the run after it names the boundary again", async () => {
+      const { t, end } = await boundaryAfterDebt();
+      expect(t.refetches().map((r) => r.boundary)).toEqual(["R0"]);
+
+      // V leaves the follow-up and never reaches the server: its arguments
+      // do not encode. The boundary is still on screen at its exit.
+      t.encodeReply.mockRejectedValueOnce(new Error("unserializable"));
+      const v = t.act("hash#v");
+      await expect(v).rejects.toThrow("unserializable");
+      await t.flush();
+      expect(t.refetches().map((r) => [r.targetUrl, r.boundary])).toEqual([
+        ["http://localhost/page", "R0"],
+        ["http://localhost/page", "R0"],
+      ]);
+      end();
+    });
+
+    /** An answer whose matched names a segment nothing holds: hmr-missing. */
+    const missing = {
+      metadata: { ...answer, matched: ["L0", "R0", "R1"] },
+      returnValue: { ok: true, data: "saved" },
+    };
+
+    it("a repair never names the boundary: it stands in for a successful action's commit", async () => {
+      const t = setup();
+      t.show("/page");
+      const w = t.act("hash#w");
+      const failure = new Error("out of stock");
+      await t.respond(0, thrown(failure).payload);
+      await expect(w).rejects.toBe(failure);
+      await t.flush();
+      expect(t.fetchPartial).not.toHaveBeenCalled();
+
+      // V succeeds on the page; its answer misses a segment, so a repair
+      // refetches the page.
+      const v = t.act("hash#v");
+      await t.respond(1, missing);
+      while (t.fetchPartial.mock.calls.length === 0) await t.flush();
+      expect(t.refetches().map((r) => [r.segmentIds, r.boundary])).toEqual([
+        [[], undefined],
+      ]);
+      t.answerRefetch(0);
+      await expect(v).resolves.toBe("saved");
+    });
+
+    it("a repair owed to the batch's end runs as the follow-up of the page a click commits, and names nothing there", async () => {
+      const t = setup();
+      t.show("/page");
+      const w = t.act("hash#w");
+      const failure = new Error("out of stock");
+      await t.respond(0, thrown(failure).payload);
+      await expect(w).rejects.toBe(failure);
+      await t.flush();
+
+      // A click is in flight when V's answer needs its repair: the repair
+      // cannot start, so V's exit owes it.
+      const v = t.act("hash#v");
+      const click = t.navigate("/next");
+      await t.respond(1, missing);
+      await expect(v).resolves.toBe("saved");
+      await t.flush();
+      expect(t.fetchPartial).not.toHaveBeenCalled();
+
+      click.commit();
+      await t.flush();
+      expect(t.refetches().map((r) => [r.targetUrl, r.boundary])).toEqual([
+        ["http://localhost/next", undefined],
+      ]);
+    });
+
+    it("a repair owed to the batch's end names no boundary on the page that still shows one: the success it stands in for supersedes it", async () => {
+      const t = setup();
+      t.show("/page");
+      const w = t.act("hash#w");
+      const failure = new Error("out of stock");
+      await t.respond(0, thrown(failure).payload);
+      await expect(w).rejects.toBe(failure);
+      await t.flush();
+
+      // V succeeds on the page while a click is in flight; its repair cannot
+      // start. The click is then aborted, so the page still shows W's
+      // boundary when the repair runs as the follow-up.
+      const v = t.act("hash#v");
+      const click = t.navigate("/next");
+      await t.respond(1, missing);
+      await expect(v).resolves.toBe("saved");
+      await t.flush();
+      expect(t.fetchPartial).not.toHaveBeenCalled();
+      t.eventController.abortNavigation();
+      click.handle[Symbol.dispose]();
+      await t.flush();
+      expect(t.cache.get("/page")!.segments[1]).toMatchObject({
+        type: "error",
+      });
+      expect(
+        t.refetches().map((r) => [r.targetUrl, r.segmentIds, r.boundary]),
+      ).toEqual([["http://localhost/page", [], undefined]]);
+    });
+
+    it("two action boundaries on two entries: Back to the older one during an action's flight; the follow-up that takes over Back's revalidation before it commits names the boundary that entry shows", async () => {
+      const t = setup();
+      // W1 throws into its boundary on /a, then W2 into its boundary on /b.
+      t.show("/a");
+      const w1 = t.act("hash#w1");
+      const first = thrown(new Error("one"));
+      await t.respond(0, first.payload);
+      await expect(w1).rejects.toThrow("one");
+      t.show("/b");
+      const w2 = t.act("hash#w2");
+      const second = thrown(new Error("two"));
+      await t.respond(1, second.payload);
+      await expect(w2).rejects.toThrow("two");
+      await t.flush();
+      expect(t.fetchPartial).not.toHaveBeenCalled();
+
+      // X is sent on /b; the user goes Back to /a, restored from the history
+      // cache, before it lands, so X owes /a the follow-up. With X in flight
+      // Back revalidates the restored entry (R7, a background navigation).
+      // The follow-up supersedes it while it is in flight (R6). Had that
+      // revalidation committed first, its stale render would have replaced
+      // the boundary with the route (rango-d207 case B1).
+      const x = t.act("hash#x");
+      t.back("/a");
+      const revalidation = t.navigate("/a", {
+        replace: true,
+        skipLoadingState: true,
+      });
+      expect(t.cache.get("/a")!.segments[1]).toBe(first.error);
+      await t.respond(2, saved("x"));
+      await expect(x).resolves.toBe("x");
+      await t.flush();
+      expect(revalidation.handle.signal.aborted).toBe(true);
+      expect(t.refetches()).toEqual([
+        expect.objectContaining({
+          targetUrl: "http://localhost/a",
+          segmentIds: [],
+          boundary: "R0",
+        }),
+      ]);
+    });
+
+    it("an action whose response arrived, aborted by the boundary before its decode, owes the follow-up of the page it left, which names the boundary", async () => {
+      const t = setup();
+      // X is sent from "/"; the user moves to /other and sends W there.
+      const x = t.act("hash#x");
+      t.show("/other");
+      const w = t.act("hash#w");
+      let decode!: () => void;
+      await t.respond(0, saved("x"), {}, new Promise((r) => (decode = r)));
+      await t.flush();
+      const failure = new Error("out of stock");
+      await t.respond(1, thrown(failure).payload);
+      await expect(w).rejects.toBe(failure);
+      await t.flush();
+      expect(t.onUpdate).toHaveBeenCalledTimes(1);
+      // X is still in the fence.
+      expect(t.fetchPartial).not.toHaveBeenCalled();
+
+      // W's boundary aborted X: it bails after its decode, and its exit owes
+      // the page on screen the follow-up.
+      decode();
+      await expect(x).resolves.toBeUndefined();
+      await t.flush();
+      expect(t.refetches()).toEqual([
+        expect.objectContaining({
+          targetUrl: "http://localhost/other",
+          segmentIds: [],
+          boundary: "R0",
+        }),
+      ]);
+    });
+
+    it("a follow-up that fails is reported and leaves the boundary on screen", async () => {
+      const t = setup();
+      t.show("/other");
+      const x = t.act("hash#x");
+      t.show("/page");
+      const w = t.act("hash#w");
+      await t.respond(0, saved("x"));
+      await expect(x).resolves.toBe("x");
+      const down = new Error("network down");
+      t.fetchPartial.mockImplementationOnce(() => Promise.reject(down));
+      const failure = new Error("out of stock");
+      const { error, payload } = thrown(failure);
+      await t.respond(1, payload);
+      await expect(w).rejects.toBe(failure);
+      await t.flush();
+
+      expect(t.refetches().map((r) => r.boundary)).toEqual(["R0"]);
+      expect(console.error).toHaveBeenCalledWith(
+        "[Browser] Background revalidation failed:",
+        down,
+      );
+      expect(t.onUpdate).toHaveBeenCalledTimes(1);
+      expect(t.cache.get("/page")!.segments[1]).toBe(error);
+    });
+
+    it("a thrown action that called keepClientCache() owes nothing; an earlier action's follow-up still names its boundary", async () => {
+      const { t, end } = await boundaryAfterDebt({ "x-rango-keep-cache": "1" });
+      expect(t.refetches()).toEqual([
+        expect.objectContaining({
+          targetUrl: "http://localhost/page",
+          boundary: "R0",
+        }),
+      ]);
+      end();
+    });
   });
 });

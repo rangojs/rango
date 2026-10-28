@@ -72,7 +72,8 @@
  *   RSC segments and holds no match-cache state), and a thrown non-Response error
  *   emits request.error with phase "routing". All three carry the same requestId
  *   (getRequestId), as does a response-route timeout on a rewritten pass
- *   (setRequestId). Emission is gated entirely on a configured sink; with none,
+ *   (runRequestPasses carries the id to each pass's request, as in
+ *   production). Emission is gated entirely on a configured sink; with none,
  *   dispatch does zero new work and stays byte-identical for existing callers.
  *   Lets a consumer unit-test their sink wiring in-process instead of only at e2e.
  * - Response-route `renderStartMs` timeouts and `onTimeout`: dispatch races the
@@ -146,12 +147,7 @@ import {
 } from "../rsc/helpers.js";
 import type { OnErrorCallback } from "../types/error-types.js";
 import type { Rango } from "../router/router-interfaces.js";
-import {
-  getRequestId,
-  resolveSink,
-  safeEmit,
-  setRequestId,
-} from "../router/telemetry.js";
+import { getRequestId, resolveSink, safeEmit } from "../router/telemetry.js";
 import type { TelemetrySink } from "../router/telemetry.js";
 import type { OnTimeoutCallback, ResolvedTimeouts } from "../router/timeout.js";
 import { WIRE } from "../wire-params.js";
@@ -349,6 +345,9 @@ export async function dispatch<TEnv = any>(
     cacheProfiles: router.cacheProfiles,
     versions,
   });
+  // The request's start, as the production handler sets it: onError's
+  // `duration` counts from here.
+  requestContext._handlerStart = performance.now();
   // Cache degradation (reportCacheError -> _reportBackgroundError) reaches the
   // router's onError, as in the production handler.
   stages.reportBackgroundErrors(requestContext, req, url, ctx.callOnError);
@@ -406,11 +405,6 @@ export async function dispatch<TEnv = any>(
               plan = await classifyPass(stages, passRequest, passUrl, ctx);
             }
           },
-          // A rewritten pass's request is a new object, which getRequestId
-          // would give an id of its own.
-          onHop: telemetryRequestId
-            ? (hop) => setRequestId(hop.request, telemetryRequestId)
-            : undefined,
           // The core the global chain wraps, as the handler's
           // coreRequestHandler: the terminal plans, then a findMatch()
           // redirect's 308, the response route, or a 404. The 308 and 404 go

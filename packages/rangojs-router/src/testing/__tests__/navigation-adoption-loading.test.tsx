@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import {
+  Profiler,
   Suspense,
   use,
   useContext,
@@ -15,11 +16,16 @@ import { createPartialUpdater } from "../../browser/partial-update.js";
 import { NavigationStoreContext } from "../../browser/react/context.js";
 import { consumeHandles } from "../../browser/react/NavigationProvider.js";
 import { useNavigation } from "../../browser/react/use-navigation.js";
+import { useParams } from "../../browser/react/use-params.js";
+import { usePathname } from "../../browser/react/use-pathname.js";
+import { useSearchParams } from "../../browser/react/use-search-params.js";
+import { useSegments } from "../../browser/react/use-segments.js";
 import type { NavigationUpdate } from "../../browser/types.js";
 import { OutletProvider } from "../../outlet-provider.js";
 import type { LoaderDefinition, ResolvedSegment } from "../../types.js";
 import { useLoader } from "../../use-loader.js";
 import { renderRoute } from "../render-route.js";
+import { auditTreeCause } from "../../suspense-audit.js";
 import { Defer, readDefer } from "../../browser/defer.js";
 
 // A click that adopts a payload with deferred segments (`prefetch: false`),
@@ -66,7 +72,11 @@ async function mount() {
     ),
     metadata: { pathname: "/", segments: [] },
   });
-  const emit = (u: NavigationUpdate) => router.store.emitUpdate(u);
+  // Named as the navigation bridge names it (suspense-audit.ts I6).
+  const emit = (u: NavigationUpdate) => {
+    auditTreeCause("navigation");
+    router.store.emitUpdate(u);
+  };
   await act(async () => emit(update(<p data-testid="page">home</p>)));
   return {
     emit,
@@ -207,28 +217,47 @@ describe("a click that adopts a prefetch, and its fill", () => {
    * answers with, `stream` how long the fill's response stays open. The tree
    * is whatever `render` makes of the segments on the page. `plain`: the
    * click with no prefetch, answered with the `filled` segments in one
-   * response.
+   * response. `sameStructure`: the adopted segments are the page's own
+   * (renderRoute's "/" is the one route segment "R0"), so the click commits
+   * in a transition (partial-update.ts isSameStructureNav). `initial`
+   * replaces the page on screen before the click. `to`: the URL the click
+   * goes to (default: the one on screen). `params`: the route params both
+   * responses carry.
    */
   async function adopt(options: {
     adopted: ResolvedSegment[];
     filled: ResolvedSegment[];
     stream?: Promise<void>;
     plain?: boolean;
+    sameStructure?: boolean;
+    initial?: ReactNode;
+    to?: string;
+    params?: Record<string, string>;
     render: (find: (id: string) => ResolvedSegment) => ReactNode;
   }) {
     const { router, getByTestId } = await renderRoute(
       [{ path: "/", Component: () => <p data-testid="page">home</p> }],
       { request: "/" },
     );
+    if (options.initial) {
+      await act(async () => {
+        auditTreeCause("navigation");
+        router.store.emitUpdate({
+          root: options.initial,
+          metadata: { pathname: "/", segments: [] },
+        });
+      });
+    }
     const held = router.store.getSegmentState().currentSegmentIds;
     const added = options.adopted.map((s) => s.id);
     const payload = (segments: ResolvedSegment[]) => ({
       metadata: {
         isPartial: true,
         pathname: "/",
-        matched: [...held, ...added],
+        matched: options.sameStructure ? held : [...held, ...added],
         diff: added,
         segments,
+        params: options.params,
       },
     });
     const answer = deferred<void>();
@@ -266,6 +295,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
       } as any,
       onUpdate: (update) => {
         updates++;
+        auditTreeCause("navigation");
         router.store.emitUpdate(update);
       },
       renderSegments: (segments) =>
@@ -282,7 +312,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
         flush: router.eventController.flushRouteState,
       },
     });
-    const here = window.location.href;
+    const here = new URL(options.to ?? "", window.location.href).href;
     const tx = createNavigationTransaction(
       router.store,
       router.eventController,
@@ -559,6 +589,121 @@ describe("a click that adopts a prefetch, and its fill", () => {
       expect(outlet, "no fallback inside the layout").toBe(0);
     },
   );
+
+  // The click to the page on screen (same structure) commits in a
+  // transition, and React holds it on the route's hole. The fill answers
+  // with another structure (the route failed), so its tree goes over
+  // urgently and ends the hold. Each reader shows the values that tree's
+  // release brings, though the click's anchor set the same ones and React
+  // never commits that set apart from the fill's tree (rango-t219).
+  it("a fill that ends the hold urgently shows with idle in every useNavigation() reader", async () => {
+    const screens: string[] = [];
+    function Readers(): ReactNode {
+      const state = useNavigation((n) => n.state);
+      const navigating = useNavigation((n) => n.isNavigating);
+      const full = useNavigation();
+      return (
+        <Profiler
+          id="readers"
+          onRender={(_id, phase) => {
+            if (phase === "nested-update") screens.pop();
+            screens.push(
+              `${document.querySelector('[data-testid="page"]')?.textContent} | ${state} ${navigating} | ${full.state} ${full.isNavigating}`,
+            );
+          }}
+        >
+          <i />
+        </Profiler>
+      );
+    }
+    const { shown, fill, updates, navigation } = await adopt({
+      sameStructure: true,
+      initial: (
+        <>
+          <Readers key="readers" />
+          <p data-testid="page">home</p>
+        </>
+      ),
+      adopted: [segment("R0", "route", { deferred: true })],
+      filled: [segment("R0", "error", { component: "failed" })],
+      render: (find) => (
+        <>
+          <Readers key="readers" />
+          <Unit content={find("R0").component} />
+        </>
+      ),
+    });
+    expect(shown(), "React holds the click").toBe("home");
+    expect(updates()).toBe(1);
+
+    await fill(0);
+    await navigation;
+    expect(shown()).toBe("failed");
+    expect(updates(), "the click's tree and the answer's").toBe(2);
+    expect(screens.filter((v, i) => i === 0 || screens[i - 1] !== v)).toEqual([
+      "home | idle false | idle false",
+      "home | loading true | loading true",
+      "failed | idle false | idle false",
+    ]);
+  });
+
+  // The same click, to the page's own route with a new search: the click's
+  // anchor set the new URL in every URL hook reader, and the fill's tree
+  // ends the hold before React commits that set (rango-t221).
+  it("a fill that ends the hold urgently shows with its URL in every URL hook reader", async () => {
+    const screens: string[] = [];
+    function Readers(): ReactNode {
+      const pathname = usePathname();
+      const [search] = useSearchParams();
+      const { id = "-" } = useParams();
+      const segments = useSegments(
+        (s) => s.location.pathname + s.location.search,
+      );
+      const { location } = useNavigation();
+      return (
+        <Profiler
+          id="readers"
+          onRender={(_id, phase) => {
+            if (phase === "nested-update") screens.pop();
+            screens.push(
+              `${document.querySelector('[data-testid="page"]')?.textContent} | ${pathname}?tab=${search.get("tab")} id=${id} ${segments} | ${location.pathname}${location.search}`,
+            );
+          }}
+        >
+          <i />
+        </Profiler>
+      );
+    }
+    const { shown, fill, updates, navigation } = await adopt({
+      sameStructure: true,
+      to: "/?tab=2",
+      initial: (
+        <>
+          <Readers key="readers" />
+          <p data-testid="page">home</p>
+        </>
+      ),
+      params: { id: "2" },
+      adopted: [segment("R0", "route", { deferred: true })],
+      filled: [segment("R0", "error", { component: "failed" })],
+      render: (find) => (
+        <>
+          <Readers key="readers" />
+          <Unit content={find("R0").component} />
+        </>
+      ),
+    });
+    expect(shown(), "React holds the click").toBe("home");
+    expect(updates()).toBe(1);
+
+    await fill(0);
+    await navigation;
+    expect(shown()).toBe("failed");
+    expect(screens.filter((v, i) => i === 0 || screens[i - 1] !== v)).toEqual([
+      "home | /?tab=null id=- / | /",
+      "failed | /?tab=2 id=2 /?tab=2 | /?tab=2",
+    ]);
+  });
 
   // A layout above the unit reads the route's loader, with no boundary: the
   // read is above the unit's fallback, so React holds the click on that

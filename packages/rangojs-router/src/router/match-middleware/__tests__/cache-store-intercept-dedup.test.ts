@@ -26,6 +26,7 @@ async function driveFreshIntercept(status: number) {
   const cacheRoute = vi.fn(async () => {});
   const recordTags = vi.fn();
   const cacheScope = { enabled: true, cacheRoute, recordTags } as any;
+  const modal = { slotName: "@modal", routeName: "feed", loader: [], when: [] };
 
   const ctx = {
     cacheScope,
@@ -35,6 +36,10 @@ async function driveFreshIntercept(status: number) {
     clientSegmentSet: new Set<string>(),
     metricsStore: undefined,
     isIntercept: true,
+    interceptResult: {
+      intercept: modal,
+      entry: { shortCode: "R0", intercept: [modal] },
+    },
     matched: { params: {}, routeKey: "feed" },
     url: new URL("https://app.test/feed/photo/1"),
   } as unknown as MatchContext<any>;
@@ -93,6 +98,11 @@ describe("withCacheStore — intercept segment dedup (B4)", () => {
     expect(counts["R0.@modal"]).toBe(1);
     expect(counts["R0"]).toBe(1);
     expect(counts["R0.page"]).toBe(1);
+  });
+
+  it("writes the record under the selected intercept's key", async () => {
+    const cacheRoute = await driveFreshIntercept(200);
+    expect((cacheRoute.mock.calls[0] as unknown[])[3]).toBe("R0.@modal~0");
   });
 
   it.each([500, 404])(

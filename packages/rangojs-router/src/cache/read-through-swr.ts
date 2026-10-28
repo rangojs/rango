@@ -117,29 +117,31 @@ export async function readThroughItem<T>(
       // span cover the write too (a slow or failing store write is part of
       // the revalidation, not an untraced tail). The foreground miss below
       // stays unwrapped: its context is already established.
+      // Reported inside the task, within wrapBackground's frame, so onError
+      // marks it `background`; rethrown so the span records the failure.
       const revalidateTask = async () => {
-        const fresh = await execute();
-        const serialized = await serialize(fresh);
-        if (serialized !== null) {
-          await setItem(key, serialized, storeOptions);
+        try {
+          const fresh = await execute();
+          const serialized = await serialize(fresh);
+          if (serialized !== null) {
+            await setItem(key, serialized, storeOptions);
+          }
+        } catch (error) {
+          reportCacheError(
+            error,
+            "stale-revalidation",
+            "[read-through] background revalidation",
+            host ?? undefined,
+          );
+          throw error;
         }
       };
       runBackground(
         host,
-        async () => {
-          try {
-            await (wrapBackground
-              ? wrapBackground(revalidateTask)
-              : revalidateTask());
-          } catch (error) {
-            reportCacheError(
-              error,
-              "stale-revalidation",
-              "[read-through] background revalidation",
-              host ?? undefined,
-            );
-          }
-        },
+        () =>
+          (wrapBackground ? wrapBackground(revalidateTask) : revalidateTask())
+            // Reported above.
+            .catch(() => {}),
         true,
       );
       return data;

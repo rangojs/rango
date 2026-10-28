@@ -65,7 +65,10 @@ const { executionStart, markInvalidated } =
 import type { SegmentCacheStore, CachedEntryData } from "../types.js";
 import type { PartialCacheOptions } from "../../types.js";
 import type { RequestContext } from "../../server/request-context.js";
-import { makeRequestContext } from "../../__tests__/kit/request-context.js";
+import {
+  makeRequestContext,
+  makeShellCaptureState,
+} from "../../__tests__/kit/request-context.js";
 
 const PRODUCTS_URL = "https://example.com/products";
 
@@ -698,7 +701,7 @@ describe("CacheScope - router.prerender() warm", () => {
     });
     foreground._prerenderWarm = createWarmRecord("replace", store);
     const capture = Object.create(foreground) as typeof foreground;
-    capture._shellCaptureRun = true;
+    capture._shellCaptureState = makeShellCaptureState();
     const outcome = await runWithRequestContext(capture, () =>
       scope.lookupRouteDetailed("/products", {}),
     );
@@ -736,7 +739,13 @@ describe("CacheScope - router.prerender() warm", () => {
     const record = createWarmRecord("replace", store);
     ctx._prerenderWarm = record;
     await runWithRequestContext(ctx, async () => {
-      await scope.cacheRoute("/products", {}, [makeSegment()], false, start);
+      await scope.cacheRoute(
+        "/products",
+        {},
+        [makeSegment()],
+        undefined,
+        start,
+      );
       ctx._handleStore.seal();
       const tasks = ctx._pendingBackgroundTasks!;
       for (let i = 0; i < tasks.length; i++) await tasks[i];

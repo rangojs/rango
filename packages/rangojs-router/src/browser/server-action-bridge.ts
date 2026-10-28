@@ -15,6 +15,9 @@ import {
 import { KEEP_CACHE_HEADER } from "./cookie-name.js";
 import { createNavigationTransaction } from "./navigation-transaction.js";
 import {
+  actionBoundaries,
+  actionBoundaryAt,
+  idsAboveBoundary,
   reconcileSegments,
   reconcileErrorSegments,
 } from "./segment-reconciler.js";
@@ -206,6 +209,8 @@ export function createServerActionBridge(
     actionId?: string;
     /** transition({ when }) `action` fields for the refetch commit. */
     action?: TransitionWhenActionInput;
+    /** The follow-up's held error boundary (UpdateMode `action`). */
+    boundary?: string;
   };
 
   /** The follow-up's transition({ when }) fields: the last owing action's. */
@@ -255,13 +260,13 @@ export function createServerActionBridge(
   let followUpsStarted = 0;
   /** The newest follow-up, until it ends: leaveFollowUp() aborts it. */
   let followUpRunning: { handle: NavigationHandle; due: FollowUp } | undefined;
-
   /**
    * The follow-up revalidation: the rules are R1-R7 in
    * docs/internal/execution-model.md. Once the batch's last action exited,
    * the page on screen that missed a write is refetched once, whole (no
-   * segments held, so every loader re-runs), in the action lane (storeOnly,
-   * skipLoadingState: useNavigation() stays idle).
+   * segments held, so every loader re-runs; above an action's boundary, see
+   * below), in the action lane (storeOnly, skipLoadingState:
+   * useNavigation() stays idle).
    *
    * - Never over an intercept: a request holding no segments drops the page
    *   under it (match-result.ts buildMatchResult). Checked when it would run,
@@ -271,6 +276,10 @@ export function createServerActionBridge(
    *   keeps its error on screen, and the debt is dropped.
    * - Runs again when it is left before its commit (a navigation, or an action
    *   that started: leaveFollowUp), for the page then on screen.
+   * - Holds the action error boundary the page shows (actionBoundaryAt): it
+   *   is that action's outcome, which no GET reproduces, so the server
+   *   renders every segment above it and nothing at or below it. With
+   *   nothing above it (the page's first segment), the debt is dropped.
    */
   function followUp(): void {
     if (!owed || isActionFenceActive()) return;
@@ -285,8 +294,16 @@ export function createServerActionBridge(
     const due = owed;
     owed = undefined;
     if (store.getInterceptSourceUrl()) return;
+    // The deepest action boundary the page shows: none (-1) refetches the
+    // page whole, the first segment (0) leaves nothing above it.
+    const shown =
+      store.getCachedSegments(store.getHistoryKey())?.segments ?? [];
+    const at = actionBoundaryAt(shown);
+    if (at === 0) return;
+    // Not on `due`: a run owed again (owed ??= due) looks again.
+    const held = { ...due, boundary: shown[at]?.id };
     const generation = ++followUpsStarted;
-    refetchRoute(due, {
+    refetchRoute(held, {
       started: (handle) => (followUpRunning = { handle, due }),
       ended: (left) => {
         if (generation !== followUpsStarted) return;
@@ -359,6 +376,7 @@ export function createServerActionBridge(
           ...(src ? { interceptSourceUrl: src } : {}),
           ...(opts.actionId !== undefined ? { actionId: opts.actionId } : {}),
           ...(opts.action ? { action: opts.action } : {}),
+          boundary: opts.boundary,
         },
       );
       return { started: true, error };
@@ -729,36 +747,50 @@ export function createServerActionBridge(
       }
 
       // Handle error responses with error boundary UI
-      if (isError && isPartial && segments && diff) {
+      if (isError && isPartial && segments) {
         log("processing error boundary response");
 
-        // Fail current handle BEFORE aborting all actions so the event controller
-        // records the error state (abortAllActions clears inflight entries)
+        // transition({ when }) sees action.error on the boundary commit and on
+        // a dropped one's follow-up.
+        whenAction = {
+          ...whenAction,
+          error: returnValue && !returnValue.ok ? returnValue.data : undefined,
+        };
+
+        // No consolidation: the boundary replaces the page, or the page left.
+        handle.clearConsolidation();
+
+        const currentKey = store.getHistoryKey();
+        const pageLeft = () =>
+          navigatedSince() || store.getHistoryKey() !== currentKey;
+        // The action's page left the screen (during the flight or the error
+        // render): drop the boundary; the call rejects and the exit owes the
+        // follow-up.
+        const dropBoundary = () => {
+          log("user navigated during error render, skipping");
+          if (returnValue && !returnValue.ok) throw returnValue.data;
+          handle.complete(undefined);
+          return undefined;
+        };
+        if (pageLeft()) return dropBoundary();
+
+        // fail() settles once the response's stream ends; the abort below
+        // spares this action, so its entry keeps the error for useAction().
         if (returnValue && !returnValue.ok) {
           handle.fail(returnValue.data);
         }
 
-        // Abort all other pending action requests - error takes precedence
-        // This prevents other actions from completing and overwriting the error UI
-        eventController.abortAllActions();
-
-        // Clear concurrent action tracking - no consolidation needed when showing error
-        handle.clearConsolidation();
+        // Abort the other actions in flight: the error takes precedence, so
+        // none completes over the boundary.
+        eventController.abortAllActions(handle.id);
 
         // Get current page's cached segments
-        const currentKey = store.getHistoryKey();
         const cached = store.getCachedSegments(currentKey);
         const cachedSegments = cached?.segments || [];
 
         // Reconcile error segments with cached tree
         const errorResult = reconcileErrorSegments(cachedSegments, segments);
 
-        // transition({ when }) decides the error-boundary commit too, with
-        // `action.error` set.
-        whenAction = {
-          ...whenAction,
-          error: returnValue && !returnValue.ok ? returnValue.data : undefined,
-        };
         const errorGatedOff = decideActionGatedOff(
           errorResult.segments,
           metadata,
@@ -775,28 +807,22 @@ export function createServerActionBridge(
               : undefined,
         });
 
-        // The page the action was sent from left the screen, during the
-        // flight or while the error tree rendered: the boundary is not shown,
-        // and the action's exit owes the page on screen the follow-up.
-        if (navigatedSince() || store.getHistoryKey() !== currentKey) {
-          log("user navigated during error render, skipping");
-          if (returnValue && !returnValue.ok) {
-            throw returnValue.data;
-          }
-          handle.complete(undefined);
-          return undefined;
-        }
-
-        // Update segment tracking to exclude error segment IDs
-        const errorSegmentIds = new Set(diff);
-        const segmentIdsAfterError = segmentState.currentSegmentIds.filter(
-          (id) => !errorSegmentIds.has(id),
-        );
+        if (pageLeft()) return dropBoundary();
 
         // Cache (and bump the nav instance) BEFORE the UI update so a deferred
         // handle pushed by the error-boundary render still applies — see the
-        // "normal" case below for why caching after onUpdate dropped it.
-        store.setSegmentIds(segmentIdsAfterError);
+        // "normal" case below for why caching after onUpdate dropped it. The
+        // action's boundary is the last error segment: the server's cut stops
+        // there (segment-resolution/revalidation.ts resolveAllSegments). The
+        // page holds what is above it, the loaders the response re-ran
+        // included, and no error segment.
+        const errors = segments.filter((s) => s.type === "error");
+        const boundary = errors[errors.length - 1];
+        store.setSegmentIds(
+          idsAboveBoundary(segmentState.currentSegmentIds, boundary?.id).filter(
+            (id) => !errors.some((s) => s.id === id),
+          ),
+        );
         const currentHandleData = liveHandleDataForCache(
           eventController,
           store,
@@ -808,6 +834,7 @@ export function createServerActionBridge(
           currentHandleData,
         );
         store.rememberDisplayedEntry();
+        if (boundary) actionBoundaries.add(boundary);
 
         // Update UI with error boundary.
         if (process.env.NODE_ENV !== "production") auditTreeCause("action");
@@ -908,6 +935,10 @@ export function createServerActionBridge(
           metadata?.locationState,
           eventController,
         );
+        // A success on the page supersedes the action boundary it shows
+        // (R4): a repair that stands in for this commit, direct or owed to
+        // the batch's end, holds none.
+        for (const s of cachedSegments) actionBoundaries.delete(s);
       }
       whenAction = { ...whenAction, result: returnData };
 

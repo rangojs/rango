@@ -77,9 +77,9 @@ describe("isWarmReplace", () => {
     };
     // deriveShellCaptureContext: Object.create(reqCtx) plus the run flag.
     const capture = Object.create(foreground) as typeof foreground & {
-      _shellCaptureRun?: boolean;
+      _shellCaptureState?: { run: true };
     };
-    capture._shellCaptureRun = true;
+    capture._shellCaptureState = { run: true };
 
     expect(capture._prerenderWarm).toBe(foreground._prerenderWarm);
     expect(isWarmReplace(capture)).toBe(false);

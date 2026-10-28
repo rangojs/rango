@@ -60,6 +60,10 @@ export type { ActionFollowUpScenarioOptions } from "./action-follow-up-scenario.
 export { runHandlesAfterAwaitTests } from "./handles-after-await-scenario.js";
 export type { HandlesAfterAwaitScenarioOptions } from "./handles-after-await-scenario.js";
 export { runActionFailureTests } from "./action-failure-scenario.js";
+export { runActionBoundaryTests } from "./action-boundary-scenario.js";
+export type { ActionBoundaryScenarioOptions } from "./action-boundary-scenario.js";
+export { runInterceptBoundaryTests } from "./intercept-boundary-scenario.js";
+export type { InterceptBoundaryScenarioOptions } from "./intercept-boundary-scenario.js";
 export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
 export {
   expectBackOntoAStalePageShowsTheWrite,
@@ -109,14 +113,26 @@ export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
 export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario.js";
 export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
+export { runActionLatestCallTests } from "./action-latest-call-scenario.js";
+export type { ActionLatestCallScenarioOptions } from "./action-latest-call-scenario.js";
+export { runActionPersistsTests } from "./action-persists-scenario.js";
+export type { ActionPersistsScenarioOptions } from "./action-persists-scenario.js";
+export { runHookFieldsTests } from "./hook-fields-scenario.js";
+export type { HookFieldsScenarioOptions } from "./hook-fields-scenario.js";
+export { runNavIdleOverlapTests } from "./nav-idle-overlap-scenario.js";
+export type { NavIdleOverlapScenarioOptions } from "./nav-idle-overlap-scenario.js";
 export { runAsyncHandlesTests } from "./async-handles-scenario.js";
 export type { AsyncHandlesScenarioOptions } from "./async-handles-scenario.js";
 export { runHandlesCommitTests } from "./handles-commit-scenario.js";
 export { runVtBackTests } from "./vt-back-scenario.js";
 export type { VtBackScenarioOptions } from "./vt-back-scenario.js";
 export type { HandlesCommitScenarioOptions } from "./handles-commit-scenario.js";
+export { runHandlesOverlapTests } from "./handles-overlap-scenario.js";
+export type { HandlesOverlapScenarioOptions } from "./handles-overlap-scenario.js";
 export type { TxIdleViewTransitionScenarioOptions } from "./tx-idle-view-transition-scenario.js";
 export { runTransitionKindsTests } from "./transition-kinds-scenario.js";
+export { runOptimisticSettleTests } from "./optimistic-settle-scenario.js";
+export type { OptimisticSettleScenarioOptions } from "./optimistic-settle-scenario.js";
 export type { TransitionKindsScenarioOptions } from "./transition-kinds-scenario.js";
 export {
   countViewTransitions,
@@ -4008,3 +4024,7 @@ export async function expectDeclinedBakedParamServedLive(
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
 }
+export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
+export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
+export { runOnErrorBackgroundTests } from "./onerror-background-scenario.js";
+export type { OnErrorBackgroundScenarioOptions } from "./onerror-background-scenario.js";

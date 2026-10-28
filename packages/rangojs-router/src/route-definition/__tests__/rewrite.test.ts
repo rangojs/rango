@@ -24,6 +24,7 @@ import {
   setRequestContextParams,
   type RequestContext,
 } from "../../server/request-context.js";
+import { makeShellCaptureState } from "../../__tests__/kit/request-context.js";
 import { createMetricsStore } from "../../router/metrics.js";
 import type { LocationStateEntry } from "../../browser/react/location-state-shared.js";
 import { createVar } from "../../context-var.js";
@@ -449,20 +450,19 @@ describe("applyRewrite", () => {
     });
     const target = new URL("https://shop.test/b");
     const shared = Object.create(ctx) as RequestContext<any>;
-    shared._shellCaptureRun = true;
+    shared._shellCaptureState = makeShellCaptureState();
     expect(renderedLocation(shared, target).href).toBe(target.href);
     expect(shared.rewrittenFrom).toBeUndefined();
 
     const visitor = Object.create(ctx) as RequestContext<any>;
-    visitor._shellCaptureRun = true;
-    visitor._shellCaptureForVisitor = true;
+    visitor._shellCaptureState = makeShellCaptureState({ forVisitor: true });
     expect(renderedLocation(visitor, target).href).toBe(
       "https://shop.test/a?x=1",
     );
     expect(visitor.rewrittenFrom?.href).toBe("https://shop.test/a?x=1");
     // Its key covers the URL: the read neither trips the capture guard nor
     // marks the request's own payload as the visitor's.
-    expect(visitor._shellCaptureGuardTripped).toBeUndefined();
+    expect(visitor._shellCaptureState?.guardTripped).toBeUndefined();
     expect(ctx._payloadVisitorLocation).toBeUndefined();
     // A "use cache" body inside the capture is keyed without the URL.
     expect(() => runWithCacheExecScope(() => visitor.rewrittenFrom)).toThrow(

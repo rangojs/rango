@@ -1,4 +1,9 @@
-import { expect, test } from "@playwright/test";
+import {
+  type APIRequestContext,
+  type APIResponse,
+  expect,
+  test,
+} from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 
 /**
@@ -10,6 +15,27 @@ import { useFixture, type Fixture } from "./fixture";
  * from cache. A non-cached control route proves the handler *does*
  * re-execute without cache() wrapping.
  */
+
+/**
+ * Polls GET `url` until `read` returns `expected`. A miss writes the cache in
+ * waitUntil, after its response, so the next GET can still miss.
+ */
+async function expectCacheHit<T>(
+  request: APIRequestContext,
+  url: string,
+  read: (res: APIResponse) => Promise<T>,
+  expected: T,
+): Promise<void> {
+  await expect(async () => {
+    const res = await request.get(url);
+    expect(res.status()).toBe(200);
+    expect(await read(res)).toBe(expected);
+  }).toPass({ timeout: 10_000 });
+}
+
+const readTs = async (res: APIResponse): Promise<number> =>
+  (await res.json()).ts;
+const readText = (res: APIResponse): Promise<string> => res.text();
 
 function responseCacheSuite(f: Fixture) {
   test("control: uncached route returns different timestamps", async ({
@@ -40,13 +66,7 @@ function responseCacheSuite(f: Fixture) {
     const ts1 = body1.ts;
     expect(typeof ts1).toBe("number");
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/test/cached-json"));
-    expect(res2.status()).toBe(200);
-    const body2 = await res2.json();
-
-    expect(body2.ts).toBe(ts1);
+    await expectCacheHit(request, f.url("/test/cached-json"), readTs, ts1);
   });
 
   test("path.text() with cache() returns identical body on cache hit", async ({
@@ -58,12 +78,7 @@ function responseCacheSuite(f: Fixture) {
     const body1 = await res1.text();
     expect(body1).toMatch(/^text:\d+$/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/test/cached-text"));
-    expect(res2.status()).toBe(200);
-
-    expect(await res2.text()).toBe(body1);
+    await expectCacheHit(request, f.url("/test/cached-text"), readText, body1);
   });
 
   test("path.xml() with cache() returns identical body on cache hit", async ({
@@ -75,12 +90,7 @@ function responseCacheSuite(f: Fixture) {
     const body1 = await res1.text();
     expect(body1).toMatch(/<ts>\d+<\/ts>/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/test/cached-xml"));
-    expect(res2.status()).toBe(200);
-
-    expect(await res2.text()).toBe(body1);
+    await expectCacheHit(request, f.url("/test/cached-xml"), readText, body1);
   });
 
   test("path.html() with cache() returns identical body on cache hit", async ({
@@ -92,12 +102,7 @@ function responseCacheSuite(f: Fixture) {
     const body1 = await res1.text();
     expect(body1).toMatch(/data-ts="\d+"/);
 
-    await new Promise((r) => setTimeout(r, 500));
-
-    const res2 = await request.get(f.url("/test/cached-html"));
-    expect(res2.status()).toBe(200);
-
-    expect(await res2.text()).toBe(body1);
+    await expectCacheHit(request, f.url("/test/cached-html"), readText, body1);
   });
 
   test("POST does not write or hit the response-route cache", async ({
@@ -116,17 +121,17 @@ function responseCacheSuite(f: Fixture) {
   test("HEAD does not poison a subsequent GET cache entry", async ({
     request,
   }) => {
+    // Per-run key: a retry or a reused server starts cold, so the HEAD runs
+    // before any GET of this entry.
     const url = f.url(
-      `/test/cached-json-query?q=head-isolate-${f.mode === "build" ? "prod" : "dev"}`,
+      `/test/cached-json-query?q=head-isolate-${crypto.randomUUID()}`,
     );
     const head = await request.fetch(url, { method: "HEAD" });
     expect(head.status()).toBe(200);
     await new Promise((r) => setTimeout(r, 200));
     const get1 = await request.get(url);
     const ts1 = (await get1.json()).ts;
-    await new Promise((r) => setTimeout(r, 500));
-    const get2 = await request.get(url);
-    expect((await get2.json()).ts).toBe(ts1);
+    await expectCacheHit(request, url, readTs, ts1);
   });
 
   test("Set-Cookie response is live but not shared on a later GET", async ({

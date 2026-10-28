@@ -54,6 +54,10 @@ import type { HandlerCacheConfig, SSRModule } from "../rsc/types.js";
 import type { createRSCHandler } from "../rsc/handler.js";
 import { setDefaultSSRModuleLoaderForTests } from "../rsc/ssr-module-loader.js";
 import {
+  createPrerenderStore,
+  prerenderManifestEntries,
+} from "../prerender/store.js";
+import {
   POST_QUIESCE_TASK_HOPS,
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
@@ -72,7 +76,6 @@ import {
   type PprReplayStatus,
   type ShellStatus,
 } from "./shell-status.js";
-import { WIRE } from "../wire-params.js";
 import { writePartialParams } from "../browser/wire-protocol.js";
 
 /** Options for {@link serveShellRequest}. */
@@ -112,7 +115,13 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * and segments take an action's revalidation defaults; it renders live, as
    * an action does, so neither the route cache nor the document cache answers
    * or stores it, and a `ppr` route's `replayStatus` is
-   * `{ outcome: "BYPASS", reason: "stale" }`.
+   * `{ outcome: "BYPASS", reason: "stale" }`. `boundary` names the error
+   * segment of a thrown action's boundary the page at `from` shows
+   * (`_rsc_boundary`), as the follow-up an earlier action owes that page
+   * sends it, with `stale: true` and no `segments`: the response renders
+   * every segment above the boundary and nothing at or below it, claims the
+   * boundary in `matched` and sends no segment for it. The server reads it
+   * only beside `stale`.
    */
   partial?:
     | true
@@ -124,6 +133,7 @@ export interface ServeShellRequestOptions<TEnv = any> {
         fill?: boolean;
         interceptSource?: string;
         stale?: boolean;
+        boundary?: string;
       };
   /**
    * POST this form as a submit before hydration: the no-JS request the
@@ -483,29 +493,14 @@ async function servePrerenderArtifacts(
     const { hashParams } = await import("../prerender/param-hash.js");
     baked.add(pathname);
     if (result && !result.passthrough) {
-      const key = `${result.routeName}/${hashParams(result.params)}`;
-      payloads.set(
-        key,
-        JSON.stringify({ segments: result.segments, handles: result.handles }),
-      );
-      // The intercept variant, keyed and shaped as the build writes it
-      // (vite/discovery/prerender-collection.ts).
-      if (result.interceptSegments?.length) {
-        payloads.set(
-          `${key}/i`,
-          JSON.stringify({
-            segments: [...result.segments, ...result.interceptSegments],
-            handles: result.interceptHandles ?? "",
-          }),
-        );
+      const paramHash = hashParams(result.params);
+      for (const [key, value] of prerenderManifestEntries(result, paramHash)) {
+        payloads.set(key, value);
       }
     }
   }
-  const [{ createPrerenderStore }, { setPrerenderStoreForTests }] =
-    await Promise.all([
-      import("../prerender/store.js"),
-      import("../router/match-middleware/cache-lookup.js"),
-    ]);
+  const { setPrerenderStoreForTests } =
+    await import("../router/match-middleware/cache-lookup.js");
   const previousLoader = globalThis.__loadPrerenderManifestModule;
   globalThis.__loadPrerenderManifestModule = async () => ({
     default: Object.fromEntries([...payloads.keys()].map((key) => [key, key])),
@@ -638,20 +633,23 @@ async function buildRequest(
     fill = false,
     interceptSource,
     stale = false,
+    boundary,
   } = partial === true ? {} : partial;
   if (stale && prefetch) {
     throw new Error(
       "serveShellRequest: partial.stale cannot be combined with partial.prefetch",
     );
   }
-  const target = new URL(url);
-  target.searchParams.set(WIRE.partial, "true");
-  target.searchParams.set(WIRE.segments, segments.join(","));
-  if (rewriteTarget) target.searchParams.set(WIRE.rewriteTarget, rewriteTarget);
-  // As the browser sends them: browser/navigation-client.ts (fill, stale) and
-  // browser/prefetch/fetch.ts (prefetch).
-  if (fill) target.searchParams.set(WIRE.fill, "1");
-  if (stale) target.searchParams.set(WIRE.stale, "true");
+  // As the browser writes them: browser/navigation-client.ts, and
+  // browser/prefetch/fetch.ts for the prefetch header.
+  const target = writePartialParams(new URL(url), {
+    segmentIds: segments,
+    emptySegments: "send",
+    stale,
+    boundary,
+    rewriteTarget,
+    fill,
+  });
   if (prefetch && !headers.has(PREFETCH_HEADER)) {
     headers.set(PREFETCH_HEADER, "1");
   }

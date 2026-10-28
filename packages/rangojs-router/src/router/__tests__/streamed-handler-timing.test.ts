@@ -2,8 +2,12 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { RangoContext, track } from "../../server/context.js";
 import type { MetricsStore } from "../../server/context.js";
 import { runWithRouterContext } from "../router-context.js";
-import { resolveSegment, resolveParallelEntry } from "../segment-resolution";
-import { resolveEntryHandlerWithRevalidation } from "../segment-resolution/revalidation.js";
+import {
+  resolveEntryHandler,
+  resolveParallelSegments,
+  resolveSegment,
+} from "../segment-resolution/revalidation.js";
+import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -68,7 +72,6 @@ function createDeps() {
 function minimalRouterCtx() {
   return {
     resolveAllSegments: vi.fn(),
-    resolveAllSegmentsWithRevalidation: vi.fn(),
     findInterceptForRoute: () => null,
   } as any;
 }
@@ -147,10 +150,10 @@ describe("track()", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration: streamed route handler timing via resolveSegment
+// Integration: streamed route handler timing via a FRESH segment pass
 // ---------------------------------------------------------------------------
 
-describe("streamed handler timing — fresh path", () => {
+describe("streamed handler timing — FRESH pass", () => {
   it("records handler timing after streamed route promise settles", async () => {
     const metrics = createMetrics();
     const ctx = createContext();
@@ -179,7 +182,10 @@ describe("streamed handler timing — fresh path", () => {
 
     await runWithMetrics(metrics, () =>
       runWithRouterContext(minimalRouterCtx(), async () => {
-        await resolveSegment(entry, "blog.post", {}, ctx, new Map(), deps);
+        await resolveSegment(
+          makeFreshPass(ctx, deps, { routeKey: "blog.post", params: {} }),
+          entry,
+        );
 
         // Handler hasn't settled yet — only entry-level timing should be absent
         // (track fires synchronously for non-streamed, but for streamed the
@@ -233,7 +239,16 @@ describe("streamed handler timing — fresh path", () => {
 
     await runWithMetrics(metrics, () =>
       runWithRouterContext(minimalRouterCtx(), async () => {
-        await resolveParallelEntry(parallelEntry, {}, ctx, false, "L0", deps);
+        await resolveParallelSegments(
+          makeFreshPass(ctx, deps, { params: {} }),
+          {
+            id: "layout",
+            type: "layout",
+            shortCode: "L0",
+            parallel: { "@sidebar": parallelEntry },
+          } as any,
+          false,
+        );
 
         // Not yet settled
         const before = metrics.metrics.find((m) =>
@@ -288,7 +303,7 @@ describe("streamed handler timing — revalidation path", () => {
 
     await runWithMetrics(metrics, () =>
       runWithRouterContext(minimalRouterCtx(), async () => {
-        const result = await resolveEntryHandlerWithRevalidation(
+        const result = await resolveEntryHandler(
           {
             context: ctx,
             client: new Set<string>(), // empty = new segment, always revalidate
@@ -355,7 +370,7 @@ describe("streamed handler timing — revalidation path", () => {
 
     await runWithMetrics(metrics, () =>
       runWithRouterContext(minimalRouterCtx(), async () => {
-        const result = await resolveEntryHandlerWithRevalidation(
+        const result = await resolveEntryHandler(
           {
             context: ctx,
             client: new Set<string>(),

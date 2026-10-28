@@ -501,7 +501,7 @@ prefetch.
 ### Where the decisions are made
 
 All of it is in `src/router/segment-resolution/revalidation.ts`, the partial
-path. The document path (`fresh.ts`) never defers.
+path. A FRESH pass (the document path) never defers.
 
 - `resolveOwnerLoaders` is the one place a navigation kicks a DSL
   loader off. A loader `defersLoader()` says yes to (R14) is registered
@@ -509,13 +509,13 @@ path. The document path (`fresh.ts`) never defers.
   with no `loaderData`. Registering starts nothing: `resolveLoaderData` is
   called only when a reader starts the loader, so the `cache()` of a loader
   nothing reads is not read (R1).
-- `resolveEntryHandlerWithRevalidation` skips a unit's handler, emits the
+- `resolveEntryHandler` skips a unit's handler, emits the
   segment with `component: null`, the fallback and `deferred: true`, and sets
   the latch (`markUnitDeferred`). The walk goes on.
 - Everything the walk reaches below a chain unit is emitted the same way, as
   a placeholder of its own: each deeper chain entry
-  (`resolveAllSegmentsWithRevalidation` no longer stops), each orphan layout
-  and each parallel slot (`resolveParallelSegmentsWithRevalidation`), with
+  (`resolveAllSegments` no longer stops), each orphan layout
+  and each parallel slot (`resolveParallelSegments`), with
   its own `loading`, its own `transition` and its slot name. No handler runs.
   A slot below the latch is not asked its `revalidate()` predicates: it is
   new, so there is nothing to revalidate against.
@@ -548,12 +548,15 @@ In a fill, every one of those decision points answers
 `fillSends()` in `prefetch-deferral.ts`. `revalidation.ts` asks it through
 `revalidateHeld()` for a held loader, entry or orphan layout, and directly
 for a slot, where the fill decides a slot the client lacks as well. The two
-store paths in `src/router/match-middleware/cache-lookup.ts` (the `cache()`
-HIT loop and `yieldFromStore`) ask it too, so they keep a held segment
-without consulting predicates or the params comparison. Each path keeps its
-own rule for every other request, and the two differ: `yieldFromStore`
-ignores a search change, re-sends every held segment when the params
-changed and the route's own segments on an action, while the HIT loop re-sends a route's own segments when the params
+store sources in `src/router/match-middleware/cache-lookup.ts` (a `cache()`
+record's `cachedSegmentSends` and a prerender entry's `storedEntrySends`, both
+asked by `serveStoredSegments`) ask it too, so they keep a held segment
+without consulting predicates or the params comparison. Each source keeps its
+own rule for every other request, and the two differ: a prerender entry
+ignores a search change and re-sends the route's own held segments when the
+params changed, and a held layout above the route only when its
+`revalidate()` asks for it then (an on-demand overlay entry also re-sends the
+route's own segments on an action or a stale request), while a `cache()` record re-sends a route's own segments when the params
 or the search changed and asks `revalidate()` where a segment declares one.
 
 A fill also leaves a stale `cache()` record alone. A stale hit normally
@@ -572,7 +575,7 @@ so the loader runs in the prefetch whatever its flag says. The rule is lazy
 deferral: a deferred loader is one nobody started by the end of resolution.
 
 Deferring a loader registers it and starts nothing. The registration
-(`PrefetchDeferral.deferredLoaders`, `registerDeferredLoader`) holds the
+(`InternalHandlerContext._deferredLoaders`, `registerDeferredLoader`) holds the
 segment that registers the loader and how resolution would have started it:
 `resolveLoaderData` with the loader's entry, its `cache()` binding included.
 When something reads the loader, a handler's `ctx.use()` or another loader's,
@@ -580,7 +583,7 @@ the loader executor (`createLoaderExecutor` in `router/loader-resolution.ts`)
 finds no run and no binding and starts it through that registration
 (`startDeferredLoader`), once. So the read takes the path a navigation takes:
 a warm `cache()` serves the reader and the body does not run, a cold one runs
-it and stores. After resolution, `resolveAllSegmentsWithRevalidation` looks
+it and stores. After resolution, `resolveAllSegments` looks
 at each deferred loader segment and delivers every loader that was started
 (`deliverStartedLoaders`): its own `resolveLoaderData` finds the same run or
 binding, so the reader and the loader's segment carry one value from one
@@ -595,6 +598,13 @@ the `cache()`. On a HIT the page rendered the loader's fresh run while its
 segment carried the cached value, two values on one page, and the loader ran
 once more than on a plain navigation. Pinned by
 `src/testing/__tests__/prefetch-false.rsc-test.tsx` ("with its own cache()").
+
+A pass that skips loaders (`skipLoaders`: build time, and the background
+re-render of a route `cache()` record) registers every loader in the same
+table, so a handler's read starts it as its declaration there too. Started
+bare, the refresh's run was a handler-invoked loader whose handle pushes the
+record kept, and every HIT showed them twice. Pinned by
+`src/testing/__tests__/cached-route-handler-reads-loader.rsc-test.tsx`.
 
 Two reads are not redirected. A stale refresh's executor
 (`_runLoaderIsolated`) reads each loader fresh by design and never starts a
@@ -621,7 +631,7 @@ under the same layout dropped the push.
 
 Stored routes need no special path. A `cache()` HIT, a `ppr` partial replay
 and a prerender store hit all resolve their loaders through
-`resolveLoadersOnlyWithRevalidation`, which is
+`resolveLoadersOnly`, which is
 `resolveOwnerLoaders` in a loop, so the same check defers them. A
 `ppr` prefetch that defers live loaders still schedules its navigation capture
 as before; the capture is a document render on a derived context and never

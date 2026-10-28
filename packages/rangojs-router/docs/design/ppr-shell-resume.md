@@ -197,7 +197,7 @@ swr of its own, so the store's `defaults.swr` applies);
 `PartialPrerenderProps { ttl?, swr?, tags?, captureTimeout? }` sets it
 explicitly. A shell never outlives the route `cache()` entry it was captured
 from: the cache scope notes the window of every route record the capture
-read or wrote (`RequestContext._routeRecordWindow`: the record's `expiresAt`,
+read or wrote (`ShellCaptureState.routeRecordWindow`: the record's `expiresAt`,
 its scope's swr, and that cache() config), and the capture stores the shell
 capped to it (`capShellWindow` in `src/rsc/shell-capture.ts`): freshness to
 the record's fresh end, total lifetime (ttl + swr) to its stale end, in whole
@@ -597,6 +597,25 @@ the only capture allowed to store an entry without one is a prerender-served
 capture. A navigation-only capture is no exception: partial replay consumes
 nothing but the record.
 
+Before the callbacks fire (step 2), a match that holds an `error` or
+`notFound` segment fails the capture: a route, layout or parallel slot
+handler threw (or threw `notFound()`) on the capture's own run. On a first
+capture that is a flaky upstream, since a MISS whose own render failed
+answers 500/404 and schedules no capture. A recapture has no visitor render
+behind it (a stale HIT, a warm, a stale build-time shell), so its failure can
+be lasting too, such as a deleted page: the stale shell keeps serving until
+its ttl + swr ends (a build-time shell, until a recapture stores), as a
+failed `cache()` refresh's record does, and each recapture logs and calls
+`onError` once per backoff window; invalidating the page's tag evicts it.
+The pass's `_setStatus` is the foreground's and the callbacks get a
+synthetic 200, so without this check the boundary became the shell every
+HIT served. It throws like a render error (`reportCacheError`, backoff, no
+retry); a tripped capture guard still refuses first, checked after the
+handler output settled so a loader's late read is seen. Pinned by "a handler
+that throws on the capture pass only" and "a parallel slot that throws on
+the capture pass only"
+(`src/testing/__tests__/cache-writers-failed-render.rsc-test.tsx`).
+
 Scar tissue for step 4: before it, server components rendered TWICE per
 capture, once in the capture's Flight render and once inside the record's
 encode. An uncached async server component therefore showed one value in the
@@ -661,7 +680,7 @@ on a HIT `serveShellHit` deserializes them into `_shellLoaderSeed` so
 recorded paths pinned, hole-marker paths keeping the fresh run's live nested
 promises. A rejected container REFUSES the capture (error UI never bakes), and
 an identity read inside a bake-lane loader refuses via the guard's context
-flag (`_shellCaptureGuardTripped`; see "Security: request-scoped reads during
+flag (`_shellCaptureState.guardTripped`; see "Security: request-scoped reads during
 capture" below).
 
 Mechanics (`src/cache/shell-snapshot.ts`):
@@ -680,7 +699,7 @@ Mechanics (`src/cache/shell-snapshot.ts`):
    OVERWRITE the foreground's entry with the capture's re-render. A
    get-before-set guard would just shrink that window. The contract the barrier
    enforces: a capture never clobbers a ring-3 entry the foreground produced —
-   all foreground cache writes are scheduled before `scheduleShellCapture` runs
+   all foreground cache writes are scheduled before `planShellCapture` runs
    (the response and its `onResponse` callbacks commit first), so settling them
    makes the capture's lookup HIT, replay the foreground's generation (handler
    skipped; the cache-store middleware's write path is gated off by
@@ -1188,7 +1207,7 @@ bots/SEO crawlers get one complete axis-1 document.
 
 Because the capture runs the handler layer and every HIT replays it, anything
 request-scoped the capture reads would be served to every visitor of the URL.
-The shell is shared per host+URL. So during a capture (`_shellCaptureRun` on
+The shell is shared per host+URL. So during a capture (`_shellCaptureState.run` on
 the derived context) `guardIdentityRead` (`src/server/context.ts`)
 throws on:
 
@@ -1219,14 +1238,19 @@ entered inside the cached function included), then a `cache()` boundary
 outside loader bodies.
 
 The throw can be caught by the code that made the read. So the guard first
-flags the capture context (`_shellCaptureGuardTripped`, plus the loader id when
+flags the capture context (`_shellCaptureState.guardTripped`, plus the loader id when
 a loader body made the read), and `refuseOnCaptureGuard` in
 `src/rsc/shell-capture.ts` refuses the capture on the flag, with a once-per-key
 warning naming the source. Same for `ctx.dynamic()`: it used to write the
 FOREGROUND context's latch (its closure), which had already served and which
 the runtime capture never read, so a handler promise that called it after an
 await baked anyway. The derived context now has its own `_dynamic` and
-`dynamic()`, and the capture refuses when it flips.
+`dynamic()`, and the capture refuses when it flips. A background refresh that
+a stale `cache()` read in the capture starts is not the capture: it re-runs
+the cached handler for the route record, while the capture replays the record
+as a fresh HIT would. Its `dynamic()` lands on the refresh's throwaway
+context (the `background-revalidation` row of `RENDER_PASS_FIELDS`), so it
+refuses nothing.
 
 Not guarded: `ctx.get` of a NORMAL variable (for example a
 session object middleware set). It bakes the capturing request's value
@@ -1355,7 +1379,7 @@ under its own derived context.
 ```
 MISS ──> axis-1 serve (x-rango-shell: MISS)
            rsc-rendering, after building the response (200 HTML only):
-             scheduleShellCapture(descriptor from the ppr path option)
+             planShellCapture({ request, ssr, descriptor from the ppr path option })
                runBackground: runWithRequestContext(derivedCtx, () =>
                  router.match()  [MIXED-CHAIN: cache()'d segments replay,
                                   uncached handlers execute; live loaders
@@ -1385,7 +1409,7 @@ HIT  ──> committed composed response (x-rango-shell: HIT)
              record unavailable ──> ShellRecordUnavailableError
                                     ──> degradeUnreplayableShell (tombstone,
                                         drop memo, recapture, reload script)
-           (+ scheduleShellCapture on a stale/SWR hit)
+           (+ planShellCapture on a stale/SWR hit)
 ```
 
 Why `router.match()` and not a pipeline re-run for runtime capture: the
@@ -1397,14 +1421,14 @@ transition list). No double middleware side effects, and the served response is
 never blocked on the capture
 (`runBackground` = `waitUntil` on workerd, fire-and-forget in Node dev).
 
-`_shellCaptureRun` on the derived context is the single ACTIVE marker: loader
-masking (`loader-mask.ts`), the `emitStreaming` guard (`fresh.ts`), and the
+`_shellCaptureState.run` on the derived context is the single ACTIVE marker: loader
+masking (`loader-mask.ts`), the `loadingDisabled && !isShellCaptureActive()` settle guard (`resolveOwnerLoaders`), and the
 capture guard (`guardIdentityRead`, `src/server/context.ts`, behind
 `cookies()`, `headers()`, the theme reads and `{ cache: false }` variable
 reads) all key off it. The
 old `_shellResume`/`_shellCapture` request-context flags are gone — the
 integrated serve path builds the `ShellCaptureDescriptor` locally and passes it
-to `scheduleShellCapture` directly.
+to `planShellCapture` directly.
 
 ## Contracts
 
@@ -1544,7 +1568,9 @@ once-per-key warning, since the declared intent cannot be honored).
 ### Serve plumbing (`src/rsc/shell-serve.ts` + `src/server/request-context.ts`)
 
 `shell-serve.ts` owns the config/key/store helpers the render layer uses at the
-commit point: `resolvePprConfig` (normalizes the route's `ppr` option;
+commit point: `readShell` (the document serve's store read:
+`readShellDocument` on a built-in store, else `getShell`; a failed read is a
+MISS, never a 500), `resolvePprConfig` (normalizes the route's `ppr` option;
 `DEFAULT_PPR_TTL_SECONDS` = 300), `buildShellKey`
 (`${routerId}@${host}${pathname}${sortedSearch}:shell` — host-scoped so
 multi-tenant shells never collide, and router-scoped so two routers that
@@ -1570,8 +1596,9 @@ off the CLASSIFIED route snapshot (`reqCtx._classifiedRoute.manifestEntry`),
 which the RSC handler stores before dispatching the render — available before
 `match()` runs, which is what makes the eager HIT flush possible.
 
-The only request-context flag left is `_shellCaptureRun` (the ACTIVE capture
-marker; internal). The capture descriptor (`ShellCaptureDescriptor` in
+The only request-context capture field left is `_shellCaptureState` (the
+ACTIVE capture's own state, `ShellCaptureState` in `shell-capture.ts`;
+internal). The capture descriptor (`ShellCaptureDescriptor` in
 `shell-capture.ts`: key/ttl/swr/tags/store/debug sink) is passed by value.
 
 There is NO public middleware: `createShellCacheMiddleware`/`ShellCacheOptions`
@@ -1583,10 +1610,15 @@ The document branch of `handleRscRenderingInner` starts with the PPR serve
 block (commit point, above). On a HIT, `serveShellHit` commits the composed
 response and runs the live tail inside the stream. On a MISS the axis-1 flow is
 unchanged; after building the response, a servable 200-HTML document schedules
-`scheduleShellCapture` with the descriptor built from the route's ppr config,
-and the response is tagged `x-rango-shell: MISS`.
+`planShellCapture` with the descriptor built from the route's ppr config,
+and the response is tagged `x-rango-shell: MISS`. A store HIT and a build-shell
+HIT share the one serve; every capture (the MISS's, a stale or failed HIT's
+recapture, a navigation heal) is one `planShellCapture` call whose
+`ShellCaptureInput` carries the request, the descriptor and the SSR module as a
+factory (a document hands it the module it already resolved; a navigation heal
+resolves one for the capture's own request).
 
-`scheduleShellCapture` (in `shell-capture.ts`) is the single owner of the
+`planShellCapture` (in `shell-capture.ts`) is the single owner of the
 stampede guard (one capture per key per isolate) and the refused-capture
 backoff. The guard covers a capture while it runs, but a MISS schedules its
 capture only after rendering, so a capture another request started can store
@@ -1599,7 +1631,7 @@ It dispatches `runBackground(reqCtx, runShellCapture)`.
 `runShellCapture` runs up to two `attemptCapture`s. Each builds the derived
 context (`deriveShellCaptureContext`: `Object.create` of `reqCtx` overriding a
 fresh handle store with the push funnel / request-tag set / transition list,
-`_shellCaptureRun: true`, its own `_dynamic` latch, the recording store and
+its own `_shellCaptureState` (`run: true`), its own `_dynamic` latch, the recording store and
 the implicit doc scope marker), then under `runWithRequestContext` re-derives
 the page: `router.match()` (mixed-chain; live loaders masked),
 `settleCaptureRecord` (the record-first step), `buildFullPayload`
@@ -1672,7 +1704,7 @@ An ineligible route — a live (non-`ssr: false`) loader read with no
 `loading()` or inline `<Suspense>` above it, or a cookie-reading handler whose
 capture throws — refuses on every request. Without a memory of
 that, a `ppr`-declared route in that shape would schedule a doomed background
-render on EVERY request it serves. `scheduleShellCapture`
+render on EVERY request it serves. `planShellCapture`
 keeps a module-level negative cache (`refusedCaptures`): a key enters backoff only
 after the in-place retry ALSO failed (or a genuine error, or an attempt that ran
 out of `ppr.captureTimeout`, which is not retried), and within the window
@@ -1994,8 +2026,8 @@ response (`createResponseWithMergedHeaders` -> `applyStubHeaders`,
 `src/rsc/helpers.ts`). One deliberate asymmetry survives, and it is loader-KIND
 specific (#725): a DSL (registered) loader's writes inside a plain `cache()`
 boundary stay ALLOWED — a registered loader re-runs on every HIT
-(`runInsideLoaderScope` in `fresh.ts` -> `resolveLoadersOnly` on the cache-hit
-path) and merges into every response, so no divergence exists (pinned by the
+(`runInsideLoaderScope` in `resolveOwnerLoaders`, reached from
+`resolveLoadersOnly` on the cache-hit path) and merges into every response, so no divergence exists (pinned by the
 `/loader-cookie-allowed` cache-scope-guard e2e and vite-rsc-demo's shop cart).
 A **handler-invoked** loader body (`await ctx.use(Loader)` from a handler,
 never registered with `loader()`) does NOT get the exemption: on a HIT the
@@ -2025,7 +2057,7 @@ axis, never the CACHE axis:
   is undefined again, so `latchCachedHeaderScope`'s `!store.cachedHeaderScope`
   guard sets), so a handler write inside that cache() still throws.
 - A ppr route NESTED under a `cache()` boundary latches `"ppr"` at the funnel
-  top (`fresh.ts`, first-wins), which masks the positional `cache()` latch — but
+  top (`resolveAllSegments`, first-wins), which masks the positional `cache()` latch — but
   the handler still runs inside the cache scope (`insideCacheScope`). A
   `cache()` HIT skips that handler, so the write is still non-deterministic:
   `clearPprHeaderScope` UNMASKS to `"cache"` there instead of clearing, so the

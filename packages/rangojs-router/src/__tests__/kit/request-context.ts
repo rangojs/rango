@@ -3,6 +3,9 @@ import {
   type CreateRequestContextOptions,
   type RequestContext,
 } from "../../server/request-context.js";
+import { createHandleStore } from "../../server/handle-store.js";
+import { deriveRenderPass } from "../../server/render-pass.js";
+import type { ShellCaptureState } from "../../rsc/shell-capture.js";
 
 const DEFAULT_URL = "http://localhost/";
 
@@ -40,4 +43,20 @@ export function makeRequestContext<TEnv = {}>(
     url: new URL(request.url),
     variables,
   });
+}
+
+/**
+ * The ShellCaptureState RENDER_PASS_FIELDS["shell-capture"] creates, with
+ * `fields` written over it: for a context a test runs as a shell capture
+ * without deriving one.
+ */
+export function makeShellCaptureState(
+  fields: Partial<ShellCaptureState> = {},
+): ShellCaptureState {
+  const pass = deriveRenderPass(makeRequestContext(), "shell-capture", {
+    handleStore: createHandleStore(),
+    identity: undefined,
+    recording: undefined,
+  });
+  return Object.assign(pass._shellCaptureState!, fields);
 }

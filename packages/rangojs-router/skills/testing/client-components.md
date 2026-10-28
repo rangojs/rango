@@ -66,9 +66,13 @@ type RenderRouteResult = RenderResult & {
       url: string,
       options?: {
         loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
+        handles?: ReadonlyArray<readonly [Handle<any, any>, unknown[]]>;
         state?: HistoryState;
         replace?: boolean;
         transition?: boolean;
+        // the response's stream: opens a task after the call, before the
+        // commit, and stays open until the promise settles (isStreaming)
+        streamUntil?: Promise<unknown>;
       },
     ): Promise<void>;
     // re-render the current location, as router.refresh() does:
@@ -203,13 +207,14 @@ it("lists no product twice while the next page loads", async () => {
 });
 ```
 
-| To bring state to a reader                          | Do                                                                                                                                                                                                                                           |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| a push / replace, the component's own               | click its `<Link state>` or the control that calls `router.push(url, { state })`, then `waitFor`                                                                                                                                             |
-| a push / replace whose loader the test holds        | `router.navigate(url, { state, replace?, loaders: [[Loader, pendingPromise]] })` on a `transition` spec                                                                                                                                      |
-| back/forward onto an entry                          | `history.replaceState(entry, "")`, then `window.dispatchEvent(new Event("popstate"))` inside `act`. The tree has one location, so no page is restored: readers take the entry as history holds it (also how a `Def.write()` becomes visible) |
-| a reader that mounts while a navigation is pending  | hold the navigation as in the row above, then mount the reader inside `await act(async () => { ... })`: it reads the entry on screen                                                                                                         |
-| a server action's state, a redirect's, an intercept | e2e                                                                                                                                                                                                                                          |
+| To bring state to a reader                                    | Do                                                                                                                                                                                        |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a push / replace, the component's own                         | click its `<Link state>` or the control that calls `router.push(url, { state })`, then `waitFor`                                                                                          |
+| a push / replace whose loader the test holds                  | `router.navigate(url, { state, replace?, loaders: [[Loader, pendingPromise]] })` on a `transition` spec                                                                                   |
+| back/forward onto the mounted entry or one a navigation wrote | `window.history.back()` inside `await act(async () => { ... })`: the entry's page is restored with its state and handle values, as production's history-cache restore is                  |
+| back/forward onto an entry the test wrote                     | `history.replaceState(entry, "")`, then `window.dispatchEvent(new Event("popstate"))` inside `act`: readers take the entry as history holds it (also how a `Def.write()` becomes visible) |
+| a reader that mounts while a navigation is pending            | hold the navigation as in the row above, then mount the reader inside `await act(async () => { ... })`: it reads the entry on screen                                                      |
+| a server action's state, a redirect's, an intercept           | e2e                                                                                                                                                                                       |
 
 ### Definitions with `clearOnReload`
 
@@ -390,17 +395,19 @@ it("dims the held price while the next product streams", async () => {
 });
 ```
 
-| Pending state                                                                                  | Under `renderRoute`                                                                                                                                                                                    |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `useLoader().isLoading` on the reader a `transition` navigate() holds, pending seed            | Modeled: `true` on the OLD data until the promise settles, then `false` with the new data in the same commit.                                                                                          |
-| `transition` navigate(), settled seed (a plain value)                                          | `false`; the data swaps in the commit.                                                                                                                                                                 |
-| navigate() without `transition`, pending seed                                                  | Urgent commit (production's cold-navigation lane): the read suspends to the nearest `<Suspense>` fallback (with none, React keeps the previous tree). No flag.                                         |
-| `transition: { when }` returning false, or `navigate(url, { transition: false })`              | Same as without `transition`: urgent, with production's decision (`kind: "push"`; `refresh()` is `"revalidate"`). `transition: false` calls no predicate.                                              |
-| Production's other hold lanes (same-structure search/filter nav, fully-prefetched, optimistic) | NOT modeled — without `transition` navigate() stays urgent. Assert those at e2e.                                                                                                                       |
-| `useNavigation().state`, `useLinkStatus().pending`                                             | Modeled: navigate() starts the navigation as a click does. `loading` from the call, `idle` in the commit, held with it; `pending` true for the destination's link until the commit is handed to React. |
-| `useAction().state`                                                                            | Stays `idle`: navigate() runs no action. e2e.                                                                                                                                                          |
-| `useHandle()` on a held navigation, `navigate(url, { handles, loaders })`                      | Modeled: `handles` arrive on the response's handle stream, so readers keep the page being left's values while React holds the page and take the new ones with its commit.                              |
-| A back/forward restored from the history cache (its view transition, `pop`)                    | NOT modeled: the tree has one location and navigate() caches no entries, so a `popstate` restores nothing. Assert it at e2e.                                                                           |
+| Pending state                                                                                  | Under `renderRoute`                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useLoader().isLoading` on the reader a `transition` navigate() holds, pending seed            | Modeled: `true` on the OLD data until the promise settles, then `false` with the new data in the same commit.                                                                                                        |
+| `transition` navigate(), settled seed (a plain value)                                          | `false`; the data swaps in the commit.                                                                                                                                                                               |
+| navigate() without `transition`, pending seed                                                  | Urgent commit (production's cold-navigation lane): the read suspends to the nearest `<Suspense>` fallback (with none, React keeps the previous tree). No flag.                                                       |
+| `transition: { when }` returning false, or `navigate(url, { transition: false })`              | Same as without `transition`: urgent, with production's decision (`kind: "push"`; `refresh()` is `"revalidate"`). `transition: false` calls no predicate.                                                            |
+| Production's other hold lanes (same-structure search/filter nav, fully-prefetched, optimistic) | NOT modeled — without `transition` navigate() stays urgent. Assert those at e2e.                                                                                                                                     |
+| `useNavigation().state`, `useLinkStatus().pending`                                             | Modeled: navigate() starts the navigation as a click does. `loading` from the call, `idle` in the commit, held with it; `pending` true for the destination's link until that commit, held with it too.               |
+| `useAction().state`                                                                            | Stays `idle`: navigate() runs no action. e2e.                                                                                                                                                                        |
+| `useHandle()` on a held navigation, `navigate(url, { handles, loaders })`                      | Modeled: `handles` arrive on the response's handle stream, so readers keep the page being left's values while React holds the page and take the new ones with its commit.                                            |
+| `useNavigation().isStreaming` past the commit, `navigate(url, { streamUntil })`                | Modeled: the stream opens a task after the call (`pendingUrl` clears) and ends when the promise settles or a newer navigation aborts it; settle it inside `await act(async () => ...)`.                              |
+| A navigation started while React holds a page (a newer click, a `transition: false` commit)    | `await router.navigate(...)` shows its page, with or without `act()`. A `<Link>` click goes inside `await act(async () => { ... })`: `fireEvent`'s synchronous `act()` drops React's retry of the held page.         |
+| A back/forward restored from the history cache (`pop`)                                         | Modeled for the mounted entry and one a navigate() wrote: the page and its handle values come back, decided by `transition({ when })` as kind `"pop"`. A stale entry's revalidation and a restore that fetches: e2e. |
 
 - Per-navigation seeds merge over the render-time `loaders`/`loaderData` for THAT navigation only; a later `navigate()` without `loaders` falls back to the render-time data.
 - Pass settled data as a plain value, not `Promise.resolve(value)`: React has not observed a plain promise yet, so it counts as pending and renders one `stale` frame. (A Flight chunk that has already settled carries its status and is skipped, which a plain value mirrors.)

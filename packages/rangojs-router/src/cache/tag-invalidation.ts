@@ -36,7 +36,10 @@
  * predatesInvalidation, and docs/design/caching.md "Read-your-own-writes".
  */
 
-import { _getRequestContext } from "../server/request-context.js";
+import {
+  _getRequestContext,
+  isBackgroundWork,
+} from "../server/request-context.js";
 import { reportingAsync } from "./cache-error.js";
 import { normalizeTags } from "./cache-tag.js";
 import type { SegmentCacheStore } from "./types.js";
@@ -136,7 +139,8 @@ function warnPartialTagStore(fn: string, incapable: number): void {
  */
 function markFreshReads(stores: SegmentCacheStore[]): void {
   const ctx = _getRequestContext();
-  if (!ctx?._setFreshReadsCookie) return;
+  // No visitor made an invalidation in background work (runAsBackgroundWork).
+  if (!ctx?._setFreshReadsCookie || isBackgroundWork()) return;
   let windowMs = 0;
   for (const store of stores) {
     windowMs = Math.max(windowMs, store.freshReadsWindowMs ?? 0);

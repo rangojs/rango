@@ -40,6 +40,7 @@ import {
   runWithRequestContext,
   type RequestContext,
 } from "../../../server/request-context.js";
+import { makeShellCaptureState } from "../../../__tests__/kit/request-context.js";
 import {
   CacheScope,
   resolveShellImplicitCacheScope,
@@ -73,7 +74,7 @@ interface Harness {
 
 /**
  * Build a capture-shaped request context: recording store as the app store,
- * `_shellCaptureRun` set, and the capture marker whose store is the
+ * `_shellCaptureState` set, and the capture marker whose store is the
  * SnapshotOnlySegmentStore — exactly what createDerivedContext installs.
  * The document identity URL carries no `_rsc_partial`, so key resolution
  * lands in the `doc:` namespace on both the marker and a default-keyed
@@ -97,7 +98,7 @@ function makeHarness(): Harness {
     } as any,
   }) as RequestContext<any>;
   reqCtx._cacheStore = recording;
-  reqCtx._shellCaptureRun = true;
+  reqCtx._shellCaptureState = makeShellCaptureState();
   reqCtx._shellImplicitCache = {
     ttl: 300,
     swr: 60,
@@ -182,7 +183,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     expect(doc[0]!.key).toBe("doc:localhost/p");
     expect(h.reqCtx._shellImplicitCache?.docKey).toBe("doc:localhost/p");
     // Explicit tier's own write went through (recorded AND persisted)…
-    expect(await h.inner.get("key:consumer-key")).not.toBeNull();
+    expect(await h.inner.get("key:consumer-key|doc")).not.toBeNull();
     // …but the doc record stayed snapshot-only: no real-store doc entry that
     // would poison the next capture's lookup.
     expect(await h.inner.get("doc:localhost/p")).toBeNull();
@@ -201,7 +202,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     expect(doc).toHaveLength(1);
     expect(h.reqCtx._shellImplicitCache?.docKey).toBe("doc:localhost/p");
     // The normal write was skipped (cacheHit), so the consumer key is absent.
-    expect(await h.inner.get("key:consumer-key")).toBeNull();
+    expect(await h.inner.get("key:consumer-key|doc")).toBeNull();
   });
 
   it("writes the doc record only when the capture fires onResponse (after the handler pushes settle)", async () => {
@@ -252,7 +253,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
 
     expect(condition).toHaveBeenCalledTimes(1);
     expect(docRecords(h.drainSnapshot())).toHaveLength(1);
-    expect(await h.inner.get("key:consumer-key")).not.toBeNull();
+    expect(await h.inner.get("key:consumer-key|doc")).not.toBeNull();
   });
 
   it("a flapping condition() cannot split the two writers: one write decision per render (false first)", async () => {
@@ -264,7 +265,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
 
     expect(condition).toHaveBeenCalledTimes(1);
     expect(h.drainSnapshot()).toBeUndefined();
-    expect(await h.inner.get("key:consumer-key")).toBeNull();
+    expect(await h.inner.get("key:consumer-key|doc")).toBeNull();
   });
 
   it("records nothing when the prerender store supplied the match", async () => {
@@ -278,7 +279,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
 
   it("records nothing outside a capture render (replay serve must not mint doc records)", async () => {
     const h = makeHarness();
-    h.reqCtx._shellCaptureRun = undefined;
+    h.reqCtx._shellCaptureState = undefined;
     const explicit = new CacheScope({ ttl: 30, key: () => "consumer-key" });
 
     await h.run(explicit);

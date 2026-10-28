@@ -445,8 +445,8 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
 
   it("loading(..., { ssr: false }): the document's null loading, kept by the client's reconcile, on every path", async () => {
     // A document evaluation sets the entry's loading to false
-    // (applyDocumentModeLoading), which the walkers emit as `loading: null`
-    // (fresh.ts, revalidation.ts); a navigation gets the fallback. A page
+    // (applyDocumentModeLoading), which the FRESH and partial passes emit as
+    // `loading: null` (revalidation.ts); a navigation gets the fallback. A page
     // holding the document's segments keeps its null when a navigation or an
     // action answers with the fallback.
     await expectShape(

@@ -32,6 +32,7 @@ import {
   RangoContext,
   latchPprHeaderScopeForEntries,
 } from "../server/context.js";
+import { _getRequestContext } from "../server/request-context.js";
 
 /**
  * Header-guard latch for the intercept funnels (issue #713). ppr and
@@ -163,18 +164,26 @@ export function findInterceptForRoute(
 /**
  * An intercept handler's throw or notFound() renders the declaring entry's
  * boundary as the slot component (catchSegmentError, as for route handlers on
- * partial navigations: 500/404 status, onError "handler"). Responses and every
- * error on the background re-render (`background`) rethrow, so a failed
- * re-render aborts its cache write instead of storing the fallback.
+ * partial navigations: 500/404 status, onError "handler" naming the slot).
+ * Responses rethrow. The background re-render (`background`) reports the
+ * error the same way and then rethrows it, so a failed re-render aborts its
+ * cache write instead of storing the fallback.
  */
 function renderInterceptHandlerError<TEnv>(
   pass: ResolutionPass<TEnv>,
   error: unknown,
   parentEntry: EntryData,
+  slotSegmentId: string,
   background: boolean | undefined,
 ): ReactNode {
-  if (error instanceof Response || background) throw error;
-  return catchSegmentError(
+  if (error instanceof Response) throw error;
+  // A background re-render's waitUntil task may run outside the router
+  // context, as the segment walk's report allows.
+  let telemetry;
+  try {
+    telemetry = getRouterContext()?.telemetry;
+  } catch {}
+  const { component } = catchSegmentError(
     error,
     parentEntry,
     pass.params,
@@ -182,10 +191,13 @@ function renderInterceptHandlerError<TEnv>(
     {
       ...buildLoaderErrorContext(pass.context),
       isPartial: true,
-      telemetry: getRouterContext()?.telemetry,
+      telemetry,
     },
     pass.context.pathname,
-  ).component;
+    { id: slotSegmentId, type: "parallel" },
+  );
+  if (background) throw error;
+  return component;
 }
 
 /** The segment id of `intercept`'s slot on `parentEntry`. */
@@ -194,6 +206,33 @@ export function interceptSlotId(
   intercept: InterceptEntry,
 ): string {
   return `${parentEntry.shortCode}.${intercept.slotName}`;
+}
+
+/**
+ * The intercept a match selected (findInterceptForRoute), as its cache()
+ * record names it (CacheScope): the slot id, then `~` and its position among
+ * the intercepts its entry declares for the same slot and target route. Two
+ * such intercepts share the slot id, and the position tells them apart; one
+ * for another slot or route does not renumber it. `~` is unreserved in a
+ * URL, so a store that maps the key onto one unencoded keeps the whole key.
+ * Undefined when the match selected none.
+ */
+export function interceptRecordKey(
+  selected: { intercept: InterceptEntry; entry: EntryData } | null,
+): string | undefined {
+  if (!selected) return undefined;
+  const { intercept, entry } = selected;
+  let position = 0;
+  for (const other of entry.intercept) {
+    if (other === intercept) break;
+    if (
+      other.slotName === intercept.slotName &&
+      other.routeName === intercept.routeName
+    ) {
+      position++;
+    }
+  }
+  return `${interceptSlotId(entry, intercept)}~${position}`;
 }
 
 /**
@@ -252,7 +291,9 @@ async function settleLoaderSegments(
 /**
  * Resolve an intercept entry: its slot segment, then its loader segments. The
  * background re-render resolves with a pass that holds nothing
- * (heldNothingPassInput, resolution-pass.ts): every segment renders fresh.
+ * (heldNothingPassInput, resolution-pass.ts): every segment renders fresh, and
+ * its loaders are skipped (skipLoaders), each registered for the handler's
+ * read.
  */
 export async function resolveInterceptEntry<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -263,9 +304,9 @@ export async function resolveInterceptEntry<TEnv>(
     /**
      * Set ONLY by the post-response background re-render (stale background
      * revalidation), whose sole purpose is to re-render the segment tree to
-     * populate the cache: a handler error rejects instead of rendering the
-     * error boundary, so a failure is never cached. Never set on the
-     * foreground path.
+     * populate the cache: a handler error is reported, then rejects instead
+     * of rendering the error boundary, so a failure is never cached. Never
+     * set on the foreground path.
      */
     background?: boolean;
   },
@@ -324,6 +365,7 @@ export async function resolveInterceptEntry<TEnv>(
       pass,
       error,
       parentEntry,
+      slotSegmentId,
       options?.background,
     );
   }
@@ -363,6 +405,7 @@ export async function resolveInterceptEntry<TEnv>(
       context,
       routeKey: interceptEntry.routeName,
       params,
+      isPartial: true,
       recover: !options?.background,
     });
 
@@ -390,6 +433,7 @@ export async function resolveInterceptEntry<TEnv>(
           pass,
           error,
           parentEntry,
+          slotSegmentId,
           options?.background,
         );
       }
@@ -413,11 +457,16 @@ export async function resolveInterceptLoadersOnly<TEnv>(
   belongsToRoute: boolean,
 ): Promise<ResolvedSegment[]> {
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
+  const handleStore = _getRequestContext()?._handleStore;
   const { segments } = await resolveInterceptLoaders(
     pass,
     interceptEntry,
     parentEntry,
     belongsToRoute,
+  );
+  // Where resolveInterceptEntry runs the handler.
+  handleStore?.releaseRecordedValues(
+    interceptSlotId(parentEntry, interceptEntry),
   );
   if (!interceptEntry.loading) await settleLoaderSegments(segments);
   deliverStartedLoaders(pass.context, segments);

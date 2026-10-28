@@ -11,6 +11,7 @@ import type { ExecutionContext } from "../server/request-context.js";
 import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
+import type { LiveIntercept } from "./prerender-match.js";
 import type { ExtractParams } from "../types/route-config.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RangoOptions, RootLayoutProps } from "./router-options.js";
@@ -18,6 +19,7 @@ import type { DefaultVars } from "../types/global-namespace.js";
 import type { ResolvedTimeouts, OnTimeoutCallback } from "./timeout.js";
 import type { ResolvedTracing } from "./tracing.js";
 import type { TelemetrySink } from "./telemetry.js";
+import type { ActionContext } from "./types.js";
 
 /**
  * Options passed to router.fetch(), router.match(), and other request entrypoints.
@@ -543,8 +545,10 @@ export interface RangoInternal<
     routeName: string;
     params: Record<string, string>;
     interceptSegments?: SerializedSegmentData[];
-    /** RSC-encoded MERGED (main + intercept) handle map for the intercept artifact. */
+    /** RSC-encoded handle map for the intercept artifact (see matchForPrerender). */
     interceptHandles?: string;
+    /** The intercepts the intercept artifact does not hold (see matchForPrerender). */
+    liveIntercepts?: LiveIntercept[];
     passthrough?: true;
   } | null>;
 
@@ -580,12 +584,7 @@ export interface RangoInternal<
   matchPartial(
     request: Request,
     input?: RouterRequestInput<TEnv>,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    },
+    actionContext?: ActionContext,
   ): Promise<MatchResult | null>;
 
   /**

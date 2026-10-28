@@ -149,7 +149,6 @@ async function lookup(
     evaluateRevalidation,
     buildEntryRevalidateMap: () =>
       new Map([[ROUTE, { revalidate: [() => options.routeRevalidates] }]]),
-    resolveLoadersOnlyWithRevalidation: undefined,
     resolveLoadersOnly: undefined,
   } as any;
   const ctx = {
@@ -312,7 +311,7 @@ describe("withCacheLookup and prefetch: false", () => {
   });
 });
 
-// The prerender store answers before the cache scope (yieldFromStore). It
+// The prerender store answers before the cache scope (readPrerenderSource). It
 // re-sends a held stored segment when the params changed; a fill keeps it
 // whatever the request says about where the client came from.
 describe("withCacheLookup: a fill served from the prerender store", () => {
@@ -363,8 +362,7 @@ describe("withCacheLookup: a fill served from the prerender store", () => {
     } as unknown as MatchPipelineState;
     const routerContext = {
       evaluateRevalidation: vi.fn(),
-      resolveLoadersOnly: undefined,
-      resolveLoadersOnlyWithRevalidation: vi.fn(async () => ({
+      resolveLoadersOnly: vi.fn(async () => ({
         segments: [],
         matchedIds: [],
       })),

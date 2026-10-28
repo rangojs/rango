@@ -9,6 +9,8 @@ export default defineConfig({
     // The router's own tests run the dev suspense audit; a consumer's never
     // do (src/internal-suspense-audit.ts).
     env: { INTERNAL_RANGO_SUSPENSE_AUDIT: "1" },
+    // Each test starts with no audit records and fails on a violation.
+    setupFiles: ["./src/__tests__/kit/suspense-audit-lock.ts"],
     benchmark: {
       // Needs the react-server condition; runs under vitest.rsc.config.ts.
       exclude: [
@@ -16,6 +18,8 @@ export default defineConfig({
         "dist",
         "e2e",
         "src/rsc/__tests__/request-stages.bench.tsx",
+        "src/router/match-middleware/__tests__/stored-source.bench.tsx",
+        "src/rsc/__tests__/shell-serve.bench.tsx",
       ],
     },
   },

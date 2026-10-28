@@ -9,7 +9,10 @@ import {
 } from "../tag-invalidation.js";
 import { resolveCacheStore } from "../cache-policy.js";
 import type { SegmentCacheStore } from "../types.js";
-import { runWithRequestContext } from "../../server/request-context.js";
+import {
+  runAsBackgroundWork,
+  runWithRequestContext,
+} from "../../server/request-context.js";
 import { makeRequestContext } from "../../__tests__/kit/request-context.js";
 
 const EXAMPLE_URL = "https://example.com/";
@@ -582,6 +585,53 @@ describe("the fresh-reads cookie", () => {
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining("after the response headers were sent"),
       );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  // A stale entry's refresh runs on the visitor's context, but the visitor
+  // made none of its invalidations. The request's own, concurrent with it,
+  // still sets the cookie.
+  it("inside a background refresh: no cookie and no dev warning, the invalidation still runs", async () => {
+    const store = storeWithWindow(10_000);
+    const invalidate = vi.spyOn(store, "invalidateTags");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const freshCookies = (ctx: ReturnType<typeof ctxFor>) =>
+      ctx.res.headers
+        .getSetCookie()
+        .filter((cookie) => cookie.startsWith("rango-state-fresh="));
+    try {
+      const ctx = ctxFor(store);
+      await runWithRequestContext(ctx, async () => {
+        let invalidated!: () => void;
+        const refreshInvalidated = new Promise<void>(
+          (resolve) => (invalidated = resolve),
+        );
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => (release = resolve));
+        const refresh = runAsBackgroundWork(ctx, async () => {
+          await Promise.resolve();
+          revalidateTag("refreshed");
+          invalidated();
+          await held;
+        });
+        await refreshInvalidated;
+        expect(freshCookies(ctx)).toEqual([]);
+        // While the refresh is still running.
+        revalidateTag("own");
+        release();
+        await refresh;
+      });
+      expect(invalidate).toHaveBeenCalledWith(["refreshed"]);
+      expect(freshCookies(ctx)).toEqual([
+        "rango-state-fresh=1; Max-Age=10; Path=/; HttpOnly; SameSite=Lax; Secure",
+      ]);
+
+      const sent = ctxFor(store);
+      sent._responseSent = true;
+      await runAsBackgroundWork(sent, () => updateTag("refreshed"));
+      expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
     }

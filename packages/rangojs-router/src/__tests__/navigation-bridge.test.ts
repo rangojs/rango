@@ -10,6 +10,7 @@ const { fetchPartialUpdateMock, createNavigationTransactionMock } = vi.hoisted(
 
 vi.mock("../browser/partial-update.js", () => ({
   createPartialUpdater: vi.fn(() => fetchPartialUpdateMock),
+  shouldStartViewTransition: vi.fn(() => false),
 }));
 
 vi.mock("../browser/navigation-transaction.js", () => ({
@@ -20,14 +21,15 @@ vi.mock("../browser/navigation-transaction.js", () => ({
 }));
 
 import { createNavigationBridge } from "../browser/navigation-bridge";
+import { actionBoundaries } from "../browser/segment-reconciler";
 
 function createStore() {
   return {
     getHistoryKey: vi.fn(() => "http://localhost/current"),
     rememberDisplayedEntry: vi.fn(),
     getHistoryEntryMemory: vi.fn(() => undefined),
-    getCachedSegments: vi.fn((): any => undefined),
-    hasHistoryCache: vi.fn(() => false),
+    getCachedSegments: vi.fn((_key: string): any => undefined),
+    hasInterceptCache: vi.fn(() => false),
     cacheSegmentsForHistory: vi.fn(),
     updateCacheHandleData: vi.fn(),
     setInterceptSourceUrl: vi.fn(),
@@ -303,7 +305,7 @@ describe("navigation-bridge revalidate: false", () => {
 
     const store = createStore();
     store.getHistoryKey.mockReturnValue(
-      "http://localhost/product/123?tab=reviews:intercept",
+      "/product/123?tab=reviews:intercept:/products",
     );
     store.getCachedSegments.mockReturnValue({
       segments: [{ id: "root", type: "layout" }] as any,
@@ -336,9 +338,9 @@ describe("navigation-bridge revalidate: false", () => {
       "/product/123?tab=specs",
     );
 
-    // Store history key should include :intercept suffix
+    // Store history key names the intercept's source page
     expect(store.setHistoryKey).toHaveBeenCalledWith(
-      expect.stringContaining("intercept"),
+      "/product/123?tab=specs:intercept:/products",
     );
   });
 
@@ -706,6 +708,75 @@ describe("navigation-bridge stale cache handling", () => {
   });
 });
 
+describe("navigation-bridge link to an entry whose cached list holds an error boundary", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  /** A link to /page while its entry caches `segments`, fresh. */
+  async function linkTo(segments: unknown[]) {
+    vi.stubGlobal("window", {
+      location: { href: "http://localhost/other", origin: "http://localhost" },
+      history: { state: {}, pushState: vi.fn(), replaceState: vi.fn() },
+    });
+    const store = createStore();
+    store.getCachedSegments.mockImplementation((key: string) =>
+      key === "http://localhost/current"
+        ? undefined
+        : { segments, stale: false, handleData: {} },
+    );
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: new AbortController().signal },
+      commit: vi.fn(),
+      with: vi.fn(() => ({})),
+      [Symbol.dispose]: vi.fn(),
+    });
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+    await createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    }).navigate("/page");
+    const [, segmentIds, , , , mode] = fetchPartialUpdateMock.mock.calls[0]!;
+    return { segmentIds, mode };
+  }
+
+  it("does not hold the list: the request holds the page on screen, so the route the error replaced renders again", async () => {
+    const { segmentIds, mode } = await linkTo([
+      { id: "L0", type: "layout" },
+      { id: "L0R0D0.item", type: "loader" },
+      { id: "L0R0", type: "error" },
+    ]);
+    expect(segmentIds).toBeUndefined();
+    expect(mode).toEqual({ type: "navigate" });
+  });
+
+  it("a parallel slot's error segment, the list's only one, also keeps the link from holding it", async () => {
+    const { segmentIds, mode } = await linkTo([
+      { id: "L0", type: "layout" },
+      { id: "L0.@side", type: "error" },
+      { id: "L0R0", type: "route" },
+    ]);
+    expect(segmentIds).toBeUndefined();
+    expect(mode).toEqual({ type: "navigate" });
+  });
+
+  it("control: a list without one is held, as before", async () => {
+    const { segmentIds, mode } = await linkTo([
+      { id: "L0", type: "layout" },
+      { id: "L0R0", type: "route" },
+    ]);
+    expect(segmentIds).toEqual(["L0", "L0R0"]);
+    expect(mode).toMatchObject({ type: "navigate" });
+    expect(mode.targetCacheSegments).toHaveLength(2);
+  });
+});
+
 describe("navigation-bridge handlePopstate intercept exit", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -1060,7 +1131,10 @@ describe("navigation-bridge handlePopstate onto an intercept entry", () => {
     expect(reload).not.toHaveBeenCalled();
     expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
     expect(onUpdate).toHaveBeenCalledOnce();
-    expect(store.setHistoryKey).toHaveBeenCalledWith("/item/1:intercept");
+    expect(store.getCachedSegments).toHaveBeenCalledWith(
+      "/item/1:intercept:/list",
+    );
+    expect(store.setHistoryKey).toHaveBeenCalledWith("/item/1:intercept:/list");
     expect(store.setInterceptSourceUrl).toHaveBeenLastCalledWith(SOURCE);
   });
 
@@ -1081,6 +1155,156 @@ describe("navigation-bridge handlePopstate onto an intercept entry", () => {
       type: "stale-revalidation",
       interceptSourceUrl: SOURCE,
     });
+  });
+});
+
+describe("navigation-bridge an action's error boundary the entry shows", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  const layout = () => ({ id: "L0", type: "layout" });
+  const layoutLoader = () => ({ id: "L0D0.cart", type: "loader" });
+  const routeLoader = () => ({ id: "L0R0D0.item", type: "loader" });
+  const error = () => ({ id: "L0R0", type: "error" });
+  const action = <T extends object>(segment: T): T => {
+    actionBoundaries.add(segment as any);
+    return segment;
+  };
+
+  /** /page's entry caches `segments`; history is on it. */
+  function setup(segments: unknown[], opts: { stale?: boolean } = {}) {
+    vi.stubGlobal("window", {
+      location: { href: "http://localhost/page", origin: "http://localhost" },
+      history: { state: { key: "entry-key" }, replaceState: vi.fn() },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    let historyKey = "http://localhost/other";
+    const store = {
+      ...createStore(),
+      getHistoryKey: vi.fn(() => historyKey),
+      setHistoryKey: vi.fn((key: string) => {
+        historyKey = key;
+      }),
+      getSegmentState: vi.fn(() => ({
+        currentUrl: "http://localhost/other",
+        currentSegmentIds: [],
+      })),
+      setSegmentIds: vi.fn(),
+      setPath: vi.fn(),
+    };
+    store.getCachedSegments.mockReturnValue({
+      segments,
+      stale: opts.stale ?? false,
+    });
+    const eventController = {
+      ...createEventController(),
+      setLocation: vi.fn(),
+      getState: vi.fn(() => ({ isStreaming: false })),
+      setParams: vi.fn(),
+    };
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: eventController as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: new AbortController().signal },
+      with: (overrides: Record<string, unknown>) => ({ ...overrides }),
+      [Symbol.dispose]: vi.fn(),
+    });
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+    return { bridge, store, eventController };
+  }
+
+  it("Back onto a stale entry: the page holds the ids above the boundary, and the revalidation holds them and names the boundary", async () => {
+    const { bridge, store } = setup(
+      [layout(), layoutLoader(), action(error()), routeLoader()],
+      { stale: true },
+    );
+
+    await bridge.handlePopstate();
+
+    expect(store.setSegmentIds).toHaveBeenCalledWith(["L0", "L0D0.cart"]);
+    expect(fetchPartialUpdateMock).toHaveBeenCalledOnce();
+    const [, segmentIds, , , tx, mode] = fetchPartialUpdateMock.mock.calls[0];
+    expect(segmentIds).toEqual(["L0", "L0D0.cart"]);
+    expect(tx).toMatchObject({ cacheOnly: true });
+    expect(mode).toEqual({ type: "stale-revalidation", boundary: "L0R0" });
+  });
+
+  it("Back onto a fresh entry: the page holds the ids above the boundary, with no request", async () => {
+    const { bridge, store } = setup([layout(), action(error())]);
+
+    await bridge.handlePopstate();
+
+    expect(store.setSegmentIds).toHaveBeenCalledWith(["L0"]);
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("a boundary at the page's first segment: nothing above it is revalidated", async () => {
+    const { bridge, store } = setup([action(error()), routeLoader()], {
+      stale: true,
+    });
+
+    await bridge.handlePopstate();
+
+    expect(store.setSegmentIds).toHaveBeenCalledWith([]);
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it("control: a navigation's error segment is held and revalidated as before", async () => {
+    const { bridge, store } = setup([layout(), error()], { stale: true });
+
+    await bridge.handlePopstate();
+
+    expect(store.setSegmentIds).toHaveBeenCalledWith(["L0", "L0R0"]);
+    const [, segmentIds, , , , mode] = fetchPartialUpdateMock.mock.calls[0];
+    expect(segmentIds).toEqual(["L0", "L0R0"]);
+    expect(mode.boundary).toBeUndefined();
+  });
+
+  it("a cross-tab refresh holds nothing and names the boundary; a refresh the app asks for names none", async () => {
+    const { bridge, store } = setup([layout(), action(error())]);
+    store.getHistoryKey.mockReturnValue("http://localhost/page");
+
+    await bridge.refresh(true);
+    await bridge.refresh();
+
+    const [cross, app] = fetchPartialUpdateMock.mock.calls;
+    expect(cross[1]).toEqual([]);
+    expect(cross[5]).toEqual({
+      type: "navigate",
+      refresh: true,
+      boundary: "L0R0",
+    });
+    expect(app[5].boundary).toBeUndefined();
+  });
+
+  it("a cross-tab refresh with the boundary at the page's first segment sends nothing and aborts nothing", async () => {
+    const { bridge, store, eventController } = setup([action(error())]);
+    store.getHistoryKey.mockReturnValue("http://localhost/page");
+
+    await bridge.refresh(true);
+
+    expect(fetchPartialUpdateMock).not.toHaveBeenCalled();
+    expect(eventController.abortNavigation).not.toHaveBeenCalled();
+  });
+
+  it("a cross-tab refresh under an open intercept names no boundary", async () => {
+    const { bridge, store } = setup([layout(), action(error())]);
+    store.getHistoryKey.mockReturnValue("http://localhost/page");
+    store.getInterceptSourceUrl.mockReturnValue("http://localhost/list");
+
+    await bridge.refresh(true);
+
+    expect(fetchPartialUpdateMock.mock.calls[0][5].boundary).toBeUndefined();
   });
 });
 

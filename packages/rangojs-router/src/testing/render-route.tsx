@@ -26,24 +26,30 @@
  *   - navigate() drives the navigation lifecycle as a click does:
  *     useNavigation() reads loading from the call and idle with the commit,
  *     and useLinkStatus().pending is true for a link to the destination until
- *     the commit is handed to React. A `transition` spec plus a pending
+ *     the commit, which React holds with it. A `transition` spec plus a pending
  *     Promise seeded via navigate(url, { loaders }) commits through
  *     production's commitInTransition (browser/partial-update.ts), which React
  *     holds: useNavigation() stays loading and the held reader's
  *     useLoader().isLoading reads true until the data lands. Without
  *     `transition` the commit is urgent (production's same-structure hold is
- *     not modeled). useAction().state stays idle: no action runs.
+ *     not modeled). navigate(url, { streamUntil }) gives the navigation a
+ *     response stream that stays open past the commit (isStreaming).
+ *     useAction().state stays idle: no action runs.
  *   - A spec's transition({ when }) decides every commit with production's
  *     browser decision: navigate() and useRouter().push model kind "push",
- *     useRouter().replace kind "replace", refresh() kind "revalidate".
- *     Back/forward, action and optimistic clientUrls() swap decisions are
- *     e2e territory.
+ *     useRouter().replace kind "replace", refresh() kind "revalidate", and a
+ *     back/forward that restores a page kind "pop". Action and optimistic
+ *     clientUrls() swap decisions are e2e territory.
  *   - Location state reaches readers the way it does in production:
  *     NavigationProvider holds the committed entry's state next to the
  *     payload, so a navigation whose loader the test holds keeps the entry
  *     being left on screen with its own state. A `popstate` event is a
- *     back/forward onto the entry history.state holds; the tree has one
- *     location, so no page is restored with it. A server action's state, a
+ *     back/forward onto the entry history.state holds. When it is the
+ *     mounted entry or one a navigate() wrote, history still holds the state
+ *     written there, and another page is on screen, its page is restored
+ *     from the history cache, with the handle values it had, as production's
+ *     restore is; otherwise the tree keeps its location. A stale entry's
+ *     revalidation, a restore that fetches, a server action's state, a
  *     redirect's and an intercept's are e2e territory.
  * What it DOES cover: client hooks that read NavigationProvider /
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
@@ -61,6 +67,7 @@
 import { decideTransitionGatedOff } from "../browser/transition-when.js";
 import {
   StrictMode,
+  startTransition,
   useEffect,
   type ReactNode,
   type ComponentType,
@@ -78,10 +85,12 @@ import {
   shouldStartViewTransition,
 } from "../browser/partial-update.js";
 import type {
+  HandleData,
   NavigateOptions,
   NavigateOptionsInternal,
   NavigationStore,
   NavigationBridge,
+  NavigationUpdate,
   UpdateSubscriber,
 } from "../browser/types.js";
 import type {
@@ -101,6 +110,7 @@ import type {
   TransitionWhenKind,
 } from "../types.js";
 import {
+  setCurrentHistoryStateListener,
   setLocationStateVersion,
   type LocationStateDefinition,
 } from "../browser/react/location-state-shared.js";
@@ -118,7 +128,7 @@ import { isUnderTestRunner } from "../runtime-env.js";
 import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-bridge.js";
 import { resetPrefetchObserverForTesting } from "../browser/prefetch/observer.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
-import { auditTreeCause } from "../suspense-audit.js";
+import { auditTreeCause, forgetSuspenseAudit } from "../suspense-audit.js";
 
 const TEST_ORIGIN = "http://localhost";
 let activePrefetchRegistrations = 0;
@@ -447,11 +457,40 @@ export interface TestRouterHandle {
    * `handles`). They arrive on the response's handle stream, so `useHandle`
    * readers take them with the page's commit: while React holds the page,
    * readers keep the values of the page being left.
+   *
+   * `options.streamUntil` gives the navigation a response stream, as a real
+   * response has: it opens in a task after the call, before the commit (the
+   * response arrives, and `useNavigation().pendingUrl` clears), and stays open
+   * until the promise settles (a page that streams a tail past its commit:
+   * `isStreaming` reads true until then). Without it the navigation has no
+   * stream. A navigation that a newer one or a back/forward aborts before its
+   * response arrives opens none and commits nothing; one aborted after its
+   * response arrived stops counting as streaming at the abort, as in
+   * production, where its response streams on and is ignored.
+   *
+   * @example
+   * const tail = deferred();
+   * await router.navigate("/products/2", { streamUntil: tail.promise });
+   * // useNavigation(): idle, isStreaming true
+   * await act(async () => tail.resolve());
+   * // useNavigation(): idle, isStreaming false
+   *
+   * A navigation started while React holds a page shows its page once the
+   * call resolves, with or without act(). A `<Link>` click over a held page
+   * still goes inside `await act(async () => ...)` (docs/testing.md).
+   *
+   * @example
+   * await router.navigate("/products/2", { loaders: [[ProductLoader, next]] });
+   * // React holds /products/2
+   * await router.navigate("/products/3", { transition: false });
+   * // /products/3 is on screen
    */
   navigate(
     url: string,
     options?: Pick<RenderRouteOptions, "loaders" | "handles"> &
-      Pick<NavigateOptions, "state" | "replace" | "transition">,
+      Pick<NavigateOptions, "state" | "replace" | "transition"> & {
+        streamUntil?: Promise<unknown>;
+      },
   ): Promise<void>;
   /**
    * Re-render the current location, as router.refresh() does: a spec's
@@ -821,7 +860,49 @@ export async function renderRoute(
     history?: Pick<NavigateOptionsInternal, "state" | "replace" | "transition">;
     kind?: TransitionWhenKind;
     transition?: boolean;
+    streamUntil?: Promise<unknown>;
   };
+
+  // The page each history entry shows, by the entry's `idx` stamp (the
+  // seeded entry has none: 0), so a back/forward can restore it as
+  // production restores a history-cache entry. `state` is the entry's
+  // history state as the router last wrote it: an entry the test wrote over
+  // it (no `idx` reads as 0) is not that page. `handleData` is the page's
+  // pushes, taken when it is left.
+  interface EntryPage {
+    url: URL;
+    segments: ResolvedSegment[];
+    params: Record<string, string>;
+    state: unknown;
+    handleData?: HandleData;
+  }
+  const entries = new Map<number, EntryPage>();
+  const entryIndex = (): number => {
+    const idx = (window.history.state as { idx?: unknown } | null)?.idx;
+    return typeof idx === "number" ? idx : 0;
+  };
+  let entryOnScreen = entryIndex();
+  entries.set(entryOnScreen, {
+    url,
+    segments: initialSegments,
+    params: initialMatch.params,
+    state: window.history.state,
+  });
+  // A write the router makes to the entry history is on (a flash read,
+  // Def.write() or delete()) stays that entry's state, as production's
+  // per-entry memory follows it (navigation-store.ts). A test's own
+  // history.replaceState() does not.
+  setCurrentHistoryStateListener(() => {
+    store.rememberDisplayedEntry();
+    const written = entries.get(entryIndex());
+    if (written) written.state = window.history.state;
+  });
+  /** The page being left keeps its pushes for a back/forward onto it. */
+  const leaveEntry = (): void => {
+    const left = entries.get(entryOnScreen);
+    if (left) left.handleData = eventController.getHandleState().data;
+  };
+  let popGeneration = 0;
   // The navigation's lifecycle, as navigation-transaction.ts drives it:
   // useNavigation() reads loading from the call, delivered before the commit
   // as a click's notification goes out while its response is in flight, and
@@ -833,10 +914,35 @@ export async function renderRoute(
     const handle = eventController.startNavigation(
       new URL(target, TEST_ORIGIN).href,
     );
-    // Synchronous, in the caller's task: a <Link> click's own act() scope
-    // takes it, and no act() of the caller's can overlap it.
-    act(() => eventController.flushRouteState());
+    // Runs in the caller's task, so a <Link> click's own act() takes it.
+    // Awaited: React retries a held page with this update, and an unawaited
+    // act() drops that suspended retry for good.
+    await act(() => eventController.flushRouteState());
     try {
+      const streamUntil = navOptions?.streamUntil;
+      if (streamUntil) {
+        // The response arrives a task after the request, ahead of the
+        // commit (navigation-transaction.ts: the stream opens with it).
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+        if (handle.signal.aborted) return;
+        const stream = handle.startStreaming();
+        await act(() => eventController.flushRouteState());
+        // A navigation that is left stops counting as streaming at the abort
+        // (partial-update.ts endStream); the abort's notification goes out
+        // with the newer navigation's.
+        handle.signal.addEventListener("abort", () => stream.end(), {
+          once: true,
+        });
+        const end = async (): Promise<void> => {
+          await act(() => {
+            stream.end();
+            eventController.flushRouteState();
+          });
+        };
+        void streamUntil.then(end, end);
+      }
       await commitNavigation(handle, target, navOptions);
     } finally {
       // Back to idle when the commit never came (a render that threw).
@@ -922,6 +1028,7 @@ export async function renderRoute(
     // A newer navigate() started meanwhile: this one commits nothing, as
     // production's (browser/partial-update.ts) returns on its aborted signal.
     if (handle.signal.aborted) return;
+    leaveEntry();
     handle.complete(nextUrl);
     eventController.setParams(match.params);
     store.setCurrentUrl(nextUrl.href);
@@ -934,6 +1041,13 @@ export async function renderRoute(
       );
       eventController.commitLocationState(historyState);
     }
+    entryOnScreen = entryIndex();
+    entries.set(entryOnScreen, {
+      url: nextUrl,
+      segments,
+      params: match.params,
+      state: window.history.state,
+    });
     const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
     await act(async () => {
       // As production's emitters name their cause (suspense-audit.ts I6).
@@ -961,17 +1075,90 @@ export async function renderRoute(
     return navigate(current.pathname + current.search, { kind: "revalidate" });
   };
 
+  // A back/forward onto the mounted entry or one a navigation wrote, whose
+  // page is not the one on screen: its page is restored from the entry, as production's
+  // history-cache restore does (navigation-bridge.ts handlePopstate). Not
+  // modeled: a stale entry's revalidation and a restore that has to fetch.
+  const restoreEntry = async (index: number, page: EntryPage) => {
+    const generation = ++popGeneration;
+    eventController.abortNavigation();
+    const historyState = window.history.state;
+    // transition({ when }) decides the restore (kind "pop") against the
+    // entry being left.
+    const gatedOff = decideTransitionGatedOff(page.segments, () => ({
+      kind: "pop",
+      from: {
+        url: eventController.getLocation().href,
+        params: eventController.getParams(),
+        routeName: leaf.name,
+        state: entries.get(entryOnScreen)?.state ?? null,
+      },
+      to: {
+        url: page.url,
+        params: page.params,
+        routeName: leaf.name,
+        state: historyState,
+      },
+    }));
+    const root = await renderSegments(page.segments, {
+      forceAwait: true,
+      outletPending: options.outletPending,
+      transitionGatedOff: gatedOff,
+    });
+    // A later back/forward owns the screen.
+    if (generation !== popGeneration) return;
+    leaveEntry();
+    entryOnScreen = index;
+    store.setCurrentUrl(page.url.href);
+    store.setSegmentIds(page.segments.map((s) => s.id));
+    const update: NavigationUpdate = {
+      root,
+      metadata: {
+        ...makeMetadata(page.url.pathname, page.segments, page.params),
+        isPartial: true,
+        cachedHandleData: page.handleData,
+      },
+    };
+    await act(async () => {
+      // The restored entry's location and params, set where its tree is
+      // handed over, so the hooks take them in that batch.
+      eventController.setLocation(page.url);
+      eventController.setParams(page.params);
+      eventController.commitLocationState(historyState);
+      auditTreeCause("popstate");
+      if (!shouldStartViewTransition(page.segments, gatedOff)) {
+        store.emitUpdate(update);
+      } else {
+        startTransition(() => {
+          store.emitUpdate({ ...update, inTransition: true });
+        });
+      }
+    });
+  };
+
   let prefetchRoot: HTMLElement | undefined;
   const bridge: NavigationBridge = {
     navigate: (target, navigateOptions) =>
       navigate(target, { history: navigateOptions ?? {} }),
     refresh: () => refresh(),
-    // Back/forward onto the entry history.state holds. The tree has one
-    // location, so nothing is restored: a treeless commit of that entry, as
-    // production's traversal that keeps every segment
-    // (navigation-transaction.ts commit). Flushed, not left to the notify
-    // timer: the dispatching test's act() has returned by then.
+    // Back/forward onto the entry history.state holds. Its page is restored
+    // when the mount or a navigation wrote the entry, history still holds that
+    // state and another page is on screen (restoreEntry). Otherwise the tree
+    // keeps its location: a treeless commit of that entry, as production's
+    // traversal that keeps every segment (navigation-transaction.ts commit).
+    // Flushed, not left to the notify timer: the dispatching test's act()
+    // has returned by then.
     handlePopstate: async () => {
+      const index = entryIndex();
+      const page = entries.get(index);
+      if (
+        page &&
+        index !== entryOnScreen &&
+        page.state === window.history.state
+      ) {
+        await restoreEntry(index, page);
+        return;
+      }
       eventController.commitLocationState(window.history.state, true);
       eventController.flushRouteState();
     },
@@ -999,6 +1186,10 @@ export async function renderRoute(
     ...makeMetadata(url.pathname, initialSegments, initialMatch.params),
     defaultPrefetch: options.defaultPrefetch,
   };
+  // The suspense audit holds one document's tree and mounts: a root an earlier
+  // renderRoute mounted is gone (a test unmounts its root, production never
+  // does). A no-op unless this repo's tests run the audit.
+  forgetSuspenseAudit();
   const initialTree = await renderSegments(initialSegments, {
     outletPending: options.outletPending,
   });
@@ -1091,6 +1282,7 @@ export async function renderRoute(
         loaders: navOptions?.loaders,
         handles: navOptions?.handles,
         transition: navOptions?.transition,
+        streamUntil: navOptions?.streamUntil,
         history:
           navOptions?.state !== undefined || navOptions?.replace
             ? navOptions

@@ -38,7 +38,10 @@ import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
-import { NavIdleTagsLoader } from "./loaders/nav-idle.js";
+import {
+  NavIdleOverlapTagsLoader,
+  NavIdleTagsLoader,
+} from "./loaders/nav-idle.js";
 import { LoadMoreLoader } from "./loaders/location-state.js";
 import {
   DepCrumbProductLoader,
@@ -204,7 +207,12 @@ import {
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { LoaderParamsProbe } from "./components/LoaderParamsProbe.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
-import { NavIdlePage } from "./pages/nav-idle.js";
+import {
+  NavIdleOverlapPage,
+  NavIdlePage,
+  navIdleOverlapAway,
+  navIdleSkipOnAction,
+} from "./pages/nav-idle.js";
 import { FeatureDetailPage, FeaturesShell } from "./pages/features.js";
 import {
   BlogLayout,
@@ -256,6 +264,7 @@ import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
 import { LoaderCacheTagPage } from "./pages/loader-cache-tag.js";
 import { RyowActionPage } from "./pages/ryow-action.js";
 import { NestedUseCachePage } from "./pages/nested-use-cache.js";
+import { ReturnedLazyPage } from "./pages/use-cache-returned-lazy.js";
 import { controlHeldValue, getHeldValue } from "./use-cache-tags-data.js";
 import {
   LoaderCacheIdentityLayout,
@@ -346,6 +355,8 @@ import { heldHandlesPatterns } from "./pages/held-handles.js";
 import { historyHandlesPatterns } from "./pages/history-handles.js";
 import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
 import { staleDefaultsPatterns } from "./pages/stale-defaults.js";
+import { actionBoundaryPatterns } from "./pages/action-boundary.js";
+import { interceptBoundaryPatterns } from "./pages/intercept-boundary.js";
 import actionFailureClientPatterns from "./pages/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -357,9 +368,14 @@ import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { transitionKindsPatterns } from "./pages/transition-kinds.js";
+import { optimisticSettlePatterns } from "./pages/optimistic-settle.js";
 import { asyncHandlesPatterns } from "./pages/async-handles.js";
 import { handlesCommitPatterns } from "./pages/handles-commit.js";
+import { handlesOverlapPatterns } from "./pages/handles-overlap.js";
 import { vtBackPatterns } from "./pages/vt-back.js";
+import { actionLatestCallPatterns } from "./pages/action-latest-call.js";
+import { actionPersistsPatterns } from "./pages/action-persists.js";
+import { hookFieldsPatterns } from "./pages/hook-fields.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -541,6 +557,20 @@ const PersonalizedGuideTrigger: Handler<{ slug: string }> = async (ctx) => {
 /** Consumer-mirror template layout: server component between the chrome-loader
  *  layout and the clientUrls include, reading params from getRequestContext —
  *  the CategoryTemplate shape from the consumer app. */
+const captureFailsRuns = new Map<string, number>();
+
+/**
+ * Renders on its first run per :k and throws on every later one: the
+ * visitor's MISS renders, the PPR shell capture that follows it fails.
+ */
+const CaptureFailsPage: Handler<{ k: string }> = (ctx) => {
+  const k = ctx.params.k;
+  const run = (captureFailsRuns.get(k) ?? 0) + 1;
+  captureFailsRuns.set(k, run);
+  if (run > 1) throw new Error(`capture fails (k=${k})`);
+  return <div data-testid="capture-fails-page">rendered</div>;
+};
+
 function MirrorTemplateLayout(): ReactNode {
   const params: Record<string, string | undefined> = getRequestContext().params;
   if (params.slug === undefined) return <Outlet />;
@@ -715,6 +745,17 @@ export const urlpatterns = urls(
     // An ssr: false loader that throws with no errorBoundary() (dc-t92).
     include("/", holeyThrowsPatterns, { name: "" }),
 
+    // onError's `background`: only the shell capture after the MISS throws.
+    path(
+      "/errors/capture-fails/:k",
+      CaptureFailsPage,
+      { name: "errorsCaptureFails", ppr: true },
+      () => [
+        errorBoundary(() => (
+          <div data-testid="capture-fails-fallback">Capture fallback</div>
+        )),
+      ],
+    ),
     // Test utils: read the onError log (non-destructive). Imports from
     // error-log.js (not router.js) so the read uses a static import and avoids
     // the dynamic-import / module-graph race that can return an empty log.
@@ -2142,6 +2183,21 @@ export const urlpatterns = urls(
           loader(NavIdleTagsLoader),
           transition(),
         ]),
+        // #1164's chips while an action settles, or a newer navigation ends
+        // with no page, during a 1.5 s hold (hook-lock rows S10, S8).
+        path(
+          "/nav-idle-overlap",
+          NavIdleOverlapPage,
+          { name: "navIdleOverlap" },
+          () => [
+            middleware(navIdleOverlapAway),
+            loader(NavIdleOverlapTagsLoader, () => [
+              revalidate(navIdleSkipOnAction),
+            ]),
+            revalidate(navIdleSkipOnAction),
+            transition(),
+          ],
+        ),
         path("/scripts-demo", ScriptsDemoPage, { name: "scriptsDemo" }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
 
@@ -2592,6 +2648,16 @@ export const urlpatterns = urls(
         path("/nested-use-cache/:probe", NestedUseCachePage, {
           name: "nestedUseCache",
         }),
+
+        // A "use cache" function returns a lazy component that reads the
+        // session cookie: the value is encoded inside the "use cache" guard
+        // and the page renders its decoded copy, so the read refuses and no
+        // visitor's session is stored for the next.
+        path(
+          "/use-cache-returned-lazy/:probe",
+          (ctx) => <ReturnedLazyPage probe={ctx.params.probe} />,
+          { name: "useCacheReturnedLazy" },
+        ),
 
         // A cached loader on a store whose KV marker writes land late, and a
         // server action that runs revalidateTag() on its tag: the action's
@@ -3147,6 +3213,16 @@ export const urlpatterns = urls(
         include("/stale-defaults", staleDefaultsPatterns, {
           name: "staleDefaults",
         }),
+        // An action that throws on a route with its own errorBoundary(), under a
+        // layout whose loader reads its write (action-boundary.test.ts).
+        include("/action-boundary", actionBoundaryPatterns, {
+          name: "actionBoundary",
+        }),
+        // An action that throws inside an intercept, under the layout's
+        // errorBoundary() (intercept-boundary.test.ts).
+        include("/intercept-boundary", interceptBoundaryPatterns, {
+          name: "interceptBoundary",
+        }),
         // A link to a page the history cache holds keeps that page's handle
         // pushes when the response re-renders part of it.
         include("/", historyHandlesPatterns, { name: "" }),
@@ -3163,14 +3239,29 @@ export const urlpatterns = urls(
         // #1165: each transition commit carries its kind as a transition
         // type (mirrors the router e2e app's /vt-kinds/*).
         include("/", transitionKindsPatterns, { name: "" }),
+        // Optimistic hook values settle in the page's commit (mirrors the
+        // router e2e app's /opt-settle/*).
+        include("/", optimisticSettlePatterns, { name: "" }),
         // A navigation's title and crumbs commit with its page (mirrors the
         // router e2e app's /handles-commit/*).
         include("/", handlesCommitPatterns, { name: "" }),
+        // A second click over a held page (mirrors the router e2e app's
+        // /handles-overlap/*).
+        include("/", handlesOverlapPatterns, { name: "" }),
         // Async handle values (mirrors the router e2e app's /async-handles/*).
         include("/", asyncHandlesPatterns, { name: "" }),
         // A cached back/forward animates under transition() (mirrors the
         // router e2e app's /vt-back/*).
         include("/", vtBackPatterns, { name: "" }),
+        // useAction() reports the latest call of an action called twice
+        // (mirrors the router e2e app's /action-latest*).
+        include("/", actionLatestCallPatterns, { name: "" }),
+        // useAction() keeps a settled call until the action's next call
+        // (mirrors the router e2e app's /action-persists*).
+        include("/", actionPersistsPatterns, { name: "" }),
+        // useNavigation()'s fields in every reader shape while a page is
+        // held (mirrors the router e2e app's /hook-fields/:id).
+        include("/", hookFieldsPatterns, { name: "" }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {

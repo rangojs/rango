@@ -206,9 +206,11 @@ describe('a "use cache" function calling another (#980)', () => {
     ]);
   });
 
-  // The #973 gate: an outer call made earlier in the request, its write
-  // still pending, is neither reused nor written after the request
-  // invalidates a tag only its inner function recorded.
+  // The #973 gate: an outer call made earlier in the request is neither
+  // reused nor served later once the request invalidates a tag only its
+  // inner function recorded. A miss hands its caller the decoded encode, so
+  // its write can land before the invalidation (and is evicted by it) or
+  // after it (and is refused): either way no entry serves its value.
   it.each(["revalidateTag", "updateTag"] as const)(
     "%s: the same-request gate covers a tag the inner function recorded",
     async (verb) => {
@@ -224,10 +226,8 @@ describe('a "use cache" function calling another (#980)', () => {
 
       expect(values).toEqual(["card(stout #1)", "card(stout #2)"]);
       await pause(50);
-      const written = store.setItem.mock.calls.map(([, value]) =>
-        String(value),
-      );
-      expect(written.some((value) => value.includes("stout #1"))).toBe(false);
+      const later = await runLoader(() => getStockCard("stout"), store.options);
+      expect(later).not.toContain("stout #1");
     },
   );
 });

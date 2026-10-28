@@ -160,6 +160,82 @@ export function createPrerenderStore(): PrerenderStore | null {
 }
 
 /**
+ * The segments of a prerendered URL's intercept variant (`/i`): the main
+ * variant's without the intercepted route's own (`belongsToRoute`: its
+ * handler, layouts and slots), then the intercept's. A render under an
+ * intercept skips the route's entry (resolveAllSegments), so the variant
+ * holds what a cache() intercept record holds. The producer
+ * (matchForPrerender) encodes `interceptHandles` for exactly these segments.
+ */
+export function interceptVariantSegments(
+  segments: SerializedSegmentData[],
+  interceptSegments: SerializedSegmentData[],
+): SerializedSegmentData[] {
+  return [
+    ...segments.filter((s) => s.metadata.belongsToRoute !== true),
+    ...interceptSegments,
+  ];
+}
+
+/**
+ * The intercept variant as served under the intercept the match selected
+ * (findInterceptForRoute): its main segments and that intercept's slot,
+ * `slotId` in `intercept:<routeName>`. The build bakes every intercept that
+ * can target the route, since it cannot evaluate when(). Null when the
+ * variant does not hold that slot: the request renders live. The handles
+ * string is kept whole; decodeStoredEntry (cache-lookup.ts) replays only the
+ * served segments' pushes.
+ */
+export function selectInterceptVariant(
+  entry: PrerenderEntry,
+  slotId: string,
+  routeName: string,
+): PrerenderEntry | null {
+  const namespace = `intercept:${routeName}`;
+  let found = false;
+  const segments = entry.segments.filter(({ metadata }) => {
+    if (!metadata.namespace?.startsWith("intercept:")) return true;
+    if (metadata.id !== slotId || metadata.namespace !== namespace) {
+      return false;
+    }
+    found = true;
+    return true;
+  });
+  return found ? { segments, handles: entry.handles } : null;
+}
+
+/**
+ * The manifest entries ([key, PrerenderEntry JSON]) one prerendered URL
+ * bakes, keyed as the production store's get() reads them. The intercept
+ * variant (`/i`) holds interceptVariantSegments with the handle string the
+ * producer encoded for it. Written by the build
+ * (vite/discovery/prerender-collection.ts) and serveShellRequest.
+ */
+export function prerenderManifestEntries(
+  result: PrerenderEntry & {
+    routeName: string;
+    interceptSegments?: SerializedSegmentData[];
+    interceptHandles?: string;
+  },
+  paramHash: string,
+): Array<[key: string, value: string]> {
+  const { segments, handles, interceptSegments } = result;
+  const key = `${result.routeName}/${paramHash}`;
+  const entries: Array<[string, string]> = [
+    [key, JSON.stringify({ segments, handles })],
+  ];
+  if (interceptSegments?.length) {
+    const intercept = interceptVariantSegments(segments, interceptSegments);
+    const interceptHandles = result.interceptHandles ?? "";
+    entries.push([
+      `${key}/i`,
+      JSON.stringify({ segments: intercept, handles: interceptHandles }),
+    ]);
+  }
+  return entries;
+}
+
+/**
  * Create a static segment store.
  * Production only: backed by globalThis.__STATIC_MANIFEST injected at build time.
  * Returns null if no static data is available (dev mode or no Static handlers).

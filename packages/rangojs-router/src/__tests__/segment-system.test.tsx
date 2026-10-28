@@ -3,6 +3,7 @@ import { withOptimisticCommitNone } from "../browser/optimistic-commit.js";
 import { describe, it, expect, vi } from "vitest";
 import { createElement, type ReactNode, type ReactElement } from "react";
 import type { ResolvedSegment } from "../types";
+import { allowSuspenseAuditViolations } from "./kit/suspense-audit-lock.js";
 
 // Sentinel components for identification in the element tree
 function MockOutletProvider(props: any) {
@@ -739,7 +740,7 @@ describe("segment-system", () => {
 
     describe("segment ordering", () => {
       it("renders segments in root-to-leaf order as emitted by producers", async () => {
-        // Segments arrive in root-to-leaf order from resolveSegment/resolveSegmentWithRevalidation
+        // Segments arrive in root-to-leaf order from resolveSegment
         const segments: ResolvedSegment[] = [
           seg({ id: "L0", type: "layout" }),
           seg({ id: "L0L0", type: "layout" }),
@@ -1693,6 +1694,12 @@ describe("segment-system", () => {
       });
 
       it("reuses pending parallel loader promise across rerenders with the same loader inputs", async () => {
+        // Router defect (rango-t227), rule 6: renderSegments writes loaderIds
+        // on the slot's segment object the previous tree was built from
+        // (segment-system.tsx `p.loaderIds =`; tools/e2e-console-baseline.json).
+        allowSuspenseAuditViolations(
+          "I7 mutated: renderSegments writes loaderIds on a handed slot segment (rango-t227)",
+        );
         let resolveLoader!: (value: unknown) => void;
         const loaderPromise = new Promise((resolve) => {
           resolveLoader = resolve;

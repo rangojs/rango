@@ -63,7 +63,6 @@
  *
  * Handler Context:
  *   - handlerContext: Context passed to loaders
- *   - loaderPromises: Memoized loader promises
  *
  * Intercepts:
  *   - interceptResult: Detected intercept (if soft navigation)
@@ -119,16 +118,7 @@ import type { HandlerContext, ResolvedSegment } from "../types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { InterceptResult } from "./router-context.js";
 import type { ResolutionPassInput } from "./segment-resolution/resolution-pass.js";
-
-/**
- * Action context passed to matchPartial
- */
-export interface ActionContext {
-  actionId?: string;
-  actionUrl?: URL;
-  actionResult?: any;
-  formData?: FormData;
-}
+import type { ActionContext } from "./types.js";
 
 /**
  * Match context containing all state for the match pipeline
@@ -146,6 +136,8 @@ export interface MatchContext<TEnv = any> {
   clientSegmentIds: string[];
   clientSegmentSet: Set<string>;
   stale: boolean;
+  /** NavigationSnapshot.heldBoundary: the walk stops above it. */
+  heldBoundary?: string;
 
   // Previous navigation state
   prevUrl: URL;
@@ -161,7 +153,6 @@ export interface MatchContext<TEnv = any> {
 
   // Handler context (for loaders)
   handlerContext: HandlerContext<any, TEnv>;
-  loaderPromises: Map<string, Promise<any>>;
 
   // Route map for server-side ctx.reverse() resolution
   routeMap: Record<string, string>;
@@ -230,6 +221,7 @@ export function resolutionPassInput<TEnv>(
     routeKey: ctx.routeKey,
     actionContext: ctx.actionContext,
     stale: ctx.stale,
+    heldBoundary: ctx.heldBoundary,
   };
 }
 

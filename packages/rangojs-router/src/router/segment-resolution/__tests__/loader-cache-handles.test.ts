@@ -1,6 +1,6 @@
 /**
  * Handle pushes from a loader with its own cache (`loader(Def, () =>
- * [cache({...})])`) through the real segment funnel: resolveLoaders ->
+ * [cache({...})])`) through the real segment funnel: resolveOwnerLoaders ->
  * resolveLoaderData -> executeLoaderData -> the real setupLoaderAccess
  * executor -> the request's HandleStore.
  *
@@ -30,7 +30,9 @@ vi.mock("../../../cache/handle-snapshot.js", async (importActual) => ({
   decodeHandles: async (encoded: string) => JSON.parse(encoded),
 }));
 
-import { resolveLoaders } from "../fresh.js";
+import { ownerOf, resolveOwnerLoaders } from "../revalidation.js";
+import { makeFreshPass } from "../../../__tests__/kit/resolution-pass.js";
+import type { ResolvedSegment, HandlerContext } from "../../../types.js";
 import { setupLoaderAccess } from "../../loader-resolution.js";
 import { createHandlerContext } from "../../handler-context.js";
 import {
@@ -42,6 +44,21 @@ import { createHandle } from "../../../handle.js";
 import type { EntryData, LoaderEntry } from "../../../server/context.js";
 import type { LoaderContext, LoaderDefinition } from "../../../types.js";
 import type { SegmentResolutionDeps } from "../../types.js";
+
+/** A full match's loader funnel: a FRESH pass of resolveOwnerLoaders. */
+async function resolveLoaders(
+  entry: EntryData,
+  ctx: HandlerContext<any>,
+  belongsToRoute: boolean,
+  deps: SegmentResolutionDeps<any>,
+): Promise<ResolvedSegment[]> {
+  const { segments } = await resolveOwnerLoaders(
+    makeFreshPass(ctx, deps),
+    ownerOf(entry),
+    belongsToRoute,
+  );
+  return segments;
+}
 
 const Meta = createHandle<{ title: string }>();
 const Crumbs = createHandle<{ label: string }>();
@@ -72,7 +89,7 @@ function entryWith(loaderEntries: LoaderEntry[]): EntryData {
     shortCode: "R0",
     type: "route",
     loader: loaderEntries,
-    // Loading-disabled: resolveLoaders awaits every loader before returning.
+    // Loading-disabled: a FRESH pass awaits every loader before returning.
     loading: false,
   } as unknown as EntryData;
 }

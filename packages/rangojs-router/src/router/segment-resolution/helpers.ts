@@ -204,8 +204,39 @@ export interface ErrorReportContext {
   routeKey?: string;
   env?: any;
   isPartial?: boolean;
-  requestStartTime?: number;
   telemetry?: TelemetrySink;
+}
+
+type Thrower = { id: string; type: ErrorInfo["segmentType"] };
+
+/**
+ * Note that `id` threw `error`, for an error its owning entry's boundary
+ * catches (a parallel slot's sync throw, an orphan layout's): onError names
+ * the segment that threw, as a streamed slot's rejection does. Kept on the
+ * request context, never the module: a reused error object (a constant, a
+ * memoized rejection) can be thrown by another request, or by a Prerender
+ * pass that rethrows before catchSegmentError reads it. Returns `error`, to
+ * rethrow.
+ */
+export function noteThrower(
+  error: unknown,
+  id: string,
+  type: ErrorInfo["segmentType"],
+): unknown {
+  const reqCtx = _getRequestContext();
+  if (reqCtx && error !== null && typeof error === "object") {
+    (reqCtx._throwers ??= new WeakMap()).set(error, { id, type });
+  }
+  return error;
+}
+
+/** The segment noteThrower recorded for `error`, read once. */
+function takeThrower(error: unknown): Thrower | undefined {
+  const throwers = _getRequestContext()?._throwers;
+  if (!throwers || error === null || typeof error !== "object") return;
+  const noted = throwers.get(error) as Thrower | undefined;
+  throwers.delete(error);
+  return noted;
 }
 
 /**
@@ -213,6 +244,9 @@ export interface ErrorReportContext {
  * error or not-found segment with the nearest boundary.
  *
  * Called by resolveWithErrorBoundary to produce error/notFound segments.
+ * `entry` is where the boundary is looked up; `thrower` names the segment
+ * that threw when it is not `entry` (an intercept's slot, under its declaring
+ * entry), for the report, the server print and the client's ErrorInfo.
  */
 export function catchSegmentError<TEnv>(
   error: unknown,
@@ -221,7 +255,11 @@ export function catchSegmentError<TEnv>(
   deps: SegmentResolutionDeps<TEnv>,
   report?: ErrorReportContext,
   pathname?: string,
+  thrower?: Thrower,
 ): ResolvedSegment {
+  const named = thrower ?? takeThrower(error);
+  const segmentId = named?.id ?? entry.shortCode;
+  const segmentType: ErrorInfo["segmentType"] = named?.type ?? entry.type;
   const reportError = (
     handledByBoundary: boolean,
     metadata?: Record<string, unknown>,
@@ -232,13 +270,12 @@ export function catchSegmentError<TEnv>(
       url: report.url,
       routeKey: report.routeKey,
       params,
-      segmentId: entry.shortCode,
-      segmentType: entry.type as any,
+      segmentId,
+      segmentType: segmentType as any,
       env: report.env,
       isPartial: report.isPartial,
       handledByBoundary,
       metadata,
-      requestStartTime: report.requestStartTime,
     });
     if (report.telemetry) {
       const errorObj =
@@ -247,8 +284,8 @@ export function catchSegmentError<TEnv>(
         type: "handler.error",
         timestamp: performance.now(),
         requestId: report.request ? getRequestId(report.request) : undefined,
-        segmentId: entry.shortCode,
-        segmentType: entry.type,
+        segmentId,
+        segmentType,
         error: errorObj,
         handledByBoundary,
         pathname,
@@ -274,8 +311,8 @@ export function catchSegmentError<TEnv>(
 
     const notFoundInfo = createNotFoundInfo(
       error,
-      entry.shortCode,
-      entry.type,
+      segmentId,
+      segmentType,
       pathname,
     );
 
@@ -285,7 +322,7 @@ export function catchSegmentError<TEnv>(
     });
 
     debugLog("segment", "notFound boundary handled error", {
-      segmentId: entry.shortCode,
+      segmentId,
       message: notFoundInfo.message,
     });
 
@@ -302,19 +339,18 @@ export function catchSegmentError<TEnv>(
   // The client gets the masked ErrorInfo; the original prints here.
   printServerError(
     error,
-    { label: "Handler error", name: entry.shortCode, pathname },
+    { label: "Handler error", name: segmentId, pathname },
     _getRequestContext(),
   );
 
   const fallback = deps.findNearestErrorBoundary(entry);
-  const segmentType: ErrorInfo["segmentType"] = entry.type;
-  const errorInfo = createErrorInfo(error, entry.shortCode, segmentType);
+  const errorInfo = createErrorInfo(error, segmentId, segmentType);
   const effectiveFallback = fallback ?? DefaultErrorFallback;
 
   reportError(!!effectiveFallback);
 
   debugLog("segment", "error boundary handled error", {
-    segmentId: entry.shortCode,
+    segmentId,
     boundary: fallback ? "custom" : "default",
     message: errorInfo.message,
   });

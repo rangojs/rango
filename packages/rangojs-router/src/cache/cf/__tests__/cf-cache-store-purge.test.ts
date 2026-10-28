@@ -527,6 +527,11 @@ describe("CFCacheStore purge mode (tagPurge)", () => {
       expect(
         await runWithRequestContext(makeReqCtx(), () => store.get("k")),
       ).toBeNull();
+      // Nor may the rejected KV read promote the entry back into L1.
+      await ctx.flush();
+      expect(
+        await runWithRequestContext(makeReqCtx(), () => store.get("k")),
+      ).toBeNull();
     });
   });
 

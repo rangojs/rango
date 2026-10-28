@@ -19,6 +19,11 @@ export const WIRE = {
   rewriteTarget: "_rsc_rt",
   /** A stale request: `true` (router/navigation-snapshot.ts). */
   stale: "_rsc_stale",
+  /**
+   * The id of an action's error boundary on screen that a stale request
+   * holds: read only beside `stale` (router/navigation-snapshot.ts).
+   */
+  boundary: "_rsc_boundary",
   /** A fill request (docs/design/prefetch-false.md): `1`. */
   fill: "_rsc_fill",
   /** A loader fetch's loader id (rsc/loader-fetch.ts). */

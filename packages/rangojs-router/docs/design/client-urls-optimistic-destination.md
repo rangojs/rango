@@ -177,8 +177,8 @@ Each projected route is still its own server segment
 (`server-projection.ts` builds one `path()` per record), but every route of
 one group mount carries the same `clientGroup` key — the include's URL prefix,
 stamped through `PathOptions.clientGroup` (internal) onto the entry
-(`urls/path-helper.ts`), the resolved segment (`segment-resolution/fresh.ts`,
-`revalidation.ts`), and the segment cache codec. `renderSegments` keys those
+(`urls/path-helper.ts`), the resolved segment (`segment-resolution/revalidation.ts`),
+and the segment cache codec. `renderSegments` keys those
 segments by `cg:<group>` instead of `id-params` and gives them one wrapper
 shape (an `OutletProvider` with a `StreamedLoaderErrorBoundary`, never a
 `LoaderBoundary` or `RouteContentWrapper`; `loading()` is the `Suspense`

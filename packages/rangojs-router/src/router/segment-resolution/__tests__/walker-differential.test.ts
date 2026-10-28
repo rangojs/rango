@@ -1,44 +1,56 @@
 /**
- * The fresh walker (fresh.ts resolveAllSegments) against the revalidating
- * walker (revalidation.ts resolveAllSegmentsWithRevalidation) when the
- * client holds nothing: the same route, one pass each, each with a handler
- * context built the same way. They agree segment for segment except for the
- * differences named below. When the fresh walk becomes a pass of the
- * revalidating walker, each named difference becomes an explicit branch of
- * that pass, and this file stays green with the same list. Two of them are
- * internal-only (`INTERNAL_ONLY`): the walks may stop differing there, and
- * they must not differ in what the payload and the render read.
+ * The segment walker (revalidation.ts resolveAllSegments) on
+ * a full match's FRESH pass (resolution-pass.ts freshPassInput) against a
+ * partial pass whose client holds nothing (an empty set): the same route,
+ * one pass each, each with a handler context built the same way. They agree
+ * segment for segment except for the differences named below; each one is a
+ * branch of the walker, named in its entry. Two of them are internal-only
+ * (`INTERNAL_ONLY`): the passes may stop differing there, and they must not
+ * differ in what the payload and the render read.
  *
- * Each case also pins the fresh walk's own output (segment id, type, the
- * component's text and the loader data), so a change both walkers share
+ * Each case also pins the FRESH pass's own output (segment id, type, the
+ * component's text and the loader data), so a change both passes share
  * shows too.
  *
- * Besides a request's walk, the passes that call the fresh walker with
- * options: build time (prerender-match.ts), the background re-render of a
- * stale route record (background-revalidation.ts, `skipLoaders`) and the
- * live pass above a cache() HIT (cache-lookup.ts, the entries above the
- * marker with the full `chain`).
+ * Beside its segments, each walk records what it reports on the side
+ * (`Walk.recorded`): the handler perf metrics (`handler:<id>`, track()), the
+ * rango.handler spans (observeSegmentHandler), the streamed-Response
+ * warnings (warnOnStreamedResponse) and every other console.warn. Each case
+ * pins how the two passes differ there (`Case.recorded`), named the same
+ * way: both passes meter, span and warn for every handler they run, so they
+ * differ there only where one of them skips a handler.
  *
- * Both walkers run as the router runs them: a router built from the DSL, the
+ * Besides a request's walk, the FRESH passes with options: build time
+ * (prerender-match.ts, `skipLoaders` and `throwOnError`), the background
+ * re-render of a stale route record (background-revalidation.ts,
+ * `skipLoaders`) and the live pass above a cache() HIT (cache-lookup.ts, the
+ * entries above the marker with the full `chain`).
+ *
+ * Both passes run as the router runs them: a router built from the DSL, the
  * RouterContext its match builds (its deps, findMatch, handler contexts and
  * loader access), entries from resolveRoute, and the DSL store around the
  * walk. Each case runs on both manifest partitions (document, isSSR true,
  * and navigation, isSSR false), which differ for `loading(..., { ssr: false })`.
  *
- * walkFresh() and walkRevalidating() are the only calls of the two walkers:
- * a change to either signature lands there.
+ * walkFresh() and walkRevalidating() are the only calls of the walker: a
+ * change to its signature lands there.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createElement, isValidElement, type ReactNode } from "react";
 import { createRouter } from "../../../router.js";
 import { createLoader } from "../../../loader.rsc.js";
+import { Static } from "../../../static-handler.js";
 import { urls } from "../../../urls.js";
 import { buildRouterTrieFromUrlpatterns } from "../../../rsc/manifest-init.js";
 import {
   createRequestContext,
   runWithRequestContext,
 } from "../../../server/request-context.js";
-import { getContext, type EntryData } from "../../../server/context.js";
+import {
+  getContext,
+  type EntryData,
+  type MetricsStore,
+} from "../../../server/context.js";
 import {
   getRouterContext,
   runWithRouterContext,
@@ -50,8 +62,36 @@ import { setupBuildUse } from "../../loader-resolution.js";
 import { buildMatchResult } from "../../match-result.js";
 import type { MatchContext, MatchPipelineState } from "../../match-context.js";
 import { restoreParallelLoaderMarkers } from "../../../segment-system.js";
-import type { ResolutionPassInput } from "../resolution-pass.js";
+import { resolveTracing } from "../../tracing.js";
+import {
+  freshPassInput,
+  type ResolutionPassInput,
+} from "../resolution-pass.js";
 import type { HandlerContext, ResolvedSegment } from "../../../types.js";
+
+// The Flight runtime does not run in this config: a static store payload
+// decodes as JSON. The store, its manifest and the lookup are the real ones.
+vi.mock("@vitejs/plugin-rsc/rsc/server", async () =>
+  (
+    await import("../../../rsc/__tests__/handler-mock-factories.js")
+  ).pluginRscMock(),
+);
+vi.mock("@vitejs/plugin-rsc/rsc/client", async () => ({
+  ...(
+    await import("../../../rsc/__tests__/handler-mock-factories.js")
+  ).pluginRscMock(),
+  createFromReadableStream: (stream: ReadableStream<Uint8Array>) =>
+    new Response(stream).json(),
+}));
+
+// The build-time static store holds one Static() handler's output, so its
+// route is a static hit (tryStaticHandler); every other lookup misses.
+globalThis.__STATIC_MANIFEST = {
+  "walker#Static": async () => ({ default: JSON.stringify("static hit") }),
+};
+afterAll(() => {
+  globalThis.__STATIC_MANIFEST = undefined;
+});
 
 const DataLoader = (createLoader as Function)(
   async () => ({ value: "data" }),
@@ -200,6 +240,33 @@ beforeAll(async () => {
             { name: "throws" },
             () => [errorBoundary(el("p", "route failed"))],
           ),
+          layout(
+            () => undefined,
+            () => [
+              path("/void-layout", () => el("p", "void layout"), {
+                name: "voidLayout",
+              }),
+            ],
+          ),
+          path(
+            "/static-hit",
+            Static(() => el("p", "static live"), undefined, "walker#Static"),
+            { name: "staticHit" },
+          ),
+          layout(
+            () => el("section", "response slot"),
+            () => [
+              parallel(
+                {
+                  "@response": async () => new Response(null, { status: 204 }),
+                },
+                () => [loading(Spinner)],
+              ),
+              path("/slot-response", () => el("p", "slot response"), {
+                name: "slotResponse",
+              }),
+            ],
+          ),
         ],
       ),
     ],
@@ -287,6 +354,80 @@ interface Walk {
   lines: string[];
   /** The message of what the walk threw, if it threw. */
   threw?: string;
+  /** What the walk reported beside its segments. */
+  recorded: Recorded;
+}
+
+/** What a walk reports on the side, each list sorted. */
+interface Recorded {
+  /** The `<id>` of each `handler:<id>` perf metric (track()). */
+  metered: string[];
+  /** The handler id of each rango.handler span (observeSegmentHandler). */
+  spans: string[];
+  /** The entry each streamed-Response warning names (warnOnStreamedResponse). */
+  warnedResponse: string[];
+  /** The text of every other console.warn the walk printed. */
+  warnedOther: string[];
+}
+
+/**
+ * Run `fn` with the handler metrics on (the DSL store's MetricsStore, which
+ * track() reads), a span runner on the request context (observePhase reads
+ * `_tracing`) and every console.warn captured, and return what it recorded
+ * once `fn` (the walk and the settling of its segments) is done.
+ */
+async function recording<T>(
+  store: { metrics?: MetricsStore },
+  requestContext: object,
+  fn: () => Promise<T>,
+): Promise<{ result: T; recorded: Recorded }> {
+  const metrics: MetricsStore = {
+    enabled: true,
+    requestStart: performance.now(),
+    metrics: [],
+  };
+  store.metrics = metrics;
+  const spans: string[] = [];
+  Object.assign(requestContext, {
+    _tracing: resolveTracing({
+      runner: (name, run) =>
+        run({
+          setAttribute(key, value) {
+            if (name === "rango.handler" && key === "rango.handler_id") {
+              spans.push(String(value));
+            }
+          },
+        }),
+    }),
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const result = await fn();
+    const warnedResponse: string[] = [];
+    const warnedOther: string[] = [];
+    for (const args of warn.mock.calls) {
+      const text = args.map(String).join(" ");
+      const named = /^\[rango\] Handler for "([^"]+)" returned a Response/.exec(
+        text,
+      );
+      if (named) warnedResponse.push(named[1]!);
+      else warnedOther.push(text);
+    }
+    return {
+      result,
+      recorded: {
+        metered: metrics.metrics
+          .filter((m) => m.label.startsWith("handler:"))
+          .map((m) => m.label.slice("handler:".length))
+          .sort(),
+        spans: spans.sort(),
+        warnedResponse: warnedResponse.sort(),
+        warnedOther: warnedOther.sort(),
+      },
+    };
+  } finally {
+    warn.mockRestore();
+  }
 }
 
 /** Which pass calls the walker, beside a request's own walk. */
@@ -324,25 +465,26 @@ function passEntries(pass: Pass): {
   return { entries: entries.slice(0, marker), chain: entries };
 }
 
-function walkFresh(pass: Pass): Promise<ResolvedSegment[]> {
+async function walkFresh(pass: Pass): Promise<ResolvedSegment[]> {
   const { entries, chain } = passEntries(pass);
-  return routerCtx.resolveAllSegments(
-    entries,
-    pass.snapshot.routeKey,
-    pass.snapshot.params,
-    pass.context,
-    new Map(),
-    pass.build
-      ? // prerender-match.ts
-        { skipLoaders: true, throwOnError: true }
-      : pass.skipLoaders
-        ? // background-revalidation.ts rerenderAndCacheRoute
-          { skipLoaders: true }
-        : chain
-          ? // cache-lookup.ts, the live pass of a full match
-            { chain }
+  const { segments } = await routerCtx.resolveAllSegments(
+    freshPassInput(
+      pass.context,
+      pass.snapshot.routeKey,
+      pass.snapshot.params,
+      pass.build
+        ? // prerender-match.ts
+          { skipLoaders: true, throwOnError: true }
+        : pass.skipLoaders
+          ? // background-revalidation.ts rerenderAndCacheRoute
+            { skipLoaders: true }
           : undefined,
+    ),
+    entries,
+    // cache-lookup.ts passes `chain` on the live pass of a full match.
+    { pathname: pass.pathname, ...(chain && { chain }) },
   );
+  return segments;
 }
 
 function walkRevalidating(
@@ -370,7 +512,9 @@ function walkRevalidating(
     : null;
   if (pass.intercept) expect(interceptResult).not.toBeNull();
   // Field by field, not heldNothingPassInput: that reads context.request,
-  // which the build-time prerender context's getter throws on.
+  // which the build-time prerender context's getter throws on. The set is a
+  // fresh empty one, never FRESH: compared by identity, FRESH would make
+  // this a full match's pass.
   const input: ResolutionPassInput = {
     context: pass.context,
     client: new Set(),
@@ -382,7 +526,7 @@ function walkRevalidating(
     routeKey: pass.snapshot.routeKey,
   };
   const { entries, chain } = passEntries(pass);
-  return routerCtx.resolveAllSegmentsWithRevalidation(input, entries, {
+  return routerCtx.resolveAllSegments(input, entries, {
     interceptResult,
     localRouteName: pass.snapshot.localRouteName,
     pathname: pass.pathname,
@@ -416,9 +560,9 @@ async function line(segment: ResolvedSegment): Promise<string> {
 
 /**
  * The segments as they leave the server and reach the tree: the match
- * result of the request kind each walker serves (a full match for the fresh
- * walk, a partial one with nothing held for the revalidating walk), then
- * the render's marker restore.
+ * result of the request kind each pass serves (a full match for the FRESH
+ * pass, a partial one with nothing held for the other), then the render's
+ * marker restore.
  */
 function delivered(
   walker: "fresh" | "revalidating",
@@ -516,33 +660,40 @@ async function walk(
           store.parent,
           fn,
         );
-      let result: { segments: ResolvedSegment[]; matchedIds: string[] };
-      try {
-        if (walker === "fresh") {
-          const segments = await inStore(() => walkFresh(pass));
-          result = { segments, matchedIds: segments.map((s) => s.id) };
-        } else {
-          result = await inStore(() => walkRevalidating(pass));
-        }
-      } catch (error) {
-        const threw = (error as Error).message;
-        return {
-          segments: [],
-          delivered: [],
-          matchedIds: [],
-          lines: [`threw: ${threw}`],
-          threw,
-        };
-      }
-      const { segments, matchedIds } = result;
-      return {
-        segments: await Promise.all(segments.map(project)),
-        delivered: await Promise.all(
-          delivered(walker, pass, segments, matchedIds).map(project),
-        ),
-        matchedIds,
-        lines: await Promise.all(segments.map(line)),
-      };
+      const { result: walked, recorded } = await recording(
+        store,
+        requestContext,
+        async (): Promise<Omit<Walk, "recorded">> => {
+          let result: { segments: ResolvedSegment[]; matchedIds: string[] };
+          try {
+            if (walker === "fresh") {
+              const segments = await inStore(() => walkFresh(pass));
+              result = { segments, matchedIds: segments.map((s) => s.id) };
+            } else {
+              result = await inStore(() => walkRevalidating(pass));
+            }
+          } catch (error) {
+            const threw = (error as Error).message;
+            return {
+              segments: [],
+              delivered: [],
+              matchedIds: [],
+              lines: [`threw: ${threw}`],
+              threw,
+            };
+          }
+          const { segments, matchedIds } = result;
+          return {
+            segments: await Promise.all(segments.map(project)),
+            delivered: await Promise.all(
+              delivered(walker, pass, segments, matchedIds).map(project),
+            ),
+            matchedIds,
+            lines: await Promise.all(segments.map(line)),
+          };
+        },
+      );
+      return { ...walked, recorded };
     }),
   );
 }
@@ -559,50 +710,67 @@ type Differences = Partial<Record<Exception | "unnamed", string[]>>;
 
 type Exception =
   /**
-   * Internal-only. The revalidating walker marks a segment whose handler it
-   * ran (`_handlerRan`); the fresh walker never sets it. Neither marks an
-   * orphan layout or an error segment. buildMatchResult (match-result.ts)
-   * strips it from the segments it returns. Only a partial match reads it
-   * before that, for `resolvedIds` (the revalidating side, pinned byte for
-   * byte by prefetch-false-unflagged.rsc-test.tsx); a full match never does.
+   * Internal-only. A segment whose handler ran is marked (`_handlerRan`,
+   * resolveEntryHandler, resolveOrphanLayout and the slot loop). Both passes
+   * mark it now, so the difference is gone; it was the fresh walker's
+   * absent marker. Neither marks an error segment.
+   * buildMatchResult (match-result.ts) strips it from the segments it
+   * returns. Only a partial match reads it before that, for `resolvedIds`
+   * (pinned byte for byte by prefetch-false-unflagged.rsc-test.tsx); a full
+   * match never does.
    */
   | "handler ran marker"
   /**
-   * Internal-only. The fresh walker tags a slot's loaders with the slot's
-   * loading() (`parallelLoading`); the revalidating walker does not.
+   * Internal-only. The FRESH branch of the slot loop
+   * (resolveParallelSegments) tags a slot's loaders with the
+   * slot's loading() (`parallelLoading`); a partial pass does not.
    * renderSegments restores the tag on every render
    * (restoreParallelLoaderMarkers, segment-system.tsx).
    */
   | "slot loading tag"
   /**
-   * Under an intercept the revalidating walker skips the intercepted
+   * The intercept branch of resolveAllSegments
+   * (`interceptResult`): under an intercept the walker skips the intercepted
    * route's entry (its handler and loaders) and lists only the route's id
-   * as matched.
+   * as matched. A full match's FRESH pass has no intercept; the background
+   * re-render of an intercept record passes it to its FRESH pass
+   * (rerenderAndCacheRoute), which is not modelled here.
    */
   | "skipped under intercept"
   /**
-   * At build time the fresh walker skips loaders (skipLoaders); the
-   * revalidating walker has no such option, so a route with a loader runs
-   * the loader path, whose error context reads the prerender context's
-   * throwing `request` getter (helpers.ts buildLoaderErrorContext), and the
-   * route becomes an error segment.
+   * The `skipLoaders` branch (resolveOwnerLoaders), which the build-time
+   * FRESH pass sets (prerender-match.ts). The partial pass does not set it,
+   * so a route with a loader runs the loader path, whose error context reads
+   * the prerender context's throwing `request` getter (helpers.ts
+   * buildLoaderErrorContext), and the route becomes an error segment. The
+   * FRESH pass itself never reads that getter: freshPassInput reads it
+   * guarded and carries `request: undefined`.
    */
   | "build-time loaders"
   /**
-   * At build time the fresh walker rethrows a handler error (throwOnError);
-   * the revalidating walker renders the route's error segment.
+   * The `throwOnError` branch (resolveAllSegments, and a
+   * streamed handler's `recover`), which the build-time FRESH pass sets: a
+   * handler error rethrows. The partial pass renders the route's error
+   * segment.
    */
   | "build-time handler error"
   /**
-   * The background re-render of a stale route record walks fresh with
-   * skipLoaders (background-revalidation.ts rerenderAndCacheRoute): the
-   * fresh walk has no loader segments, which the revalidating walk returns
+   * The `skipLoaders` branch, which the background re-render of a stale
+   * route record sets (background-revalidation.ts rerenderAndCacheRoute):
+   * the FRESH pass has no loader segments, which the partial pass returns
    * and lists as matched.
    */
-  | "skipped loaders";
+  | "skipped loaders"
+  /**
+   * The void-layout branch of resolveEntryHandler: the FRESH pass keeps a
+   * layout handler's `undefined` as its component, the partial pass
+   * normalizes it to null. cache-scope.ts refuses a document record whose
+   * layout component is null.
+   */
+  | "void layout";
 
 /**
- * The differences that stay inside the server or the render: the walks may
+ * The differences that stay inside the server or the render: the passes may
  * stop differing there, and the segments delivered (`Walk.delivered`) never
  * differ there.
  */
@@ -610,6 +778,100 @@ const INTERNAL_ONLY: readonly Exception[] = [
   "handler ran marker",
   "slot loading tag",
 ];
+
+/** The ids in `a` that `b` lacks, counted as a multiset. */
+function onlyIn(a: readonly string[], b: readonly string[]): string[] {
+  const rest = [...b];
+  return a.filter((id) => {
+    const at = rest.indexOf(id);
+    if (at === -1) return true;
+    rest.splice(at, 1);
+    return false;
+  });
+}
+
+/**
+ * The differences in `Walk.recorded`, each shown by the id of the segment it
+ * belongs to (a slot's `parallelName`, or its id for a warning; a layout's
+ * `layoutName`; a route's namespace) and named by that segment's kind. A
+ * route whose handler the partial pass never runs (under an intercept, or a
+ * build-time loader error) is metered and spanned by the FRESH pass only.
+ */
+function recordedDifferences(
+  fresh: Walk,
+  revalidating: Walk,
+  options: PassKind,
+): Differences {
+  const out: Differences = {};
+  const add = (name: Exception | "unnamed", line: string): void => {
+    (out[name] ??= []).push(line);
+  };
+  type Kind = "slot" | "layout" | "route";
+  const owners = new Map<unknown, { kind: Kind; id: string }>();
+  for (const s of [...fresh.segments, ...revalidating.segments]) {
+    const id = s.id as string;
+    if (s.type === "parallel") {
+      owners.set(s.parallelName, { kind: "slot", id });
+      owners.set(id, { kind: "slot", id });
+    } else if (s.type === "layout") {
+      owners.set(s.layoutName, { kind: "layout", id });
+    } else if (s.type === "route") {
+      owners.set(s.namespace, { kind: "route", id });
+    }
+  }
+  const skippedRoute: Exception | undefined = options.intercept
+    ? "skipped under intercept"
+    : options.build
+      ? "build-time loaders"
+      : undefined;
+  const each = (
+    ids: string[],
+    line: string,
+    names: Partial<Record<Kind, Exception>>,
+  ): void => {
+    for (const id of ids) {
+      const owner = owners.get(id);
+      add(
+        (owner && names[owner.kind]) ?? "unnamed",
+        `${line}: ${owner?.id ?? id}`,
+      );
+    }
+  };
+  const f = fresh.recorded;
+  const r = revalidating.recorded;
+  each(onlyIn(f.metered, r.metered), "metered by fresh only", {
+    route: skippedRoute,
+  });
+  each(onlyIn(r.metered, f.metered), "metered by revalidating only", {});
+  each(onlyIn(f.spans, r.spans), "span by fresh only", {
+    route: skippedRoute,
+  });
+  each(onlyIn(r.spans, f.spans), "span by revalidating only", {});
+  each(onlyIn(f.warnedResponse, r.warnedResponse), "warned by fresh only", {});
+  each(
+    onlyIn(r.warnedResponse, f.warnedResponse),
+    "warned by revalidating only",
+    {},
+  );
+  each(onlyIn(f.warnedOther, r.warnedOther), "warned by fresh only", {});
+  each(onlyIn(r.warnedOther, f.warnedOther), "warned by revalidating only", {});
+  return out;
+}
+
+/**
+ * The segments a walk meters, by segment id: each `handler:<id>` metric's
+ * `<id>` is a layout's or route's namespace, or a slot's `parallelName`.
+ */
+function meteredSegments(walk: Walk): string[] {
+  const ids = new Map<unknown, string>();
+  for (const s of walk.segments) {
+    if (s.type === "parallel") ids.set(s.parallelName, s.id as string);
+    else if (s.type === "layout" || s.type === "route") {
+      ids.set(s.namespace, s.id as string);
+    }
+  }
+  return walk.recorded.metered.map((id) => ids.get(id) ?? `?${id}`).sort();
+}
 
 function differences(
   fresh: Walk,
@@ -678,6 +940,13 @@ function differences(
         add("handler ran marker", id);
       } else if (field === "parallelLoading" && b === undefined) {
         add("slot loading tag", id);
+      } else if (
+        field === "component" &&
+        f.type === "layout" &&
+        a === undefined &&
+        b === "null"
+      ) {
+        add("void layout", id);
       } else {
         add("unnamed", `${id}.${field}: ${a} -> ${b}`);
       }
@@ -714,9 +983,16 @@ function differences(
 interface Case extends Partial<PassKind> {
   name: string;
   pathname: string;
-  /** The fresh walk, one `line()` per segment, the same on both partitions. */
+  /** The FRESH pass, one `line()` per segment, the same on both partitions. */
   fresh: string[];
   expected: Differences;
+  /** The differences in what the walks report (`Walk.recorded`); none by default. */
+  recorded?: Differences;
+  /**
+   * The segments each walk meters (a `handler:<id>` metric), by segment id;
+   * both walks alike. Unchecked when absent.
+   */
+  metered?: string[];
 }
 
 const CASES: Case[] = [
@@ -813,6 +1089,7 @@ const CASES: Case[] = [
     expected: {
       "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0R7L0.@aside", "M0L0L0R7"],
     },
+    metered: ["M0L0", "M0L0L0", "M0L0L0R7", "M0L0L0R7L0", "M0L0L0R7L0.@aside"],
   },
   {
     name: "routeless layout nested in a cache() marker (#918), route before the marker",
@@ -880,6 +1157,12 @@ const CASES: Case[] = [
         "not matched: M0L0L0L2R1D0.walker#Data",
       ],
     },
+    recorded: {
+      "skipped under intercept": [
+        "metered by fresh only: M0L0L0L2R1",
+        "span by fresh only: M0L0L0L2R1",
+      ],
+    },
   },
   {
     name: "the same route, not intercepted",
@@ -927,6 +1210,12 @@ const CASES: Case[] = [
         'M0L0L0R4: Property "request" is not available during pre-rendering. Fetch data directly in the handler or use a passthrough prerender handler.',
       ],
     },
+    recorded: {
+      "build-time loaders": [
+        "metered by fresh only: M0L0L0R4",
+        "span by fresh only: M0L0L0R4",
+      ],
+    },
   },
   {
     name: "build time, handler error",
@@ -963,6 +1252,41 @@ const CASES: Case[] = [
     fresh: ["M0L0 layout", 'M0L0L0 layout "root"', 'M0L0L0L1 layout "host"'],
     expected: { "handler ran marker": ["M0L0", "M0L0L0", "M0L0L0L1"] },
   },
+  {
+    name: "void layout handler",
+    pathname: "/void-layout",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      "M0L0L0L3 layout",
+      'M0L0L0L3R0 route "void layout"',
+    ],
+    expected: { "void layout": ["M0L0L0L3"] },
+  },
+  {
+    name: "route served from the static store",
+    pathname: "/static-hit",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0R9 route "static hit"',
+    ],
+    expected: {},
+    // A static hit runs no handler: neither walk meters the route.
+    metered: ["M0L0", "M0L0L0"],
+  },
+  {
+    name: "streamed slot handler returning a Response",
+    pathname: "/slot-response",
+    fresh: [
+      "M0L0 layout",
+      'M0L0L0 layout "root"',
+      'M0L0L0L4 layout "response slot"',
+      "M0L0L0L4.@response parallel",
+      'M0L0L0L4R0 route "slot response"',
+    ],
+    expected: {},
+  },
 ];
 
 describe("fresh vs revalidating walker, nothing held by the client", () => {
@@ -980,6 +1304,8 @@ describe("fresh vs revalidating walker, nothing held by the client", () => {
         aboveMarker = false,
         fresh: freshLines,
         expected,
+        recorded = {},
+        metered,
       }) => {
         const options = { isSSR, build, intercept, skipLoaders, aboveMarker };
         const fresh = await walk("fresh", pathname, options);
@@ -1002,6 +1328,17 @@ describe("fresh vs revalidating walker, nothing held by the client", () => {
         expect(differences(fresh, revalidating, options, "delivered")).toEqual(
           required,
         );
+
+        // What the walks report beside their segments.
+        expect(recordedDifferences(fresh, revalidating, options)).toEqual(
+          recorded,
+        );
+        if (metered) {
+          expect({
+            fresh: meteredSegments(fresh),
+            revalidating: meteredSegments(revalidating),
+          }).toEqual({ fresh: metered, revalidating: metered });
+        }
       },
     );
   });

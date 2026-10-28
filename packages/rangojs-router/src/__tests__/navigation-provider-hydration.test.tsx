@@ -11,6 +11,7 @@ import {
 } from "../browser/rsc-router.js";
 import { NavigationProvider } from "../browser/react/NavigationProvider.js";
 import { commitInTransition } from "../browser/partial-update.js";
+import { auditTreeCause } from "../suspense-audit.js";
 import { useHandle } from "../browser/react/use-handle.js";
 import { usePathname } from "../browser/react/use-pathname.js";
 import type { RscBrowserDependencies, RscPayload } from "../browser/types.js";
@@ -94,6 +95,7 @@ describe("NavigationProvider: a navigation committed during the hydration window
     // then the payload update in a transition, its handles with it.
     await act(async () => {
       app.eventController.setLocation(new URL("http://localhost/next"));
+      auditTreeCause("navigation");
       commitInTransition(
         app.store.loaders,
         (update) => app.store.emitUpdate(update),

@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { CFCacheStore, resetCFShellMemoForTests } from "../cf-cache-store";
+import {
+  CFCacheStore,
+  EDGE_LOOKUP_TIMEOUT_MS,
+  resetCFShellMemoForTests,
+} from "../cf-cache-store";
 import {
   ShellFrameReader,
   encodeShellFrame,
@@ -98,6 +102,23 @@ async function drain(mockCtx: ReturnType<typeof createMockCtx>) {
 }
 
 const REACT_VERSION = "19.2.6";
+
+/**
+ * How long a mocked Cache API match holds, on fake timers: 1 ms inside the
+ * lookup budget. On real timers a pause between the budget's setTimeout and
+ * the hold's let the budget fire first under CI load.
+ */
+const L1_MATCH_HOLD_MS = EDGE_LOOKUP_TIMEOUT_MS - 1;
+
+/**
+ * Delete a shell's KV copy (tag markers stay): only L1 can answer, so a
+ * lookup that outlives its budget misses instead of falling back to KV.
+ */
+function dropShellKvCopy(kv: MockKV, key: string): void {
+  for (const kvKey of [...kv.store.keys()]) {
+    if (kvKey.includes(`shell2:${key}`)) kv.store.delete(kvKey);
+  }
+}
 
 function shellEntry(overrides: Partial<ShellCacheEntry> = {}): ShellCacheEntry {
   return {
@@ -855,7 +876,6 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     // The tag names a shell key carried last time start their marker reads
     // alongside the Cache API match; the check itself still uses the head.
     it("a hinted HIT starts the marker read before the Cache API match resolves", async () => {
-      vi.useRealTimers();
       const store = new CFCacheStore({
         ctx: mockCtx,
         kv: mockKV as any,
@@ -863,6 +883,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       });
       await store.putShell("k", shellEntry(), 300, 30, ["home"]);
       await drain(mockCtx);
+      dropShellKvCopy(mockKV, "k");
       let matchResolved = false;
       let markerReadBeforeMatch = false;
       const kvGet = mockKV.get.bind(mockKV);
@@ -874,17 +895,18 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       });
       const match = mockCache.match.bind(mockCache);
       vi.spyOn(mockCache, "match").mockImplementation(async (request) => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, L1_MATCH_HOLD_MS));
         const response = await match(request);
         matchResolved = true;
         return response;
       });
-      expect(await store.readShellDocument("k")).not.toBeNull();
+      const read = store.readShellDocument("k");
+      await vi.advanceTimersByTimeAsync(L1_MATCH_HOLD_MS);
+      expect(await read).not.toBeNull();
       expect(markerReadBeforeMatch).toBe(true);
     });
 
     it("the route's static tags are hinted before this isolate has seen the key", async () => {
-      vi.useRealTimers();
       const store = new CFCacheStore({
         ctx: mockCtx,
         kv: mockKV as any,
@@ -893,6 +915,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       await store.putShell("k", shellEntry(), 300, 30, ["home"]);
       await drain(mockCtx);
       resetCFShellMemoForTests(); // no remembered hint
+      dropShellKvCopy(mockKV, "k");
       const markerGets: string[] = [];
       const kvGet = mockKV.get.bind(mockKV);
       vi.spyOn(mockKV, "get").mockImplementation(async (key, options) => {
@@ -903,15 +926,15 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       let markerReadBeforeMatch = false;
       const match = mockCache.match.bind(mockCache);
       vi.spyOn(mockCache, "match").mockImplementation(async (request) => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, L1_MATCH_HOLD_MS));
         markerReadBeforeMatch = markerGets.length > 0;
         const response = await match(request);
         matchResolved = true;
         return response;
       });
-      expect(
-        await store.readShellDocument("k", { tagHints: ["home"] }),
-      ).not.toBeNull();
+      const read = store.readShellDocument("k", { tagHints: ["home"] });
+      await vi.advanceTimersByTimeAsync(L1_MATCH_HOLD_MS);
+      expect(await read).not.toBeNull();
       expect(matchResolved).toBe(true);
       expect(markerReadBeforeMatch).toBe(true);
     });
@@ -1279,10 +1302,6 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
     // read keeps the caller's hints: the key's own hint can be evicted while
     // the shell memo still holds the entry.
     it("a stale memo entry's store read starts the caller-hinted marker read before the Cache API match resolves", async () => {
-      // Only Date is faked: the Cache API match below waits on a real timer.
-      vi.useRealTimers();
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
       const store = new CFCacheStore({
         ctx: mockCtx,
         kv: mockKV as any,
@@ -1317,6 +1336,7 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       );
       await drain(mockCtx);
       reseatL1();
+      dropShellKvCopy(mockKV, "k");
       vi.setSystemTime(Date.now() + 11_000);
 
       let matchResolved = false;
@@ -1330,12 +1350,14 @@ describe("CFCacheStore shell family (Cache API L1 + KV L2)", () => {
       });
       const match = mockCache.match.bind(mockCache);
       vi.spyOn(mockCache, "match").mockImplementation(async (request) => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, L1_MATCH_HOLD_MS));
         const response = await match(request);
         matchResolved = true;
         return response;
       });
-      const read = await store.readShellDocument("k", { tagHints: ["home"] });
+      const pending = store.readShellDocument("k", { tagHints: ["home"] });
+      await vi.advanceTimersByTimeAsync(L1_MATCH_HOLD_MS);
+      const read = await pending;
       expect(matchResolved).toBe(true);
       expect(read?.shouldRevalidate).toBe(true);
       expect(markerReadBeforeMatch).toBe(true);

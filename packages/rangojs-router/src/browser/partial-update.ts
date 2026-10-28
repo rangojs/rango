@@ -14,7 +14,7 @@ export const addTransitionType: ((type: string) => void) | undefined =
   "addTransitionType" in React ? (React as any).addTransitionType : undefined;
 
 import type { RenderSegmentsOptions } from "../segment-system.js";
-import { reconcileSegments } from "./segment-reconciler.js";
+import { idsAboveBoundary, reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
 import { Defer } from "./defer.js";
 import {
@@ -236,15 +236,28 @@ export type UpdateMode =
        * transition({ when }) sees kind "revalidate", not "replace".
        */
       refresh?: boolean;
+      /** The cross-tab refresh's held boundary (see `action`). */
+      boundary?: string;
     }
-  | { type: "leave-intercept"; interceptSourceUrl?: string }
-  | { type: "stale-revalidation"; interceptSourceUrl?: string }
+  | { type: "leave-intercept"; interceptSourceUrl?: string; boundary?: never }
+  | {
+      type: "stale-revalidation";
+      interceptSourceUrl?: string;
+      /** Back/Forward's held boundary (see `action`). */
+      boundary?: string;
+    }
   | {
       type: "action";
       interceptSourceUrl?: string;
       actionId?: string;
       /** The action's FormData and result, for transition({ when }) `action`. */
       action?: TransitionWhenActionInput;
+      /**
+       * An action's error boundary the page shows (actionBoundaryAt): the
+       * server renders above it, its cached segment stays, and the page
+       * holds only the ids above it.
+       */
+      boundary?: string;
     };
 
 /**
@@ -569,6 +582,7 @@ export function createPartialUpdater(
     const historyKeyAtStart = store.getHistoryKey();
 
     const interceptSourceUrl = mode.interceptSourceUrl;
+    const boundary = mode.boundary;
 
     let segments: string[];
     if (mode.type === "leave-intercept") {
@@ -690,6 +704,7 @@ export function createPartialUpdater(
         : store.getHistoryEntryMemory()?.rewriteTarget,
       staleRevalidation:
         mode.type === "stale-revalidation" || segments.length === 0,
+      boundary,
       version: getVersion(),
       routerId: store.getRouterId?.(),
     });
@@ -874,14 +889,14 @@ export function createPartialUpdater(
       // in place of each missing value, and this navigation fills them from
       // one fill request once it has committed the tree.
       let defers: Holes["defers"] | undefined;
-      let heldIds = matchedIds;
+      let heldIds = idsAboveBoundary(matchedIds, boundary);
       const placeholders = serverSegments.filter(isPlaceholder);
       if (placeholders.length > 0) {
         defers = armHoles(placeholders);
         // A placeholder is not held: every later request from this page
         // leaves its id out, so the server renders it.
         const deferredIds = new Set(placeholders.map((s) => s.id));
-        heldIds = matchedIds.filter((id) => !deferredIds.has(id));
+        heldIds = heldIds.filter((id) => !deferredIds.has(id));
       }
 
       const reconcile = () =>
@@ -895,7 +910,10 @@ export function createPartialUpdater(
         });
       let reconciled = reconcile();
 
-      const missing = missingIds(matchedIds, reconciled.segments);
+      // Not the ids at or below a held boundary: its loaders may never have
+      // reached the client (the route failed on its GET), and nothing renders
+      // them under the error.
+      const missing = missingIds(heldIds, reconciled.segments);
 
       if (missing.length > 0) {
         const missingCount = missing.length;
@@ -1119,6 +1137,15 @@ export function createPartialUpdater(
         }),
         ...(serverLocationState && { serverState: serverLocationState }),
       };
+      // A refetch that held an action's boundary commits only while the page
+      // on screen still shows it: a later commit there (an action's success)
+      // replaced it, and this response would put the error back.
+      if (
+        boundary &&
+        !entryOnScreen()?.includes(cachedSegs.find((s) => s.id === boundary)!)
+      ) {
+        return;
+      }
       const cachedHandleData = readCachedHandleData?.();
       const { scroll: navScroll } = tx.commit(
         heldIds,

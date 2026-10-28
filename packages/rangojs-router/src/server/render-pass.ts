@@ -1,6 +1,7 @@
 /**
  * Derived render passes over a request past its middleware (PPR shell
- * capture, PPR HIT tail, background re-render), each `Object.create(base)`.
+ * capture, PPR HIT tail, background re-render, document cache re-run), each
+ * `Object.create(base)`.
  * A field missing from a RENDER_PASS_FIELDS row reads the foreground
  * request's value (#684). derived-context-shape.rsc-test.tsx pins each row's
  * own keys.
@@ -9,6 +10,7 @@ import type { RecordingShellStore } from "../cache/shell-snapshot.js";
 import type { HandleStore } from "./handle-store.js";
 import {
   bindRes,
+  createUseFunction,
   wireRenderBarrier,
   type RequestContext,
 } from "./request-context.js";
@@ -42,6 +44,15 @@ export interface RenderPassInit {
     /** Throwaway: the pass's response writes land here and are dropped. */
     sink: RequestContext<any>;
   };
+  "document-revalidation": {
+    /** The request's: the stale HIT pushed nothing into it. */
+    handleStore: HandleStore;
+    /**
+     * Holds the re-run's response writes, which make the response the
+     * document cache stores; starts from the request's response stub.
+     */
+    sink: RequestContext<any>;
+  };
 }
 
 export type RenderPurpose = keyof RenderPassInit;
@@ -73,8 +84,6 @@ export const RENDER_PASS_FIELDS: {
     own(pass, { handleStore, identity, recording }, base) {
       // Fresh: the foreground's is drained and throws LateHandlePushError.
       pass._handleStore = handleStore;
-      // The capture notes its own route records, not the foreground's.
-      pass._routeRecordWindow = undefined;
       if (identity) {
         pass.request = identity.request;
         pass.url = identity.url;
@@ -90,8 +99,22 @@ export const RENDER_PASS_FIELDS: {
       // The capture's render errors refuse the capture only.
       pass._renderErrors = [];
       pass._recoveredHandlerErrors = undefined;
-      // Read by the loader, cookies() and headers() capture guards.
-      pass._shellCaptureRun = true;
+      // `run` is read by the loader, cookies() and headers() capture guards.
+      // Every field is present from here on: one shape while the capture
+      // writes it.
+      pass._shellCaptureState = {
+        run: true,
+        forVisitor: undefined,
+        // Bake-lane loader containers: settleCaptureRecord awaits them, the
+        // drain pins them into the snapshot.
+        loaderRecords: new Map(),
+        unrecordedLoaderPush: undefined,
+        loaderLanes: undefined,
+        guardTripped: undefined,
+        guardTrippedLoaderId: undefined,
+        // The capture notes its own route records, not the foreground's.
+        routeRecordWindow: undefined,
+      };
       // The inherited dynamic() writes the foreground, which already served;
       // settleCaptureRecord and captureAndStoreShell read this latch.
       pass._dynamic = false;
@@ -103,9 +126,6 @@ export const RENDER_PASS_FIELDS: {
       // Metrics and spans are foreground surfaces, already ended.
       pass._metricsStore = undefined;
       pass._tracing = undefined;
-      // Bake-lane loader containers: settleCaptureRecord awaits them, the
-      // drain pins them into the snapshot.
-      pass._shellCaptureLoaderRecords = new Map();
       // Fired by settleCaptureRecord: the capture builds no Response, and the
       // doc record's write is gated on onResponse.
       pass._onResponseCallbacks = [];
@@ -150,7 +170,16 @@ export const RENDER_PASS_FIELDS: {
    * router/match-middleware/background-revalidation.ts rerenderAndCacheRoute.
    */
   "background-revalidation": {
-    // The request's barrier; whether this pass needs its own is rango-t160.
+    // The request's, resolved before the pass starts: a stale HIT resolves
+    // it in cache-lookup.ts before withBackgroundRevalidation starts the
+    // refresh, and proactive caching runs from onResponse, so a loader's
+    // rendered() here never waits. The route's and an open intercept's
+    // passes skip loaders: one runs only when a handler reads it, started
+    // through its registration (resolveOwnerLoaders), so its pushes stay out
+    // of the record (captureHandles drops loader pushes) and its value bakes
+    // into the handler's output, as on a MISS. A shell capture never opens
+    // an intercept (createNavigationCaptureRequest drops the intercept
+    // source).
     renderBarrier: "inherited",
     own(pass, { handleStore, sink }) {
       // Read late by loader pushes and cache-scope.ts; setupLoaderAccess
@@ -160,6 +189,20 @@ export const RENDER_PASS_FIELDS: {
       pass._metricsStore = undefined;
       pass._renderErrors = [];
       pass._recoveredHandlerErrors = undefined;
+      // The barrier's deadlock bookkeeping is the pass's own and stays open.
+      // The visitor's is closed once its barrier resolves, so a handler's
+      // read of a loader that calls rendered() went unrecorded and rendered()
+      // let it through: the record baked the visitor's handle snapshot, or on
+      // a streaming tree rendered() awaited this pass's store, which awaits
+      // that handler, and the refresh never settled. Open, the read is
+      // refused as a MISS refuses it.
+      pass._handlerLoaderDeps = undefined;
+      pass._renderBarrierWaiters = undefined;
+      pass._renderBarrierGuardClosed = undefined;
+      // A route cache() record, not a shell, even when a capture's stale read
+      // starts it: under the capture's guard a loader body's headers() fails
+      // the refresh, and recaptures replay the stale record until it expires.
+      pass._shellCaptureState = undefined;
       // Response writes go to the sink: a layout above the cache() boundary
       // or an error boundary's status would otherwise reach the live response.
       pass._onResponseCallbacks = [];
@@ -171,6 +214,59 @@ export const RENDER_PASS_FIELDS: {
       pass.setTheme = sink.setTheme;
       pass._rotateStateCookie = sink._rotateStateCookie;
       pass._setKeepCacheDirective = sink._setKeepCacheDirective;
+      // An invalidation here is not the visitor's mutation.
+      pass._setFreshReadsCookie = sink._setFreshReadsCookie;
+      // A cached handler's dynamic() opts out nothing here: the inherited one
+      // would refuse the capture whose stale read started the pass, or opt
+      // out the visitor's request.
+      pass.dynamic = sink.dynamic;
+      bindRes(pass, () => sink.res);
+    },
+  },
+
+  /** cache/document-cache.ts: the re-run of a stale entry, a whole request. */
+  "document-revalidation": {
+    // The stale HIT matched and rendered nothing: the re-run is the
+    // request's render. The request's barrier closes over the request, whose
+    // _treeHasStreaming the re-run never sets.
+    renderBarrier: "own",
+    own(pass, { handleStore, sink }, base) {
+      pass._handleStore = handleStore;
+      // The request's use() reads the request's params and route name, which
+      // the re-run's match sets on this pass. Its own memo: a loader that
+      // middleware ahead of the cache started runs again here.
+      pass.use = createUseFunction({
+        handleStore,
+        loaderPromises: new Map(),
+        getContext: () => pass,
+      });
+      // Its own latch, from what middleware ahead of the cache set: the
+      // render reads it on this pass, as a MISS reads the request's. The
+      // sink's dynamic() clears the ppr header latch.
+      pass._dynamic = base._dynamic;
+      pass.dynamic = (): void => {
+        pass._dynamic = true;
+        sink.dynamic();
+      };
+      pass._metricsStore = undefined;
+      // The re-run's classify timing stays off the visitor's Server-Timing.
+      pass._handlerTiming = [];
+      pass._renderErrors = [];
+      pass._recoveredHandlerErrors = undefined;
+      pass._shellCaptureState = undefined;
+      // Response writes go to the sink, never the visitor's STALE response.
+      pass._onResponseCallbacks = [];
+      pass.header = sink.header;
+      pass.setCookie = sink.setCookie;
+      pass.deleteCookie = sink.deleteCookie;
+      pass.setStatus = sink.setStatus;
+      pass._setStatus = sink._setStatus;
+      pass.setTheme = sink.setTheme;
+      pass._setKeepCacheDirective = sink._setKeepCacheDirective;
+      // No client receives the re-run's response: no rotation, no
+      // fresh-reads cookie (the sink has no state cookie name).
+      pass._rotateStateCookie = sink._rotateStateCookie;
+      pass._setFreshReadsCookie = sink._setFreshReadsCookie;
       bindRes(pass, () => sink.res);
     },
   },

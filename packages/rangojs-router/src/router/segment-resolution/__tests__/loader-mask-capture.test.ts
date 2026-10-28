@@ -5,10 +5,10 @@ import type { EntryData, LoaderEntry } from "../../../server/context";
 // functions must NOT execute, and their slots must hold a never-resolving promise
 // so the consuming Suspense subtree postpones. See loader-mask.ts and
 // docs/design/ppr-shell-resume.md. The ACTIVE capture is read off
-// requestCtx._shellCaptureRun (only the background derived context sets it — the
+// requestCtx._shellCaptureState (only the background derived context sets it — the
 // foreground descriptor _shellCapture must NOT trigger masking).
 
-const mockRequestCtx: any = { _shellCaptureRun: undefined, params: {} };
+const mockRequestCtx: any = { _shellCaptureState: undefined, params: {} };
 
 vi.mock("../../../server/request-context.js", () => ({
   getRequestContext: vi.fn(() => mockRequestCtx),
@@ -91,24 +91,24 @@ function runRevalidationFunnel(entry: EntryData, ctx: any) {
 describe("loader masking under PPR shell capture", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRequestCtx._shellCaptureRun = undefined;
+    mockRequestCtx._shellCaptureState = undefined;
   });
 
   describe("isShellCaptureActive", () => {
-    it("is false when _shellCaptureRun is unset", () => {
+    it("is false when _shellCaptureState is unset", () => {
       expect(isShellCaptureActive()).toBe(false);
     });
 
     it("is false when only the _shellCapture DESCRIPTOR is set (foreground)", () => {
       // The descriptor means "a capture is wanted" and must NOT mask loaders on
-      // the foreground render — only the background run's _shellCaptureRun does.
+      // the foreground render — only the background run's _shellCaptureState does.
       mockRequestCtx._shellCapture = { key: "k:shell" };
       expect(isShellCaptureActive()).toBe(false);
       mockRequestCtx._shellCapture = undefined;
     });
 
-    it("is true when _shellCaptureRun is set (active background capture)", () => {
-      mockRequestCtx._shellCaptureRun = true;
+    it("is true when _shellCaptureState is set (active background capture)", () => {
+      mockRequestCtx._shellCaptureState = { run: true };
       expect(isShellCaptureActive()).toBe(true);
     });
   });
@@ -121,7 +121,7 @@ describe("loader masking under PPR shell capture", () => {
 
   describe("resolveLoaderData gate", () => {
     it("does NOT invoke the loader and returns a never-resolving promise in capture mode (no cache config)", async () => {
-      mockRequestCtx._shellCaptureRun = true;
+      mockRequestCtx._shellCaptureState = { run: true };
       const loader = createMockLoader("l1");
       const ctx = createMockCtx();
 
@@ -133,7 +133,7 @@ describe("loader masking under PPR shell capture", () => {
     });
 
     it("does NOT invoke the loader or touch the cache store in capture mode (cached loader)", async () => {
-      mockRequestCtx._shellCaptureRun = true;
+      mockRequestCtx._shellCaptureState = { run: true };
       const loader = createMockLoader("l2");
       const store: any = {
         getItem: vi.fn(async () => null),
@@ -176,7 +176,7 @@ describe("loader masking under PPR shell capture", () => {
 describe("revalidation loader lanes under PPR shell capture", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRequestCtx._shellCaptureRun = undefined;
+    mockRequestCtx._shellCaptureState = undefined;
   });
 
   it("masks a loader WITHOUT loading() at capture — the lane trigger is gone (always live)", async () => {
@@ -186,7 +186,7 @@ describe("revalidation loader lanes under PPR shell capture", () => {
     // exactly like a loading() entry: never executes, the consumer's own
     // Suspense boundary postpones as the hole, every HIT runs it fresh.
     // Baking route data into a shell is expressed via cache()/"use cache".
-    mockRequestCtx._shellCaptureRun = true;
+    mockRequestCtx._shellCaptureState = { run: true };
     const loader = createMockLoader("bake#L");
     const ctx = createMockCtx();
 
@@ -199,7 +199,7 @@ describe("revalidation loader lanes under PPR shell capture", () => {
   });
 
   it("still whole-container-masks a LIVE-lane loader", async () => {
-    mockRequestCtx._shellCaptureRun = true;
+    mockRequestCtx._shellCaptureState = { run: true };
     const loader = createMockLoader("live#L");
     const ctx = createMockCtx();
 

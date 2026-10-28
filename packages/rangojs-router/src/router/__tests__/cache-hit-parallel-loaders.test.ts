@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { EntryData } from "../../server/context.js";
-import { resolveLoadersOnly } from "../segment-resolution/fresh.js";
+import { RangoContext, type EntryData } from "../../server/context.js";
+import { makeFreshPass } from "../../__tests__/kit/resolution-pass.js";
 import {
   buildEntryRevalidateMap,
-  resolveLoadersOnlyWithRevalidation,
+  resolveLoadersOnly,
 } from "../segment-resolution/revalidation.js";
+import { planPrefetchDeferral } from "../segment-resolution/prefetch-deferral.js";
 import type { SegmentResolutionDeps } from "../types.js";
 
 const mockEvaluateRevalidation = vi.fn((_opts: any) => true);
@@ -130,7 +131,7 @@ function makeParallelLoaderEntry(): EntryData {
 /**
  * In the real DSL, when a cache boundary wraps a layout that has a loader,
  * the loader entry ends up on both the cache entry and the layout entry
- * with the SAME shortCode (the layout's). This causes resolveLoaders to
+ * with the SAME shortCode (the layout's). This causes the loader funnel to
  * produce two segments with identical IDs.
  */
 function makeCacheBoundaryWithSharedLoader(): EntryData {
@@ -175,11 +176,10 @@ function makeCacheBoundaryWithSharedLoader(): EntryData {
 }
 
 describe("cache-boundary shared loader dedup", () => {
-  it("resolveLoadersOnly emits shared loader only once when cache wraps layout", async () => {
-    const segments = await resolveLoadersOnly(
+  it("a FRESH pass emits shared loader only once when cache wraps layout", async () => {
+    const { segments } = await resolveLoadersOnly(
+      makeFreshPass(makeContext(), makeDeps()),
       [makeCacheBoundaryWithSharedLoader()],
-      makeContext(),
-      makeDeps(),
     );
 
     const cartSegments = segments.filter((s) =>
@@ -188,10 +188,10 @@ describe("cache-boundary shared loader dedup", () => {
     expect(cartSegments).toHaveLength(1);
   });
 
-  it("resolveLoadersOnlyWithRevalidation emits shared loader only once when cache wraps layout", async () => {
+  it("resolveLoadersOnly emits shared loader only once when cache wraps layout", async () => {
     mockEvaluateRevalidation.mockClear();
 
-    const result = await resolveLoadersOnlyWithRevalidation(
+    const result = await resolveLoadersOnly(
       {
         context: makeContext(),
         client: new Set(["C0D0.src/loaders/cart.ts#Cart"]),
@@ -214,21 +214,20 @@ describe("cache-boundary shared loader dedup", () => {
 });
 
 describe("cache-hit parallel loaders", () => {
-  it("resolveLoadersOnly includes loaders from parallel entries using the parent shortCode", async () => {
-    const segments = await resolveLoadersOnly(
+  it("a FRESH pass includes loaders from parallel entries using the parent shortCode", async () => {
+    const { segments } = await resolveLoadersOnly(
+      makeFreshPass(makeContext(), makeDeps()),
       [makeParallelLoaderEntry()],
-      makeContext(),
-      makeDeps(),
     );
 
     expect(segments).toHaveLength(1);
     expect(segments[0]?.id).toBe("L0D0.parallel-loader");
   });
 
-  it("resolveLoadersOnlyWithRevalidation includes parallel loaders using the parent shortCode", async () => {
+  it("resolveLoadersOnly includes parallel loaders using the parent shortCode", async () => {
     mockEvaluateRevalidation.mockClear();
 
-    const result = await resolveLoadersOnlyWithRevalidation(
+    const result = await resolveLoadersOnly(
       {
         context: makeContext(),
         client: new Set(["L0D0.parallel-loader"]),
@@ -248,8 +247,8 @@ describe("cache-hit parallel loaders", () => {
     expect(result.matchedIds).toEqual(["L0D0.parallel-loader"]);
   });
 
-  it("resolveLoadersOnlyWithRevalidation keeps a SKIPPED loader in matchedIds but drops it from segments", async () => {
-    // The reval-only divergence vs the fresh path: when a loader's gate says
+  it("resolveLoadersOnly keeps a SKIPPED loader in matchedIds but drops it from segments", async () => {
+    // The reval-only divergence vs a FRESH pass: when a loader's gate says
     // skip (it's already in the client set and revalidate() returned false), the
     // loader is NOT re-fetched (absent from segments) but its id STAYS in
     // matchedIds so the client keeps advertising it and it stays eligible for
@@ -257,7 +256,7 @@ describe("cache-hit parallel loaders", () => {
     mockEvaluateRevalidation.mockClear();
     mockEvaluateRevalidation.mockReturnValueOnce(false); // loader revalidate -> skip
 
-    const result = await resolveLoadersOnlyWithRevalidation(
+    const result = await resolveLoadersOnly(
       {
         context: makeContext(),
         client: new Set(["L0D0.parallel-loader"]), // loader IS in the client set
@@ -281,5 +280,97 @@ describe("cache-hit parallel loaders", () => {
 
     expect(map.has("L0.@sidebar")).toBe(true);
     expect(map.has("L0P0.@sidebar")).toBe(false);
+  });
+
+  it("buildEntryRevalidateMap keys an orphan layout's slots by the orphan, as the walker names them", () => {
+    const orphan = { ...makeParallelLoaderEntry(), shortCode: "M0L0L0" };
+    const shell = {
+      ...makeParallelLoaderEntry(),
+      shortCode: "M0L0",
+      parallel: {},
+      layout: [orphan],
+    } as EntryData;
+    const map = buildEntryRevalidateMap([shell]);
+
+    expect(map.has("M0L0L0.@sidebar")).toBe(true);
+    expect(map.has("M0L0.@sidebar")).toBe(false);
+  });
+});
+
+describe("cache-hit loaders under an intercept", () => {
+  function entry(type: "layout" | "route", shortCode: string, id: string) {
+    return {
+      id: `blog.${type}`,
+      type,
+      shortCode,
+      handler: () => null,
+      loader: [{ loader: { $$id: id } as any, revalidate: [] }],
+      layout: [],
+      parallel: {},
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      handle: [],
+    } as any as EntryData;
+  }
+
+  const chain = (): EntryData[] => [
+    entry("layout", "L0", "layout-loader"),
+    entry("route", "L0R0", "route-loader"),
+  ];
+
+  it("resolves the route's loaders without an intercept", async () => {
+    const { segments } = await resolveLoadersOnly(
+      makeFreshPass(makeContext(), makeDeps()),
+      chain(),
+    );
+    expect(segments.map((s) => s.id)).toEqual([
+      "L0D0.layout-loader",
+      "L0R0D0.route-loader",
+    ]);
+  });
+
+  it("skips the intercepted route's entry, as the MISS's walk does", async () => {
+    const { segments, matchedIds } = await resolveLoadersOnly(
+      makeFreshPass(makeContext(), makeDeps()),
+      chain(),
+      { interceptResult: {} as any },
+    );
+    expect(segments.map((s) => s.id)).toEqual(["L0D0.layout-loader"]);
+    expect(matchedIds).toEqual(["L0D0.layout-loader"]);
+  });
+
+  it("on the intercept's fill, skips an entry the client lacks after the ppr latch read the route", async () => {
+    const entries: EntryData[] = [
+      entry("layout", "L0", "layout-loader"),
+      entry("layout", "L1", "unheld-loader"),
+      { ...entry("route", "L0R0", "route-loader"), ppr: true } as EntryData,
+    ];
+    const context = {
+      ...makeContext(),
+      _prefetchDeferral: planPrefetchDeferral(entries, "fill", {}, null),
+    };
+    const store: { cachedHeaderScope?: { kind: string } } = {};
+    const { segments } = await RangoContext.run(store as never, () =>
+      resolveLoadersOnly(
+        {
+          context,
+          client: new Set(["L0"]),
+          params: {},
+          prevParams: {},
+          request: new Request("http://localhost/blog"),
+          prevUrl: new URL("http://localhost/"),
+          nextUrl: new URL("http://localhost/blog"),
+          routeKey: "blog",
+          deps: makeDeps(),
+        },
+        entries,
+        { interceptResult: {} as any },
+      ),
+    );
+    expect(segments.map((s) => s.id)).toEqual(["L0D0.layout-loader"]);
+    expect(store.cachedHeaderScope?.kind).toBe("ppr");
   });
 });

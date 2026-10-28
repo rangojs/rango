@@ -19,8 +19,8 @@
  *
  * Over a `Prerender()` target the modal is served from the build's intercept
  * variant, on the action too (match-middleware/cache-lookup.ts
- * yieldFromStore). The stored slot is kept like any held stored segment; its
- * loaders, never stored, run as loader segments of it.
+ * serveStoredSegments). The stored slot is kept like any held stored
+ * segment; its loaders, never stored, run as loader segments of it.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";

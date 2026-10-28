@@ -18,6 +18,13 @@ export interface NavigationSnapshot {
   filteredSegmentIds: string[];
 
   stale: boolean;
+  /**
+   * The id of an action's error boundary on screen that a stale request holds
+   * (`_rsc_boundary`, the action follow-up): read only beside `stale`, so it
+   * has every stale guarantee (a live render, no route-cache or document-cache
+   * read or store, no PPR replay).
+   */
+  heldBoundary?: string;
 
   isSameRouteNavigation: boolean;
 
@@ -136,6 +143,8 @@ export async function resolveNavigation(
   const clientSegmentIds =
     url.searchParams.get(WIRE.segments)?.split(",").filter(Boolean) || [];
   const stale = url.searchParams.get(WIRE.stale) === "true";
+  const heldBoundary =
+    (stale && url.searchParams.get(WIRE.boundary)) || undefined;
   const previousUrl = getNavigationContextHeader(request, url.origin);
   const interceptSourceUrl = getInterceptSourceHeader(request);
   const isHmr = !!requestHeaders(request).get("X-RSC-HMR");
@@ -198,6 +207,7 @@ export async function resolveNavigation(
     clientSegmentSet,
     filteredSegmentIds,
     stale,
+    heldBoundary,
     isSameRouteNavigation,
     effectiveFromUrl,
     effectiveFromMatch,

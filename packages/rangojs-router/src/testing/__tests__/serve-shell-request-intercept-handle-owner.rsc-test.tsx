@@ -5,8 +5,8 @@
  *
  * resolveInterceptEntry (router/intercept-resolution.ts) pins
  * `_currentSegmentId` to the slot's id before its loaders' kickoff and its
- * handler, as the parallel-slot funnels (segment-resolution/fresh.ts,
- * revalidation.ts) and the build-time intercept bake (router/prerender-match.ts)
+ * handler, as the parallel-slot funnels (segment-resolution/revalidation.ts)
+ * and the build-time intercept bake (router/prerender-match.ts)
  * do. Without the pin, a handler's `ctx.use(Handle)` and a loader's push
  * (`loaderOwner`, segment-resolution/prefetch-deferral.ts) read whatever
  * segment was pinned last:

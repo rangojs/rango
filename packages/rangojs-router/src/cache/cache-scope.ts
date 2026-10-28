@@ -58,12 +58,13 @@ import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
 import { WIRE } from "../wire-params.js";
 
 /**
- * Narrow the request's route-record window (RequestContext._routeRecordWindow)
- * to a record this request read or wrote: fresh until `freshUntil` (the
- * record's `expiresAt`), then stale for `swr` seconds. A shell capture starts
- * with no window of its own (shell-capture.ts deriveShellCaptureContext sets
- * it undefined), so it narrows only to the records the capture itself read
- * or wrote.
+ * Narrow a shell capture's route-record window
+ * (ShellCaptureState.routeRecordWindow) to a record the capture read or
+ * wrote: fresh until `freshUntil` (the record's `expiresAt`), then stale for
+ * `swr` seconds. A capture starts with no window of its own
+ * (RENDER_PASS_FIELDS["shell-capture"] creates it undefined), so it narrows
+ * only to the records the capture itself read or wrote. Only a capture reads
+ * the window (shell-capture.ts capShellWindow): another render notes nothing.
  */
 function noteRouteRecordWindow(
   requestCtx: RequestContext,
@@ -72,6 +73,8 @@ function noteRouteRecordWindow(
   swr: number,
   written: boolean,
 ): void {
+  const captureState = requestCtx._shellCaptureState;
+  if (!captureState) return;
   const next = {
     freshUntil,
     staleUntil: freshUntil + swr * 1000,
@@ -79,9 +82,9 @@ function noteRouteRecordWindow(
     swr,
     written,
   };
-  const current = requestCtx._routeRecordWindow;
+  const current = captureState.routeRecordWindow;
   // The record that runs out first names the config; freshness is the least.
-  requestCtx._routeRecordWindow = current
+  captureState.routeRecordWindow = current
     ? {
         ...(current.staleUntil <= next.staleUntil ? current : next),
         freshUntil: Math.min(current.freshUntil, freshUntil),
@@ -125,23 +128,36 @@ function validatedSwr(value: number | undefined): number | undefined {
   return isValidCacheSeconds(value, "swr") ? value : undefined;
 }
 
+/**
+ * The request kind a route record answers: `doc` (a document request),
+ * `partial` (a navigation) or `intercept:<intercept>`, where `intercept` is
+ * the intercept an intercept navigation selected (interceptRecordKey,
+ * router/intercept-resolution.ts). The kinds' records hold different
+ * segments (an intercept's holds its slot and no route page), so every record
+ * key names its kind, a `key()`'s included (CacheScope.resolveKeyFrom).
+ * Keyed by the URL alone, a record written under one intercept answered a
+ * navigation that selected another; keyed by a `key()` alone, a document GET
+ * rendered an intercept's record and dropped the page.
+ */
+function routeRecordKind(intercept?: string, prefixOverride?: "doc"): string {
+  if (intercept !== undefined) return `intercept:${intercept}`;
+  if (prefixOverride !== undefined) return prefixOverride;
+  const isPartial =
+    getRequestContext()?.originalUrl?.searchParams.has(WIRE.partial) ?? false;
+  return isPartial ? "partial" : "doc";
+}
+
+/** `{kind}:` + the request's key base (routeRecordKind, requestKeyBase). */
 function getDefaultRouteCacheKey(
   pathname: string,
-  params?: Record<string, string>,
-  isIntercept?: boolean,
-  prefixOverride?: "doc",
+  params: Record<string, string> | undefined,
+  kind: string,
 ): string {
   const ctx = getRequestContext();
-  const isPartial = ctx?.originalUrl?.searchParams.has(WIRE.partial) ?? false;
   const searchParams = ctx?.url.searchParams;
   const host = ctx?.url.host ?? "localhost";
 
-  // Intercept navigations get their own cache namespace
-  const prefix = isIntercept
-    ? "intercept"
-    : (prefixOverride ?? (isPartial ? "partial" : "doc"));
-
-  return `${prefix}:${requestKeyBase(ctx, host, pathname, searchParams, params, ctx?._searchParamsFilter)}`;
+  return `${kind}:${requestKeyBase(ctx, host, pathname, searchParams, params, ctx?._searchParamsFilter)}`;
 }
 
 // ============================================================================
@@ -239,14 +255,22 @@ function memoizedKey(
 }
 
 /**
+ * A route record that answered. `restoreHandles` is set when the lookup left
+ * the handle restore to its caller (lookupRouteDetailed `deferHandles`),
+ * which names the segments it sends (handle-snapshot.ts restoreHandles).
+ */
+export interface CachedRouteHit {
+  segments: ResolvedSegment[];
+  shouldRevalidate: boolean;
+  restoreHandles?: (sentIds: ReadonlySet<string>) => Promise<void>;
+}
+
+/**
  * Discriminated outcome of a route cache lookup — see
  * {@link CacheScope.lookupRouteDetailed} for what each status licenses.
  */
 export type CacheRouteLookupOutcome =
-  | {
-      status: "hit";
-      result: { segments: ResolvedSegment[]; shouldRevalidate: boolean };
-    }
+  | { status: "hit"; result: CachedRouteHit }
   | { status: "miss" | "bypass" | "error" };
 
 /**
@@ -457,15 +481,13 @@ export class CacheScope {
   private resolveKey(
     pathname: string,
     params: Record<string, string>,
-    isIntercept?: boolean,
+    intercept?: string,
   ): Promise<string> {
+    const kind = routeRecordKind(intercept, this.defaultKeyPrefix);
     return this.resolveKeyFrom(
-      getDefaultRouteCacheKey(
-        pathname,
-        params,
-        isIntercept,
-        this.defaultKeyPrefix,
-      ),
+      getDefaultRouteCacheKey(pathname, params, kind),
+      "",
+      kind,
     );
   }
 
@@ -502,14 +524,18 @@ export class CacheScope {
    * enclosing partition (#970, #974). A scope whose own config sets no
    * `key()` appends its own default key (resolveDefaultKey). Reusing the
    * outer `key()` result alone would give every route under the inner
-   * cache() one record: a `key()` replaces the whole default key, so an
-   * outer key that names no route (`tier:gold`) would make `/a` HIT `/b`'s
-   * record. A scope with its own `key()` adds no default key: a `key()` is a
-   * full override, and its store's keyGenerator does not run. With no
-   * partition part it is resolveDefaultKey alone. With a `key()` on the
-   * chain but no request context it rejects (keyWithoutContextError).
-   * `partitionedPrefix` prefixes a key built from partition parts only (the
-   * response family's `response:`).
+   * cache() one record: a `key()` replaces the default key's URL part, so
+   * an outer key that names no route (`tier:gold`) would make `/a` HIT
+   * `/b`'s record. A scope with its own `key()` adds no default key: its `key()`
+   * replaces the URL part, and its store's keyGenerator does not run. It
+   * appends `kind` instead (routeRecordKind): the `key()` decides which
+   * requests of one kind share a record, never that a document, a
+   * navigation and an intercept navigation do. With no partition part it is
+   * resolveDefaultKey alone. With a `key()` on the chain but no request
+   * context it rejects (keyWithoutContextError). `partitionedPrefix`
+   * prefixes a key built from partition parts only (the response family's
+   * `response:`, which passes no `kind`: a response route answers every
+   * request alike).
    *
    * Each `key()` result lives on the request context (`_resolvedCacheKeys`),
    * by function: it runs once per request whatever the default key
@@ -520,7 +546,11 @@ export class CacheScope {
    * itself: a `key()` calling `cookies()` would trip the capture guard there,
    * and a capture must store the partition its request resolved.
    */
-  resolveKeyFrom(defaultKey: string, partitionedPrefix = ""): Promise<string> {
+  resolveKeyFrom(
+    defaultKey: string,
+    partitionedPrefix = "",
+    kind?: string,
+  ): Promise<string> {
     if (this.fixedKey !== undefined) return Promise.resolve(this.fixedKey);
     const requestCtx = _getRequestContext();
     if (!requestCtx || !this.mayPartition) {
@@ -536,7 +566,8 @@ export class CacheScope {
     ]).then(([[keys, storeParts], ownDefault]) => {
       const generated = positionalParts(storeParts);
       if (keys.length === 0 && generated.length === 0) return ownDefault!;
-      if (ownDefault !== undefined) generated.push(ownDefault);
+      const last = ownDefault ?? kind;
+      if (last !== undefined) generated.push(last);
       return partitionedPrefix + composeCacheKeys(keys, generated);
     });
   }
@@ -560,7 +591,7 @@ export class CacheScope {
       ? undefined
       : this.getStore()?.keyGenerator;
     if (!this.mayPartition && !keyGenerator) return undefined;
-    const defaultKey = getDefaultRouteCacheKey(pathname, params, false, "doc");
+    const defaultKey = getDefaultRouteCacheKey(pathname, params, "doc");
     const requestCtx = _getRequestContext();
     if (!requestCtx) {
       return this.keyFns.length > 0
@@ -737,24 +768,26 @@ export class CacheScope {
    *
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
-   * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
+   * @param intercept - The intercept an intercept navigation selected
+   *   (interceptRecordKey): its record has its own key
    * @param ownedPushes - What the record is to each loader's handle pushes
    *   (withCacheLookup: loader-cache.ts loaderPins), called on a hit
+   * @param deferHandles - Restore no handle value here: the caller calls the
+   *   hit's `restoreHandles` once it decided which segments it sends
    */
   async lookupRoute(
     pathname: string,
     params: Record<string, string>,
-    isIntercept?: boolean,
+    intercept?: string,
     ownedPushes?: () => OwnedPushDelivery,
-  ): Promise<{
-    segments: ResolvedSegment[];
-    shouldRevalidate: boolean;
-  } | null> {
+    deferHandles?: boolean,
+  ): Promise<CachedRouteHit | null> {
     const outcome = await this.lookupRouteDetailed(
       pathname,
       params,
-      isIntercept,
+      intercept,
       ownedPushes,
+      deferHandles,
     );
     return outcome.status === "hit" ? outcome.result : null;
   }
@@ -780,8 +813,9 @@ export class CacheScope {
   async lookupRouteDetailed(
     pathname: string,
     params: Record<string, string>,
-    isIntercept?: boolean,
+    intercept?: string,
     ownedPushes?: () => OwnedPushDelivery,
+    deferHandles?: boolean,
   ): Promise<CacheRouteLookupOutcome> {
     if (!this.enabled) return { status: "bypass" };
     if (!this.conditionAllows("read")) return { status: "bypass" };
@@ -803,7 +837,7 @@ export class CacheScope {
     // happens here, where a miss is a safe outcome.
     let key: string | undefined;
     try {
-      key = await this.resolveKey(pathname, params, isIntercept);
+      key = await this.resolveKey(pathname, params, intercept);
 
       const result = await store.get(key);
 
@@ -884,17 +918,23 @@ export class CacheScope {
       await this.onHit?.();
 
       const handleStore = _getRequestContext()?._handleStore;
+      let restoreHandles: CachedRouteHit["restoreHandles"];
       // An empty handles string means the route pushed none (the common
       // case); a decode failure skips the restore but keeps the segments.
       if (handleStore) {
-        await restoreRecordHandles(
-          handleStore,
-          cached,
-          ownedPushes?.(),
+        const owned = ownedPushes?.();
+        const keepIds =
           this.boundary !== undefined
             ? new Set(segments.map((s) => s.id))
-            : undefined,
-        );
+            : undefined;
+        if (deferHandles) {
+          // The authority holds from here, as with the restore below.
+          if (owned) handleStore.setRecordAuthority(owned);
+          restoreHandles = (sent) =>
+            restoreRecordHandles(handleStore, cached, owned, keepIds, sent);
+        } else {
+          await restoreRecordHandles(handleStore, cached, owned, keepIds);
+        }
       }
 
       if (INTERNAL_RANGO_DEBUG) {
@@ -909,7 +949,10 @@ export class CacheScope {
       if (ambientContext)
         this.noteRecordWindow(ambientContext, cached.expiresAt, false);
 
-      return { status: "hit", result: { segments, shouldRevalidate } };
+      return {
+        status: "hit",
+        result: { segments, shouldRevalidate, restoreHandles },
+      };
     } catch (error) {
       // Covers a store.get() failure AND a throwing consumer key()/keyGenerator
       // (resolveKey). Either way degrade to an uncached render — reported as
@@ -971,7 +1014,8 @@ export class CacheScope {
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
    * @param segments - All resolved segments to cache
-   * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
+   * @param intercept - The intercept an intercept navigation selected
+   *   (interceptRecordKey): its record has its own key
    * @param start - Where the render of `segments` started: the record is not
    *   written when one of its tags was invalidated since (#977,
    *   predatesInvalidation). A shell capture's doc record passes none: it
@@ -981,7 +1025,7 @@ export class CacheScope {
     pathname: string,
     params: Record<string, string>,
     segments: ResolvedSegment[],
-    isIntercept?: boolean,
+    intercept?: string,
     start?: ExecutionStart,
   ): Promise<void> {
     if (!this.enabled || segments.length === 0) return;
@@ -1008,7 +1052,7 @@ export class CacheScope {
     this.noteRecordWindow(requestCtx, Date.now() + ttl * 1000, true);
 
     // Resolve cache key early (while request context is available)
-    const key = await this.resolveKey(pathname, params, isIntercept);
+    const key = await this.resolveKey(pathname, params, intercept);
 
     // Doc-namespaced scopes (the shell implicit scope and the capture's
     // composed doc scope) publish the canonical document segment key so
@@ -1206,7 +1250,7 @@ export function resolveShellPartition(
 ): Promise<string | null> | undefined {
   if (routeScope?.enabled) return routeScope.resolvePartition(pathname, params);
   if (!appStore?.keyGenerator) return undefined;
-  const defaultKey = getDefaultRouteCacheKey(pathname, params, false, "doc");
+  const defaultKey = getDefaultRouteCacheKey(pathname, params, "doc");
   return resolveCacheKey(undefined, appStore, defaultKey).then((resolved) =>
     resolved === defaultKey ? null : resolved,
   );
@@ -1261,7 +1305,7 @@ export function createShellImplicitDocScope(
  * normal partial navigation replay), substitute an implicit doc-level scope
  * so withCacheLookup/withCacheStore treat the WHOLE matched route as a
  * cache() boundary — the shell entry IS a cache() of the handler layer, with
- * loaders as the live carve-outs (resolveFreshLoadersAndYield).
+ * loaders as the live carve-outs (serveStoredSegments).
  *
  * A document HIT tail (`docTail`) always gets the implicit scope: it replays
  * the shell's own record and never consults a route-derived scope, whose

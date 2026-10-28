@@ -306,7 +306,7 @@ the contract `cache()` has always had:
   `cookies()`, `headers()`, a `{ cache: false }` variable, and
   `ctx.dynamic()` refuse the capture from a handler promise, an async
   component, a handle push, or a loader a handler awaits. The guard flags the
-  capture context (`_shellCaptureGuardTripped`) before it throws, so code
+  capture context (`_shellCaptureState.guardTripped`) before it throws, so code
   that catches the throw still refuses the capture. The handler-invoked
   loader used to be exempt: its identity reads rendered per visitor on the
   re-running HIT. With no re-run, the exemption would bake the capturing
@@ -382,7 +382,7 @@ never-emitting masked-loader rows, so raw byte reuse means row-id surgery):
   context flagged `_shellFragmentPayload` (rsc-rendering.ts). Under that flag,
   the tail's segment sources — `CacheScope.lookupRoute` (the seeded doc
   record / any route-scoped cache() hit) and the prerender-store path
-  (`yieldFromStore` in cache-lookup.ts, the Prerender+ppr / producer B lane)
+  (`decodeStoredEntry` in cache-lookup.ts, the Prerender+ppr / producer B lane)
   — build segments via `fragmentSegments` (segment-codec.ts): the STORED
   per-segment Flight strings ride the `ResolvedSegment` ReactNode fields
   verbatim as `{ __rangoFragment: 1, f }` envelopes; nothing is decoded.

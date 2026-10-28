@@ -165,7 +165,7 @@ export interface ResolvedSegment {
   loaderData?: any; // For loaders: the resolved data from loader execution
   /**
    * True when this loader was awaited before first flush
-   * (loader(Def, { ssr: false })). Stamped by resolveLoaders (fresh.ts) on
+   * (loader(Def, { ssr: false })). Stamped by resolveOwnerLoaders on
    * document AND shell-capture renders — capture bakes flagged loaders and
    * awaits the same lane. Feeds segment-system's settled-value delivery and
    * the dev SSR suspension warning (ssr-suspension-warning.ts).

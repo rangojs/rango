@@ -54,7 +54,7 @@ vi.mock("../../server/context.js", async () => {
   };
 });
 
-import { resolveAllSegmentsWithRevalidation } from "../segment-resolution/revalidation.js";
+import { resolveAllSegments } from "../segment-resolution/revalidation.js";
 import {
   planPrefetchDeferral,
   startDeferredLoader,
@@ -109,7 +109,7 @@ async function resolve(
   chain: EntryData[],
   mode: PrefetchDeferral["mode"],
   clientIds: string[],
-  options: { started?: string[] } = {},
+  options: { started?: string[]; skipLoaders?: boolean } = {},
 ) {
   // The plan holds what the request listed as held, as match-api builds it.
   const plan = planPrefetchDeferral(chain, mode, {}, null, new Set(clientIds));
@@ -126,7 +126,7 @@ async function resolve(
     _prefetchDeferral: plan,
     _loaderStarted: (id: string) => options.started?.includes(id) ?? false,
   };
-  const result = await resolveAllSegmentsWithRevalidation(
+  const result = await resolveAllSegments(
     {
       context,
       client: new Set(clientIds),
@@ -137,6 +137,7 @@ async function resolve(
       nextUrl: new URL(URL_PAGE),
       routeKey: "product",
       deps: makeDeps(),
+      skipLoaders: options.skipLoaders,
     },
     chain,
     {
@@ -148,7 +149,7 @@ async function resolve(
   const byId = new Map<string, ResolvedSegment>(
     result.segments.map((s) => [s.id, s]),
   );
-  return { ...result, byId, plan };
+  return { ...result, byId, plan, context };
 }
 
 const ran = () =>
@@ -227,11 +228,11 @@ describe("a prefetch: deferral replaces execution", () => {
     const layout = entry("layout", "L0", {
       loader: [layoutLoader],
     });
-    const { byId, plan } = await resolve([layout, route], "prefetch", []);
+    const { byId, context } = await resolve([layout, route], "prefetch", []);
 
     expect(read).toEqual([{ from: "owned" }]);
     expect(resolveLoaderDataMock.mock.calls[0]![0]).toBe(layoutLoader);
-    expect(plan!.deferredLoaders!.get("owned")).toMatchObject({
+    expect(context._deferredLoaders.get("owned")).toMatchObject({
       owner: "L0",
       started: true,
     });
@@ -244,13 +245,13 @@ describe("a prefetch: deferral replaces execution", () => {
     const route = entry("route", "R1", {
       loader: [loaderEntry("unread", { prefetch: false })],
     });
-    const { byId, plan } = await resolve([route], "prefetch", []);
+    const { byId, context } = await resolve([route], "prefetch", []);
 
     expect(ran()).toEqual([]);
-    expect(plan!.deferredLoaders!.get("unread")).toMatchObject({
+    expect(context._deferredLoaders.get("unread")).toMatchObject({
       owner: "R1",
     });
-    expect(plan!.deferredLoaders!.get("unread")!.started).toBeUndefined();
+    expect(context._deferredLoaders.get("unread").started).toBeUndefined();
     expect(byId.get("R1D0.unread")!.deferred).toBe(true);
   });
 
@@ -628,5 +629,42 @@ describe("a fill: held is skipped outright", () => {
     expect(matchedIds).toEqual(
       expect.arrayContaining(["L0", "L0L1", "R2", "R2D0.page", "R2.@side"]),
     );
+  });
+});
+
+describe("a pass that skips loaders (skipLoaders)", () => {
+  it("registers every loader under its owner, emits none, and starts only the one a handler reads", async () => {
+    const read: unknown[] = [];
+    const layout = entry("layout", "L0", { loader: [loaderEntry("layout")] });
+    const route = entry("route", "R1", {
+      loader: [loaderEntry("read"), loaderEntry("unread")],
+      handler: vi.fn(async (ctx: any) => {
+        read.push(await startDeferredLoader(ctx, "read"));
+        return "content-R1";
+      }),
+    });
+    const { segments, context } = await resolve(
+      [layout, route],
+      undefined,
+      [],
+      {
+        skipLoaders: true,
+      },
+    );
+
+    expect(segments.filter((s) => s.type === "loader")).toEqual([]);
+    expect(read).toEqual([{ from: "read" }]);
+    expect(ran()).toEqual(["read"]);
+    expect(
+      [...context._deferredLoaders].map(([id, d]: [string, any]) => [
+        id,
+        d.owner,
+        d.started,
+      ]),
+    ).toEqual([
+      ["layout", "L0", undefined],
+      ["read", "R1", true],
+      ["unread", "R1", undefined],
+    ]);
   });
 });

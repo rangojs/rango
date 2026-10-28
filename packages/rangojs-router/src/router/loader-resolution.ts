@@ -341,7 +341,8 @@ export function wrapLoaderWithErrorHandling<T>(
       // Render fallback on server. The user ErrorBoundaryHandler may throw
       // synchronously; if it does we must NOT let that rejection escape — the
       // wrapped LoaderDataResult promise is contracted to never reject (see
-      // segment-resolution/fresh.ts `await Promise.all(...wrapped)`), and a
+      // resolveOwnerLoaders `await Promise.all(...)` in
+      // segment-resolution/revalidation.ts), and a
       // rejection here would collapse the whole entry and discard healthy
       // sibling loader data. On a fallback-render throw, fall back to the
       // no-boundary result (fallback: null) so the client throws the ORIGINAL
@@ -585,7 +586,7 @@ function createLoaderExecutor<TEnv>(
     const variables = internal._variables;
 
     // Capture whether this loader is being started from a DSL loader scope
-    // (runInsideLoaderScope in fresh.ts). Handler-invoked loaders are NOT
+    // (runInsideLoaderScope in resolveOwnerLoaders). Handler-invoked loaders are NOT
     // inside loader scope. This determines whether rendered() is allowed.
     const isDslLoader = isInsideLoaderScope();
     // The body resolves ctx.reverse(".name") in its DSL declaration's module
@@ -596,7 +597,7 @@ function createLoaderExecutor<TEnv>(
 
     // Owning segment for ctx.handle() attribution, captured SYNCHRONOUSLY at
     // kickoff: segment resolution sets _currentSegmentId while resolving the
-    // segment that declares this loader (fresh.ts), and the value moves on as
+    // segment that declares this loader (resolveOwnerLoaders), and the value moves on as
     // resolution continues — by the time the async body pushes, it would be
     // stale. Attributing to the owning route/layout segment gives handle
     // pushes the same granularity handler pushes have (segmentOrder-correct
@@ -844,7 +845,7 @@ function createLoaderExecutor<TEnv>(
     // Run the loader body inside loader scope so request-scoped reads
     // (cookies()/headers() and non-cacheable ctx.get) are exempt from the
     // cache-purity guards: loaders always run fresh, so their reads never leak
-    // into a cached segment. DSL loaders are already wrapped by fresh.ts; this
+    // into a cached segment. DSL loaders are already wrapped by resolveOwnerLoaders; this
     // also covers handler-invoked loaders (ctx.use(Loader) from a handler),
     // which otherwise execute in the caller's cache scope and would wrongly
     // throw. rendered() gating uses the captured isDslLoader (above), so this

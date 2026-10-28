@@ -61,7 +61,7 @@ export function buildFullPayload(
       // capture renders from what its record keeps (resolvedHandleStream).
       handles: resolvedHandleStream(
         handleStore,
-        reqCtx._shellCaptureRun === true,
+        reqCtx._shellCaptureState?.run === true,
       ),
       // Post-handler-barrier pushes (streaming loader ctx.handle() writes)
       // stream here; the client applies them after hydration. Instantly
@@ -105,8 +105,7 @@ export function renderedLocation(
     | Pick<
         RequestContext<any>,
         | "_variables"
-        | "_shellCaptureRun"
-        | "_shellCaptureForVisitor"
+        | "_shellCaptureState"
         | "_documentCacheRender"
         | "_payloadVisitorLocation"
         | "res"
@@ -116,7 +115,9 @@ export function renderedLocation(
 ): URL {
   if (!reqCtx || !rewriteTrail(reqCtx)) return url;
   if (rendersForSharedAudience(reqCtx)) {
-    return reqCtx._shellCaptureForVisitor ? visitorUrl(reqCtx, url) : url;
+    return reqCtx._shellCaptureState?.forVisitor
+      ? visitorUrl(reqCtx, url)
+      : url;
   }
   reqCtx._payloadVisitorLocation = true;
   return visitorUrl(reqCtx, url);
@@ -163,7 +164,7 @@ export function payloadInitialTheme(
   reqCtx: Pick<
     RequestContext<any>,
     | "_themeConfig"
-    | "_shellCaptureRun"
+    | "_shellCaptureState"
     | "_readTheme"
     | "_documentCacheRender"
     | "_payloadVisitorTheme"

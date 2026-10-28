@@ -614,6 +614,7 @@ export async function initBrowserApp(
 
             const historyKey = generateHistoryKey(window.location.href, {
               intercept: responseIsIntercept,
+              interceptSource: interceptSourceUrl ?? undefined,
             });
             store.setHistoryKey(historyKey);
             const currentHandleData = liveHandleDataForCache(

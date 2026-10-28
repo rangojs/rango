@@ -123,6 +123,19 @@ export const prerenderInterceptPatterns = urls(
           loader(PrerenderInterceptHeldLoader, () => [revalidate(() => false)]),
         ],
       ),
+
+      // A second intercept of the detail route, in its own slot, for a
+      // navigation from a page that asks for the drawer. The build bakes it
+      // next to @modal (it cannot evaluate when()); a navigation from the
+      // index selects @modal and must not show it.
+      intercept(
+        "@drawer",
+        ".detail",
+        (ctx) => (
+          <aside data-testid="pri-drawer">Drawer for {ctx.params.slug}</aside>
+        ),
+        { when: ({ from }) => from.url.searchParams.get("panel") === "drawer" },
+      ),
     ]),
   ],
 );

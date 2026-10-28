@@ -4,7 +4,8 @@
  * deriveShellCaptureContext), the PPR HIT tail (rsc/rsc-rendering.ts
  * createTailContext and the seeding after it), the background re-render of a
  * stale route record (router/match-middleware/background-revalidation.ts
- * rerenderAndCacheRoute), and what rebaseRequestContext moves when
+ * rerenderAndCacheRoute), the re-run of a stale document cache entry
+ * (cache/document-cache.ts), and what rebaseRequestContext moves when
  * middleware rewrites a request. A field missing from a derivation's own set
  * reads the foreground request's value through the prototype (#684: a
  * capture that inherited the foreground's render barrier baked foreground
@@ -33,6 +34,7 @@ vi.mock(
 import {
   createRequestContext,
   rebaseRequestContext,
+  runWithRequestContext,
   _getRequestContext,
   type RequestContext,
 } from "../request-context.js";
@@ -43,7 +45,11 @@ import { rerenderAndCacheRoute } from "../../router/match-middleware/background-
 import type { MatchContext } from "../../router/match-context.js";
 import type { RouterContext } from "../../router/router-context.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
-import { MemorySegmentCacheStore } from "../../cache/index.js";
+import {
+  createDocumentCacheMiddleware,
+  MemorySegmentCacheStore,
+} from "../../cache/index.js";
+import type { MiddlewareContext } from "../../router/middleware.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
 import {
   resetShellTestState,
@@ -78,6 +84,8 @@ function requestContext(
     cacheStore: withStore ? new MemorySegmentCacheStore() : undefined,
     // ctx.setTheme exists only with a theme config.
     themeConfig: resolveThemeConfig(true),
+    // The state and fresh-reads cookie writers write only with a name.
+    stateCookieName: "rango-state",
   });
 }
 
@@ -106,12 +114,21 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     "_recoveredHandlerErrors",
     "_renderErrors",
     "_requestTags",
-    "_routeRecordWindow",
-    "_shellCaptureLoaderRecords",
-    "_shellCaptureRun",
+    "_shellCaptureState",
     "_shellFragmentPayload",
     "_tracing",
     "dynamic",
+  ];
+  /** RENDER_PASS_FIELDS["shell-capture"] creates every field. */
+  const SHELL_CAPTURE_STATE = [
+    "forVisitor",
+    "guardTripped",
+    "guardTrippedLoaderId",
+    "loaderLanes",
+    "loaderRecords",
+    "routeRecordWindow",
+    "run",
+    "unrecordedLoaderPush",
   ];
   /** Only with a cache store on the request: the recording store and its scope. */
   const WITH_STORE = ["_cacheStore", "_shellImplicitCache", "waitUntil"];
@@ -146,7 +163,7 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     expect(capture._renderErrors).not.toBe(base._renderErrors);
     expect(capture._onResponseCallbacks).toEqual([]);
     expect(capture._onResponseCallbacks).not.toBe(base._onResponseCallbacks);
-    expect(capture._shellCaptureLoaderRecords).toEqual(new Map());
+    expect(capture._shellCaptureState?.loaderRecords).toEqual(new Map());
     expect(capture._cacheStore).not.toBe(baseStore);
     expect(capture.waitUntil).not.toBe(base.waitUntil);
     expect(capture._shellImplicitCache).toMatchObject({
@@ -154,21 +171,23 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
       swr: 300,
       keyPrefix: "doc",
     });
+    expect(ownKeys(capture._shellCaptureState!)).toEqual(SHELL_CAPTURE_STATE);
     expect({
-      _shellCaptureRun: capture._shellCaptureRun,
+      "_shellCaptureState.run": capture._shellCaptureState?.run,
       _dynamic: capture._dynamic,
       _shellFragmentPayload: capture._shellFragmentPayload,
       _metricsStore: capture._metricsStore,
       _tracing: capture._tracing,
-      _routeRecordWindow: capture._routeRecordWindow,
+      "_shellCaptureState.routeRecordWindow":
+        capture._shellCaptureState?.routeRecordWindow,
       _recoveredHandlerErrors: capture._recoveredHandlerErrors,
     }).toEqual({
-      _shellCaptureRun: true,
+      "_shellCaptureState.run": true,
       _dynamic: false,
       _shellFragmentPayload: false,
       _metricsStore: undefined,
       _tracing: undefined,
-      _routeRecordWindow: undefined,
+      "_shellCaptureState.routeRecordWindow": undefined,
       _recoveredHandlerErrors: undefined,
     });
     // Its dynamic() opts out the capture, not the request.
@@ -197,7 +216,7 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     Object.assign(base, {
       _metricsStore: { metrics: [] },
       _tracing: { tracer: {} },
-      _routeRecordWindow: { reads: [] },
+      _shellCaptureState: { routeRecordWindow: { reads: [] } },
       _recoveredHandlerErrors: new Map([["M0", new Error("recovered")]]),
       _shellFragmentPayload: true,
       _dynamic: true,
@@ -222,7 +241,8 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     expect({
       _metricsStore: capture._metricsStore,
       _tracing: capture._tracing,
-      _routeRecordWindow: capture._routeRecordWindow,
+      "_shellCaptureState.routeRecordWindow":
+        capture._shellCaptureState?.routeRecordWindow,
       _recoveredHandlerErrors: capture._recoveredHandlerErrors,
       _shellFragmentPayload: capture._shellFragmentPayload,
       _dynamic: capture._dynamic,
@@ -240,7 +260,7 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     }).toEqual({
       _metricsStore: undefined,
       _tracing: undefined,
-      _routeRecordWindow: undefined,
+      "_shellCaptureState.routeRecordWindow": undefined,
       _recoveredHandlerErrors: undefined,
       _shellFragmentPayload: false,
       _dynamic: false,
@@ -371,13 +391,17 @@ describe("PPR HIT tail context (createTailContext)", () => {
 });
 
 describe("background re-render context (rerenderAndCacheRoute)", () => {
-  it("owns its handle store, error lists and response writers; inherits the request's render barrier", async () => {
+  it("owns its handle store, error lists, response writers, dynamic() and an empty capture state; inherits the request's render barrier", async () => {
     const base = requestContext();
     // The foreground has rendered: it measured, recovered and reported.
     Object.assign(base, {
       _metricsStore: { metrics: [] },
       _recoveredHandlerErrors: new Map([["M0", new Error("recovered")]]),
       _renderErrors: [new Error("rendered")],
+      // Its barrier resolved: the deadlock bookkeeping is closed.
+      _renderBarrierGuardClosed: true,
+      _handlerLoaderDeps: new Set(["visitor-dep"]),
+      _renderBarrierWaiters: new Set(["visitor-waiter"]),
     });
     base._onResponseCallbacks.push((response) => response);
     const handleStore = createHandleStore();
@@ -391,7 +415,10 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
         return {};
       },
       setupLoaderAccess: () => {},
-      resolveAllSegments: async () => [],
+      resolveAllSegments: async () => ({
+        segments: [],
+        matchedIds: [],
+      }),
     } as unknown as RouterContext;
     const match = {
       env: {},
@@ -417,14 +444,20 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
     expect(ownAtStart).toEqual([
       "[rango.requestContext.res] (hidden)",
       "_handleStore",
+      "_handlerLoaderDeps",
       "_metricsStore",
       "_onResponseCallbacks",
       "_recoveredHandlerErrors",
+      "_renderBarrierGuardClosed",
+      "_renderBarrierWaiters",
       "_renderErrors",
       "_rotateStateCookie",
+      "_setFreshReadsCookie",
       "_setKeepCacheDirective",
       "_setStatus",
+      "_shellCaptureState",
       "deleteCookie",
+      "dynamic",
       "header",
       "res (accessor)",
       "setCookie",
@@ -432,6 +465,7 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       "setTheme",
     ]);
     expect(ctx._handleStore).toBe(handleStore);
+    expect(ctx._shellCaptureState).toBeUndefined();
     expect({
       _metricsStore: ctx._metricsStore,
       _recoveredHandlerErrors: ctx._recoveredHandlerErrors,
@@ -443,9 +477,10 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       _renderErrors: [],
       _onResponseCallbacks: [],
     });
-    // Response writes land on a throwaway response: no writer is the
-    // request's.
+    // Response writes and dynamic() land on a throwaway context: no writer
+    // is the request's.
     const writers = [
+      "dynamic",
       "header",
       "setCookie",
       "deleteCookie",
@@ -454,6 +489,7 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       "setTheme",
       "_rotateStateCookie",
       "_setKeepCacheDirective",
+      "_setFreshReadsCookie",
     ] as const;
     expect(writers.filter((writer) => ctx[writer] === base[writer])).toEqual(
       [],
@@ -463,12 +499,151 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
     ctx.header("x-background", "1");
     ctx.setCookie("background", "1");
     ctx.deleteCookie("session");
+    ctx._rotateStateCookie();
+    ctx._setFreshReadsCookie(5_000);
+    ctx.dynamic();
+    expect(base._dynamic).toBe(false);
     expect(base.res.status).toBe(200);
     expect(base.res.headers.get("x-background")).toBeNull();
     expect(base.res.headers.get("set-cookie")).toBeNull();
-    // No barrier of its own: the request's, as it is today.
+    // No barrier of its own: the request's resolved before the pass starts,
+    // so an open intercept's loader passes rendered() at once, and the
+    // record keeps nothing it reads.
     expect(Object.hasOwn(ctx, "_resolveRenderBarrier")).toBe(false);
     expect(ctx._resolveRenderBarrier).toBe(base._resolveRenderBarrier);
+    // Its deadlock bookkeeping is open, so a handler awaiting a loader that
+    // calls rendered() is refused as on a MISS, not let through.
+    expect({
+      _renderBarrierGuardClosed: ctx._renderBarrierGuardClosed,
+      _handlerLoaderDeps: ctx._handlerLoaderDeps,
+      _renderBarrierWaiters: ctx._renderBarrierWaiters,
+    }).toEqual({
+      _renderBarrierGuardClosed: undefined,
+      _handlerLoaderDeps: undefined,
+      _renderBarrierWaiters: undefined,
+    });
+  });
+});
+
+describe("document cache re-run context (document-cache.ts)", () => {
+  it("owns its render barrier, use(), dynamic() latch, error lists and response writers over the request's handle store", async () => {
+    const base = requestContext();
+    base.header("x-before", "1");
+    base._cacheStore = {
+      getResponse: async () => ({
+        response: new Response("stale"),
+        shouldRevalidate: true,
+      }),
+      putResponse: async () => {},
+    } as unknown as RequestContext["_cacheStore"];
+    const tasks: Promise<void>[] = [];
+    base.waitUntil = (fn) => {
+      tasks.push(Promise.resolve().then(fn));
+    };
+    let rerun: RequestContext | undefined;
+    let ownAtStart: string[] = [];
+    const next = async (): Promise<Response> => {
+      rerun = _getRequestContext();
+      ownAtStart = ownKeys(rerun!);
+      return new Response("fresh", {
+        headers: { "Cache-Control": "s-maxage=60" },
+      });
+    };
+    const stale = await runWithRequestContext(base, () =>
+      createDocumentCacheMiddleware()(
+        {
+          request: base.request,
+          url: base.url,
+          env: {},
+        } as unknown as MiddlewareContext,
+        next,
+      ),
+    );
+    expect(stale.headers.get("x-document-cache-status")).toBe("STALE");
+    // After the stale hit: the visitor's own write, not the re-run's.
+    base.header("x-after", "1");
+    await Promise.all(tasks);
+
+    const ctx = rerun!;
+    expect(Object.getPrototypeOf(ctx)).toBe(base);
+    expect(ownAtStart).toEqual(
+      [
+        ...RENDER_BARRIER,
+        "[rango.requestContext.res] (hidden)",
+        "_dynamic",
+        "_handleStore",
+        "_handlerTiming",
+        "_metricsStore",
+        "_onResponseCallbacks",
+        "_recoveredHandlerErrors",
+        "_renderErrors",
+        "_rotateStateCookie",
+        "_setFreshReadsCookie",
+        "_setKeepCacheDirective",
+        "_setStatus",
+        "_shellCaptureState",
+        "deleteCookie",
+        "dynamic",
+        "header",
+        "res (accessor)",
+        "setCookie",
+        "setStatus",
+        "setTheme",
+        "use",
+      ].sort(),
+    );
+    // The request's handle store, its own barrier over it and its own use().
+    expect(ctx._handleStore).toBe(base._handleStore);
+    expect(ctx._resolveRenderBarrier).not.toBe(base._resolveRenderBarrier);
+    expect(ctx.use).not.toBe(base.use);
+    expect({
+      _metricsStore: ctx._metricsStore,
+      _handlerTiming: ctx._handlerTiming,
+      _recoveredHandlerErrors: ctx._recoveredHandlerErrors,
+      _renderErrors: ctx._renderErrors,
+      _onResponseCallbacks: ctx._onResponseCallbacks,
+      _shellCaptureState: ctx._shellCaptureState,
+    }).toEqual({
+      _metricsStore: undefined,
+      _handlerTiming: [],
+      _recoveredHandlerErrors: undefined,
+      _renderErrors: [],
+      _onResponseCallbacks: [],
+      _shellCaptureState: undefined,
+    });
+    // Its response starts from the request's stub at the stale hit.
+    expect(ctx.res).not.toBe(base.res);
+    expect(ctx.res.headers.get("x-before")).toBe("1");
+    expect(ctx.res.headers.get("x-after")).toBeNull();
+    const writers = [
+      "dynamic",
+      "header",
+      "setCookie",
+      "deleteCookie",
+      "setStatus",
+      "_setStatus",
+      "setTheme",
+      "_rotateStateCookie",
+      "_setKeepCacheDirective",
+      "_setFreshReadsCookie",
+    ] as const;
+    expect(writers.filter((writer) => ctx[writer] === base[writer])).toEqual(
+      [],
+    );
+    ctx.setStatus(500);
+    ctx.header("x-rerun", "1");
+    ctx.setCookie("rerun", "1");
+    ctx._rotateStateCookie();
+    ctx._setFreshReadsCookie(5_000);
+    expect(ctx.res.headers.get("x-rerun")).toBe("1");
+    expect(base.res.status).toBe(200);
+    expect(base.res.headers.get("x-rerun")).toBeNull();
+    expect(base.res.headers.get("set-cookie")).toBeNull();
+    // Its dynamic() opts out the re-run's render, not the request's.
+    expect(ctx._dynamic).toBe(false);
+    ctx.dynamic();
+    expect(ctx._dynamic).toBe(true);
+    expect(base._dynamic).toBe(false);
   });
 });
 

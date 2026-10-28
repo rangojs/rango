@@ -7,7 +7,7 @@ import type { HandleData } from "../server/handle-store.js";
  *
  * A segment's handle bucket holds its handler's pushes and those of the
  * loaders registered on it: a loader pushes under its owning segment's id
- * (fresh.ts, revalidation.ts pin `_currentSegmentId`). A navigation or an
+ * (revalidation.ts pins `_currentSegmentId`). A navigation or an
  * action response decides each of them on its own: the handler re-runs and a
  * loader whose revalidate() answers false keeps its data on the client. The
  * response carries only what re-ran, so replacing the whole bucket with it

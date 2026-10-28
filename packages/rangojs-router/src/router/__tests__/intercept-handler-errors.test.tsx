@@ -5,8 +5,8 @@
  * way a throwing intercept loader does.
  *
  * Also pinned: a thrown/returned Response propagates, the background cache
- * re-render rejects (also for a streamed handler: a fallback
- * there would be cached), and an async handler error under loading() streams,
+ * re-render reports a thrown handler error and rejects (also for a streamed
+ * handler: a fallback there would be cached), and an async handler error under loading() streams,
  * resolves to the declared boundary and records the failure on the request so
  * cacheRoute refuses to store it.
  */
@@ -207,15 +207,16 @@ function expectModalFallback(
   ).toEqual([]);
   expect(nav.status).toBe(status);
 
-  // Reported once as a boundary-handled handler error on the declaring entry.
-  const declaringShortCode = modal.id.slice(0, -".@modal".length);
+  // Reported once as a boundary-handled handler error on the intercept's
+  // slot, as a streamed one is.
   expect(onError).toHaveBeenCalledTimes(1);
   const [errCtx] = onError.mock.calls[0];
   expect(errCtx).toMatchObject({
     phase: "handler",
     handledByBoundary: true,
     isPartial: true,
-    segmentId: declaringShortCode,
+    segmentId: modal.id,
+    segmentType: "parallel",
   });
   expect(errCtx.error.message).toBe(message);
 }
@@ -322,7 +323,7 @@ describe("intercept handler lanes left unchanged", () => {
     });
   });
 
-  it("the background re-render still rejects", async () => {
+  it("the background re-render reports the error, then rejects", async () => {
     const parentEntry = {
       type: "layout",
       shortCode: "L9",
@@ -375,7 +376,16 @@ describe("intercept handler lanes left unchanged", () => {
         ),
       ),
     ).rejects.toThrow("background modal failed");
-    expect(deps.callOnError).not.toHaveBeenCalled();
+    expect(deps.callOnError).toHaveBeenCalledTimes(1);
+    expect(deps.callOnError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "background modal failed" }),
+      "handler",
+      expect.objectContaining({
+        isPartial: true,
+        segmentId: "L9.@modal",
+        segmentType: "parallel",
+      }),
+    );
   });
 
   it("the background re-render of a streamed handler rejects and records nothing", async () => {

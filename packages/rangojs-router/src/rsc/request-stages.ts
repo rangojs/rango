@@ -22,6 +22,7 @@ import type { MiddlewareEntry } from "../router/middleware-types.js";
 import {
   _getRequestContext,
   getRequestContext,
+  reportedErrorsOf,
   setRequestContextParams,
   type RequestContext,
 } from "../server/request-context.js";
@@ -70,6 +71,7 @@ import {
   safeEmit,
   resolveSink,
   getRequestId,
+  setRequestId,
   type TelemetrySink,
 } from "../router/telemetry.js";
 import {
@@ -157,8 +159,9 @@ export function createErrorReporter<TEnv>(router: {
     // case — the error is from a cancelled stream, not a real failure.
     const reqCtx = _getRequestContext();
     if (error != null && typeof error === "object" && reqCtx) {
-      if (reqCtx._reportedErrors.has(error)) return;
-      reqCtx._reportedErrors.add(error);
+      const reportedErrors = reportedErrorsOf(reqCtx);
+      if (reportedErrors.has(error)) return;
+      reportedErrors.add(error);
     }
     invokeOnError(router.onError, error, phase, context, "RSC");
   };
@@ -445,7 +448,13 @@ export async function runRequestPasses<TEnv>(
             .then(() => runChain(passRequest, passUrl, index))
         : runChain(passRequest, passUrl, index);
     },
-    onHop: opts.onHop,
+    onHop: (pass) => {
+      // A pass's request is a new Request: keep the visitor's telemetry id.
+      if (ctx.router.telemetry) {
+        setRequestId(pass.request, getRequestId(opts.request));
+      }
+      opts.onHop?.(pass);
+    },
     report: (error, at) => {
       ctx.callOnError(error, "routing", {
         request: at.request,
