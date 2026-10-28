@@ -22,6 +22,8 @@ vi.mock("../loader-redirect.js", () => ({
 }));
 
 import { renderSegments } from "../segment-system.js";
+import { auditTreeCause, auditTreeUpdate } from "../suspense-audit.js";
+import { allowSuspenseAuditViolations } from "./kit/suspense-audit-lock.js";
 import { useLoader } from "../use-loader.js";
 import { Outlet } from "../client.js";
 import type { LoaderDefinition, ResolvedSegment } from "../types.js";
@@ -153,7 +155,13 @@ let laneOptions: { isAction?: boolean; forceAwait?: boolean } = {};
 
 async function action(segs: ResolvedSegment[]) {
   const tree = await renderSegments(segs, laneOptions);
-  await act(async () => setTree(tree));
+  await act(async () => {
+    // The hand-over production's action commit makes
+    // (server-action-bridge.ts, NavigationProvider.tsx).
+    auditTreeCause("action");
+    auditTreeUpdate(tree);
+    setTree(tree);
+  });
 }
 
 async function type(result: ReturnType<typeof render>, value: string) {
@@ -383,6 +391,12 @@ describe.each(LANES)("%s lane: layouts and ancestor loaders", (_, options) => {
 
   for (const loading of [false, true]) {
     it(`a loader redirect() replaces only the route's content; the layout keeps its instance (${loading ? "with" : "without"} loading())`, async () => {
+      // Router defect (rango-t29): a settle lane plants a settled redirect()
+      // in place of the route's StreamedLoaderErrorBoundary
+      // (segment-system.tsx), so the route's wrapper chain drifts (I5).
+      allowSuspenseAuditViolations(
+        "I5 drift: a settled redirect() drops StreamedLoaderErrorBoundary (rango-t29)",
+      );
       vi.spyOn(console, "error").mockImplementation(() => {});
       const route = createElement(OwnReader);
       const result = await mount(
