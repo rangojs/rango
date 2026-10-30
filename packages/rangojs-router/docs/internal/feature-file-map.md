@@ -360,7 +360,15 @@ The public DOM seam is
   [router/match-middleware/cache-lookup.ts](../../src/router/match-middleware/cache-lookup.ts)
   (`storedEntrySends`) when, on equal params, it keeps a held segment whose
   `revalidate()` it skipped, or the route's own segments on a search-only
-  change.
+  change. Two tests lock the class:
+  [source-independence.rsc-test.tsx](../../src/testing/__tests__/source-independence.rsc-test.tsx)
+  adopts every shared prefetch of its fixture on every other page and
+  compares the tree with that page's own navigation, through
+  `serveShellRequest` and the browser's prefetch cache and reconciler
+  ([helpers/prefetch-browser.ts](../../src/testing/__tests__/helpers/prefetch-browser.ts));
+  [revalidate-args-sources.test.ts](../../src/router/__tests__/revalidate-args-sources.test.ts)
+  classes every `revalidate()` argument and fails on a source field that is
+  not a read-noting getter.
 - `prefetch: false` is owned by
   [router/segment-resolution/prefetch-deferral.ts](../../src/router/segment-resolution/prefetch-deferral.ts)
   (the per-route plan: which loaders and handler units a prefetch defers,
