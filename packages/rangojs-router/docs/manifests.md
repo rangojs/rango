@@ -242,6 +242,21 @@ has three modes for producing `.named-routes.gen.ts`:
 | Static, partial  | `--static`  | AST-only, no Vite server                                         | Same, but accepts partial output with warnings          |
 | Runtime          | `--runtime` | Spins up a temp Vite server, imports entry via RSC module runner | 100% of registered routes (`--config` picks the config) |
 
+`--runtime` forwards your resolver plugins (`resolveId` / `load`) to its temp
+server the way `vite dev` does: from a config resolved as `serve` /
+`development`, so a resolver that builds its state in `config` or
+`configResolved` (vite-tsconfig-paths) works and an `apply: "build"` plugin is
+left out. The framework plugins (rango(), `@vitejs/plugin-rsc`, `vite:*`, the
+Cloudflare plugin) are dropped before that resolve, since rango()'s
+`configResolved` would write the static gen files
+(`isFrameworkPlugin` in `src/vite/utils/forward-user-plugins.ts`). An alias a
+plugin's `config()` hook adds still resolves, because Vite's own `alias`
+plugin is in the resolved list and is forwarded with your resolvers.
+`resolve`, `define` and `oxc` themselves come from the config file as
+written, so a `define` or `resolve.conditions` added by a `config` hook is
+missed: a module that reads a `define`d `__FLAG__` at top level throws a
+ReferenceError under `--runtime`.
+
 **Design rule:** when the static parser encounters route tree structures it
 cannot reconstruct (factory function calls, dynamic expressions, conditional
 registrations), it must **fail fast with a clear diagnostic** pointing the

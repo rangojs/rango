@@ -844,6 +844,98 @@ export default clientUrls(({ path }) => [
     ).toContain('second: "/second",');
   }, 30_000);
 
+  it("--runtime forwards a resolver that initializes in configResolved, and no apply: build plugin", () => {
+    // Regression (rango-t233): resolver plugins were forwarded from the
+    // unresolved config, so their configResolved never ran (vite-tsconfig-paths
+    // matched nothing) and apply: "build" plugins ran in the serve discovery.
+    const fixtureDir = cloneFixtureDir("app-with-config-resolver");
+    const result = runRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+    );
+    expect(result.combined).not.toContain("build-only resolver ran");
+    expect(result.combined).not.toContain("Could not resolve the Vite config");
+    expect(result.status).toBe(0);
+
+    const content = readFileSync(
+      join(fixtureDir, "router.named-routes.gen.ts"),
+      "utf-8",
+    );
+    expect(content).toContain('shop: "/shop",');
+    expect(content).toContain('product: "/shop/:id",');
+  }, 30_000);
+
+  it("--runtime forwards the serve resolvers, not a function-apply build one, when a plugin's configResolved throws", () => {
+    // The resolve fails, so the fallback forwards the config's plugins itself
+    // and must evaluate `apply` as Vite would for a serve run.
+    const fixtureDir = cloneFixtureDir("app-with-config-resolver");
+    writeFileSync(
+      join(fixtureDir, "vite.config.ts"),
+      `import { join } from "node:path";
+const resolveRoutes = (id) =>
+  id.startsWith("~routes/")
+    ? join(import.meta.dirname, "routes", id.slice("~routes/".length) + ".tsx")
+    : null;
+export default {
+  plugins: [
+    { name: "throws-in-config-resolved", configResolved() { throw new Error("no rsc environment"); } },
+    {
+      name: "build-only-by-function",
+      enforce: "pre",
+      apply: (_config, env) => env.command === "build",
+      resolveId(id) {
+        if (id.startsWith("~routes/")) throw new Error("function-apply build resolver ran");
+        return null;
+      },
+    },
+    { name: "serve-resolver", resolveId: resolveRoutes },
+  ],
+};
+`,
+    );
+    const result = runRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+    );
+    expect(result.combined).toContain(
+      "Could not resolve the Vite config (no rsc environment)",
+    );
+    expect(result.combined).toContain("rango() and rsc() are left out");
+    expect(result.combined).not.toContain("function-apply build resolver ran");
+    expect(result.status).toBe(0);
+    expect(
+      readFileSync(join(fixtureDir, "router.named-routes.gen.ts"), "utf-8"),
+    ).toContain('shop: "/shop",');
+  }, 30_000);
+
+  it("--runtime honours an alias a plugin's config hook adds", () => {
+    const fixtureDir = cloneFixtureDir("app-with-config-resolver");
+    writeFileSync(
+      join(fixtureDir, "vite.config.ts"),
+      `import { join } from "node:path";
+export default {
+  plugins: [
+    {
+      name: "alias-from-config-hook",
+      config() {
+        return { resolve: { alias: { "~routes": join(import.meta.dirname, "routes") } } };
+      },
+    },
+  ],
+};
+`,
+    );
+    const result = runRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+    );
+    expect(result.combined).not.toContain("Could not resolve the Vite config");
+    expect(result.status).toBe(0);
+    const content = readFileSync(
+      join(fixtureDir, "router.named-routes.gen.ts"),
+      "utf-8",
+    );
+    expect(content).toContain('shop: "/shop",');
+    expect(content).toContain('product: "/shop/:id",');
+  }, 30_000);
+
   it("--runtime leaves no gen file behind for a router whose discovery fails", () => {
     const fixtureDir = cloneFixtureDir("app-with-two-routers");
     const brokenFile = join(fixtureDir, "broken.tsx");
