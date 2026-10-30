@@ -149,7 +149,11 @@ export async function discoverAndWriteRouteTypes(
       const mountManifests = [];
       for (const mount of mounts) {
         mountManifests.push(
-          await generateManifestFull(mount.patterns, globalMountIndex),
+          await generateManifestFull(
+            mount.patterns,
+            globalMountIndex,
+            router.__basename ? { urlPrefix: router.__basename } : undefined,
+          ),
         );
         globalMountIndex++;
       }

@@ -189,23 +189,23 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
 
   if (uniqueDiagnostics.length > 0 && mode === "default") {
     // Hard error: no files written
-    console.error("\n[rango] Unresolvable includes detected:\n");
+    console.error("\n[rango] Unresolvable routes detected:\n");
     formatDiagnostics(uniqueDiagnostics);
     console.error(
-      "\nThe static parser cannot resolve these includes because they use " +
-        "factory functions or dynamic expressions.\n\n" +
+      "\nThe static parser cannot resolve these includes or basename because " +
+        "they use factory functions or dynamic expressions. A basename must be " +
+        "a string literal or a top-level const (in the router file or imported " +
+        "from a relative module).\n\n" +
         "Options:\n" +
         "  rango generate <path> --runtime   Use Vite-based discovery (requires vite)\n" +
-        "  rango generate <path> --static    Accept partial output (missing routes above)\n",
+        "  rango generate <path> --static    Accept partial output (missing routes or basename prefix above)\n",
     );
     process.exit(1);
   }
 
   if (uniqueDiagnostics.length > 0 && mode === "static") {
     // Warning: partial output accepted
-    console.warn(
-      "\n[rango] Warning: partial output (unresolvable includes):\n",
-    );
+    console.warn("\n[rango] Warning: partial output (unresolvable routes):\n");
     formatDiagnostics(uniqueDiagnostics);
     console.warn("");
   }
@@ -317,7 +317,12 @@ function formatDiagnostics(
   diagnostics: Array<UnresolvableInclude & { routerFile: string }>,
 ) {
   for (const d of diagnostics) {
-    const prefix = d.namePrefix ? `${d.namePrefix}.*` : `${d.pathPrefix}*`;
+    const prefix =
+      d.reason === "unresolvable-basename"
+        ? "createRouter basename"
+        : d.namePrefix
+          ? `${d.namePrefix}.*`
+          : `${d.pathPrefix}*`;
     console.error(`  ${prefix}`);
     console.error(`    Reason:  ${d.reason} -- ${d.detail}`);
     console.error(`    Source:  ${d.sourceFile}`);

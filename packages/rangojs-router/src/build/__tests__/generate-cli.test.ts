@@ -523,6 +523,29 @@ describe("basename fixture", () => {
     // No "admin." name prefix
     expect(content).not.toContain('"admin.');
   });
+
+  it("runtime discovery prefixes all route patterns with basename", async () => {
+    const packageRoot = resolve(__dirname, "..", "..", "..");
+    const srcDir = join(packageRoot, "src");
+
+    await discoverAndWriteRouteTypes({
+      root: packageRoot,
+      entry: join(basenameFixtureDir, "router.tsx"),
+      resolveAlias: {
+        "@rangojs/router/server": join(srcDir, "server.ts"),
+        "@rangojs/router/build": join(srcDir, "build", "index.ts"),
+        "@rangojs/router/cache": join(srcDir, "cache", "index.ts"),
+        "@rangojs/router/host": join(srcDir, "host", "index.ts"),
+        "@rangojs/router": join(srcDir, "index.rsc.ts"),
+      },
+    });
+
+    const content = readFileSync(basenameGenPath, "utf-8");
+    expect(content).toContain('home: "/admin"');
+    expect(content).toContain('settings: "/admin/settings"');
+    expect(content).toContain('"api.health": "/admin/api/health"');
+    expect(content).toContain('"api.detail": "/admin/api/:id"');
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -768,7 +791,7 @@ export default clientUrls(({ path }) => [
     const result = runRango(`generate ${routerFile}`);
     expect(result.status).not.toBe(0);
     // Error output should include the diagnostic and point to --runtime
-    expect(result.combined).toContain("Unresolvable includes detected");
+    expect(result.combined).toContain("Unresolvable routes detected");
     expect(result.combined).toContain("docs.");
     expect(result.combined).toContain("--runtime");
     expect(result.combined).toContain("--static");
@@ -795,6 +818,68 @@ export default clientUrls(({ path }) => [
     expect(content).not.toContain("docs.page");
   });
 
+  function writeBasenameRouter(basename: string): {
+    routerFile: string;
+    genPath: string;
+  } {
+    const dir = mkdtempSync(join(tmpdir(), "rango-cli-basename-"));
+    commandTempDirs.push(dir);
+    writeFileSync(
+      join(dir, "site.ts"),
+      `export const SITE = { basename: "/ab" };\n`,
+    );
+    const routerFile = join(dir, "router.tsx");
+    writeFileSync(
+      routerFile,
+      `import { createRouter } from "@rangojs/router";
+import { SITE } from "./site.js";
+import { getBase } from "./config.js";
+export const router = createRouter({ basename: ${basename} }).routes(({ path }) => [
+  path("/:locale?/account", () => null, { name: "account" }),
+]);
+`,
+    );
+    return { routerFile, genPath: join(dir, "router.named-routes.gen.ts") };
+  }
+
+  it("default mode hard-fails on an unreadable basename and writes nothing", () => {
+    const { routerFile, genPath } = writeBasenameRouter("getBase()");
+    const result = runRango(`generate ${routerFile}`);
+    expect(result.status).toBe(1);
+    expect(result.combined).toContain("Unresolvable routes detected");
+    expect(result.combined).toContain("  createRouter basename\n");
+    expect(result.combined).not.toContain("  /*\n");
+    expect(result.combined).toContain("unresolvable-basename");
+    expect(result.combined).toContain("basename `getBase()`");
+    expect(result.combined).toContain("--runtime");
+    expect(result.combined).toContain("--static");
+    expect(existsSync(genPath)).toBe(false);
+  });
+
+  it("--static warns on an unreadable basename and writes unprefixed patterns", () => {
+    const { routerFile, genPath } = writeBasenameRouter("getBase()");
+    const result = runRango(`generate ${routerFile} --static`);
+    expect(result.status).toBe(0);
+    expect(result.combined).toContain("partial output (unresolvable routes)");
+    expect(result.combined).toContain("unresolvable-basename");
+    expect(readFileSync(genPath, "utf-8")).toContain(
+      'account: "/:locale?/account"',
+    );
+  });
+
+  it.each([`"/ab"`, "SITE.basename"])(
+    "default mode accepts a readable basename (%s) without a diagnostic",
+    (basename) => {
+      const { routerFile, genPath } = writeBasenameRouter(basename);
+      const result = runRango(`generate ${routerFile}`);
+      expect(result.status).toBe(0);
+      expect(result.combined).not.toContain("Unresolvable");
+      expect(readFileSync(genPath, "utf-8")).toContain(
+        'account: "/ab/:locale?/account"',
+      );
+    },
+  );
+
   it("--config without --runtime is ignored with a warning", () => {
     const fixtureDir = cloneFixtureDir("app");
     const routerFile = join(fixtureDir, "router.tsx");
@@ -811,7 +896,7 @@ export default clientUrls(({ path }) => [
     const fixtureDir = cloneFixtureDir("app-with-factory");
     const result = runRango(`generate ${fixtureDir}`);
     expect(result.status).not.toBe(0);
-    expect(result.combined).toContain("Unresolvable includes detected");
+    expect(result.combined).toContain("Unresolvable routes detected");
 
     // No gen files should have been written — the command failed before
     // reaching the write phase.
@@ -830,7 +915,7 @@ export default clientUrls(({ path }) => [
     const urlsFile = join(fixtureDir, "urls.tsx");
     const result = runRango(`generate ${urlsFile}`);
     expect(result.status).not.toBe(0);
-    expect(result.combined).toContain("Unresolvable includes detected");
+    expect(result.combined).toContain("Unresolvable routes detected");
     expect(result.combined).toContain("factory-call");
     expect(result.combined).toContain("--runtime");
     expect(result.combined).toContain("--static");
