@@ -511,6 +511,14 @@ export type InternalHandlerContext<
    */
   _prefetchDeferral?: import("../router/segment-resolution/prefetch-deferral.js").PrefetchDeferral;
   /**
+   * @internal A revalidate() predicate that read the source page
+   * (`currentParams`, `currentUrl`, `fromRouteName`) kept a held segment, so
+   * this match's diff is right for that source only (#1331). Set by
+   * evaluateRevalidation (router/revalidation.ts); match-result.ts turns it
+   * into `sourceHeld`, which scopes a prefetch of the response to its source.
+   */
+  _sourceHeld?: true;
+  /**
    * @internal DSL loaders registered and not started, by `$$id`: a prefetch
    * deferred them, or a pass that skips loaders (`skipLoaders`) did not run
    * them. A reader's ctx.use() starts one through its registration

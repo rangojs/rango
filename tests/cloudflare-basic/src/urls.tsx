@@ -410,6 +410,10 @@ import competeClientUrls from "./client-urls-compete/urls.js";
 import { CompeteServerPage } from "./client-urls-compete/server.js";
 import { settledLaneErrorsPatterns } from "./pages/settled-lane-errors.js";
 import { prefetchRenderErrorsPatterns } from "./pages/prefetch-render-errors.js";
+import {
+  keptLayoutSourceOneShapePatterns,
+  keptLayoutSourceTwoShapePatterns,
+} from "./pages/kept-layout-source.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
 import clientUrlsLoaderElementPatterns from "./client-urls-loader-element/urls.js";
@@ -1219,6 +1223,10 @@ export const urlpatterns = urls(
             name: "mixedClient",
           }),
         ]),
+        // A layout above a clientUrls() group whose revalidate() reads the
+        // source page, per template shape (e2e/kept-layout-source.test.ts).
+        include("/kept-layout-source/two", keptLayoutSourceTwoShapePatterns),
+        include("/kept-layout-source/one", keptLayoutSourceOneShapePatterns),
         // Group behind a 5s middleware: pins optimistic presentation vs the
         // gated canonical request (e2e/client-urls-slow.test.ts). The landing
         // route sits OUTSIDE the middleware so the loader redirect is not

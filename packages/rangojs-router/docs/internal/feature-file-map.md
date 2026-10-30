@@ -341,6 +341,14 @@ The public DOM seam is
   configuration and race guard, and
   [browser/prefetch/runtime.ts](../../src/browser/prefetch/runtime.ts), the lazy
   boundary for fetch, queue, and observer code.
+- Prefetch scope (`x-rsc-prefetch-scope: source`) is decided server-side in
+  [rsc/rsc-rendering.ts](../../src/rsc/rsc-rendering.ts) (`sourceScoped`) from
+  `MatchResult.interceptTargeted`, a deferring payload, and
+  `MatchResult.sourceHeld`: a `revalidate()` that read the source page kept a
+  held segment, noted by
+  [router/revalidation.ts](../../src/router/revalidation.ts)
+  (`evaluateRevalidation`, `InternalHandlerContext._sourceHeld`) and carried
+  by [router/match-result.ts](../../src/router/match-result.ts) (#1331).
 - `prefetch: false` is owned by
   [router/segment-resolution/prefetch-deferral.ts](../../src/router/segment-resolution/prefetch-deferral.ts)
   (the per-route plan: which loaders and handler units a prefetch defers,

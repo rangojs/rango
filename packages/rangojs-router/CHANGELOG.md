@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a prefetch held by a `revalidate()` that read the source page no longer shows another page's layout ([#1331](https://github.com/rangojs/rango/issues/1331))
+
+**Before.** A layout whose `revalidate()` compares the page you leave with
+the page you go to (`currentParams`, `currentUrl`, `fromRouteName`), such as
+a template that shows a category hero on category pages, could show the
+wrong copy of itself. A prefetch of `/cart` sent from a product page kept
+the layout, which is right for the product page. The prefetch is shared by
+every page, so a click on the same link from a category page took the same
+answer and kept the category page's layout: the cart rendered under the
+category hero, and stayed there on the next navigation. Production's
+`"viewport"` default made this likely; development, which prefetches
+nothing by default, did not show it.
+
+**Now.** When a `revalidate()` reads the page navigated away from and keeps
+the segment, the response is stored for the page that prefetched it
+(`x-rsc-prefetch-scope: source`), as an intercept target's already is. A
+click from another page prefetches its own answer, or asks the server. A
+`revalidate()` that re-renders, or that reads only the destination
+(`nextParams`, `nextUrl`, `isAction()`, `toRouteName`), keeps one shared
+prefetch.
+
+No change in your code. `prefetchKey=":source"` on such a Link is no longer
+needed.
+
 ## 0.31.0 (2026-10-30)
 
 ### Changed: `rango generate` reads a const `createRouter({ basename })` and stops on one it cannot read ([#1324](https://github.com/rangojs/rango/pull/1324))
