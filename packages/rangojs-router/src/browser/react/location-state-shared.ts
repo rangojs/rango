@@ -462,6 +462,12 @@ export interface LocationStateDefinition<TArgs extends unknown[], TState> {
  * The key is auto-injected by the Vite exposeInternalIds plugin as a property
  * based on file path and export name. No manual key required.
  *
+ * One definition is one slot in `history.state`. Entries of different
+ * definitions accumulate, but for the same definition the last write wins:
+ * two `ctx.setLocationState(Def(...))` calls in one response, or
+ * `redirect(url, { state: [Def(a), Def(b)] })`, deliver only the later
+ * value. To combine writes, make the state an array and write it once.
+ *
  * @param options Optional configuration
  * @returns A typed state definition for use with Link and useLocationState
  *
@@ -675,7 +681,8 @@ export function isLocationStateEntry(
 }
 
 /**
- * Resolve state entries into a flat object for history.state
+ * Resolve state entries into a flat object for history.state. One slot per
+ * definition: a later entry of the same definition replaces an earlier one.
  */
 export function resolveLocationStateEntries(
   entries: LocationStateEntry[],

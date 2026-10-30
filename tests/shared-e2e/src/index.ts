@@ -111,6 +111,7 @@ export type { InterceptHistoryScenarioOptions } from "./intercept-history-scenar
 export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
+export { runDocumentLocationStateTests } from "./document-location-state-scenario.js";
 export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario.js";
 export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
 export { runActionLatestCallTests } from "./action-latest-call-scenario.js";
@@ -141,6 +142,7 @@ export {
   viewTransitionTypes,
 } from "./view-transition-probe.js";
 export type { PeFormStateScenarioOptions } from "./pe-form-state-scenario.js";
+export type { DocumentLocationStateScenarioOptions } from "./document-location-state-scenario.js";
 export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";
 export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
 export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
@@ -951,14 +953,15 @@ const loadMoreItems = (pageNumber: number): string[] =>
 async function openLoadMorePageTwo(page: Page, url: string): Promise<void> {
   const items = byTestId(page, "lm-items").locator("li");
 
-  // A document response carries no location state: what the handler set for
-  // this load does not reach history.state, so start-up has nothing of the
-  // server's to drop.
+  // The document carries what the handler set for this load (#1330): start-up
+  // writes it after the clearOnReload pass, so this load keeps it.
   await page.goto(`${url}?page=1`);
   await waitForShellHydration(page);
   await expect(items).toHaveText(loadMoreItems(1));
-  await expect(byTestId(page, "lm-server-page")).toHaveText("none");
-  expect(await locationStateSlots(page)).toEqual({});
+  await expect(byTestId(page, "lm-server-page")).toHaveText("1");
+  expect(await locationStateSlots(page)).toEqual({
+    "ServerPageStamp~r": { page: 1 },
+  });
 
   // A client navigation shows the carried items above the new page's, and
   // delivers the state the handler set for it.
@@ -975,8 +978,9 @@ async function openLoadMorePageTwo(page: Page, url: string): Promise<void> {
 
 /**
  * What a document load of that entry must leave: the page as the server
- * rendered it, both `~r` slots gone from history.state, the slot without
- * options still applied.
+ * rendered it, the carried `~r` slot gone from history.state, the slot
+ * without options still applied, and the `~r` slot the handler set for this
+ * load (the document carries it, #1330) applied.
  *
  * The server HTML never contains carried items, so "not shown" would pass
  * before the client applied anything. `lm-sort` comes from history.state too:
@@ -988,12 +992,13 @@ async function expectLoadMorePageTwoAsServerRendered(
   await waitForShellHydration(page);
   await expect(byTestId(page, "lm-sort")).toHaveText("asc");
   await expect(byTestId(page, "lm-carried-count")).toHaveText("0");
-  await expect(byTestId(page, "lm-server-page")).toHaveText("none");
+  await expect(byTestId(page, "lm-server-page")).toHaveText("2");
   await expect(byTestId(page, "lm-items").locator("li")).toHaveText(
     loadMoreItems(2),
   );
   expect(await locationStateSlots(page)).toEqual({
     ListSort: { order: "asc" },
+    "ServerPageStamp~r": { page: 2 },
   });
 }
 
@@ -1085,8 +1090,8 @@ const loadMoreCommit = (pageNumber: number, shown: string[]): string =>
  * The load-more fixture at one instant. `content` is what the shared layout
  * holds: the list, the other fixture's panel, or neither. `sharedCarried` is
  * the layout's own reader of the carried items, `carried` the list's, and
- * `serverPage` the state the route's handler set for the entry ("none" for an
- * entry a document load started). `late` is the reader `lm-open-late` mounts:
+ * `serverPage` the state the route's handler set for the entry (a document
+ * load carries it too, #1330; "none" before it is applied). `late` is the reader `lm-open-late` mounts:
  * `<page of the list it is in>:<carried items it reads>`, null until then.
  */
 interface LoadMoreScreen {
@@ -1207,8 +1212,8 @@ export async function expectHeldLoadMoreShowsNoItemTwice(
       page: String(next - 1),
       carried: String(loadMoreThrough(next - 2).length),
       sharedCarried: String(loadMoreThrough(next - 2).length),
-      // Page 1 came with the document, which carries no location state.
-      serverPage: next === 2 ? "none" : String(next - 1),
+      // Page 1 came with the document, which carries its handler's state.
+      serverPage: String(next - 1),
       late: null,
       items: loadMoreThrough(next - 1),
     };

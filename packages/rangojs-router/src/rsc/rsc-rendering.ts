@@ -441,11 +441,12 @@ function* requestRenderPlan<TEnv>(
   );
   if (prepared.kind === "control") return prepared.response;
 
-  // For partial requests, include any server-set location state in the payload.
-  // SSR (full page) requests ignore location state since there's no history.state
-  // to write to on a fresh page load.
-  if (isPartial && prepared.payload.metadata) {
-    attachLocationStateIfPresent(prepared.payload);
+  // Server-set location state rides the payload: a navigation's, merged at
+  // its commit, or a document's bootstrap payload, merged when the client
+  // starts (browser/rsc-router.tsx). A document carrying it is per visitor
+  // (server/document-location-state.ts).
+  if (prepared.payload.metadata) {
+    attachLocationStateIfPresent(prepared.payload, !isPartial);
   }
 
   const response = yield* step("render", () =>
@@ -458,7 +459,11 @@ function* requestRenderPlan<TEnv>(
   // re-runs (it already ran for this request; guarding is serve-time).
   // reqCtx._dynamic is re-read here on purpose: a loader may have marked the
   // request dynamic while rendering.
-  if (shell.kind === "miss" && !reqCtx._dynamic) {
+  if (
+    shell.kind === "miss" &&
+    !reqCtx._dynamic &&
+    !reqCtx._documentLocationState
+  ) {
     if (
       response.status === 200 &&
       (response.headers.get("content-type") ?? "").includes("text/html")
@@ -528,11 +533,14 @@ function* shellServePlan<TEnv>(
   const warm = reqCtx._prerenderWarm;
   if (warm && resolvePprConfig(manifestEntry)) warm.shell ??= "not-eligible";
 
+  // Location state set before the render (a document redirect's cookie,
+  // middleware) is the visitor's: a shared shell cannot carry it.
   if (
     isPartial ||
     request.method !== "GET" ||
     isRscRequest(request, url, false) ||
-    reqCtx._dynamic
+    reqCtx._dynamic ||
+    (reqCtx._locationState?.length ?? 0) > 0
   ) {
     return { kind: "pass" };
   }
