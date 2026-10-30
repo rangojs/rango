@@ -553,6 +553,15 @@ describe("basename fixture", () => {
 // ---------------------------------------------------------------------------
 
 describe("factory fixture", () => {
+  // Runtime discovery scans its root for clientUrls() modules, as `vite dev`
+  // does; the package root would pull in the e2e apps' modules.
+  const runtimeRoots: string[] = [];
+  function runtimeRoot(): string {
+    const root = mkdtempSync(join(tmpdir(), "rango-runtime-root-"));
+    runtimeRoots.push(root);
+    return root;
+  }
+
   afterEach(() => {
     // Clean up gen files in factory fixture
     const possibleGens = [
@@ -565,6 +574,10 @@ describe("factory fixture", () => {
         rmSync(f, { force: true });
       } catch {}
     }
+    for (const root of runtimeRoots) {
+      rmSync(root, { recursive: true, force: true });
+    }
+    runtimeRoots.length = 0;
   });
 
   it("produces partial gen file with API routes but no docs routes", () => {
@@ -595,7 +608,7 @@ describe("factory fixture", () => {
     generatedFiles.push(genPath);
 
     const result = await discoverAndWriteRouteTypes({
-      root: packageRoot,
+      root: runtimeRoot(),
       entry: join(factoryFixtureDir, "router.tsx"),
       resolveAlias: {
         "@rangojs/router/server": join(srcDir, "server.ts"),
@@ -630,7 +643,7 @@ describe("factory fixture", () => {
     generatedFiles.push(genPath);
 
     await discoverAndWriteRouteTypes({
-      root: packageRoot,
+      root: runtimeRoot(),
       entry: join(factoryFixtureDir, "router.tsx"),
       resolveAlias: {
         "@rangojs/router/server": join(srcDir, "server.ts"),
@@ -688,11 +701,12 @@ const staticGenPath = join(
 const fixturesRoot = join(__dirname, "__fixtures__");
 const commandTempDirs: string[] = [];
 
-function runRango(args: string) {
+function runRango(args: string, env?: NodeJS.ProcessEnv) {
   const result = spawnSync("node", [rangoBin, ...args.split(" ")], {
     encoding: "utf-8",
     cwd: packageRoot,
     timeout: 30_000,
+    env,
   });
   return {
     ...result,
@@ -707,6 +721,9 @@ function cloneFixtureDir(name: string): string {
   const packageLinkDir = join(tempRoot, "node_modules", "@rangojs");
   mkdirSync(packageLinkDir, { recursive: true });
   symlinkSync(packageRoot, join(packageLinkDir, "router"), "dir");
+  // The CLI's project root (findProjectRoot), not the cwd's package root:
+  // --runtime scans its root for clientUrls() modules, as `vite dev` does.
+  writeFileSync(join(tempRoot, "package.json"), '{ "type": "module" }\n');
 
   const dest = join(tempRoot, name);
   cpSync(join(fixturesRoot, name), dest, { recursive: true });
@@ -781,6 +798,64 @@ export default clientUrls(({ path }) => [
     expect(content).toContain("docs.page");
     // No internal $ names
     expect(content).not.toMatch(/\$path/);
+  }, 30_000);
+
+  it("--runtime injects $$id for exported createLoader/createHandle outside a test runner", () => {
+    // Regression (rango-t231): the --runtime server lacked expose-internal-ids,
+    // so createLoader/createHandle threw "missing $$id". VITEST is cleared
+    // because under a test runner they fall back to a synthetic id.
+    const fixtureDir = cloneFixtureDir("app-with-loader-handle");
+    const routerFile = join(fixtureDir, "router.tsx");
+    const genPath = join(fixtureDir, "router.named-routes.gen.ts");
+    const { VITEST: _vitest, ...env } = process.env;
+    const result = runRango(`generate ${routerFile} --runtime`, env);
+    expect(result.combined).not.toContain("$$id");
+    expect(result.status).toBe(0);
+
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain('home: "/",');
+    expect(content).toContain('product: "/product/:id",');
+  }, 30_000);
+
+  it("--runtime discovers a second router file whose gen file does not exist yet", () => {
+    // expose-router-id makes every createRouter() file import its sibling
+    // *.named-routes.gen.js; none exists before the first run.
+    const fixtureDir = cloneFixtureDir("app-with-two-routers");
+    const { VITEST: _vitest, ...env } = process.env;
+    const result = runRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+      env,
+    );
+    expect(result.combined).not.toContain("Failed to load url");
+    expect(result.status).toBe(0);
+
+    expect(
+      readFileSync(join(fixtureDir, "router.named-routes.gen.ts"), "utf-8"),
+    ).toContain('home: "/",');
+    expect(
+      readFileSync(join(fixtureDir, "second.named-routes.gen.ts"), "utf-8"),
+    ).toContain('second: "/second",');
+  }, 30_000);
+
+  it("--runtime leaves no gen file behind for a router whose discovery fails", () => {
+    const fixtureDir = cloneFixtureDir("app-with-two-routers");
+    const brokenFile = join(fixtureDir, "broken.tsx");
+    writeFileSync(
+      brokenFile,
+      [
+        'import { createRouter } from "@rangojs/router";',
+        "export const router = createRouter();",
+        'throw new Error("broken router module");',
+        "",
+      ].join("\n"),
+    );
+    const { VITEST: _vitest, ...env } = process.env;
+    const result = runRango(`generate ${brokenFile} --runtime`, env);
+    expect(result.combined).toContain("broken router module");
+    expect(result.status).not.toBe(0);
+    expect(existsSync(join(fixtureDir, "broken.named-routes.gen.ts"))).toBe(
+      false,
+    );
   }, 30_000);
 
   // --- Non-happy paths ---

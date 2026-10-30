@@ -193,7 +193,7 @@
     "tag": "latest"
   },
   "scripts": {
-    "build": "pnpm run build:types && pnpm exec esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external && mkdir -p dist/vite/plugins && cp src/vite/plugins/cloudflare-protocol-loader-hook.mjs dist/vite/plugins/cloudflare-protocol-loader-hook.mjs && pnpm exec esbuild src/testing/vitest.ts --bundle --format=esm --outfile=dist/testing/vitest.js --platform=node --packages=external && pnpm exec esbuild src/bin/rango.ts --bundle --format=esm --outfile=dist/bin/rango.js --platform=node --packages=external --banner:js='#!/usr/bin/env node' && chmod +x dist/bin/rango.js",
+    "build": "pnpm run build:types && pnpm exec esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external && mkdir -p dist/vite/plugins && cp src/vite/plugins/cloudflare-protocol-loader-hook.mjs dist/vite/plugins/cloudflare-protocol-loader-hook.mjs && pnpm exec esbuild src/testing/vitest.ts --bundle --format=esm --outfile=dist/testing/vitest.js --platform=node --packages=external && pnpm exec esbuild src/bin/rango.ts --bundle --format=esm --outfile=dist/bin/rango.js --platform=node --packages=external --banner:js='#!/usr/bin/env node' && chmod +x dist/bin/rango.js && mkdir -p dist/bin/plugins && cp src/vite/plugins/cloudflare-protocol-loader-hook.mjs dist/bin/plugins/cloudflare-protocol-loader-hook.mjs",
     "build:types": "rm -rf dist/types && pnpm exec tsc -p tsconfig.types.json",
     "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.strict-check.json --noEmit && tsc -p tsconfig.augment-check.json --noEmit",

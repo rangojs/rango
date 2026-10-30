@@ -267,7 +267,12 @@ Concretely:
 - In `--static` mode, partial output is accepted with a warning (for a
   basename, the gen file is written without the prefix).
 - In `--runtime` mode, the Vite server evaluates the actual module graph,
-  so factory functions execute and all routes are discovered.
+  so factory functions execute and all routes are discovered. It is the
+  discovery temp server of `vite dev`/`vite build` (`createTempRscServer`):
+  loader/handle/router ids are injected, and the app config's `resolve`,
+  `define`, `oxc` and resolver plugins apply. The config is loaded but not
+  resolved, so those plugins run without their `config`/`configResolved`
+  hooks.
 
 This is intentional: "hard runtime augmentation parity" is not a goal of
 the static parser. The static parser is a fast, dependency-free path for
