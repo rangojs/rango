@@ -249,9 +249,13 @@ server the way `vite dev` does: from a config resolved as `serve` /
 left out. The framework plugins (rango(), `@vitejs/plugin-rsc`, `vite:*`, the
 Cloudflare plugin) are dropped before that resolve, since rango()'s
 `configResolved` would write the static gen files
-(`isFrameworkPlugin` in `src/vite/utils/forward-user-plugins.ts`). `resolve`,
-`define` and `oxc` come from the config file as written, without what a
-plugin's `config` hook adds.
+(`isFrameworkPlugin` in `src/vite/utils/forward-user-plugins.ts`). An alias a
+plugin's `config()` hook adds still resolves, because Vite's own `alias`
+plugin is in the resolved list and is forwarded with your resolvers.
+`resolve`, `define` and `oxc` themselves come from the config file as
+written, so a `define` or `resolve.conditions` added by a `config` hook is
+missed: a module that reads a `define`d `__FLAG__` at top level throws a
+ReferenceError under `--runtime`.
 
 **Design rule:** when the static parser encounters route tree structures it
 cannot reconstruct (factory function calls, dynamic expressions, conditional

@@ -108,10 +108,17 @@ export async function discoverAndWriteRouteTypes(
           );
         } catch (err: any) {
           console.warn(
-            `[rango] Could not resolve the Vite config (${err?.message ?? err}); forwarding its resolver plugins without their config hooks`,
+            `[rango] Could not resolve the Vite config (${err?.message ?? err}); forwarding its resolver plugins without their config hooks. rango() and rsc() are left out of that resolve, so a plugin that needs the rsc environment fails there`,
           );
+          // The resolve would have applied `apply`; do the same for the serve
+          // pass, including the function form.
+          const serveEnv = { command: "serve", mode: "development" } as const;
           state.userResolvePlugins = selectForwardableResolvePlugins(
-            userPlugins.filter((p) => p.apply !== "build"),
+            userPlugins.filter((p) =>
+              typeof p.apply === "function"
+                ? p.apply(loaded.config, serveEnv)
+                : p.apply !== "build",
+            ),
           );
         }
       }
