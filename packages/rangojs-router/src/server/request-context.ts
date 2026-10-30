@@ -709,9 +709,9 @@ export interface RequestContext<
 
   /**
    * @internal Set when a document's payload carries location state
-   * (rsc/rsc-rendering.ts, rsc/progressive-enhancement.ts). The document is
-   * per visitor: the document cache and the PPR shell capture refuse it, and
-   * it leaves `private, no-store` (server/document-location-state.ts).
+   * (rsc/rsc-rendering.ts, rsc/progressive-enhancement.ts), a shell HIT's
+   * included. The document is per visitor: the document cache refuses it,
+   * and it leaves `private, no-store` (server/document-location-state.ts).
    */
   _documentLocationState?: boolean;
 

@@ -354,15 +354,18 @@ path("/checkout/callback", async (ctx) => {
 - **Caching.** A document that carries state, and the redirect carrying it
   on, are sent `Cache-Control: private, no-store`, after every middleware.
   The document cache neither stores such a document nor answers a request
-  that arrives with the cookie from a stored one. A `ppr` route renders such a
-  request in full: no shell is served or captured. `no-store` also keeps the
+  that arrives with the cookie from a stored one. A shared PPR shell never
+  holds state: on a `ppr` route, state set before the render (by middleware,
+  or the cookie) rides the live payload of a shell HIT or MISS, and the shell
+  is still served and captured; state a handler sets keeps that route from
+  being captured, so it renders in full. `no-store` also keeps the
   page out of the browser's back/forward cache (Chrome's bfcache), so Back to
   it loads it again. That costs little for a one-off flash; a handler that
   sets state on every request pays it on every page view.
 - **`ppr` and cached routes.** A shell HIT and a `cache()` hit run no
   handler, so a handler there cannot set state on that request. Set it from
-  middleware, which runs on every request (and makes the request render in
-  full).
+  middleware, which runs on every request; the HIT still serves, with the
+  state in its live payload.
 - **The cookie.** It is named after the router's state cookie
   (`<stateCookieName>-ls`, `__Host-` prefixed on https), `HttpOnly`,
   `SameSite=Lax`, `Path=/`, and lives 60 seconds. Only the next GET document

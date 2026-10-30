@@ -7,7 +7,10 @@
  *   target's document request reads into its payload and clears;
  * - a no-JS form post's action state rides the re-rendered document, or the
  *   cookie when the action redirects;
- * - such a document is never stored by the document cache or as a PPR shell.
+ * - such a document is never stored by the document cache; a PPR shell never
+ *   holds it, and a ppr route whose state is set before the render (middleware,
+ *   the cookie) still serves and captures its shell, the state riding the live
+ *   payload.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -134,6 +137,10 @@ function makeRouter() {
         path("/shelled", FlashPage, { name: "shelled", ppr: true }),
         path("/shelled-mw", () => <p>shelled mw</p>, {
           name: "shelledMw",
+          ppr: true,
+        }),
+        path("/shelled-plain", () => <p>shelled plain</p>, {
+          name: "shelledPlain",
           ppr: true,
         }),
         path("/form", () => <p>form page</p>, { name: "form" }),
@@ -467,18 +474,66 @@ describe("caching a document that carries location state (#1330)", () => {
     });
   });
 
-  it("renders a ppr route in full, no shell read or capture, when middleware sets it", async () => {
+  it("serves and captures the shell of a ppr route when middleware sets it, the state riding the live payload", async () => {
     const cacheStore = new MemorySegmentCacheStore();
     const router = makeRouter();
 
-    const result = await serveShellRequest(router, "/shelled-mw", {
+    const miss = await serveShellRequest(router, "/shelled-mw", {
       cacheStore,
     });
-
-    expect(result.shellStatus).toBeNull();
-    expect(await result.readEntry()).toBeNull();
-    expect(await result.readLocationState()).toEqual({
+    expect(miss.shellStatus).toBe("MISS");
+    expect(await miss.readLocationState()).toEqual({
       [NOTE]: { text: "from middleware" },
     });
+    expect(miss.response.headers.get("cache-control")).toBe(
+      "private, no-store",
+    );
+    expect(await miss.readEntry()).not.toBeNull();
+
+    const hit = await serveShellRequest(router, "/shelled-mw", { cacheStore });
+    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.body).toContain("shelled mw");
+    expect(await hit.readLocationState()).toEqual({
+      [NOTE]: { text: "from middleware" },
+    });
+    expect(hit.response.headers.get("cache-control")).toBe("private, no-store");
+    // The shared shell holds none of it: the state is the tail's.
+    expect(hit.prelude).not.toContain("from middleware");
+  });
+
+  it("serves a ppr route's shell to a request carrying a redirect's cookie, with the state on that response only", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const router = makeRouter();
+    expect(
+      (await serveShellRequest(router, "/shelled-plain", { cacheStore }))
+        .shellStatus,
+    ).toBe("MISS");
+
+    const name = cookiePair(
+      stateCookie((await serveShellRequest(router, "/callback")).response)!,
+    ).split("=")[0];
+    const value = encodeURIComponent(
+      JSON.stringify({ p: "/shelled-plain", s: { [FLASH]: { text: "hi" } } }),
+    );
+    const carried = await serveShellRequest(router, "/shelled-plain", {
+      cacheStore,
+      headers: { cookie: `${name}=${value}`, "sec-fetch-dest": "document" },
+    });
+    expect(carried.shellStatus).toBe("HIT");
+    expect(await carried.readLocationState()).toEqual({
+      [FLASH]: { text: "hi" },
+    });
+    expect(carried.response.headers.get("cache-control")).toBe(
+      "private, no-store",
+    );
+
+    const after = await serveShellRequest(router, "/shelled-plain", {
+      cacheStore,
+    });
+    expect(after.shellStatus).toBe("HIT");
+    expect(await after.readLocationState()).toBeUndefined();
+    expect(after.response.headers.get("cache-control")).not.toBe(
+      "private, no-store",
+    );
   });
 });

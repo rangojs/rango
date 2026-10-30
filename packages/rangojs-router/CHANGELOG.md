@@ -57,7 +57,9 @@ handler, a link from an email.
   or that JSON cannot encode, is dropped with a warning;
 - such a document, and the redirect carrying the cookie, are sent
   `Cache-Control: private, no-store`; the document cache neither stores nor
-  serves them, and a `ppr` route renders them in full.
+  serves them. A `ppr` route keeps its shell: state set by middleware or the
+  cookie rides the live payload of a HIT or MISS (no shell holds it), and a
+  route whose handler sets state is not captured and renders in full.
 
 ```ts
 // Works the same for a client action, a no-JS form post and a request from

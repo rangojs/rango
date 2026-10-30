@@ -436,7 +436,7 @@ expect(target.response.headers.get("cache-control")).toBe("private, no-store");
 ```
 
 - Only a GET document request of the target's pathname reads the cookie, and clears it (`Max-Age=0` on its response). Where the request sends `Sec-Fetch-Dest`, it must be `document`, `iframe` or `frame`: a prefetch or `fetch()` (`empty`) leaves the cookie to the navigation. Without the header the request counts as a navigation.
-- A document that carries state, and the redirect carrying it on, leave `Cache-Control: private, no-store`; the document cache neither stores nor serves them. A `ppr` route never stores one as a shell (`readEntry()` is null), and renders in full when the state was set before its handler ran, by middleware or a redirect's cookie (`shellStatus` null).
+- A document that carries state, and the redirect carrying it on, leave `Cache-Control: private, no-store`; the document cache neither stores nor serves them. On a `ppr` route, state set before its handler ran, by middleware or a redirect's cookie, rides the live payload: the request is still a `MISS` that captures or a `HIT`, and `prelude` holds none of it. State its handler sets keeps the route from being stored as a shell (`readEntry()` is null).
 - For a `form` request, the re-rendered document carries what the action set; a redirecting action carries it in the cookie, as above.
 - What a reader shows is client-side: seed it with `renderRoute({ hydrate: true, documentLocationState })` (see [`./client-components.md`](./client-components.md)).
 

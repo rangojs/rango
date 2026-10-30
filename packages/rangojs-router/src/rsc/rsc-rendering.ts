@@ -430,6 +430,12 @@ function* requestRenderPlan<TEnv>(
   // chain (executeRender wraps it), so no shell byte can precede a guard
   // decision — that ordering is what makes a shared shell safe. Routes
   // without the `ppr` option stay pure axis 1 at zero cost.
+  //
+  // Location state set by now (middleware, a document redirect's cookie) does
+  // not keep a request off the shell: a HIT attaches it to the live tail's
+  // payload, and a capture builds its own payload without it, so no shell
+  // ever holds a visitor's state (server/document-location-state.ts).
+  const stateBeforeRender = reqCtx._locationState?.length ?? 0;
   const shell = yield* scope("shell-serve", shellServePlan(input));
   if (shell.kind === "serve") return shell.response;
 
@@ -458,11 +464,13 @@ function* requestRenderPlan<TEnv>(
   // shell). Capture does not flow through the HTTP pipeline — middleware never
   // re-runs (it already ran for this request; guarding is serve-time).
   // reqCtx._dynamic is re-read here on purpose: a loader may have marked the
-  // request dynamic while rendering.
+  // request dynamic while rendering. State a handler set in this render is
+  // not captured: a HIT replays the handler's output without running it, so
+  // the state would be lost on every HIT. The route renders in full instead.
   if (
     shell.kind === "miss" &&
     !reqCtx._dynamic &&
-    !reqCtx._documentLocationState
+    (reqCtx._locationState?.length ?? 0) <= stateBeforeRender
   ) {
     if (
       response.status === 200 &&
@@ -533,14 +541,11 @@ function* shellServePlan<TEnv>(
   const warm = reqCtx._prerenderWarm;
   if (warm && resolvePprConfig(manifestEntry)) warm.shell ??= "not-eligible";
 
-  // Location state set before the render (a document redirect's cookie,
-  // middleware) is the visitor's: a shared shell cannot carry it.
   if (
     isPartial ||
     request.method !== "GET" ||
     isRscRequest(request, url, false) ||
-    reqCtx._dynamic ||
-    (reqCtx._locationState?.length ?? 0) > 0
+    reqCtx._dynamic
   ) {
     return { kind: "pass" };
   }
@@ -1725,6 +1730,15 @@ function serveShellHit(
   // A visitor-keyed shell shows the visitor's URL: the document cache keys
   // this response by the target.
   if (entry.pathname !== undefined) reqCtx._payloadVisitorLocation = true;
+  // Location state set before the render (middleware, a document redirect's
+  // cookie) rides the tail's payload, not the shell. Marked here, on the
+  // request's own context and before the response leaves (the tail runs on a
+  // derived context, after an await), so the response goes
+  // `private, no-store` and stays out of the document cache
+  // (server/document-location-state.ts).
+  if ((reqCtx._locationState?.length ?? 0) > 0) {
+    reqCtx._documentLocationState = true;
+  }
   const metricsStore = reqCtx._metricsStore;
   // Per-stage tail timing for the `ppr:tail` Server-Timing mirror and the
   // perf console line: always in dev, in production only when this request
@@ -1781,6 +1795,9 @@ function serveShellHit(
         | undefined;
       // Same for the location: the key's URL, or a visitor-keyed shell's.
       payload.metadata.pathname = entry.pathname ?? url.pathname;
+      // The visitor's location state, as a MISS document's payload carries
+      // it. The request was marked per visitor above.
+      attachLocationStateIfPresent(payload);
     }
     // Full Flight render per request: hydration needs the whole payload (there
     // is no Flight-side resume — a React limitation, not ours).
