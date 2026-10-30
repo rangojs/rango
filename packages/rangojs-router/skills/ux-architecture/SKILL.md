@@ -313,9 +313,12 @@ The rule: **prefetch broadly, and flag what is expensive.**
 - On a server route, `loading(fallback, { prefetch: false })` keeps the whole
   entry behind that fallback out of the prefetch (`/route`, "`loading()`
   options"). A group's `loading()` takes no options.
-- When the target's `revalidate()` reads `currentUrl` or `currentParams`, give
-  the Link `prefetchKey=":source"`: the default prefetch entry is shared by
-  every source page (`src/browser/react/Link.tsx`, `prefetchKey`).
+- The default prefetch entry is shared by every source page. When the
+  target's `revalidate()` reads `currentParams`, `currentUrl` or
+  `fromRouteName` and keeps the segment, the router scopes that prefetch to
+  the page that sent it (`x-rsc-prefetch-scope: source`): another page
+  prefetches its own. `prefetchKey=":source"` on the Link scopes every
+  prefetch of it (`src/browser/react/Link.tsx`, `prefetchKey`).
 
 ### 2.7 transition() and view transitions
 

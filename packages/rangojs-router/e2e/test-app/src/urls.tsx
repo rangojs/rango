@@ -180,6 +180,11 @@ import clientUrlsLayoutLoaderPatterns from "./urls/client-urls-layout-loader.js"
 import clientUrlsComponentUsePatterns from "./urls/client-urls-component-use.js";
 import clientUrlsLocalePatterns from "./urls/client-urls-locale.js";
 import clientUrlsCompetePatterns from "./urls/client-urls-compete.js";
+import {
+  keptLayoutSourceBakedPatterns,
+  keptLayoutSourceOneShapePatterns,
+  keptLayoutSourceTwoShapePatterns,
+} from "./urls/kept-layout-source.js";
 import { CompeteServerPage } from "./urls/client-urls-compete.server.js";
 import { settledLaneErrorsPatterns } from "./urls/settled-lane-errors.js";
 import { prefetchRenderErrorsPatterns } from "./urls/prefetch-render-errors.js";
@@ -1115,6 +1120,13 @@ export const urlpatterns = urls(
       // (client-declared transition), /plain re-streams its skeleton.
       include("/client-urls-transition", clientUrlsTransitionPatterns, {
         name: "clientTransition",
+      }),
+      // A layout above a clientUrls() group whose revalidate() reads the
+      // source page, per template shape (e2e/kept-layout-source.test.ts).
+      include("/kept-layout-source/two", keptLayoutSourceTwoShapePatterns),
+      include("/kept-layout-source/one", keptLayoutSourceOneShapePatterns),
+      include("/kept-layout-source/baked", keptLayoutSourceBakedPatterns, {
+        name: "keptLayoutSourceBaked",
       }),
       // Action revalidation over a clientUrls group: the group's projected
       // loaders re-run on the action follow-up (route-owned default true);

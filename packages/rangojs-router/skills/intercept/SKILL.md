@@ -316,7 +316,8 @@ or not the intercept applies from that page (`rsc-rendering.ts`
 `x-rsc-prefetch-scope: source`, set from `MatchResult.interceptTargeted`). A
 full page prefetched from a page where `when` is false never serves a click
 from a page where it is true. Routes no intercept targets keep one shared
-prefetch entry.
+prefetch entry, unless a `revalidate()` that read the source page kept a
+segment (`MatchResult.sourceHeld`, same header).
 
 ```typescript
 // Intercept only when opened from the shop index

@@ -885,7 +885,10 @@ function* preparePayloadPlan<TEnv>(
           stateCookieName: ctx.router.resolvedStateCookieName,
         },
       },
-      sourceScoped: result.interceptTargeted === true || deferring,
+      sourceScoped:
+        result.interceptTargeted === true ||
+        result.sourceHeld === true ||
+        deferring,
       pprReplayStatus,
       healKey,
     };
@@ -1116,7 +1119,9 @@ function renderPreparedRscResponse<TEnv>(
   // intercept targets renders the modal or the full page depending on the
   // source, so neither response may be reused from another source: a full
   // page prefetched where the intercept does not apply would otherwise
-  // serve a later click where it does (#1007).
+  // serve a later click where it does (#1007). So is a diff a revalidate()
+  // decided from the source page: another page adopting it would keep its
+  // own copy of the segment the answer held (#1331).
   if (sourceScoped) {
     rscHeaders["x-rsc-prefetch-scope"] = "source";
   }

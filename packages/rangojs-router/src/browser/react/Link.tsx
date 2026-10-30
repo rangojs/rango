@@ -110,23 +110,20 @@ export interface LinkProps extends Omit<
    * keyed on Rango state + target URL. This is correct for routes whose
    * response shape doesn't depend on where the user navigates from.
    *
-   * Set `":source"` when this Link's response would legitimately differ
-   * based on the source page — typically when the target route (or one
-   * of its layouts) uses a custom `revalidate()` handler that reads
-   * `currentUrl` / `currentParams`, and the wildcard entry would
-   * therefore serve the wrong diff to a navigation from a different
-   * source.
+   * Set `":source"` to scope every prefetch of this Link to the page that
+   * sent it, when its response would differ by source page in a way the
+   * server cannot see.
    *
-   * A route an intercept targets is scoped to the source automatically
-   * (server-side `x-rsc-prefetch-scope: source`), whether or not the
-   * intercept applies from this page: the modal and the full page are
-   * both source-specific. Every other route stays shared, so `":source"`
-   * is only needed for custom revalidation logic.
+   * The server scopes a prefetch to its source automatically
+   * (`x-rsc-prefetch-scope: source`) when an intercept targets the route,
+   * whether or not it applies from this page (the modal and the full page
+   * are both source-specific), and when a `revalidate()` of the target
+   * read `currentParams`, `currentUrl` or `fromRouteName` and kept the
+   * segment: that diff is the source page's (#1331). Every other response
+   * stays shared.
    *
    * @example
    * ```tsx
-   * // Route uses a `revalidate()` that branches on currentUrl — opt in
-   * // so prefetches don't bleed across source pages.
    * <Link to="/dashboard" prefetch="hover" prefetchKey=":source" />
    * ```
    */
