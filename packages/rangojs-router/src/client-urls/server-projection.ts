@@ -170,8 +170,10 @@ function serializeSearchSchema(
     throw projectionError(route, 'path option "search" must be an object');
   }
 
+  // Source order, not sorted: the build writes the gen file's search keys from
+  // this projection and must match `rango generate`'s static parse (#1322).
   const entries: Array<[string, SearchSchemaValue]> = [];
-  for (const key of Object.keys(value).sort()) {
+  for (const key of Object.keys(value)) {
     const schemaValue = (value as Record<string, unknown>)[key];
     if (
       typeof schemaValue !== "string" ||
