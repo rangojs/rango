@@ -253,9 +253,19 @@ Concretely:
 - `detectUnresolvableIncludes()` scans router files for `include()` calls
   whose second argument is a function call or expression the parser cannot
   resolve. These are classified as `"factory-call"` or `"unresolvable"`.
-- In default mode, any unresolvable include causes a hard error with the
-  list of unresolvable prefixes and the suggestion to use `--runtime`.
-- In `--static` mode, partial output is accepted with a warning.
+- The same scan reports an explicit `createRouter({ basename })` whose value
+  is not a string literal or a top-level const (in the router file, or an
+  `export const` imported by name from a relative module) as
+  `"unresolvable-basename"`: every pattern would lack the prefix. The basename
+  is read from the `createRouter` call whose urls the gen file uses. A basename
+  inside a spread (`{ ...shared }`) is not read and not reported.
+- The parser reads a const's initializer and does not track later mutation:
+  after `SITE.basename = "/b"` the gen file still uses the initial value. Use
+  a string literal, a plain const, or an object declared `as const`.
+- In default mode, any unresolvable include or basename causes a hard error
+  with the list of diagnostics and the suggestion to use `--runtime`.
+- In `--static` mode, partial output is accepted with a warning (for a
+  basename, the gen file is written without the prefix).
 - In `--runtime` mode, the Vite server evaluates the actual module graph,
   so factory functions execute and all routes are discovered.
 
