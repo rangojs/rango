@@ -158,8 +158,9 @@ export function stripShellMissMarker(): void {
  * the server rendered this document without them. One pass before hydration
  * (initBrowserApp; renderRoute's `hydrate` mode), so no reader needs to know
  * the page began as a document load, and a slot nobody reads is removed too.
- * No server-set state exists yet to lose: a document response carries none
- * (rsc-rendering.ts attaches it to partial payloads only).
+ * Server-set state is not lost to it: the state a document response carries
+ * is merged after this pass (applyDocumentLocationState), so a `~r` slot the
+ * server set for this load survives this load and no later one.
  *
  * A slot is recognised by its key alone (the `~r` suffix): at start-up the
  * module that defines it may not be loaded.
@@ -183,6 +184,27 @@ export function clearLocationStateOnDocumentLoad(): void {
     }
   }
   if (next) window.history.replaceState(next, "");
+}
+
+/**
+ * Merge the location state a document response carried (its bootstrap
+ * payload's `metadata.locationState`, server/document-location-state.ts)
+ * into the entry the document loaded on. Start-up runs it after
+ * clearLocationStateOnDocumentLoad and the version is set, before the entry
+ * is committed for readers (initBrowserApp; renderRoute's `hydrate` mode),
+ * so readers get it once they have hydrated, as stored state. Only typed
+ * slots are taken.
+ */
+export function applyDocumentLocationState(
+  locationState: Record<string, unknown> | undefined,
+): void {
+  if (!locationState) return;
+  let slots: Record<string, unknown> | undefined;
+  for (const key of Object.keys(locationState)) {
+    if (!isLocationStateKey(key)) continue;
+    (slots ??= {})[key] = locationState[key];
+  }
+  if (slots) mergeLocationState(slots);
 }
 
 /**

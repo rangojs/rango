@@ -101,6 +101,7 @@ Back/forward and state the server sets on a navigation
 | `<Link state>`, `router.push()` / `router.replace()`         | in the commit that shows the destination                         |
 | back/forward                                                 | in the commit that restores the entry (cached or refetched)      |
 | the server, on a navigation (`setLocationState`, a redirect) | in the commit that shows the destination                         |
+| the server, on a document load (a page load, a no-JS post)   | once the page has hydrated, as stored state                      |
 | a navigation the server answers with nothing to re-render    | with the new location: the page on screen is the entry's         |
 | `router.push(url, { revalidate: false })` (no server fetch)  | with the new location: the page does not change                  |
 | a server action's `setLocationState` (no navigation)         | when the action's response arrives, added to what readers show   |
@@ -279,8 +280,8 @@ import { FlashMessage } from "../location-states";
 ```
 
 Or via `ctx.setLocationState()` from a handler or middleware. It is delivered
-with a client navigation's or an action's response; a document response
-carries no location state (there is no history entry to write it to yet):
+with a client navigation's or an action's response, and with a document
+response too (see "State on a document response" below):
 
 ```tsx
 (ctx) => {
@@ -288,6 +289,106 @@ carries no location state (there is no history entry to write it to yet):
   return <Dashboard />;
 };
 ```
+
+### Several writes to one definition
+
+Entries accumulate across definitions, but one definition is one slot in
+`history.state`: for the same definition the last write wins. Two
+`ctx.setLocationState(Toasts(...))` calls in one response, or
+`redirect(url, { state: [Toasts(a), Toasts(b)] })`, deliver only the later
+value, without a warning. A server action, a handler and the middleware
+around them all write to the same response, so a shared helper that writes a
+definition replaces what an earlier call wrote.
+
+To combine several messages, make the state an array and write it once, for
+example by collecting them in a request variable and writing the definition
+at the end of the action:
+
+```ts
+export const Toasts = createLocationState<ToastMessage[]>({ flash: true });
+
+// One write per response, with every toast in it.
+getRequestContext().setLocationState(Toasts([...savedToasts, loginToast]));
+```
+
+### State on a document response
+
+A document request has no history entry yet, so the router carries what the
+server set to the client and writes it there when the client starts. This
+covers the mutations that most need a flash message: a `<form action={fn}>`
+posted before hydration or without JS, a payment provider redirecting the
+shopper back, a link from an email.
+
+| The document request                                                         | Where the state travels                                          |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| renders a page (`setLocationState` in a handler, middleware or no-JS action) | the document's bootstrap payload                                 |
+| redirects (`redirect(url, { state })`, or `setLocationState` and a redirect) | a one-shot cookie the target's document request reads and clears |
+| redirects with `{ external: true }` or off-origin                            | nowhere: the cookie would not reach the target                   |
+
+```tsx
+// A payment provider sends the shopper back to /checkout/callback.
+path("/checkout/callback", async (ctx) => {
+  const ok = await completeOrder(ctx.searchParams.get("token"));
+  return ok
+    ? redirect("/orders/confirmed", { state: [Flash({ text: "Paid" })] })
+    : redirect("/checkout", { state: [Flash({ text: "Payment declined" })] });
+});
+```
+
+- **When a reader gets it.** `useLocationState` returns `undefined` while the
+  document streams and hydrates, then the value, at the moment it would get
+  state stored in the entry. A flash message shows just after hydration.
+- **Without JS, no flash.** The state rides to the client, and only the
+  client writes it into the entry and hands it to readers. A visitor with JS
+  disabled gets the page as the server rendered it, where every reader of the
+  state shows `undefined`: the post and its redirect work, but the message
+  never shows. If such visitors must see it, render it from the server, for
+  example from a search param or a cookie your handler reads.
+- **Flash and refresh.** Flash state is cleared once read, as always. The
+  cookie is cleared by the response that read it, so a refresh of the target
+  renders without it. A page whose handler sets state on every request
+  delivers it again on a refresh, because the handler ran again. A no-JS post
+  answered with a page (no redirect) is re-posted by the browser on refresh;
+  redirect after the post (`redirect(url, { status: 303, state })`) to avoid
+  that.
+- **Caching.** A document that carries state, and the redirect carrying it
+  on, are sent `Cache-Control: private, no-store`, after every middleware.
+  The document cache neither stores such a document nor answers a request
+  that arrives with the cookie from a stored one. A `ppr` route renders such a
+  request in full: no shell is served or captured. `no-store` also keeps the
+  page out of the browser's back/forward cache (Chrome's bfcache), so Back to
+  it loads it again. That costs little for a one-off flash; a handler that
+  sets state on every request pays it on every page view.
+- **`ppr` and cached routes.** A shell HIT and a `cache()` hit run no
+  handler, so a handler there cannot set state on that request. Set it from
+  middleware, which runs on every request (and makes the request render in
+  full).
+- **The cookie.** It is named after the router's state cookie
+  (`<stateCookieName>-ls`, `__Host-` prefixed on https), `HttpOnly`,
+  `SameSite=Lax`, `Path=/`, and lives 60 seconds. Only the next GET document
+  request of the redirect's target pathname that navigates reads it: where
+  the browser sends `Sec-Fetch-Dest`, it must be `document`, `iframe` or
+  `frame`, so a `<link rel=prefetch>` or a `fetch()` of that path leaves it
+  to the navigation. A form POST to it, a client navigation and a Flight
+  fetch leave it too, as does a request of another path. A
+  target that redirects again carries the state on to the next target. There
+  is one such cookie per router: two document redirects within a moment (two
+  tabs) keep only the later one's state. Without https there is no `__Host-`
+  prefix, so a sibling subdomain could set the cookie: treat state that
+  arrives this way as a message to show, not as a fact to act on.
+- **Known limit: a redirect from one router to another.** The cookie is
+  named after the redirecting router's state cookie, which holds its router
+  id (`<stateCookiePrefix>_<routerId>`), and a router reads only its own. On
+  one origin served by several routers (a host router, or several
+  `createRouter()` apps behind one worker), a document redirect from one
+  router to a path another serves loses its state, without a warning. Carry
+  such a message another way, such as a search param.
+- **JSON only across a redirect.** The cookie holds JSON: a `Date` arrives as
+  a string, a `Map` or `Set` as `{}`, `undefined` is dropped. Development
+  warns, naming the slot. A value JSON cannot encode (a `bigint`), or state
+  over the cookie's 4000-byte limit, is dropped from the redirect with a
+  `console.warn`. Carry an id and load the rest on the target page.
+  Navigation and action payloads are not limited this way.
 
 ### State from another deploy
 
@@ -419,10 +520,10 @@ as the server rendered it:
   where it sits (a `<Suspense>` boundary that hydrates late included), or
   whether the definition's module is loaded at all. Other slots on the entry
   are left alone.
-- State the server sets is never dropped by this: a document response carries
-  no location state, and `ctx.setLocationState()` / `redirect(url, { state })`
-  reach `history.state` only through navigations and actions in the running
-  app, after start-up.
+- State the server sets is never dropped by this: the state a document
+  response carries is written after the `~r` keys are removed, so a
+  `clearOnReload` slot the server set for this load is applied on this load
+  (and removed by the next one). Navigations and actions write after start-up.
 - `.write()` stores under the same key, so it does not survive a refresh
   either.
 - Adding the option to an existing definition moves it to the `~r` key: state

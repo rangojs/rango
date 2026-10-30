@@ -365,6 +365,7 @@ import {
 } from "./pages/action-failure.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
+import { documentLocationStatePatterns } from "./pages/document-location-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { transitionKindsPatterns } from "./pages/transition-kinds.js";
@@ -2994,7 +2995,10 @@ export const urlpatterns = urls(
             "/location-state-load-more",
             (ctx) => {
               const page = Number(ctx.searchParams.get("page") ?? "1");
-              ctx.setLocationState(ServerPageStamp({ page }));
+              // The e2e skips it on a document load to see a stale stamp kept.
+              if (ctx.request.headers.get("x-lm-stamp") !== "off") {
+                ctx.setLocationState(ServerPageStamp({ page }));
+              }
               return <LoadMoreList basePath="/location-state-load-more" />;
             },
             { name: "locationStateLoadMore" },
@@ -3239,6 +3243,7 @@ export const urlpatterns = urls(
         // pushes when the response re-renders part of it.
         include("/", historyHandlesPatterns, { name: "" }),
         include("/", peFormStatePatterns, { name: "" }),
+        include("/", documentLocationStatePatterns, { name: "" }),
         include("/", suspenseCasesPatterns, { name: "sc" }),
         // prefetch: false on loader() and loading(): one page per case with
         // server-side run counters (mirrors the router e2e app).

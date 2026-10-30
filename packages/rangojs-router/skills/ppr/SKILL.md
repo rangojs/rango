@@ -500,6 +500,16 @@ Rango warns with the shell key and backs capture off instead of rendering the
 same doomed generation on every request. Move a deterministic self-invalidation
 out of render code if you want the shell to persist.
 
+### Location state on a ppr route
+
+A document that carries location state is the visitor's, so it never comes
+from or becomes a shell. State set before the render (from middleware, or the
+one-shot cookie a document redirect left for this request) skips the shell
+lookup and the capture: the request renders in full. State a handler sets
+skips the capture of that MISS. A HIT runs no handler, so a handler's
+`ctx.setLocationState()` does not happen on a HIT: set it from middleware (see
+`/hooks` `state.md`, "State on a document response").
+
 ### Opting out per request with `ctx.dynamic()`
 
 Middleware and handlers can call `ctx.dynamic()` to force this request onto a
