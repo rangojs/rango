@@ -527,18 +527,25 @@ describe("basename fixture", () => {
   it("runtime discovery prefixes all route patterns with basename", async () => {
     const packageRoot = resolve(__dirname, "..", "..", "..");
     const srcDir = join(packageRoot, "src");
+    // Runtime discovery scans its root for clientUrls() modules; the package
+    // root would pull in the e2e apps' modules.
+    const root = mkdtempSync(join(tmpdir(), "rango-runtime-root-"));
 
-    await discoverAndWriteRouteTypes({
-      root: packageRoot,
-      entry: join(basenameFixtureDir, "router.tsx"),
-      resolveAlias: {
-        "@rangojs/router/server": join(srcDir, "server.ts"),
-        "@rangojs/router/build": join(srcDir, "build", "index.ts"),
-        "@rangojs/router/cache": join(srcDir, "cache", "index.ts"),
-        "@rangojs/router/host": join(srcDir, "host", "index.ts"),
-        "@rangojs/router": join(srcDir, "index.rsc.ts"),
-      },
-    });
+    try {
+      await discoverAndWriteRouteTypes({
+        root,
+        entry: join(basenameFixtureDir, "router.tsx"),
+        resolveAlias: {
+          "@rangojs/router/server": join(srcDir, "server.ts"),
+          "@rangojs/router/build": join(srcDir, "build", "index.ts"),
+          "@rangojs/router/cache": join(srcDir, "cache", "index.ts"),
+          "@rangojs/router/host": join(srcDir, "host", "index.ts"),
+          "@rangojs/router": join(srcDir, "index.rsc.ts"),
+        },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
 
     const content = readFileSync(basenameGenPath, "utf-8");
     expect(content).toContain('home: "/admin"');
