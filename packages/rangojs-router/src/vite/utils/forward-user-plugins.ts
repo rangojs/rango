@@ -139,6 +139,8 @@ export interface ForwardedRunnerConfig {
 /**
  * Extract the data-only config slice to mirror into the discovery temp server.
  * `alias` is included here so callers no longer need to thread it separately.
+ * Accepts the unresolved config too: `rango generate --runtime` must not
+ * resolve it (that runs rango()'s configResolved, which writes gen files).
  *
  * `tsconfigPaths` is forwarded so Vite 8's native tsconfig `paths` resolution
  * (a top-level `resolve` flag, off by default) reaches the temp server. The
@@ -154,9 +156,9 @@ export interface ForwardedRunnerConfig {
  * forward `oxc` exclusively — no `esbuild` field is touched.
  */
 export function pickForwardedRunnerConfig(
-  config: ResolvedConfig,
+  config: Pick<ResolvedConfig | UserConfig, "resolve" | "define" | "oxc">,
 ): ForwardedRunnerConfig {
-  const r = config.resolve ?? ({} as ResolvedConfig["resolve"]);
+  const r = config.resolve ?? {};
   const resolve: NonNullable<UserConfig["resolve"]> = {};
   if (r.alias !== undefined) resolve.alias = r.alias as any;
   if (r.dedupe !== undefined) resolve.dedupe = r.dedupe;
