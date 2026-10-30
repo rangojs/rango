@@ -22,6 +22,15 @@ const fixtureDir = join(__dirname, "__fixtures__", "app");
 // Track generated files for cleanup
 const generatedFiles: string[] = [];
 
+// Runtime discovery scans its root for clientUrls() modules, as `vite dev`
+// does; the package root would pull in the e2e apps' modules.
+const runtimeRoots: string[] = [];
+function runtimeRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "rango-runtime-root-"));
+  runtimeRoots.push(root);
+  return root;
+}
+
 function genPathFor(filePath: string): string {
   return filePath.replace(/\.tsx?$/, ".gen.ts");
 }
@@ -37,6 +46,10 @@ afterEach(() => {
     } catch {}
   }
   generatedFiles.length = 0;
+  for (const root of runtimeRoots) {
+    rmSync(root, { recursive: true, force: true });
+  }
+  runtimeRoots.length = 0;
 });
 
 describe("generate-cli e2e fixtures", () => {
@@ -529,7 +542,7 @@ describe("basename fixture", () => {
     const srcDir = join(packageRoot, "src");
 
     await discoverAndWriteRouteTypes({
-      root: packageRoot,
+      root: runtimeRoot(),
       entry: join(basenameFixtureDir, "router.tsx"),
       resolveAlias: {
         "@rangojs/router/server": join(srcDir, "server.ts"),
@@ -553,15 +566,6 @@ describe("basename fixture", () => {
 // ---------------------------------------------------------------------------
 
 describe("factory fixture", () => {
-  // Runtime discovery scans its root for clientUrls() modules, as `vite dev`
-  // does; the package root would pull in the e2e apps' modules.
-  const runtimeRoots: string[] = [];
-  function runtimeRoot(): string {
-    const root = mkdtempSync(join(tmpdir(), "rango-runtime-root-"));
-    runtimeRoots.push(root);
-    return root;
-  }
-
   afterEach(() => {
     // Clean up gen files in factory fixture
     const possibleGens = [
@@ -574,10 +578,6 @@ describe("factory fixture", () => {
         rmSync(f, { force: true });
       } catch {}
     }
-    for (const root of runtimeRoots) {
-      rmSync(root, { recursive: true, force: true });
-    }
-    runtimeRoots.length = 0;
   });
 
   it("produces partial gen file with API routes but no docs routes", () => {
@@ -835,6 +835,50 @@ export default clientUrls(({ path }) => [
     expect(
       readFileSync(join(fixtureDir, "second.named-routes.gen.ts"), "utf-8"),
     ).toContain('second: "/second",');
+  }, 30_000);
+
+  it("--runtime forwards a resolver that initializes in configResolved, and no apply: build plugin", () => {
+    // Regression (rango-t233): resolver plugins were forwarded from the
+    // unresolved config, so their configResolved never ran (vite-tsconfig-paths
+    // matched nothing) and apply: "build" plugins ran in the serve discovery.
+    const fixtureDir = cloneFixtureDir("app-with-config-resolver");
+    const result = runRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+    );
+    expect(result.combined).not.toContain("build-only resolver ran");
+    expect(result.status).toBe(0);
+
+    const content = readFileSync(
+      join(fixtureDir, "router.named-routes.gen.ts"),
+      "utf-8",
+    );
+    expect(content).toContain('shop: "/shop",');
+    expect(content).toContain('product: "/shop/:id",');
+  }, 30_000);
+
+  it("--runtime keeps the config's resolve and resolvers when a plugin's configResolved throws", () => {
+    const fixtureDir = cloneFixtureDir("app-with-config-resolver");
+    writeFileSync(
+      join(fixtureDir, "vite.config.ts"),
+      `import { join } from "node:path";
+export default {
+  resolve: { alias: { "~routes": join(import.meta.dirname, "routes") } },
+  plugins: [
+    { name: "throws-in-config-resolved", configResolved() { throw new Error("no rsc environment"); } },
+  ],
+};
+`,
+    );
+    const result = runRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+    );
+    expect(result.combined).toContain(
+      "Could not resolve the Vite config (no rsc environment)",
+    );
+    expect(result.status).toBe(0);
+    expect(
+      readFileSync(join(fixtureDir, "router.named-routes.gen.ts"), "utf-8"),
+    ).toContain('shop: "/shop",');
   }, 30_000);
 
   it("--runtime leaves no gen file behind for a router whose discovery fails", () => {
