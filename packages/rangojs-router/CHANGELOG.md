@@ -23,8 +23,15 @@ click from another page prefetches its own answer, or asks the server. A
 (`nextParams`, `nextUrl`, `isAction()`, `toRouteName`), keeps one shared
 prefetch.
 
-No change in your code. `prefetchKey=":source"` on such a Link is no longer
-needed.
+A prerendered target is covered too: its stored entry runs a held layout's
+`revalidate()` only when the params change, so on equal params the kept
+layout scopes the prefetch the same way. So does a prerendered page kept on
+a search-only change (`/item/1?tab=a` to `/item/1?tab=b`): a click from
+`/item/2` no longer shows item 2.
+
+No change in your code. `prefetchKey=":source"` stays for a response that
+differs by source in ways the server cannot see; the router now scopes the
+`revalidate()`-driven case itself.
 
 ## 0.31.0 (2026-10-30)
 

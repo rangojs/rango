@@ -348,7 +348,12 @@ The public DOM seam is
   held segment, noted by
   [router/revalidation.ts](../../src/router/revalidation.ts)
   (`evaluateRevalidation`, `InternalHandlerContext._sourceHeld`) and carried
-  by [router/match-result.ts](../../src/router/match-result.ts) (#1331).
+  by [router/match-result.ts](../../src/router/match-result.ts) (#1331). A
+  prerender entry marks it in
+  [router/match-middleware/cache-lookup.ts](../../src/router/match-middleware/cache-lookup.ts)
+  (`storedEntrySends`) when, on equal params, it keeps a held segment whose
+  `revalidate()` it skipped, or the route's own segments on a search-only
+  change.
 - `prefetch: false` is owned by
   [router/segment-resolution/prefetch-deferral.ts](../../src/router/segment-resolution/prefetch-deferral.ts)
   (the per-route plan: which loaders and handler units a prefetch defers,

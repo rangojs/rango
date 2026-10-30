@@ -9,8 +9,9 @@ import { waitForShellHydration } from "./shell-request.js";
  * from a category page, the page must not keep the category page's copy of
  * the layout, the hero, above the destination. Both template shapes: the
  * reporter's, whose <Outlet /> moves, and a fixed one. Fixture:
- * kept-layout-source* in each app, mounted at "/kept-layout-source/two" and
- * "/kept-layout-source/one"; both apps call this from a dev and a
+ * kept-layout-source* in each app, mounted at "/kept-layout-source/two",
+ * "/kept-layout-source/one" and, prerendered, "/kept-layout-source/baked";
+ * both apps call this from a dev and a
  * (production) describe.
  */
 export interface KeptLayoutSourceScenarioOptions {
@@ -76,4 +77,44 @@ export function runKeptLayoutSourceTests(
       await expect(page.getByTestId("kls-hero")).toHaveCount(0);
     });
   }
+
+  // Server pages, /cart and /item/:id prerendered ("/kept-layout-source/baked").
+  // In production a stored entry serves them: it keeps the template on equal
+  // params without asking its revalidate(), and the route's own segment on a
+  // search-only change. Dev renders them live.
+  const baked = "/kept-layout-source/baked";
+
+  test("prerendered /cart prefetched on a page with the same params, clicked on a category page, shows no hero", async ({
+    page,
+  }) => {
+    await open(page, options.url(`${baked}/wishlist`));
+    await expect(page.getByTestId("kls-page")).toHaveText("wishlist");
+    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+
+    await prefetch(page, "kls-to-cart", `${baked}/cart`);
+
+    await page.getByTestId("kls-to-c").click();
+    await expect(page.getByTestId("kls-page")).toHaveText("plp:audio");
+    await expect(page.getByTestId("kls-hero")).toHaveText("hero:audio");
+
+    await page.getByTestId("kls-to-cart").click();
+    await expect(page.getByTestId("kls-page")).toHaveText("cart");
+    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+  });
+
+  test("prerendered item prefetched on a search-only change, clicked on another item, shows its own item", async ({
+    page,
+  }) => {
+    await open(page, options.url(`${baked}/item/1?tab=a`));
+    await expect(page.getByTestId("kls-page")).toHaveText("item:1");
+
+    await prefetch(page, "kls-to-item1b", `${baked}/item/1`);
+
+    await page.getByTestId("kls-to-item2").click();
+    await expect(page.getByTestId("kls-page")).toHaveText("item:2");
+
+    await page.getByTestId("kls-to-item1b").click();
+    await expect(page).toHaveURL(/\/item\/1\?tab=b$/);
+    await expect(page.getByTestId("kls-page")).toHaveText("item:1");
+  });
 }

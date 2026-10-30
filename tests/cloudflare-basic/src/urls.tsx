@@ -411,6 +411,7 @@ import { CompeteServerPage } from "./client-urls-compete/server.js";
 import { settledLaneErrorsPatterns } from "./pages/settled-lane-errors.js";
 import { prefetchRenderErrorsPatterns } from "./pages/prefetch-render-errors.js";
 import {
+  keptLayoutSourceBakedPatterns,
   keptLayoutSourceOneShapePatterns,
   keptLayoutSourceTwoShapePatterns,
 } from "./pages/kept-layout-source.js";
@@ -1227,6 +1228,9 @@ export const urlpatterns = urls(
         // source page, per template shape (e2e/kept-layout-source.test.ts).
         include("/kept-layout-source/two", keptLayoutSourceTwoShapePatterns),
         include("/kept-layout-source/one", keptLayoutSourceOneShapePatterns),
+        include("/kept-layout-source/baked", keptLayoutSourceBakedPatterns, {
+          name: "keptLayoutSourceBaked",
+        }),
         // Group behind a 5s middleware: pins optimistic presentation vs the
         // gated canonical request (e2e/client-urls-slow.test.ts). The landing
         // route sits OUTSIDE the middleware so the loader redirect is not

@@ -32,7 +32,12 @@ import {
   type ServeShellRequestOptions,
   type ServeShellRequestResult,
 } from "../flight.entry.js";
-import { createLoader, createRouter, urls } from "../../index.rsc.js";
+import {
+  createLoader,
+  createRouter,
+  Prerender,
+  urls,
+} from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { reconcileSegments } from "../../browser/segment-reconciler.js";
@@ -56,13 +61,26 @@ const revalidateTemplate: ShouldRevalidateFn = ({
     : defaultShouldRevalidate;
 };
 
+/** Runs of the prerendered cart's handler: its bake's only. */
+const bakedCartRuns = { count: 0 };
+
+const BakedCart = Prerender(() => {
+  bakedCartRuns.count += 1;
+  return <article>cart</article>;
+});
+
+const BakedItem = Prerender<{ id: string }>(
+  async () => [{ id: "1" }, { id: "2" }],
+  (ctx) => <article>{`item:${ctx.params.id}`}</article>,
+);
+
 /** The template's render: the hero on a category page only. */
 function Template({ category }: { category: string | null }) {
   return <section>{category === null ? "outlet" : `hero:${category}`}</section>;
 }
 
 const router = createRouter({}).routes(
-  urls(({ layout, include, loader, revalidate }) => [
+  urls(({ layout, include, loader, path, revalidate }) => [
     layout(
       () => <main>chrome</main>,
       () => [
@@ -75,6 +93,25 @@ const router = createRouter({}).routes(
             include("/", group, { name: "shop" }),
           ],
         ),
+        // The same template above server routes, the cart prerendered: its
+        // stored entry asks the template's revalidate() only when the params
+        // changed (cache-lookup.ts storedEntrySends).
+        layout(
+          (ctx) => <Template category={categoryOf(ctx.params)} />,
+          () => [
+            revalidate(revalidateTemplate),
+            path("/baked/c/:category", () => <ul>plp</ul>, {
+              name: "bakedPlp",
+            }),
+            path("/baked/wishlist", () => <ul>wishlist</ul>, {
+              name: "bakedWishlist",
+            }),
+            path("/baked/cart", BakedCart, { name: "bakedCart" }),
+          ],
+        ),
+        // A prerendered route under no revalidate(): its stored entry keeps
+        // the route's own segment on equal params, whatever the search.
+        path("/baked/item/:id", BakedItem, { name: "bakedItem" }),
         // The same template held by the layout default (no revalidate()).
         layout(
           (ctx) => <Template category={categoryOf(ctx.params)} />,
@@ -120,7 +157,12 @@ const scopeOf = (result: ServeShellRequestResult) =>
 const templateOf = (page: Metadata): ResolvedSegment =>
   page.segments.filter((s) => s.type === "layout").at(-1)!;
 
+/** The page's route segment. */
+const routeOf = (page: Metadata): ResolvedSegment =>
+  page.segments.find((s) => s.type === "route")!;
+
 beforeEach(async () => {
+  bakedCartRuns.count = 0;
   await resetShellTestState();
 });
 
@@ -169,5 +211,84 @@ describe("a prefetch a revalidate() answered from the source page", () => {
     const fromProduct = await prefetch("/plain/p/1", product, "/plain/cart");
     expect((await metadataOf(fromProduct)).diff).not.toContain(template);
     expect(scopeOf(fromProduct)).toBeNull();
+  });
+});
+
+describe("a prefetch of a prerendered target served from its stored entry", () => {
+  it("held the template from a page with the same params, its revalidate() not asked: the answer is scoped to that page", async () => {
+    const wishlist = await standingOn("/baked/wishlist");
+    const category = await standingOn("/baked/c/audio");
+    const template = templateOf(wishlist).id;
+    expect(templateOf(category).id).toBe(template);
+    // Bake the cart; the prefetch is served from the bake.
+    await serve("/baked/cart", {});
+    const bakes = bakedCartRuns.count;
+
+    const fromWishlist = await prefetch(
+      "/baked/wishlist",
+      wishlist,
+      "/baked/cart",
+    );
+    expect(bakedCartRuns.count).toBe(bakes);
+    const answer = await metadataOf(fromWishlist);
+    expect(answer.matched).toContain(template);
+    expect(answer.diff).not.toContain(template);
+    expect(scopeOf(fromWishlist)).toBe("source");
+  });
+
+  it("re-rendered the template from a category page: the answer is shared", async () => {
+    const category = await standingOn("/baked/c/audio");
+    const template = templateOf(category).id;
+    await serve("/baked/cart", {});
+
+    const fromCategory = await prefetch(
+      "/baked/c/audio",
+      category,
+      "/baked/cart",
+    );
+    expect((await metadataOf(fromCategory)).diff).toContain(template);
+    expect(scopeOf(fromCategory)).toBeNull();
+  });
+
+  it("kept the route's own segment on a search-only change: the answer is scoped to that page", async () => {
+    const tabA = await standingOn("/baked/item/1?tab=a");
+    const item2 = await standingOn("/baked/item/2");
+    const route = routeOf(tabA).id;
+    expect(routeOf(item2).id).toBe(route);
+
+    const fromTabA = await prefetch(
+      "/baked/item/1?tab=a",
+      tabA,
+      "/baked/item/1?tab=b",
+    );
+    const answer = await metadataOf(fromTabA);
+    expect(answer.matched).toContain(route);
+    expect(answer.diff).not.toContain(route);
+
+    // What /baked/item/2 would render had it adopted it: item 2's route.
+    const adopted = reconcileSegments({
+      actor: "navigation",
+      matched: answer.matched,
+      diff: answer.diff,
+      serverSegments: answer.segments,
+      cachedSegments: item2.segments,
+      insertMissingDiff: true,
+    });
+    expect(adopted.segments.find((s) => s.id === route)).toBe(routeOf(item2));
+
+    expect(scopeOf(fromTabA)).toBe("source");
+  });
+
+  it("sent the route's own segment from a page with other params: the answer is shared", async () => {
+    const item2 = await standingOn("/baked/item/2");
+    const route = routeOf(item2).id;
+
+    const fromItem2 = await prefetch(
+      "/baked/item/2",
+      item2,
+      "/baked/item/1?tab=b",
+    );
+    expect((await metadataOf(fromItem2)).diff).toContain(route);
+    expect(scopeOf(fromItem2)).toBeNull();
   });
 });

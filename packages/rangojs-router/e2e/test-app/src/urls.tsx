@@ -181,6 +181,7 @@ import clientUrlsComponentUsePatterns from "./urls/client-urls-component-use.js"
 import clientUrlsLocalePatterns from "./urls/client-urls-locale.js";
 import clientUrlsCompetePatterns from "./urls/client-urls-compete.js";
 import {
+  keptLayoutSourceBakedPatterns,
   keptLayoutSourceOneShapePatterns,
   keptLayoutSourceTwoShapePatterns,
 } from "./urls/kept-layout-source.js";
@@ -1124,6 +1125,9 @@ export const urlpatterns = urls(
       // source page, per template shape (e2e/kept-layout-source.test.ts).
       include("/kept-layout-source/two", keptLayoutSourceTwoShapePatterns),
       include("/kept-layout-source/one", keptLayoutSourceOneShapePatterns),
+      include("/kept-layout-source/baked", keptLayoutSourceBakedPatterns, {
+        name: "keptLayoutSourceBaked",
+      }),
       // Action revalidation over a clientUrls group: the group's projected
       // loaders re-run on the action follow-up (route-owned default true);
       // this parent-chain layout reads the SAME counter and keeps the locked

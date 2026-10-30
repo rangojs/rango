@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { urls, type Revalidate } from "@rangojs/router";
+import { Prerender, urls, type Revalidate } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import keptLayoutSourceGroup from "../kept-layout-source/urls.js";
 
@@ -105,5 +105,90 @@ export const keptLayoutSourceOneShapePatterns = urls(
         ),
       ],
     ),
+  ],
+);
+
+// The template above server pages, /cart and /item/:id prerendered. In
+// production a stored entry asks the template's revalidate() only when the
+// params change (/wishlist -> /cart: both {}), and keeps the route's own
+// segment on a search-only change (/item/1?tab=a -> /item/1?tab=b); either
+// keep is right for its source only. Dev renders them live.
+const KeptBakedCart = Prerender(() => <p data-testid="kls-page">cart</p>);
+
+const KeptBakedItem = Prerender<{ id: string }>(
+  async () => [{ id: "1" }, { id: "2" }],
+  (ctx) => <p data-testid="kls-page">{`item:${ctx.params.id}`}</p>,
+);
+
+const BAKED_BASE = "/kept-layout-source/baked";
+
+function KeptBakedChrome(): ReactNode {
+  return (
+    <section data-testid="kls-chrome">
+      <nav>
+        <Link
+          to={`${BAKED_BASE}/c/audio`}
+          prefetch="hover"
+          data-testid="kls-to-c"
+        >
+          Audio
+        </Link>
+        <Link
+          to={`${BAKED_BASE}/wishlist`}
+          prefetch="hover"
+          data-testid="kls-to-wishlist"
+        >
+          Wishlist
+        </Link>
+        <Link
+          to={`${BAKED_BASE}/cart`}
+          prefetch="hover"
+          data-testid="kls-to-cart"
+        >
+          Cart
+        </Link>
+        <Link
+          to={`${BAKED_BASE}/item/1?tab=b`}
+          prefetch="hover"
+          data-testid="kls-to-item1b"
+        >
+          Item 1, tab b
+        </Link>
+        <Link
+          to={`${BAKED_BASE}/item/2`}
+          prefetch="hover"
+          data-testid="kls-to-item2"
+        >
+          Item 2
+        </Link>
+      </nav>
+      <Outlet />
+    </section>
+  );
+}
+
+export const keptLayoutSourceBakedPatterns = urls(
+  ({ layout, path, revalidate }) => [
+    layout(<KeptBakedChrome />, () => [
+      layout(
+        (ctx) => <TwoShapeTemplate category={categoryOf(ctx.params)} />,
+        () => [
+          revalidate(revalidateKeptTemplate),
+          path(
+            "/c/:category",
+            (ctx) => (
+              <p data-testid="kls-page">{`plp:${ctx.params.category}`}</p>
+            ),
+            { name: "plp" },
+          ),
+          path("/wishlist", () => <p data-testid="kls-page">wishlist</p>, {
+            name: "wishlist",
+          }),
+          path("/cart", KeptBakedCart, { name: "cart" }),
+        ],
+      ),
+      // Under no revalidate(): only the route's own segment decides.
+      path("/item/:id", KeptBakedItem, { name: "item" }),
+    ]),
   ],
 );
