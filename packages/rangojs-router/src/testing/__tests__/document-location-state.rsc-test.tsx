@@ -246,6 +246,34 @@ describe("location state on a document response (#1330)", () => {
     expect(stateCookie(other.response)).toBeUndefined();
   });
 
+  it("is left to the navigation by a prefetch or fetch() of the target", async () => {
+    const router = makeRouter();
+    const set = stateCookie(
+      (await serveShellRequest(router, "/callback")).response,
+    )!;
+
+    // A <link rel=prefetch> or a same-path fetch(): a document request by
+    // mayNeedSSR, but Sec-Fetch-Dest names no browsing context.
+    const prefetch = await serveShellRequest(router, "/target", {
+      headers: {
+        cookie: cookiePair(set),
+        accept: "*/*",
+        "sec-fetch-dest": "empty",
+      },
+    });
+    expect(await prefetch.readLocationState()).toBeUndefined();
+    expect(stateCookie(prefetch.response)).toBeUndefined();
+    expect(prefetch.response.headers.get("cache-control")).toBeNull();
+
+    const navigation = await serveShellRequest(router, "/target", {
+      headers: { cookie: cookiePair(set), "sec-fetch-dest": "document" },
+    });
+    expect(await navigation.readLocationState()).toEqual({
+      [FLASH]: { text: "redirected" },
+    });
+    expect(stateCookie(navigation.response)).toMatch(/Max-Age=0/);
+  });
+
   it("clears a malformed cookie and carries nothing from it", async () => {
     const router = makeRouter();
     const name = cookiePair(

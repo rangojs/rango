@@ -945,7 +945,8 @@ const loadMoreItems = (pageNumber: number): string[] =>
  * Link goes to page N+1 carrying every item on screen as a `clearOnReload`
  * slot, plus a slot without options (`lm-sort`). The route's handler sets a
  * `clearOnReload` slot of its own on every request (`lm-server-page`),
- * document loads included.
+ * document loads included, unless the request sends `x-lm-stamp: off`
+ * (skipLoadMoreServerStamp).
  *
  * Loads page 1, then navigates to page 2 on the client. Leaves the page on an
  * entry holding all three slots.
@@ -976,11 +977,39 @@ async function openLoadMorePageTwo(page: Page, url: string): Promise<void> {
   });
 }
 
+/** The load-more fixture's pages, whatever the app's prefix. */
+const isLoadMoreUrl = (url: URL): boolean => url.pathname.endsWith("load-more");
+
 /**
- * What a document load of that entry must leave: the page as the server
- * rendered it, the carried `~r` slot gone from history.state, the slot
- * without options still applied, and the `~r` slot the handler set for this
- * load (the document carries it, #1330) applied.
+ * Sends `x-lm-stamp: off` on the load-more document requests while it is on,
+ * so the handler sets no stamp and a document load carries none (#1330). The
+ * stale `~r` stamp a navigation left in the entry then shows if start-up keeps
+ * it: with the stamp, the document's own write of the same slot would replace
+ * it and hide that. Document requests only: a prefetch of the next page made
+ * meanwhile (production) is a fetch, keeps its stamp, and may serve the click
+ * after this is turned off.
+ */
+async function skipLoadMoreServerStamp(
+  page: Page,
+  skip: boolean,
+): Promise<void> {
+  if (!skip) {
+    await page.unroute(isLoadMoreUrl);
+    return;
+  }
+  await page.route(isLoadMoreUrl, (route) => {
+    const request = route.request();
+    if (!request.isNavigationRequest()) return route.fallback();
+    return route.continue({
+      headers: { ...request.headers(), "x-lm-stamp": "off" },
+    });
+  });
+}
+
+/**
+ * What a document load of that entry must leave, its handler's stamp skipped
+ * (skipLoadMoreServerStamp): the page as the server rendered it, both `~r`
+ * slots gone from history.state, the slot without options still applied.
  *
  * The server HTML never contains carried items, so "not shown" would pass
  * before the client applied anything. `lm-sort` comes from history.state too:
@@ -992,13 +1021,12 @@ async function expectLoadMorePageTwoAsServerRendered(
   await waitForShellHydration(page);
   await expect(byTestId(page, "lm-sort")).toHaveText("asc");
   await expect(byTestId(page, "lm-carried-count")).toHaveText("0");
-  await expect(byTestId(page, "lm-server-page")).toHaveText("2");
+  await expect(byTestId(page, "lm-server-page")).toHaveText("none");
   await expect(byTestId(page, "lm-items").locator("li")).toHaveText(
     loadMoreItems(2),
   );
   expect(await locationStateSlots(page)).toEqual({
     ListSort: { order: "asc" },
-    "ServerPageStamp~r": { page: 2 },
   });
 }
 
@@ -1015,8 +1043,10 @@ export async function expectClearOnReloadDropsCarriedState(
   const carried = byTestId(page, "lm-carried-count");
 
   await openLoadMorePageTwo(page, url);
+  await skipLoadMoreServerStamp(page, true);
   await page.reload();
   await expectLoadMorePageTwoAsServerRendered(page);
+  await skipLoadMoreServerStamp(page, false);
 
   await byTestId(page, "lm-more").click();
   await expect(page).toHaveURL(`${url}?page=3`);
@@ -1052,11 +1082,13 @@ export async function expectClearOnReloadDropsStateOnTraversalLoad(
   await markDocument(page);
   await page.goto(`${url}?page=9`);
   await waitForShellHydration(page);
+  await skipLoadMoreServerStamp(page, true);
   await page.goBack();
   await expect(page).toHaveURL(`${url}?page=2`);
   expect(await isMarkedDocument(page)).toBe(false);
 
   await expectLoadMorePageTwoAsServerRendered(page);
+  await skipLoadMoreServerStamp(page, false);
 }
 
 /** How long the load-more fixture's loader holds a page (`?hold=<ms>`). */

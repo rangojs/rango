@@ -19,7 +19,9 @@ handler, a link from an email.
 - a document request that redirects carries the state in a one-shot cookie
   (`<stateCookieName>-ls`, `__Host-` on https, `HttpOnly`, `SameSite=Lax`,
   60 seconds) that the target's document request reads and clears, so a
-  refresh does not show a flash again. The cookie holds JSON: give state
+  refresh does not show a flash again. A prefetch or `fetch()` of the target
+  (`Sec-Fetch-Dest` other than a browsing context) leaves it to the
+  navigation. The cookie holds JSON: give state
   that crosses a document redirect plain JSON data. State over 4000 bytes,
   or that JSON cannot encode, is dropped with a warning;
 - such a document, and the redirect carrying the cookie, are sent
@@ -37,7 +39,11 @@ path("/checkout/callback", async (ctx) =>
 If a handler or middleware calls `setLocationState` on every request, it is
 now delivered on document loads too; a `clearOnReload` slot it sets applies
 on the load it arrived with. On a `ppr` route, set state from middleware: a
-shell HIT runs no handler.
+shell HIT runs no handler. Without JS the state reaches no reader (only the
+client applies it), and a `no-store` page is kept out of the browser's
+back/forward cache. A document redirect from one router to a path another
+router on the same origin serves loses its state: each router reads only its
+own cookie.
 
 ### Docs: one location-state definition keeps only its last write ([#1330](https://github.com/rangojs/rango/issues/1330))
 

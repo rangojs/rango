@@ -10,10 +10,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import type { RequestContext } from "../server/request-context.js";
-import {
-  isLocationStateKey,
-  resolveLocationStateEntries,
-} from "../browser/react/location-state-shared.js";
+import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import {
   isRedirectResponse,
   isWebSocketUpgradeResponse,
@@ -339,13 +336,6 @@ export function interceptRedirectForPartial(
 
   return intercepted;
 }
-
-/**
- * The location-state helpers the server side uses, through this module's one
- * import of browser/react/location-state-shared.ts
- * (server/document-location-state.ts reads them here).
- */
-export { isLocationStateKey, resolveLocationStateEntries };
 
 /**
  * Attach location state set during a request to a payload's metadata.

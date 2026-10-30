@@ -48,7 +48,10 @@ function requestWithCookie(
   );
   return new Request(url, {
     ...init,
-    headers: { cookie: `${COOKIE}-ls=${encoded}` },
+    headers: {
+      ...(init.headers as Record<string, string> | undefined),
+      cookie: `${COOKIE}-ls=${encoded}`,
+    },
   });
 }
 
@@ -219,6 +222,78 @@ describe("consumeDocumentLocationState", () => {
     );
     expect(ctx._locationState).toBeUndefined();
     expect(set).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a <link rel=prefetch>",
+      { "sec-fetch-dest": "empty", "sec-purpose": "prefetch", accept: "*/*" },
+    ],
+    ["a same-path fetch()", { "sec-fetch-dest": "empty", accept: "*/*" }],
+    ["an image request", { "sec-fetch-dest": "image" }],
+  ])(
+    "leaves the cookie to %s (Sec-Fetch-Dest not a navigation)",
+    (_label, headers) => {
+      const { ctx, set } = fakeCtx();
+      consumeDocumentLocationState(
+        ctx,
+        requestWithCookie(
+          "http://app.test/done",
+          { p: "/done", s: { [SLOT]: 1 } },
+          { headers },
+        ),
+        new URL("http://app.test/done"),
+        COOKIE,
+      );
+      expect(ctx._locationState).toBeUndefined();
+      expect(set).toEqual([]);
+    },
+  );
+
+  it.each(["document", "iframe", "frame"])(
+    "consumes the cookie on a navigation with Sec-Fetch-Dest: %s",
+    (dest) => {
+      const { ctx, set } = fakeCtx();
+      consumeDocumentLocationState(
+        ctx,
+        requestWithCookie(
+          "http://app.test/done",
+          { p: "/done", s: { [SLOT]: 1 } },
+          { headers: { "sec-fetch-dest": dest } },
+        ),
+        new URL("http://app.test/done"),
+        COOKIE,
+      );
+      expect(ctx._locationState).toEqual([entry(1)]);
+      expect(set).toHaveLength(1);
+    },
+  );
+
+  it("lets a prefetch pass and the navigation after it consume the cookie", () => {
+    const cookie = { p: "/done", s: { [SLOT]: { text: "hi" } } };
+    const prefetch = fakeCtx();
+    consumeDocumentLocationState(
+      prefetch.ctx,
+      requestWithCookie("http://app.test/done", cookie, {
+        headers: { "sec-fetch-dest": "empty", "sec-purpose": "prefetch" },
+      }),
+      new URL("http://app.test/done"),
+      COOKIE,
+    );
+    expect(prefetch.ctx._locationState).toBeUndefined();
+    expect(prefetch.set).toEqual([]);
+
+    const navigation = fakeCtx();
+    consumeDocumentLocationState(
+      navigation.ctx,
+      requestWithCookie("http://app.test/done", cookie, {
+        headers: { "sec-fetch-dest": "document" },
+      }),
+      new URL("http://app.test/done"),
+      COOKIE,
+    );
+    expect(navigation.ctx._locationState).toEqual([entry({ text: "hi" })]);
+    expect(navigation.set).toHaveLength(1);
   });
 
   it("clears a malformed cookie and seeds nothing", () => {

@@ -380,7 +380,7 @@ test("browser-import: every runtime import form is reported", () => {
     'const m = await import("../browser/prefetch/cache.js");',
     'const r = require("../browser/history-state.js");',
     'import "../browser/side-effect.js";',
-    'import c, { type D } from "../browser/react/location-state-shared.js";',
+    'import c, { type D } from "../browser/react/location-state.js";',
     'import e = require("../browser/legacy.js");',
     'import { f } from "../browser";',
   ];
@@ -409,6 +409,7 @@ test("browser-import: type-only imports, the L0 helpers and other paths are allo
     'import { cookie } from "../browser/cookie-name.js";',
     'import { isInterceptSegment } from "../browser/intercept-utils.js";',
     'import { f } from "../browser/react/filter-segment-order.js";',
+    'import { isLocationStateKey } from "../browser/react/location-state-shared.js";',
     'import { ok } from "../urls/x.js";',
     'import { pkg } from "browser/anything";',
     'import { g } from "../browser-like/x.js";',

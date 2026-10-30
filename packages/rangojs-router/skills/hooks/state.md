@@ -338,6 +338,12 @@ path("/checkout/callback", async (ctx) => {
 - **When a reader gets it.** `useLocationState` returns `undefined` while the
   document streams and hydrates, then the value, at the moment it would get
   state stored in the entry. A flash message shows just after hydration.
+- **Without JS, no flash.** The state rides to the client, and only the
+  client writes it into the entry and hands it to readers. A visitor with JS
+  disabled gets the page as the server rendered it, where every reader of the
+  state shows `undefined`: the post and its redirect work, but the message
+  never shows. If such visitors must see it, render it from the server, for
+  example from a search param or a cookie your handler reads.
 - **Flash and refresh.** Flash state is cleared once read, as always. The
   cookie is cleared by the response that read it, so a refresh of the target
   renders without it. A page whose handler sets state on every request
@@ -349,7 +355,10 @@ path("/checkout/callback", async (ctx) => {
   on, are sent `Cache-Control: private, no-store`, after every middleware.
   The document cache neither stores such a document nor answers a request
   that arrives with the cookie from a stored one. A `ppr` route renders such a
-  request in full: no shell is served or captured.
+  request in full: no shell is served or captured. `no-store` also keeps the
+  page out of the browser's back/forward cache (Chrome's bfcache), so Back to
+  it loads it again. That costs little for a one-off flash; a handler that
+  sets state on every request pays it on every page view.
 - **`ppr` and cached routes.** A shell HIT and a `cache()` hit run no
   handler, so a handler there cannot set state on that request. Set it from
   middleware, which runs on every request (and makes the request render in
@@ -357,13 +366,23 @@ path("/checkout/callback", async (ctx) => {
 - **The cookie.** It is named after the router's state cookie
   (`<stateCookieName>-ls`, `__Host-` prefixed on https), `HttpOnly`,
   `SameSite=Lax`, `Path=/`, and lives 60 seconds. Only the next GET document
-  request of the redirect's target pathname reads it (not a form POST to it,
-  a navigation or a Flight fetch); a request of another path leaves it. A
+  request of the redirect's target pathname that navigates reads it: where
+  the browser sends `Sec-Fetch-Dest`, it must be `document`, `iframe` or
+  `frame`, so a `<link rel=prefetch>` or a `fetch()` of that path leaves it
+  to the navigation. A form POST to it, a client navigation and a Flight
+  fetch leave it too, as does a request of another path. A
   target that redirects again carries the state on to the next target. There
   is one such cookie per router: two document redirects within a moment (two
   tabs) keep only the later one's state. Without https there is no `__Host-`
   prefix, so a sibling subdomain could set the cookie: treat state that
   arrives this way as a message to show, not as a fact to act on.
+- **Known limit: a redirect from one router to another.** The cookie is
+  named after the redirecting router's state cookie, which holds its router
+  id (`<stateCookiePrefix>_<routerId>`), and a router reads only its own. On
+  one origin served by several routers (a host router, or several
+  `createRouter()` apps behind one worker), a document redirect from one
+  router to a path another serves loses its state, without a warning. Carry
+  such a message another way, such as a search param.
 - **JSON only across a redirect.** The cookie holds JSON: a `Date` arrives as
   a string, a `Map` or `Set` as `{}`, `undefined` is dropped. Development
   warns, naming the slot. A value JSON cannot encode (a `bigint`), or state

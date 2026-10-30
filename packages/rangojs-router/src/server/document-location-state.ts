@@ -11,7 +11,8 @@
  *   finalizeRequestResponse) writes it on a document request's same-origin
  *   3xx when the request set location state;
  * - `consumeDocumentLocationState` (rsc/request-stages.ts runRequestPasses)
- *   reads it on the next GET document request of the target pathname, seeds
+ *   reads it on the next GET document request that navigates to the target
+ *   pathname (`Sec-Fetch-Dest` a browsing context, where sent), seeds
  *   `_locationState` with its entries (so the render attaches them to the
  *   bootstrap payload, rsc/rsc-rendering.ts) and clears it.
  *
@@ -26,11 +27,11 @@
  * the target pathname inside the value decides who consumes it.
  */
 
-import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 import {
   isLocationStateKey,
   resolveLocationStateEntries,
-} from "../rsc/helpers.js";
+  type LocationStateEntry,
+} from "../browser/react/location-state-shared.js";
 import { getRawCookieValue } from "../browser/cookie-name.js";
 import { isExternalRedirect } from "../redirect-origin.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
@@ -103,12 +104,36 @@ function parseCarriedState(raw: string): CarriedState | undefined {
 }
 
 /**
+ * `Sec-Fetch-Dest` values of a request that navigates a browsing context: the
+ * one a browser makes when it follows a document redirect.
+ */
+const NAVIGATION_FETCH_DESTS: ReadonlySet<string> = new Set([
+  "document",
+  "iframe",
+  "frame",
+]);
+
+/**
+ * A request that navigates: the browser shows its response. Where the browser
+ * sends `Sec-Fetch-Dest`, it must name a browsing context. A same-path
+ * `fetch()` with a wildcard `Accept` or a `<link rel=prefetch>` passes
+ * mayNeedSSR but sends `empty`, and must not eat the cookie before the
+ * navigation it was left for. A request without the header (an older
+ * browser, a non-browser client) keeps the mayNeedSSR rule alone.
+ */
+function isNavigationRequest(request: Request): boolean {
+  const dest = requestHeaders(request).get("sec-fetch-dest");
+  return dest === null || NAVIGATION_FETCH_DESTS.has(dest);
+}
+
+/**
  * Read the cookie a document redirect left for this request: seed
  * `_locationState` with its slots and clear it. Only a GET document request
- * of the target pathname consumes it (the request the browser makes for a
- * 301/302/303); any other request, a form POST to that path included, leaves
- * it to its expiry. A malformed value is cleared and ignored, and only
- * `__rsc_ls_*` slots are taken from it (the value comes from the browser).
+ * of the target pathname that navigates consumes it (the request the browser
+ * makes for a 301/302/303, see isNavigationRequest); any other request, a
+ * form POST to that path or a prefetch of it included, leaves it to its
+ * expiry. A malformed value is cleared and ignored, and only `__rsc_ls_*`
+ * slots are taken from it (the value comes from the browser).
  */
 export function consumeDocumentLocationState(
   reqCtx: Pick<RequestContext, "_locationState" | "setCookie">,
@@ -118,6 +143,7 @@ export function consumeDocumentLocationState(
 ): void {
   if (request.method !== "GET") return;
   if (!isDocumentRequest(request, url)) return;
+  if (!isNavigationRequest(request)) return;
   const secure = url.protocol === "https:";
   const name = documentLocationStateCookieName(stateCookieName, secure);
   const raw = getRawCookieValue(requestHeaders(request).get("cookie"), name);
