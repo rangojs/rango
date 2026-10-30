@@ -1735,8 +1735,14 @@ function serveShellHit(
   // request's own context and before the response leaves (the tail runs on a
   // derived context, after an await), so the response goes
   // `private, no-store` and stays out of the document cache
-  // (server/document-location-state.ts).
-  if ((reqCtx._locationState?.length ?? 0) > 0) {
+  // (server/document-location-state.ts). The tail carries exactly this
+  // state: a write during the tail (a loader's, through getRequestContext())
+  // comes after these headers chose the response's caching, so it is not
+  // sent, as the skill documents (skills/hooks/state.md).
+  // Never undefined: attachLocationStateIfPresent would read the tail's
+  // context instead.
+  const tailLocationState = reqCtx._locationState ?? [];
+  if (tailLocationState.length > 0) {
     reqCtx._documentLocationState = true;
   }
   const metricsStore = reqCtx._metricsStore;
@@ -1797,7 +1803,7 @@ function serveShellHit(
       payload.metadata.pathname = entry.pathname ?? url.pathname;
       // The visitor's location state, as a MISS document's payload carries
       // it. The request was marked per visitor above.
-      attachLocationStateIfPresent(payload);
+      attachLocationStateIfPresent(payload, false, tailLocationState);
     }
     // Full Flight render per request: hydration needs the whole payload (there
     // is no Flight-side resume — a React limitation, not ours).
@@ -2061,7 +2067,13 @@ function serveShellHit(
               "the doc record could not supply the handler layer",
             );
           }
-          controller.enqueue(new TextEncoder().encode(shellReloadScript()));
+          // A document redirect's state cookie: this response's headers
+          // cleared it, and the reload must read it again.
+          controller.enqueue(
+            new TextEncoder().encode(
+              shellReloadScript(reqCtx._carriedLocationStateCookie),
+            ),
+          );
           if (tailTiming) {
             tailTiming.outcome = "error";
             tailTiming.completeMs = Math.round(performance.now() - tailT0);
