@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.31.0 (2026-10-30)
+
+### Changed: `rango generate` reads a const `createRouter({ basename })` and stops on one it cannot read ([#1324](https://github.com/rangojs/rango/pull/1324))
+
+**Before.** `rango generate` read `basename` only as a string literal. Any
+other value, such as `basename: BASE` or `basename: SITE.basename`, was
+dropped without a word, so every pattern in `router.named-routes.gen.ts`
+lacked the prefix and the `href()` / `reverse()` types disagreed with the
+real URLs. `rango generate --runtime` dropped the basename in every case.
+`vite dev` and `vite build` were not affected.
+
+**Now.** `rango generate` reads a string literal, a top-level `const` in the
+router file, an `export const` imported by name from a relative module, and
+`CONST.prop` on a const object literal; `as` and `satisfies` are unwrapped.
+When it cannot read the value (`process.env.BASE ?? "/shop"`, a call, a
+`let`, a default import), it reports it with the unresolvable-include
+diagnostics: plain `rango generate` exits 1 and writes nothing, `--static`
+warns and writes the patterns without the prefix, and `--runtime` reads the
+real basename. `--runtime` now always applies the basename.
+
+If plain `rango generate` now stops on your router, use a literal or a
+top-level const for `basename`, or run it with `--runtime`.
+
+### Fixed: `rango generate --runtime` works on apps with loaders, handles and their own resolver plugins ([#1325](https://github.com/rangojs/rango/pull/1325))
+
+**Before.** `rango generate --runtime` failed with
+`Loader is missing $$id` on any app that exports a `createLoader` or
+`createHandle`. Its discovery server ran only the RSC plugin, and it kept
+only `resolve.alias` from your Vite config, so an app with its own resolver
+plugins also failed on their imports.
+
+**Now.** `--runtime` discovers routes on the same server `vite dev` and
+`vite build` use, with your config's resolver plugins and its `resolve`,
+`define` and `oxc` settings. A router whose gen file does not exist yet no
+longer fails the run, and a Vite config that fails to load prints a warning.
+Resolver plugins run without their `config` and `configResolved` hooks, so
+one that sets itself up there, such as vite-tsconfig-paths, does not resolve
+under `--runtime` yet.
+
+No change in your code.
+
+### Fixed: `vite build` writes `clientUrls()` search keys in source order ([#1323](https://github.com/rangojs/rango/pull/1323))
+
+**Before.** For a `clientUrls()` route with a `search` schema, `vite build`
+wrote the keys in `router.named-routes.gen.ts` alphabetically and
+`rango generate` wrote them in source order, so running one after the other
+left a diff in the checked-in file.
+
+**Now.** Both write them in source order. An app whose `clientUrls()` search
+keys are not already alphabetical gets a new cache version once on its first
+deploy with this release.
+
+No change in your code.
+
 ## 0.30.1 (2026-10-28)
 
 ### Fixed: per-app cache versions stay the same across build directories with rolldown 1.2.15 ([#1320](https://github.com/rangojs/rango/pull/1320))
