@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.32.0 (2026-10-30)
 
-### Fixed: a prefetch held by a `revalidate()` that read the source page no longer shows another page's layout ([#1331](https://github.com/rangojs/rango/issues/1331))
+### Fixed: a prefetch held by a `revalidate()` that read the source page no longer shows another page's layout ([#1333](https://github.com/rangojs/rango/pull/1333))
 
 **Before.** A layout whose `revalidate()` compares the page you leave with
 the page you go to (`currentParams`, `currentUrl`, `fromRouteName`), such as
@@ -33,7 +33,23 @@ No change in your code. `prefetchKey=":source"` stays for a response that
 differs by source in ways the server cannot see; the router now scopes the
 `revalidate()`-driven case itself.
 
-### Added: location state on document responses ([#1330](https://github.com/rangojs/rango/issues/1330))
+### Fixed: `rango generate --runtime` resolves through plugins that set up in `configResolved` ([#1332](https://github.com/rangojs/rango/pull/1332))
+
+**Before.** `rango generate --runtime` forwarded the app's resolver plugins
+straight from the unresolved Vite config, so their `config` and
+`configResolved` hooks never ran. A resolver that builds its state there,
+such as vite-tsconfig-paths, matched nothing, and discovery failed with
+`Cannot find module '~routes/shop'`. A plugin with `apply: "build"` was
+forwarded into the serve-mode discovery too.
+
+**Now.** `--runtime` resolves the Vite config as `vite dev` would, without
+rango() and rsc(), and forwards the resolver plugins from the result. An
+alias added by a plugin's `config()` hook resolves, and `apply: "build"`
+plugins, string or function form, are left out. `define` and
+`resolve.conditions` set from a plugin's `config` hook are still not picked
+up (`docs/manifests.md`).
+
+### Added: location state on document responses ([#1334](https://github.com/rangojs/rango/pull/1334))
 
 **Before.** `ctx.setLocationState()` and `redirect(url, { state })` reached
 `history.state` only through client navigations and actions. A document
@@ -78,7 +94,7 @@ back/forward cache. A document redirect from one router to a path another
 router on the same origin serves loses its state: each router reads only its
 own cookie.
 
-### Docs: one location-state definition keeps only its last write ([#1330](https://github.com/rangojs/rango/issues/1330))
+### Docs: one location-state definition keeps only its last write ([#1334](https://github.com/rangojs/rango/pull/1334))
 
 Entries accumulate across definitions, but for one definition the last write
 wins: two `setLocationState(Toasts(...))` calls in one response, or
