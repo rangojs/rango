@@ -103,8 +103,8 @@ export const CarriedItems = createLocationState<string[]>({
 export const ListSort = createLocationState<{ order: string }>();
 
 // Set by the load-more handler on every request (ctx.setLocationState). A
-// document response carries no location state, so it reaches the client only
-// with a client navigation's payload, after start-up removed the stale slot.
+// document response carries it too (#1330): start-up writes it after it
+// removed the stale slot, so a reload shows the reloaded page's own stamp.
 export const ServerPageStamp = createLocationState<{ page: number }>({
   clearOnReload: true,
 });
@@ -121,3 +121,12 @@ export const GridState = createLocationState<GridSnapshot>();
 // #1029: carried on the Links of the slow clientUrls group
 // (client-urls-slow.tsx), read inside and outside the optimistic branch.
 export const SlowNote = createLocationState<{ value: string }>();
+
+/**
+ * #1330: flash state a document response carries (a link from outside the
+ * app, a document redirect, a no-JS form post). Read by the document-state
+ * fixture (tests/shared-e2e/src/document-location-state-scenario.ts).
+ */
+export const DocumentFlash = createLocationState<{ text: string }>({
+  flash: true,
+});

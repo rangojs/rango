@@ -56,6 +56,7 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 | `middleware()` (auth, logging)                   | ordering, short-circuit, cookie/header merge                                        | unit (node)         | `runMiddleware`                                                                                                | `/middleware`                            |
 | a client component reading router context        | it renders given params/loaderData/Outlet                                           | unit (DOM)          | `renderRoute`                                                                                                  | `/hooks`                                 |
 | a component reading `useLocationState`           | it renders the seeded location-state value                                          | unit (DOM)          | `renderRoute` (`locationState` option)                                                                         | `/hooks`                                 |
+| a component reading state a document carried     | it shows the flash once the page has hydrated                                       | unit (DOM)          | `renderRoute` (`documentLocationState` + `hydrate`)                                                            | `/hooks`                                 |
 | a client component's hydration                   | its first client render matches its own server HTML (no recoverable error)          | unit (DOM)          | `renderRoute` (`hydrate` option)                                                                               | `/hooks`                                 |
 | a component reading `useHandle` (Breadcrumbs)    | it renders the seeded handle output                                                 | unit (DOM)          | `renderRoute` (`handles` option)                                                                               | `/breadcrumbs`                           |
 | a handle's `collect`/accumulator                 | it maps per-segment pushes to the accumulated value                                 | unit (node)         | `collectHandle`                                                                                                | `/breadcrumbs`                           |
@@ -73,6 +74,7 @@ Both are made structural by `parityDescribe` and `expectParity`, below.
 | a loader's own `cache()`                         | hit/miss; `updateTag()` of a tag its body recorded drops the entry                  | RSC unit            | `runLoader` + `cache` + seeded `cacheStore` (rsc project)                                                      | `/loader`, `/caching`                    |
 | `cache()` / loader cache / `"use cache"` stale   | hit/miss/stale across two requests                                                  | e2e + signal        | `assertCacheStatus` / telemetry sink                                                                           | `/caching`, `/use-cache`, `/cache-guide` |
 | `Prerender(...)` routes                          | served from a build-time artifact (a cache hit)                                     | e2e (prod) + signal | `assertCacheStatus(..., "prerendered")`                                                                        | `/prerender`                             |
+| location state on a document / its redirect      | the payload carries it; the redirect's cookie reaches the target                    | RSC unit            | `serveShellRequest` (`readLocationState()`)                                                                    | `/hooks`                                 |
 | `ppr` shell (axis 2)                             | MISS -> capture -> HIT: the frozen shell vs the live tail; tag eviction; replay     | RSC unit            | `serveShellRequest` (HTML step stubbed)                                                                        | `/ppr`                                   |
 | `ppr` shell (axis 2) in real HTML                | document HIT/MISS; partial fresh/stale replay or bounded bypass                     | e2e + signal / unit | `assertShellStatus` / `assertPprReplayStatus` / `shellCacheKey` + `MemorySegmentCacheStore`                    | `/ppr`                                   |
 | the generated `*.named-routes.gen.ts`            | it matches the runtime route map (drift in CI)                                      | unit (node)         | `assertGeneratedRoutesMatch`                                                                                   | `/typesafety`                            |
@@ -698,6 +700,29 @@ const loaded = await renderRoute(routes, { ...seed, hydrate: true }); // a refre
 expect(loaded.recoverableErrors).toEqual([]);
 expect(loaded.queryAllByRole("listitem")).toHaveLength(0);
 expect(CarriedProducts.read()).toBeUndefined(); // removed from history.state
+```
+
+State the server set for a page load is not the entry's stored state, so it
+has its own option. A handler, middleware or no-JS form action that calls
+`ctx.setLocationState()` on a document request (or a document redirect that
+carried state there in its cookie) puts it in the document's bootstrap
+payload, and start-up merges it into the entry after the `clearOnReload` pass
+(`applyDocumentLocationState`, `src/browser/history-state.ts`). Seed that with
+`documentLocationState`: `renderRoute` runs the same function at the same
+point, so with `hydrate: true` a `clearOnReload` slot given there is applied,
+while the same slot given as `locationState` is dropped. The reader hydrates as
+`undefined` and gets the value once the root has hydrated, as in the browser.
+
+```tsx
+const loaded = await renderRoute(
+  [{ path: "/checkout", Component: FlashBanner }],
+  {
+    hydrate: true,
+    documentLocationState: [[FlashMessage, { text: "Payment declined" }]],
+  },
+);
+expect(loaded.serverHtml).not.toContain("Payment declined");
+expect(loaded.getByRole("alert")).toHaveTextContent("Payment declined");
 ```
 
 Model an `include('/shop', …)` mount with the `mount` option: it wraps the
@@ -1504,6 +1529,34 @@ value the browser entry hands `hydrateRoot` so a hydrated `useActionState` does
 not reset (#1087). A GET, a plain-form POST and a redirecting action carry none. A state Flight cannot serialize leaves the document intact and makes `readPayloadFormState()` reject. `fields` carries the form's own fields to the action.
 The hydration itself stays e2e.
 
+#### Location state on a document
+
+`await result.readLocationState()` decodes the payload's location state as the
+browser reads it, `{ [Def.__rsc_ls_key]: value }`, or `undefined` when it
+carries none. A document request that redirects carries its state in a
+one-shot cookie instead (`<stateCookieName>-ls`, `__Host-` on https): take it
+from the redirect's `Set-Cookie`, send it on the target's request, and read the
+target's payload. Only a GET document request of the target pathname reads and
+clears it; where `Sec-Fetch-Dest` is sent it must name a browsing context
+(`document`, `iframe`, `frame`), so a prefetch or `fetch()` of the target
+leaves the cookie to the navigation.
+
+```tsx
+const redirected = await serveShellRequest(router, "/payment/callback");
+const setCookie = redirected.response.headers
+  .getSetCookie()
+  .find((c) => /-ls=/.test(c.split(";")[0]!))!;
+const target = await serveShellRequest(router, "/checkout", {
+  headers: { cookie: setCookie.split(";")[0]!, "sec-fetch-dest": "document" },
+});
+expect(await target.readLocationState()).toEqual({
+  [FlashMessage.__rsc_ls_key]: { text: "Payment declined" },
+});
+expect(target.response.headers.get("cache-control")).toBe("private, no-store");
+```
+
+The suite is `src/testing/__tests__/document-location-state.rsc-test.tsx`.
+
 #### A server action called from the page
 
 `serveShellRequest(router, url, { action: { ref, id, args, segments } })` sends
@@ -1738,6 +1791,7 @@ renderRoute(                            // async; lazy-loads RTL at call time
     loaders?: [loader, data][],         // seed useLoader by REFERENCE (real handles)
     loaderData?: Record<$$id, data>,    // seed useLoader by explicit $$id
     locationState?: [def, value][],     // seed useLocationState by REFERENCE
+    documentLocationState?: [def, value][], // state the document response carried; merged after the clearOnReload pass
     handles?: [handle, pushedValues[]][],// seed useHandle by REFERENCE, RAW pushes[] (reaches layouts too)
     handle?,                            // advanced: raw handle wire data
     basename?,                          // createRouter({ basename }) value (Link/href/reverse prefixing)
@@ -1773,7 +1827,8 @@ renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeM
 // entry whose profile sets foregroundOnAction:true re-executes in the FOREGROUND (fresh) instead of SWR.
 serveShellRequest(router, url: string | URL, opts?: { cacheStore?, env?, headers?, partial?: true | { from?, segments? }, form?, action?: { ref, id, args?, segments? } }):
   Promise<{ response, body, shellStatus, replayStatus, prelude, flight, key, readEntry(): Promise<ShellCacheEntry | null>,
-    readHandles(): Promise<{ hydration: HandleData, late: HandleData[] } | undefined> }>;
+    readHandles(): Promise<{ hydration: HandleData, late: HandleData[] } | undefined>,
+    readLocationState(): Promise<Record<string, unknown> | undefined> }>;
 // One GET through the router's production handler, background capture settled. HTML step stubbed:
 // prelude = the capture's Flight text, flight = this request's Flight (a HIT's tail).
 resetShellTestState(): Promise<void>; // beforeEach: capture backoff/guards + CFCacheStore isolate memos

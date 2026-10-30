@@ -270,6 +270,15 @@ export interface ServeShellRequestResult {
    */
   readPayloadFormState(): Promise<unknown>;
   /**
+   * The payload's location state as the browser reads it: the slots
+   * (`Def.__rsc_ls_key` to value) a document's start-up merges into its
+   * entry (or a navigation's commit, for a `partial` request). Undefined when
+   * the payload carries none (or no Flight was rendered). A redirect carries
+   * a document request's state in a `Set-Cookie` instead: pass that cookie
+   * on the request of its target to read what the target's payload carries.
+   */
+  readLocationState(): Promise<Record<string, unknown> | undefined>;
+  /**
    * For an `action` request, the call's answer as the browser reads it: its
    * result and the `revalidationError` its loaders' reruns report.
    * Undefined when no Flight was rendered or the payload carries no action
@@ -805,6 +814,13 @@ export async function serveShellRequest<TEnv = any>(
         formState?: Promise<unknown>;
       }>(flight);
       return payload.formState;
+    },
+    async readLocationState() {
+      if (!flight) return undefined;
+      const payload = await decodePayload<{
+        metadata?: { locationState?: Record<string, unknown> };
+      }>(flight);
+      return payload.metadata?.locationState;
     },
     async readAction() {
       return flight ? decodeAction(flight) : undefined;

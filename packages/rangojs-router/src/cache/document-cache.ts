@@ -276,6 +276,13 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return next();
     }
 
+    // Location state is already set for this request (a document redirect's
+    // cookie, an earlier middleware): the response is the visitor's, so a
+    // stored body must not answer it, and it is not stored.
+    if ((requestCtx._locationState?.length ?? 0) > 0) {
+      return next();
+    }
+
     // The write gate's start (#977) and the entry's stamp (#1068): the
     // request's, not this middleware's, also for a stale refresh. A
     // middleware ahead of this one can read tagged data the document bakes,

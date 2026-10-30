@@ -116,6 +116,7 @@ import {
 } from "../browser/react/location-state-shared.js";
 import {
   buildHistoryState,
+  applyDocumentLocationState,
   clearLocationStateOnDocumentLoad,
   pushHistoryWithIdx,
   resolveNavigationState,
@@ -272,6 +273,25 @@ export interface RenderRouteOptions {
    * });
    */
   locationState?: ReadonlyArray<
+    readonly [LocationStateDefinition<any, any>, unknown]
+  >;
+  /**
+   * Location state the document response carries, as `[def, value]` pairs:
+   * what a handler, middleware or no-JS form action set with
+   * `ctx.setLocationState()` (or a document redirect carried) for this page
+   * load. Merged into the entry at start-up as initBrowserApp merges the
+   * bootstrap payload's: after `locationState` and, with `hydrate: true`,
+   * after the `clearOnReload` pass, so a `clearOnReload` slot given here is
+   * applied. With `hydrate: true` a reader hydrates as `undefined` and gets
+   * the value once the root has hydrated.
+   *
+   * @example
+   * await renderRoute([{ path: "/", Component: FlashBanner }], {
+   *   hydrate: true,
+   *   documentLocationState: [[FlashMessage, { text: "Payment declined" }]],
+   * });
+   */
+  documentLocationState?: ReadonlyArray<
     readonly [LocationStateDefinition<any, any>, unknown]
   >;
   /**
@@ -510,6 +530,19 @@ export interface TestRouterHandle {
 /** Result of renderRoute: RTL's render result plus the router handle. */
 export type RenderRouteResult = RenderResult & { router: TestRouterHandle };
 
+/** `[def, value]` seeds as `history.state` slots, each def keyed. */
+function locationStateSlots(
+  seeds:
+    | ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>
+    | undefined,
+): Record<string, unknown> {
+  const slots: Record<string, unknown> = {};
+  for (const [def, value] of seeds ?? []) {
+    slots[withLocationStateKey(def).__rsc_ls_key] = value;
+  }
+  return slots;
+}
+
 /** Result of renderRoute with `hydrate: true`. */
 export type RenderRouteHydrateResult = RenderRouteResult & {
   /** The HTML the server pass produced, as placed in the container. */
@@ -743,14 +776,15 @@ export async function renderRoute(
     // The tree has no app version (its bridge reports none), so a seed needs
     // none either. Reset what an initBrowserApp in the same file may have left.
     setLocationStateVersion(undefined);
-    const stateObj: Record<string, unknown> = {};
-    for (const [def, value] of options.locationState ?? []) {
-      stateObj[withLocationStateKey(def).__rsc_ls_key] = value;
-    }
-    window.history.replaceState(stateObj, "");
+    window.history.replaceState(locationStateSlots(options.locationState), "");
     // Hydrate mode is a document load of the seeded entry: run start-up's
-    // step (initBrowserApp), not a copy of it.
+    // steps (initBrowserApp), not a copy of them.
     if (options.hydrate) clearLocationStateOnDocumentLoad();
+    if (options.documentLocationState) {
+      applyDocumentLocationState(
+        locationStateSlots(options.documentLocationState),
+      );
+    }
   }
 
   const resolve = (pathname: string): ResolvedMatch => {

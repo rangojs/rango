@@ -340,14 +340,23 @@ export function interceptRedirectForPartial(
 /**
  * Attach location state set during a request to a payload's metadata.
  * No-op if no location state was set. Callers must ensure payload.metadata
- * is populated (the non-null assertion holds for the partial/action payloads
- * that reach this helper).
+ * is populated. A `document` payload (a page load's or a no-JS form post's
+ * bootstrap payload) that carries state marks the request
+ * `_documentLocationState`: it is the visitor's, so no shared cache keeps it
+ * (server/document-location-state.ts).
  */
-export function attachLocationStateIfPresent(payload: RscPayload): void {
+export function attachLocationStateIfPresent(
+  payload: RscPayload,
+  document = false,
+): void {
   const locationState = getLocationState();
-  if (locationState) {
+  if (locationState && locationState.length > 0) {
     payload.metadata!.locationState =
       resolveLocationStateEntries(locationState);
+    if (document) {
+      const ctx = _getRequestContext();
+      if (ctx) ctx._documentLocationState = true;
+    }
   }
 }
 

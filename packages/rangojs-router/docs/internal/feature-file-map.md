@@ -42,12 +42,19 @@ readers and writers; importable from server code) and
 [`browser/react/location-state.ts`](../../src/browser/react/location-state.ts)
 (`useLocationState`). How a slot reaches or leaves `history.state` is owned by
 [`browser/history-state.ts`](../../src/browser/history-state.ts): navigation
-state resolution, server-set state merging, and the start-up removal of
+state resolution, server-set state merging, the start-up removal of
 `clearOnReload` slots and of the entry's intercept marks (a document load is
-never an intercept), which
+never an intercept) and the start-up merge of the state a document response
+carried (`applyDocumentLocationState`), which
 [`browser/rsc-router.tsx`](../../src/browser/rsc-router.tsx) (`initBrowserApp`)
 and [`testing/render-route.tsx`](../../src/testing/render-route.tsx) (`hydrate`
-mode) both call. Key injection is the Vite plugin's
+mode) both call. Location state on a document response is carried across a document
+redirect by
+[`server/document-location-state.ts`](../../src/server/document-location-state.ts)
+(the one-shot cookie: written in `finalizeRequestResponse`, read in
+`runRequestPasses`, both in
+[`rsc/request-stages.ts`](../../src/rsc/request-stages.ts), and the
+`private, no-store` mark). Key injection is the Vite plugin's
 ([`vite/plugins/expose-ids/handler-transform.ts`](../../src/vite/plugins/expose-ids/handler-transform.ts));
 [`testing/location-state-key.ts`](../../src/testing/location-state-key.ts) is
 its stand-in for unit tests.
