@@ -1,7 +1,7 @@
 /**
  * A prefetch the browser shares between source pages renders the same on
  * every page that adopts it (#1331), through serveShellRequest and the
- * browser's own prefetch cache and reconcile step (helpers/prefetch-browser.ts).
+ * browser's prefetch cache and commit (helpers/prefetch-browser.ts).
  *
  * Segment ids are positional, so a page holds its own copy of an id another
  * page holds too. A partial answer keeps (omits) the segments the server
@@ -15,10 +15,16 @@
  * The property: for pages A, B and a target T, if the prefetch of T made on
  * A is shared, the tree B builds from it is the tree B builds from its own
  * request. Enumerated over every (A, B, T) of the fixture
- * (fixtures/source-independence-router.tsx). One difference is allowed and
- * counted: a segment A's answer sends that B's request keeps. B then shows
- * the target's fresh render where its own request keeps B's copy, which is
- * what a held layout's contract leaves open, not a copy of another page.
+ * (fixtures/source-independence-router.tsx), with B loaded as a document,
+ * with T in the tab's history (the click sends the entry's ids and commits
+ * over it), and with B reached by a client navigation from any page of its
+ * family (B may then hold copies a document load of its URL does not, and
+ * may sit at A's URL, where it adopts A's source-scoped prefetch). One
+ * difference is
+ * allowed and counted: a segment A's answer sends that B's request keeps,
+ * when it renders what T's own document renders for that id. B then shows
+ * T's fresh render where its own request keeps B's copy, which a held
+ * layout's contract leaves open.
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -33,13 +39,17 @@ vi.mock(
 
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
+import { isInterceptOnlyCache } from "../../browser/intercept-utils.js";
 import type { ResolvedSegment } from "../../types.js";
 import {
   adoptPrefetch,
-  applyAnswer,
+  commitAnswer,
   createPrefetchBrowser,
+  historyBase,
   loadScreen,
+  renderedOf,
   renderedTree,
+  request,
   requestFrom,
   resetPrefetchCache,
   storePrefetchOf,
@@ -72,21 +82,47 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const VARIANTS = [
+  ["the clientUrls() group", ""],
+  ["prerendered server routes", "/baked"],
+  ["cache() routes", "/cached"],
+] as const;
+
 describe("the #1331 report, as it showed on the live app", () => {
   beforeAll(async () => {
     await resetShellTestState();
     await warm();
   });
 
-  it.each([
-    ["the clientUrls() group", ""],
-    ["prerendered server routes", "/baked"],
-    ["cache() routes", "/cached"],
-  ])(
+  it.each(VARIANTS)(
     "%s: a product prefetched on search and clicked from a category page shows no hero, nor does /cart after it",
     async (_, base) => {
       const tab = createPrefetchBrowser(serve);
       await tab.load(`${base}/search?text=kenwood`);
+      await tab.prefetch(`${base}/p1.html`);
+
+      const category = await tab.click(`${base}/c/speakers`);
+      const product = await tab.click(`${base}/p1.html`);
+      const productHeroes = await heroOf(product.screen.segments);
+      const cart = await tab.click(`${base}/cart`);
+      expect({
+        category: await heroOf(category.screen.segments),
+        product: productHeroes,
+        cart: await heroOf(cart.screen.segments),
+      }).toEqual({
+        category: ["hero:speakers"],
+        product: [],
+        cart: [],
+      });
+    },
+  );
+
+  it.each(VARIANTS)(
+    "%s: a product visited before, prefetched on search and clicked from a category page, shows no hero",
+    async (_, base) => {
+      const tab = createPrefetchBrowser(serve);
+      await tab.load(`${base}/p1.html`);
+      await tab.click(`${base}/search?text=kenwood`);
       await tab.prefetch(`${base}/p1.html`);
 
       const category = await tab.click(`${base}/c/speakers`);
@@ -135,32 +171,51 @@ function describeDiff(
 }
 
 describe("a shared prefetch renders the same on every source page", () => {
-  it("every (A, B, T): the prefetch of T made on A, adopted on B, renders as B's own navigation to T", async () => {
+  const screens = new Map<string, Screen>();
+  const prefetches = new Map<string, Fetched | undefined>();
+  const directs = new Map<string, Fetched>();
+  const memo = async <T,>(
+    map: Map<string, T>,
+    key: string,
+    make: () => Promise<T>,
+  ): Promise<T> => {
+    if (!map.has(key)) map.set(key, await make());
+    return map.get(key)!;
+  };
+
+  beforeAll(async () => {
     await resetShellTestState();
     await warm();
-    // A prefetch holding an id the page lacks: the reconciler warns, and
-    // the browser refetches (counted below).
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    const screens = new Map<string, Screen>();
     for (const page of PAGES) {
       screens.set(page, await loadScreen(serve, page));
     }
-    const prefetches = new Map<string, Fetched | undefined>();
-    const directs = new Map<string, Fetched>();
-    const memo = async <T,>(
-      map: Map<string, T>,
-      key: string,
-      make: () => Promise<T>,
-    ): Promise<T> => {
-      if (!map.has(key)) map.set(key, await make());
-      return map.get(key)!;
-    };
+  });
 
+  /** B as one of the property's axes builds it. */
+  interface PageB {
+    label: string;
+    screen: Screen;
+  }
+
+  /**
+   * Run the property over every (A, B, T), B from `pagesB`, T in the tab's
+   * history when `fromHistory`. `sameSourceUrl` keeps the triples where B is
+   * at A's URL: a document B is then A itself, a navigated B is the same URL
+   * reached another way.
+   */
+  async function property(
+    pagesB: readonly PageB[],
+    fromHistory: boolean,
+    sameSourceUrl = false,
+  ): Promise<void> {
+    // A prefetch holding an id the page lacks: the reconciler warns, and
+    // the browser refetches (counted below).
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     const counts = {
       triples: 0,
       sourceScoped: 0,
       refetched: 0,
+      sourceAdopted: 0,
       equal: 0,
       fresher: 0,
       different: 0,
@@ -170,39 +225,60 @@ describe("a shared prefetch renders the same on every source page", () => {
     const diffs: { size: number; text: string }[] = [];
 
     for (const target of PAGES) {
+      const targetHref = screens.get(target)!.href;
+      const own = new Map(
+        await Promise.all(
+          screens
+            .get(target)!
+            .segments.map(async (s) => [s.id, await renderedOf(s)] as const),
+        ),
+      );
+      const entry = fromHistory ? screens.get(target)!.segments : undefined;
       for (const a of PAGES) {
         if (a === target) continue;
         const screenA = screens.get(a)!;
         const prefetched = (await memo(prefetches, `${a}\0${target}`, () =>
           requestFrom(serve, screenA, target, "prefetch"),
         ))!;
-        for (const b of PAGES) {
-          if (b === a || b === target) continue;
+        for (const b of pagesB) {
+          const screenB = b.screen;
+          if (screenB.href === targetHref) continue;
+          if (!sameSourceUrl && screenB.href === screenA.href) continue;
           counts.triples++;
-          const triple = `(A ${a}, B ${b}, T ${target})`;
-          const screenB = screens.get(b)!;
+          const triple = `(A ${a}, B ${b.label}, T ${target}${fromHistory ? ", T in history" : ""})`;
+          const ids = entry ? entry.map((s) => s.id) : screenB.matched;
           resetPrefetchCache();
           storePrefetchOf(screenA, target, prefetched);
-          const adopted = await adoptPrefetch(screenB, target);
+          const adopted = await adoptPrefetch(screenB, target, ids);
           if (prefetched.scope === "source") {
-            // The cache never hands a source-scoped answer to another page.
-            expect(adopted, triple).toBeNull();
-            counts.sourceScoped++;
-            continue;
+            // A source-scoped answer is keyed by the source URL and the ids
+            // its request sent: only a page at A's URL holding A's ids adopts
+            // it, and that request is what B's own would send.
+            const adoptable =
+              screenB.href === screenA.href &&
+              ids.join() === screenA.matched.join();
+            expect(adopted === null, triple).toBe(!adoptable);
+            if (!adopted) {
+              counts.sourceScoped++;
+              continue;
+            }
+            counts.sourceAdopted++;
+          } else {
+            expect(adopted, triple).not.toBeNull();
           }
-          expect(adopted, triple).not.toBeNull();
-          const fromPrefetch = applyAnswer(adopted!, screenB);
+          const base = entry ? historyBase(entry, screenB.segments) : undefined;
+          const fromPrefetch = commitAnswer(adopted!, screenB, base);
           if (fromPrefetch === "missing") {
             counts.refetched++;
             continue;
           }
           const direct = await memo(
             directs,
-            `${b}\0${target}`,
+            `${b.label}\0${target}\0${fromHistory}`,
             async () =>
-              (await requestFrom(serve, screenB, target, "navigation"))!,
+              (await request(serve, screenB.href, ids, target, "navigation"))!,
           );
-          const fromDirect = applyAnswer(direct.answer, screenB);
+          const fromDirect = commitAnswer(direct.answer, screenB, base);
           expect(fromDirect, `${triple}: B's own answer`).not.toBe("missing");
           if (fromDirect === "missing") continue;
           const adoptedTree = await renderedTree(fromPrefetch);
@@ -213,13 +289,15 @@ describe("a shared prefetch renders the same on every source page", () => {
             continue;
           }
           // Where each adopted segment came from: B's copy, or A's answer.
-          const held = new Set(screenB.segments);
+          const held = new Set(base ?? screenB.segments);
           const fresher =
             sameShape &&
             fromPrefetch.every(
               (s, i) =>
                 adoptedTree[i] === directTree[i] ||
-                (!held.has(s) && held.has(fromDirect[i]!)),
+                (!held.has(s) &&
+                  held.has(fromDirect[i]!) &&
+                  own.get(s.id) === adoptedTree[i]),
             );
           if (fresher) {
             counts.fresher++;
@@ -240,7 +318,7 @@ describe("a shared prefetch renders the same on every source page", () => {
     }
 
     process.stdout.write(
-      `[source-independence] ${PAGES.length} pages: ${JSON.stringify(counts)}\n`,
+      `[source-independence] ${PAGES.length} pages, ${pagesB.length} B${fromHistory ? ", T in history" : ""}: ${JSON.stringify(counts)}\n`,
     );
     const report = diffs
       .sort((x, y) => x.size - y.size)
@@ -253,5 +331,67 @@ describe("a shared prefetch renders the same on every source page", () => {
     ).toEqual([]);
     expect(counts.equal).toBeGreaterThan(0);
     expect(counts.sourceScoped).toBeGreaterThan(0);
+    if (sameSourceUrl) expect(counts.sourceAdopted).toBeGreaterThan(0);
+  }
+
+  const documentPages = (): PageB[] =>
+    PAGES.map((page) => ({ label: page, screen: screens.get(page)! }));
+
+  it(
+    "every (A, B, T): the prefetch of T made on A, adopted on B, renders as B's own navigation to T",
+    () => property(documentPages(), false),
+    60_000,
+  );
+
+  it(
+    "every (A, B, T), T in the tab's history: the click sends the entry's ids and commits over it",
+    () => property(documentPages(), true),
+    60_000,
+  );
+
+  /** Every click between two pages of one family. */
+  const navigations = (): [string, string][] =>
+    Object.values(SOURCE_INDEPENDENCE_URLS).flatMap((urls) =>
+      urls.flatMap((from) =>
+        urls
+          .filter((to) => to !== from)
+          .map((to): [string, string] => [from, to]),
+      ),
+    );
+
+  /**
+   * B reached by a client navigation keeps the copies of the segments the
+   * page it came from held, so it can differ from the document load of its
+   * URL. A navigated B that renders and matches as that document load is the
+   * document axis's B, and is left out: the property runs over the ones that
+   * differ, which is where the axis can find what the document axis cannot.
+   */
+  it("every (A, B, T), B reached by a client navigation from another page of its family", async () => {
+    const navigated: PageB[] = [];
+    let clicks = 0;
+    let intercepts = 0;
+    for (const [from, to] of navigations()) {
+      const tab = createPrefetchBrowser(serve);
+      await tab.load(from);
+      const { screen } = await tab.click(to);
+      clicks++;
+      // A click on an intercept screen sends interceptSourceUrl, which the
+      // navigation client never serves a prefetch for (canUsePrefetch).
+      if (isInterceptOnlyCache(screen.segments)) {
+        intercepts++;
+        continue;
+      }
+      const loaded = screens.get(to)!;
+      const sameScreen =
+        loaded.matched.join() === screen.matched.join() &&
+        (await renderedTree(loaded.segments)).join("\n") ===
+          (await renderedTree(screen.segments)).join("\n");
+      if (!sameScreen) navigated.push({ label: `${from} -> ${to}`, screen });
+    }
+    process.stdout.write(
+      `[source-independence] ${clicks} navigations: ${intercepts} intercept screens, ${navigated.length} B differing from the document load of their URL, ${clicks - intercepts - navigated.length} equal to it\n`,
+    );
+    expect(navigated.length).toBeGreaterThan(0);
+    await property(navigated, false, true);
   }, 60_000);
 });

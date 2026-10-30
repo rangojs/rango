@@ -362,13 +362,28 @@ The public DOM seam is
   `revalidate()` it skipped, or the route's own segments on a search-only
   change. Two tests lock the class:
   [source-independence.rsc-test.tsx](../../src/testing/__tests__/source-independence.rsc-test.tsx)
-  adopts every shared prefetch of its fixture on every other page and
-  compares the tree with that page's own navigation, through
-  `serveShellRequest` and the browser's prefetch cache and reconciler
-  ([helpers/prefetch-browser.ts](../../src/testing/__tests__/helpers/prefetch-browser.ts));
+  adopts every shared prefetch of its fixture on every other page (loaded
+  as a document, reached by a client navigation from any page of its family
+  (including a page at the source's URL, which adopts the source's
+  source-scoped prefetch), or with the target in the tab's history) and compares the tree with that page's own
+  navigation,
+  through `serveShellRequest`, the prefetch cache's slot choice and lookup
+  (`prefetchStorageSlot` in `browser/prefetch/fetch.ts`,
+  `consumeStoredPrefetch` in `browser/navigation-client.ts`) and
+  `reconcileSegments`
+  ([helpers/prefetch-browser.ts](../../src/testing/__tests__/helpers/prefetch-browser.ts)).
+  The commit and the history-entry merge it restates
+  ([helpers/browser-commit.ts](../../src/testing/__tests__/helpers/browser-commit.ts))
+  live in hook-locked files;
+  [prefetch-browser-commit.test.tsx](../../src/testing/__tests__/prefetch-browser-commit.test.tsx)
+  pins them to the real bridge and partial updater. The request URL the
+  keys derive from
+  ([helpers/fetch-url.ts](../../src/testing/__tests__/helpers/fetch-url.ts))
+  is pinned to the navigation client's own request by
+  [browser/**tests**/wire-urls.test.ts](../../src/browser/__tests__/wire-urls.test.ts).
   [revalidate-args-sources.test.ts](../../src/router/__tests__/revalidate-args-sources.test.ts)
-  classes every `revalidate()` argument and fails on a source field that is
-  not a read-noting getter.
+  runs a predicate for one destination from two source pages and fails on
+  any field that differs without being a read-noting getter.
 - `prefetch: false` is owned by
   [router/segment-resolution/prefetch-deferral.ts](../../src/router/segment-resolution/prefetch-deferral.ts)
   (the per-route plan: which loaders and handler units a prefetch defers,
