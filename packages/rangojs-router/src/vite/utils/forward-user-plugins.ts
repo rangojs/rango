@@ -37,6 +37,17 @@ function isDenied(name: string): boolean {
 }
 
 /**
+ * Drop the framework-owned plugins (isDenied) from an unresolved plugin list,
+ * so `rango generate --runtime` can resolve the user's config for its
+ * resolvers' `config`/`configResolved` without running rango()'s
+ * configResolved (it writes the static gen files) or re-initializing
+ * @vitejs/plugin-rsc and @cloudflare/vite-plugin. None of these is forwarded.
+ */
+export function withoutFrameworkPlugins(plugins: readonly Plugin[]): Plugin[] {
+  return plugins.filter((p) => !p?.name || !isDenied(p.name));
+}
+
+/**
  * Transform-only plugins forwarded with their `transform` hook. A plugin
  * belongs here only if its transform changes the code or imports discovery
  * evaluates, and reads only state built at construction or in
@@ -71,21 +82,22 @@ function isForwardable(p: Plugin): boolean {
  * rewriter's `transform`) plus the gating fields that decide whether/where it
  * runs.
  *
- * We reuse the SAME instance objects captured from `config.plugins`. By the
- * time `configResolved` fires on the discovery plugin, every plugin's own
- * `config`/`configResolved` has already run on the main server, so any state
- * a `resolveId` hook depends on (e.g. vite-tsconfig-paths' compiled path
- * matcher, held in closure) is already populated. Forwarding only the
- * resolution hooks therefore preserves correct resolution while avoiding a
- * second `buildStart`/`configureServer`/`config` lifecycle in the temp server.
+ * We reuse the SAME instance objects captured from a resolved `config.plugins`.
+ * Every plugin's own `config`/`configResolved` has already run there (on the
+ * main server by the time the discovery plugin's `configResolved` fires; in
+ * `rango generate --runtime`'s own resolveConfig), so any state a `resolveId`
+ * hook depends on (e.g. vite-tsconfig-paths' compiled path matcher, held in
+ * closure) is already populated. Forwarding only the resolution hooks
+ * therefore preserves correct resolution while avoiding a second
+ * `buildStart`/`configureServer`/`config` lifecycle in the temp server.
  *
  * `enforce` and `applyToEnvironment` are preserved so ordering and per-environment
  * gating match the real pipeline.
  *
  * `apply` is intentionally dropped. Vite filters plugins by `apply` against the
  * command during config resolution, so the `config.plugins` we read here is
- * already command-filtered by the main server (build: `apply: "build"` +
- * unconditional; dev: `apply: "serve"` + unconditional). The discovery temp
+ * already command-filtered (build: `apply: "build"` + unconditional; dev and
+ * `rango generate --runtime`: `apply: "serve"` + unconditional). The discovery temp
  * server is always created with `createServer` (`command === "serve"`), so a
  * forwarded `apply: "build"` plugin would be filtered straight back out -- even
  * during a production build, where build-only resolvers are exactly what
@@ -105,7 +117,7 @@ function stripToResolutionHooks(p: Plugin): Plugin {
 }
 
 /**
- * Pick the user's resolution plugins from the resolved plugin list, denylist
+ * Pick the user's resolution plugins from a resolved plugin list, denylist
  * framework-owned plugins, keep only those with resolution hooks, and strip
  * each to its resolution surface. Returns plugin objects safe to drop into the
  * discovery temp server's `plugins` array.
@@ -139,8 +151,9 @@ export interface ForwardedRunnerConfig {
 /**
  * Extract the data-only config slice to mirror into the discovery temp server.
  * `alias` is included here so callers no longer need to thread it separately.
- * Accepts the unresolved config too: `rango generate --runtime` must not
- * resolve it (that runs rango()'s configResolved, which writes gen files).
+ * Accepts the unresolved config too: `rango generate --runtime` passes its
+ * loaded config file, since it resolves the config only for its plugins,
+ * without the framework plugins whose `config` hooks shape the resolved slice.
  *
  * `tsconfigPaths` is forwarded so Vite 8's native tsconfig `paths` resolution
  * (a top-level `resolve` flag, off by default) reaches the temp server. The

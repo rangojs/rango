@@ -4,11 +4,12 @@ import {
   cpSync,
   mkdtempSync,
   mkdirSync,
+  renameSync,
   symlinkSync,
   writeFileSync,
   rmSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import {
@@ -30,6 +31,15 @@ function namedRoutesGenPathFor(filePath: string): string {
   return filePath.replace(/\.tsx?$/, ".named-routes.gen.ts");
 }
 
+// Runtime discovery scans its root for clientUrls() modules, as `vite dev`
+// does; the package root would pull in the e2e apps' modules.
+const runtimeRoots: string[] = [];
+function runtimeRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "rango-runtime-root-"));
+  runtimeRoots.push(root);
+  return root;
+}
+
 afterEach(() => {
   for (const f of generatedFiles) {
     try {
@@ -37,6 +47,10 @@ afterEach(() => {
     } catch {}
   }
   generatedFiles.length = 0;
+  for (const root of runtimeRoots) {
+    rmSync(root, { recursive: true, force: true });
+  }
+  runtimeRoots.length = 0;
 });
 
 describe("generate-cli e2e fixtures", () => {
@@ -529,7 +543,7 @@ describe("basename fixture", () => {
     const srcDir = join(packageRoot, "src");
 
     await discoverAndWriteRouteTypes({
-      root: packageRoot,
+      root: runtimeRoot(),
       entry: join(basenameFixtureDir, "router.tsx"),
       resolveAlias: {
         "@rangojs/router/server": join(srcDir, "server.ts"),
@@ -553,15 +567,6 @@ describe("basename fixture", () => {
 // ---------------------------------------------------------------------------
 
 describe("factory fixture", () => {
-  // Runtime discovery scans its root for clientUrls() modules, as `vite dev`
-  // does; the package root would pull in the e2e apps' modules.
-  const runtimeRoots: string[] = [];
-  function runtimeRoot(): string {
-    const root = mkdtempSync(join(tmpdir(), "rango-runtime-root-"));
-    runtimeRoots.push(root);
-    return root;
-  }
-
   afterEach(() => {
     // Clean up gen files in factory fixture
     const possibleGens = [
@@ -574,10 +579,6 @@ describe("factory fixture", () => {
         rmSync(f, { force: true });
       } catch {}
     }
-    for (const root of runtimeRoots) {
-      rmSync(root, { recursive: true, force: true });
-    }
-    runtimeRoots.length = 0;
   });
 
   it("produces partial gen file with API routes but no docs routes", () => {
@@ -835,6 +836,32 @@ export default clientUrls(({ path }) => [
     expect(
       readFileSync(join(fixtureDir, "second.named-routes.gen.ts"), "utf-8"),
     ).toContain('second: "/second",');
+  }, 30_000);
+
+  it("--runtime forwards a resolver that initializes in configResolved, and no apply: build resolver", () => {
+    // rango-t233: forwarded resolvers ran without their config/configResolved
+    // hooks (vite-tsconfig-paths builds its matchers there), and `apply:
+    // "build"` resolvers were forwarded to this serve run. The build-only
+    // resolver comes first, so it would win if forwarded.
+    const fixtureDir = cloneFixtureDir("app-with-config-resolver");
+    const projectRoot = dirname(fixtureDir);
+    renameSync(
+      join(fixtureDir, "vite.config.ts"),
+      join(projectRoot, "vite.config.ts"),
+    );
+    const { VITEST: _vitest, ...env } = process.env;
+    const result = runRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+      env,
+    );
+    expect(result.combined).not.toContain("Could not");
+    expect(result.status).toBe(0);
+
+    const content = readFileSync(
+      join(fixtureDir, "router.named-routes.gen.ts"),
+      "utf-8",
+    );
+    expect(content).toContain('marked: "/from-config-resolved",');
   }, 30_000);
 
   it("--runtime leaves no gen file behind for a router whose discovery fails", () => {
