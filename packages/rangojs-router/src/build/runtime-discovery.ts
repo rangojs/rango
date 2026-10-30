@@ -37,10 +37,12 @@ export async function discoverAndWriteRouteTypes(
   outputFiles: string[];
 }> {
   let loadConfigFromFile: typeof import("vite").loadConfigFromFile;
+  let resolveConfig: typeof import("vite").resolveConfig;
 
   try {
     const vite = await import("vite");
     loadConfigFromFile = vite.loadConfigFromFile;
+    resolveConfig = vite.resolveConfig;
   } catch {
     throw new Error(
       "Runtime discovery requires 'vite'. Install it with: pnpm add -D vite",
@@ -59,14 +61,19 @@ export async function discoverAndWriteRouteTypes(
   const { createDiscoveryState } = await import("../vite/discovery/state.js");
   const { discoverClientUrlProjections } =
     await import("../vite/discovery/client-urls-projection.js");
-  const { pickForwardedRunnerConfig, selectForwardableResolvePlugins } =
-    await import("../vite/utils/forward-user-plugins.js");
+  const {
+    isFrameworkPlugin,
+    pickForwardedRunnerConfig,
+    selectForwardableResolvePlugins,
+  } = await import("../vite/utils/forward-user-plugins.js");
 
   // The discovery temp server of `vite dev/build` (expose-internal-ids, the
   // cloudflare:* stubs, the user's resolver plugins and resolve/define/oxc).
-  // The config stays unresolved: resolving it would run rango()'s
-  // configResolved, which writes the static gen files. Forwarded resolvers
-  // therefore run without their own config/configResolved hooks.
+  // Resolver plugins are forwarded from a resolved config, as `vite dev` does:
+  // vite-tsconfig-paths and the like build their matchers in config /
+  // configResolved, and resolving drops `apply: "build"` plugins. The
+  // framework plugins are left out of that resolve: rango()'s configResolved
+  // writes the static gen files.
   const entryPath = resolve(opts.entry);
   const state = createDiscoveryState(entryPath, undefined);
   state.projectRoot = opts.root;
@@ -80,9 +87,33 @@ export async function discoverAndWriteRouteTypes(
       );
       if (loaded) {
         state.userRunnerConfig = pickForwardedRunnerConfig(loaded.config);
-        state.userResolvePlugins = selectForwardableResolvePlugins(
-          await flattenPluginOptions(loaded.config.plugins),
-        );
+        const userPlugins = (
+          await flattenPluginOptions(loaded.config.plugins)
+        ).filter((p) => !isFrameworkPlugin(p.name ?? ""));
+        try {
+          // The temp server's root, so a resolver's root-relative state
+          // matches the server it runs in.
+          const resolved = await resolveConfig(
+            {
+              ...loaded.config,
+              root: opts.root,
+              configFile: false,
+              plugins: userPlugins,
+            },
+            "serve",
+            "development",
+          );
+          state.userResolvePlugins = selectForwardableResolvePlugins(
+            resolved.plugins,
+          );
+        } catch (err: any) {
+          console.warn(
+            `[rango] Could not resolve the Vite config (${err?.message ?? err}); forwarding its resolver plugins without their config hooks`,
+          );
+          state.userResolvePlugins = selectForwardableResolvePlugins(
+            userPlugins.filter((p) => p.apply !== "build"),
+          );
+        }
       }
     } catch (err: any) {
       // Discovery without the app's resolvers fails later on an unrelated
