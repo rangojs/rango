@@ -78,6 +78,12 @@ export interface MiddlewareContext<
 
   setTheme?: (theme: Theme) => void;
 
+  /**
+   * Attach location state entries to this response (see the handler
+   * context's `setLocationState`). Entries accumulate across definitions;
+   * for one definition the last write wins. Set it here rather than in a
+   * handler on a `ppr` route: a shell HIT runs no handler.
+   */
   setLocationState(entries: LocationStateEntry | LocationStateEntry[]): void;
 
   /** Global route names only; see {@link GlobalReverseFunction}. */

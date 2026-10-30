@@ -25,6 +25,7 @@ import type { RscPayload, ReactFormState } from "./types.js";
 import type { MatchResult } from "../types.js";
 import {
   actionRenderRequest,
+  attachLocationStateIfPresent,
   createResponseWithMergedHeaders,
   finalizeResponse,
   buildRouteMiddlewareEntries,
@@ -448,6 +449,10 @@ function renderPeResponse<TEnv>(
     // slot instead of failing the payload root and the whole document.
     ...(reactFormState ? { formState: Promise.resolve(reactFormState) } : {}),
   };
+  // The action's location state rides the re-rendered document's bootstrap
+  // payload, as a JS action's rides its response. Not on a failure render,
+  // like the JS path.
+  if (!failure) attachLocationStateIfPresent(payload, true);
 
   const trace = getRequestContext()._activeRoutine;
 

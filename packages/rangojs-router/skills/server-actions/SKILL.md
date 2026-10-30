@@ -645,6 +645,14 @@ Redirects from actions render the **target** route tree's matched segments
 source page's — the target is what the user sees next. See `/hooks
 useLocationState` for reading flash state on the target page.
 
+The same holds for a form posted without JS (or before hydration): an action
+that redirects with `state` carries it to the target in a one-shot cookie,
+and one that sets it with `getRequestContext().setLocationState()` and does
+not redirect carries it in the re-rendered page. Either way the target reads
+it with `useLocationState` once it has hydrated. Prefer a `303` redirect, so a
+refresh does not post the form again. State that crosses a no-JS redirect
+travels as JSON (see `/hooks` `state.md`, "State on a document response").
+
 Build the target by name rather than a literal path:
 `throw redirect(getRequestContext().reverse("account.settings"))`. It fills
 mount params (`:accountId`, `:locale`) from the page URL the action was called

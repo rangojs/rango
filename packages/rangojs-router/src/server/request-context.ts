@@ -680,12 +680,22 @@ export interface RequestContext<
   /**
    * Attach location state entries to the current response.
    *
-   * For partial (SPA) requests, the state is included in the RSC payload
-   * metadata and merged into history.pushState on the client. For redirect
-   * responses, the state travels through the redirect payload so the target
-   * page can read it via useLocationState.
+   * For a client navigation or an action, the state is included in the RSC
+   * payload metadata and merged into the entry's history.state on the
+   * client. For a document request (a page load, a no-JS form post), it rides
+   * the document's bootstrap payload and is merged into the entry when the
+   * client starts; readers get it once the page has hydrated. For a redirect,
+   * the state travels with the redirect: in its Flight payload on a
+   * navigation or action, in a one-shot cookie the target's document request
+   * reads on a document request. A document that carries state is sent
+   * `Cache-Control: private, no-store` and never stored by the document cache
+   * or as a PPR shell.
    *
-   * Multiple calls accumulate entries.
+   * Multiple calls accumulate entries across definitions. For one definition
+   * the last write wins: two entries of the same definition share its slot
+   * in history.state, so a later call (or a later entry in one array)
+   * replaces an earlier one. To combine writes, make the state an array and
+   * write it once.
    *
    * @example
    * ```typescript
@@ -696,6 +706,14 @@ export interface RequestContext<
 
   /** @internal Accumulated location state entries */
   _locationState?: LocationStateEntry[];
+
+  /**
+   * @internal Set when a document's payload carries location state
+   * (rsc/rsc-rendering.ts, rsc/progressive-enhancement.ts), a shell HIT's
+   * included. The document is per visitor: the document cache refuses it,
+   * and it leaves `private, no-store` (server/document-location-state.ts).
+   */
+  _documentLocationState?: boolean;
 
   /**
    * The matched route name, if the route has an explicit name.
@@ -1006,6 +1024,7 @@ export type PublicRequestContext<
   | "_requestKind"
   | "_payloadVisitorLocation"
   | "_locationState"
+  | "_documentLocationState"
   | "_routeName"
   | "_prevRouteKey"
   | "_visitorMoved"

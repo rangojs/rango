@@ -84,6 +84,11 @@ import {
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
 import { WIRE } from "../wire-params.js";
+import {
+  carryLocationStateAcrossRedirect,
+  consumeDocumentLocationState,
+  markDocumentResponsePrivate,
+} from "../server/document-location-state.js";
 
 /**
  * The router members the stages read. The handler's `RangoInternal` carries
@@ -96,6 +101,8 @@ export interface StageRouter<TEnv = unknown> {
   readonly telemetry?: TelemetrySink;
   readonly timeouts?: ResolvedTimeouts;
   readonly onTimeout?: OnTimeoutCallback<TEnv>;
+  /** Names the cookie location state crosses a document redirect in. */
+  readonly resolvedStateCookieName: string;
 }
 
 /** Report an error through the router's onError. */
@@ -409,6 +416,14 @@ export async function runRequestPasses<TEnv>(
   opts: RequestPassesOptions<TEnv>,
 ): Promise<RequestPassesResult> {
   const { ctx, env, variables } = opts;
+  // Before any middleware: a document cache lookup, a PPR shell serve and the
+  // render all see the state a document redirect carried here.
+  consumeDocumentLocationState(
+    opts.reqCtx,
+    opts.request,
+    opts.url,
+    ctx.router.resolvedStateCookieName,
+  );
   let passIndex = 0;
   let hasMiddleware = false;
   const runChain = (
@@ -707,7 +722,19 @@ export function finalizeRequestResponse<TEnv>(
   // guarding browser-followed (3xx) redirects once covers them all and any
   // future redirect exit. Soft SPA/Flight redirects are 200/204 and pass
   // through untouched (validated client-side instead).
-  const guarded = guardOutgoingRedirect(response, url.origin, router.basename);
+  // After the guard, so the cookie names the target the browser follows.
+  // A document carrying location state, or a redirect carrying it on, leaves
+  // private: set after every middleware, so none can make it shared.
+  const guarded = markDocumentResponsePrivate(
+    carryLocationStateAcrossRedirect(
+      guardOutgoingRedirect(response, url.origin, router.basename),
+      reqCtx,
+      request,
+      url,
+      router.resolvedStateCookieName,
+    ),
+    reqCtx,
+  );
 
   // Stream-idle watchdog (opt-in via timeouts.streamIdleMs): bounds
   // end-to-end idle flow on the streamed body — see rsc/stream-idle.ts

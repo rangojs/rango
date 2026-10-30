@@ -33,6 +33,60 @@ No change in your code. `prefetchKey=":source"` stays for a response that
 differs by source in ways the server cannot see; the router now scopes the
 `revalidate()`-driven case itself.
 
+### Added: location state on document responses ([#1330](https://github.com/rangojs/rango/issues/1330))
+
+**Before.** `ctx.setLocationState()` and `redirect(url, { state })` reached
+`history.state` only through client navigations and actions. A document
+response dropped the state: a `<form action={fn}>` posted without JS (or
+before hydration), a payment provider redirecting the shopper back to a
+handler, a link from an email.
+
+**Now.** A document response carries it:
+
+- a page load or no-JS form post that renders a page carries the state in
+  its bootstrap payload; the client writes it into the entry when it starts,
+  and `useLocationState` returns it once the page has hydrated (as it does
+  for stored state);
+- a document request that redirects carries the state in a one-shot cookie
+  (`<stateCookieName>-ls`, `__Host-` on https, `HttpOnly`, `SameSite=Lax`,
+  60 seconds) that the target's document request reads and clears, so a
+  refresh does not show a flash again. A prefetch or `fetch()` of the target
+  (`Sec-Fetch-Dest` other than a browsing context) leaves it to the
+  navigation. The cookie holds JSON: give state
+  that crosses a document redirect plain JSON data. State over 4000 bytes,
+  or that JSON cannot encode, is dropped with a warning;
+- such a document, and the redirect carrying the cookie, are sent
+  `Cache-Control: private, no-store`; the document cache neither stores nor
+  serves them. A `ppr` route keeps its shell: state set by middleware or the
+  cookie rides the live payload of a HIT or MISS (no shell holds it), and a
+  route whose handler sets state is not captured and renders in full.
+
+```ts
+// Works the same for a client action, a no-JS form post and a request from
+// outside the app.
+path("/checkout/callback", async (ctx) =>
+  redirect("/orders/confirmed", { state: [Flash({ text: "Paid" })] }),
+);
+```
+
+If a handler or middleware calls `setLocationState` on every request, it is
+now delivered on document loads too; a `clearOnReload` slot it sets applies
+on the load it arrived with. On a `ppr` route, set state from middleware: a
+shell HIT runs no handler. Without JS the state reaches no reader (only the
+client applies it), and a `no-store` page is kept out of the browser's
+back/forward cache. A document redirect from one router to a path another
+router on the same origin serves loses its state: each router reads only its
+own cookie.
+
+### Docs: one location-state definition keeps only its last write ([#1330](https://github.com/rangojs/rango/issues/1330))
+
+Entries accumulate across definitions, but for one definition the last write
+wins: two `setLocationState(Toasts(...))` calls in one response, or
+`redirect(url, { state: [Toasts(a), Toasts(b)] })`, deliver only the later
+value. The `setLocationState`, `createLocationState` and `redirect` JSDoc and
+the `/hooks` `state.md` skill now say so. Write an array once to combine
+messages.
+
 ## 0.31.0 (2026-10-30)
 
 ### Changed: `rango generate` reads a const `createRouter({ basename })` and stops on one it cannot read ([#1324](https://github.com/rangojs/rango/pull/1324))
