@@ -18,15 +18,19 @@ intercepts target the route by its own name and by its local name.
 **Now.** An action re-renders the intercept on screen, the one whose slot the
 page holds: its loaders re-run as after any action, and no other intercept
 opens. An open intercept still stays open after an action when its `when()`
-would now reject. When the page holds the slots of more than one of the
-route's intercepts (two that fill one slot share it, and a `parallel()` of an
-intercept's slot name holds that slot while another intercept is open),
-whether they are declared for the route's name or its local name inside
-`include()`, the action evaluates their `when()` again, with `from` the
-intercept's source page, and the first that passes renders; when none
-passes, the first of them renders. `when()` selects an intercept;
-it does not authorize one: guard data in the target route's middleware or the
-intercept's loaders. No change in your code.
+would now reject, also beside a `parallel()` default of another intercept's
+slot name. When the page holds the slots of more than one of the route's
+intercepts (two that fill one slot share it, and a `parallel()` of an
+intercept's slot name holds that slot whether or not an intercept is open
+there), whether they are declared for the route's name or its local name
+inside `include()`, the action sets aside the ones whose slot a `parallel()`
+fills and renders the one left, its `when()` not evaluated. Among several
+left, it evaluates their `when()` again, with `from` the intercept's source
+page, and the first that passes renders; when none passes, the first of them
+renders. When a `parallel()` fills every held slot, nothing but `when()` tells
+them apart, and that rule applies to all of them. `when()` selects an intercept; it does not authorize one: guard data
+in the target route's middleware or the intercept's loaders. No change in your
+code.
 
 ## 0.32.0 (2026-10-30)
 

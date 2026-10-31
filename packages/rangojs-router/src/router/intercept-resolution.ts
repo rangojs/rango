@@ -151,8 +151,11 @@ export function collectInterceptTargetNames(
  * slot's name) must not win before the local name is looked at. One held:
  * that one, when() not evaluated, so an open intercept stays open when its
  * when() would now reject. Several held (intercepts on one entry that fill one
- * slot share its id, as does a parallel() slot of that name): the first whose
- * when() passes against the action's intercept source, else the first.
+ * slot share its id, as does a parallel() slot of that name): the ones whose
+ * slot has no parallel() default on their entry, if any (a default holds its
+ * slot id whether or not an intercept is open there). One left: that one,
+ * when() not evaluated. Else the first whose when() passes against the
+ * action's intercept source, else the first.
  */
 export function findInterceptForRoute(
   targetRouteKeys: string | readonly string[],
@@ -185,9 +188,17 @@ export function findInterceptForRoute(
   });
   const open = byName.flat();
   if (open.length < 2) return open[0] ?? null;
+  // A parallel() default of the slot's name holds its slot id whichever
+  // intercept is open, so a candidate that has one proves nothing about what
+  // is on screen: among several, the ones without a default are the open ones.
+  const unshadowed = open.filter(
+    (c) => !c.entry.parallel?.[c.intercept.slotName],
+  );
+  const pool = unshadowed.length > 0 ? unshadowed : open;
+  if (pool.length === 1) return pool[0]!;
   return (
-    open.find((c) => evaluateInterceptWhen(c.intercept, selectorContext)) ??
-    open[0]!
+    pool.find((c) => evaluateInterceptWhen(c.intercept, selectorContext)) ??
+    pool[0]!
   );
 }
 

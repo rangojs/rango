@@ -13,7 +13,9 @@ import type {
  * that share that id. With no held ids (interceptTargeted in match-api.ts),
  * an action takes the first declared. Under include() a route has two names,
  * its own and its local one: a navigation tries them in turn, an action
- * collects its held intercepts under both in one walk.
+ * collects its held intercepts under both in one walk. A parallel() default
+ * holds its slot id whether or not an intercept is open, so among several
+ * held intercepts the ones filling a slot with a default do not count.
  */
 
 function intercept(
@@ -30,11 +32,16 @@ function intercept(
  */
 const SHOP_ITEM = ["shop.item", "item"] as const;
 
-function layout(intercepts: InterceptEntry[]): EntryData {
+/** `parallel` names the slots the layout has a parallel() default for. */
+function layout(
+  intercepts: InterceptEntry[],
+  parallel: `@${string}`[] = [],
+): EntryData {
   return {
     shortCode: "M0L0",
     intercept: intercepts,
     layout: [],
+    parallel: Object.fromEntries(parallel.map((slot) => [slot, {}])),
     parent: null,
   } as unknown as EntryData;
 }
@@ -208,5 +215,63 @@ describe("findInterceptForRoute", () => {
       ),
     ).toBe(drawer);
     expect(toModal).not.toHaveBeenCalled();
+  });
+
+  describe("a parallel() default holds its slot id whether or not an intercept is open", () => {
+    const held = ["M0L0", "M0L0.@modal", "M0L0.@drawer"];
+
+    it("action: the open intercept wins over a defaulted slot's, when() not evaluated", () => {
+      const toModal = from("/list");
+      const modal = intercept("@modal", [toModal]);
+      const drawer = intercept("@drawer", [() => false]);
+      const entry = layout([modal, drawer], ["@modal"]);
+      expect(select(entry, source("/other"), true, held)).toBe(drawer);
+      expect(toModal).not.toHaveBeenCalled();
+    });
+
+    it("action: the defaulted slot's intercept is not the fallback when neither when() passes", () => {
+      const modal = intercept("@modal", [from("/list")]);
+      const drawer = intercept("@drawer", [from("/other")]);
+      const entry = layout([modal, drawer], ["@modal"]);
+      expect(select(entry, source("/"), true, held)).toBe(drawer);
+    });
+
+    it("action: a defaulted slot's intercept declared after the open one does not win either", () => {
+      const drawer = intercept("@drawer", [() => false]);
+      const modal = intercept("@modal", [() => true]);
+      const entry = layout([drawer, modal], ["@modal"]);
+      expect(select(entry, source("/other"), true, held)).toBe(drawer);
+    });
+
+    it("action: two held intercepts without a default are still told apart by when()", () => {
+      const modal = intercept("@modal", [from("/list")]);
+      const drawer = intercept("@drawer", [from("/other")]);
+      const sheet = intercept("@sheet", [from("/third")]);
+      const entry = layout([modal, drawer, sheet], ["@modal"]);
+      const all = [...held, "M0L0.@sheet"];
+      expect(select(entry, source("/third"), true, all)).toBe(sheet);
+      expect(select(entry, source("/other"), true, all)).toBe(drawer);
+      // Neither passing: the first of them, not the defaulted slot's.
+      expect(select(entry, source("/"), true, all)).toBe(drawer);
+    });
+
+    it("action: every held intercept on a defaulted slot falls back to when(), then the first", () => {
+      const modal = intercept("@modal", [from("/list")]);
+      const drawer = intercept("@drawer", [from("/other")]);
+      const entry = layout([modal, drawer], ["@modal", "@drawer"]);
+      expect(select(entry, source("/other"), true, held)).toBe(drawer);
+      expect(select(entry, source("/"), true, held)).toBe(modal);
+    });
+
+    it("action: the lone held intercept of a defaulted slot is still selected, when() not evaluated", () => {
+      const toModal = from("/list");
+      const modal = intercept("@modal", [toModal]);
+      const drawer = intercept("@drawer", [from("/other")]);
+      const entry = layout([modal, drawer], ["@modal"]);
+      expect(select(entry, source("/other"), true, ["M0L0.@modal"])).toBe(
+        modal,
+      );
+      expect(toModal).not.toHaveBeenCalled();
+    });
   });
 });

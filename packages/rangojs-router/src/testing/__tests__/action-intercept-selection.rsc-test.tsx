@@ -86,6 +86,12 @@ const from =
  * - `parallel default, include names`: the same under the include, the
  *   drawer declared for the local name: the held `@modal` id is the route's
  *   own name's intercept, the drawer its local name's.
+ * - `gated drawer`: `different slots`, the drawer's `when()` also requiring
+ *   the `x-d` header the opening navigation sends and the action does not
+ *   (a selector reading something the action changes).
+ * - `parallel default, gated drawer`: that with the `parallel()` default, so
+ *   the page holds the modal's slot id and the drawer's `when()` rejects on
+ *   the action: nothing but the held ids says which intercept is open.
  */
 type Shape =
   | "different slots"
@@ -94,7 +100,9 @@ type Shape =
   | "include names"
   | "same slot, split names"
   | "parallel default"
-  | "parallel default, include names";
+  | "parallel default, include names"
+  | "gated drawer"
+  | "parallel default, gated drawer";
 
 /** Shapes mounted under `include("/", ..., { name: "shop" })`. */
 const INCLUDED: ReadonlySet<Shape> = new Set<Shape>([
@@ -107,7 +115,17 @@ const INCLUDED: ReadonlySet<Shape> = new Set<Shape>([
 const PARALLEL_DEFAULT: ReadonlySet<Shape> = new Set<Shape>([
   "parallel default",
   "parallel default, include names",
+  "parallel default, gated drawer",
 ]);
+
+/** Shapes whose drawer's `when()` also reads the `x-d` request header. */
+const GATED: ReadonlySet<Shape> = new Set<Shape>([
+  "gated drawer",
+  "parallel default, gated drawer",
+]);
+
+/** The header a gated drawer's `when()` requires. */
+const GATE_HEADER = { "x-d": "1" } as const;
 
 /** The route the intercepts open over: a live one or a Prerender() one. */
 type Target = "live" | "prerender";
@@ -135,6 +153,11 @@ function makeRouter(shape: Shape, cached: boolean, target: Target) {
     ({ path, cache, layout, intercept, loader, parallel }) => {
       const source = (pathname: string, name: string) =>
         path(pathname, () => <ul>{`${name} body`}</ul>, { name });
+      const fromOther = from("/other");
+      const drawerWhen = GATED.has(shape)
+        ? (ctx: InterceptSelectorContext) =>
+            fromOther(ctx) && ctx.request.headers.get("x-d") === "1"
+        : fromOther;
       // Called inside the layout's children: a DSL call attaches to the
       // entry being built.
       const modal = () =>
@@ -150,7 +173,7 @@ function makeRouter(shape: Shape, cached: boolean, target: Target) {
           "@drawer",
           drawerTarget,
           interceptHandler("drawer"),
-          { when: from("/other") },
+          { when: drawerWhen },
           () => [loader(DrawerLoader)],
         );
       const sheet = () =>
@@ -177,6 +200,7 @@ function makeRouter(shape: Shape, cached: boolean, target: Target) {
           ...parallels(),
           source("/list", "list"),
           source("/other", "other"),
+          source("/home", "home"),
           path(
             "/item/:id",
             target === "prerender" ? PrerenderedItem : liveItem,
@@ -244,17 +268,24 @@ interface Acted {
   loaderRuns: Record<string, number>;
 }
 
+let actionSeq = 0;
+
 /**
- * Open /item/1 from `source`, then call an action from the open intercept as
- * the browser sends it: the page's URL as client path, the held segment ids
- * and the intercept source.
+ * Open /item/1 from `source`, then call an action from the page that opened
+ * as the browser sends it: the page's URL as client path, the held segment
+ * ids and, while an intercept is open, the intercept source. `openHeaders`
+ * go on the opening navigation only.
  */
-async function actFromOpenIntercept(
+async function openThenAct(
   router: Router,
   target: Target,
   source: string,
   held: Held,
-  actionId: string,
+  options: {
+    openHeaders?: Record<string, string>;
+    /** Whether the page has an intercept open to name as the source. */
+    interceptSource?: boolean;
+  } = {},
 ): Promise<Acted> {
   const cacheStore = new MemorySegmentCacheStore();
   let segments: string[] = [];
@@ -268,6 +299,7 @@ async function actFromOpenIntercept(
   const openIt = () =>
     serveShellRequest(router, "/item/1", {
       cacheStore,
+      headers: options.openHeaders,
       partial: { from: source, segments },
     });
   // Over a Prerender() the first request bakes the variant.
@@ -278,8 +310,15 @@ async function actFromOpenIntercept(
   clearRuns();
   const actRes = await serveShellRequest(router, "/item/1", {
     cacheStore,
-    headers: { "X-RSC-Router-Intercept-Source": source },
-    action: { ref: touch, id: actionId, segments: opened.matched },
+    headers:
+      options.interceptSource === false
+        ? undefined
+        : { "X-RSC-Router-Intercept-Source": source },
+    action: {
+      ref: touch,
+      id: `src/intercept.actions.ts#touch${++actionSeq}`,
+      segments: opened.matched,
+    },
   });
   const action = await actRes.readAction();
   return {
@@ -300,6 +339,8 @@ const CASES: ReadonlyArray<{
   source: string;
   open: string;
   others: string[];
+  /** Headers of the navigation that opens the intercept; the action sends none. */
+  openHeaders?: Record<string, string>;
 }> = [
   {
     shape: "different slots",
@@ -334,6 +375,23 @@ const CASES: ReadonlyArray<{
     open: "drawer",
     others: ["modal"],
   },
+  // The open intercept's when() rejects on the action: it stays open and the
+  // other intercept does not open, whether or not a parallel() default holds
+  // the other's slot id.
+  {
+    shape: "parallel default, gated drawer",
+    source: "/other",
+    open: "drawer",
+    others: ["modal"],
+    openHeaders: GATE_HEADER,
+  },
+  {
+    shape: "gated drawer",
+    source: "/other",
+    open: "drawer",
+    others: ["modal"],
+    openHeaders: GATE_HEADER,
+  },
   // Controls: the first intercept declared is the open one, or the only one.
   {
     shape: "different slots",
@@ -366,22 +424,16 @@ describe("an action from an open intercept answers with that intercept", () => {
     clearRuns();
   });
 
-  let actionSeq = 0;
-
-  for (const { shape, source, open, others } of CASES) {
+  for (const { shape, source, open, others, openHeaders } of CASES) {
     for (const target of TARGETS) {
       for (const cached of [false, true]) {
         for (const held of HELD) {
           const title = `${shape}, opened from ${source} (${open}), ${target} route${cached ? " under cache()" : ""}, ${held}`;
           it(title, async () => {
             const router = makeRouter(shape, cached, target);
-            const r = await actFromOpenIntercept(
-              router,
-              target,
-              source,
-              held,
-              `src/intercept.actions.ts#touch${++actionSeq}`,
-            );
+            const r = await openThenAct(router, target, source, held, {
+              openHeaders,
+            });
 
             // The intercept opened as expected.
             expect(slotsOf(r.opened)).toHaveLength(1);
@@ -407,6 +459,57 @@ describe("an action from an open intercept answers with that intercept", () => {
               expect(r.actedFlight).not.toContain(`${other} body`);
               expect(r.runs[other] ?? 0).toBe(0);
               expect(r.loaderRuns[other] ?? 0).toBe(0);
+            }
+          });
+        }
+      }
+    }
+  }
+});
+
+/**
+ * Control: an action from a page with no intercept open. The client holds no
+ * intercept slot and sends no intercept source, so no intercept is selected,
+ * whatever intercepts the route has.
+ */
+describe("an action from a page with no intercept open renders no intercept", () => {
+  beforeEach(async () => {
+    await resetShellTestState();
+    clearRuns();
+  });
+
+  const SHAPES: readonly Shape[] = [
+    "different slots",
+    "same slot",
+    "single",
+    "gated drawer",
+  ];
+
+  for (const shape of SHAPES) {
+    for (const target of TARGETS) {
+      for (const cached of [false, true]) {
+        for (const held of HELD) {
+          const title = `${shape}, ${target} route${cached ? " under cache()" : ""}, ${held}`;
+          it(title, async () => {
+            // /home is a page none of the when() selectors accepts.
+            const r = await openThenAct(
+              makeRouter(shape, cached, target),
+              target,
+              "/home",
+              held,
+              { interceptSource: false },
+            );
+
+            expect(slotsOf(r.opened)).toEqual([]);
+            expect(r.status).toBe(200);
+            expect(r.result).toBe("touched");
+            expect(slotsOf(r.acted)).toEqual([]);
+            expect(interceptIdsOf(r.acted)).toEqual([]);
+            expect(activeSlotsOf(r.acted)).toEqual([]);
+            expect(r.runs).toEqual({});
+            expect(r.loaderRuns).toEqual({});
+            for (const name of ["modal", "drawer", "sheet"]) {
+              expect(r.actedFlight).not.toContain(`${name} body`);
             }
           });
         }

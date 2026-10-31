@@ -654,18 +654,6 @@ export function createRouter<TEnv = any>(
     viewTransitionDefault: viewTransitionOption,
   };
 
-  // Match API dependencies
-  const matchApiDeps: MatchApiDeps<TEnv> = {
-    findMatch: (pathname: string, ms?: any) => findMatch(pathname, ms),
-    getMetricsStore,
-    findInterceptForRoute: (...args) => findInterceptForRoute(...args),
-    callOnError,
-    findNearestErrorBoundary,
-    // Use per-router manifest when available, otherwise the static named map
-    // seeded into mergedRouteMap at router creation.
-    getRouteMap: () => getRouterManifest(routerId) ?? mergedRouteMap,
-  };
-
   // Create segment resolution wrappers bound to segmentDeps
   const {
     resolveLoadersOnly,
@@ -675,6 +663,18 @@ export function createRouter<TEnv = any>(
     resolveInterceptEntry,
     resolveInterceptLoadersOnly,
   } = createSegmentWrappers<TEnv>(segmentDeps);
+
+  // Match API dependencies
+  const matchApiDeps: MatchApiDeps<TEnv> = {
+    findMatch: (pathname: string, ms?: any) => findMatch(pathname, ms),
+    getMetricsStore,
+    findInterceptForRoute,
+    callOnError,
+    findNearestErrorBoundary,
+    // Use per-router manifest when available, otherwise the static named map
+    // seeded into mergedRouteMap at router creation.
+    getRouteMap: () => getRouterManifest(routerId) ?? mergedRouteMap,
+  };
 
   // Lazy evaluation deps — captures closure state for extracted evaluateLazyEntry
   const lazyEvalDeps: LazyEvalDeps<TEnv> = {

@@ -284,14 +284,17 @@ renders and the error is logged with the route name.
 A server action from an open intercept re-renders that intercept, the one
 whose slot the page holds, and opens no other intercept that targets the
 route. Its `when` is not evaluated again, so the intercept stays open after
-the action even when its `when` would now reject. When the page holds the
-slots of more than one of the route's intercepts (two intercepts on one layout
-that fill the same slot share it, and a `parallel()` of an intercept's slot
-name holds that slot while another intercept is open), whether they are
+the action even when its `when` would now reject. The page can hold the slots
+of more than one of the route's intercepts: two intercepts on one layout that
+fill the same slot share it, and a `parallel()` of an intercept's slot name
+holds that slot whether or not an intercept is open there. Whether they are
 declared for the route's name or its local name inside `include()`, the
-action evaluates their `when` again, with `from` the intercept's source page,
-and the first that passes renders; when none passes, the first of them
-renders.
+action sets aside the intercepts whose slot a `parallel()` fills on their
+layout and renders the one that is left, its `when` not evaluated. When
+several are left (the same-slot pair), the action evaluates their `when`
+again, with `from` the intercept's source page, and the first that passes
+renders; when none passes, the first of them renders. When a `parallel()`
+fills every held slot, that rule applies to all of them.
 
 `when` selects an intercept; it does not authorize one. An action request
 that names an intercept's slot renders that intercept without its `when`,
