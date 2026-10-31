@@ -506,8 +506,11 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         if (ctx.body !== undefined || ctx.formData !== undefined) {
           hasBodyCtx = true;
         }
+        // Only an argument with a pin (a handler or loader ctx, or its copy)
+        // is the caller: a request context before it has no claim.
         if (callerSegmentId === undefined) {
-          callerSegmentId = segmentPinOf(ctx);
+          callerSegmentId =
+            ctx._currentSegmentId === undefined ? undefined : segmentPinOf(ctx);
           claimLoaderPushes = ctx._claimLoaderPushes;
         }
         if (ctx.params && typeof ctx.params === "object") {
