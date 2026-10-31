@@ -103,6 +103,30 @@ describe("renderRoute: a click on a prefetch made before a server action", () =>
     expect(pageMounts).toBe(mountsAtClick);
   });
 
+  it("serves a stale prefetch once: the next click on the link shows post-write data with no second revalidation", async () => {
+    const { getByTestId, router } = await renderRoute(routes, {
+      request: "/home",
+      loaders: [[BasketLoader, { count: 2 }]],
+    });
+    router.prefetch("/cart");
+    await router.action({ loaders: [[BasketLoader, { count: 3 }]] });
+
+    await router.navigate("/cart");
+    expect(getByTestId("page").textContent).toBe("cart:2");
+    await waitFor(() => expect(getByTestId("page").textContent).toBe("cart:3"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(router.revalidations()).toHaveLength(1);
+
+    await router.navigate("/orders");
+    await router.navigate("/cart");
+    // The stale entry was spent by the first click: this one fetches fresh,
+    // as production does, so it never shows the pre-write count again.
+    expect(getByTestId("page").textContent).toBe("cart:3");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(getByTestId("page").textContent).toBe("cart:3");
+    expect(router.revalidations()).toHaveLength(1);
+  });
+
   it("revalidates only once the click's stream ended", async () => {
     const { getByTestId, router } = await renderRoute(routes, {
       request: "/home",

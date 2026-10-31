@@ -1049,6 +1049,11 @@ export async function renderRoute(
         : undefined;
     if (prefetchedPage) {
       navOptions = { ...navOptions, seeds: prefetchedPage.loaderData };
+      // A stale entry is served once (cache.ts consumePrefetch): the next
+      // click on the link fetches fresh.
+      if (isPrefetchStale(prefetchedPage)) {
+        prefetchedPages.delete(prefetchKeyOf(target));
+      }
     }
     const handle = eventController.startNavigation(
       new URL(target, TEST_ORIGIN).href,

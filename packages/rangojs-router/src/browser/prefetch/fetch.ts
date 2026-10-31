@@ -30,7 +30,6 @@ import {
   currentGeneration,
   currentPrefetchEpoch,
   isFragmentPassthroughEnabled,
-  isPrefetchSlotTaken,
   isPrefetchStale,
   type DecodedPrefetch,
   type PrefetchScope,
@@ -446,16 +445,15 @@ function executePrefetchFetch(
             // storePrefetch skip publication (adoptedKeys), and a mid-stream
             // cache adoption deletes the incomplete entry. Now that the bytes
             // proved themselves complete, publish a respawned sibling so the
-            // revisit is warm. Guards: isPrefetchSlotTaken skips when the
-            // slot is live again (our own un-adopted entry, a fresh entry, or
-            // a new in-flight prefetch), and storePrefetch's generation check
-            // drops the sibling if the cache was invalidated since the fetch
-            // began. The slot check must not be hasPrefetch: it drops a stale
-            // entry, which here is our own un-adopted one, and disposing it
-            // cancels the reserve this refill would decode. A stale entry is
-            // served at most once (cache.ts consumePrefetch), so an adopted
-            // stale one is not refilled: the next click fetches fresh.
-            if (!isPrefetchStale(entry) && !isPrefetchSlotTaken(storageKey)) {
+            // revisit is warm. Guards: hasPrefetch skips when the slot is
+            // live again (our own un-adopted entry, a fresh entry, or a new
+            // in-flight prefetch), and storePrefetch's generation check drops
+            // the sibling if the cache was invalidated since the fetch began.
+            // A stale entry is served at most once (cache.ts consumePrefetch),
+            // so an adopted stale one is not refilled: the next click fetches
+            // fresh. The isPrefetchStale check also keeps hasPrefetch from
+            // dropping (and disposing) our own un-adopted entry once stale.
+            if (!isPrefetchStale(entry) && !hasPrefetch(storageKey)) {
               storePrefetch(storageKey, entry.respawn(), gen);
             }
           }

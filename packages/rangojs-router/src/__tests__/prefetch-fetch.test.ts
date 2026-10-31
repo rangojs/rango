@@ -1582,9 +1582,11 @@ describe("prefetch in flight when an action marks prefetches stale", () => {
     await entry.streamComplete;
     await new Promise((resolve) => setTimeout(resolve, 10));
     // A stale entry is served once: the early adoption leaves the slot
-    // empty, so the next click or trigger fetches fresh.
-    expect(hasPrefetch(WILDCARD_KEY)).toBe(false);
+    // empty, so the next click or trigger fetches fresh. Read the slot
+    // through consumePrefetch first: hasPrefetch drops a stale entry itself
+    // and would hide a refill.
     expect(consumePrefetch(WILDCARD_KEY, { acceptStale: true })).toBeNull();
+    expect(hasPrefetch(WILDCARD_KEY)).toBe(false);
   });
 
   it("a prefetch that starts after the mark is fresh", async () => {

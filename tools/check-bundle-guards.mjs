@@ -263,16 +263,6 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // (rango-t84-q2): the measured size plus 256B, rounded up to the next 128B
 // step.
 //
-// Raised 51.125KB -> 51.625KB on 2026-10-31 for rango-t234 (#1329), measured
-// on cloudflare-basic at 52535B gzip (Vite's report: main 52.75kB ->
-// 53.15kB). A server action marks prefetches stale instead of flushing them:
-// the prefetch cache keeps a stale bit per entry (browser/prefetch/cache.ts),
-// a click on a stale entry commits it and sends one stale revalidation
-// (navigation-bridge.ts), and the cross-tab channel tells a soft mark from a
-// rotation (navigation-store.ts). None of it can load lazily: it runs on every
-// action exit and every prefetched click, and browser/prefetch/ is not split
-// (AGENTS.md Bundle hygiene). The owner's rule (rango-t84-q2).
-//
 // Raised 51.125KB -> 51.875KB on 2026-10-31 for rango-t242, measured on
 // cloudflare-basic from main 67e43bd 52143B -> 52789B (+646B gzip, +1641B
 // raw). A prefetch a revalidate() kept from the page being left is shared
@@ -291,12 +281,18 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 //
 // Both landed together, rango-t234 (#1343, merged with main 5f5a79a) and
 // rango-t242 (#1344): raised to 52.375KB on 2026-10-31, measured on
-// cloudflare-basic at 53296B gzip, main alone 52789B (+507B: the stale epoch,
-// a click's acceptStale and the served-once rule in browser/prefetch/
-// cache.ts, the refill's slot check in prefetch/fetch.ts, the stale-click
-// revalidation in navigation-bridge.ts scheduleStalePrefetchRevalidation and
-// the soft cross-tab mark in navigation-store.ts). By the owner's rule
-// above: 53296B + 256B, rounded up to the next 128B step.
+// cloudflare-basic at 53296B gzip, main alone 52789B (+507B). rango-t234
+// (#1329): a server action marks prefetches stale instead of flushing them.
+// The prefetch cache keeps a stale epoch per entry, and a click's acceptStale
+// and the served-once rule live in browser/prefetch/cache.ts; the refill's
+// stale check is in prefetch/fetch.ts; a click on a stale entry commits it and
+// sends one stale revalidation (navigation-bridge.ts
+// scheduleStalePrefetchRevalidation); and the cross-tab channel tells a soft
+// mark from a rotation (navigation-store.ts). None of it can load lazily: it
+// runs on every action exit and every prefetched click, and browser/prefetch/
+// is not split (AGENTS.md Bundle hygiene). By the owner's rule above: 53296B +
+// 256B, rounded up to the next 128B step. Re-measured at 53290B after the
+// review fixes and a merge of main fdc564c0: the same step, the cap stays.
 const ROUTER_CHUNK_GZIP_MAX = 52.375 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 

@@ -4,6 +4,7 @@ import { getRangoState } from "../browser/rango-state";
 import {
   buildPrefetchKey,
   clearPrefetchCache,
+  consumePrefetch,
   hasPrefetch,
   markPrefetchesStale,
 } from "../browser/prefetch/cache";
@@ -243,8 +244,10 @@ describe("a prefetch a server action marked stale", () => {
     await expect(restOf(click)).resolves.toBe("head;tail");
     await vi.advanceTimersByTimeAsync(10);
 
-    // The slot stays empty: the next click fetches.
-    expect(hasPrefetch(blogKey())).toBe(false);
+    // The slot stays empty: the next click fetches. consumePrefetch with
+    // acceptStale reads a stale entry as it is; hasPrefetch would drop one
+    // itself and hide a refill.
+    expect(consumePrefetch(blogKey(), { acceptStale: true })).toBeNull();
     await navigateToBlog(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

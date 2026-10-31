@@ -374,27 +374,6 @@ export function hasPrefetch(key: string): boolean {
 }
 
 /**
- * Whether a prefetch is stored (within its TTL) or in flight for `key`,
- * whatever its stale epoch. Unlike `hasPrefetch` it never drops a stale
- * entry: the refill after an early adoption (fetch.ts) asks whether the slot
- * is taken, and a stale entry still in it is that fetch's own, which must
- * stay servable (rango-d221: a prefetch in flight at action time finishes and
- * lands stale).
- */
-export function isPrefetchSlotTaken(key: string): boolean {
-  if (inflight.has(key)) return true;
-  if (cacheTTL <= 0) return false;
-  const cached = cache.get(key);
-  if (!cached) return false;
-  if (Date.now() - cached.timestamp > cacheTTL) {
-    cached.entry.dispose?.();
-    cache.delete(key);
-    return false;
-  }
-  return true;
-}
-
-/**
  * Consume a cached, eagerly-decoded prefetch. Returns null if not found or
  * expired. Returns null when caching is disabled (TTL <= 0).
  *
