@@ -121,7 +121,7 @@ async function evaluate(
   const request = new Request(DESTINATION, { method });
   const { ctx } = createTestRequestContext({ request, params: { id: "2" } });
   ctx._prevRouteKey = source.routeKey;
-  const context = handlerContext as { _sourceHeld?: true };
+  const context = handlerContext as { _sourceHeld?: unknown };
   delete context._sourceHeld;
   const decision = await runWithRequestContext(ctx as never, () =>
     evaluateRevalidation({
@@ -156,7 +156,7 @@ async function evaluate(
           : undefined,
     }),
   );
-  const sourceHeld = context._sourceHeld === true;
+  const sourceHeld = context._sourceHeld !== undefined;
   delete context._sourceHeld;
   return { decision, sourceHeld };
 }
