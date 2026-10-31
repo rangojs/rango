@@ -50,9 +50,11 @@ async function measureFirstChunk(
   return { ttfb, html: chunks.join("") };
 }
 
-const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
-
 test.describe("ssr-stream-mode", () => {
+  // Inside the describe: a file-level fixture's beforeAll would also run for
+  // the "(production)" describe below, in the production project.
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+
   test("stream mode flushes first chunk before allReady mode", async () => {
     // Stream mode: shell should flush before the 500ms loader completes
     const stream = await measureFirstChunk(
@@ -98,8 +100,8 @@ test.describe("ssr-stream-mode", () => {
   });
 });
 
-// Production tests — fixture inside describe so its beforeAll only runs
-// when the production project picks up this file.
+// Production tests: each fixture lives inside its describe so its beforeAll
+// only runs in the project that picks that describe up.
 test.describe("ssr-stream-mode (production)", () => {
   const fProd = useFixture({ root: "./e2e/test-app", mode: "build" });
 
