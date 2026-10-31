@@ -1621,4 +1621,92 @@ describe("navigation-bridge click on a stale prefetch", () => {
 
     expect(fetchPartialUpdateMock.mock.calls[1]![1]).toEqual([]);
   });
+
+  // An action's error boundary on screen is that action's outcome, which no
+  // GET reproduces: the revalidation holds it and renders what is above it,
+  // as Back's does (actionBoundaryAt, idsAboveBoundary).
+  it("holds an action error boundary the page shows, and sends only the ids above it", async () => {
+    const env = setup();
+    staleClick(env);
+    const boundary = { id: "L0R1", type: "error" };
+    actionBoundaries.add(boundary as any);
+    const segments = [
+      SEGMENTS[0],
+      SEGMENTS[1],
+      boundary,
+      { id: "L0R1D0.items", type: "loader" },
+    ];
+    env.store.getCachedSegments.mockImplementation((key: string) =>
+      key === CART ? { segments, stale: false, handleData: {} } : undefined,
+    );
+
+    await env.bridge.navigate("/cart");
+    await env.settle(true);
+
+    expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(2);
+    const [, heldIds, , , , mode] = fetchPartialUpdateMock.mock.calls[1]!;
+    expect(heldIds).toEqual(["L0", "L0D0.basket"]);
+    expect(mode).toMatchObject({
+      type: "stale-revalidation",
+      boundary: "L0R1",
+    });
+  });
+
+  it("runs nothing when the action error boundary is the page's root: nothing is above it", async () => {
+    const env = setup();
+    staleClick(env);
+    const boundary = { id: "L0", type: "error" };
+    actionBoundaries.add(boundary as any);
+    env.store.getCachedSegments.mockImplementation((key: string) =>
+      key === CART
+        ? { segments: [boundary], stale: false, handleData: {} }
+        : undefined,
+    );
+
+    await env.bridge.navigate("/cart");
+    await env.settle(true);
+
+    expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(1);
+    // Still marked stale, so a Back onto it revalidates.
+    expect(env.store.updateCacheHandleData).toHaveBeenCalledWith(
+      CART,
+      {},
+      true,
+    );
+  });
+
+  // An intercept on screen (a modal over its source page): the revalidation
+  // asks for it from its source, as Back onto an intercept entry does, and
+  // holds no boundary (an intercept's list is not the page's).
+  it("revalidates an intercept from its source page", async () => {
+    const env = setup();
+    // The click from the source page opens the modal: its commit writes the
+    // intercept entry.
+    fetchPartialUpdateMock.mockImplementationOnce(
+      async (_url, _ids, _retry, _signal, _tx, mode) => {
+        mode.onStalePrefetch(true);
+        env.commit();
+        (window.history as { state: unknown }).state = {
+          intercept: true,
+          sourceUrl: "http://localhost/shop",
+        };
+      },
+    );
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+
+    await env.bridge.navigate("/cart");
+    await env.settle(true);
+
+    expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(2);
+    const [, , , , tx, mode] = fetchPartialUpdateMock.mock.calls[1]!;
+    expect(mode).toEqual({
+      type: "stale-revalidation",
+      interceptSourceUrl: "http://localhost/shop",
+      boundary: undefined,
+    });
+    expect(tx).toMatchObject({
+      intercept: true,
+      interceptSourceUrl: "http://localhost/shop",
+    });
+  });
 });

@@ -261,7 +261,6 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
     // The action (no directive) marks the prefetch stale instead of flushing
     // it (#1329): the anchor is not prefetched again and the state is kept.
     const written = await incrementCounter(page);
-    const before = written - 1;
     await page.waitForTimeout(1000);
     expect(targetRequests).toHaveLength(prefetchCount);
     expect(await readState(page)).toBe(initialState);
@@ -280,10 +279,16 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
       page.getByRole("heading", { name: "Prefetch target" }),
     ).toBeVisible();
     await expect(page.getByTestId("target-count")).toHaveText(String(written));
+    // The counter is shared with other suites, so the prefetched value is
+    // read from the page, not derived from `written`: any value from before
+    // this write, then the write.
+    const texts = await readTexts(page);
+    expect(texts, "the prefetched page, then the write").toHaveLength(2);
+    expect(texts[1]).toBe(String(written));
     expect(
-      await readTexts(page),
-      "the prefetched page, then the write",
-    ).toEqual([String(before), String(written)]);
+      Number(texts[0]),
+      "the prefetch was made before the write",
+    ).toBeLessThan(written);
     expect(await sameElement(page), "updated in place").toBe(true);
     await page.waitForTimeout(500);
     expect(navigations, "exactly one request, the revalidation").toHaveLength(

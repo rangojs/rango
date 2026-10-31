@@ -4,6 +4,7 @@ import { useAction, useLoader, useNavigation } from "@rangojs/router/client";
 import {
   ActionStaleCartDefaultLoader,
   ActionStaleCartLoader,
+  ActionStaleCountLoader,
   ActionStaleFillLoader,
   ActionStalePlainLoader,
 } from "./action-stale.defs.js";
@@ -91,6 +92,24 @@ export function ActionStaleBar() {
       </button>
     </div>
   );
+}
+
+// The bare layout's add (no loaders read): <html data-as-result> holds the
+// count it wrote.
+export function ActionStaleBareAdd() {
+  return (
+    <button
+      data-testid="as-bare-add"
+      onClick={() => run(() => addToActionStaleCart("first", 0))}
+    >
+      Add, write first, no delay
+    </button>
+  );
+}
+
+export function ActionStaleCount() {
+  const { data } = useLoader(ActionStaleCountLoader);
+  return <p data-testid="as-count">{`count:${data}`}</p>;
 }
 
 export function ActionStaleFillValue() {

@@ -13,7 +13,10 @@ page at once, then revalidates it in the background, as Back does on a page
 an action made stale; `useNavigation()` stays idle and nothing remounts. The
 pre-write values show for one round trip, a layout loader that re-runs on
 navigation included. Visible links do not prefetch again; a new hover
-replaces a stale prefetch with a fresh one. Other tabs that share a segment
+replaces a stale prefetch with a fresh one. A stale prefetch answers only a
+click, once: a second click on the same link fetches the page, and so do
+Back/Forward onto a page the history cache no longer holds and leaving an
+intercept. Other tabs that share a segment
 with the page mark their history and prefetches stale and refresh. The
 cookie is not rotated, so a partial response a route caches with its own
 `Cache-Control` stays in the browser's HTTP cache until its max-age. Tabs

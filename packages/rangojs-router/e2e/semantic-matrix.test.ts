@@ -820,10 +820,25 @@ const matrixRows: SemanticMatrixRow[] = [
           subtree: true,
           characterData: true,
         });
-        Object.assign(self, { __psStates: states });
+        // The element the pre-write page shows: the revalidated one must be
+        // the same (updated in place, no remount).
+        Object.assign(self, {
+          __psStates: states,
+          __psBasket: document.querySelector('[data-testid="as-basket"]'),
+        });
       });
 
       await expect(testId(page, "as-basket")).toHaveText("basket:1");
+      expect(
+        await page.evaluate(
+          () =>
+            (self as unknown as { __psBasket: Element | null }).__psBasket ===
+            document.querySelector('[data-testid="as-basket"]'),
+        ),
+        "the revalidated page is updated in place",
+      ).toBe(true);
+      // Exactly one request: let a second one, if any, leave.
+      await page.waitForTimeout(500);
       expect(sent).toEqual([{ stale: true }]);
       const states = await page.evaluate(
         () => (self as unknown as { __psStates: string[] }).__psStates,

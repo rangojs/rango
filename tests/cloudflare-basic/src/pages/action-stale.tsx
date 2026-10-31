@@ -4,11 +4,17 @@ import { Link, Outlet } from "@rangojs/router/client";
 import {
   ActionStaleCartDefaultLoader,
   ActionStaleCartLoader,
+  ActionStaleCountLoader,
   ActionStaleFillLoader,
   ActionStaleItemLoader,
   ActionStalePlainLoader,
 } from "./action-stale.defs.js";
-import { ActionStaleBar, ActionStaleFillValue } from "./action-stale.client.js";
+import {
+  ActionStaleBar,
+  ActionStaleBareAdd,
+  ActionStaleCount,
+  ActionStaleFillValue,
+} from "./action-stale.client.js";
 import { actionStaleState, wait } from "./action-stale.store.js";
 
 // The action follow-up fixture: a layout with a cart count whose loader opts
@@ -17,7 +23,14 @@ import { actionStaleState, wait } from "./action-stale.store.js";
 // answer at set delays; and two pages the document cache stores
 // (/action-stale/cached/*). The product page renders a prefetching link only
 // with ?prefetch=render (or =fill: the fill page's, on hover, passing on
-// ?fillDelay), so no other case has a prefetch to consume. Bodies:
+// ?fillDelay; =transition: the transition() basket's; =inflight: on hover, a
+// basket that answers after 1500 ms, which an action's start does not
+// cancel as it cancels queued ones), so no other case has a prefetch to
+// consume.
+// /action-stale/bare/* sit under a layout with no revalidate(): a basket and
+// a chain of pages whose first prefetches it. /action-stale/counted is a layout whose loader
+// re-runs on every navigation, with a prefetching link to its other page.
+// Bodies:
 // tests/shared-e2e/src/action-stale-navigation-scenario.ts,
 // action-held-segments-scenario.ts, action-follow-up-scenario.ts and
 // action-stale-prefetch-scenario.ts.
@@ -85,6 +98,24 @@ const ActionStalePdp: Handler = (ctx) => {
             Basket, prefetched
           </Link>
         </>
+      )}
+      {prefetch === "inflight" && (
+        <Link
+          to="/action-stale/basket?delay=1500"
+          prefetch="hover"
+          data-testid="as-to-slow-basket-prefetched"
+        >
+          Basket, answering after 1500 ms, prefetched on hover
+        </Link>
+      )}
+      {prefetch === "transition" && (
+        <Link
+          to="/action-stale/basket-transition"
+          prefetch="render"
+          data-testid="as-to-basket-transition-prefetched"
+        >
+          Basket in a transition, prefetched
+        </Link>
       )}
       {prefetch === "fill" && (
         <Link
@@ -156,10 +187,14 @@ const ActionStaleFill: Handler = async () => {
 };
 
 // Reads the cart, after 300 ms, in the route itself: a prefetch of it carries
-// the cart as it was then (#1329).
-const ActionStaleBasket: Handler = async () => {
-  await wait(300);
-  const { cart } = actionStaleState();
+// the cart as it was then (#1329). With ?delay it reads the cart as the
+// request arrives and answers `delay` ms later: a prefetch still in flight
+// when an action lands carries the cart from before it.
+const ActionStaleBasket: Handler = async (ctx) => {
+  const delay = ctx.searchParams.get("delay");
+  const early = delay === null ? undefined : actionStaleState().cart;
+  await wait(delay === null ? 300 : Number(delay));
+  const cart = early ?? actionStaleState().cart;
   return (
     <div data-testid="as-basket-page">
       <p data-testid="as-basket">{`basket:${cart}`}</p>
@@ -169,6 +204,110 @@ const ActionStaleBasket: Handler = async () => {
     </div>
   );
 };
+
+// Pages under no revalidate(): a prefetch of one is stored in the slot every
+// source page shares (the wildcard key), unlike a page under the layout
+// above, whose loader's revalidate() scopes every response to its source page
+// (#1331). The bare basket reads the cart after 300 ms and links to a chain
+// of pages, each linking to the next, so a test can push enough entries to
+// evict the basket's from the 20-entry history cache. The 22nd page, by when
+// the basket's entry has left it, prefetches the basket (#1329: Back onto the
+// evicted entry after an action must not be answered by that prefetch, which
+// the action made stale). Prefetching last keeps the prefetch inside the
+// test-app's 60 s prefetchCacheTTL however slow the hops are.
+const BARE_HOP_PREFETCHING = 22;
+
+function ActionStaleBareLayout() {
+  return (
+    <div data-testid="as-bare">
+      <ActionStaleBareAdd />
+      <Outlet />
+    </div>
+  );
+}
+
+const ActionStaleBareBasket: Handler = async () => {
+  await wait(300);
+  const { cart } = actionStaleState();
+  return (
+    <div data-testid="as-bare-basket-page">
+      <p data-testid="as-bare-basket">{`basket:${cart}`}</p>
+      <Link
+        to="/action-stale/bare/hop?n=1"
+        prefetch="none"
+        data-testid="as-to-hop"
+      >
+        Hop
+      </Link>
+    </div>
+  );
+};
+
+const ActionStaleBareHop: Handler = (ctx) => {
+  const n = Number(ctx.searchParams.get("n") ?? 1);
+  return (
+    <div data-testid="as-hop">
+      <p data-testid="as-hop-n">{`hop:${n}`}</p>
+      <Link
+        to={`/action-stale/bare/hop?n=${n + 1}`}
+        prefetch="none"
+        data-testid="as-to-next-hop"
+      >
+        Next hop
+      </Link>
+      {n === BARE_HOP_PREFETCHING && (
+        <Link
+          to="/action-stale/bare/basket"
+          prefetch="render"
+          data-testid="as-hop-to-basket-prefetched"
+        >
+          Basket, prefetched
+        </Link>
+      )}
+    </div>
+  );
+};
+
+// The basket page on a transition() route: the click on its stale prefetch
+// and the revalidation's commit both go through the transition lane (#1329).
+const ActionStaleBasketTransition: Handler = async () => {
+  await wait(300);
+  const { cart } = actionStaleState();
+  return (
+    <div data-testid="as-basket-transition-page">
+      <p data-testid="as-basket-transition">{`basket:${cart}`}</p>
+    </div>
+  );
+};
+
+// A layout whose loader reads the cart and re-runs on every navigation
+// (revalidate(() => true)), so every prefetch under it carries the count it
+// read then (rango-d170): after an action the click on such a prefetch shows
+// the count from before the write, then its revalidation the new one.
+function ActionStaleCountedLayout() {
+  return (
+    <div data-testid="as-counted">
+      <ActionStaleCount />
+      <Outlet />
+    </div>
+  );
+}
+
+const ActionStaleCountedHome: Handler = () => (
+  <div data-testid="as-counted-home">
+    <Link
+      to="/action-stale/counted/next"
+      prefetch="render"
+      data-testid="as-to-counted-next-prefetched"
+    >
+      Next, prefetched
+    </Link>
+  </div>
+);
+
+const ActionStaleCountedNext: Handler = () => (
+  <div data-testid="as-counted-next">Next page</div>
+);
 
 const ActionStaleItem: Handler = () => (
   <div data-testid="as-item-page">Item page</div>
@@ -214,6 +353,16 @@ export const actionStalePatterns = urls(
       path("/action-stale/slow", ActionStaleSlow),
       path("/action-stale/read", ActionStaleRead),
       path("/action-stale/basket", ActionStaleBasket),
+      path(
+        "/action-stale/basket-transition",
+        ActionStaleBasketTransition,
+        () => [transition()],
+      ),
+      layout(ActionStaleCountedLayout, () => [
+        loader(ActionStaleCountLoader, () => [revalidate(() => true)]),
+        path("/action-stale/counted", ActionStaleCountedHome),
+        path("/action-stale/counted/next", ActionStaleCountedNext),
+      ]),
       path("/action-stale/transition", ActionStaleTransition, () => [
         transition(),
       ]),
@@ -241,6 +390,10 @@ export const actionStalePatterns = urls(
         },
         () => [loader(ActionStaleItemLoader)],
       ),
+    ]),
+    layout(ActionStaleBareLayout, () => [
+      path("/action-stale/bare/basket", ActionStaleBareBasket),
+      path("/action-stale/bare/hop", ActionStaleBareHop),
     ]),
   ],
 );

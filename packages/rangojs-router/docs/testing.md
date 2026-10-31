@@ -125,7 +125,11 @@ server action's response through production's store, which marks every
 prefetch stale (#1329). A `navigate(url)` to a stale prefetch commits it at
 once and then revalidates the page with the post-write data in Back's lane,
 `useNavigation()` idle, so "the click shows the prefetch, then the write" is
-unit-testable (`src/testing/__tests__/render-route-stale-prefetch.test.tsx`). A `router.navigate()` started while React holds a page
+unit-testable (`src/testing/__tests__/render-route-stale-prefetch.test.tsx`).
+Production's own guards decide that revalidation
+(`scheduleStalePrefetchRevalidation` in `browser/navigation-bridge.ts`), and
+`router.revalidations()` lists each request it started with the segment ids
+it holds, so "exactly one revalidation" is a unit assertion too. A `router.navigate()` started while React holds a page
 shows its page once the call resolves, with or without `act()`. A `<Link>`
 click over a held page goes inside `await act(async () => ...)`: RTL's
 `fireEvent` runs the click in a synchronous `act()`, which drops React's retry

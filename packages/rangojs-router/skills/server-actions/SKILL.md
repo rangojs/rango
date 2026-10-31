@@ -549,8 +549,10 @@ action that reached the server, including ones that threw. No setup is needed.
 The pre-write values show for one round trip, a layout loader that re-runs
 on navigation included. `useNavigation().state` stays `"idle"` during the
 revalidation, and nothing remounts. A new hover on the link replaces the
-stale prefetch with a fresh one. Visible links do not prefetch again after an
-action. Two things are no longer reached, because nothing rotates: a partial
+stale prefetch with a fresh one. A stale prefetch answers one click only: a
+second click on the same link fetches the page, and Back/Forward onto a page
+the history cache no longer holds never uses it. Visible links do not
+prefetch again after an action. Two things are no longer reached, because nothing rotates: a partial
 response a route caches with its own `Cache-Control` stays in the browser's
 HTTP cache until its max-age, and a tab that shares no segment with the page
 (or an app with `crossTabSync: false`) is not told. Call

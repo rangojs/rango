@@ -159,8 +159,17 @@ async function testKeepCacheLeavesStateUnchanged(
   const initialState = await readRangoState(page);
   expect(initialState).toBeTruthy();
 
+  // An entry in the history cache to come back to.
+  await page.click('[data-testid="nav-home"]');
+  await expect(page).toHaveURL(url("/"));
+  await page.goBack();
+  await expect(
+    page.locator('[data-testid="action-keep-cache-btn"]'),
+  ).toBeVisible();
+
   // An action that calls keepClientCache() suppresses the bridge's automatic
-  // invalidation, so the rango state value must NOT rotate.
+  // invalidation: the rango state value does not rotate (no action rotates
+  // it now, #1329), and the history cache stays fresh.
   await page.click('[data-testid="action-keep-cache-btn"]');
   await page.waitForSelector(
     '[data-testid="action-keep-cache-btn"]:not([disabled])',
@@ -168,6 +177,24 @@ async function testKeepCacheLeavesStateUnchanged(
 
   const afterState = await readRangoState(page);
   expect(afterState).toBe(initialState);
+
+  // A default action marks the entry stale, and Forward onto it revalidates
+  // it (`_rsc_stale`). After keepClientCache() nothing revalidates.
+  const staleRequests: string[] = [];
+  page.on("request", (req) => {
+    const requested = new URL(req.url());
+    if (
+      requested.searchParams.has("_rsc_partial") &&
+      requested.searchParams.get("_rsc_stale") === "true" &&
+      !isPrefetchRequest(req)
+    ) {
+      staleRequests.push(req.url());
+    }
+  });
+  await page.goForward();
+  await expect(page).toHaveURL(url("/"));
+  await page.waitForTimeout(1000);
+  expect(staleRequests, "no revalidation request after Forward").toEqual([]);
 }
 
 async function testKeepThenInvalidateStillRotates(

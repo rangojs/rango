@@ -2254,8 +2254,15 @@ change (see Contract Change Process).
   aborted and lands stale). A click on it shows it at once, then revalidates
   the page once the click settled, as Back onto a stale entry does: its ids
   held, an action error boundary on screen held, `useNavigation()` idle
-  (`revalidateStalePrefetch` in `browser/navigation-bridge.ts`, through the
-  lane `handlePopstate` uses). An action in flight does not hold it back, as
+  (`scheduleStalePrefetchRevalidation` in `browser/navigation-bridge.ts`,
+  through the lane `handlePopstate` uses). Only a click takes a stale
+  prefetch (`acceptStalePrefetch`, set for a navigate mode that carries
+  `onStalePrefetch`): Back/Forward on a history-cache miss and leaving an
+  intercept never revalidate after their commit, so for them a stale stored
+  entry is a miss and a stale in-flight one is dropped and fetched again. A
+  stale entry is served once: its slot is not re-armed, so a second click on
+  the same link fetches fresh, and a fill's fresh start-over after a stale
+  adoption leaves nothing to revalidate. An action in flight does not hold it back, as
   it does not hold Back's: that action's follow-up, when it owes one (R3),
   starts a navigation that supersedes it. An action that starts while it is
   in flight does not leave it, as it does not leave Back's. The pre-write
@@ -2673,7 +2680,7 @@ should not be treated as equivalent.
   or by a rotated state cookie (`handlePopstate` in
   `browser/navigation-bridge.ts`), the same revalidation during an
   action's flight, and the one after a click that adopted a prefetch an
-  action marked stale (`revalidateStalePrefetch`, R7). Why the action's defaults: the entry was cached before the
+  action marked stale (`scheduleStalePrefetchRevalidation`, R7). Why the action's defaults: the entry was cached before the
   write, and a navigation's defaults would keep a layout's loader and the
   route on their pre-write values, so Back showed the page as it was before
   the action (a layout's cart count, or the page under an intercept after an
