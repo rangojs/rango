@@ -2,6 +2,7 @@ import { type SpawnOptions, spawn } from "node:child_process";
 import path from "node:path";
 import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
+import { assertFixtureModeMatchesProject } from "@shared/e2e/fixture-mode";
 import { x } from "tinyexec";
 
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
@@ -78,6 +79,7 @@ export function useFixture(options: {
   let proc!: ReturnType<typeof runCli>;
 
   test.beforeAll(async ({}, testInfo) => {
+    assertFixtureModeMatchesProject(options.mode, testInfo);
     if (options.mode === "dev") {
       proc = runCli({
         command: options.command ?? `pnpm dev`,

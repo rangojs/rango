@@ -25,6 +25,7 @@ export default defineConfig({
     },
     {
       name: "dev",
+      metadata: { fixtureMode: "dev" },
       grep: /^(?!.*\(production\))/,
       testIgnore: ["**/*.setup.js"],
       use: browserConfig,
@@ -35,6 +36,7 @@ export default defineConfig({
     },
     {
       name: "production",
+      metadata: { fixtureMode: "build" },
       grep: /\(production\)/,
       testIgnore: ["**/*.setup.js"],
       use: browserConfig,

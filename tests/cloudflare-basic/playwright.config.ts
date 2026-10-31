@@ -119,6 +119,7 @@ export default defineConfig({
     ? [
         {
           name: "dev",
+          metadata: { fixtureMode: "dev" },
           grep: /^(?!.*\(production\))/,
           testIgnore: [
             "**/hmr*.test.ts",
@@ -133,6 +134,7 @@ export default defineConfig({
         },
         {
           name: "production",
+          metadata: { fixtureMode: "build" },
           grep: /\(production\)/,
           testIgnore: [
             "**/head-script-preload.test.ts",
@@ -146,6 +148,7 @@ export default defineConfig({
         },
         {
           name: "hmr",
+          metadata: { fixtureMode: "dev" },
           testMatch: ["**/hmr*.test.ts"],
           use: { ...devices["Desktop Chrome"] },
           fullyParallel: false,
@@ -164,6 +167,7 @@ export default defineConfig({
         },
         {
           name: "dev",
+          metadata: { fixtureMode: "dev" },
           grep: /^(?!.*\(production\))/,
           testIgnore: [
             "**/hmr*.test.ts",
@@ -179,6 +183,7 @@ export default defineConfig({
         },
         {
           name: "production",
+          metadata: { fixtureMode: "build" },
           grep: /\(production\)/,
           testIgnore: [
             "**/head-script-preload.test.ts",
@@ -195,6 +200,7 @@ export default defineConfig({
         },
         {
           name: "hmr",
+          metadata: { fixtureMode: "dev" },
           testMatch: ["**/hmr*.test.ts"],
           use: { ...devices["Desktop Chrome"] },
           fullyParallel: false,

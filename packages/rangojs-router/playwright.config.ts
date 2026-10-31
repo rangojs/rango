@@ -181,6 +181,7 @@ export default defineConfig({
         },
         {
           name: "dev",
+          metadata: { fixtureMode: "dev" },
           // Exclude any production-tagged describe blocks, including
           // variants like "(production build)".
           grep: /^(?!.*\(production)/,
@@ -207,6 +208,7 @@ export default defineConfig({
         },
         {
           name: "production",
+          metadata: { fixtureMode: "build" },
           grep: /\(production/,
           testIgnore: [
             "**/smoke.test.ts",
@@ -221,6 +223,7 @@ export default defineConfig({
         },
         {
           name: "hmr-prerender",
+          metadata: { fixtureMode: "dev" },
           testMatch: "**/prerender-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
@@ -229,6 +232,7 @@ export default defineConfig({
         },
         {
           name: "hmr-client",
+          metadata: { fixtureMode: "dev" },
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
@@ -237,6 +241,7 @@ export default defineConfig({
         },
         {
           name: "hmr-loader",
+          metadata: { fixtureMode: "dev" },
           testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
           fullyParallel: false,
@@ -245,6 +250,7 @@ export default defineConfig({
         },
         {
           name: "hmr-routes",
+          metadata: { fixtureMode: "dev" },
           testMatch: "**/route-types-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
@@ -253,6 +259,7 @@ export default defineConfig({
         },
         {
           name: "hmr-client-urls",
+          metadata: { fixtureMode: "dev" },
           testMatch: "**/client-urls-hmr*.test.ts",
           use: browserConfig,
           fullyParallel: false,
@@ -263,6 +270,7 @@ export default defineConfig({
         },
         {
           name: "hmr-intercept",
+          metadata: { fixtureMode: "dev" },
           testMatch: "**/intercept-hmr*.test.ts",
           use: browserConfig,
           fullyParallel: false,
@@ -274,6 +282,7 @@ export default defineConfig({
         },
         {
           name: "hmr-basename",
+          metadata: { fixtureMode: "dev" },
           testMatch: "**/basename-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
@@ -339,6 +348,7 @@ export default defineConfig({
           : []),
         {
           name: "dev",
+          metadata: { fixtureMode: "dev" },
           // Exclude production tests (by test name) and HMR test files (by file name)
           grep: /^(?!.*\(production)/,
           testIgnore: [
@@ -368,6 +378,7 @@ export default defineConfig({
         },
         {
           name: "production",
+          metadata: { fixtureMode: "build" },
           grep: /\(production/,
           testIgnore: [
             "**/smoke.test.ts",
@@ -388,6 +399,7 @@ export default defineConfig({
         },
         {
           name: "hmr-client",
+          metadata: { fixtureMode: "dev" },
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
@@ -400,6 +412,7 @@ export default defineConfig({
         },
         {
           name: "hmr-loader",
+          metadata: { fixtureMode: "dev" },
           testMatch: ["**/loader-hmr.test.ts", "**/refresh-cmd.test.ts"],
           use: browserConfig,
           fullyParallel: false,
@@ -408,6 +421,7 @@ export default defineConfig({
         },
         {
           name: "hmr-routes",
+          metadata: { fixtureMode: "dev" },
           // Route-types HMR modifies route definition files — must not
           // overlap with intercept-hmr which expects routes to be intact.
           testMatch: "**/route-types-hmr.test.ts",
@@ -418,6 +432,7 @@ export default defineConfig({
         },
         {
           name: "hmr-intercept",
+          metadata: { fixtureMode: "dev" },
           // Intercept HMR modifies the intercept config file. Runs after
           // route-types HMR to avoid file-modification conflicts.
           testMatch: "**/intercept-hmr*.test.ts",
@@ -431,6 +446,7 @@ export default defineConfig({
         },
         {
           name: "hmr-basename",
+          metadata: { fixtureMode: "dev" },
           // Basename HMR modifies router.tsx to add basename: "/app",
           // which triggers route rediscovery and rewrites the gen file
           // with /app-prefixed routes. Must run after dev tests to avoid
@@ -443,6 +459,7 @@ export default defineConfig({
         },
         {
           name: "hmr-client-urls",
+          metadata: { fixtureMode: "dev" },
           // Mutates the clientUrls fixture source (route-shape edit), which
           // triggers rediscovery on every watching server — run at the end of
           // the serial HMR chain like the other file-mutating suites.
@@ -454,6 +471,7 @@ export default defineConfig({
         },
         {
           name: "hmr-prerender",
+          metadata: { fixtureMode: "dev" },
           // Local-only: tests skip on CI via test.skip(!!process.env.CI).
           testMatch: "**/prerender-hmr.test.ts",
           use: browserConfig,

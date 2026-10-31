@@ -27,12 +27,14 @@ export default defineConfig({
     ? [
         {
           name: "dev",
+          metadata: { fixtureMode: "dev" },
           grep: /^(?!.*\(production\))/,
           testIgnore: ["**/*.setup.ts"],
           use: browserConfig,
         },
         {
           name: "production",
+          metadata: { fixtureMode: "build" },
           grep: /\(production\)/,
           testIgnore: ["**/*.setup.ts"],
           use: browserConfig,
@@ -46,6 +48,7 @@ export default defineConfig({
         },
         {
           name: "dev",
+          metadata: { fixtureMode: "dev" },
           grep: /^(?!.*\(production\))/,
           testIgnore: ["**/*.setup.ts"],
           use: browserConfig,
@@ -55,6 +58,7 @@ export default defineConfig({
         },
         {
           name: "production",
+          metadata: { fixtureMode: "build" },
           grep: /\(production\)/,
           testIgnore: ["**/*.setup.ts"],
           use: browserConfig,
