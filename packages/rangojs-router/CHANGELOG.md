@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a handle a `loading()` route or slot pushes after an `await` shows in its own place in `useHandle` ([#1262](https://github.com/rangojs/rango/pull/1262))
+
+**Before.** The router does not wait for a route or parallel slot handler
+under `loading()`: it goes on to the route's slots, the next slot or the
+route while that handler runs. A `ctx.use(Handle)` push the handler made
+after its first `await` (a fetch, a timer, any promise) was filed under the
+segment the router had reached by then, so `useHandle` showed it out of
+order. The same went for a loader the handler started after the `await`, for
+the pushes of a `"use cache"` function given the ctx, on a miss and on the
+replay of a hit, and for a loader that another loader's body started after
+an `await`, in any route.
+
+```tsx
+// Under a layout that pushes { label: "Shop" }.
+path(
+  "/product/:id",
+  async (ctx) => {
+    const product = await getProduct(ctx.params.id);
+    ctx.use(Breadcrumbs)({ label: product.name });
+    return <Product product={product} />;
+  },
+  { name: "product" },
+  () => [
+    loading(<ProductSkeleton />),
+    parallel({
+      "@reviews": (ctx) => {
+        ctx.use(Breadcrumbs)({ label: "Reviews" });
+        return <Reviews />;
+      },
+    }),
+  ],
+);
+// Before: useHandle(Breadcrumbs) gave Shop, Reviews, Product.
+// After:  Shop, Product, Reviews.
+```
+
+**After.** Each push lands under the segment whose handler or loader made
+it, wherever the `await` sits, on the document and on a navigation. No
+change in your code. A handler without `loading()` and a push function bound
+before the `await` (`const push = ctx.use(Handle)`) were filed right before,
+and are unchanged.
+
 ## 0.32.0 (2026-10-30)
 
 ### Fixed: a prefetch held by a `revalidate()` that read the source page no longer shows another page's layout ([#1333](https://github.com/rangojs/rango/pull/1333))

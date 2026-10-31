@@ -1561,9 +1561,9 @@ This requires separating:
   loader's position too (`SlotTag.under`), so a loader that pushes, awaits
   a dependency that pushes, and pushes again ends as
   `[own, dependency, own]`, the order its entry's HIT replays. A live push
-  to another segment (the dependency's owning segment is its kickoff's
-  `_currentSegmentId`) removes the replayed slots and lands where it is
-  pushed.
+  to another segment (the dependency's owning segment is the one its
+  kickoff runs for, `segmentPinOf` in `server/context.ts`) removes the
+  replayed slots and lands where it is pushed.
 
   Why the position and not an append: the common shape is a cached loader
   that pushes its own crumb after awaiting the dependency. On the miss the
