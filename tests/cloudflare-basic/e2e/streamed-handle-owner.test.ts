@@ -3,13 +3,13 @@ import { useFixture } from "./fixture";
 import { waitForHydration } from "./helper";
 
 /**
- * A push made after real workerd I/O (a KV read, a dynamic import, a timer)
- * lands under the segment that made it, so useHandle reads in segment order:
- * a loading() route beside its slot, a loading() slot before a sibling slot
- * and the route, and a loader a route's loader() body starts. The segment
- * travels in the handler's async context (server/context.ts runAsSegment),
- * so this also shows that context survives those awaits in workerd. Fixture:
- * src/pages/streamed-handle-owner.tsx.
+ * A push made after real workerd I/O (a KV read, a dynamic import, a fetch(),
+ * a timer) lands under the segment that made it, so useHandle reads in
+ * segment order: a loading() route beside its slot, a loading() slot before a
+ * sibling slot and the route, and a loader a route's loader() body starts. The
+ * segment travels in the handler's async context (server/context.ts
+ * runAsSegment), so this also shows that context survives those awaits in
+ * workerd. Fixture: src/pages/streamed-handle-owner.tsx.
  */
 const SHO = "/streamed-handle-owner";
 

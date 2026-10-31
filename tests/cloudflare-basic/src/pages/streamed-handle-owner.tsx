@@ -43,7 +43,7 @@ function crumb(label: string, href: string): Handler {
 }
 
 const ShoRoutePage: Handler = async (ctx) => {
-  await shoIo(ctx.env);
+  await shoIo(ctx);
   ctx.use(Breadcrumbs)({ label: "Route", href: `${SHO}/route` });
   return <p>route</p>;
 };
@@ -69,7 +69,7 @@ export const streamedHandleOwnerPatterns = urls(
           parallel(
             {
               "@a": async (ctx) => {
-                await shoIo(ctx.env);
+                await shoIo(ctx);
                 ctx.use(Breadcrumbs)({ label: "A", href: `${SHO}/slot#a` });
                 return null;
               },

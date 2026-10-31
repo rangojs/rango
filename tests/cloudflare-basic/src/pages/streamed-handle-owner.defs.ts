@@ -2,11 +2,15 @@ import { Breadcrumbs, createLoader } from "@rangojs/router";
 import type { AppBindings } from "../env.js";
 
 // e2e streamed-handle-owner.test.ts. Every push in this fixture follows real
-// workerd I/O: a KV read, a dynamic import and a timer, the awaits that can
-// drop an AsyncLocalStorage store there (cache-lookup.ts).
-export async function shoIo(env: Pick<AppBindings, "KV">): Promise<void> {
-  await env.KV.get("streamed-handle-owner");
+// workerd I/O: a KV read, a dynamic import, a fetch() and a timer, the awaits
+// that can drop an AsyncLocalStorage store there (cache-lookup.ts).
+export async function shoIo(ctx: {
+  env: Pick<AppBindings, "KV">;
+  url: URL;
+}): Promise<void> {
+  await ctx.env.KV.get("streamed-handle-owner");
   await import("./streamed-handle-owner.lazy.js");
+  await (await fetch(new URL("/api/health", ctx.url))).text();
   await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
@@ -21,7 +25,7 @@ export const ShoInnerLoader = createLoader(async (ctx) => {
 
 /** A route's loader() that starts ShoInnerLoader after its I/O. */
 export const ShoOuterLoader = createLoader(async (ctx) => {
-  await shoIo(ctx.env);
+  await shoIo(ctx);
   await ctx.use(ShoInnerLoader);
   return null;
 });
