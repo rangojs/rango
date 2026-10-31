@@ -156,7 +156,9 @@ export function createNavigationClient(
       // `prefetchKey=":source"`), then fall back to the wildcard slot shared
       // across source pages.
       // Both keys embed the Rango state, so state rotation (deploy or
-      // server-action invalidation) auto-invalidates both scopes.
+      // invalidateClientCache()) auto-invalidates both scopes. A server
+      // action marks entries stale instead: one is still served, and the
+      // bridge revalidates its page after the click (stalePrefetch).
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
       // A prefetch served during an action's flight holds pre-write data:

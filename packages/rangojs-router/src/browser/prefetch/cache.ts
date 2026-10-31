@@ -11,7 +11,8 @@
  * - Wildcard (default): built by `buildPrefetchKey(rangoState, target)` —
  *   shape `rangoState\0/target?...`. Shared across all source pages and
  *   source segment trees; `_rsc_segments` is omitted from this key. Invalidated
- *   automatically when Rango state bumps (deploy or server-action invalidation).
+ *   automatically when Rango state bumps (deploy or invalidateClientCache()).
+ *   A server action marks entries stale instead (the stale epoch, below).
  * - Source-scoped: built by `buildSourceKey(rangoState, sourceHref, target)`
  *   — shape `rangoState\0sourceHref\0/target?...`. Embeds the Rango state
  *   (so rotation invalidates source-scoped entries too), the source href, and
@@ -191,7 +192,7 @@ let staleEpoch = 0;
  * one of:
  * - Wildcard (source-agnostic): prefix is the Rango state value from
  *   `getRangoState()`. Shared across all source pages. Invalidated
- *   automatically when Rango state bumps (deploy or server-action).
+ *   automatically when Rango state bumps (deploy or invalidateClientCache()).
  *   `_rsc_segments` is omitted so sibling payloads prefetched from one page
  *   remain reusable after another prefetched navigation commits. Key shape:
  *   `rangoState\0/target?...`.

@@ -10,7 +10,8 @@
  * - Build version: the router's document version. It changes when a deploy
  *   changes the router's server code or the client assets, busting all cached
  *   prefetches at boot; a deploy that changes neither keeps them.
- * - Timestamp rotates on invalidation (server action, invalidateClientCache).
+ * - Timestamp rotates on invalidation (invalidateClientCache, either seat). A
+ *   server action without it rotates nothing.
  *
  * Storage is a session cookie named by the server-resolved name passed to
  * initRangoState (`{prefix}_{routerId}`, default prefix `rango-state`). The
@@ -176,7 +177,7 @@ export function getRangoState(): string {
 
 /**
  * Invalidate the Rango state (self-rotation). Called when the client clears its
- * prefetch caches (e.g. via the server-action bridge). Rotates the timestamp,
+ * prefetch caches (e.g. invalidateClientCache()). Rotates the timestamp,
  * keeps the version, writes the cookie, and updates the mirror synchronously so
  * the external-rotation observer is NOT triggered by our own write.
  */

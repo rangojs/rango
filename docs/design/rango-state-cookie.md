@@ -46,7 +46,11 @@ tissue that still applies):
 
 - the **in-memory prefetch map** (`src/browser/prefetch/cache.ts`), whose
   wildcard and source-scoped keys both embed the state value —
-  `rangoState\0/target` and `rangoState\0sourceHref\0/target`;
+  `rangoState\0/target` and `rangoState\0sourceHref\0/target`. Its entries
+  are also invalidated by a second door, the **stale epoch**: a server
+  action without a directive bumps it (`markPrefetchesStale()`), and an
+  entry whose fetch began under an older epoch is stale. It is still served:
+  the click commits it, then revalidates the page (#1329);
 - the **browser's private HTTP cache**, via the `Vary` mechanism above. The
   router itself puts nothing in it any more: prefetch responses carried
   `Cache-Control: private, max-age={prefetchCacheTTL}` until #1170, and the
@@ -65,14 +69,14 @@ tissue that still applies):
 
 Live paths that rotate / clear:
 
-| Trigger                     | Path                                                                                                                                                           |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Deploy                      | version prefix changes; `initRangoState` mints fresh at boot (`rango-state.ts`, from `rsc-router.tsx`)                                                         |
-| Server action               | `server-action-bridge.ts` → deferred invalidate unless the action called `keepClientCache()`                                                                   |
-| `invalidateClientCache()`   | public API (both seats) → rotates cookie / marks caches stale; replaces the removed `useClientCache().clear()` hook                                            |
-| Cross-tab broadcast receipt | a sibling tab's namespaced `BroadcastChannel` message → adopt its state, mark history stale, clear prefetches without re-rotating; gated on shared segment IDs |
-| External cookie rotation    | sibling tab / server `Set-Cookie` / cookie clear detected on the next `getRangoState()` read → external-rotation observer                                      |
-| Dev HMR                     | a version change → `navigationBridge.updateVersion()` → `store.clearHistoryCache()`                                                                            |
+| Trigger                     | Path                                                                                                                                                                                                                                    |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deploy                      | version prefix changes; `initRangoState` mints fresh at boot (`rango-state.ts`, from `rsc-router.tsx`)                                                                                                                                  |
+| Server action               | `server-action-bridge.ts` → at the response, unless the action called `keepClientCache()`: marks history and prefetches stale, marked (`soft`) broadcast; no rotation (#1329)                                                           |
+| `invalidateClientCache()`   | public API (both seats) → rotates cookie / marks caches stale; replaces the removed `useClientCache().clear()` hook                                                                                                                     |
+| Cross-tab broadcast receipt | a sibling tab's namespaced `BroadcastChannel` message → mark history stale; adopt a newer state and clear prefetches without re-rotating; a `soft` message whose state is not newer marks prefetches stale; gated on shared segment IDs |
+| External cookie rotation    | sibling tab / server `Set-Cookie` / cookie clear detected on the next `getRangoState()` read → external-rotation observer                                                                                                               |
+| Dev HMR                     | a version change → `navigationBridge.updateVersion()` → `store.clearHistoryCache()`                                                                                                                                                     |
 
 Note that `clearPrefetchCache()` is the function that clears the in-memory map,
 discards in-flight prefetches, and normally calls `invalidateRangoState()`. A
@@ -214,16 +218,20 @@ build gets a real implementation instead of a throwing stub:
   call during SSR should not take down the page.
 
 The contract, in one sentence: **calling it anywhere makes the current client
-behave as if a server action had just completed.** Import it from
+drop what it cached and rotate its state.** That is more than a server action
+without a directive does since #1329: an action marks history and prefetches
+stale and rotates nothing, where this flushes the prefetch map and rotates.
+Import it from
 `@rangojs/router` in a handler, a middleware, a server component, a client
 component, or a plain browser module, and the environment-appropriate
 mechanics fire:
 
-| Seat                                             | Mechanism                                                                                                                                                                 | Timing                                                                                                                         |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Client component / browser code                  | `store.markCacheAsStaleAndBroadcast()` — history cache marked stale (SWR), prefetch map flushed, in-flight prefetches aborted, state rotated, `BroadcastChannel` notified | immediate                                                                                                                      |
-| Handler / middleware / action / server component | rotated `Set-Cookie` on the response                                                                                                                                      | on receipt; caches miss from the client's next fetch onward, history cache marked stale by the jar-divergence observer (below) |
-| SSR render pass                                  | no-op, dev warning                                                                                                                                                        | —                                                                                                                              |
+| Seat                                    | Mechanism                                                                                                                                                                                                                           | Timing                                                                                                                                       |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Client component / browser code         | `store.invalidateCacheAndBroadcast()` — history cache marked stale (SWR), prefetch map flushed, in-flight prefetches aborted, state rotated, `BroadcastChannel` notified                                                            | immediate                                                                                                                                    |
+| Action                                  | rotated `Set-Cookie` on the response; the action's landing sees the rotation (the jar-divergence observer records it on the action fence), flushes the prefetch map without rotating again, and sends the full (unmarked) broadcast | on receipt; other tabs sharing a segment adopt the newer state, flush and refresh                                                            |
+| Handler / middleware / server component | rotated `Set-Cookie` on the response                                                                                                                                                                                                | on receipt; caches miss from the client's next fetch onward, history cache marked stale by the jar-divergence observer (below); no broadcast |
+| SSR render pass                         | no-op, dev warning                                                                                                                                                                                                                  | —                                                                                                                                            |
 
 ```ts
 // Client seat: a mutation the router can't see.
@@ -246,12 +254,14 @@ export const handler = async (ctx) => {
 **Client seat details.** It wraps the store layer, not `clearPrefetchCache()`
 directly — `clearPrefetchCache()` alone leaves the history segment cache
 untouched and broadcasts nothing, which is the stale-Back-button bug from the
-three-caches section. It uses the **mark-stale (SWR)** path, not the hard-clear
-path the deleted hook used: that is what makes the "as if a server action
-completed" sentence literally true (`server-action-bridge.ts` uses the same
-`markCacheAsStaleAndBroadcast()`), and it is the gentler behavior for the
-websocket/REST cases this exists for — Back renders the cached entry instantly
-and revalidates, instead of refetching with a loading state. This is a
+three-caches section. It marks the history cache **stale (SWR)**, not the
+hard-clear path the deleted hook used, and flushes the prefetch map and
+rotates (`invalidateCacheAndBroadcast()`). A server action's landing uses
+`markCacheAsStaleAndBroadcast()`, which marks prefetches stale instead of
+flushing them and rotates nothing (#1329). The history half is the gentler
+behavior for the websocket/REST cases this exists for — Back renders the
+cached entry instantly and revalidates, instead of refetching with a loading
+state. This is a
 recorded behavior delta versus `useClientCache().clear()`; since the hook is
 removed in the same change, no published contract survives to be broken.
 
@@ -316,13 +326,13 @@ before implementing]**:
 Semantics consumers must understand — the server seat is **per-client and
 lazy**:
 
-| Scenario                                               | Effect                                                                                                                                                                                       |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Action handler calls it                                | Redundant but harmless. Actions already rotate the caller's state client-side (`server-action-bridge.ts`); the extra `Set-Cookie` is one duplicate rotation, costing at most one extra miss. |
-| Non-action handler (e.g. response-route POST) calls it | The intended use. The responding client rotates on receipt of the `Set-Cookie`; its history cache is marked stale by the jar-divergence observer at its next read.                           |
-| Other clients with warm caches                         | Unaffected. Rotating them requires your app code to call it on _their_ requests too — there is no shared epoch (see Deferred).                                                               |
-| A client served entirely from its own browser cache    | Unaffected until something forces a round trip (bounded by `prefetchCacheTTL`).                                                                                                              |
-| Called twice in one request                            | One `Set-Cookie`, one rotation.                                                                                                                                                              |
+| Scenario                                               | Effect                                                                                                                                                                                        |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Action handler calls it                                | The way to rotate from an action: an action without it rotates nothing (#1329). The landing sees the rotation, flushes the prefetch map without rotating again, and sends the full broadcast. |
+| Non-action handler (e.g. response-route POST) calls it | The intended use. The responding client rotates on receipt of the `Set-Cookie`; its history cache is marked stale by the jar-divergence observer at its next read.                            |
+| Other clients with warm caches                         | Unaffected. Rotating them requires your app code to call it on _their_ requests too — there is no shared epoch (see Deferred).                                                                |
+| A client served entirely from its own browser cache    | Unaffected until something forces a round trip (bounded by `prefetchCacheTTL`).                                                                                                               |
+| Called twice in one request                            | One `Set-Cookie`, one rotation.                                                                                                                                                               |
 
 **Why one name with two mechanics is safe.** The unifying contract is the
 outcome — "this client's caches miss from now on" — and the timing difference
@@ -335,15 +345,53 @@ its sibling `keepClientCache()` is server-only and no-ops on the client, so the
 same move does not round-trip — see its section.) The doc table above is the
 whole story a consumer needs.
 
+### Since #1329: an action marks prefetches stale
+
+A server action without a directive used to run the full invalidation at its
+response: history marked stale, prefetch map flushed, state rotated,
+broadcast. Every visible link prefetched again after each action, and other
+tabs flushed theirs. It now marks every history entry and every prefetch
+stale and rotates nothing:
+
+- **Prefetches.** `markPrefetchesStale()` bumps the stale epoch
+  (`prefetch/cache.ts`); each entry carries the epoch its fetch began under.
+  Nothing is dropped or aborted, so a prefetch in flight at the response
+  finishes and is stored stale (a Flight response that arrived is never
+  aborted). Visible links are not told (`notifyPrefetchCacheInvalidated()`
+  does not run): none prefetches again. `hasPrefetch` treats a stale entry as
+  absent, so a new hover replaces it with a fresh one. A click on a stale
+  entry commits it at once, then the page revalidates once the click settled,
+  in Back's stale-revalidation lane (`revalidateStalePrefetch` in
+  `navigation-bridge.ts`; R7 in `docs/internal/execution-model.md`). TTL ages
+  from the original fetch; marking never extends it.
+- **The state.** Not rotated. A partial response a route caches with its own
+  `Cache-Control` stays in the browser's HTTP cache until its max-age, since
+  the `Vary` key did not change.
+- **Other tabs.** The broadcast carries `soft: true`. A receiver that adopts a
+  newer carried state takes the full branch (flush without rotating); one that
+  cannot marks history and prefetches stale; an unmarked message it cannot
+  adopt flushes and rotates locally, as before. Every branch refreshes the
+  page on screen. A tab that shares no segment with the sender, and every tab
+  under `crossTabSync: false`, is no longer told: with no rotation there is no
+  jar divergence for it to see. An old tab ignores `soft` and flushes and
+  rotates, which every tab then sees through jar divergence: one flush, never
+  staleness.
+- **`invalidateClientCache()` in the action.** Its `Set-Cookie` reaches the
+  jar; the jar-divergence observer records the rotation on the action fence
+  (`noteStateRotation()` in `action-fence.ts`), and the landing flushes the
+  prefetch map without rotating again and sends the unmarked broadcast, so
+  other tabs adopt the new state, flush and refresh: today's full effect.
+
 ### `keepClientCache()` — the action-side counterpart
 
 Server actions invalidate automatically — that stays the default, and it is
 the right default. But "every action mutates route-visible data" is a
 heuristic, and some hot actions falsify it: a debounced draft autosave, an
-analytics event, a save that turns out to be a no-op. Each of those currently
-pays the full price — prefetch map wiped, state rotated (busting the Vary-keyed
-HTTP cache), sibling tabs broadcast at, and a revalidation refetch of the
-current route. `keepClientCache()` is the server-side directive that says:
+analytics event, a save that turns out to be a no-op. Each of those pays the
+price — history and prefetches marked stale (so the next click on a prefetch
+and the next Back revalidate), sibling tabs broadcast at, and a revalidation
+refetch of the current route. (Until #1329 the price also included a wiped
+prefetch map and a rotated state, see "Since #1329" above.) `keepClientCache()` is the server-side directive that says:
 this action changed nothing a route renders; leave the client's key and caches
 alone.
 
@@ -416,10 +464,11 @@ client-side. The actual conclusion: the eager _clear_ must become an eager
     (`cached.stale || fenceActive()`), and the SWR revalidation must fire when
     `fenceActive()` even if `entry[2]` is false. `navigation-bridge.ts` is
     therefore part of the implementation surface (added below).
-- **At response, no directive:** perform today's full invalidation — mark
-  history stale, clear the prefetch map, rotate the state, broadcast — then
-  the usual revalidation refetch. Same end state as today, shifted to response
-  time. This reproduces the existing post-commit broadcast (`:656`); see the
+- **At response, no directive:** mark history stale, mark every prefetch
+  stale (the stale epoch; nothing is cleared or aborted), send the `soft`
+  broadcast — then the usual revalidation refetch. No rotation (#1329; this
+  bullet first shipped as the full invalidation: clear the prefetch map,
+  rotate the state). This reproduces the existing post-commit broadcast (`:656`); see the
   race note below for why "today" already broadcasts twice.
 - **At response, directive present:** drop this action's fence reference (the
   fence lifts only when the count hits zero). No rotation, no wipe, no
@@ -484,7 +533,7 @@ response decision and never served before it.
 
 | Case                                                                | Behavior                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Action without the directive                                        | full invalidation at response — same end state as today                                                                                                                                                                                                                                                                                                                      |
+| Action without the directive                                        | at response: history and prefetches marked stale, `soft` broadcast, no rotation (#1329). When the response rotated the state (`invalidateClientCache()` in the action), the prefetch map is flushed without a second rotation and the broadcast is the full one                                                                                                              |
 | Action calls `keepClientCache()`                                    | no rotation, no wipe, no broadcast, no _revalidation_ refetch; this action's fence reference is dropped. Exception: the `hmr-missing`/`consolidation-needed` _repair_ refetches stay ungated on keep (they fix a missing/partial tree, and a keep action resolving last must discharge a directive-free sibling's consolidation) — see the keep bullet under fence-and-defer |
 | Action calls both `keepClientCache()` and `invalidateClientCache()` | invalidation wins, with no special-casing: the directive suppresses only the _automatic_ invalidation, while the explicit `Set-Cookie` still lands in the jar and the divergence observer does the rest                                                                                                                                                                      |
 | `keepClientCache()` action overlapping a directive-free action      | the directive-free action's full invalidation still fires at _its_ response; keep protects against this action's own automatic invalidation, not against a concurrent real mutation. The keep row's "no rotation/wipe/broadcast" is a per-action guarantee, not a global one                                                                                                 |
@@ -752,12 +801,12 @@ channel inventory above leaves open:
 
 The resulting matrix — every row at least as strong as today:
 
-| Event                                          | Today                                                                                                                                                | Under this design                                                                                                                                                                                                                                                                                                                                       |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Action completes in tab A                      | A marks stale + broadcasts at action start **and** again post-commit (`:656`); B invalidates if segments shared; B's value syncs via `storage` event | the redundant pre-commit broadcast is gone — invalidation fires once, at response time (post-commit); a shared-segment B adopts A's namespaced state and clears without re-rotating, while an unrelated B syncs via jar read at its next fetch and marks history stale through jar divergence (see the fence-and-defer notes under `keepClientCache()`) |
-| `invalidateClientCache()` client seat in tab A | n/a (hook: hard clear + broadcast)                                                                                                                   | same row as an action — mark-stale + broadcast + jar divergence                                                                                                                                                                                                                                                                                         |
-| Server rotation (`Set-Cookie`)                 | n/a                                                                                                                                                  | every tab sharing the jar observes the divergence at its next fetch and marks its history stale — no broadcast needed                                                                                                                                                                                                                                   |
-| Cookies cleared mid-session                    | no effect — localStorage state survives, stale-keyed entries still hit                                                                               | each tab's next read finds no cookie, mints fresh, marks history stale; every previously cached response unreachable                                                                                                                                                                                                                                    |
+| Event                                          | Today                                                                                                                                                | Under this design                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Action completes in tab A                      | A marks stale + broadcasts at action start **and** again post-commit (`:656`); B invalidates if segments shared; B's value syncs via `storage` event | invalidation fires once, at response time (post-commit). Since #1329 it is `soft`: a shared-segment B marks history and prefetches stale and refreshes, with no rotation anywhere; B adopts and flushes only when A's message carries a newer state (A's action rotated it). An unrelated B, or any B under `crossTabSync: false`, is not told (no jar divergence either, since nothing rotated) |
+| `invalidateClientCache()` client seat in tab A | n/a (hook: hard clear + broadcast)                                                                                                                   | history marked stale, prefetch map flushed, state rotated, full (unmarked) broadcast: a shared-segment B adopts the newer state, flushes and refreshes; every other tab sees jar divergence at its next fetch                                                                                                                                                                                    |
+| Server rotation (`Set-Cookie`)                 | n/a                                                                                                                                                  | every tab sharing the jar observes the divergence at its next fetch and marks its history stale — no broadcast needed                                                                                                                                                                                                                                                                            |
+| Cookies cleared mid-session                    | no effect — localStorage state survives, stale-keyed entries still hit                                                                               | each tab's next read finds no cookie, mints fresh, marks history stale; every previously cached response unreachable                                                                                                                                                                                                                                                                             |
 
 Two boundaries to keep the claims precise: the observer is pull-based (it
 fires at a tab's next jar read — a navigation/prefetch fetch or a popstate

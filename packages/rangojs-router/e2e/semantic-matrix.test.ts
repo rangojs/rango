@@ -99,6 +99,57 @@ async function readRouteReport(page: Page): Promise<{
   return JSON.parse(report);
 }
 
+/**
+ * The action-stale fixture's product page under a fresh `as-key` (cart 0),
+ * once its prefetching link to /action-stale/basket has been prefetched
+ * (#1329 rows PS1-PS3).
+ */
+async function openPrefetchedProductPage(
+  page: Page,
+  baseUrl: (path: string) => string,
+): Promise<void> {
+  await page
+    .context()
+    .addCookies([
+      { name: "as-key", value: crypto.randomUUID(), url: baseUrl("/") },
+    ]);
+  const prefetched = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith("/action-stale/basket") &&
+      isPrefetchRequest(response.request()),
+  );
+  await openJsPage(page, baseUrl("/action-stale/pdp?prefetch=render"));
+  await (await prefetched).finished();
+  await expect(testId(page, "as-cart")).toHaveText("cart:0");
+}
+
+/** Click an action button of the fixture and wait for its call to settle. */
+async function landAction(page: Page, button: string): Promise<void> {
+  await testId(page, button).click();
+  await expect(page.locator("html")).not.toHaveAttribute("data-as-pending");
+}
+
+async function readStateCookie(page: Page): Promise<string | undefined> {
+  const cookies = await page.context().cookies();
+  return cookies.find((cookie) => cookie.name.startsWith("rango-state"))?.value;
+}
+
+/** The non-prefetch partial requests for /action-stale/basket from now on. */
+function basketNavigations(page: Page): { stale: boolean }[] {
+  const sent: { stale: boolean }[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      url.pathname.endsWith("/action-stale/basket") &&
+      url.searchParams.has("_rsc_partial") &&
+      !isPrefetchRequest(request)
+    ) {
+      sent.push({ stale: url.searchParams.get("_rsc_stale") === "true" });
+    }
+  });
+  return sent;
+}
+
 function rowTitle(row: SemanticMatrixRow): string {
   return `[${row.id}] ${row.transport} | ${row.execution} | ${row.scope} :: ${row.contract}`;
 }
@@ -728,6 +779,99 @@ const matrixRows: SemanticMatrixRow[] = [
 
       const body2 = await (await request.get(url)).json();
       expect(body2.ts).toBe(body1.ts);
+    },
+  },
+  {
+    id: "PS1",
+    contract:
+      "after an action, a click on a prefetch made before it shows the prefetched page, then its loaders' post-write values; useNavigation stays idle during the revalidation",
+    transport: "js",
+    execution: "stale-revalidation",
+    scope: "n/a",
+    url: "/action-stale/pdp",
+    assert: async ({ baseUrl, page }) => {
+      await openPrefetchedProductPage(page, baseUrl);
+      await landAction(page, "as-add-fast");
+      await expect(testId(page, "as-cart")).toHaveText("cart:1");
+      const sent = basketNavigations(page);
+
+      await testId(page, "as-to-basket-prefetched").click();
+      await page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="as-basket"]')?.textContent ===
+          "basket:0",
+        null,
+        { polling: "raf" },
+      );
+      // The revalidation leaves as the click settles, around this frame.
+      expect(
+        sent.filter((entry) => !entry.stale),
+        "the click makes no request of its own",
+      ).toEqual([]);
+      await page.evaluate(() => {
+        const states: string[] = [];
+        new MutationObserver(() => {
+          const state = document.querySelector(
+            '[data-testid="as-navigation"]',
+          )?.textContent;
+          if (state && states.at(-1) !== state) states.push(state);
+        }).observe(document.body, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+        Object.assign(self, { __psStates: states });
+      });
+
+      await expect(testId(page, "as-basket")).toHaveText("basket:1");
+      expect(sent).toEqual([{ stale: true }]);
+      const states = await page.evaluate(
+        () => (self as unknown as { __psStates: string[] }).__psStates,
+      );
+      expect(states).not.toContain("loading");
+      await expect(testId(page, "as-navigation")).toHaveText("idle");
+    },
+  },
+  {
+    id: "PS2",
+    contract:
+      "an action without a directive leaves the state cookie unchanged; invalidateClientCache() in an action rotates it",
+    transport: "js",
+    execution: "action-followup",
+    scope: "n/a",
+    url: "/action-stale/pdp",
+    assert: async ({ baseUrl, page }) => {
+      await openPrefetchedProductPage(page, baseUrl);
+      const state = await readStateCookie(page);
+      expect(state).toBeTruthy();
+
+      await landAction(page, "as-add-fast");
+      await expect(testId(page, "as-cart")).toHaveText("cart:1");
+      expect(await readStateCookie(page)).toBe(state);
+
+      await landAction(page, "as-add-invalidate");
+      await expect(testId(page, "as-cart")).toHaveText("cart:2");
+      expect(await readStateCookie(page)).not.toBe(state);
+    },
+  },
+  {
+    id: "PS3",
+    contract:
+      "a keepClientCache() action leaves prefetches fresh: the click shows the prefetch and nothing revalidates",
+    transport: "js",
+    execution: "partial-render",
+    scope: "n/a",
+    url: "/action-stale/pdp",
+    assert: async ({ baseUrl, page }) => {
+      await openPrefetchedProductPage(page, baseUrl);
+      await landAction(page, "as-add-keep");
+      const sent = basketNavigations(page);
+
+      await testId(page, "as-to-basket-prefetched").click();
+      await expect(testId(page, "as-basket")).toHaveText("basket:0");
+      await page.waitForTimeout(1000);
+      await expect(testId(page, "as-basket")).toHaveText("basket:0");
+      expect(sent).toEqual([]);
     },
   },
   {

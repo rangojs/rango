@@ -173,8 +173,8 @@ export interface NavigationStoreConfig {
 
   /**
    * Enable cross-tab cache invalidation via BroadcastChannel (default: true)
-   * When cache is cleared (via server actions or invalidateClientCache()),
-   * other tabs will also clear their cache
+   * After a server action other tabs that share a segment mark their caches
+   * stale; after invalidateClientCache() they adopt its state and flush
    */
   crossTabSync?: boolean;
 

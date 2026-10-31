@@ -49,9 +49,9 @@ async function readState(page: Page): Promise<string | null> {
 }
 
 /**
- * Records every text `testId` shows from now on (one entry per change), with
- * the time it first appeared, and tags the first element shown with it so a
- * remount can be told from an update in place.
+ * Records every text `testId` shows from now on (one entry per change), and
+ * keeps the first element shown with it so a remount can be told from an
+ * update in place.
  */
 async function recordTexts(page: Page, testId: string): Promise<void> {
   await page.evaluate((id) => {
@@ -61,10 +61,7 @@ async function recordTexts(page: Page, testId: string): Promise<void> {
     const read = (): void => {
       const element = document.querySelector(`[data-testid="${id}"]`);
       if (!element) return;
-      if (!first) {
-        first = element;
-        Object.assign(self, { __asShownAt: Date.now() });
-      }
+      if (!first) first = element;
       const text = element.textContent;
       if (text === last) return;
       last = text;
@@ -88,12 +85,6 @@ async function recordTexts(page: Page, testId: string): Promise<void> {
 async function readTexts(page: Page): Promise<string[]> {
   return page.evaluate(
     () => (self as unknown as { __asTexts: string[] }).__asTexts,
-  );
-}
-
-async function shownAt(page: Page): Promise<number> {
-  return page.evaluate(
-    () => (self as unknown as { __asShownAt: number }).__asShownAt,
   );
 }
 
@@ -151,11 +142,9 @@ export function runActionStalePrefetchTests(
     await recordNavigationStates(page, "as-basket");
     await page.getByTestId("as-to-basket-prefetched").click();
     await waitForShown(page, "as-basket");
-    const at = await shownAt(page);
+    // The revalidation leaves as the click settles, around the same frame.
     expect(
-      navigations(sent, "/action-stale/basket").filter(
-        (entry) => entry.at <= at,
-      ),
+      navigations(sent, "/action-stale/basket").filter((entry) => !entry.stale),
       "the click shows the prefetched page without a request of its own",
     ).toEqual([]);
 
