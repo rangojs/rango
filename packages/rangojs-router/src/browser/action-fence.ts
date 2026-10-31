@@ -38,12 +38,35 @@
 
 let fenceCount = 0;
 
+/**
+ * Whether a cookie read saw the state rotate externally while the fence was
+ * up (navigation-store-handle.ts reports it). Almost always the action's own
+ * server-seat `invalidateClientCache()` `Set-Cookie`; a sibling tab's
+ * rotation in that window reads the same and costs one full flush, today's
+ * behavior. navigation-store.ts reads it when the action lands.
+ */
+let rotatedInFence = false;
+
 export function enterActionFence(): void {
+  if (fenceCount === 0) rotatedInFence = false;
   fenceCount++;
 }
 
 export function exitActionFence(): void {
   if (fenceCount > 0) fenceCount--;
+}
+
+/** A cookie read saw an external state rotation (rango-state.ts observer). */
+export function noteStateRotation(): void {
+  if (fenceCount > 0) rotatedInFence = true;
+}
+
+/**
+ * Whether the state rotated externally since the fence went up. False with
+ * the fence down.
+ */
+export function stateRotatedInActionFence(): boolean {
+  return fenceCount > 0 && rotatedInFence;
 }
 
 export function isActionFenceActive(): boolean {
@@ -53,4 +76,5 @@ export function isActionFenceActive(): boolean {
 /** Test-only: reset the refcount between cases. */
 export function __resetActionFence(): void {
   fenceCount = 0;
+  rotatedInFence = false;
 }

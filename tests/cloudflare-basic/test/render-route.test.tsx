@@ -306,12 +306,31 @@ describe("renderRoute against cloudflare-basic client components", () => {
     expect(observePrefetchElement).toHaveBeenCalledOnce();
     expect(observePrefetchElement).toHaveBeenCalledWith(target);
 
-    result.router.store.markCacheAsStaleAndBroadcast();
+    result.router.store.invalidateCacheAndBroadcast();
 
     await vi.waitFor(() =>
       expect(observePrefetchElement).toHaveBeenCalledTimes(2),
     );
     expect(observePrefetchElement).toHaveBeenLastCalledWith(target);
+  });
+
+  it("keeps delegated viewport prefetch armed once after an action's stale mark", async () => {
+    function PrefetchAnchor() {
+      return <a href="/target" data-testid="prefetch-target" />;
+    }
+
+    const result = await renderRoute(
+      [{ path: "/", Component: PrefetchAnchor }],
+      { request: "/", defaultPrefetch: "viewport" },
+    );
+    expect(observePrefetchElement).toHaveBeenCalledOnce();
+
+    // A server action without a directive marks prefetches stale; visible
+    // links are not told, so none prefetches again.
+    result.router.store.markCacheAsStaleAndBroadcast();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(observePrefetchElement).toHaveBeenCalledOnce();
   });
 
   it.each(["/café", "/caf%C3%A9", "/caf%c3%a9"])(

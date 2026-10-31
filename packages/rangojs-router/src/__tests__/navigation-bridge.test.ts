@@ -753,7 +753,10 @@ describe("navigation-bridge link to an entry whose cached list holds an error bo
       { id: "L0R0", type: "error" },
     ]);
     expect(segmentIds).toBeUndefined();
-    expect(mode).toEqual({ type: "navigate" });
+    expect(mode).toEqual({
+      type: "navigate",
+      onStalePrefetch: expect.any(Function),
+    });
   });
 
   it("a parallel slot's error segment, the list's only one, also keeps the link from holding it", async () => {
@@ -763,7 +766,10 @@ describe("navigation-bridge link to an entry whose cached list holds an error bo
       { id: "L0R0", type: "route" },
     ]);
     expect(segmentIds).toBeUndefined();
-    expect(mode).toEqual({ type: "navigate" });
+    expect(mode).toEqual({
+      type: "navigate",
+      onStalePrefetch: expect.any(Function),
+    });
   });
 
   it("control: a list without one is held, as before", async () => {

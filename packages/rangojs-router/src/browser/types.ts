@@ -703,7 +703,10 @@ export interface NavigationStore {
    */
   getPageHistoryKeys(historyKey: string): string[];
   markHistoryCacheStale(): void;
+  /** A server action without a directive: mark stale, soft broadcast. */
   markCacheAsStaleAndBroadcast(): void;
+  /** The client seat of invalidateClientCache(): flush, rotate, broadcast. */
+  invalidateCacheAndBroadcast(): void;
   clearHistoryCache(): void;
 
   // Cross-tab refresh callback (set by navigation bridge)
@@ -771,6 +774,13 @@ export interface FetchPartialResult {
    * fallbacks stream as usual.
    */
   fullyPrefetched?: boolean;
+  /**
+   * True when the payload is a prefetch a server action marked stale after it
+   * was fetched (prefetch/cache.ts isPrefetchStale). The click commits it as
+   * any prefetch; the navigation then revalidates its page once it settled,
+   * as Back onto a stale history entry does (navigation-bridge.ts navigate).
+   */
+  stalePrefetch?: boolean;
 }
 
 /**

@@ -68,6 +68,15 @@ export interface DecodedPrefetch {
    */
   scope: "source" | "wildcard";
   /**
+   * The stale epoch (`currentPrefetchEpoch()`) the prefetch's fetch started
+   * under. A server action without a directive marks every prefetch stale
+   * (`markPrefetchesStale()` bumps the epoch) instead of flushing it: an entry
+   * from an older epoch is still served, and the navigation that adopts it
+   * revalidates its page once it settled (`isPrefetchStale`). A respawn keeps
+   * the original fetch's epoch, as it keeps its timestamp.
+   */
+  epoch: number;
+  /**
    * Synchronously-readable flag, flipped to true when `streamComplete` resolves
    * (the entire RSC stream has drained). Navigation reads this at click time to
    * tell a FULLY warmed prefetch (payload commits without suspending → safe to
@@ -166,6 +175,16 @@ const adoptedKeys = new Set<string>();
 let generation = 0;
 
 /**
+ * The stale epoch. `markPrefetchesStale()` bumps it; an entry whose fetch
+ * started under an older one is stale (`isPrefetchStale`). Separate from
+ * `generation`: a stale mark keeps every entry and every in-flight fetch,
+ * where a generation bump drops them. So a Flight response that has already
+ * arrived is never aborted by an action (rango-d171): an in-flight prefetch
+ * finishes and lands stale.
+ */
+let staleEpoch = 0;
+
+/**
  * Build a cache key by combining a scope prefix with the target URL.
  *
  * Low-level primitive — callers that want a specific scope should use
@@ -233,13 +252,19 @@ function forEachAlias(key: string, fn: (k: string) => void): void {
 
 /**
  * Check if a prefetch is already cached, in-flight, or queued for the given key.
+ *
+ * A stale stored entry (`isPrefetchStale`) counts as absent and is dropped, so
+ * a new hover or viewport trigger replaces it with a fresh prefetch, and a
+ * click made while that one is in flight adopts it rather than the stale one.
+ * An in-flight fetch counts whatever its epoch: it is never aborted, and a
+ * duplicate request for its key would race it for the slot.
  */
 export function hasPrefetch(key: string): boolean {
   if (inflight.has(key)) return true;
   if (cacheTTL <= 0) return false;
   const entry = cache.get(key);
   if (!entry) return false;
-  if (Date.now() - entry.timestamp > cacheTTL) {
+  if (Date.now() - entry.timestamp > cacheTTL || isPrefetchStale(entry.entry)) {
     entry.entry.dispose?.();
     cache.delete(key);
     return false;
@@ -318,7 +343,8 @@ export function consumeInflightPrefetch(
  * Store an eagerly-decoded prefetch in the in-memory cache.
  *
  * Skips storage if the generation has changed since the fetch started
- * (a server action invalidated the cache mid-flight).
+ * (the cache was flushed mid-flight). An entry from an older stale epoch (an
+ * action marked prefetches stale mid-flight) is stored, and stays stale.
  */
 export function storePrefetch(
   key: string,
@@ -396,6 +422,33 @@ export function removePrefetch(key: string, entry: DecodedPrefetch): void {
  */
 export function currentGeneration(): number {
   return generation;
+}
+
+/**
+ * Capture the current stale epoch. A prefetch fetch stamps its entry with the
+ * value read when it started (`DecodedPrefetch.epoch`).
+ */
+export function currentPrefetchEpoch(): number {
+  return staleEpoch;
+}
+
+/** Whether an action marked prefetches stale after this entry's fetch began. */
+export function isPrefetchStale(
+  entry: Pick<DecodedPrefetch, "epoch">,
+): boolean {
+  return entry.epoch < staleEpoch;
+}
+
+/**
+ * Mark every stored and in-flight prefetch stale: what a server action
+ * without a directive does (navigation-store.ts markCacheAsStaleAndBroadcast).
+ * Only bumps the epoch. Nothing is dropped, aborted or rotated, and visible
+ * links are not told (no `notifyPrefetchCacheInvalidated()`), so they do not
+ * prefetch again. A click on a stale entry commits it at once; the navigation
+ * then revalidates its page (navigation-bridge.ts navigate).
+ */
+export function markPrefetchesStale(): void {
+  staleEpoch++;
 }
 
 export function markPrefetchInflight(key: string): void {

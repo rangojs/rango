@@ -238,6 +238,14 @@ export type UpdateMode =
       refresh?: boolean;
       /** The cross-tab refresh's held boundary (see `action`). */
       boundary?: string;
+      /**
+       * Told when the response is a prefetch a server action marked stale
+       * (FetchPartialResult.stalePrefetch). The click commits it as it
+       * commits any prefetch; the bridge revalidates the page once the
+       * navigation settled (navigation-bridge.ts navigate). Nothing here
+       * changes how or when this commit lands.
+       */
+      onStalePrefetch?: () => void;
     }
   | { type: "leave-intercept"; interceptSourceUrl?: string; boundary?: never }
   | {
@@ -714,6 +722,9 @@ export function createPartialUpdater(
       streamComplete: rawStreamComplete,
       fullyPrefetched,
     } = fetchResult;
+    if (fetchResult.stalePrefetch && mode.type === "navigate") {
+      mode.onStalePrefetch?.();
+    }
     debugLog("payload.metadata", payload.metadata);
 
     // Side effect only: end the streaming token once the stream settles.

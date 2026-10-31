@@ -35,6 +35,7 @@ import {
   consumePrefetch,
   disableFragmentPassthrough,
   isFragmentPassthroughEnabled,
+  isPrefetchStale,
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
 import { cancelAllPrefetches } from "./prefetch/loader.js";
@@ -327,6 +328,9 @@ export function createNavigationClient(
       // (complete === true). A still-streaming hit and the fresh path stay false,
       // so only a fully-warmed prefetch commits in a transition (no fallback flash).
       let fullyPrefetched = false;
+      // A prefetch an action marked stale after it was fetched: committed
+      // like any other, then revalidated (FetchPartialResult.stalePrefetch).
+      let stalePrefetch = false;
 
       // The prefetch entry this navigation serves.
       let adopted = cachedEntry;
@@ -372,6 +376,7 @@ export function createNavigationClient(
         // prefetched"; a still-streaming one keeps streaming its fallbacks like
         // a cold load.
         fullyPrefetched = adopted.complete;
+        stalePrefetch = isPrefetchStale(adopted);
       } else {
         ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
           freshResult());
@@ -408,6 +413,7 @@ export function createNavigationClient(
           const recovery = freshResult(false, true);
           streamCompletePromise = recovery.streamComplete;
           fullyPrefetched = false;
+          stalePrefetch = false;
           payload = await recovery.payload;
           await expandPayloadFragments(payload, deps.createFromReadableStream);
         }
@@ -429,6 +435,7 @@ export function createNavigationClient(
           payload,
           streamComplete: streamCompletePromise,
           fullyPrefetched,
+          stalePrefetch,
         };
       } catch (error) {
         // Convert network-level errors to NetworkError for proper handling

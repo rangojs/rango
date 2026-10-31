@@ -9,6 +9,7 @@ import {
 } from "./action-stale.defs.js";
 import {
   addToActionStaleCart,
+  addToActionStaleCartWith,
   failActionStaleCart,
 } from "./action-stale.actions.js";
 
@@ -57,6 +58,18 @@ export function ActionStaleBar() {
         onClick={() => run(() => addToActionStaleCart("first", 0))}
       >
         Add, write first, no delay
+      </button>
+      <button
+        data-testid="as-add-keep"
+        onClick={() => run(() => addToActionStaleCartWith("keep"))}
+      >
+        Add, keep the client cache
+      </button>
+      <button
+        data-testid="as-add-invalidate"
+        onClick={() => run(() => addToActionStaleCartWith("invalidate"))}
+      >
+        Add, invalidate the client cache
       </button>
       <button
         data-testid="as-add-last"

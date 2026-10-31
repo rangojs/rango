@@ -10,7 +10,8 @@ import type {
   ShownEntry,
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
-import { clearPrefetchCache } from "./prefetch/cache.js";
+import { clearPrefetchCache, markPrefetchesStale } from "./prefetch/cache.js";
+import { stateRotatedInActionFence } from "./action-fence.js";
 import { LoaderStore } from "../loader-store.js";
 import {
   adoptRangoState,
@@ -332,22 +333,49 @@ export function createNavigationStore(
    */
   function clearCacheAndBroadcast(): void {
     clearCacheInternal();
-    broadcastInvalidation();
+    broadcastInvalidation(false);
   }
 
   /**
-   * Mark cache as stale and broadcast to other tabs
+   * Mark cache as stale, flush the prefetch caches (rotating the state), and
+   * broadcast to other tabs: the client seat of `invalidateClientCache()`.
    */
   function markStaleAndBroadcast(): void {
     markCacheAsStaleInternal();
-    broadcastInvalidation();
+    broadcastInvalidation(false);
   }
 
   /**
-   * Broadcast cache invalidation to other tabs without clearing local cache
-   * Used after consolidation fetch where local cache has fresh data
+   * What a server action without a directive does once its response arrived
+   * (server-action-bridge.ts finalizeAction). History entries and prefetches
+   * are marked stale, nothing is flushed or rotated, and other tabs get a
+   * `soft` broadcast: they mark theirs stale and refresh.
+   *
+   * When the state rotated during the action (the action called the server
+   * seat of `invalidateClientCache()`, whose `Set-Cookie` reached the jar),
+   * this tab's prefetch keys are already stranded: the prefetch map is flushed
+   * without rotating again, and other tabs get today's full broadcast, which
+   * carries the newer state for them to adopt.
    */
-  function broadcastInvalidation(): void {
+  function markStaleSoftAndBroadcast(): void {
+    markHistoryStale();
+    // The read reports an external rotation the jar holds to the fence.
+    getRangoState();
+    if (stateRotatedInActionFence()) {
+      clearPrefetchCache(false);
+      broadcastInvalidation(false);
+      return;
+    }
+    markPrefetchesStale();
+    broadcastInvalidation(true);
+  }
+
+  /**
+   * Broadcast cache invalidation to other tabs. `soft` marks a server action
+   * that rotated nothing: a receiver that cannot adopt a newer state marks its
+   * caches stale instead of flushing them and rotating.
+   */
+  function broadcastInvalidation(soft: boolean): void {
     // Only broadcast if cross-tab sync is enabled
     if (!crossTabSync) return;
 
@@ -362,6 +390,7 @@ export function createNavigationStore(
         segmentIds: currentSegmentIds,
         rangoState: getRangoState(),
         stateCookieName: getRangoStateCookieName(),
+        ...(soft && { soft: true }),
       });
     }
   }
@@ -394,12 +423,20 @@ export function createNavigationStore(
             typeof stateCookieName === "string"
           ) {
             if (stateCookieName !== getRangoStateCookieName()) return;
-            // The sender already rotated the same-origin cookie. Adopt that
-            // value before clearing locally so tabs cannot ping-pong rotations
-            // and obsolete each other's post-invalidation prefetches.
-            const adopted = adoptRangoState(rangoState);
             markHistoryStale();
-            clearPrefetchCache(!adopted);
+            if (adoptRangoState(rangoState)) {
+              // The sender carries a newer state (it rotated the shared
+              // cookie: invalidateClientCache() on either seat). Adopt it
+              // before flushing locally, whether or not the message is soft,
+              // so tabs cannot ping-pong rotations and obsolete each other's
+              // post-invalidation prefetches.
+              clearPrefetchCache(false);
+            } else if (event.data.soft === true) {
+              // A server action that rotated nothing: mark, never flush.
+              markPrefetchesStale();
+            } else {
+              clearPrefetchCache(true);
+            }
           } else {
             // Compatibility with an already-open tab running an older sender.
             markCacheAsStaleInternal();
@@ -688,10 +725,19 @@ export function createNavigationStore(
     },
 
     /**
-     * Mark cache as stale and broadcast to other tabs
-     * Called after server actions - allows SWR pattern for popstate
+     * Mark history entries and prefetches stale and tell other tabs. Called
+     * after a server action without a directive: Back and a click on a
+     * prefetch made before it show the cached page and revalidate it.
      */
     markCacheAsStaleAndBroadcast(): void {
+      markStaleSoftAndBroadcast();
+    },
+
+    /**
+     * Mark history stale, flush the prefetch caches, rotate the state and
+     * tell other tabs: the client seat of invalidateClientCache().
+     */
+    invalidateCacheAndBroadcast(): void {
       markStaleAndBroadcast();
     },
 
