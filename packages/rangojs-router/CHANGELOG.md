@@ -48,6 +48,30 @@ and `action({ loaders, keepClientCache })`, so a test can run an action and
 then a click on a stale prefetch, and `revalidations()` to read the
 revalidation requests it made.
 
+### Changed: `rango generate` reads an inline `createRouter().routes(urls(...))` and stops on a root tree it cannot read ([#1349](https://github.com/rangojs/rango/pull/1349))
+
+**Before.** `rango generate` read a router's tree only from a variable or a
+builder function. An inline call, `createRouter({}).routes(urls(...))` or
+`createRouter({ urls: urls(...) })`, was skipped: the command exited 0,
+printed nothing and wrote no `router.named-routes.gen.ts`, so `href()` and
+`reverse()` had no route names to check. A mount argument of any other shape,
+such as `.routes(buildUrls())`, was skipped the same way.
+
+**Now.** An inline `urls(...)` or `clientUrls(...)` call is read like a
+builder function, includes and all, under its own name or a renamed import
+(`import { urls as u } from "@rangojs/router"`), and `as`, `satisfies` and
+parentheses around a mount are unwrapped. `vite dev`'s static generation uses
+the same reader, so it now also writes `router.named-routes.gen.ts` for an
+inline `urls()` router. A mount argument the static parser cannot read
+is reported as `unresolvable-routes`, naming the mount: plain
+`rango generate` exits 1 and writes nothing, `--static` warns, and
+`--runtime` reads the real tree. A variable whose value is not a `urls()`
+call (`const tree = buildUrls()`) is still not reported. Test files, Flight
+tests' `*.rsc-test.*` included, are no longer read as router roots by
+`rango generate` or `vite dev`, so their inline routers get no
+`named-routes.gen.ts` beside them; the default `discovery.exclude` lists
+`*.rsc-test.*` too.
+
 ### Changed: a prefetch a `revalidate()` kept from the page being left is shared by the pages with equal values of what it read (rango-t242)
 
 **Before.** Since 0.32.0, a `revalidate()` that read the page being left
