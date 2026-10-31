@@ -277,12 +277,15 @@ Concretely:
 - The router's own tree is read from `.routes(x)` or `createRouter({ urls: x })`
   when `x` is a variable, a builder function (`({ path }) => [...]`) or an
   inline `urls(...)` / `clientUrls(...)` call, with `as`, `satisfies` and
-  parentheses unwrapped. Any other `x` (`.routes(buildUrls())`,
+  parentheses unwrapped. The call is recognised by its name or by a renamed
+  named import from `@rangojs/router` or `@rangojs/router/client`
+  (`import { urls as u }`); a `urls` imported from any other module under
+  another name is not read. Any other `x` (`.routes(buildUrls())`,
   `urls: mod.tree`) is reported as `"unresolvable-routes"`, naming the mount.
   The tree comes from the first `createRouter` chain with a readable mount; a
   chain whose mounts are all unreadable is reported only when the file has no
   other. A variable whose value is not a `urls()` call
-  (`const tree = buildUrls()`) is still not reported. Before rango-t42 an inline
+  (`const tree = buildUrls()`) is still not reported. Before #1349 an inline
   `urls(...)` call was neither read nor reported: the CLI exited 0 and wrote no
   `router.named-routes.gen.ts`, so `href()` and `reverse()` lost the route
   names without a word.

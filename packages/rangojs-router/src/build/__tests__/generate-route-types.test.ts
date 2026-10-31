@@ -1733,6 +1733,24 @@ export const router = createRouter<AppEnv>({
     });
   });
 
+  it.each([
+    ['import { urls as u } from "@rangojs/router";', "u"],
+    ['import { clientUrls as cu } from "@rangojs/router/client";', "cu"],
+  ])("reads a renamed import (%s) like urls()", (importLine, local) => {
+    const tree = `${local}(({ path }) => [path("/", Home, { name: "home" })])`;
+    const code = `${importLine}\nexport const router = createRouter({}).routes(${tree});`;
+    expect(extractUrlsFromRouter(code)).toEqual({
+      kind: "inline",
+      block: tree,
+    });
+  });
+
+  it("does not read a renamed urls from another module", () => {
+    const code = `import { urls as u } from "./mine.js";
+export const router = createRouter({}).routes(u(({ path }) => []));`;
+    expect(extractUrlsFromRouter(code)).toBeNull();
+  });
+
   it("returns null for a mount call that is not urls()", () => {
     const code = `export const router = createRouter().routes(buildUrls());`;
     expect(extractUrlsFromRouter(code)).toBeNull();

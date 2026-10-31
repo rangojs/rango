@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Fixed: `rango generate` reads an inline `createRouter().routes(urls(...))` and stops on a root tree it cannot read ([#1349](https://github.com/rangojs/rango/pull/1349))
+### Changed: `rango generate` reads an inline `createRouter().routes(urls(...))` and stops on a root tree it cannot read ([#1349](https://github.com/rangojs/rango/pull/1349))
 
 **Before.** `rango generate` read a router's tree only from a variable or a
 builder function. An inline call, `createRouter({}).routes(urls(...))` or
@@ -12,8 +12,11 @@ printed nothing and wrote no `router.named-routes.gen.ts`, so `href()` and
 such as `.routes(buildUrls())`, was skipped the same way.
 
 **Now.** An inline `urls(...)` or `clientUrls(...)` call is read like a
-builder function, includes and all, and `as`, `satisfies` and parentheses
-around a mount are unwrapped. A mount argument the static parser cannot read
+builder function, includes and all, under its own name or a renamed import
+(`import { urls as u } from "@rangojs/router"`), and `as`, `satisfies` and
+parentheses around a mount are unwrapped. `vite dev`'s static generation uses
+the same reader, so it now also writes `router.named-routes.gen.ts` for an
+inline `urls()` router. A mount argument the static parser cannot read
 is reported as `unresolvable-routes`, naming the mount: plain
 `rango generate` exits 1 and writes nothing, `--static` warns, and
 `--runtime` reads the real tree. A variable whose value is not a `urls()`

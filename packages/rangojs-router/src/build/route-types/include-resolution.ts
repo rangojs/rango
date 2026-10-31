@@ -79,12 +79,48 @@ function readSourceMemoized(
   return source;
 }
 
-export function isUrlsDefinitionCall(node: ts.CallExpression): boolean {
+export function isUrlsDefinitionCall(
+  node: ts.CallExpression,
+  aliases?: ReadonlySet<string>,
+): boolean {
   const callee = node.expression;
   return (
     ts.isIdentifier(callee) &&
-    (callee.text === "urls" || callee.text === "clientUrls")
+    (callee.text === "urls" ||
+      callee.text === "clientUrls" ||
+      aliases?.has(callee.text) === true)
   );
+}
+
+/**
+ * Local names that `import { urls as u, clientUrls as cu } from
+ * "@rangojs/router"` (or `/client`) binds to urls()/clientUrls(), so a renamed
+ * import is read like the plain name. Other modules' exports are not guessed
+ * at: a `urls` from elsewhere is read only under its own name.
+ */
+export function collectUrlsImportAliases(
+  sourceFile: ts.SourceFile,
+): ReadonlySet<string> {
+  const aliases = new Set<string>();
+  for (const stmt of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(stmt) ||
+      !ts.isStringLiteral(stmt.moduleSpecifier) ||
+      (stmt.moduleSpecifier.text !== "@rangojs/router" &&
+        stmt.moduleSpecifier.text !== "@rangojs/router/client")
+    ) {
+      continue;
+    }
+    const bindings = stmt.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const el of bindings.elements) {
+      const imported = (el.propertyName ?? el.name).text;
+      if (imported === "urls" || imported === "clientUrls") {
+        aliases.add(el.name.text);
+      }
+    }
+  }
+  return aliases;
 }
 
 // ---------------------------------------------------------------------------

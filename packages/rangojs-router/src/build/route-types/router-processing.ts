@@ -22,6 +22,7 @@ import {
   buildCombinedRouteMapWithSearch,
   createScanMemo,
   isUrlsDefinitionCall,
+  collectUrlsImportAliases,
   type ScanMemo,
   type UnresolvableInclude,
 } from "./include-resolution.js";
@@ -211,6 +212,7 @@ function isCreateRouterCall(node: ts.Node): boolean {
 function extractUrlsArgument(
   arg: ts.Expression,
   sourceFile: ts.SourceFile,
+  urlsAliases: ReadonlySet<string>,
 ): UrlsExtractionResult | null {
   const node = unwrapTypeOperators(arg);
   if (ts.isIdentifier(node)) {
@@ -219,7 +221,7 @@ function extractUrlsArgument(
   if (
     ts.isArrowFunction(node) ||
     ts.isFunctionExpression(node) ||
-    (ts.isCallExpression(node) && isUrlsDefinitionCall(node))
+    (ts.isCallExpression(node) && isUrlsDefinitionCall(node, urlsAliases))
   ) {
     return { kind: "inline", block: node.getText(sourceFile) };
   }
@@ -262,6 +264,7 @@ function findRouterUrls(sourceFile: ts.SourceFile): {
   };
   let result: RouterUrls | null = null;
   let unreadableOnly: RouterUrls | null = null;
+  const urlsAliases = collectUrlsImportAliases(sourceFile);
 
   function visit(node: ts.Node) {
     if (result) return;
@@ -277,7 +280,7 @@ function findRouterUrls(sourceFile: ts.SourceFile): {
           arg: ts.Expression,
           mount: (text: string) => string,
         ) => {
-          const urls = extractUrlsArgument(arg, sourceFile);
+          const urls = extractUrlsArgument(arg, sourceFile, urlsAliases);
           if (urls) extracted.push(urls);
           else
             unreadable.push(
@@ -750,7 +753,7 @@ export function detectUnresolvableIncludes(
       namePrefix: null,
       reason: "unresolvable-routes",
       sourceFile: realPath,
-      detail: `\`${mount}\` is not a urls() call, a builder function or a variable; its routes would be missing`,
+      detail: `\`${mount}\` is not a urls() call (as imported from @rangojs/router), a builder function or a variable; its routes would be missing`,
     });
   }
   const memo = createScanMemo();

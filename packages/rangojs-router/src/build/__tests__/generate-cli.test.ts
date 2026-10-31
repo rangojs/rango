@@ -1176,6 +1176,26 @@ export const router = ${mount(tree)};
     },
   );
 
+  it("default mode writes named routes for an inline root tree under a renamed urls import", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rango-cli-inline-alias-"));
+    commandTempDirs.push(dir);
+    const routerFile = join(dir, "router.tsx");
+    writeFileSync(
+      routerFile,
+      `import { createRouter, urls as u } from "@rangojs/router";
+export const router = createRouter({}).routes(u(({ path }) => [
+  path("/", () => null, { name: "home" }),
+]));
+`,
+    );
+    const result = await runRango(`generate ${routerFile}`);
+    expect(result.combined).not.toContain("Unresolvable");
+    expect(result.status).toBe(0);
+    expect(
+      readFileSync(join(dir, "router.named-routes.gen.ts"), "utf-8"),
+    ).toContain('home: "/",');
+  });
+
   it("default mode hard-fails on a root tree it cannot read and names the call", async () => {
     const { routerFile, genPath } = writeInlineUrlsRouter(
       () => "createRouter({}).routes(buildUrls())",
