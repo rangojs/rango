@@ -189,13 +189,15 @@ beforeAll(async () => {
             ],
           ),
           // A layout among a route's children: an orphan of the route that
-          // inherits the route's loaders for its slot.
+          // inherits the route's loaders for its slot. The route's loading()
+          // fallback is what makes the copy needed (inheritedCopyRedundant).
           path(
             "/orphan",
             () => el("p", "orphan"),
             { name: "orphan" },
             () => [
               loader(DataLoader),
+              loading(Spinner),
               layout(
                 () => el("nav", "orphan layout"),
                 () => [parallel({ "@aside": () => el("aside", "aside") })],

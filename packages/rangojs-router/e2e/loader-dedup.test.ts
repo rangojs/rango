@@ -3,16 +3,26 @@ import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
 
 /**
- * Tests that inherited loader segments are deduplicated in the RSC stream.
- *
  * The parallel-loader-inherit route has a loader on the route and a child
- * layout with parallel slots. Without dedup, the loader is resolved twice
- * (route + inherited layout) and both copies are sent to the client.
- * With dedup, only the route copy is sent (unless loading() is present).
+ * layout with parallel slots. The layout's copy of the route's loader is
+ * needed only when the route renders a loading() fallback: without one the
+ * slot reads the route's own copy, and the copy is never resolved
+ * (inheritedCopyRedundant, router/segment-resolution/revalidation.ts).
  *
- * We verify dedup by checking server logs (INTERNAL_RANGO_DEBUG=1 emits
- * "deduped N inherited loader segment(s)" when it fires).
+ * The dev suite reads the loader segments the server renders from the
+ * INTERNAL_RANGO_DEBUG=1 "renderSegments start" log, which names each
+ * segment as `'<id>:loader'`.
  */
+
+/** The distinct ParallelInheritLoader segment ids rendered in `output`. */
+function renderedInheritLoaderIds(output: string): Set<string> {
+  return new Set(
+    Array.from(
+      output.matchAll(/'([A-Z0-9]+D\d+\.[^']*#ParallelInheritLoader):loader'/g),
+      (m) => m[1],
+    ),
+  );
+}
 
 // ── Dev mode ─────────────────────────────────────────────────────────────
 
@@ -26,7 +36,9 @@ test.describe("loader-dedup (dev)", () => {
     },
   });
 
-  test("non-loading route deduplicates inherited loader", async ({ page }) => {
+  test("non-loading route never resolves the inherited loader copy", async ({
+    page,
+  }) => {
     using _ = expectNoPageError(page);
 
     // Snapshot stdout before navigation so we only assert on new output
@@ -40,15 +52,16 @@ test.describe("loader-dedup (dev)", () => {
       "route-level:inherited-data",
     );
 
-    // Poll for the dedup log in the new stdout slice
+    // Only the route's own copy is rendered.
     await expect
-      .poll(() => f.proc().stdout().slice(before), { timeout: 5000 })
-      .toContain("deduped 1 inherited loader segment");
+      .poll(
+        () => renderedInheritLoaderIds(f.proc().stdout().slice(before)).size,
+        { timeout: 5000 },
+      )
+      .toBe(1);
   });
 
-  test("loading() route keeps inherited loader (no dedup)", async ({
-    page,
-  }) => {
+  test("loading() route keeps the inherited loader copy", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     const before = f.proc().stdout().length;
@@ -61,10 +74,13 @@ test.describe("loader-dedup (dev)", () => {
       "route-level:inherited-data",
     );
 
-    // Give the server a moment to flush logs, then verify no dedup fired
-    await page.waitForTimeout(500);
-    const newOutput = f.proc().stdout().slice(before);
-    expect(newOutput).not.toContain("deduped");
+    // The route's own copy and the layout's.
+    await expect
+      .poll(
+        () => renderedInheritLoaderIds(f.proc().stdout().slice(before)).size,
+        { timeout: 5000 },
+      )
+      .toBe(2);
   });
 });
 

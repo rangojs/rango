@@ -309,8 +309,8 @@ export async function serializeSegments(
  * cached with the route record).
  *
  * The loading "null" sentinel decodes here (not on the consumer): loading:null
- * must survive as null, and shipping the raw sentinel would change the
- * deduplicateLoaderSegments loading-presence check.
+ * must survive as null, and shipping the raw sentinel would hand renderSegments
+ * a truthy `loading`, the fallback tree shape (docs/tree-structure.md).
  */
 export async function fragmentSegments(
   data: SerializedSegmentData[],
