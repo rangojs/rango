@@ -13,7 +13,8 @@ export type UnresolvableReason =
   | "dynamic-expression"
   | "unresolvable-import"
   | "file-not-found"
-  | "unresolvable-basename";
+  | "unresolvable-basename"
+  | "unresolvable-routes";
 
 export interface UnresolvableInclude {
   pathPrefix: string;
@@ -78,7 +79,7 @@ function readSourceMemoized(
   return source;
 }
 
-function isUrlsDefinitionCall(node: ts.CallExpression): boolean {
+export function isUrlsDefinitionCall(node: ts.CallExpression): boolean {
   const callee = node.expression;
   return (
     ts.isIdentifier(callee) &&

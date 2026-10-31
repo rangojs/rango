@@ -21,6 +21,7 @@ import {
   resolveImportPath,
   buildCombinedRouteMapWithSearch,
   createScanMemo,
+  isUrlsDefinitionCall,
   type ScanMemo,
   type UnresolvableInclude,
 } from "./include-resolution.js";
@@ -46,7 +47,9 @@ const ROUTER_CALL_PATTERN = /\bcreateRouter\s*[<(]/;
 // Global variant for the code-region scan (firstCodeMatchIndex sets lastIndex).
 const ROUTER_CALL_PATTERN_G = /\bcreateRouter\s*[<(]/g;
 
-function isRoutableSourceFile(name: string): boolean {
+// Test files build their own routers (a Flight test's `*.rsc-test.tsx` usually
+// mounts `createRouter({}).routes(urls(...))`); none is an app's router root.
+export function isRoutableSourceFile(name: string): boolean {
   return (
     (name.endsWith(".ts") ||
       name.endsWith(".tsx") ||
@@ -54,6 +57,7 @@ function isRoutableSourceFile(name: string): boolean {
       name.endsWith(".jsx")) &&
     !name.includes(".gen.") &&
     !name.includes(".test.") &&
+    !name.includes(".rsc-test.") &&
     !name.includes(".spec.")
   );
 }
@@ -205,13 +209,18 @@ function isCreateRouterCall(node: ts.Node): boolean {
 }
 
 function extractUrlsArgument(
-  node: ts.Expression,
+  arg: ts.Expression,
   sourceFile: ts.SourceFile,
 ): UrlsExtractionResult | null {
+  const node = unwrapTypeOperators(arg);
   if (ts.isIdentifier(node)) {
     return { kind: "variable", name: node.text };
   }
-  if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+  if (
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    (ts.isCallExpression(node) && isUrlsDefinitionCall(node))
+  ) {
     return { kind: "inline", block: node.getText(sourceFile) };
   }
   return null;
@@ -236,14 +245,23 @@ function collectCreateRouterCallChain(
 
 // The first createRouter chain (in source order) that mounts urls, with its
 // extractions in runtime order. Route types and basename both come from it.
+// `unreadable` holds the source of each mount the static parser cannot follow
+// (`.routes(buildUrls())`, `urls: mod.tree`): its routes are missing from the
+// extractions, so detectUnresolvableIncludes reports it rather than letting
+// the gen file silently lose them (rango-t42). A chain with only unreadable
+// mounts is returned only when no chain in the file has a readable one.
 function findRouterUrls(sourceFile: ts.SourceFile): {
   createRouterCall: ts.CallExpression;
   extractions: UrlsExtractionResult[];
+  unreadable: string[];
 } | null {
-  let result: {
+  type RouterUrls = {
     createRouterCall: ts.CallExpression;
     extractions: UrlsExtractionResult[];
-  } | null = null;
+    unreadable: string[];
+  };
+  let result: RouterUrls | null = null;
+  let unreadableOnly: RouterUrls | null = null;
 
   function visit(node: ts.Node) {
     if (result) return;
@@ -251,7 +269,21 @@ function findRouterUrls(sourceFile: ts.SourceFile): {
       const chain = collectCreateRouterCallChain(node);
       if (chain) {
         const extracted: UrlsExtractionResult[] = [];
+        const unreadable: string[] = [];
         const createRouterCall = chain[0];
+        // `mount` wraps the argument's source for the diagnostic; the text is
+        // only built for an argument the parser cannot read.
+        const addMount = (
+          arg: ts.Expression,
+          mount: (text: string) => string,
+        ) => {
+          const urls = extractUrlsArgument(arg, sourceFile);
+          if (urls) extracted.push(urls);
+          else
+            unreadable.push(
+              mount(arg.getText(sourceFile).replace(/\s+/g, " ")),
+            );
+        };
 
         for (const callArg of createRouterCall.arguments) {
           if (!ts.isObjectLiteralExpression(callArg)) continue;
@@ -263,8 +295,7 @@ function findRouterUrls(sourceFile: ts.SourceFile): {
             ) {
               continue;
             }
-            const urls = extractUrlsArgument(prop.initializer, sourceFile);
-            if (urls) extracted.push(urls);
+            addMount(prop.initializer, (text) => `urls: ${text}`);
             break;
           }
         }
@@ -277,13 +308,15 @@ function findRouterUrls(sourceFile: ts.SourceFile): {
           ) {
             continue;
           }
-          const urls = extractUrlsArgument(call.arguments[0], sourceFile);
-          if (urls) extracted.push(urls);
+          addMount(call.arguments[0], (text) => `.routes(${text})`);
         }
 
         if (extracted.length > 0) {
-          result = { createRouterCall, extractions: extracted };
+          result = { createRouterCall, extractions: extracted, unreadable };
           return;
+        }
+        if (unreadable.length > 0) {
+          unreadableOnly ??= { createRouterCall, extractions: [], unreadable };
         }
       }
     }
@@ -291,27 +324,31 @@ function findRouterUrls(sourceFile: ts.SourceFile): {
   }
 
   visit(sourceFile);
-  return result;
+  return result ?? unreadableOnly;
 }
 
-function extractAllUrlsFromRouter(code: string): UrlsExtractionResult[] {
-  const sourceFile = ts.createSourceFile(
+function parseRouterSource(code: string): ts.SourceFile {
+  return ts.createSourceFile(
     "router.tsx",
     code,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TSX,
   );
-  return findRouterUrls(sourceFile)?.extractions ?? [];
+}
+
+function extractAllUrlsFromRouter(code: string): UrlsExtractionResult[] {
+  return findRouterUrls(parseRouterSource(code))?.extractions ?? [];
 }
 
 /**
  * Extract the url patterns from a router file using AST.
- * Detects four patterns:
+ * Detects these patterns, in either mount (`.routes(x)` or `urls: x`):
  *   1. createRouter(...).routes(variableName)
  *   2. createRouter({ urls: variableName, ... })
  *   3. createRouter(...).routes(({ path, ... }) => [...])
  *   4. createRouter({ urls: ({ path, ... }) => [...], ... })
+ *   5. createRouter(...).routes(urls(({ path, ... }) => [...])), and clientUrls()
  * Returns either a variable name or an inline code block.
  */
 export function extractUrlsFromRouter(
@@ -322,7 +359,11 @@ export function extractUrlsFromRouter(
 }
 
 function unwrapTypeOperators(expr: ts.Expression): ts.Expression {
-  while (ts.isAsExpression(expr) || ts.isSatisfiesExpression(expr)) {
+  while (
+    ts.isAsExpression(expr) ||
+    ts.isSatisfiesExpression(expr) ||
+    ts.isParenthesizedExpression(expr)
+  ) {
     expr = expr.expression;
   }
   return expr;
@@ -699,12 +740,21 @@ export function detectUnresolvableIncludes(
     return [];
   }
 
-  const extractions = extractAllUrlsFromRouter(source);
-  if (extractions.length === 0) return [];
+  const routerUrls = findRouterUrls(parseRouterSource(source));
+  if (!routerUrls) return [];
 
   const diagnostics: UnresolvableInclude[] = [];
+  for (const mount of routerUrls.unreadable) {
+    diagnostics.push({
+      pathPrefix: "/",
+      namePrefix: null,
+      reason: "unresolvable-routes",
+      sourceFile: realPath,
+      detail: `\`${mount}\` is not a urls() call, a builder function or a variable; its routes would be missing`,
+    });
+  }
   const memo = createScanMemo();
-  for (const extraction of extractions) {
+  for (const extraction of routerUrls.extractions) {
     resolveRouterUrlsExtraction(
       realPath,
       source,

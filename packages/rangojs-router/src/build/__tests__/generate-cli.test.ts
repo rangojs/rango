@@ -1110,6 +1110,118 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
     },
   );
 
+  // rango-t42: a root tree passed as an inline urls() call wrote no gen file
+  // and printed nothing, so href()/reverse() silently lost their route names.
+  function writeInlineUrlsRouter(mount: (tree: string) => string): {
+    routerFile: string;
+    genPath: string;
+  } {
+    const dir = mkdtempSync(join(tmpdir(), "rango-cli-inline-urls-"));
+    commandTempDirs.push(dir);
+    writeFileSync(
+      join(dir, "api.tsx"),
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const apiUrls = urls(({ path }) => [
+  path("/health", handler, { name: "health" }),
+]);
+`,
+    );
+    const routerFile = join(dir, "router.tsx");
+    const tree = `urls(({ path, include }) => [
+  path("/", () => null, { name: "home" }),
+  path("/about", () => null, { name: "about" }),
+  include("/api", apiUrls, { name: "api" }),
+])`;
+    writeFileSync(
+      routerFile,
+      `import { createRouter, urls } from "@rangojs/router";
+import { apiUrls } from "./api.js";
+import { buildUrls } from "./build.js";
+export const router = ${mount(tree)};
+`,
+    );
+    return { routerFile, genPath: join(dir, "router.named-routes.gen.ts") };
+  }
+
+  it.each([
+    [
+      ".routes(urls(...))",
+      (tree: string) => `createRouter({}).routes(${tree})`,
+    ],
+    [
+      "{ urls: urls(...) }",
+      (tree: string) => `createRouter({ urls: ${tree} })`,
+    ],
+    [
+      "(urls(...) satisfies T)",
+      (tree: string) => `createRouter({}).routes((${tree} satisfies T))`,
+    ],
+    [
+      "unreadable helper chain before the app's",
+      (tree: string) =>
+        `createRouter({}).routes(buildUrls());\nexport const app = createRouter({}).routes(${tree})`,
+    ],
+  ])(
+    "default mode writes named routes for an inline %s root tree",
+    async (_label, mount) => {
+      const { routerFile, genPath } = writeInlineUrlsRouter(mount);
+      const result = await runRango(`generate ${routerFile}`);
+      expect(result.combined).not.toContain("Unresolvable");
+      expect(result.status).toBe(0);
+      const content = readFileSync(genPath, "utf-8");
+      expect(content).toContain('home: "/",');
+      expect(content).toContain('about: "/about",');
+      expect(content).toContain('"api.health": "/api/health",');
+    },
+  );
+
+  it("default mode hard-fails on a root tree it cannot read and names the call", async () => {
+    const { routerFile, genPath } = writeInlineUrlsRouter(
+      () => "createRouter({}).routes(buildUrls())",
+    );
+    const result = await runRango(`generate ${routerFile}`);
+    expect(result.status).toBe(1);
+    expect(result.combined).toContain("Unresolvable routes detected");
+    expect(result.combined).toContain("  createRouter routes\n");
+    expect(result.combined).toContain("unresolvable-routes");
+    expect(result.combined).toContain("`.routes(buildUrls())`");
+    expect(result.combined).toContain("--runtime");
+    expect(existsSync(genPath)).toBe(false);
+  });
+
+  it("--static warns on each root tree it cannot read", async () => {
+    const { routerFile } = writeInlineUrlsRouter(
+      () => "createRouter({ urls: mod.tree }).routes(buildUrls())",
+    );
+    const result = await runRango(`generate ${routerFile} --static`);
+    expect(result.status).toBe(0);
+    expect(result.combined).toContain("partial output (unresolvable routes)");
+    expect(result.combined).toContain("`urls: mod.tree`");
+    expect(result.combined).toContain("`.routes(buildUrls())`");
+  });
+
+  it("a directory run writes no named routes beside a Flight test's inline router", async () => {
+    const { routerFile, genPath } = writeInlineUrlsRouter(
+      (tree) => `createRouter({}).routes(${tree})`,
+    );
+    const dir = join(routerFile, "..");
+    const flightTest = join(dir, "page.rsc-test.tsx");
+    writeFileSync(
+      flightTest,
+      `import { createRouter, urls } from "@rangojs/router";
+const router = createRouter({}).routes(urls(({ path }) => [
+  path("/fixture", () => null, { name: "fixture" }),
+]));
+`,
+    );
+    const result = await runRango(`generate ${dir}`);
+    expect(result.status).toBe(0);
+    expect(result.combined).toContain("(1 router)");
+    expect(readFileSync(genPath, "utf-8")).toContain('home: "/",');
+    expect(existsSync(namedRoutesGenPathFor(flightTest))).toBe(false);
+  });
+
   it("--config without --runtime is ignored with a warning", async () => {
     const fixtureDir = cloneFixtureDir("app");
     const routerFile = join(fixtureDir, "router.tsx");

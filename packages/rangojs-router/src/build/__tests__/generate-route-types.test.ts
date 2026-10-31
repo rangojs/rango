@@ -129,6 +129,26 @@ describe("writeCombinedRouteTypes", () => {
     expect(discovered).not.toContain(dropped);
   });
 
+  // A Flight test (`*.rsc-test.tsx`, the testing skill's naming) builds its own
+  // router, usually `createRouter({}).routes(urls(...))`. Read as a router root,
+  // it got a sibling named-routes.gen.ts whose global GeneratedRouteMap merged
+  // its fixture routes into the app's.
+  it("skips test files, Flight tests included, as router roots", () => {
+    const appDir = join(tempDir, "src");
+    const testDir = join(tempDir, "test");
+    mkdirSync(appDir, { recursive: true });
+    mkdirSync(testDir, { recursive: true });
+    const router = join(appDir, "router.ts");
+    writeFileSync(router, routerSource("./urls.js"));
+    for (const name of ["a.test.tsx", "b.spec.ts", "c.rsc-test.tsx"]) {
+      writeFileSync(join(testDir, name), routerSource("./urls.js"));
+    }
+
+    expect(findRouterFiles(tempDir)).toEqual([router]);
+    const filter = createScanFilter(tempDir, { include: ["**"] });
+    expect(findRouterFiles(tempDir, filter)).toEqual([router]);
+  });
+
   it("ignores a createRouter( mention inside a comment or string literal", () => {
     const appDir = join(tempDir, "src", "app");
     const utilsDir = join(tempDir, "src", "utils");
@@ -1696,6 +1716,26 @@ export const router = createRouter<AppEnv>({
     expect(result!.kind === "inline" && result!.block).toContain(
       'path("/dashboard"',
     );
+  });
+
+  it.each([
+    ["createRouter({}).routes(TREE)", "urls"],
+    ["createRouter({ urls: TREE })", "urls"],
+    ["createRouter().routes(TREE)", "clientUrls"],
+  ])("returns inline kind for %s with a %s() call", (mount, callee) => {
+    const tree = `${callee}(({ path }) => [
+  path("/", HomePage, { name: "home" }),
+])`;
+    const code = `export const router = ${mount.replace("TREE", tree)};`;
+    expect(extractUrlsFromRouter(code)).toEqual({
+      kind: "inline",
+      block: tree,
+    });
+  });
+
+  it("returns null for a mount call that is not urls()", () => {
+    const code = `export const router = createRouter().routes(buildUrls());`;
+    expect(extractUrlsFromRouter(code)).toBeNull();
   });
 
   it("returns null for no createRouter call", () => {
