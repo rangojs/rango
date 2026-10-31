@@ -28,7 +28,7 @@ import {
   serveShellRequest,
   type ServeShellRequestResult,
 } from "../flight.entry.js";
-import { createLoader, createRouter, urls } from "../../index.rsc.js";
+import { createLoader, createRouter, rewrite, urls } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { pageMatchesParamsLabel } from "../../browser/prefetch/cache.js";
@@ -44,7 +44,7 @@ async function save(): Promise<{ ok: true }> {
 }
 
 const router = createRouter({}).routes(
-  urls(({ layout, loader, path, revalidate }) => [
+  urls(({ layout, loader, middleware, path, revalidate }) => [
     layout(
       () => <main>chrome</main>,
       () => [
@@ -106,6 +106,35 @@ const router = createRouter({}).routes(
                     ]),
                   ],
                 ),
+              ],
+            ),
+          ],
+        ),
+        // A rule on the route itself that falls back to the route's default,
+        // under a layout that always re-renders so the answer sends a
+        // segment; /rw/deals renders /rw/en/p/1 through a rewrite.
+        layout(
+          () => <aside>offers</aside>,
+          () => [
+            revalidate(() => true),
+            path(
+              "/rw/:locale/p/:id",
+              (ctx) => <p>{`product:${ctx.params.id}`}</p>,
+              { name: "rwProduct" },
+              () => [
+                revalidate(({ currentParams, nextParams }) =>
+                  currentParams.locale !== nextParams.locale ? true : undefined,
+                ),
+              ],
+            ),
+            path(
+              "/rw/deals",
+              () => <p>deals</p>,
+              { name: "rwDeals" },
+              () => [
+                middleware(() => {
+                  throw rewrite("/rw/en/p/1");
+                }),
               ],
             ),
           ],
@@ -223,6 +252,24 @@ describe("x-rsc-prefetch-scope through serveShellRequest (rango-t242)", () => {
     );
     expect(sharedWith(fromPage1, page2)).toBe(true);
     expect(sharedWith(fromPage1, await standingOn("/q/other/2"))).toBe(false);
+  });
+
+  it("a rule on the route that reads currentParams and falls back to the route's default keep, to a target a rewrite renders: the exact page's (source)", async () => {
+    // /rw/deals renders /rw/en/p/1: from /rw/en/p/1 its params and search
+    // equal the source's, so the route's default keeps product 1, and the
+    // offers layout is sent.
+    const p1 = await standingOn("/rw/en/p/1");
+    const toDeals = await prefetch("/rw/en/p/1", p1, "/rw/deals");
+    const answer = (
+      await deserializeResult<{ metadata: Metadata }>(toDeals.flight!)
+    ).metadata;
+    const productId = p1.matched[p1.matched.length - 1]!;
+    expect(answer.matched).toContain(productId);
+    expect(answer.diff).not.toContain(productId);
+    expect(answer.diff.length).toBeGreaterThan(0);
+    // Grouped by locale (`params; $k=id,locale&locale=en`), /rw/en/p/2 would
+    // adopt it and keep product 2 at /rw/deals.
+    expect(scopeOf(toDeals)).toBe("source");
   });
 
   it("an action request is not a prefetch: its response carries no prefetch scope", async () => {

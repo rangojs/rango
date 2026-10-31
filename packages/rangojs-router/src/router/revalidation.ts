@@ -171,12 +171,27 @@ export async function evaluateRevalidation<TEnv>(
   // segment. Reads before a throw count: the fallback is decided after them.
   const reads = createSourceReads();
   let recordedParams: Record<string, string> | undefined;
-  function decide(finalVal: boolean, reason: string): boolean {
+  // A rule read `defaultShouldRevalidate`.
+  let readDefault = false;
+  /** `usedDefault`: the decision is the default's, or a rule read it. */
+  function decide(
+    finalVal: boolean,
+    reason: string,
+    usedDefault: boolean,
+  ): boolean {
     if (floorTrue && !finalVal) {
       pushTrace(defaultShouldRevalidate, true, `${reason}:floored`);
       return true;
     }
     if (!finalVal && hasSourceReads(reads)) {
+      // The navigation default of a route segment, and of a segment the route
+      // owns, compares the target's params and search with the source's, and
+      // no read records that: a page grouped by the rules' reads but with
+      // other params would adopt the keep. Seen from a page whose params
+      // equal a rewritten target's (/en/p/1 prefetching /deals, which renders
+      // /en/p/1): grouped by locale, /en/p/2 adopted the answer and kept
+      // product 2 at /deals.
+      if (usedDefault && defaultComparesSource) reads.url = true;
       markSourceHeld(context as InternalHandlerContext<any, TEnv>, reads, {
         params: currentParams,
         routeName: fromRouteName,
@@ -188,6 +203,8 @@ export async function evaluateRevalidation<TEnv>(
 
   let defaultShouldRevalidate: boolean;
   let defaultReason: string;
+  // The default hangs on paramsChanged / searchChanged (the nav lane below).
+  let defaultComparesSource = false;
 
   if (defaultOverride) {
     defaultShouldRevalidate = defaultOverride.value;
@@ -211,6 +228,8 @@ export async function evaluateRevalidation<TEnv>(
       defaultReason = reasons.parentChain;
     }
   } else {
+    defaultComparesSource =
+      segment.type === "route" || segment.belongsToRoute === true;
     if (segment.type === "route") {
       const routeChanged = paramsChanged || searchChanged;
       defaultShouldRevalidate = routeChanged;
@@ -259,7 +278,7 @@ export async function evaluateRevalidation<TEnv>(
         segmentId: segment.id,
       });
     }
-    return decide(defaultShouldRevalidate, defaultReason);
+    return decide(defaultShouldRevalidate, defaultReason, true);
   }
 
   const prevSegment = getPrevSegment ? await getPrevSegment() : null;
@@ -285,7 +304,10 @@ export async function evaluateRevalidation<TEnv>(
         },
         nextParams,
         nextUrl,
-        defaultShouldRevalidate: currentSuggestion,
+        get defaultShouldRevalidate() {
+          readDefault = true;
+          return currentSuggestion;
+        },
         context,
         // Segment metadata (which segment is being evaluated)
         segmentType: segment.type,
@@ -353,7 +375,7 @@ export async function evaluateRevalidation<TEnv>(
         revalidator: name,
         revalidate: result,
       });
-      return decide(result, `hard:${name}`);
+      return decide(result, `hard:${name}`, readDefault);
     } else if (
       result &&
       typeof result === "object" &&
@@ -379,5 +401,6 @@ export async function evaluateRevalidation<TEnv>(
     revalidate: currentSuggestion,
   });
   const softNames = revalidations.map((r) => r.name).join(",");
-  return decide(currentSuggestion, `soft-chain:${softNames}`);
+  // A soft result may carry the default it read on: counted as the default's.
+  return decide(currentSuggestion, `soft-chain:${softNames}`, true);
 }

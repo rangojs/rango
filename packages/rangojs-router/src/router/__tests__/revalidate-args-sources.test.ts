@@ -173,7 +173,13 @@ async function argumentsOf(
   return received!;
 }
 
-const isGetter = (args: RevalidateArgs, field: PropertyKey): boolean =>
+/**
+ * A getter that notes a read of the source page. The seed's getter notes
+ * only that the rule saw the seed (a route's default compares the target
+ * with the source, revalidation.ts decide): it is measured as a value.
+ */
+const isTracked = (args: RevalidateArgs, field: Field): boolean =>
+  field !== "defaultShouldRevalidate" &&
   typeof Object.getOwnPropertyDescriptor(args, field)?.get === "function";
 
 /** A field's value as comparable data. */
@@ -210,7 +216,7 @@ describe("revalidate() arguments: only a tracked getter may carry the source pag
         const first = await argumentsOf({ source: SOURCES[0], method, kind });
         const second = await argumentsOf({ source: SOURCES[1], method, kind });
         for (const field of Object.keys(FIELDS) as Field[]) {
-          if (isGetter(first, field) && isGetter(second, field)) continue;
+          if (isTracked(first, field) && isTracked(second, field)) continue;
           expect(
             valueOf(second, field),
             `${field} differs between source pages but is a plain value: it ` +
@@ -226,7 +232,7 @@ describe("revalidate() arguments: only a tracked getter may carry the source pag
     const first = await argumentsOf({ source: SOURCES[0] });
     const second = await argumentsOf({ source: SOURCES[1] });
     const getters = (Object.keys(FIELDS) as Field[]).filter((field) =>
-      isGetter(first, field),
+      isTracked(first, field),
     );
     expect(getters.length).toBeGreaterThan(0);
     for (const field of getters) {
@@ -237,7 +243,7 @@ describe("revalidate() arguments: only a tracked getter may carry the source pag
   it.each(Object.keys(FIELDS) as Field[])(
     "%s: a segment of every kind kept after reading it is source-held exactly when it is a tracked getter",
     async (field) => {
-      const tracked = isGetter(await argumentsOf({}), field);
+      const tracked = isTracked(await argumentsOf({}), field);
       for (const kind of KINDS) {
         const { decision, sourceHeld } = await evaluate(
           (a) => {

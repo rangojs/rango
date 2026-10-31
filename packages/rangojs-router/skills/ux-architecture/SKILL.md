@@ -325,8 +325,10 @@ The rule: **prefetch broadly, and flag what is expensive.**
   makes an answer page-only (`x-rsc-prefetch-scope: source`) when sharing it
   would be wrong: an intercept targets the route or the page sending it, the
   answer defers a `prefetch: false` unit the page does not show yet, a
-  `revalidate()` on the target read `currentUrl` and kept its segment, or a
-  kept answer sends no segment at all. Only a click from that exact URL, query
+  `revalidate()` on the target read `currentUrl` and kept its segment, a rule
+  on the route (or inside its `path()`) read the page being left and kept the
+  segment through the route's default, or a kept answer sends no segment at
+  all. Only a click from that exact URL, query
   and hash included, uses a page-only answer, so every page prefetches it
   again (`/links`, "Shared prefetches and `prefetchKey`").
 - A `revalidate()` that read `currentParams` or `fromRouteName` and kept its

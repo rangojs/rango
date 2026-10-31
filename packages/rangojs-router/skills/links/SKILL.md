@@ -662,6 +662,11 @@ The answer is page-only (`x-rsc-prefetch-scope: source`) when:
 - The answer defers a `prefetch: false` loader or `loading()` that the page
   does not show yet.
 - A `revalidate()` on the target read `currentUrl` and kept its segment.
+- A `revalidate()` on the route, or on a segment inside its `path()`, read
+  the page being left and kept the segment through the route's default
+  (it returned `undefined`, or the `defaultShouldRevalidate` it was given).
+  That default compares the target's params and search with the page's,
+  which no read records.
 - The answer kept a segment for the page that asked and sends no segment at
   all: a page that adopted it would keep its whole tree.
 

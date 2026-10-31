@@ -19,7 +19,10 @@ export interface SourceReads {
    * can test a key's presence (`in`, `Object.keys`) without reading a value.
    */
   keys: boolean;
-  /** Each `currentParams` value read; a spread or JSON.stringify reads all. */
+  /**
+   * Each `currentParams` value read; a spread or JSON.stringify reads all.
+   * Non-empty only with `keys`: a value is read through `currentParams`.
+   */
   params: Set<string>;
   /** `fromRouteName` was read. */
   route: boolean;
@@ -63,7 +66,7 @@ export function mergeSourceReads(into: SourceReads, from: SourceReads): void {
 
 export function shapeOfReads(reads: SourceReads): SourceShape {
   return {
-    keys: reads.keys || reads.params.size > 0,
+    keys: reads.keys,
     route: reads.route,
     names: [...reads.params].sort(),
   };

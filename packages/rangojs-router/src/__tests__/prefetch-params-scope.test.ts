@@ -7,6 +7,8 @@
  * navigation-client.ts consumeStoredPrefetch).
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { act, cleanup, render } from "@testing-library/react";
 import {
   buildParamsKey,
   buildPrefetchKey,
@@ -31,6 +33,17 @@ import {
   registerCommittedPageReader,
 } from "../browser/navigation-store-handle.js";
 import { createEventController } from "../browser/event-controller.js";
+import {
+  NavigationStoreContext,
+  type NavigationStoreContextValue,
+} from "../browser/react/context.js";
+import { useParams } from "../browser/react/use-params.js";
+import { ClientUrlsRoot } from "../client-urls/client-root.js";
+import { clientUrls } from "../client-urls/client-urls.js";
+import {
+  beginClientUrlNavigation,
+  clearClientUrlNavigationRegistry,
+} from "../client-urls/navigation.js";
 import {
   formatSourceLabel,
   parseSourceShape,
@@ -284,27 +297,56 @@ describe("the label", () => {
 });
 
 describe("the committed page the lookup reads", () => {
-  it("is the event controller's committed params: an optimistic clientUrls() frame, which sets React context only, does not move it", () => {
+  afterEach(() => {
+    cleanup();
+    clearClientUrlNavigationRegistry();
+  });
+
+  it("stays the committed page while an optimistic clientUrls() frame presents another locale", async () => {
     const controller = createEventController({
-      initialLocation: new URL("http://localhost/en/products?page=1"),
+      initialLocation: new URL("http://localhost/en"),
     });
-    controller.setParams({ locale: "en", page: "1" });
+    controller.setParams({ locale: "en" });
     registerCommittedPageReader(
       committedPageOf(controller, {
-        getHistoryEntryMemory: () => ({
-          routeName: "products",
-          state: null,
-        }),
+        getHistoryEntryMemory: () => ({ routeName: "home", state: null }),
       }),
     );
-    // An optimistic frame for /fr renders through OptimisticLocationContext
-    // (client-urls/client-root.tsx); the controller's params stay put until
-    // the navigation commits.
-    expect(getCommittedPage()).toEqual({
-      params: { locale: "en", page: "1" },
-      routeName: "products",
+    const Home = () => createElement("p", { "data-testid": "home" }, "home");
+    const Products = () =>
+      createElement("p", { "data-testid": "products" }, useParams().locale);
+    const definition = clientUrls(({ path }) => [
+      path("/:locale", Home),
+      path("/:locale/products", Products),
+    ]);
+    const result = render(
+      createElement(
+        NavigationStoreContext.Provider,
+        {
+          value: {
+            eventController: controller,
+          } as unknown as NavigationStoreContextValue,
+        },
+        createElement(ClientUrlsRoot, {
+          definition,
+          routeId: "client-route-0",
+        }),
+      ),
+    );
+    expect(result.getByTestId("home")).toBeDefined();
+
+    await act(async () => {
+      beginClientUrlNavigation(
+        new URL("http://localhost/fr/products"),
+        new AbortController().signal,
+      );
     });
-    controller.setParams({ locale: "fr", page: "1" });
-    expect(getCommittedPage()?.params).toEqual({ locale: "fr", page: "1" });
+    // The frame is presented: the destination reads its own params.
+    expect(result.getByTestId("products").textContent).toBe("fr");
+    // The lookup a click made now reads the page that is committed.
+    expect(getCommittedPage()).toEqual({
+      params: { locale: "en" },
+      routeName: "home",
+    });
   });
 });

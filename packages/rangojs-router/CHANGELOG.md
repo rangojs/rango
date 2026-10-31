@@ -25,6 +25,10 @@ stays off `/cart`.
 - `fromRouteName` groups by the source's route name.
 - `currentUrl`, an intercept, a `prefetch: false` deferral, and a kept answer
   that sends no segment stay page-only (`x-rsc-prefetch-scope: source`).
+- A rule on a route, or on a segment inside its `path()`, that read the page
+  being left and kept the segment through the route's default (returning
+  `undefined`, or the `defaultShouldRevalidate` it was given) stays
+  page-only: that default compares the target with the page being left.
 - A prerendered target kept on equal params is shared by the pages with the
   same params.
 

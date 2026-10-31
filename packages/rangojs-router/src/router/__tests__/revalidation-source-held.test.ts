@@ -24,6 +24,9 @@ function evaluate(
     context?: Held;
     source?: Record<string, string>;
     next?: Record<string, string>;
+    /** The segment decided for; a layout outside the route by default. */
+    segment?: { type: "layout" | "route" | "loader"; belongsToRoute?: boolean };
+    nextUrl?: string;
   } = {},
 ): Promise<{ decision: boolean; context: Held }> {
   const context: Held = extra.context ?? {};
@@ -33,12 +36,17 @@ function evaluate(
   const fns = Array.isArray(fn) ? fn : [fn];
   return runWithRequestContext(ctx as never, () =>
     evaluateRevalidation({
-      segment: { id: "M0L0", type: "layout", params: extra.next ?? {} } as any,
+      segment: {
+        id: "M0L0",
+        type: "layout",
+        ...extra.segment,
+        params: extra.next ?? {},
+      } as any,
       prevParams: extra.source ?? SOURCE,
       getPrevSegment: null,
       request,
       prevUrl: new URL("http://localhost/c/audio?page=2"),
-      nextUrl: new URL("http://localhost/cart"),
+      nextUrl: new URL(extra.nextUrl ?? "http://localhost/cart"),
       revalidations: fns.map((f, i) => ({ name: `revalidate${i}`, fn: f })),
       routeKey: "cart",
       context: context as any,
@@ -457,6 +465,92 @@ describe("x-rsc-prefetch-scope of a decision, by what the rule read (rango-t242)
     expect(headerOf(context)).toBe(
       "params; $k=q&q=" + encodeURIComponent("a=b&c;d ü"),
     );
+  });
+});
+
+/**
+ * A route segment's default, and the default of a segment the route owns,
+ * compares the target's params and search with the source's: no read
+ * records it. A rule that read the source and fell back to that default
+ * keeps the segment for this source only. Grouped by the rule's reads, a
+ * rewritten source (/deals rendering /en/p/1) prefetching /en/p/1 kept the
+ * product, and /en/p/2 adopted the answer and kept product 2 at /en/p/1.
+ */
+describe("a route's default keep compares with the source: the answer is the exact page's (review of #1344)", () => {
+  const P1 = { locale: "en", id: "1" };
+  // The source's search: the target's params and search equal the source's,
+  // so the route default keeps.
+  const sameSearch = "http://localhost/en/p/1?page=2";
+  const deferToDefault: ShouldRevalidateFn = ({ currentParams, nextParams }) =>
+    currentParams.locale !== nextParams.locale ? true : undefined;
+
+  it.each([
+    ["the route segment", { type: "route" as const }],
+    [
+      "a layout the route owns",
+      { type: "layout" as const, belongsToRoute: true },
+    ],
+    [
+      "a loader the route owns",
+      { type: "loader" as const, belongsToRoute: true },
+    ],
+  ])(
+    "a rule on %s that reads currentParams.locale and returns undefined, so the default keep applies: source",
+    async (_, segment) => {
+      const { decision, context } = await evaluate(deferToDefault, {
+        source: P1,
+        next: P1,
+        segment,
+        nextUrl: sameSearch,
+      });
+      expect(decision).toBe(false);
+      expect(headerOf(context)).toBe("source");
+    },
+  );
+
+  it("a rule on the route segment that returns the defaultShouldRevalidate it was given: source", async () => {
+    const { decision, context } = await evaluate(
+      ({ currentParams, nextParams, defaultShouldRevalidate }) =>
+        currentParams.locale !== nextParams.locale || defaultShouldRevalidate,
+      { source: P1, next: P1, segment: { type: "route" }, nextUrl: sameSearch },
+    );
+    expect(decision).toBe(false);
+    expect(headerOf(context)).toBe("source");
+  });
+
+  it("a hard keep on the route segment that never reads the default: grouped by what it read", async () => {
+    const { decision, context } = await evaluate(
+      ({ currentParams, nextParams }) =>
+        currentParams.locale !== nextParams.locale,
+      {
+        source: P1,
+        next: { locale: "en", id: "2" },
+        segment: { type: "route" },
+      },
+    );
+    expect(decision).toBe(false);
+    expect(headerOf(context)).toBe("params; $k=id,locale&locale=en");
+  });
+
+  it("the route segment kept by its default with no source read: no header, as without a rule", async () => {
+    const { decision, context } = await evaluate(() => undefined, {
+      source: P1,
+      next: P1,
+      segment: { type: "route" },
+      nextUrl: sameSearch,
+    });
+    expect(decision).toBe(false);
+    expect(headerOf(context)).toBeUndefined();
+  });
+
+  it("a layout outside the route keeps by a default that reads no source: still grouped by the rule's reads", async () => {
+    const { decision, context } = await evaluate(deferToDefault, {
+      source: P1,
+      next: P1,
+      nextUrl: sameSearch,
+    });
+    expect(decision).toBe(false);
+    expect(headerOf(context)).toBe("params; $k=id,locale&locale=en");
   });
 });
 
