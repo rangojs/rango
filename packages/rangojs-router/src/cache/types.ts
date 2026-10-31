@@ -93,7 +93,9 @@ export interface SegmentCacheStore<TEnv = unknown> {
   /**
    * Custom key generator applied to all cache operations using this store.
    * Receives the full RequestContext and the default-generated key.
-   * Return value becomes the final cache key (unless route overrides with `key` option).
+   * The return value is the cache key (unless route overrides with `key`
+   * option), with a route record's request kind appended when it does not
+   * start with that kind (below).
    *
    * Resolution priority:
    * 1. Route-level `key` function (replaces the URL part; the request kind stays)

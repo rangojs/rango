@@ -1156,7 +1156,9 @@ results first, outermost first:
   `items|doc` for a document request), so a document request, a navigation
   and each intercept navigation keep their own record whatever it returns.
   Build on the default key (`` `${defaultKey}|${locale}` ``) and the result
-  is the key, byte for byte.
+  is the key, byte for byte. A prefix before it
+  (`` `${locale}:${defaultKey}` ``) keeps the kind too, but no longer starts
+  with it, so the kind is appended (`en%3Adoc%3A…|doc`).
 - A response route's entry (`path.json()` and the other response routes) is
   keyed the same way, behind a `response:` prefix. A `ppr` route's shell is
   partitioned by the chain's `key()` results, namespaced the same way, since

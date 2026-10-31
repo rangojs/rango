@@ -11,10 +11,9 @@ gave a document request, a client navigation and every intercept navigation
 to the URL one record. So the defects #1293 fixed under `cache({ key })`
 happened without any `key()`: after an intercept navigation stored its
 record, a reload of the item URL rendered the intercept and no page, and a
-layout's
-`loading(..., { ssr: false })` fallback showed on a navigation after a
-document load as it never does live, or streamed on a document load after a
-navigation.
+layout's `loading(..., { ssr: false })` fallback showed on a navigation after
+a document load as it never does live, or streamed on a document load after
+a navigation.
 
 ```ts
 const store = new MemorySegmentCacheStore({
@@ -30,19 +29,30 @@ returns. A result that starts with its kind, which every result built on
 `defaultKey` (`` `${defaultKey}|${tenant}` ``) and the default key itself
 do, is the key as before, byte for byte. A result that does not gets the kind
 as a last part: `items` is stored as `items|doc`, `items|partial` or
-`items|intercept%3A…`, and `` `en:${defaultKey}` `` as
-`en%3Adoc%3A…|doc`. Records such a `keyGenerator` stored before this release
-are not read again: `CFCacheStore` and `VercelCacheStore` already miss them
-under the new router version; on `MemorySegmentCacheStore` or a custom store
-each request kind renders once and stores a new record, and the old one
-expires with its TTL. On a `ppr` route under a `cache()` whose store has
-such a `keyGenerator`, the first navigation after a document request is now
+`items|intercept%3A…`. An empty result, which was the key `""` for every
+kind, is stored as `|doc`, `|partial` or `|intercept%3A…`; where a result
+partitions a nested `cache()` or a ppr shell, `""` still fails key
+resolution, as before.
+
+**The documented `${x}:${defaultKey}` examples change keys.** The store
+`keyGenerator` JSDoc and the caching skill showed the prepend form
+(`` `${locale}:${defaultKey}` ``). It kept the request kind, but its result
+does not start with it, so its records get new keys: `en:doc:…` is now
+stored as `en%3Adoc%3A…|doc`. On `MemorySegmentCacheStore` and a custom
+store each such record misses once and is stored again, and the old one
+expires with its TTL; `CFCacheStore` and `VercelCacheStore` already miss
+every record once on a rango upgrade, so they lose nothing more. Build on
+`defaultKey` instead, `` `${defaultKey}|${locale}` ``, as the examples now
+do: a result that starts with `defaultKey` is the record key as you return
+it.
+
+On a `ppr` route under a `cache()` whose store has a `keyGenerator` that
+ignores `defaultKey`, the first navigation after a document request is now
 answered from the PPR shell (`x-rango-ppr-replay: HIT`) instead of the
 document's record (`BYPASS`), as under a `keyGenerator` built on
-`defaultKey`. The PPR shell partition (the raw
-result), a loader's entry and a response route's entry are unchanged. The
-`keyGenerator` examples in the store JSDoc now build on `defaultKey`
-(`` `${defaultKey}|${locale}` ``). No change in your code.
+`defaultKey`. The PPR shell partition (the raw result), a loader's entry and
+a response route's entry are unchanged. Your `keyGenerator` keeps working
+unchanged.
 
 ## 0.32.0 (2026-10-30)
 

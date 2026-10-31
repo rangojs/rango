@@ -190,8 +190,8 @@ export const KEY_PART_PREFIX = "key:";
  * (#974) and, for a route record key, the scope's own parts: without a
  * `key()` of its own, its default key (or its store's keyGenerator result,
  * #970, then the request kind when that result does not start with it,
- * rango-t204); with one, the default key's request kind (`doc`, `partial`
- * or `intercept:<intercept>`, routeRecordKind in cache-scope.ts).
+ * #1298); with one, the default key's request kind (`doc`, `partial` or
+ * `intercept:<intercept>`, routeRecordKind in cache-scope.ts).
  *
  * Key scheme invariant (#975). A `key()` result is often request input,
  * and a record key has no route or scope discriminator (the store reads

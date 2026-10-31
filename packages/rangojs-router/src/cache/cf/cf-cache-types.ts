@@ -419,10 +419,11 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   /**
    * Custom key generator applied to all cache operations.
    * Receives the full RequestContext (including env) and the default-generated key.
-   * Return value becomes the final cache key (unless route overrides with `key` option).
-   * A route record keeps its request kind: a result that does not start with
-   * `defaultKey`'s prefix (`doc:`, `partial:`, `intercept:<intercept>:`) gets
-   * the kind appended (see SegmentCacheStore.keyGenerator).
+   * The return value is the cache key (unless route overrides with `key`
+   * option), except that a route record keeps its request kind: a result that
+   * does not start with `defaultKey`'s prefix (`doc:`, `partial:`,
+   * `intercept:<intercept>:`) gets the kind appended (see
+   * SegmentCacheStore.keyGenerator).
    *
    * Reserved prefixes: tag-invalidation markers live in the SAME KV namespace as
    * data, keyed `__tag__/<tag>` (and `__tagmarker__/<tag>` for the L1 cache). A

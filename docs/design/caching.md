@@ -2038,9 +2038,13 @@ raw key starts with its own kind's prefix, and a composed one ends with its
 kind. The collision probe in `src/cache/__tests__/cache-scope-chain.test.ts`
 runs results such as `x`, `doc:x`, `doc` and `x|doc` under every kind.
 
-Why keep a result that starts with its kind as it is. That is the documented
-shape (`${defaultKey}|en`, every keyGenerator in the repo's apps and tests),
-which then costs no miss. It is also the identity keyGenerator, which keeps
+Why keep a result that starts with its kind as it is. That is the shape every
+keyGenerator in the repo's apps and tests uses (`${defaultKey}|en`), which
+then costs no miss. The store JSDoc examples and the caching skill showed the
+prepend form (`${locale}:${defaultKey}`) until this change: it kept the kind,
+but its result does not start with it, so its keys change (`en%3Adoc%3A…|doc`)
+and each such record misses once on Memory and custom stores. The examples
+now build on `defaultKey`. It is also the identity keyGenerator, which keeps
 one shell per URL and its build shell
 (`packages/rangojs-router/docs/design/ppr-shell-resume.md`): partial replay
 resolves the doc record key through the request's keyGenerator
