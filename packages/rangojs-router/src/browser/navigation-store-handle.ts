@@ -14,6 +14,7 @@
 
 import { setRangoStateObserver } from "./rango-state.js";
 import type { NavigationStore } from "./types.js";
+import type { SourcePage } from "../prefetch-source-scope.js";
 
 let registeredStore: NavigationStore | null = null;
 
@@ -35,4 +36,39 @@ export function registerNavigationStore(store: NavigationStore): void {
 /** The active navigation store, or null before boot has registered it. */
 export function getRegisteredStore(): NavigationStore | null {
   return registeredStore;
+}
+
+let readCommittedPage: (() => SourcePage) | null = null;
+
+/**
+ * Register the reader of the committed page's params and route name: the
+ * router store's own state, which useParams reads (the event controller's
+ * params, the displayed history entry's route name). Read by the prefetch
+ * cache outside render, at request time, to look up an answer shared by the
+ * pages with equal values of what a revalidate() rule read
+ * (prefetch-source-scope.ts). A reader, not a copy: there is no second
+ * source of truth for the params.
+ */
+export function registerCommittedPageReader(read: () => SourcePage): void {
+  readCommittedPage = read;
+}
+
+/**
+ * The boot reader (rsc-router.tsx): the event controller's params, which
+ * useParams reads and only a commit sets (an optimistic clientUrls() frame
+ * sets React context, not them), and the displayed entry's route name.
+ */
+export function committedPageOf(
+  controller: { getParams(): Record<string, string> },
+  store: Pick<NavigationStore, "getHistoryEntryMemory">,
+): () => SourcePage {
+  return () => ({
+    params: controller.getParams(),
+    routeName: store.getHistoryEntryMemory()?.routeName,
+  });
+}
+
+/** The committed page, or null before boot has registered its reader. */
+export function getCommittedPage(): SourcePage | null {
+  return readCommittedPage ? readCommittedPage() : null;
 }

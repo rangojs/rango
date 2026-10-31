@@ -20,6 +20,14 @@
  *   targets, matched or not), OR when a Link opts in with
  *   `prefetchKey=":source"` — in both cases so source-sensitive responses
  *   cannot bleed into navigations from other pages.
+ * - Params-scoped: built by `buildParamsKey(rangoState, label, target)` —
+ *   shape `rangoState\0p:<label>\0/target?...`. Populated when the server
+ *   tags a response with `X-RSC-Prefetch-Scope: params; <label>`: a
+ *   revalidate() rule read the source's params or route name and kept a
+ *   segment, so the answer is right for every page with equal values of
+ *   what it read (prefetch-source-scope.ts). `paramsShapes` remembers, per
+ *   target, what the stored labels read, so a lookup rebuilds the label of
+ *   the page on screen (paramsCandidateKeys).
  *
  * Also tracks in-flight prefetch promises. Each promise resolves to the
  * decoded prefetch entry (or null), letting navigation adopt a
@@ -44,6 +52,13 @@ import { notifyPrefetchCacheInvalidated } from "./invalidation.js";
 import { invalidateRangoState } from "../rango-state.js";
 import type { RscPayload } from "../types.js";
 import { WIRE } from "../../wire-params.js";
+import {
+  formatSourceLabel,
+  parseSourceShape,
+  sourceShapeId,
+  type SourcePage,
+  type SourceShape,
+} from "../../prefetch-source-scope.js";
 
 /**
  * A prefetch that has been fetched AND eagerly decoded. Storing the decoded
@@ -64,9 +79,12 @@ export interface DecodedPrefetch {
    * Prefetch scope as tagged by the server via `X-RSC-Prefetch-Scope`.
    * `"source"` means the response is source-page-sensitive and must not be
    * reused by a navigation from a different page — navigation enforces this
-   * when it adopted an inflight entry through the wildcard key.
+   * when it adopted an inflight entry through the wildcard key. `"params"`
+   * means it serves the pages whose label equals `paramsLabel`.
    */
-  scope: "source" | "wildcard";
+  scope: PrefetchScope;
+  /** The label of a `"params"` entry (prefetch-source-scope.ts). */
+  paramsLabel?: string;
   /**
    * Synchronously-readable flag, flipped to true when `streamComplete` resolves
    * (the entire RSC stream has drained). Navigation reads this at click time to
@@ -107,6 +125,9 @@ export interface DecodedPrefetch {
    */
   dispose?: () => void;
 }
+
+/** Where a prefetch is stored: see the module comment. */
+export type PrefetchScope = "source" | "params" | "wildcard";
 
 let cacheTTL = 300_000;
 let fragmentPassthroughEnabled = true;
@@ -163,6 +184,13 @@ const inflightAliases = new Map<string, string[]>();
 
 const adoptedKeys = new Set<string>();
 
+/**
+ * What the stored params-scoped labels of a target read, by
+ * `buildPrefetchKey("", target)`: the shapes paramsCandidateKeys rebuilds
+ * labels from. Bounded like the cache; cleared with it.
+ */
+const paramsShapes = new Map<string, Map<string, SourceShape>>();
+
 let generation = 0;
 
 /**
@@ -215,6 +243,76 @@ export function buildSourceKey(
     "\0" +
     targetUrl.pathname +
     targetUrl.search
+  );
+}
+
+/**
+ * Build a params-scoped cache key. Key shape:
+ * `rangoState\0p:<label>\0/target?...`, the target normalized like the
+ * wildcard key's: the answer serves every page with this label, whatever
+ * segments it holds, as a wildcard answer serves every page.
+ */
+export function buildParamsKey(
+  rangoState: string,
+  label: string,
+  targetUrl: URL,
+): string {
+  return buildPrefetchKey(rangoState + "\0p:" + label, targetUrl);
+}
+
+/**
+ * Remember that a params-scoped answer for `targetUrl` is stored under a
+ * label of this shape. Called where the response header is read, with the
+ * store (fetch.ts executePrefetchFetch).
+ */
+export function rememberParamsShape(targetUrl: URL, label: string): void {
+  const target = buildPrefetchKey("", targetUrl);
+  const shape = parseSourceShape(label);
+  let shapes = paramsShapes.get(target);
+  if (!shapes) {
+    if (paramsShapes.size >= maxPrefetchCacheSize) {
+      const oldest = paramsShapes.keys().next().value;
+      if (oldest !== undefined) paramsShapes.delete(oldest);
+    }
+    shapes = new Map();
+    paramsShapes.set(target, shapes);
+  }
+  shapes.set(sourceShapeId(shape), shape);
+}
+
+/**
+ * The params-scoped keys a request for `targetUrl` from `page` may adopt:
+ * the page's label under each shape stored for the target, the shapes that
+ * read the most first. Empty without a page (before boot).
+ */
+export function paramsCandidateKeys(
+  rangoState: string,
+  targetUrl: URL,
+  page: SourcePage | null,
+): string[] {
+  if (!page) return [];
+  const shapes = paramsShapes.get(buildPrefetchKey("", targetUrl));
+  if (!shapes) return [];
+  return [...shapes.values()]
+    .sort((a, b) => weightOf(b) - weightOf(a))
+    .map((shape) =>
+      buildParamsKey(rangoState, formatSourceLabel(shape, page), targetUrl),
+    );
+}
+
+const weightOf = (shape: SourceShape): number =>
+  shape.names.length + (shape.route ? 1 : 0) + (shape.keys ? 1 : 0);
+
+/**
+ * Whether `page` is in the group a params-scoped entry serves: its label
+ * under the entry's shape equals the entry's.
+ */
+export function pageMatchesParamsLabel(
+  label: string,
+  page: SourcePage | null,
+): boolean {
+  return (
+    page !== null && formatSourceLabel(parseSourceShape(label), page) === label
   );
 }
 
@@ -319,11 +417,16 @@ export function consumeInflightPrefetch(
  *
  * Skips storage if the generation has changed since the fetch started
  * (a server action invalidated the cache mid-flight).
+ *
+ * `inflightKey` is the key the prefetch was in flight under, when the
+ * storage key is not one of its aliases (a params-scoped answer): a
+ * navigation that adopted it marked the aliases.
  */
 export function storePrefetch(
   key: string,
   entry: DecodedPrefetch,
   fetchGeneration: number,
+  inflightKey: string = key,
 ): void {
   if (cacheTTL <= 0) return;
   if (fetchGeneration !== generation) return;
@@ -333,8 +436,8 @@ export function storePrefetch(
   // publish it to the cache map, or a later navigation would be served the
   // exhausted entry and lose that route's handles. Clear the marker (under all
   // aliases) now that the decision is made.
-  if (adoptedKeys.has(key)) {
-    forEachAlias(key, (k) => adoptedKeys.delete(k));
+  if (adoptedKeys.has(inflightKey)) {
+    forEachAlias(inflightKey, (k) => adoptedKeys.delete(k));
     return;
   }
 
@@ -457,6 +560,7 @@ export function clearPrefetchCache(rotateRangoState = true): void {
   inflightPromises.clear();
   inflightAliases.clear();
   adoptedKeys.clear();
+  paramsShapes.clear();
   for (const cached of cache.values()) cached.entry.dispose?.();
   cache.clear();
   earliestTimestamp = Infinity;

@@ -348,14 +348,30 @@ The public DOM seam is
   configuration and race guard, and
   [browser/prefetch/runtime.ts](../../src/browser/prefetch/runtime.ts), the lazy
   boundary for fetch, queue, and observer code.
-- Prefetch scope (`x-rsc-prefetch-scope: source`) is decided server-side in
-  [rsc/rsc-rendering.ts](../../src/rsc/rsc-rendering.ts) (`sourceScoped`) from
-  `MatchResult.interceptTargeted`, a deferring payload, and
-  `MatchResult.sourceHeld`: a `revalidate()` that read the source page kept a
-  held segment, noted by
+- Prefetch scope (`x-rsc-prefetch-scope: source` or `params; <label>`) is
+  decided server-side by `prefetchScopeOf` in
+  [router/source-reads.ts](../../src/router/source-reads.ts), set by
+  [rsc/rsc-rendering.ts](../../src/rsc/rsc-rendering.ts), from
+  `MatchResult.interceptTargeted`, a deferring payload, an empty diff, and
+  `MatchResult.sourceHeld`: what the `revalidate()` rules that kept a held
+  segment read of the source page, recorded by
   [router/revalidation.ts](../../src/router/revalidation.ts)
-  (`evaluateRevalidation`, `InternalHandlerContext._sourceHeld`) and carried
-  by [router/match-result.ts](../../src/router/match-result.ts) (#1331). A
+  (`evaluateRevalidation`, `recordingParams` and `markSourceHeld` in
+  `router/source-reads.ts`, `InternalHandlerContext._sourceHeld`) and carried
+  by [router/match-result.ts](../../src/router/match-result.ts) (#1331,
+  rango-t242). The label format, shared with the browser, is
+  [prefetch-source-scope.ts](../../src/prefetch-source-scope.ts); the browser
+  side is the params-scoped key and shape index in
+  [browser/prefetch/cache.ts](../../src/browser/prefetch/cache.ts)
+  (`buildParamsKey`, `rememberParamsShape`, `paramsCandidateKeys`), the slot
+  in [browser/prefetch/fetch.ts](../../src/browser/prefetch/fetch.ts)
+  (`prefetchStorageSlot`), the lookup in
+  [browser/navigation-client.ts](../../src/browser/navigation-client.ts)
+  (`consumeStoredPrefetch`, `wildcardAdoptionFits`) and the committed page
+  reader in
+  [browser/navigation-store-handle.ts](../../src/browser/navigation-store-handle.ts)
+  (`committedPageOf`, `getCommittedPage`), registered at boot by
+  [browser/rsc-router.tsx](../../src/browser/rsc-router.tsx). A
   prerender entry marks it in
   [router/match-middleware/cache-lookup.ts](../../src/router/match-middleware/cache-lookup.ts)
   (`storedEntrySends`) when, on equal params, it keeps a held segment whose
