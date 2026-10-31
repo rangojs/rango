@@ -383,6 +383,7 @@ import {
   includeScopePublicPatterns,
 } from "./pages/include-scope.js";
 import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
+import { interceptActionSelectPatterns } from "./pages/intercept-action-select.js";
 import { interceptHeldPatterns } from "./pages/intercept-held.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
 import { redirectLoopPatterns } from "./pages/redirect-loop.js";
@@ -3288,6 +3289,12 @@ export const urlpatterns = urls(
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {
           name: "interceptWhenShape",
+        }),
+        // A server action from an open intercept re-renders that intercept
+        // (rango-t200; mirrors the router e2e app's /cache-intercept-when
+        // drawer action, intercept-action-select.test.ts).
+        include("/intercept-action-select", interceptActionSelectPatterns, {
+          name: "interceptActionSelect",
         }),
         // Intercept slot handle pushes and held loaders (mirrors the router
         // e2e app's intercept-held).

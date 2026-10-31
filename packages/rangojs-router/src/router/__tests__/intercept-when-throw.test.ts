@@ -50,7 +50,6 @@ describe("evaluateInterceptWhen: a throwing selector", () => {
           },
         ]),
         ctx,
-        false,
       ),
     ).toBe(false);
     expect(error).toHaveBeenCalledTimes(1);
@@ -70,7 +69,6 @@ describe("evaluateInterceptWhen: a throwing selector", () => {
           later,
         ]),
         ctx,
-        false,
       ),
     ).toBe(false);
     expect(later).not.toHaveBeenCalled();
