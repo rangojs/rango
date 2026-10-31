@@ -169,6 +169,8 @@ The CLI is exposed via the `bin` field in `package.json`, not as a subpath expor
 
 `rango generate` — static/runtime route-type extraction for CI and repo bootstrapping.
 
+`dist/bin/` is built with esbuild code splitting: `rango.js` is the entry, and the `--runtime` path (`build/runtime-discovery.ts` and the Vite code it reaches) loads from its own chunks on demand. vite is an optional peer, so `--help` and the static modes must never load it; `generate-cli.test.ts` runs the built binary with vite unresolvable to hold that.
+
 ---
 
 ## Client API
