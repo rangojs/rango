@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { resolve, dirname } from "node:path";
 import { readFileSync, statSync, existsSync } from "node:fs";
 import {
@@ -281,6 +282,10 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
     process.exit(1);
   }
 
+  // Loads from its own chunk only because the bin is built with esbuild
+  // --splitting (package.json "build"). A single-file bundle folds this module
+  // in and hoists its Vite imports to the top, so every command, --help
+  // included, failed without vite installed (rango-t211).
   let discoverAndWriteRouteTypes: typeof import("../build/runtime-discovery.ts").discoverAndWriteRouteTypes;
   try {
     const mod = await import("../build/runtime-discovery.ts");
