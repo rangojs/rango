@@ -48,6 +48,46 @@ async function settledWithin(
   }
 }
 
+/** True while a process of the group led by `pgid` exists (not on Windows). */
+function groupAlive(pgid: number): boolean {
+  if (process.platform === "win32") return false;
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the group exists but belongs to someone else. Only ESRCH is gone.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Resolves true once every server's `done` settled and no process of any of
+ * their groups is left, false when `ms` ran out first. The leader (`pnpm`)
+ * exiting says nothing about the vite it spawned, which can outlive it, so the
+ * groups are polled too. Same shape as `stopServer` in
+ * packages/rangojs-router/src/testing/e2e/server.ts, which this package cannot
+ * import.
+ */
+async function groupsExitedWithin(
+  servers: GuardedServer[],
+  ms: number,
+): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  if (
+    !(await settledWithin(
+      servers.map((s) => s.done),
+      ms,
+    ))
+  )
+    return false;
+  const pgids = servers.flatMap((s) => (s.pid === undefined ? [] : [s.pid]));
+  while (pgids.some(groupAlive)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return true;
+}
+
 export class ServerGuard {
   #tracked = new Set<GuardedServer>();
   #disposed = false;
@@ -93,24 +133,21 @@ export class ServerGuard {
     this.#disposed = true;
     const servers = [...this.#tracked];
     for (const server of servers) server.kill();
-    if (
-      await settledWithin(
-        servers.map((s) => s.done),
-        this.#exitWaitMs,
-      )
-    ) {
-      return;
-    }
-    const survivors = servers.filter((server) => this.#tracked.has(server));
+    if (await groupsExitedWithin(servers, this.#exitWaitMs)) return;
+    // A server whose leader exited can still hold a live group, so survivors
+    // are not only the ones whose `done` is pending: forget() has already
+    // dropped those, and they are exactly the ones this must still signal.
+    const survivors = servers.filter(
+      (server) =>
+        this.#tracked.has(server) ||
+        (server.pid !== undefined && groupAlive(server.pid)),
+    );
     for (const server of survivors) server.kill("SIGKILL");
     const pids = survivors.map((server) => server.pid ?? "unknown").join(", ");
     console.error(
       `[server-guard] ${survivors.length} server(s) ignored SIGTERM for ` +
         `${this.#exitWaitMs} ms and were sent SIGKILL (pid ${pids})`,
     );
-    await settledWithin(
-      survivors.map((server) => server.done),
-      KILL_WAIT_MS,
-    );
+    await groupsExitedWithin(survivors, KILL_WAIT_MS);
   }
 }

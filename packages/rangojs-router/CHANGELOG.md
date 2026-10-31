@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fixed: `@rangojs/router/testing/e2e` stops the whole dev or preview server, not only `pnpm` ([#1352](https://github.com/rangojs/rango/pull/1352))
+
+**Before.** `useFixture` started `pnpm dev` or `pnpm preview` without making it a
+process-group leader, so its teardown's group kill threw `ESRCH` and fell back
+to stopping `pnpm` alone. The vite process `pnpm` spawned kept running after the
+suite, holding its port and memory, and a teardown could time out waiting on it.
+
+**After.** The server is spawned detached and the teardown signals its whole
+process group, waits until no process of the group is left, and sends SIGKILL
+(logging the pid) to a group that still has one after the wait. Windows is
+unchanged: the server is not detached there and `taskkill /t` ends the tree.
+Nothing changes in how you call `useFixture`.
+
 ### Changed: `rango generate` reads an inline `createRouter().routes(urls(...))` and stops on a root tree it cannot read ([#1349](https://github.com/rangojs/rango/pull/1349))
 
 **Before.** `rango generate` read a router's tree only from a variable or a

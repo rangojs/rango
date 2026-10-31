@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
-import { assertFixtureModeMatchesProject } from "@shared/e2e";
+import { assertFixtureModeMatchesProject, ServerGuard } from "@shared/e2e";
 import { x } from "tinyexec";
 import { waitForServer } from "./helper.js";
 
@@ -87,33 +87,26 @@ function runCli(options) {
     });
   }
 
-  function kill() {
+  function kill(signal = "SIGTERM") {
     if (process.platform === "win32") {
       spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
     } else {
       // Signal the whole process group so the vite grandchild dies too.
+      // ServerGuard escalates to SIGKILL for a group that outlives the wait.
       try {
-        process.kill(-child.pid, "SIGTERM");
+        process.kill(-child.pid, signal);
       } catch {
-        child.kill("SIGTERM");
+        child.kill(signal);
       }
-      setTimeout(() => {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // Already dead.
-          }
-        }
-      }, 2000);
     }
   }
 
   return {
     proc: child,
     done,
+    get pid() {
+      return child.pid;
+    },
     findURL,
     kill,
     stdout: () => stdout,
@@ -122,7 +115,9 @@ function runCli(options) {
 }
 
 export function useFixture(options) {
-  let cleanup;
+  // Owns every process this fixture spawns; afterAll disposes it, whether or
+  // not beforeAll got as far as a ready server (ServerGuard says why).
+  let servers;
   let baseURL;
 
   const cwd = path.resolve(options.root);
@@ -130,18 +125,23 @@ export function useFixture(options) {
 
   test.beforeAll(async ({}, testInfo) => {
     assertFixtureModeMatchesProject(options.mode, testInfo);
+    // A guard per run of the hook: Playwright does not cancel a timed-out
+    // hook, so its body can outlive afterAll and must not start anything
+    // under the next run's guard.
+    const guard = (servers = new ServerGuard());
+    // Tracked as soon as it is spawned, before any await.
+    const start = (cli) => {
+      guard.assertLive();
+      return guard.track(runCli(cli));
+    };
     if (options.mode === "dev") {
-      proc = runCli({
+      proc = start({
         command: options.command ?? `pnpm dev`,
         label: `${options.root}:dev`,
         cwd,
         ...options.cliOptions,
       });
       baseURL = await proc.findURL();
-      cleanup = async () => {
-        proc.kill();
-        await proc.done;
-      };
       // "Port printed" != "ready to serve" for vite dev: settle two consecutive
       // OK responses to absorb the first-request dep-optimizer cycle.
       await waitForServer(`${baseURL}/`, {
@@ -152,7 +152,7 @@ export function useFixture(options) {
     if (options.mode === "build") {
       const hasBuildDep = testInfo.project.dependencies.includes("build");
       if (!process.env.TEST_SKIP_BUILD && !hasBuildDep) {
-        const buildProc = runCli({
+        const buildProc = start({
           command: options.buildCommand ?? `pnpm build`,
           label: `${options.root}:build`,
           cwd,
@@ -160,17 +160,13 @@ export function useFixture(options) {
         });
         await buildProc.done;
       }
-      proc = runCli({
+      proc = start({
         command: options.command ?? `pnpm preview`,
         label: `${options.root}:preview`,
         cwd,
         ...options.cliOptions,
       });
       baseURL = await proc.findURL();
-      cleanup = async () => {
-        proc.kill();
-        await proc.done;
-      };
       // Preview serves static dist (no optimizer), but still confirm it is
       // actually serving before tests navigate.
       await waitForServer(`${baseURL}/`, {
@@ -180,7 +176,7 @@ export function useFixture(options) {
   });
 
   test.afterAll(async () => {
-    await cleanup?.();
+    await servers?.dispose();
   });
 
   return {

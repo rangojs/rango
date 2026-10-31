@@ -1,6 +1,6 @@
 import { stripVTControlCharacters, styleText } from "node:util";
 import { test as base, expect } from "@playwright/test";
-import { assertFixtureModeMatchesProject } from "@shared/e2e";
+import { assertFixtureModeMatchesProject, ServerGuard } from "@shared/e2e";
 import { x } from "tinyexec";
 import { waitForServer } from "./helper.js";
 
@@ -34,6 +34,21 @@ export const test = base.extend({
           },
         },
       }).process;
+      const servers = new ServerGuard();
+      // Tracked as soon as it is spawned, before anything is awaited.
+      servers.track({
+        pid: child.pid,
+        done: new Promise((resolve) => {
+          child.once("exit", () => resolve());
+        }),
+        kill: (signal = "SIGTERM") => {
+          try {
+            process.kill(-child.pid, signal);
+          } catch {
+            child.kill(signal);
+          }
+        },
+      });
 
       const label = "[.:dev]";
       let stdout = "";
@@ -84,34 +99,21 @@ export const test = base.extend({
         }
       });
 
-      const baseURL = await urlPromise;
-      // "Port printed" != "ready to serve": wait for two consecutive OK
-      // responses so the first SSR request's dep-optimizer cycle is absorbed
-      // before any test navigates (otherwise the first nav can ERR_EMPTY_RESPONSE).
+      // The guard stops the whole process group (the vite grandchild too) when
+      // the fixture ends or fails anywhere below, a startup timeout included.
       try {
+        const baseURL = await urlPromise;
+        // "Port printed" != "ready to serve": wait for two consecutive OK
+        // responses so the first SSR request's dep-optimizer cycle is absorbed
+        // before any test navigates (otherwise the first nav can ERR_EMPTY_RESPONSE).
         await waitForServer(`${baseURL}/`, {
           settleOks: 2,
           getOutput: () => ({ stdout, stderr }),
         });
-      } catch (err) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          child.kill("SIGKILL");
-        }
-        throw err;
+        await use(baseURL);
+      } finally {
+        await servers.dispose();
       }
-      await use(baseURL);
-
-      // Signal the whole process group so the vite grandchild dies too.
-      try {
-        process.kill(-child.pid, "SIGTERM");
-      } catch {
-        child.kill("SIGTERM");
-      }
-      await new Promise((resolve) => {
-        child.on("exit", () => resolve());
-      });
     },
     { scope: "worker" },
   ],

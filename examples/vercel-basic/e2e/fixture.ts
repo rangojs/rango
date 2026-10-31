@@ -2,6 +2,7 @@ import { type SpawnOptions, spawn } from "node:child_process";
 import path from "node:path";
 import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
+import { ServerGuard } from "@shared/e2e";
 import { x } from "tinyexec";
 
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
@@ -58,32 +59,25 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     });
   }
 
-  function kill() {
+  function kill(signal: NodeJS.Signals = "SIGTERM") {
     if (process.platform === "win32") {
       spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
     } else {
+      // The whole process group; ServerGuard escalates to SIGKILL.
       try {
-        process.kill(-child.pid!, "SIGTERM");
+        process.kill(-child.pid!, signal);
       } catch {
-        child.kill("SIGTERM");
+        child.kill(signal);
       }
-      setTimeout(() => {
-        try {
-          process.kill(-child.pid!, "SIGKILL");
-        } catch {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // Already dead
-          }
-        }
-      }, 2000);
     }
   }
 
   return {
     proc: child,
     done,
+    get pid() {
+      return child.pid;
+    },
     findPort,
     kill,
     exitCode: () => exitCode,
@@ -101,33 +95,37 @@ export function useFixture(options: {
   buildCommand?: string;
   cliOptions?: SpawnOptions;
 }) {
-  let cleanup: (() => Promise<void>) | undefined;
+  // Owns every process this fixture spawns; afterAll disposes it, whether or
+  // not beforeAll got as far as a ready server (ServerGuard says why).
+  let servers: ServerGuard | undefined;
   let baseURL!: string;
 
   const cwd = path.resolve(options.root);
   let proc!: ReturnType<typeof runCli>;
 
   test.beforeAll(async () => {
+    // A guard per run of the hook: Playwright does not cancel a timed-out
+    // hook, so its body can outlive afterAll and must not start anything
+    // under the next run's guard.
+    const guard = (servers = new ServerGuard());
+    // Tracked as soon as it is spawned, before any await.
+    const start = (cli: Parameters<typeof runCli>[0]) => {
+      guard.assertLive();
+      return guard.track(runCli(cli));
+    };
     if (options.mode === "dev") {
-      proc = runCli({
+      proc = start({
         command: options.command ?? `pnpm dev`,
         label: `${options.root}:dev`,
         cwd,
         ...options.cliOptions,
       });
-      // Register teardown BEFORE awaiting findPort: if findPort times out it
-      // throws out of beforeAll, and a cleanup assigned only afterwards would be
-      // undefined, leaking the detached dev server (holding its port).
-      cleanup = async () => {
-        proc.kill();
-        await proc.done;
-      };
       const port = await proc.findPort();
       baseURL = `http://localhost:${port}`;
     }
     if (options.mode === "build") {
       if (!process.env.TEST_SKIP_BUILD) {
-        const buildProc = runCli({
+        const buildProc = start({
           command: options.buildCommand ?? `pnpm build`,
           label: `${options.root}:build`,
           cwd,
@@ -145,25 +143,19 @@ export function useFixture(options: {
           );
         }
       }
-      proc = runCli({
+      proc = start({
         command: options.command ?? `pnpm preview`,
         label: `${options.root}:preview`,
         cwd,
         ...options.cliOptions,
       });
-      // Register teardown BEFORE awaiting findPort (see the dev branch): a
-      // findPort timeout would otherwise leak the detached preview server.
-      cleanup = async () => {
-        proc.kill();
-        await proc.done;
-      };
       const port = await proc.findPort();
       baseURL = `http://localhost:${port}`;
     }
   });
 
   test.afterAll(async () => {
-    await cleanup?.();
+    await servers?.dispose();
   });
 
   return {

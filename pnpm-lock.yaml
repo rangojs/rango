@@ -239,6 +239,9 @@ importers:
       '@playwright/test':
         specifier: ^1.62.0
         version: 1.63.0
+      '@shared/e2e':
+        specifier: workspace:*
+        version: link:../../tests/shared-e2e
       '@types/react':
         specifier: 'catalog:'
         version: 19.3.0
@@ -282,6 +285,9 @@ importers:
       '@playwright/test':
         specifier: ^1.62.0
         version: 1.63.0
+      '@shared/e2e':
+        specifier: workspace:*
+        version: link:../../tests/shared-e2e
       '@types/react':
         specifier: 'catalog:'
         version: 19.3.0
@@ -328,6 +334,9 @@ importers:
       '@playwright/test':
         specifier: ^1.62.0
         version: 1.63.0
+      '@shared/e2e':
+        specifier: workspace:*
+        version: link:../../tests/shared-e2e
       '@types/node':
         specifier: ^24.10.0
         version: 24.10.4
@@ -368,6 +377,9 @@ importers:
       '@playwright/test':
         specifier: ^1.62.0
         version: 1.63.0
+      '@shared/e2e':
+        specifier: workspace:*
+        version: link:../../tests/shared-e2e
       '@types/node':
         specifier: ^24.10.0
         version: 24.10.4
@@ -739,6 +751,9 @@ importers:
       '@playwright/test':
         specifier: ^1.62.0
         version: 1.63.0
+      '@shared/e2e':
+        specifier: workspace:*
+        version: link:../shared-e2e
       '@types/autocannon':
         specifier: ^7.12.7
         version: 7.12.7
@@ -816,6 +831,9 @@ importers:
       '@playwright/test':
         specifier: ^1.62.0
         version: 1.63.0
+      '@shared/e2e':
+        specifier: workspace:*
+        version: link:../shared-e2e
       '@types/react':
         specifier: 'catalog:'
         version: 19.3.0
