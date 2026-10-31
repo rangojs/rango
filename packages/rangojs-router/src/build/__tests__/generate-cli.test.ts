@@ -739,9 +739,10 @@ class CliExit extends Error {}
  * Runs the static path of `rango generate` (default and --static modes) from
  * the CLI source, in this worker. That path always ends in process.exit(),
  * which throws here and so stops the script where the real exit would: a
- * failing run writes nothing after it. A fresh module graph per run gives each
- * run a new process's module state; typescript and vite are external and load
- * once per worker. Not for --runtime, which returns before its work ends.
+ * failing run writes nothing after it. A real exit never returns, so the
+ * first exit code is the run's. A fresh module graph per run gives each run a
+ * new process's module state; typescript and vite are external and load once
+ * per worker. Not for --runtime, which returns before its work ends.
  */
 async function runRango(
   args: string,
@@ -757,7 +758,7 @@ async function runRango(
   ];
   let exitCode: number | undefined;
   const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
-    exitCode = Number(code ?? 0);
+    exitCode ??= Number(code ?? 0);
     throw new CliExit();
   });
   const argv = process.argv;

@@ -28,9 +28,11 @@ const CONCURRENT_BUILDS = 3;
  * the machine's load. Measured on a 10-core machine beside 12 busy loops:
  * 6.7-8.7 s a build and 46 s for all of them with this file run alone; 11-39 s
  * a build and 166 s in all inside a full test:unit run; over 240 s once in a
- * full run at load average 30-50.
+ * full run at load average 30-50. It stays under CI's 10-minute unit-tests job
+ * (`.github/workflows/e2e.yml`), so a hung build fails this file by name
+ * before the job is cancelled.
  */
-const BUILDS_TIMEOUT_MS = 600_000;
+const BUILDS_TIMEOUT_MS = 480_000;
 
 const scenarios = {
   baseline: {},
