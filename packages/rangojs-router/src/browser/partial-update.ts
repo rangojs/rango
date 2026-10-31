@@ -239,13 +239,18 @@ export type UpdateMode =
       /** The cross-tab refresh's held boundary (see `action`). */
       boundary?: string;
       /**
-       * Told when the response is a prefetch a server action marked stale
-       * (FetchPartialResult.stalePrefetch). The click commits it as it
-       * commits any prefetch; the bridge revalidates the page once the
-       * navigation settled (navigation-bridge.ts navigate). Nothing here
-       * changes how or when this commit lands.
+       * A click's: told of each response this navigation fetches, true when
+       * it is a prefetch a server action marked stale
+       * (FetchPartialResult.stalePrefetch), false otherwise, so a fresh
+       * refetch after it (a fill's start-over, an HMR retry) clears it. Its
+       * presence is what lets a stale prefetch answer
+       * (FetchPartialOptions.acceptStalePrefetch): only a navigation that
+       * revalidates afterwards takes one. The click commits it as it commits
+       * any prefetch; the bridge revalidates the page once the navigation
+       * settled (navigation-bridge.ts navigate). Nothing here changes how or
+       * when this commit lands.
        */
-      onStalePrefetch?: () => void;
+      onStalePrefetch?: (stale: boolean) => void;
     }
   | { type: "leave-intercept"; interceptSourceUrl?: string; boundary?: never }
   | {
@@ -715,6 +720,8 @@ export function createPartialUpdater(
       boundary,
       version: getVersion(),
       routerId: store.getRouterId?.(),
+      acceptStalePrefetch:
+        mode.type === "navigate" && mode.onStalePrefetch !== undefined,
     });
     const streamingToken = tx.startStreaming();
     const {
@@ -722,8 +729,8 @@ export function createPartialUpdater(
       streamComplete: rawStreamComplete,
       fullyPrefetched,
     } = fetchResult;
-    if (fetchResult.stalePrefetch && mode.type === "navigate") {
-      mode.onStalePrefetch?.();
+    if (mode.type === "navigate") {
+      mode.onStalePrefetch?.(fetchResult.stalePrefetch === true);
     }
     debugLog("payload.metadata", payload.metadata);
 

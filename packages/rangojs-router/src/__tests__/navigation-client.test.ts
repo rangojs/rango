@@ -758,41 +758,71 @@ describe("navigation-client", () => {
       expect(result.fullyPrefetched).toBe(false);
     });
 
-    // #1329: an entry a server action marked stale is served like any other;
-    // the result says so, and the bridge revalidates once the click settled.
-    it("reports a stale stored hit and a stale in-flight adoption as stalePrefetch", async () => {
+    // #1329: an entry a server action marked stale is served to a click
+    // (acceptStalePrefetch) like any other; the result says so, and the
+    // bridge revalidates once the click settled. The real cache's side of it
+    // (a miss for anything else, served once) is in
+    // prefetch-stale-action.test.ts.
+    it("reports a stale stored hit and a stale in-flight adoption to a click as stalePrefetch", async () => {
       vi.stubGlobal("fetch", vi.fn() as unknown as typeof fetch);
       const client = createNavigationClient({
         createFromFetch: vi.fn(),
       } as any);
       const stale = makeEntry({ metadata: { matched: [], diff: [] } });
       isPrefetchStaleMock.mockImplementation((entry) => entry === stale);
-
-      consumePrefetchMock.mockReturnValue(stale);
-      const hit = await client.fetchPartial({
+      const click = {
         targetUrl: "/products",
         previousUrl: "/current",
         segmentIds: ["root"],
-      });
+        acceptStalePrefetch: true,
+      };
+
+      consumePrefetchMock.mockReturnValue(stale);
+      const hit = await client.fetchPartial(click);
       expect(hit.stalePrefetch).toBe(true);
+      expect(consumePrefetchMock).toHaveBeenCalledWith(expect.any(String), {
+        acceptStale: true,
+      });
 
       consumePrefetchMock.mockReturnValue(null);
       consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(stale));
-      const adopted = await client.fetchPartial({
-        targetUrl: "/products",
-        previousUrl: "/current",
-        segmentIds: ["root"],
-      });
+      const adopted = await client.fetchPartial(click);
       expect(adopted.stalePrefetch).toBe(true);
 
       const fresh = makeEntry({ metadata: { matched: [], diff: [] } });
       consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(fresh));
-      const freshHit = await client.fetchPartial({
+      const freshHit = await client.fetchPartial(click);
+      expect(freshHit.stalePrefetch).toBe(false);
+      isPrefetchStaleMock.mockReset();
+      isPrefetchStaleMock.mockReturnValue(false);
+    });
+
+    it("asks the cache for no stale entry, and refetches over a stale in-flight one, for a navigation that never revalidates", async () => {
+      const fetchMock = vi.fn(async () => new Response("fresh"));
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const freshPayload = { metadata: { matched: [], diff: [] } };
+      const client = createNavigationClient({
+        createFromFetch: vi.fn(async () => freshPayload),
+      } as any);
+      const stale = makeEntry({ metadata: { matched: [], diff: [] } });
+      const dispose = vi.fn();
+      stale.dispose = dispose;
+      isPrefetchStaleMock.mockImplementation((entry) => entry === stale);
+
+      consumePrefetchMock.mockReturnValue(null);
+      consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(stale));
+      const back = await client.fetchPartial({
         targetUrl: "/products",
         previousUrl: "/current",
         segmentIds: ["root"],
       });
-      expect(freshHit.stalePrefetch).toBe(false);
+      expect(consumePrefetchMock).toHaveBeenCalledWith(expect.any(String), {
+        acceptStale: false,
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(back.payload).toBe(freshPayload);
+      expect(back.stalePrefetch).toBe(false);
+      expect(dispose).toHaveBeenCalledOnce();
       isPrefetchStaleMock.mockReset();
       isPrefetchStaleMock.mockReturnValue(false);
     });

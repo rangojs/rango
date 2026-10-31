@@ -141,6 +141,82 @@ function isRestorable(
 }
 
 /**
+ * The request a stale-prefetch revalidation makes (scheduleStalePrefetch-
+ * Revalidation): the ids it holds, and the intercept and action error
+ * boundary on screen.
+ */
+export interface StalePrefetchRevalidation {
+  segmentIds: string[];
+  intercept: { isIntercept: boolean; sourceUrl?: string };
+  boundary: string | undefined;
+}
+
+/**
+ * A click that adopted a prefetch a server action marked stale
+ * (prefetch/cache.ts isPrefetchStale) committed the pre-write payload, as any
+ * prefetched click commits. Once that navigation settled
+ * (NavigationEntry.settled: its commit, any `prefetch: false` fill and its
+ * stream, so this never supersedes the click (dc-t114) nor cuts a response
+ * that arrived short (rango-d171)), `revalidate` runs the page's request in
+ * Back's lane (the bridge's revalidateInBackground), with the ids on screen
+ * and the action error boundary it shows held, as Back onto a stale entry
+ * does.
+ *
+ * The entry is marked stale first, so a Back onto it revalidates when this
+ * one never ran or was left. Nothing runs when the click did not commit, or
+ * when the page moved since (a newer navigation aborts the click's entry, a
+ * shallow one moves the history key) or another navigation is open. An
+ * action in flight does not hold it back, as it does not hold Back's: its
+ * follow-up, when it owes one, starts a navigation that supersedes this one.
+ *
+ * Exported so renderRoute (testing/render-route.tsx) drives these guards and
+ * this plan rather than a copy of them.
+ */
+export function scheduleStalePrefetchRevalidation(
+  store: Pick<
+    NavigationStore,
+    "getCachedSegments" | "getHistoryKey" | "updateCacheHandleData"
+  >,
+  eventController: Pick<EventController, "getUnsettledNavigation">,
+  entry: Pick<NavigationEntry, "settled">,
+  historyKey: string,
+  revalidate: (request: StalePrefetchRevalidation) => void,
+): void {
+  void entry.settled.then((committed) => {
+    if (!committed) return;
+    const cached = store.getCachedSegments(historyKey);
+    if (!cached) return;
+    store.updateCacheHandleData(historyKey, cached.handleData ?? {}, true);
+    if (
+      store.getHistoryKey() !== historyKey ||
+      eventController.getUnsettledNavigation() ||
+      !isRestorable(cached.segments)
+    ) {
+      return;
+    }
+    const historyState = window.history.state;
+    const isIntercept = historyState?.intercept === true;
+    const boundaryAt = isIntercept ? -1 : actionBoundaryAt(cached.segments);
+    if (boundaryAt === 0) return;
+    const boundary = cached.segments[boundaryAt]?.id;
+    debugLog("[Browser] Stale prefetch committed, background revalidating");
+    // A deferred Meta still pending when its handles were cached: a whole
+    // render re-streams them (handlePopstate, handlesPending).
+    const segmentIds = cached.handlesPending
+      ? []
+      : idsAboveBoundary(
+          cached.segments.map((s) => s.id),
+          boundary,
+        );
+    revalidate({
+      segmentIds,
+      intercept: { isIntercept, sourceUrl: historyState?.sourceUrl },
+      boundary,
+    });
+  });
+}
+
+/**
  * Create a navigation bridge for handling client-side navigation
  *
  * The bridge coordinates all navigation operations:
@@ -242,7 +318,7 @@ export function createNavigationBridge(
    * nothing) that holds `segmentIds` and an action error boundary on screen,
    * re-caches the entry (cacheOnly) and commits as kind "revalidate". Used by
    * a Back/Forward restore of a stale entry (handlePopstate) and after a click
-   * on a stale prefetch (revalidateStalePrefetch).
+   * on a stale prefetch (scheduleStalePrefetchRevalidation).
    */
   function revalidateInBackground(
     url: string,
@@ -281,63 +357,6 @@ export function createNavigationBridge(
       .finally(() => {
         tx[Symbol.dispose]();
       });
-  }
-
-  /**
-   * A click that adopted a prefetch a server action marked stale
-   * (prefetch/cache.ts isPrefetchStale) committed the pre-write payload, as
-   * any prefetched click commits. Once that navigation settled
-   * (NavigationEntry.settled: its commit, any `prefetch: false` fill and its
-   * stream, so this never supersedes the click (dc-t114) nor cuts a response
-   * that arrived short (rango-d171)), the page revalidates in Back's lane
-   * (revalidateInBackground), with the ids on screen and the action error
-   * boundary it shows held, as Back onto a stale entry does.
-   *
-   * The entry is marked stale first, so a Back onto it revalidates when this
-   * one never ran or was left. Nothing runs when the click did not commit,
-   * or when the page moved since (a newer navigation aborts the click's
-   * entry, a shallow one moves the history key) or another navigation is
-   * open. An action in flight does not hold it back, as it does not hold
-   * Back's: its follow-up, when it owes one, starts a navigation that
-   * supersedes this one.
-   */
-  function revalidateStalePrefetch(
-    entry: NavigationEntry,
-    historyKey: string,
-  ): void {
-    void entry.settled.then((committed) => {
-      if (!committed) return;
-      const cached = store.getCachedSegments(historyKey);
-      if (!cached) return;
-      store.updateCacheHandleData(historyKey, cached.handleData ?? {}, true);
-      if (
-        store.getHistoryKey() !== historyKey ||
-        eventController.getUnsettledNavigation() ||
-        !isRestorable(cached.segments)
-      ) {
-        return;
-      }
-      const historyState = window.history.state;
-      const isIntercept = historyState?.intercept === true;
-      const boundaryAt = isIntercept ? -1 : actionBoundaryAt(cached.segments);
-      if (boundaryAt === 0) return;
-      const boundary = cached.segments[boundaryAt]?.id;
-      debugLog("[Browser] Stale prefetch committed, background revalidating");
-      // A deferred Meta still pending when its handles were cached: a whole
-      // render re-streams them (handlePopstate, handlesPending).
-      const segmentIds = cached.handlesPending
-        ? []
-        : idsAboveBoundary(
-            cached.segments.map((s) => s.id),
-            boundary,
-          );
-      revalidateInBackground(
-        window.location.href,
-        segmentIds,
-        { isIntercept, sourceUrl: historyState?.sourceUrl },
-        boundary,
-      );
-    });
   }
 
   const bridge: NavigationBridge = {
@@ -546,7 +565,7 @@ export function createNavigationBridge(
         skipLoadingState: false,
       });
       // This navigation's entry when its response was a prefetch an action
-      // marked stale (revalidateStalePrefetch).
+      // marked stale (scheduleStalePrefetchRevalidation).
       let stalePrefetchEntry: NavigationEntry | null = null;
       // A cross-route clientUrls() navigation presents its destination
       // optimistically at once: transition({ when }) decides THERE (the first
@@ -627,16 +646,29 @@ export function createNavigationBridge(
                 ...(clientUrlPresentation && {
                   presentation: clientUrlPresentation,
                 }),
-                onStalePrefetch: () => {
+                // The last response decides: a fresh refetch after a stale
+                // adoption (a fill's start-over) clears it.
+                onStalePrefetch: (stale: boolean) => {
                   const entry = eventController.getUnsettledNavigation();
-                  if (entry?.abort === tx.handle.abort) {
-                    stalePrefetchEntry = entry;
-                  }
+                  stalePrefetchEntry =
+                    stale && entry?.abort === tx.handle.abort ? entry : null;
                 },
               },
         );
         if (stalePrefetchEntry && !tx.handle.signal.aborted) {
-          revalidateStalePrefetch(stalePrefetchEntry, store.getHistoryKey());
+          scheduleStalePrefetchRevalidation(
+            store,
+            eventController,
+            stalePrefetchEntry,
+            store.getHistoryKey(),
+            ({ segmentIds, intercept, boundary }) =>
+              revalidateInBackground(
+                window.location.href,
+                segmentIds,
+                intercept,
+                boundary,
+              ),
+          );
         }
       } catch (error) {
         // Aborted, or superseded by a newer navigation. A superseded nav may

@@ -3562,3 +3562,66 @@ describe("an action refetch that holds an error boundary", () => {
     );
   });
 });
+
+// #1329: a prefetch a server action marked stale answers only a navigation
+// that revalidates its page afterwards: a click, whose bridge passes
+// onStalePrefetch (navigation-bridge.ts navigate). Back/Forward on a
+// history-cache miss, leaving an intercept and a refresh never revalidate,
+// so they must not commit pre-write data from a stale prefetch
+// (navigation-client.ts).
+describe("which navigations a stale prefetch may answer", () => {
+  type Mode = Parameters<ReturnType<typeof createPartialUpdater>>[5];
+
+  async function fetchOptionsFor(mode: Mode) {
+    const store = makeNavigationStore({
+      initialSegments: [seg("L0", { type: "layout" }), seg("L0R0")],
+    });
+    const { client } = createMockClient({
+      metadata: {
+        isPartial: true,
+        segments: [seg("L0R1")],
+        matched: ["L0", "L0R1"],
+        diff: ["L0R1"],
+      },
+    });
+    const updater = createPartialUpdater({
+      getVersion: () => undefined,
+      store,
+      client: client as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+    await updater(
+      "http://localhost/other",
+      ["L0", "L0R0"],
+      false,
+      undefined,
+      createMockTx() as any,
+      mode,
+    );
+    const [[options]] = client.fetchPartial.mock.calls as unknown as [
+      [{ acceptStalePrefetch?: boolean }],
+    ];
+    return options;
+  }
+
+  it("a click's mode, which revalidates after it, lets one answer and is told of the response", async () => {
+    const onStalePrefetch = vi.fn();
+    const options = await fetchOptionsFor({
+      type: "navigate",
+      onStalePrefetch,
+    });
+    expect(options.acceptStalePrefetch).toBe(true);
+    expect(onStalePrefetch.mock.calls).toEqual([[false]]);
+  });
+
+  it.each<[string, Mode]>([
+    ["Back/Forward on a history-cache miss (no mode)", undefined],
+    ["Back/Forward on a history-cache miss", { type: "navigate" }],
+    ["leaving an intercept", { type: "leave-intercept" }],
+    ["a refresh", { type: "navigate", refresh: true }],
+  ])("%s does not", async (_label, mode) => {
+    const options = await fetchOptionsFor(mode);
+    expect(options.acceptStalePrefetch).toBe(false);
+  });
+});

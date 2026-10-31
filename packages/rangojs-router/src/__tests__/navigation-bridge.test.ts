@@ -1468,7 +1468,7 @@ describe("navigation-bridge click on a stale prefetch", () => {
   function staleClick(env: ReturnType<typeof setup>) {
     fetchPartialUpdateMock.mockImplementationOnce(
       async (_url, _ids, _retry, _signal, _tx, mode) => {
-        mode.onStalePrefetch();
+        mode.onStalePrefetch(true);
         env.commit();
       },
     );
@@ -1505,6 +1505,30 @@ describe("navigation-bridge click on a stale prefetch", () => {
     expect(env.store.updateCacheHandleData).toHaveBeenCalledWith(
       CART,
       { h: {} },
+      true,
+    );
+  });
+
+  // A prefetch: false fill that made the click start over: the fresh
+  // refetch is what committed (partial-update.ts tells the mode of each
+  // response), so revalidating after it would be one redundant request.
+  it("runs nothing when a fresh response after the stale one is what committed", async () => {
+    const env = setup();
+    fetchPartialUpdateMock.mockImplementationOnce(
+      async (_url, _ids, _retry, _signal, _tx, mode) => {
+        mode.onStalePrefetch(true);
+        mode.onStalePrefetch(false);
+        env.commit();
+      },
+    );
+
+    await env.bridge.navigate("/cart");
+    await env.settle(true);
+
+    expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(1);
+    expect(env.store.updateCacheHandleData).not.toHaveBeenCalledWith(
+      CART,
+      expect.anything(),
       true,
     );
   });

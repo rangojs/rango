@@ -136,7 +136,10 @@ import type { Handle } from "../handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
 import { isUnderTestRunner } from "../runtime-env.js";
-import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-bridge.js";
+import {
+  scheduleStalePrefetchRevalidation,
+  setupNavigationBridgeDelegatedPrefetch,
+} from "../browser/navigation-bridge.js";
 import { resetPrefetchObserverForTesting } from "../browser/prefetch/observer.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
 import { auditTreeCause, forgetSuspenseAudit } from "../suspense-audit.js";
@@ -572,6 +575,18 @@ export interface TestRouterHandle {
       keepClientCache?: boolean;
     },
   ): Promise<void>;
+  /**
+   * The background revalidations a click on a stale prefetch started, in
+   * order: the page's pathname and search, and the segment ids the request
+   * holds, as production's bridge plans them
+   * (navigation-bridge.ts scheduleStalePrefetchRevalidation). A click on a
+   * fresh prefetch, or after a `keepClientCache` action, starts none.
+   *
+   * @example
+   * await router.navigate("/cart"); // a stale prefetch
+   * await waitFor(() => expect(router.revalidations()).toHaveLength(1));
+   */
+  revalidations(): ReadonlyArray<{ url: string; segmentIds: string[] }>;
   /** The current committed pathname. */
   pathname(): string;
   /** The current committed params. */
@@ -988,6 +1003,30 @@ export async function renderRoute(
     const written = entries.get(entryIndex());
     if (written) written.state = window.history.state;
   });
+  /**
+   * The history-cache reads production's stale-prefetch guards make
+   * (navigation-bridge.ts scheduleStalePrefetchRevalidation), over this
+   * harness's history: the store's own history key never moves here, so the
+   * key on screen is its location's, and the one cached page is the entry on
+   * screen. Marking it stale writes nothing: a stale entry's revalidation on
+   * Back is not modeled.
+   */
+  const historyView: Pick<
+    NavigationStore,
+    "getCachedSegments" | "getHistoryKey" | "updateCacheHandleData"
+  > = {
+    getHistoryKey: () => generateHistoryKey(eventController.getLocation().href),
+    getCachedSegments: (key) => {
+      const page = entries.get(entryOnScreen);
+      if (!page || generateHistoryKey(page.url.href) !== key) return undefined;
+      return {
+        segments: page.segments,
+        stale: false,
+        handleData: page.handleData,
+      };
+    },
+    updateCacheHandleData: () => {},
+  };
   /** The page being left keeps its pushes for a back/forward onto it. */
   const leaveEntry = (): void => {
     const left = entries.get(entryOnScreen);
@@ -1015,22 +1054,19 @@ export async function renderRoute(
       new URL(target, TEST_ORIGIN).href,
     );
     // An action made the prefetch stale: once this navigation settled (its
-    // commit and its stream), the page revalidates, as production's bridge
-    // runs it (navigation-bridge.ts revalidateStalePrefetch).
+    // commit and its stream), the page revalidates. Production's own guards
+    // and plan decide it (navigation-bridge.ts
+    // scheduleStalePrefetchRevalidation), over the history this harness
+    // keeps (historyView).
     const entry = eventController.getUnsettledNavigation();
     if (prefetchedPage && isPrefetchStale(prefetchedPage) && entry) {
-      const href = new URL(target, TEST_ORIGIN).href;
-      void entry.settled.then((committed) => {
-        // Production's guards: the page is still on screen and no other
-        // navigation is open.
-        if (
-          committed &&
-          eventController.getLocation().href === href &&
-          !eventController.getUnsettledNavigation()
-        ) {
-          void revalidateStalePrefetch(target);
-        }
-      });
+      scheduleStalePrefetchRevalidation(
+        historyView,
+        eventController,
+        entry,
+        generateHistoryKey(new URL(target, TEST_ORIGIN).href),
+        ({ segmentIds }) => void revalidateStalePrefetch(target, segmentIds),
+      );
     }
     // Runs in the caller's task, so a <Link> click's own act() takes it.
     // Awaited: React retries a held page with this update, and an unawaited
@@ -1273,13 +1309,22 @@ export async function renderRoute(
   };
 
   /**
-   * Back's stale-revalidation lane (navigation-bridge.ts handlePopstate),
+   * Back's stale-revalidation lane (navigation-bridge.ts revalidateInBackground),
    * after a click on a stale prefetch: a background navigation
    * (skipLoadingState) whose response arrives a task later, rendered with
-   * the loader data current then, kind "revalidate".
+   * the loader data current then, kind "revalidate". `segmentIds` are the
+   * ids production's plan holds; the request is recorded (revalidations()).
    */
-  const revalidateStalePrefetch = async (target: string): Promise<void> => {
+  const revalidations: Array<{ url: string; segmentIds: string[] }> = [];
+  const revalidateStalePrefetch = async (
+    target: string,
+    segmentIds: string[],
+  ): Promise<void> => {
     const nextUrl = new URL(target, TEST_ORIGIN);
+    revalidations.push({
+      url: nextUrl.pathname + nextUrl.search,
+      segmentIds,
+    });
     const handle = eventController.startNavigation(nextUrl.href, {
       skipLoadingState: true,
     });
@@ -1537,6 +1582,7 @@ export async function renderRoute(
     refresh,
     prefetch,
     action,
+    revalidations: () => [...revalidations],
     pathname: () => new URL(eventController.getLocation().href).pathname,
     params: () => eventController.getParams(),
     store,

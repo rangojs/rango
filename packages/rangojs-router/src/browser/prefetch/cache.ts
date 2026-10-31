@@ -73,8 +73,10 @@ export interface DecodedPrefetch {
    * under. A server action without a directive marks every prefetch stale
    * (`markPrefetchesStale()` bumps the epoch) instead of flushing it: an entry
    * from an older epoch is still served, and the navigation that adopts it
-   * revalidates its page once it settled (`isPrefetchStale`). A respawn keeps
-   * the original fetch's epoch, as it keeps its timestamp.
+   * revalidates its page once it settled (`isPrefetchStale`). A stale entry
+   * is served at most once, and only to a click (`consumePrefetch`'s
+   * `acceptStale`). A respawn keeps the original fetch's epoch, as it keeps
+   * its timestamp.
    */
   epoch: number;
   /**
@@ -274,6 +276,27 @@ export function hasPrefetch(key: string): boolean {
 }
 
 /**
+ * Whether a prefetch is stored (within its TTL) or in flight for `key`,
+ * whatever its stale epoch. Unlike `hasPrefetch` it never drops a stale
+ * entry: the refill after an early adoption (fetch.ts) asks whether the slot
+ * is taken, and a stale entry still in it is that fetch's own, which must
+ * stay servable (rango-d221: a prefetch in flight at action time finishes and
+ * lands stale).
+ */
+export function isPrefetchSlotTaken(key: string): boolean {
+  if (inflight.has(key)) return true;
+  if (cacheTTL <= 0) return false;
+  const cached = cache.get(key);
+  if (!cached) return false;
+  if (Date.now() - cached.timestamp > cacheTTL) {
+    cached.entry.dispose?.();
+    cache.delete(key);
+    return false;
+  }
+  return true;
+}
+
+/**
  * Consume a cached, eagerly-decoded prefetch. Returns null if not found or
  * expired. Returns null when caching is disabled (TTL <= 0).
  *
@@ -284,10 +307,20 @@ export function hasPrefetch(key: string): boolean {
  * TTL bounds the age of the data, not of the latest adoption. Without
  * `respawn` the entry is deleted (legacy one-shot behavior).
  *
+ * A stale entry (`isPrefetchStale`) is served only to a caller that passes
+ * `acceptStale` (a click, which revalidates its page once it settled,
+ * navigation-bridge.ts): for any other caller it is a miss and stays in its
+ * slot. It is served at most once: its slot is not re-armed, so a second
+ * click on the same link fetches fresh rather than showing pre-write data
+ * older than what the first click's revalidation showed.
+ *
  * Does NOT check in-flight prefetches — use consumeInflightPrefetch()
  * for that (returns a Promise instead of a resolved entry).
  */
-export function consumePrefetch(key: string): DecodedPrefetch | null {
+export function consumePrefetch(
+  key: string,
+  options?: { acceptStale?: boolean },
+): DecodedPrefetch | null {
   if (cacheTTL <= 0) return null;
   const cached = cache.get(key);
   if (!cached) return null;
@@ -297,10 +330,15 @@ export function consumePrefetch(key: string): DecodedPrefetch | null {
     return null;
   }
   const entry = cached.entry;
-  if (entry.respawn) {
+  const stale = isPrefetchStale(entry);
+  if (stale && !options?.acceptStale) return null;
+  if (entry.respawn && !stale) {
     cached.entry = entry.respawn();
   } else {
     cache.delete(key);
+    // The buffered reserve (fetch.ts) is never replayed: release it. It is a
+    // separate tee branch, so the payload the caller adopts keeps streaming.
+    if (stale) entry.dispose?.();
   }
   return entry;
 }

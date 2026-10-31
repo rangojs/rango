@@ -1388,7 +1388,7 @@ describe("prefetch in flight when an action marks prefetches stale", () => {
 
   const WILDCARD_KEY = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
 
-  it("finishes, is stored stale and keeps the stale bit across a respawn", async () => {
+  it("finishes, is stored stale, and is not refilled once a click adopted it", async () => {
     let answer!: (response: Response) => void;
     let signal: AbortSignal | undefined;
     const fetchMock = vi.fn(
@@ -1410,16 +1410,17 @@ describe("prefetch in flight when an action marks prefetches stale", () => {
     answer(new Response("payload", { status: 200 }));
 
     const entry = await vi.waitFor(() => {
-      const served = consumePrefetch(WILDCARD_KEY);
+      const served = consumePrefetch(WILDCARD_KEY, { acceptStale: true });
       expect(served).not.toBeNull();
       return served!;
     });
     expect(isPrefetchStale(entry)).toBe(true);
     await entry.streamComplete;
-    await vi.waitFor(() => expect(hasPrefetch(WILDCARD_KEY)).toBe(false));
-    // The slot was refilled with a respawn of the same bytes after the early
-    // adoption; hasPrefetch dropped it as stale, so a new trigger fetches.
-    expect(consumePrefetch(WILDCARD_KEY)).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // A stale entry is served once: the early adoption leaves the slot
+    // empty, so the next click or trigger fetches fresh.
+    expect(hasPrefetch(WILDCARD_KEY)).toBe(false);
+    expect(consumePrefetch(WILDCARD_KEY, { acceptStale: true })).toBeNull();
   });
 
   it("a prefetch that starts after the mark is fresh", async () => {

@@ -82,18 +82,46 @@ describe("renderRoute: a click on a prefetch made before a server action", () =>
     expect(getByTestId("page").textContent).toBe("home:3");
 
     await router.navigate("/cart");
-    // The prefetch, made before the add, commits at once.
+    // (a) The prefetch, made before the add, commits at once.
     expect(getByTestId("page").textContent).toBe("cart:2");
     expect(getByTestId("header-count").textContent).toBe("2");
     const mountsAtClick = pageMounts;
     const sinceClick = navigationLog.length;
+    const idsOnScreen = router.store.getSegmentState().currentSegmentIds;
 
+    // (c) The post-write values replace it in place.
     await waitFor(() => expect(getByTestId("page").textContent).toBe("cart:3"));
     expect(getByTestId("header-count").textContent).toBe("3");
+    // (b) After exactly one revalidation request, holding the ids on screen.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(router.revalidations()).toEqual([
+      { url: "/cart", segmentIds: idsOnScreen },
+    ]);
     // The revalidation never reads as a navigation, and remounts nothing.
     expect(navigationLog.slice(sinceClick)).not.toContain("loading");
     expect(router.eventController.getState().state).toBe("idle");
     expect(pageMounts).toBe(mountsAtClick);
+  });
+
+  it("revalidates only once the click's stream ended", async () => {
+    const { getByTestId, router } = await renderRoute(routes, {
+      request: "/home",
+      loaders: [[BasketLoader, { count: 2 }]],
+    });
+    router.prefetch("/cart");
+    await router.action({ loaders: [[BasketLoader, { count: 3 }]] });
+
+    let endStream!: () => void;
+    const tail = new Promise<void>((resolve) => (endStream = resolve));
+    await router.navigate("/cart", { streamUntil: tail });
+    expect(getByTestId("page").textContent).toBe("cart:2");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(router.revalidations()).toEqual([]);
+    expect(getByTestId("page").textContent).toBe("cart:2");
+
+    await act(async () => endStream());
+    await waitFor(() => expect(getByTestId("page").textContent).toBe("cart:3"));
+    expect(router.revalidations()).toHaveLength(1);
   });
 
   it("keepClientCache() keeps the prefetch fresh: the click shows it with no revalidation", async () => {
@@ -112,6 +140,7 @@ describe("renderRoute: a click on a prefetch made before a server action", () =>
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(getByTestId("page").textContent).toBe("cart:2");
+    expect(router.revalidations()).toEqual([]);
   });
 
   it("a prefetch made after the action is fresh: the click shows it with no revalidation", async () => {
@@ -128,6 +157,7 @@ describe("renderRoute: a click on a prefetch made before a server action", () =>
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(getByTestId("page").textContent).toBe("cart:3");
     expect(navigationLog.at(-1)).toBe("idle");
+    expect(router.revalidations()).toEqual([]);
   });
 
   it("a newer navigation before the revalidation lands keeps its own page", async () => {

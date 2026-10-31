@@ -44,17 +44,19 @@ import { writePartialParams } from "./wire-protocol.js";
 /**
  * The completed prefetch a navigation adopts: the one stored under its
  * source key, else the one every source page shares. None when the
- * navigation cannot use a prefetch.
+ * navigation cannot use a prefetch. A stale one only when `acceptStale`
+ * (FetchPartialOptions.acceptStalePrefetch).
  */
 export function consumeStoredPrefetch(
   canUsePrefetch: boolean,
   sourceKey: string,
   wildcardKey: string,
+  acceptStale = false,
 ): { entry: DecodedPrefetch | null; hitKey: string | null } {
   if (!canUsePrefetch) return { entry: null, hitKey: null };
-  const sourced = consumePrefetch(sourceKey);
+  const sourced = consumePrefetch(sourceKey, { acceptStale });
   if (sourced) return { entry: sourced, hitKey: sourceKey };
-  const shared = consumePrefetch(wildcardKey);
+  const shared = consumePrefetch(wildcardKey, { acceptStale });
   return shared
     ? { entry: shared, hitKey: wildcardKey }
     : { entry: null, hitKey: null };
@@ -108,6 +110,7 @@ export function createNavigationClient(
         routerId,
         hmr,
         fill,
+        acceptStalePrefetch = false,
       } = options;
 
       const debugEnabled = isBrowserDebugEnabled();
@@ -157,8 +160,9 @@ export function createNavigationClient(
       // across source pages.
       // Both keys embed the Rango state, so state rotation (deploy or
       // invalidateClientCache()) auto-invalidates both scopes. A server
-      // action marks entries stale instead: one is still served, and the
-      // bridge revalidates its page after the click (stalePrefetch).
+      // action marks entries stale instead: one is still served to a click
+      // (acceptStalePrefetch), whose bridge revalidates its page after it
+      // settled (stalePrefetch); for any other caller it is a miss.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
       // A prefetch served during an action's flight holds pre-write data:
@@ -173,6 +177,7 @@ export function createNavigationClient(
         canUsePrefetch,
         cacheKey,
         wildcardKey,
+        acceptStalePrefetch,
       );
       const cachedEntry = stored.entry;
       let hitKey = stored.hitKey;
@@ -364,6 +369,14 @@ export function createNavigationClient(
               tx,
               "wildcard inflight turned out source-scoped, refetching",
             );
+          }
+        } else if (!acceptStalePrefetch && isPrefetchStale(entry)) {
+          // An action marked it stale, and this navigation never revalidates
+          // (not a click): drop it and fetch fresh. Its reserve is released;
+          // the decode it started is never read.
+          entry.dispose?.();
+          if (tx) {
+            browserDebugLog(tx, "inflight prefetch is stale, refetching");
           }
         } else {
           adopted = entry;
