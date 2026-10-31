@@ -950,7 +950,7 @@ so its other request-context response writes land on its own response too,
 not the visitor's; it stores no response with a `Set-Cookie`, so a
 fresh-reads cookie there would also keep the refreshed page out of the store.
 A stale `"use cache"` entry's or cached loader's refresh runs on the
-visitor's context under `runAsBackgroundRefresh` (`cache/tag-invalidation.ts`),
+visitor's context under `runAsBackgroundWork` (`server/request-context.ts`),
 which `markFreshReads` reads.
 
 Its `Max-Age` is the longest any invalidated store's memos can be stale

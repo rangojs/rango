@@ -121,7 +121,7 @@ export function canonicalAssetsManifestBinding(
  *    (`ServerReferencesManager.claimMap`), which varies with the concurrent
  *    scan builds (e2e/test-app: 2 of 2 consecutive builds differed). Sorted
  *    here so a minified server build, where stripServerReferenceMap finds no
- *    region comments, still hashes the same bytes.
+ *    module markers, still hashes the same bytes.
  * 2. Local name of the assets-manifest import. plugin-rsc imports the manifest
  *    under three names; the bundler merges them into one import per chunk and
  *    keeps a different one from build to build (the cache-versions fixture:

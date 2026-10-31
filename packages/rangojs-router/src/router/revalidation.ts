@@ -7,6 +7,7 @@
 import type {
   ResolvedSegment,
   HandlerContext,
+  InternalHandlerContext,
   ShouldRevalidateFn,
 } from "../types";
 import type { ActionContext } from "./types";
@@ -154,10 +155,18 @@ export async function evaluateRevalidation<TEnv>(
   // second, contradicting entry would let flushRevalidationTrace count the
   // segment as both revalidated and skipped.
   const floorTrue = defaultOverride?.floor === true && defaultOverride.value;
+  // A predicate read the page navigated away from. A segment it keeps then
+  // stays held for this source only: a prefetch of the answer, adopted on
+  // another page, would keep that page's copy (#1331). A re-render is
+  // source-safe, it sends the segment.
+  let readSource = false;
   function decide(finalVal: boolean, reason: string): boolean {
     if (floorTrue && !finalVal) {
       pushTrace(defaultShouldRevalidate, true, `${reason}:floored`);
       return true;
+    }
+    if (!finalVal && readSource) {
+      (context as InternalHandlerContext<any, TEnv>)._sourceHeld = true;
     }
     pushTrace(defaultShouldRevalidate, finalVal, reason);
     return finalVal;
@@ -253,12 +262,20 @@ export async function evaluateRevalidation<TEnv>(
 
   const isActionFn = makeIsAction(actionContext?.actionId);
 
+  const currentParams = prevSegment?.params || prevParams;
+
   for (const { name, fn } of revalidations) {
     let result: any;
     try {
       result = fn({
-        currentParams: prevSegment?.params || prevParams, // Use segment params if available, else route params
-        currentUrl: prevUrl,
+        get currentParams() {
+          readSource = true;
+          return currentParams;
+        },
+        get currentUrl() {
+          readSource = true;
+          return prevUrl;
+        },
         nextParams,
         nextUrl,
         defaultShouldRevalidate: currentSuggestion,
@@ -275,7 +292,10 @@ export async function evaluateRevalidation<TEnv>(
         formData: actionContext?.formData,
         method: request.method,
         routeName: toRouteName,
-        fromRouteName,
+        get fromRouteName() {
+          readSource = true;
+          return fromRouteName;
+        },
         toRouteName,
         stale: cacheStale ? true : stale,
       });

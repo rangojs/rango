@@ -69,7 +69,10 @@ export function shouldCacheResponse(
   response: Response,
   requestCtx?: Pick<
     RequestContext,
-    "_payloadVisitorTheme" | "_payloadDeferred" | "_payloadVisitorLocation"
+    | "_payloadVisitorTheme"
+    | "_payloadDeferred"
+    | "_payloadVisitorLocation"
+    | "_documentLocationState"
   >,
 ): CacheDirectives | null {
   // Only cache successful responses
@@ -97,6 +100,12 @@ export function shouldCacheResponse(
   // A rewritten request's render shows the visitor's URL (renderedLocation,
   // full-payload.ts); this entry is keyed by the rewrite target.
   if (requestCtx?._payloadVisitorLocation) {
+    return null;
+  }
+
+  // The payload carries the visitor's location state (#1330,
+  // server/document-location-state.ts).
+  if (requestCtx?._documentLocationState) {
     return null;
   }
 

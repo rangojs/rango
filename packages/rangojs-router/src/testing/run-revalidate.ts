@@ -121,7 +121,11 @@ export async function runRevalidate<TEnv = any>(
     belongsToRoute: opts.belongsToRoute ?? true,
   };
   const fns = Array.isArray(fn) ? fn : [fn];
-  return runWithRequestContext(ctx as never, () =>
+  // evaluateRevalidation marks the context it decides on (_sourceHeld); a
+  // caller's own context leaves the run as it came in.
+  const own = opts.context as Record<string, unknown> | undefined;
+  const ownHadMark = own !== undefined && "_sourceHeld" in own;
+  const decision = runWithRequestContext(ctx as never, () =>
     evaluateRevalidation({
       segment,
       prevParams: currentParams,
@@ -146,4 +150,10 @@ export async function runRevalidate<TEnv = any>(
       stale: opts.stale ?? false,
     }),
   );
+  if (own === undefined || ownHadMark) return decision;
+  try {
+    return await decision;
+  } finally {
+    delete own._sourceHeld;
+  }
 }

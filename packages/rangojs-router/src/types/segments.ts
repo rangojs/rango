@@ -300,6 +300,12 @@ export interface MatchResult {
    */
   interceptTargeted?: true;
   /**
+   * Set on a partial match when a revalidate() predicate read the source page
+   * and kept a held segment: the diff is that source's. The RSC handler
+   * scopes its prefetch entry to it, like `interceptTargeted` (#1331).
+   */
+  sourceHeld?: true;
+  /**
    * Redirect URL for trailing slash normalization.
    * When set, the RSC handler should return a 308 redirect to this URL
    * instead of rendering the page.

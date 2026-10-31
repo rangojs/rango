@@ -24,8 +24,12 @@ import type { Plugin, ResolvedConfig, UserConfig } from "vite";
  *                          Forwarding re-inits workerd, defeating the Node temp
  *                          server. Matched specifically so a scoped user resolver
  *                          like `@cloudflare/kv-alias` is still forwarded.
+ *
+ * `rango generate --runtime` drops these before it resolves the user's config,
+ * so rango()'s configResolved (which writes the static gen files) and the
+ * Cloudflare plugin's config hooks never run there.
  */
-function isDenied(name: string): boolean {
+export function isFrameworkPlugin(name: string): boolean {
   return (
     name.startsWith("vite:") ||
     name === "rsc" ||
@@ -78,6 +82,9 @@ function isForwardable(p: Plugin): boolean {
  * matcher, held in closure) is already populated. Forwarding only the
  * resolution hooks therefore preserves correct resolution while avoiding a
  * second `buildStart`/`configureServer`/`config` lifecycle in the temp server.
+ * `rango generate --runtime` has no main server: it resolves the user config
+ * itself, without the framework plugins (see isFrameworkPlugin), so there a
+ * forwarded plugin's config hooks see no `rsc` environment.
  *
  * `enforce` and `applyToEnvironment` are preserved so ordering and per-environment
  * gating match the real pipeline.
@@ -85,7 +92,8 @@ function isForwardable(p: Plugin): boolean {
  * `apply` is intentionally dropped. Vite filters plugins by `apply` against the
  * command during config resolution, so the `config.plugins` we read here is
  * already command-filtered by the main server (build: `apply: "build"` +
- * unconditional; dev: `apply: "serve"` + unconditional). The discovery temp
+ * unconditional; dev: `apply: "serve"` + unconditional; `rango generate
+ * --runtime` resolves as serve). The discovery temp
  * server is always created with `createServer` (`command === "serve"`), so a
  * forwarded `apply: "build"` plugin would be filtered straight back out -- even
  * during a production build, where build-only resolvers are exactly what
@@ -117,7 +125,7 @@ export function selectForwardableResolvePlugins(
   const forwarded: Plugin[] = [];
   for (const p of plugins) {
     const name = p?.name;
-    if (!name || isDenied(name)) continue;
+    if (!name || isFrameworkPlugin(name)) continue;
     if (!isForwardable(p)) continue;
     forwarded.push(stripToResolutionHooks(p));
   }
@@ -139,6 +147,8 @@ export interface ForwardedRunnerConfig {
 /**
  * Extract the data-only config slice to mirror into the discovery temp server.
  * `alias` is included here so callers no longer need to thread it separately.
+ * Accepts the unresolved config too: `rango generate --runtime` passes the
+ * config file's own values, without what plugin `config` hooks add.
  *
  * `tsconfigPaths` is forwarded so Vite 8's native tsconfig `paths` resolution
  * (a top-level `resolve` flag, off by default) reaches the temp server. The
@@ -154,9 +164,9 @@ export interface ForwardedRunnerConfig {
  * forward `oxc` exclusively — no `esbuild` field is touched.
  */
 export function pickForwardedRunnerConfig(
-  config: ResolvedConfig,
+  config: Pick<ResolvedConfig | UserConfig, "resolve" | "define" | "oxc">,
 ): ForwardedRunnerConfig {
-  const r = config.resolve ?? ({} as ResolvedConfig["resolve"]);
+  const r = config.resolve ?? {};
   const resolve: NonNullable<UserConfig["resolve"]> = {};
   if (r.alias !== undefined) resolve.alias = r.alias as any;
   if (r.dedupe !== undefined) resolve.dedupe = r.dedupe;

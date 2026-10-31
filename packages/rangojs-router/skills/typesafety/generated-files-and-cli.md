@@ -111,7 +111,8 @@ imports it directly, so `Rango.Env`, `Rango.Vars`, and optional
 and client helpers.
 
 CLI flags: the default mode fails (and writes nothing) when an `include()` cannot
-be resolved statically (factory functions, dynamic expressions); `--static`
+be resolved statically (factory functions, dynamic expressions) or an explicit
+`createRouter` `basename` is not a string literal or top-level const; `--static`
 accepts partial output with warnings; `--runtime` uses Vite-based discovery for
 full coverage (needs `vite`, optional
 `--config <path>`). Passing a directory scans it for router and `urls()` files.

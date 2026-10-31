@@ -1,17 +1,14 @@
 "use client";
 
-import {
-  useContext,
-  useState,
-  useEffect,
-  useLayoutEffect,
-  startTransition,
-  useRef,
-} from "react";
+import { useContext, useEffect, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
+import { useRouteState } from "./use-route-state.js";
 import type { PublicNavigationState } from "../types.js";
-import type { DerivedNavigationState } from "../event-controller.js";
+import type {
+  DerivedNavigationState,
+  RouteStateSignal,
+} from "../event-controller.js";
 
 /**
  * Convert derived state to public version (strips inflightActions)
@@ -19,6 +16,32 @@ import type { DerivedNavigationState } from "../event-controller.js";
 function toPublicState(state: DerivedNavigationState): PublicNavigationState {
   const { inflightActions: _, ...publicState } = state;
   return publicState;
+}
+
+/** The state a value was selected from, and the value. */
+interface Snapshot<T> {
+  state: PublicNavigationState;
+  value: T;
+}
+
+/**
+ * A notification while React holds a page: work that starts shows at once
+ * (loading, streaming, a newer click's URL), what settles waits for the
+ * page's commit (rango-d152), and location moves only with the notification
+ * that moves it (the page on screen until the next one shows).
+ */
+function hold(
+  base: PublicNavigationState,
+  live: PublicNavigationState,
+  moved: boolean,
+): PublicNavigationState {
+  return {
+    state: live.state === "loading" ? live.state : base.state,
+    isStreaming: live.isStreaming || base.isStreaming,
+    isNavigating: live.isNavigating || base.isNavigating,
+    pendingUrl: live.pendingUrl ?? base.pendingUrl,
+    location: moved ? live.location : base.location,
+  };
 }
 
 /**
@@ -46,19 +69,20 @@ export function useNavigation<T>(
     throw new Error("useNavigation must be used within NavigationProvider");
   }
 
-  const [value, setValue] = useState<T | PublicNavigationState>(() => {
-    const publicState = toPublicState(
-      ctx.eventController.getHydrationSnapshot()?.state ??
-        ctx.eventController.getState(),
-    );
-    return selector ? selector(publicState) : publicState;
-  });
-  const prevState = useRef(value);
-  // The value on screen: a set value that differs has not committed yet.
-  const committedRef = useRef(value);
-  useLayoutEffect(() => {
-    committedRef.current = value;
-  });
+  // A release is compared with the state React renders it on
+  // (useRouteState). The anchor is compared with the last set, as an
+  // ordinary notification is: it sets inside its page's transition, which
+  // renders every set so far.
+  const [snapshot, set] = useRouteState<Snapshot<T | PublicNavigationState>>(
+    () => {
+      const state = toPublicState(
+        ctx.eventController.getHydrationSnapshot()?.state ??
+          ctx.eventController.getState(),
+      );
+      return { state, value: selector ? selector(state) : state };
+    },
+    (a, b) => shallowEqual(a.value, b.value),
+  );
 
   // Store selector in a ref so the subscription callback always uses the
   // latest selector without re-subscribing on every render (inline functions
@@ -74,34 +98,28 @@ export function useNavigation<T>(
   // the location hooks' values do: NavigationProvider flushes a navigation's
   // notification into the transition that commits its tree, so idle commits
   // with the destination's location (useSearchParams, usePathname,
-  // useParams). An optimistic update renders in the sync lane, ahead of that
-  // transition, and put idle on screen with the location being left (#1164).
+  // useParams). From that page's anchor to its release every other
+  // notification goes through hold(), urgently, so React rebases the same
+  // update onto the page when it commits. Never a transition of its own.
   useEffect(() => {
-    let last: DerivedNavigationState | undefined;
-    const update = () => {
-      const currentState = ctx.eventController.getState();
-      // Neither the state nor the location moved (the stream starting or
-      // ending): while a value of this hook's is held, a transition, which
-      // React entangles with it, so it never commits ahead of the location.
-      // Otherwise urgent: a transition of its own would start a view
-      // transition, and could commit ahead of a held page and take its
-      // transition types.
-      const quiet =
-        currentState.state === last?.state &&
-        currentState.location === last.location;
-      last = currentState;
-      const publicState = toPublicState(currentState);
-      const nextSelected = selectorRef.current
-        ? selectorRef.current(publicState)
-        : publicState;
-
-      // Check if selected value has changed
-      if (!shallowEqual(nextSelected, prevState.current)) {
-        const held = prevState.current !== committedRef.current;
-        prevState.current = nextSelected;
-        if (quiet && held) startTransition(() => setValue(nextSelected));
-        else setValue(nextSelected);
-      }
+    let pageHeld = false;
+    let location: PublicNavigationState["location"] | undefined;
+    const select = (state: PublicNavigationState) =>
+      selectorRef.current ? selectorRef.current(state) : state;
+    const update = (signal?: RouteStateSignal) => {
+      if (signal) pageHeld = signal === "anchor";
+      const live = toPublicState(ctx.eventController.getState());
+      const moved = live.location !== location;
+      location = live.location;
+      const held = pageHeld && !signal;
+      set(
+        (base) => {
+          const state = held ? hold(base.state, live, moved) : live;
+          return { state, value: select(state) };
+        },
+        signal,
+        held,
+      );
     };
 
     // Catch-up: re-read state synchronously on mount before subscribing, so a
@@ -110,8 +128,15 @@ export function useNavigation<T>(
     // useSearchParams.
     update();
 
-    return ctx.eventController.subscribe(update);
+    const unsubscribe = ctx.eventController.subscribe(update);
+    // The anchor and release signals ride the handle channel. One without a
+    // signal re-reads the same state, as the state channel's own would.
+    const unsubscribeSignals = ctx.eventController.subscribeToHandles(update);
+    return () => {
+      unsubscribe();
+      unsubscribeSignals();
+    };
   }, []);
 
-  return value as T | PublicNavigationState;
+  return snapshot.value as T | PublicNavigationState;
 }

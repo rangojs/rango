@@ -32,6 +32,16 @@ export type ActionContext = {
   actionUrl?: URL;
   actionResult?: any;
   formData?: FormData;
+  /**
+   * A thrown action's error segment (matchError), set on the action's
+   * revalidation (rsc/server-action.ts matchBoundaryRevalidation). The walk
+   * (resolveAllSegments) resolves every entry above the segment's outlet as on
+   * a success, emits the segment in the outlet's place and stops, so nothing
+   * at or below the outlet runs. The pass skips the prerender store
+   * (cache-lookup.ts): the evicted handler is under the cut. No revalidate()
+   * predicate sees it.
+   */
+  boundary?: ResolvedSegment;
 };
 
 export interface SegmentResolutionDeps<TEnv = any> {
@@ -47,7 +57,6 @@ export interface SegmentResolutionDeps<TEnv = any> {
       params?: Record<string, string>;
       env?: TEnv;
       isPartial?: boolean;
-      requestStartTime?: number;
     },
     /** An `ssr: false` loader on a document or capture render. */
     useDefaultErrorBoundary?: boolean,
@@ -57,6 +66,7 @@ export interface SegmentResolutionDeps<TEnv = any> {
     errorContext?: {
       segmentId?: string;
       segmentType?: string;
+      isPartial?: boolean;
     },
   ) => Promise<T>;
   findNearestErrorBoundary: (

@@ -38,7 +38,10 @@ import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
 import { CookieOverlayLoader } from "./loaders/cookie-overlay.js";
 import { FeatureLoader, FeatureShellLoader } from "./loaders/feature.js";
-import { NavIdleTagsLoader } from "./loaders/nav-idle.js";
+import {
+  NavIdleOverlapTagsLoader,
+  NavIdleTagsLoader,
+} from "./loaders/nav-idle.js";
 import { LoadMoreLoader } from "./loaders/location-state.js";
 import {
   DepCrumbProductLoader,
@@ -204,7 +207,12 @@ import {
 import { OrphanFetchTest } from "./components/OrphanFetchTest.js";
 import { LoaderParamsProbe } from "./components/LoaderParamsProbe.js";
 import { RenderStabilityRoute } from "./pages/render-stability.js";
-import { NavIdlePage } from "./pages/nav-idle.js";
+import {
+  NavIdleOverlapPage,
+  NavIdlePage,
+  navIdleOverlapAway,
+  navIdleSkipOnAction,
+} from "./pages/nav-idle.js";
 import { FeatureDetailPage, FeaturesShell } from "./pages/features.js";
 import {
   BlogLayout,
@@ -347,6 +355,8 @@ import { heldHandlesPatterns } from "./pages/held-handles.js";
 import { historyHandlesPatterns } from "./pages/history-handles.js";
 import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
 import { staleDefaultsPatterns } from "./pages/stale-defaults.js";
+import { actionBoundaryPatterns } from "./pages/action-boundary.js";
+import { interceptBoundaryPatterns } from "./pages/intercept-boundary.js";
 import actionFailureClientPatterns from "./pages/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -355,12 +365,18 @@ import {
 } from "./pages/action-failure.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
+import { documentLocationStatePatterns } from "./pages/document-location-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { transitionKindsPatterns } from "./pages/transition-kinds.js";
+import { optimisticSettlePatterns } from "./pages/optimistic-settle.js";
 import { asyncHandlesPatterns } from "./pages/async-handles.js";
 import { handlesCommitPatterns } from "./pages/handles-commit.js";
+import { handlesOverlapPatterns } from "./pages/handles-overlap.js";
 import { vtBackPatterns } from "./pages/vt-back.js";
+import { actionLatestCallPatterns } from "./pages/action-latest-call.js";
+import { actionPersistsPatterns } from "./pages/action-persists.js";
+import { hookFieldsPatterns } from "./pages/hook-fields.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -369,6 +385,7 @@ import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
 import { interceptHeldPatterns } from "./pages/intercept-held.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
 import { redirectLoopPatterns } from "./pages/redirect-loop.js";
+import { negotiationPatterns } from "./pages/negotiation.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { prefetchFalsePatterns } from "./pages/prefetch-false.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
@@ -394,6 +411,11 @@ import competeClientUrls from "./client-urls-compete/urls.js";
 import { CompeteServerPage } from "./client-urls-compete/server.js";
 import { settledLaneErrorsPatterns } from "./pages/settled-lane-errors.js";
 import { prefetchRenderErrorsPatterns } from "./pages/prefetch-render-errors.js";
+import {
+  keptLayoutSourceBakedPatterns,
+  keptLayoutSourceOneShapePatterns,
+  keptLayoutSourceTwoShapePatterns,
+} from "./pages/kept-layout-source.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
 import clientUrlsLoaderElementPatterns from "./client-urls-loader-element/urls.js";
@@ -541,6 +563,20 @@ const PersonalizedGuideTrigger: Handler<{ slug: string }> = async (ctx) => {
 /** Consumer-mirror template layout: server component between the chrome-loader
  *  layout and the clientUrls include, reading params from getRequestContext —
  *  the CategoryTemplate shape from the consumer app. */
+const captureFailsRuns = new Map<string, number>();
+
+/**
+ * Renders on its first run per :k and throws on every later one: the
+ * visitor's MISS renders, the PPR shell capture that follows it fails.
+ */
+const CaptureFailsPage: Handler<{ k: string }> = (ctx) => {
+  const k = ctx.params.k;
+  const run = (captureFailsRuns.get(k) ?? 0) + 1;
+  captureFailsRuns.set(k, run);
+  if (run > 1) throw new Error(`capture fails (k=${k})`);
+  return <div data-testid="capture-fails-page">rendered</div>;
+};
+
 function MirrorTemplateLayout(): ReactNode {
   const params: Record<string, string | undefined> = getRequestContext().params;
   if (params.slug === undefined) return <Outlet />;
@@ -715,6 +751,17 @@ export const urlpatterns = urls(
     // An ssr: false loader that throws with no errorBoundary() (dc-t92).
     include("/", holeyThrowsPatterns, { name: "" }),
 
+    // onError's `background`: only the shell capture after the MISS throws.
+    path(
+      "/errors/capture-fails/:k",
+      CaptureFailsPage,
+      { name: "errorsCaptureFails", ppr: true },
+      () => [
+        errorBoundary(() => (
+          <div data-testid="capture-fails-fallback">Capture fallback</div>
+        )),
+      ],
+    ),
     // Test utils: read the onError log (non-destructive). Imports from
     // error-log.js (not router.js) so the read uses a static import and avoids
     // the dynamic-import / module-graph race that can return an empty log.
@@ -1051,67 +1098,13 @@ export const urlpatterns = urls(
       ),
     ]),
 
-    // Content negotiation test routes (same URL, different response types)
-    path.json(
-      "/test/negotiate",
-      (ctx) => ({
-        format: "json",
-        negotiated: true,
-      }),
-      { name: "testNegotiateJson" },
-    ),
     // data-external SSR/browser agreement (pages/link-external-origin.tsx).
     path("/test/link-external-origin", LinkExternalOriginPage, {
       name: "testLinkExternalOrigin",
     }),
-    path("/test/negotiate", () => <div>HTML version</div>, {
-      name: "testNegotiate",
-    }),
 
-    // Content negotiation: text
-    path("/test/negotiate-text", () => <div>Text HTML version</div>, {
-      name: "testNegotiateText",
-    }),
-    path.text("/test/negotiate-text", () => "plain text response", {
-      name: "testNegotiateTextApi",
-    }),
-
-    // Content negotiation: xml
-    path("/test/negotiate-xml", () => <div>XML HTML version</div>, {
-      name: "testNegotiateXml",
-    }),
-    path.xml("/test/negotiate-xml", () => "<item><status>ok</status></item>", {
-      name: "testNegotiateXmlApi",
-    }),
-
-    // Content negotiation: multiple response types on same path
-    path.json("/test/negotiate-multi", () => ({ format: "json" }), {
-      name: "testNegotiateMultiJson",
-    }),
-    path.text("/test/negotiate-multi", () => "plain text", {
-      name: "testNegotiateMultiText",
-    }),
-    path.xml(
-      "/test/negotiate-multi",
-      () => "<root><format>xml</format></root>",
-      { name: "testNegotiateMultiXml" },
-    ),
-    path("/test/negotiate-multi", () => <div>Multi HTML version</div>, {
-      name: "testNegotiateMulti",
-    }),
-
-    // Content negotiation: wildcard route
-    path.json(
-      "/test/negotiate-wild/*",
-      (ctx) => ({
-        format: "json",
-        wildcard: (ctx.params as Record<string, string>)["*"],
-      }),
-      { name: "testNegotiateWildJson" },
-    ),
-    path("/test/negotiate-wild/*", () => <div>Wildcard HTML</div>, {
-      name: "testNegotiateWild",
-    }),
+    // Content negotiation: several routes on one URL (pages/negotiation.tsx).
+    include("/", negotiationPatterns, { name: "" }),
 
     // MIME type test routes (one per tag, used by e2e tests)
     path.json("/test/mime/json", () => ({ type: "json" }), {
@@ -1232,6 +1225,13 @@ export const urlpatterns = urls(
             name: "mixedClient",
           }),
         ]),
+        // A layout above a clientUrls() group whose revalidate() reads the
+        // source page, per template shape (e2e/kept-layout-source.test.ts).
+        include("/kept-layout-source/two", keptLayoutSourceTwoShapePatterns),
+        include("/kept-layout-source/one", keptLayoutSourceOneShapePatterns),
+        include("/kept-layout-source/baked", keptLayoutSourceBakedPatterns, {
+          name: "keptLayoutSourceBaked",
+        }),
         // Group behind a 5s middleware: pins optimistic presentation vs the
         // gated canonical request (e2e/client-urls-slow.test.ts). The landing
         // route sits OUTSIDE the middleware so the loader redirect is not
@@ -2196,6 +2196,21 @@ export const urlpatterns = urls(
           loader(NavIdleTagsLoader),
           transition(),
         ]),
+        // #1164's chips while an action settles, or a newer navigation ends
+        // with no page, during a 1.5 s hold (hook-lock rows S10, S8).
+        path(
+          "/nav-idle-overlap",
+          NavIdleOverlapPage,
+          { name: "navIdleOverlap" },
+          () => [
+            middleware(navIdleOverlapAway),
+            loader(NavIdleOverlapTagsLoader, () => [
+              revalidate(navIdleSkipOnAction),
+            ]),
+            revalidate(navIdleSkipOnAction),
+            transition(),
+          ],
+        ),
         path("/scripts-demo", ScriptsDemoPage, { name: "scriptsDemo" }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
 
@@ -2980,7 +2995,10 @@ export const urlpatterns = urls(
             "/location-state-load-more",
             (ctx) => {
               const page = Number(ctx.searchParams.get("page") ?? "1");
-              ctx.setLocationState(ServerPageStamp({ page }));
+              // The e2e skips it on a document load to see a stale stamp kept.
+              if (ctx.request.headers.get("x-lm-stamp") !== "off") {
+                ctx.setLocationState(ServerPageStamp({ page }));
+              }
               return <LoadMoreList basePath="/location-state-load-more" />;
             },
             { name: "locationStateLoadMore" },
@@ -3211,10 +3229,21 @@ export const urlpatterns = urls(
         include("/stale-defaults", staleDefaultsPatterns, {
           name: "staleDefaults",
         }),
+        // An action that throws on a route with its own errorBoundary(), under a
+        // layout whose loader reads its write (action-boundary.test.ts).
+        include("/action-boundary", actionBoundaryPatterns, {
+          name: "actionBoundary",
+        }),
+        // An action that throws inside an intercept, under the layout's
+        // errorBoundary() (intercept-boundary.test.ts).
+        include("/intercept-boundary", interceptBoundaryPatterns, {
+          name: "interceptBoundary",
+        }),
         // A link to a page the history cache holds keeps that page's handle
         // pushes when the response re-renders part of it.
         include("/", historyHandlesPatterns, { name: "" }),
         include("/", peFormStatePatterns, { name: "" }),
+        include("/", documentLocationStatePatterns, { name: "" }),
         include("/", suspenseCasesPatterns, { name: "sc" }),
         // prefetch: false on loader() and loading(): one page per case with
         // server-side run counters (mirrors the router e2e app).
@@ -3227,14 +3256,29 @@ export const urlpatterns = urls(
         // #1165: each transition commit carries its kind as a transition
         // type (mirrors the router e2e app's /vt-kinds/*).
         include("/", transitionKindsPatterns, { name: "" }),
+        // Optimistic hook values settle in the page's commit (mirrors the
+        // router e2e app's /opt-settle/*).
+        include("/", optimisticSettlePatterns, { name: "" }),
         // A navigation's title and crumbs commit with its page (mirrors the
         // router e2e app's /handles-commit/*).
         include("/", handlesCommitPatterns, { name: "" }),
+        // A second click over a held page (mirrors the router e2e app's
+        // /handles-overlap/*).
+        include("/", handlesOverlapPatterns, { name: "" }),
         // Async handle values (mirrors the router e2e app's /async-handles/*).
         include("/", asyncHandlesPatterns, { name: "" }),
         // A cached back/forward animates under transition() (mirrors the
         // router e2e app's /vt-back/*).
         include("/", vtBackPatterns, { name: "" }),
+        // useAction() reports the latest call of an action called twice
+        // (mirrors the router e2e app's /action-latest*).
+        include("/", actionLatestCallPatterns, { name: "" }),
+        // useAction() keeps a settled call until the action's next call
+        // (mirrors the router e2e app's /action-persists*).
+        include("/", actionPersistsPatterns, { name: "" }),
+        // useNavigation()'s fields in every reader shape while a page is
+        // held (mirrors the router e2e app's /hook-fields/:id).
+        include("/", hookFieldsPatterns, { name: "" }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {

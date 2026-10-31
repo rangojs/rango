@@ -130,6 +130,100 @@ async function switchWhenSource(
   ).toBeVisible();
 }
 
+const KEYED_ITEM = "/cache-intercept-key/item/a";
+
+/**
+ * Wait until `read` returns the same run number twice in a row: the second
+ * read was a HIT of the record the first stored. Returns that number.
+ */
+async function untilStoredRun(read: () => Promise<string>): Promise<string> {
+  let last = await read();
+  let stored: string | undefined;
+  await expect
+    .poll(
+      async () => {
+        const next = await read();
+        if (next === last) stored = next;
+        last = next;
+        return stored !== undefined;
+      },
+      { timeout: 15_000, message: "Expected a HIT of the stored record" },
+    )
+    .toBe(true);
+  return stored!;
+}
+
+/**
+ * Click `link` on the page shown and count the requests to the keyed item:
+ * an answer that misses a segment the client needs refetches the whole page.
+ */
+async function clickToKeyedItem(page: Page, link: string): Promise<void> {
+  const requests: string[] = [];
+  const onRequest = (request: { url: () => string }) => {
+    if (new URL(request.url()).pathname === KEYED_ITEM) {
+      requests.push(request.url());
+    }
+  };
+  page.on("request", onRequest);
+  await page.getByTestId(link).click();
+  await expect(page).toHaveURL(new RegExp(`${KEYED_ITEM}$`));
+  page.off("request", onRequest);
+  expect(requests).toHaveLength(1);
+}
+
+/**
+ * /cache-intercept-key: a cache({ key }) route with an intercept (rango-t201).
+ * Its key() names the path alone, and the key() result replaced the whole
+ * default key, request kind included, so every kind read and wrote one
+ * record: after the intercept stored its record (no item page), a document
+ * GET and a plain navigation of the item rendered the intercept and no page.
+ * Each kind now keeps its own record, and the intercept's survives the others'
+ * writes.
+ */
+async function expectKeyedKindsKeepTheirOwnRecord(
+  page: Page,
+  url: (path: string) => string,
+): Promise<void> {
+  const openIntercept = async () => {
+    await page.goto(url("/cache-intercept-key"));
+    await waitForHydration(page);
+    await clickToKeyedItem(page, "cik-index-item");
+    await expect(page.getByTestId("cik-modal")).toContainText("modal a");
+    await expect(page.getByTestId("cik-index")).toBeVisible();
+    await expect(page.getByTestId("cik-detail")).toHaveCount(0);
+    return (await page.getByTestId("cik-modal-run").textContent())!;
+  };
+  const expectItemPage = async () => {
+    await expect(page.getByTestId("cik-detail")).toContainText("detail a");
+    await expect(page.getByTestId("cik-modal")).toHaveCount(0);
+    return (await page.getByTestId("cik-detail-run").textContent())!;
+  };
+  const loadDocument = async () => {
+    await page.goto(url(KEYED_ITEM));
+    await waitForHydration(page);
+    return expectItemPage();
+  };
+  const navigatePlain = async () => {
+    await page.goto(url("/cache-intercept-key/plain"));
+    await waitForHydration(page);
+    await clickToKeyedItem(page, "cik-plain-item");
+    return expectItemPage();
+  };
+
+  // The intercept's record is stored once a navigation HITs it.
+  const intercept = await untilStoredRun(openIntercept);
+  // A document GET and a plain navigation render the item page, then HIT a
+  // record of their own.
+  const document = await untilStoredRun(loadDocument);
+  const plain = await untilStoredRun(navigatePlain);
+  expect(document).not.toBe(intercept);
+  expect(plain).not.toBe(intercept);
+  expect(plain).not.toBe(document);
+  // Neither write replaced the intercept's record.
+  expect(await openIntercept()).toBe(intercept);
+  expect(await loadDocument()).toBe(document);
+}
+
 /** Open the /cache-intercept-crumbs intercept from its index. */
 async function openCrumbsIntercept(page: Page): Promise<void> {
   await page.getByTestId("cic-link").click();
@@ -845,6 +939,14 @@ test.describe("cache-intercept-routes", () => {
       "/cache-intercept-when/item/a",
     );
   });
+
+  // rango-t201: see expectKeyedKindsKeepTheirOwnRecord.
+  test("under a cache({ key }), a document, a plain navigation and the intercept each keep their own record", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectKeyedKindsKeepTheirOwnRecord(page, f.url);
+  });
 });
 
 // ============================================================================
@@ -939,6 +1041,14 @@ test.describe("cache-intercept-routes (production)", () => {
     await openWhenIntercept(page, "index");
     await switchWhenSource(page, "index");
     await openWhenIntercept(page, "other");
+  });
+
+  // rango-t201: see expectKeyedKindsKeepTheirOwnRecord.
+  test("under a cache({ key }), a document, a plain navigation and the intercept each keep their own record", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectKeyedKindsKeepTheirOwnRecord(page, f.url);
   });
 });
 

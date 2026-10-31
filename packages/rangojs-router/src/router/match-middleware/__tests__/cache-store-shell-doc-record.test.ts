@@ -183,7 +183,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     expect(doc[0]!.key).toBe("doc:localhost/p");
     expect(h.reqCtx._shellImplicitCache?.docKey).toBe("doc:localhost/p");
     // Explicit tier's own write went through (recorded AND persisted)…
-    expect(await h.inner.get("key:consumer-key")).not.toBeNull();
+    expect(await h.inner.get("key:consumer-key|doc")).not.toBeNull();
     // …but the doc record stayed snapshot-only: no real-store doc entry that
     // would poison the next capture's lookup.
     expect(await h.inner.get("doc:localhost/p")).toBeNull();
@@ -202,7 +202,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
     expect(doc).toHaveLength(1);
     expect(h.reqCtx._shellImplicitCache?.docKey).toBe("doc:localhost/p");
     // The normal write was skipped (cacheHit), so the consumer key is absent.
-    expect(await h.inner.get("key:consumer-key")).toBeNull();
+    expect(await h.inner.get("key:consumer-key|doc")).toBeNull();
   });
 
   it("writes the doc record only when the capture fires onResponse (after the handler pushes settle)", async () => {
@@ -253,7 +253,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
 
     expect(condition).toHaveBeenCalledTimes(1);
     expect(docRecords(h.drainSnapshot())).toHaveLength(1);
-    expect(await h.inner.get("key:consumer-key")).not.toBeNull();
+    expect(await h.inner.get("key:consumer-key|doc")).not.toBeNull();
   });
 
   it("a flapping condition() cannot split the two writers: one write decision per render (false first)", async () => {
@@ -265,7 +265,7 @@ describe("withCacheStore — shell capture doc record under a route-derived cach
 
     expect(condition).toHaveBeenCalledTimes(1);
     expect(h.drainSnapshot()).toBeUndefined();
-    expect(await h.inner.get("key:consumer-key")).toBeNull();
+    expect(await h.inner.get("key:consumer-key|doc")).toBeNull();
   });
 
   it("records nothing when the prerender store supplied the match", async () => {

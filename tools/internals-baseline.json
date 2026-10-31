@@ -142,8 +142,6 @@
     "rsc-param-literal": {
       "packages/rangojs-router/src/use-loader.tsx": 4
     },
-    "browser-import-into-server": {
-      "packages/rangojs-router/src/rsc/helpers.ts": 1
-    }
+    "browser-import-into-server": {}
   }
 }

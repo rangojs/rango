@@ -26,7 +26,6 @@ export {
 } from "./route-types/include-resolution.js";
 export {
   extractUrlsFromRouter,
-  extractBasenameFromRouter,
   type UrlsExtractionResult,
   buildCombinedRouteMapForRouterFile,
   detectUnresolvableIncludes,

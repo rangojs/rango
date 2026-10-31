@@ -524,6 +524,36 @@ describe("basename fixture", () => {
     // No "admin." name prefix
     expect(content).not.toContain('"admin.');
   });
+
+  it("runtime discovery prefixes all route patterns with basename", async () => {
+    const packageRoot = resolve(__dirname, "..", "..", "..");
+    const srcDir = join(packageRoot, "src");
+    // Runtime discovery scans its root for clientUrls() modules; the package
+    // root would pull in the e2e apps' modules.
+    const root = mkdtempSync(join(tmpdir(), "rango-runtime-root-"));
+
+    try {
+      await discoverAndWriteRouteTypes({
+        root,
+        entry: join(basenameFixtureDir, "router.tsx"),
+        resolveAlias: {
+          "@rangojs/router/server": join(srcDir, "server.ts"),
+          "@rangojs/router/build": join(srcDir, "build", "index.ts"),
+          "@rangojs/router/cache": join(srcDir, "cache", "index.ts"),
+          "@rangojs/router/host": join(srcDir, "host", "index.ts"),
+          "@rangojs/router": join(srcDir, "index.rsc.ts"),
+        },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+
+    const content = readFileSync(basenameGenPath, "utf-8");
+    expect(content).toContain('home: "/admin"');
+    expect(content).toContain('settings: "/admin/settings"');
+    expect(content).toContain('"api.health": "/admin/api/health"');
+    expect(content).toContain('"api.detail": "/admin/api/:id"');
+  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -531,6 +561,15 @@ describe("basename fixture", () => {
 // ---------------------------------------------------------------------------
 
 describe("factory fixture", () => {
+  // Runtime discovery scans its root for clientUrls() modules, as `vite dev`
+  // does; the package root would pull in the e2e apps' modules.
+  const runtimeRoots: string[] = [];
+  function runtimeRoot(): string {
+    const root = mkdtempSync(join(tmpdir(), "rango-runtime-root-"));
+    runtimeRoots.push(root);
+    return root;
+  }
+
   afterEach(() => {
     // Clean up gen files in factory fixture
     const possibleGens = [
@@ -543,6 +582,10 @@ describe("factory fixture", () => {
         rmSync(f, { force: true });
       } catch {}
     }
+    for (const root of runtimeRoots) {
+      rmSync(root, { recursive: true, force: true });
+    }
+    runtimeRoots.length = 0;
   });
 
   it("produces partial gen file with API routes but no docs routes", () => {
@@ -573,7 +616,7 @@ describe("factory fixture", () => {
     generatedFiles.push(genPath);
 
     const result = await discoverAndWriteRouteTypes({
-      root: packageRoot,
+      root: runtimeRoot(),
       entry: join(factoryFixtureDir, "router.tsx"),
       resolveAlias: {
         "@rangojs/router/server": join(srcDir, "server.ts"),
@@ -608,7 +651,7 @@ describe("factory fixture", () => {
     generatedFiles.push(genPath);
 
     await discoverAndWriteRouteTypes({
-      root: packageRoot,
+      root: runtimeRoot(),
       entry: join(factoryFixtureDir, "router.tsx"),
       resolveAlias: {
         "@rangojs/router/server": join(srcDir, "server.ts"),
@@ -677,11 +720,12 @@ const commandTempDirs: string[] = [];
  * synchronous spawn sooner, so a shorter one only fails a correct run that
  * was slow.
  */
-function spawnRango(args: string) {
+function spawnRango(args: string, env?: NodeJS.ProcessEnv) {
   const result = spawnSync("node", [rangoBin, ...args.split(" ")], {
     encoding: "utf-8",
     cwd: packageRoot,
     timeout: 30_000,
+    env,
   });
   return {
     ...result,
@@ -738,6 +782,9 @@ function cloneFixtureDir(name: string): string {
   const packageLinkDir = join(tempRoot, "node_modules", "@rangojs");
   mkdirSync(packageLinkDir, { recursive: true });
   symlinkSync(packageRoot, join(packageLinkDir, "router"), "dir");
+  // The CLI's project root (findProjectRoot), not the cwd's package root:
+  // --runtime scans its root for clientUrls() modules, as `vite dev` does.
+  writeFileSync(join(tempRoot, "package.json"), '{ "type": "module" }\n');
 
   const dest = join(tempRoot, name);
   cpSync(join(fixturesRoot, name), dest, { recursive: true });
@@ -815,6 +862,156 @@ export default clientUrls(({ path }) => [
     expect(content).not.toMatch(/\$path/);
   }, 30_000);
 
+  it("--runtime injects $$id for exported createLoader/createHandle outside a test runner", () => {
+    // Regression (rango-t231): the --runtime server lacked expose-internal-ids,
+    // so createLoader/createHandle threw "missing $$id". VITEST is cleared
+    // because under a test runner they fall back to a synthetic id.
+    const fixtureDir = cloneFixtureDir("app-with-loader-handle");
+    const routerFile = join(fixtureDir, "router.tsx");
+    const genPath = join(fixtureDir, "router.named-routes.gen.ts");
+    const { VITEST: _vitest, ...env } = process.env;
+    const result = spawnRango(`generate ${routerFile} --runtime`, env);
+    expect(result.combined).not.toContain("$$id");
+    expect(result.status).toBe(0);
+
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain('home: "/",');
+    expect(content).toContain('product: "/product/:id",');
+  }, 30_000);
+
+  it("--runtime discovers a second router file whose gen file does not exist yet", () => {
+    // expose-router-id makes every createRouter() file import its sibling
+    // *.named-routes.gen.js; none exists before the first run.
+    const fixtureDir = cloneFixtureDir("app-with-two-routers");
+    const { VITEST: _vitest, ...env } = process.env;
+    const result = spawnRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+      env,
+    );
+    expect(result.combined).not.toContain("Failed to load url");
+    expect(result.status).toBe(0);
+
+    expect(
+      readFileSync(join(fixtureDir, "router.named-routes.gen.ts"), "utf-8"),
+    ).toContain('home: "/",');
+    expect(
+      readFileSync(join(fixtureDir, "second.named-routes.gen.ts"), "utf-8"),
+    ).toContain('second: "/second",');
+  }, 30_000);
+
+  it("--runtime forwards a resolver that initializes in configResolved, and no apply: build plugin", () => {
+    // Regression (rango-t233): resolver plugins were forwarded from the
+    // unresolved config, so their configResolved never ran (vite-tsconfig-paths
+    // matched nothing) and apply: "build" plugins ran in the serve discovery.
+    const fixtureDir = cloneFixtureDir("app-with-config-resolver");
+    const result = spawnRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+    );
+    expect(result.combined).not.toContain("build-only resolver ran");
+    expect(result.combined).not.toContain("Could not resolve the Vite config");
+    expect(result.status).toBe(0);
+
+    const content = readFileSync(
+      join(fixtureDir, "router.named-routes.gen.ts"),
+      "utf-8",
+    );
+    expect(content).toContain('shop: "/shop",');
+    expect(content).toContain('product: "/shop/:id",');
+  }, 30_000);
+
+  it("--runtime forwards the serve resolvers, not a function-apply build one, when a plugin's configResolved throws", () => {
+    // The resolve fails, so the fallback forwards the config's plugins itself
+    // and must evaluate `apply` as Vite would for a serve run.
+    const fixtureDir = cloneFixtureDir("app-with-config-resolver");
+    writeFileSync(
+      join(fixtureDir, "vite.config.ts"),
+      `import { join } from "node:path";
+const resolveRoutes = (id) =>
+  id.startsWith("~routes/")
+    ? join(import.meta.dirname, "routes", id.slice("~routes/".length) + ".tsx")
+    : null;
+export default {
+  plugins: [
+    { name: "throws-in-config-resolved", configResolved() { throw new Error("no rsc environment"); } },
+    {
+      name: "build-only-by-function",
+      enforce: "pre",
+      apply: (_config, env) => env.command === "build",
+      resolveId(id) {
+        if (id.startsWith("~routes/")) throw new Error("function-apply build resolver ran");
+        return null;
+      },
+    },
+    { name: "serve-resolver", resolveId: resolveRoutes },
+  ],
+};
+`,
+    );
+    const result = spawnRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+    );
+    expect(result.combined).toContain(
+      "Could not resolve the Vite config (no rsc environment)",
+    );
+    expect(result.combined).toContain("rango() and rsc() are left out");
+    expect(result.combined).not.toContain("function-apply build resolver ran");
+    expect(result.status).toBe(0);
+    expect(
+      readFileSync(join(fixtureDir, "router.named-routes.gen.ts"), "utf-8"),
+    ).toContain('shop: "/shop",');
+  }, 30_000);
+
+  it("--runtime honours an alias a plugin's config hook adds", () => {
+    const fixtureDir = cloneFixtureDir("app-with-config-resolver");
+    writeFileSync(
+      join(fixtureDir, "vite.config.ts"),
+      `import { join } from "node:path";
+export default {
+  plugins: [
+    {
+      name: "alias-from-config-hook",
+      config() {
+        return { resolve: { alias: { "~routes": join(import.meta.dirname, "routes") } } };
+      },
+    },
+  ],
+};
+`,
+    );
+    const result = spawnRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+    );
+    expect(result.combined).not.toContain("Could not resolve the Vite config");
+    expect(result.status).toBe(0);
+    const content = readFileSync(
+      join(fixtureDir, "router.named-routes.gen.ts"),
+      "utf-8",
+    );
+    expect(content).toContain('shop: "/shop",');
+    expect(content).toContain('product: "/shop/:id",');
+  }, 30_000);
+
+  it("--runtime leaves no gen file behind for a router whose discovery fails", () => {
+    const fixtureDir = cloneFixtureDir("app-with-two-routers");
+    const brokenFile = join(fixtureDir, "broken.tsx");
+    writeFileSync(
+      brokenFile,
+      [
+        'import { createRouter } from "@rangojs/router";',
+        "export const router = createRouter();",
+        'throw new Error("broken router module");',
+        "",
+      ].join("\n"),
+    );
+    const { VITEST: _vitest, ...env } = process.env;
+    const result = spawnRango(`generate ${brokenFile} --runtime`, env);
+    expect(result.combined).toContain("broken router module");
+    expect(result.status).not.toBe(0);
+    expect(existsSync(join(fixtureDir, "broken.named-routes.gen.ts"))).toBe(
+      false,
+    );
+  }, 30_000);
+
   // --- Non-happy paths ---
 
   it("default mode hard-fails on unresolvable factory includes", async () => {
@@ -823,7 +1020,7 @@ export default clientUrls(({ path }) => [
     const result = await runRango(`generate ${routerFile}`);
     expect(result.status).not.toBe(0);
     // Error output should include the diagnostic and point to --runtime
-    expect(result.combined).toContain("Unresolvable includes detected");
+    expect(result.combined).toContain("Unresolvable routes detected");
     expect(result.combined).toContain("docs.");
     expect(result.combined).toContain("--runtime");
     expect(result.combined).toContain("--static");
@@ -850,6 +1047,68 @@ export default clientUrls(({ path }) => [
     expect(content).not.toContain("docs.page");
   });
 
+  function writeBasenameRouter(basename: string): {
+    routerFile: string;
+    genPath: string;
+  } {
+    const dir = mkdtempSync(join(tmpdir(), "rango-cli-basename-"));
+    commandTempDirs.push(dir);
+    writeFileSync(
+      join(dir, "site.ts"),
+      `export const SITE = { basename: "/ab" };\n`,
+    );
+    const routerFile = join(dir, "router.tsx");
+    writeFileSync(
+      routerFile,
+      `import { createRouter } from "@rangojs/router";
+import { SITE } from "./site.js";
+import { getBase } from "./config.js";
+export const router = createRouter({ basename: ${basename} }).routes(({ path }) => [
+  path("/:locale?/account", () => null, { name: "account" }),
+]);
+`,
+    );
+    return { routerFile, genPath: join(dir, "router.named-routes.gen.ts") };
+  }
+
+  it("default mode hard-fails on an unreadable basename and writes nothing", async () => {
+    const { routerFile, genPath } = writeBasenameRouter("getBase()");
+    const result = await runRango(`generate ${routerFile}`);
+    expect(result.status).toBe(1);
+    expect(result.combined).toContain("Unresolvable routes detected");
+    expect(result.combined).toContain("  createRouter basename\n");
+    expect(result.combined).not.toContain("  /*\n");
+    expect(result.combined).toContain("unresolvable-basename");
+    expect(result.combined).toContain("basename `getBase()`");
+    expect(result.combined).toContain("--runtime");
+    expect(result.combined).toContain("--static");
+    expect(existsSync(genPath)).toBe(false);
+  });
+
+  it("--static warns on an unreadable basename and writes unprefixed patterns", async () => {
+    const { routerFile, genPath } = writeBasenameRouter("getBase()");
+    const result = await runRango(`generate ${routerFile} --static`);
+    expect(result.status).toBe(0);
+    expect(result.combined).toContain("partial output (unresolvable routes)");
+    expect(result.combined).toContain("unresolvable-basename");
+    expect(readFileSync(genPath, "utf-8")).toContain(
+      'account: "/:locale?/account"',
+    );
+  });
+
+  it.each([`"/ab"`, "SITE.basename"])(
+    "default mode accepts a readable basename (%s) without a diagnostic",
+    async (basename) => {
+      const { routerFile, genPath } = writeBasenameRouter(basename);
+      const result = await runRango(`generate ${routerFile}`);
+      expect(result.status).toBe(0);
+      expect(result.combined).not.toContain("Unresolvable");
+      expect(readFileSync(genPath, "utf-8")).toContain(
+        'account: "/ab/:locale?/account"',
+      );
+    },
+  );
+
   it("--config without --runtime is ignored with a warning", async () => {
     const fixtureDir = cloneFixtureDir("app");
     const routerFile = join(fixtureDir, "router.tsx");
@@ -868,7 +1127,7 @@ export default clientUrls(({ path }) => [
     const fixtureDir = cloneFixtureDir("app-with-factory");
     const result = await runRango(`generate ${fixtureDir}`);
     expect(result.status).not.toBe(0);
-    expect(result.combined).toContain("Unresolvable includes detected");
+    expect(result.combined).toContain("Unresolvable routes detected");
 
     // No gen files should have been written — the command failed before
     // reaching the write phase.
@@ -887,7 +1146,7 @@ export default clientUrls(({ path }) => [
     const urlsFile = join(fixtureDir, "urls.tsx");
     const result = await runRango(`generate ${urlsFile}`);
     expect(result.status).not.toBe(0);
-    expect(result.combined).toContain("Unresolvable includes detected");
+    expect(result.combined).toContain("Unresolvable routes detected");
     expect(result.combined).toContain("factory-call");
     expect(result.combined).toContain("--runtime");
     expect(result.combined).toContain("--static");

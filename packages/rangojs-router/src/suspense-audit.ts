@@ -233,9 +233,23 @@ const handedSeen = new Map<string, WeakSet<object>>();
 // Thenables the router handed unread that React found already settled when
 // it read them: it suspended on a value that was there. The one cause of a
 // fallback the router owns (I3); consumed by the fallback it caused.
-const needless = new WeakSet<object>();
+let needless = new WeakSet<object>();
 
 let report: SuspenseAuditReport | undefined;
+
+/**
+ * One loaded copy of this module. A test that re-imports the module after
+ * vi.resetModules() runs two, and the one its static imports use is not the
+ * one on `__rangoSuspenseAudit`. The router's unit-test lock resets and
+ * checks each (src/__tests__/kit/suspense-audit-lock.ts).
+ */
+export interface SuspenseAuditInstance {
+  /** The violation counters above zero and the last events, if any. */
+  violations(): string | undefined;
+  forget(): void;
+  /** Resolves once the judgments queued so far have run. */
+  settle(): Promise<void>;
+}
 
 function getReport(): SuspenseAuditReport {
   if (report) return report;
@@ -277,9 +291,16 @@ function getReport(): SuspenseAuditReport {
   };
   report = created;
   if (typeof window !== "undefined") {
-    (
-      window as unknown as { __rangoSuspenseAudit?: SuspenseAuditReport }
-    ).__rangoSuspenseAudit = created;
+    const target = window as unknown as {
+      __rangoSuspenseAudit?: SuspenseAuditReport;
+      __rangoSuspenseAudits?: SuspenseAuditInstance[];
+    };
+    target.__rangoSuspenseAudit = created;
+    (target.__rangoSuspenseAudits ??= []).push({
+      violations: () => violationSummary(created),
+      forget: forgetSuspenseAudit,
+      settle: () => new Promise((resolve) => afterMicrotasks(resolve)),
+    });
   }
   return created;
 }
@@ -306,17 +327,35 @@ const RULES: Record<SuspenseAuditKind, [invariant: string, counter: Counter]> =
     mutated: ["I7", "mutations"],
   };
 
+function eventLine(
+  kind: SuspenseAuditKind,
+  boundary: string,
+  detail: string,
+): string {
+  return `${RULES[kind][0]} ${kind} at ${boundary}: ${detail}`;
+}
+
+function violationSummary(r: SuspenseAuditReport): string | undefined {
+  const counts = Object.values(RULES)
+    .filter(([, counter]) => r[counter] > 0)
+    .map(([invariant, counter]) => `${invariant} ${counter}: ${r[counter]}`);
+  if (counts.length === 0) return undefined;
+  const events = r.events.map(
+    (event) => `  ${eventLine(event.kind, event.boundary, event.detail)}`,
+  );
+  return [counts.join(", "), ...events].join("\n");
+}
+
 function violate(
   kind: SuspenseAuditKind,
   boundary: string,
   detail: string,
 ): void {
-  const [invariant, counter] = RULES[kind];
   const r = getReport();
-  r[counter] += 1;
+  r[RULES[kind][1]] += 1;
   r.events.push({ kind, boundary, detail, url: href(), at: performance.now() });
   if (r.events.length > MAX_EVENTS) r.events.shift();
-  console.error(`${PREFIX} ${invariant} ${kind} at ${boundary}: ${detail}`);
+  console.error(`${PREFIX} ${eventLine(kind, boundary, detail)}`);
 }
 
 // Every hand-over, mount and fallback, for a debug run to read back. Call
@@ -617,9 +656,9 @@ let pendingRoot: PromiseLike<unknown> | undefined;
 // I7: the fields of each segment object handed to React, at hand-over, and
 // the segments themselves, weakly: the history cache keeps a tree's segments
 // after the next tree drops them, and a write there is still a write.
-const handedFields = new WeakMap<object, Record<string, unknown>>();
+let handedFields = new WeakMap<object, Record<string, unknown>>();
 const handedSegments = new Set<WeakRef<object>>();
-const trackedSegments = new WeakSet<object>();
+let trackedSegments = new WeakSet<object>();
 
 function heldTree(): TreeAudit | undefined {
   if (pendingRoot) {
@@ -1016,15 +1055,23 @@ export function auditTreeUpdate(root?: unknown): void {
   }
 }
 
-/** Forget every tree and mount seen so far. For tests of the audit itself. */
+/**
+ * Forget every tree, mount, hand-over and count seen so far: the root that
+ * held them is gone. A test unmounts its root, production never does
+ * (testing/render-route.tsx, src/__tests__/kit/suspense-audit-lock.ts).
+ * Creates no report: with the audit off there is none.
+ */
 export function forgetSuspenseAudit(): void {
   held = undefined;
   handedSegments.clear();
+  handedFields = new WeakMap();
+  trackedSegments = new WeakSet();
+  needless = new WeakSet();
   pendingRoot = undefined;
   treeCause = undefined;
   unmounted.clear();
   remounted.length = 0;
   settledSinceTree.clear();
   mountCounts.clear();
-  getReport().reset();
+  report?.reset();
 }

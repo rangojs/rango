@@ -156,7 +156,7 @@ cache(
     swr: 300, // seconds a stale entry is served while it refreshes.
     //           Default: store.defaults.swr, else no SWR window
     tags: ["blog"], // or (ctx) => string[]; see "Tag-Based Invalidation"
-    key: (ctx) => `blog:${ctx.pathname}`, // replaces the default key entirely
+    key: (ctx) => `blog:${ctx.pathname}`, // replaces the URL part of the default key
     condition: (ctx) => !ctx.request.headers.has("x-preview"), // false = bypass
     store: blogStore, // per-boundary store; see "Custom Cache Store"
   },
@@ -172,11 +172,20 @@ cache(
   apart (`<intercept>` names the one the navigation selected), and so are two
   routers that share a store (see `/host-router`, "Shared cache store"). The
   search part honors `cache.searchParams` (below).
-- **`key`** is a full override: it bypasses the default key, the store's
-  `keyGenerator`, and the search-param filter. The result is stored
-  namespaced (`key:` plus its URI encoding), so whatever it returns, request
-  input included, never names another route's default-keyed record or a
-  nested partition's. A nested `cache()` keys its records within that
+- **`key`** replaces the URL part of the default key (host, path, params,
+  search): it bypasses those, the store's `keyGenerator`, and the
+  search-param filter. The request kind stays: document requests, client
+  navigations and each intercept navigation keep their own record under one
+  `key()` result, so `key()` decides which requests of one kind share a
+  record (a `key()` that ignores `:id` shares one document record across
+  ids), never that a document request reads a navigation's record (which
+  keeps the fallback of a `loading(..., { ssr: false })` that a document
+  leaves out) or an intercept's. The
+  result is stored namespaced (`key:` plus its URI encoding, then the kind:
+  `tier:gold` is `key:tier%3Agold|doc` for a document request and
+  `key:tier%3Agold|partial` for a navigation), so whatever it returns,
+  request input included, never names another route's default-keyed record
+  or a nested partition's. A nested `cache()` keys its records within that
   partition (see "Keys nest" under "Nested Cache Boundaries"). On a `ppr`
   route the same key (or, without one, the store's `keyGenerator`)
   partitions the PPR shell: each partition captures and serves its own shell
@@ -536,7 +545,7 @@ const router = createRouter({
   baked-shell manifest gate (a URL whose only params are excluded ones now
   matches the prerendered shell), and `"use cache"` ctx key normalization.
 - **`cache({ key })` override wins**: a custom key bypasses the filter along
-  with the rest of default key generation.
+  with the rest of the default key's URL part.
 - **The footgun**: excluding a param promises the rendered output does not
   depend on it. If it does, the first variant is cached and served to everyone.
   That is why the default is `"all"`.
@@ -1090,7 +1099,8 @@ cache({ ttl: 300, key: (ctx) => `tier:${tier(ctx)}` }, () => [
       path("/faq", FaqPage, { name: "faq" }),
     ]),
 
-    // Its own key() composes with the outer one ("key:tier%3Agold|key:v%3Ab")
+    // Its own key() composes with the outer one, then the request kind
+    // ("key:tier%3Agold|key:v%3Ab|doc")
     cache(
       { ttl: 60, key: (ctx) => `v:${ctx.searchParams.get("v") ?? "a"}` },
       () => [path("/plans", PlansPage, { name: "plans" })],
@@ -1105,10 +1115,10 @@ results first, outermost first:
 
 | Boundary the route sits in                    | Record key                                                                                                                                                   |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| a single keyed `cache()`                      | Its `key()` result, namespaced (`tier:gold` is stored as `key:tier%3Agold`)                                                                                  |
+| a single keyed `cache()`                      | Its `key()` result, namespaced, then the request kind (`tier:gold` is stored as `key:tier%3Agold\|doc` for a document request)                               |
 | `cache({ ttl })`, no `key`, under a keyed one | The chain's `key()` results, then this boundary's default key (its store's `keyGenerator` result, else the default key), encoded                             |
-| `cache({ key })` under a keyed one            | The chain's `key()` results                                                                                                                                  |
-| deeper nesting                                | Composes the same way; only the innermost boundary's missing `key` adds its default key                                                                      |
+| `cache({ key })` under a keyed one            | The chain's `key()` results, then the request kind                                                                                                           |
+| deeper nesting                                | Composes the same way; the innermost boundary adds its default key without a `key` of its own, its request kind with one                                     |
 | under a `cache({ store })` on another store   | Also that store's `keyGenerator` result, one part per store: empty for a store that returns the default key while another's differs, none when all return it |
 | `cache(false)`                                | No caching, as before; a `cache()` re-enabled below it stays in the partition                                                                                |
 | no `key` anywhere                             | The default key, or the store's `keyGenerator` result, as before                                                                                             |
@@ -1140,7 +1150,10 @@ results first, outermost first:
   empty result there fails key resolution, so the request renders uncached,
   and the router warns once naming the store. On the same store the inner
   boundary's own default key already carries it (or its own `key()`
-  overrides it).
+  overrides it). Keep the default key in the result
+  (`` `${locale}:${defaultKey}` ``): its prefix is the request kind, and a
+  result without it gives a document request, a navigation and each
+  intercept navigation one record.
 - A response route's entry (`path.json()` and the other response routes) is
   keyed the same way, behind a `response:` prefix. A `ppr` route's shell is
   partitioned by the chain's `key()` results, namespaced the same way, since

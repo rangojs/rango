@@ -381,9 +381,16 @@ export type HandlerContext<
    */
   setTheme?: (theme: Theme) => void;
   /**
-   * Attach location state entries to this response.
-   * State is delivered to the client via history.pushState and accessible
-   * through the useLocationState() hook.
+   * Attach location state entries to this response, for the useLocationState()
+   * hook to read on the entry this response renders. A client navigation
+   * delivers it with its payload; a document load (a link from outside the
+   * app, a no-JS form post) with its bootstrap payload, once the page has
+   * hydrated; a redirect carries it to its target (in a one-shot cookie on a
+   * document request). A document carrying it is sent
+   * `Cache-Control: private, no-store`.
+   *
+   * Entries accumulate across definitions; for one definition the last write
+   * wins (an earlier entry of it is replaced, not merged).
    *
    * @example
    * ```typescript
@@ -510,6 +517,14 @@ export type InternalHandlerContext<
    * request is a fill. See router/segment-resolution/prefetch-deferral.ts.
    */
   _prefetchDeferral?: import("../router/segment-resolution/prefetch-deferral.js").PrefetchDeferral;
+  /**
+   * @internal A revalidate() predicate that read the source page
+   * (`currentParams`, `currentUrl`, `fromRouteName`) kept a held segment, so
+   * this match's diff is right for that source only (#1331). Set by
+   * evaluateRevalidation (router/revalidation.ts); match-result.ts turns it
+   * into `sourceHeld`, which scopes a prefetch of the response to its source.
+   */
+  _sourceHeld?: true;
   /**
    * @internal DSL loaders registered and not started, by `$$id`: a prefetch
    * deferred them, or a pass that skips loaders (`skipLoaders`) did not run

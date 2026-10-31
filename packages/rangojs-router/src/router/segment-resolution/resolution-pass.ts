@@ -51,6 +51,8 @@ export interface ResolutionPassInput<TEnv = any> {
   readonly routeKey: string;
   readonly actionContext?: ActionContext;
   readonly stale?: boolean;
+  /** NavigationSnapshot.heldBoundary: the walk cuts there, sending no segment. */
+  readonly heldBoundary?: string;
   /**
    * No loader is started and no loader segment is emitted: build time
    * (prerender-match.ts) and the background re-render of a route record

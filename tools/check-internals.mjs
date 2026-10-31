@@ -121,6 +121,7 @@ const BROWSER_L0 = new Set([
   `${SRC}browser/cookie-name`,
   `${SRC}browser/intercept-utils`,
   `${SRC}browser/react/filter-segment-order`,
+  `${SRC}browser/react/location-state-shared`,
 ]);
 
 const REQUEST_CONTEXT_TYPE = "RequestContext";

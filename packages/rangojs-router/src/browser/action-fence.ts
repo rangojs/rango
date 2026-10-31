@@ -20,7 +20,8 @@
  *
  * The drop runs the batch's follow-up: when an action of the batch did not
  * land on the page on screen, the action bridge refetches that page once,
- * whole, after the navigation the user started, unless an intercept is on
+ * whole (or whole above an action's error boundary on screen, which it
+ * holds), after the navigation the user started, unless an intercept is on
  * screen (server-action-bridge.ts followUp; the rules are R1-R7 in
  * docs/internal/execution-model.md).
  *

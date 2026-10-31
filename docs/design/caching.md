@@ -490,6 +490,7 @@ Cache keys combine request type prefix, the serving router's id, host, pathname,
 ```
 
 - **Prefix**: `doc` (full page), `partial` (navigation), or `intercept:{intercept}` (an intercept navigation). `{intercept}` names the intercept the match selected (`interceptRecordKey`, `src/router/intercept-resolution.ts`): its slot id, `~`, and its position among the intercepts its entry declares for the same slot and target route. See [Intercept Route Cache Namespace](#4-intercept-route-cache-namespace).
+- **Under a `key()`**: a scope with its own `key()` replaces what follows the prefix, never the prefix itself. Its record key is the composed `key()` parts, then the prefix as the last part (`key:tier%3Agold|doc`, `key:tier%3Agold|partial`, `key:tier%3Agold|intercept%3AM0L0.%40modal~0`). See [A key() keeps the request kind](#a-key-keeps-the-request-kind-rango-t201).
 - **Router and host**: `{routerId}@{host}` says whose output the entry is. See [The router part](#the-router-part-whose-output-an-entry-is) below.
 - **Search params**: User-facing params are included (sorted, URL-encoded). Router-internal params are excluded: `_rsc*` by prefix, plus an exact allowlist of `__`-prefixed params (`__no_cache`, `__rsc`, `__html`) — deliberately not a blanket `__*` filter, so consumer params like `__variant` still key the cache (see `src/cache/cache-key-utils.ts`).
 - **Partial response capability**: document-cache entries append a fragment-capable variant when `X-Rango-Fragment-Passthrough: 1` is present. The middleware can return before route matching, so its key must mirror the RSC response's `Vary` contract and never serve fragment envelopes to a legacy or context-less client. `X-Rango-Fragment-Recovery: 1` skips that variant's read so the failed fragment retry reaches segment decode and eviction, then the ordinary write path replaces the corrupt response bytes with the valid fallback.
@@ -568,7 +569,7 @@ key carries a router part exactly when its first `@` comes before its first
 | A loader's `key()`                                            | `loaderKeyFromResult` (`loader-cache.ts`)                                                                      | `loader:{loaderId}:key:{encoded result}`                                                                         | no: a full override, like the row below                           |
 | On-demand prerender overlay                                   | `src/prerender/writable-store.ts`                                                                              | `prerender:{routerId}:{version}:{routeName}:{paramHash}`                                                         | already there                                                     |
 | Tag markers                                                   | the stores                                                                                                     | `__tag__/{tag}`, `rg:tm:{tag}`                                                                                   | no: an invalidation reaches every router and every version        |
-| Your own keys: `cache({ key })`, `keyGenerator(url)`          | your code                                                                                                      | what you return                                                                                                  | no: a full override owns its namespace, as it owns the host       |
+| Your own keys: `cache({ key })`, `keyGenerator(url)`          | your code                                                                                                      | what you return (a route `key()`: namespaced, then the request kind)                                             | no: your key owns its namespace, as it owns the host              |
 
 The three built-in stores add nothing of their own that names a host and path.
 `CFCacheStore` and `VercelCacheStore` wrap the key they are given in a version
@@ -1823,14 +1824,14 @@ appends its own default key (`resolveDefaultKey`: its store's
 joined by `composeCacheKeys` (every `key()` result namespaced since #975, see
 "Key results are namespaced" below):
 
-| The route's scope                                     | Record key                                                         |
-| ----------------------------------------------------- | ------------------------------------------------------------------ |
-| no `key()` on the chain                               | its default key (unchanged)                                        |
-| a single keyed scope (`key()` of its own, none above) | `compose(its key() result)`: `key:` + its URI encoding             |
-| no `key()` of its own, under a keyed scope            | `compose(outer key() results..., its default key)`                 |
-| its own `key()`, under a keyed scope                  | `compose(outer key() results..., its key() result)`                |
-| `cache(false)` innermost                              | no read, no write (unchanged)                                      |
-| `cache()` re-enabled under `cache(false)`             | still in the partition: `compose(outer key() results..., default)` |
+| The route's scope                                     | Record key                                                            |
+| ----------------------------------------------------- | --------------------------------------------------------------------- |
+| no `key()` on the chain                               | its default key (unchanged)                                           |
+| a single keyed scope (`key()` of its own, none above) | `compose(its key() result, kind)`: `key:` + its URI encoding, `\|doc` |
+| no `key()` of its own, under a keyed scope            | `compose(outer key() results..., its default key)`                    |
+| its own `key()`, under a keyed scope                  | `compose(outer key() results..., its key() result, kind)`             |
+| `cache(false)` innermost                              | no read, no write (unchanged)                                         |
+| `cache()` re-enabled under `cache(false)`             | still in the partition: `compose(outer key() results..., default)`    |
 
 Why the default key in the inherit case: a first cut reused the outer
 `key()` result verbatim, and that made a new collision. A `key()` replaces
@@ -1927,6 +1928,72 @@ keyed every family under a per-build version and shells were gated on
 cold after a restart. Only `VercelCacheStore` without a version saw a one-time
 miss for existing keyed entries. (Stores now key by per-router code versions,
 and a rango upgrade changes those too: see "Versions" above.)
+
+#### A key() keeps the request kind (rango-t201)
+
+You might read "`key()` replaces the default key" as harmless: the app said
+what identifies its page, so the router should store the page under that and
+nothing else. The default key carries one more thing than the URL, though:
+its prefix, the request kind (`doc`, `partial`, `intercept:{intercept}`).
+The kinds' records hold different segments. A document record is rendered
+in document mode (`getDocumentModeEntry`, `src/server/context.ts`): a
+`loading(..., { ssr: false })` has no fallback there, and a
+`loader(..., { ssr: false })` is awaited before the first flush. A navigation
+record keeps the fallback, and is completed in the background where the client
+held a layout (proactive caching). An intercept record holds the layouts and
+the intercept's slot and never the route's page (`rerenderAndCacheRoute`
+skips the intercepted route's entry). Before, a scope with its own `key()`
+dropped the prefix with the URL, so every kind read and wrote one record.
+After an intercept navigation stored its record, a navigation from a page
+where the intercept's `when()` failed, and a document GET of the same URL,
+both HIT it: they rendered the intercept's body and no page. A document
+request rendered an intercept. Under a layout's
+`loading(..., { ssr: false })`, a navigation after a document showed no
+fallback, and a document after a navigation streamed one.
+
+So `resolveKeyFrom` takes the kind (`routeRecordKind` in
+`src/cache/cache-scope.ts`, which `getDefaultRouteCacheKey` uses as its
+prefix too) and, for a scope with its own `key()`, appends it as the last
+default part. A scope without a `key()` of its own already appends its whole
+default key, which carries the kind. The record key of a keyed route is
+`key:tier%3Agold|doc` for a document request, `key:tier%3Agold|partial` for a
+navigation and `key:tier%3Agold|intercept%3AM0L0.%40modal~0` for an intercept
+navigation.
+
+Why append the kind rather than drop the custom key's say: the `key()` result
+still decides which requests share a record, within a kind. A `key()` that
+ignores `:id` on purpose still serves one document record for every id, and
+one navigation record, and one record per intercept. It never makes a
+document share an intercept's record, which no app means.
+
+Why it cannot collide: the kind part is the default key's prefix without the
+URL after it, encoded (`doc`, `partial`, `intercept%3A...`), and a default
+key part always carries its URL (`doc%3A{base}`), so the two shapes never
+meet; the collision probe in `src/cache/__tests__/cache-scope-chain.test.ts`
+runs every `key()` value under every kind.
+
+What does not change:
+
+- The ppr shell partition (`resolvePartition`). The shell key already tells
+  a document from a navigation (`:shell` and its `:navigation` sibling), and
+  an intercept never reads a shell.
+- A response route's entry (`resolveKeyFrom(defaultKey, "response:")`): a
+  response route answers every request alike, so it passes no kind.
+- A store's `keyGenerator`. It receives the default key, prefix included, and
+  its result is the key. One that ignores `defaultKey` still gives every kind
+  one record; the `keyGenerator` JSDoc (`src/cache/types.ts`) says to keep it.
+
+The cost is one change of stored key strings for every route under a keyed
+`cache()`: each record misses once after the upgrade (the per-router code
+version already does that on `CFCacheStore` and `VercelCacheStore`). One
+visible effect on a ppr route under a keyed `cache()`: a navigation used to
+HIT the document's record (`explicit-cache-hit`); its own `partial` record now
+misses the first time, and the shell's seeded doc record answers it (a replay
+`HIT`), as on a ppr route without a `key()`. Pinned through
+`serveShellRequest` by
+`packages/rangojs-router/src/testing/__tests__/cached-custom-key-request-kind.rsc-test.tsx`,
+and in the browser by `e2e/cache.test.ts` "cache-intercept-routes", dev and
+production.
 
 #### Loader key results are namespaced (issue #1009)
 
@@ -2261,7 +2328,7 @@ Concurrent partial requests with null components could both trigger proactive ca
 
 #### 4. Intercept Route Cache Namespace
 
-An intercept navigation's record is keyed `intercept:{intercept}:` + `cacheKeyBase`, a namespace of its own, apart from `doc:` and `partial:`. `{intercept}` is `interceptRecordKey(ctx.interceptResult)` (`src/router/intercept-resolution.ts`), which every reader and writer passes to `CacheScope` (`readSegmentCacheSource` in `cache-lookup.ts`, `withCacheStore`, `rerenderAndCacheRoute`): the selected intercept's slot id, then `~` and its position among the intercepts its entry declares for the same slot and target route.
+An intercept navigation's record is keyed `intercept:{intercept}:` + `cacheKeyBase`, a namespace of its own, apart from `doc:` and `partial:`. `{intercept}` is `interceptRecordKey(ctx.interceptResult)` (`src/router/intercept-resolution.ts`), which every reader and writer passes to `CacheScope` (`readSegmentCacheSource` in `cache-lookup.ts`, `withCacheStore`, `rerenderAndCacheRoute`): the selected intercept's slot id, then `~` and its position among the intercepts its entry declares for the same slot and target route. A scope with its own `key()` keeps the namespace: its record key is the `key()` parts, then `intercept:{intercept}` as the last part (see [A key() keeps the request kind](#a-key-keeps-the-request-kind-rango-t201)).
 
 Why the key names the intercept: several intercepts can target one route, each with its own `when()`, and the match selects one per navigation (`findInterceptForRoute`). Keyed by the URL alone, the record written under one intercept answered a navigation that selected another. With `@modal` (from /list) and `@drawer` (from /other) on one layout, opening `/item/1` from /other after /list served the `@modal` slot and its body, while `metadata.slots` named `@drawer` (`handleCacheHitIntercept` files the stored slot under the selected slot's name). The slot id alone is not enough: two intercepts on one entry that fill the same slot share it, so the position tells them apart. The position counts only intercepts for the same slot and target route, so declaring an intercept for another slot or route does not renumber the rest; it is still positional, like every segment id, so a store that ignores the router version (`getCacheVersions()`) can serve an older build's record after an edit that reorders same-slot intercepts, as it can for any segment. The separator is `~`, not `#`: `~` is unreserved in a URL, so a custom store that maps keys onto URLs without encoding them keeps the whole key, where a `#` would start a fragment and drop the rest. Tags are unaffected: each record carries its own tags, and `updateTag()` / `revalidateTag()` evict every intercept's record. Pinned through `serveShellRequest` by `packages/rangojs-router/src/testing/__tests__/cached-intercept-selection.rsc-test.tsx`.
 

@@ -62,6 +62,7 @@ import {
   resolveLayoutComponent,
   resolveWithErrorBoundary,
   buildLoaderErrorContext,
+  noteThrower,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
 import { isLayoutLoaderCopy } from "../../client-urls/layout-loader-copies.js";
@@ -703,16 +704,15 @@ export function buildEntryRevalidateMap(
     { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }
   >();
 
-  function processEntry(entry: EntryData, parentShortCode?: string) {
+  function processEntry(entry: EntryData) {
     map.set(entry.shortCode, { entry, revalidate: entry.revalidate });
 
     if (entry.type !== "parallel") {
+      // The walker's slot id (resolveParallelSegments), an orphan's included.
       for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
         entry.parallel,
       )) {
-        const parallelParentShortCode = parentShortCode ?? entry.shortCode;
-        const parallelId = `${parallelParentShortCode}.${slot}`;
-        map.set(parallelId, {
+        map.set(`${entry.shortCode}.${slot}`, {
           entry: parallelEntry,
           revalidate: parallelEntry.revalidate,
         });
@@ -720,7 +720,7 @@ export function buildEntryRevalidateMap(
     }
 
     for (const layoutEntry of entry.layout) {
-      processEntry(layoutEntry, entry.shortCode);
+      processEntry(layoutEntry);
     }
   }
 
@@ -802,28 +802,34 @@ async function resolveParallelSlotComponent<TEnv>(
               handler,
               slotContext,
             );
-      if (hasLoadingFallback) {
-        const result = run();
-        if (result instanceof Promise) {
-          warnOnStreamedResponse(result, parallelId);
-          result.finally(doneHandler).catch(() => {});
-          component = trackStreamedHandler(deps, result, {
-            boundaryEntry,
-            segmentId: parallelId,
-            segmentType: "parallel",
-            context,
-            routeKey,
-            params,
-            recover: !pass.throwOnError,
-          });
+      // A throw before the slot streams reaches the owning entry's boundary.
+      try {
+        if (hasLoadingFallback) {
+          const result = run();
+          if (result instanceof Promise) {
+            warnOnStreamedResponse(result, parallelId);
+            result.finally(doneHandler).catch(() => {});
+            component = trackStreamedHandler(deps, result, {
+              boundaryEntry,
+              segmentId: parallelId,
+              segmentType: "parallel",
+              context,
+              routeKey,
+              params,
+              isPartial: reportsPartial(pass),
+              recover: !pass.throwOnError,
+            });
+          } else {
+            doneHandler();
+            component = result as ReactNode;
+          }
         } else {
+          // A static value (a Promise included) goes to render as is.
+          component = typeof handler === "function" ? await run() : handler;
           doneHandler();
-          component = result as ReactNode;
         }
-      } else {
-        // A static value (a Promise included) goes to render as is.
-        component = typeof handler === "function" ? await run() : handler;
-        doneHandler();
+      } catch (error) {
+        throw noteThrower(error, parallelId, "parallel");
       }
     }
   }
@@ -1181,6 +1187,7 @@ async function resolveRouteComponent<TEnv>(
           context,
           routeKey,
           params,
+          isPartial: reportsPartial(pass),
           recover: !pass.throwOnError,
         }),
       };
@@ -1487,6 +1494,7 @@ export async function resolveOrphanLayout<TEnv>(
   // so ctx.set() values are visible to parallel children.
   matchedIds.push(orphan.shortCode);
 
+  let handlerRan = false;
   let deferred: { readonly deferred: true } | undefined;
   let component: ReactNode = null;
   // FRESH: the orphan is new; no decision is asked, traced or observed.
@@ -1494,6 +1502,7 @@ export async function resolveOrphanLayout<TEnv>(
     // Below a unit a prefetch skipped: the orphan goes with it.
     deferred = deferUnit(context, orphan.shortCode, "below");
     if (!deferred) {
+      handlerRan = true;
       // Its handler's pushes are its own. Pinned only while it runs: a route
       // under loading() streams its handler, whose pushes after an await
       // read the pin after this returns.
@@ -1503,6 +1512,9 @@ export async function resolveOrphanLayout<TEnv>(
       const doneHandler = track(`handler:${orphan.id}`, 2);
       try {
         component = await resolveLayoutComponent(orphan, context);
+      } catch (error) {
+        // Its owning entry's boundary catches it.
+        throw noteThrower(error, orphan.shortCode, orphan.type);
       } finally {
         internal._currentSegmentId = pinned;
       }
@@ -1525,6 +1537,7 @@ export async function resolveOrphanLayout<TEnv>(
       pass.deps.viewTransitionDefault,
     ),
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
+    _handlerRan: handlerRan,
     ...deferred,
   });
 
@@ -1596,6 +1609,15 @@ export interface RevalidatingWalkOptions {
   readonly chain?: readonly EntryData[];
 }
 
+/**
+ * The onError `isPartial` of an error the walk catches. FRESH: a full match
+ * reports it unset. A re-render a navigation started reports it true
+ * (partialRequest).
+ */
+function reportsPartial(pass: ResolutionPass<any>): true | undefined {
+  return pass.client !== FRESH || pass.partialRequest ? true : undefined;
+}
+
 /** An entry's error or not-found segment, as its whole result. */
 function boundaryResult(seg: ResolvedSegment): SegmentRevalidationResult {
   return { segments: [seg], matchedIds: [seg.id] };
@@ -1604,7 +1626,8 @@ function boundaryResult(seg: ResolvedSegment): SegmentRevalidationResult {
 /**
  * Resolve all segments for a route: a partial match (matchPartial), a full
  * match with a FRESH pass, or the FRESH pass of an intercept record's
- * background re-render (rerenderAndCacheRoute).
+ * background re-render (rerenderAndCacheRoute). A thrown action's pass is cut
+ * at its error boundary (ActionContext.boundary).
  */
 export async function resolveAllSegments<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -1630,14 +1653,12 @@ export async function resolveAllSegments<TEnv>(
   try {
     telemetry = getRouterContext()?.telemetry;
   } catch {}
-  // FRESH: a full match reports an entry's error without isPartial, and a
-  // build-time pass rethrows it (throwOnError). A re-render a navigation
-  // started reports it with isPartial (partialRequest).
+  // A build-time pass rethrows an entry's error (throwOnError).
   const report = {
     request,
     url: context.url,
     routeKey,
-    isPartial: pass.client !== FRESH || pass.partialRequest ? true : undefined,
+    isPartial: reportsPartial(pass),
     telemetry,
   };
   const fillMatch = {
@@ -1646,7 +1667,22 @@ export async function resolveAllSegments<TEnv>(
     clientSegmentSet: pass.client,
   };
 
+  const boundary = pass.actionContext?.boundary;
+  const cutId = boundary?.id ?? pass.heldBoundary;
+  let cut = false;
   for (const entry of entries) {
+    if (entry.shortCode === cutId) {
+      // The outlet's loader ids stay claimed. _handlerRan makes the browser
+      // clear the outlet's handle values. A held boundary sends no segment:
+      // the client keeps its own, with its handle values.
+      if (boundary) allSegments.push({ ...boundary, _handlerRan: true });
+      matchedIds.push(cutId);
+      entry.loader?.forEach((loaderEntry, i) =>
+        matchedIds.push(`${entry.shortCode}D${i}.${loaderEntry.loader.$$id}`),
+      );
+      cut = true;
+      break;
+    }
     if (entry.type === "route" && interceptResult) {
       debugLog(
         "matchPartial.intercept",
@@ -1706,6 +1742,14 @@ export async function resolveAllSegments<TEnv>(
     }
   }
 
+  // A held boundary that names no entry (HMR rewrote the routes since the
+  // page rendered): the page renders whole, as without one.
+  if (pass.heldBoundary && !cut && process.env.NODE_ENV !== "production") {
+    console.warn(
+      `[@rangojs/router] A refetch held the error boundary "${pass.heldBoundary}", ` +
+        `which is not on the route's chain (${routeKey}): the page renders whole.`,
+    );
+  }
   deliverStartedLoaders(context, allSegments);
   return { segments: allSegments, matchedIds };
 }

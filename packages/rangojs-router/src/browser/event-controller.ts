@@ -92,6 +92,11 @@ export interface ActionEntry {
   startedAt: number;
   /** Whether action processing is complete (may still be streaming) */
   completed?: boolean;
+  /**
+   * Set when a later call started (see startAction): "id" hides this call
+   * from every reader, "name" from readers that match by export name.
+   */
+  supersededBy?: "id" | "name";
 }
 
 /**
@@ -104,7 +109,7 @@ export interface DerivedNavigationState {
   isStreaming: boolean;
   /** Whether a navigation is active (fetching or streaming, before commit) */
   isNavigating: boolean;
-  /** Current committed location */
+  /** The location of the last page flushed to React (useNavigation keeps the page on screen) */
   location: NavigationLocation;
   /** URL being navigated to (null if idle) */
   pendingUrl: string | null;
@@ -258,7 +263,8 @@ export interface EventController {
     /** Originating history entry key; scopes location-state arbitration. */
     cohort?: string,
   ): ActionHandle;
-  abortAllActions(): void;
+  /** Abort every action in flight except `except` (an ActionHandle id). */
+  abortAllActions(except?: string): void;
 
   // State access
   getState(): DerivedNavigationState;
@@ -536,6 +542,28 @@ export function createEventController(
   let unsettledNavigation: NavigationEntry | null = null;
 
   const inflightActions = new Map<string, ActionEntry>();
+  // Each action id's last settled call, which useAction reports until the
+  // action's next call starts (startAction deletes it). A call moves here
+  // when doSettle's cleanup takes it out of inflightActions. A trimmed
+  // snapshot, so no abort controller outlives the call. abortAllActions leaves
+  // settled calls: they persist through navigations until the action's next
+  // call.
+  type TrackedCall = Pick<
+    ActionEntry,
+    | "actionId"
+    | "phase"
+    | "payload"
+    | "result"
+    | "error"
+    | "revalidationError"
+    | "supersededBy"
+  >;
+  const settledActions = new Map<string, TrackedCall>();
+
+  function* trackedCalls(): Generator<TrackedCall> {
+    yield* inflightActions.values();
+    yield* settledActions.values();
+  }
 
   let location: NavigationLocation =
     config?.initialLocation ??
@@ -707,19 +735,24 @@ export function createEventController(
   }
 
   function getActionState(actionId: string): TrackedActionState {
-    // Nothing inflight — skip building/scanning the list and return the shared
-    // idle snapshot (the same reference use-action falls back to).
-    if (inflightActions.size === 0) return DEFAULT_ACTION_STATE;
+    // No call tracked: the shared idle snapshot (the same reference use-action
+    // falls back to).
+    if (inflightActions.size === 0 && settledActions.size === 0) {
+      return DEFAULT_ACTION_STATE;
+    }
 
-    const entry = [...inflightActions.values()]
-      .filter((a) => matchesActionId(actionId, a.actionId))
-      .reduce<ActionEntry | undefined>((best, a) => {
-        if (!best) return a;
-        const aActive = a.phase !== "settling";
-        const bActive = best.phase !== "settling";
-        if (aActive !== bActive) return aActive ? a : best;
-        return a.startedAt > best.startedAt ? a : best;
-      }, undefined);
+    // The latest call this reader matches, in flight or settled, or none once
+    // a later call was aborted: an earlier call is never reported again.
+    const byName = !actionId.includes("#");
+    let entry: TrackedCall | undefined;
+    for (const a of trackedCalls()) {
+      if (
+        matchesActionId(actionId, a.actionId) &&
+        (byName ? !a.supersededBy : a.supersededBy !== "id")
+      ) {
+        entry = a;
+      }
+    }
 
     if (!entry) {
       return { ...DEFAULT_ACTION_STATE };
@@ -898,9 +931,9 @@ export function createEventController(
     // after that point is strictly ordered behind the prior action's server
     // execution, and there is no skipped render or order uncertainty for
     // consolidation to repair. Completed entries still linger in the map for
-    // the 100ms doSettle window (useAction reads) and, on a slow connection,
-    // while the Flight stream drains its EOF after complete(). Counting them
-    // latched hadAnyConcurrentActions for back-to-back sequential actions,
+    // the 100ms doSettle window and, on a slow connection, while the Flight
+    // stream drains its EOF after complete(). Counting them latched
+    // hadAnyConcurrentActions for back-to-back sequential actions,
     // which made the LAST action classify as consolidation-needed; the
     // consolidation refetch omits every concurrently-revalidated segment id
     // from _rsc_segments, so the server re-ran gated loaders as "new-segment"
@@ -910,6 +943,22 @@ export function createEventController(
     );
     if (hadConcurrent) {
       hadAnyConcurrentActions = true;
+    }
+
+    // useAction reports the latest call. Every earlier call that a reader of
+    // this one also matches, in flight or settled, is hidden from that reader
+    // for good, so it never shows again, also once this call is aborted: a
+    // call of the same action from every reader, a call of another action
+    // with the same export name from readers that match by name
+    // (matchesActionId). So at most one call matches a reader (getActionState).
+    const hash = actionId.lastIndexOf("#");
+    const name = hash === -1 ? null : actionId.slice(hash + 1);
+    settledActions.delete(actionId);
+    for (const a of trackedCalls()) {
+      if (a.actionId === actionId) a.supersededBy = "id";
+      else if (name !== null && matchesActionId(name, a.actionId)) {
+        a.supersededBy ??= "name";
+      }
     }
 
     const entry: ActionEntry = {
@@ -955,9 +1004,20 @@ export function createEventController(
       if (settled) return;
       settled = true;
 
-      // Cleanup after brief delay (allow useAction to read result)
       setTimeout(() => {
-        inflightActions.delete(id);
+        // The action's last settled call until its next call starts, unless
+        // that call already started.
+        if (inflightActions.delete(id) && entry.supersededBy !== "id") {
+          settledActions.set(actionId, {
+            actionId: entry.actionId,
+            phase: entry.phase,
+            payload: entry.payload,
+            result: entry.result,
+            error: entry.error,
+            revalidationError: entry.revalidationError,
+            supersededBy: entry.supersededBy,
+          });
+        }
         // Free this cohort's arbitration once its last action has settled, so
         // a long-running action elsewhere cannot pin keys from a drained entry.
         releaseCohort();
@@ -1108,13 +1168,14 @@ export function createEventController(
     };
   }
 
-  function abortAllActions() {
+  /** Abort every action in flight except `except` (an ActionHandle id). */
+  function abortAllActions(except?: string) {
     for (const [id, entry] of inflightActions) {
       // Preserve settling entries — they have already been handled by
       // fail()/complete() and will self-cleanup via the settlement timeout.
       // Clearing them here would prevent debounced notifications from
       // delivering the error/result state to subscribers.
-      if (entry.phase === "settling") continue;
+      if (entry.phase === "settling" || id === except) continue;
       entry.abort.abort();
       inflightActions.delete(id);
     }

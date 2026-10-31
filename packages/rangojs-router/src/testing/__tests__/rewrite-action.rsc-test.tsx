@@ -40,6 +40,7 @@ import {
   type OnErrorContext,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
+import { deserializeResult } from "../../cache/segment-codec.js";
 
 const Guard = createVar<string>();
 
@@ -372,6 +373,43 @@ describe("a JS action from a page route middleware rewrote", () => {
     expect(result.flight).toContain("item boundary guard=target");
     expect(result.flight).not.toContain("fallback boundary");
     expect(errors.map((e) => e.phase)).toEqual(["action"]);
+  });
+
+  it("an earlier action's follow-up holds the target's boundary through the rewrite: no target route code runs", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const shown = await showPage("/public-1", cacheStore);
+    const thrown = await serveShellRequest(router, "/public-1", {
+      cacheStore,
+      action: {
+        ref: failingSave,
+        id: "actions.ts#failingSaveHeld",
+        segments: shown.matched,
+      },
+    });
+    const { metadata: answer } = await deserializeResult<{
+      metadata: { segments: Array<{ id: string; type: string }> };
+    }>(thrown.flight!);
+    const boundary = answer.segments.find((s) => s.type === "error")!.id;
+    seen.length = 0;
+
+    // The follow-up the page is owed, sent to the visitor's URL as the
+    // browser sends it: `_rsc_boundary` rides the rewrite pass.
+    const result = await serveShellRequest(router, "/public-1", {
+      cacheStore,
+      partial: {
+        from: "/public-1",
+        rewriteTarget: shown.rewriteTarget,
+        segments: [],
+        stale: true,
+        boundary,
+      },
+    });
+    expect(result.response.status).toBe(200);
+    expect(seen).toContain("route:GET:no-body");
+    const followUp = metadata(result.flight);
+    expect(followUp.matched).toContain(boundary);
+    expect(result.flight).not.toContain("item 1 guard=");
+    expect(result.flight).not.toContain("item boundary");
   });
 
   it("renders the target's error boundary when the rewriting route has none", async () => {
@@ -755,5 +793,80 @@ describe("a route-middleware rewrite that disallows mutations", () => {
     } finally {
       logged.mockRestore();
     }
+  });
+});
+
+describe("a thrown action's boundary on the rewrite target", () => {
+  let stock = 0;
+  const StockLoader = createLoader(async () => stock);
+  async function sellThenFail(): Promise<string> {
+    stock++;
+    throw new Error("sold out");
+  }
+  // The target's layout reads what the action wrote; the target's route
+  // declares the boundary.
+  const shop = createRouter({}).routes(
+    urls(({ layout, path, loader, middleware, errorBoundary }) => [
+      path(
+        "/deal/:id",
+        () => <main>deal</main>,
+        { name: "deal" },
+        () => [
+          middleware((ctx) => {
+            throw rewrite(`/goods/${ctx.params.id}`);
+          }),
+        ],
+      ),
+      layout(
+        () => <div>goods layout</div>,
+        () => [
+          loader(StockLoader),
+          path(
+            "/goods/:id",
+            () => <main>goods</main>,
+            { name: "goods" },
+            () => [errorBoundary(<p>goods boundary</p>)],
+          ),
+        ],
+      ),
+    ]),
+  );
+
+  it("carries the target's layout loader with the write beside the target's boundary", async () => {
+    stock = 0;
+    const cacheStore = new MemorySegmentCacheStore();
+    const page = await serveShellRequest(shop, "/deal/1", {
+      cacheStore,
+      partial: { from: "/" },
+    });
+    const result = await serveShellRequest(shop, "/deal/1", {
+      cacheStore,
+      action: {
+        ref: sellThenFail,
+        id: "actions.ts#sellThenFail",
+        segments: metadata(page.flight).matched,
+      },
+    });
+
+    expect(result.response.status).toBe(500);
+    expect(result.response.headers.get("x-rango-rewrite")).toBe("/goods/1");
+    expect(result.flight).toContain("goods boundary");
+    const { metadata: sent } = await deserializeResult<{
+      metadata: {
+        segments: Array<{
+          type: string;
+          loaderId?: string;
+          loaderData?: unknown;
+        }>;
+      };
+    }>(result.flight!);
+    const stockSegment = sent.segments.find(
+      (s) => s.loaderId === StockLoader.$$id,
+    );
+    expect(await stockSegment?.loaderData).toMatchObject({
+      ok: true,
+      data: 1,
+    });
+    expect(sent.segments.filter((s) => s.type === "error")).toHaveLength(1);
   });
 });

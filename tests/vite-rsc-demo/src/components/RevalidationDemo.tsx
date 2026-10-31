@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, useEffect, useState, type ReactNode } from "react";
+import { Component, useState, type ReactNode } from "react";
 import { useAction, useLoader } from "@rangojs/router/client";
 import {
   SaveStatusLoader,
@@ -33,17 +33,11 @@ export function RevalidationControls(): ReactNode {
   const save = useAction(saveNote);
   const [note, setNote] = useState("");
   const [result, setResult] = useState("nothing saved yet");
-  // useAction drops an action's state shortly after it settles: latch the
-  // report so it stays readable.
-  const [report, setReport] = useState("none");
-  useEffect(() => {
-    if (save.revalidationError != null) {
-      setReport(message(save.revalidationError));
-    }
-  }, [save.revalidationError]);
+  // Kept until the next save starts.
+  const report =
+    save.revalidationError != null ? message(save.revalidationError) : "none";
 
   const onSave = async (): Promise<void> => {
-    setReport("none");
     const saved = await saveNote(note);
     setResult(`Saved #${saved.saved}: ${saved.note || "(empty note)"}`);
   };

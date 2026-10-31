@@ -166,6 +166,22 @@ function buildPrefetchUrl(
 }
 
 /**
+ * Where a completed prefetch is stored: under the source key when the Link
+ * forced it or the response says `X-RSC-Prefetch-Scope: source`, else under
+ * the key every source page shares (#1331).
+ */
+export function prefetchStorageSlot(
+  forceSourceScope: boolean,
+  scopeHeader: string | null,
+  sourceKey: string,
+  wildcardKey: string,
+): { scope: "source" | "wildcard"; key: string } {
+  return forceSourceScope || scopeHeader === "source"
+    ? { scope: "source", key: sourceKey }
+    : { scope: "wildcard", key: wildcardKey };
+}
+
+/**
  * Core prefetch fetch logic. Fetches the response, eagerly decodes it, and
  * stores the decoded payload in the in-memory cache. The returned Promise
  * resolves to the decoded entry (or null on failure / control header) so
@@ -288,12 +304,12 @@ function executePrefetchFetch(
         return null;
       }
 
-      const scope: "source" | "wildcard" =
-        forceSourceScope ||
-        response.headers.get("x-rsc-prefetch-scope") === "source"
-          ? "source"
-          : "wildcard";
-      const storageKey = scope === "source" ? sourceKey : wildcardKey;
+      const { scope, key: storageKey } = prefetchStorageSlot(
+        forceSourceScope,
+        response.headers.get("x-rsc-prefetch-scope"),
+        sourceKey,
+        wildcardKey,
+      );
 
       // Track stream completion off a tee so navigation's scroll/revalidation
       // gating matches the fresh-fetch path; decode the other branch. The

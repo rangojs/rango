@@ -12,10 +12,11 @@ function NavIndicator() {
   const nav = useNavigation();
 
   // State properties
-  nav.state; // 'idle' | 'loading'
-  nav.isStreaming; // boolean — RSC data is still streaming
-  nav.location; // Current URL
-  nav.pendingUrl; // Target URL during navigation (or null)
+  nav.state; // 'idle' | 'loading' — loading during a navigation AND a server action
+  nav.isNavigating; // boolean — a navigation is in flight (false during an action)
+  nav.isStreaming; // boolean — RSC data is still streaming (navigation or action)
+  nav.location; // The page on screen, until the next page shows
+  nav.pendingUrl; // The page being fetched (or null)
 
   return nav.state === "loading" ? <Spinner /> : null;
 }
@@ -26,6 +27,22 @@ function IsLoading() {
   return isLoading ? <Spinner /> : null;
 }
 ```
+
+#### Navigation versus server action
+
+`state` is `"loading"` while a navigation is in flight and also while a server
+action runs. That is deliberate: something on this screen is loading, so a
+spinner or a progress bar has a signal for an action too. When a bar should
+show for navigations only, read `isNavigating`: true from the start of a
+navigation until its commit, false during an action (where `state` is still
+`"loading"`). `isStreaming` covers the action's response as well as a
+navigation's.
+
+| Event           | `state`     | `isNavigating` | `isStreaming`                |
+| --------------- | ----------- | -------------- | ---------------------------- |
+| a navigation    | `"loading"` | `true`         | true until the stream ends   |
+| a server action | `"loading"` | `false`        | true until the response ends |
+| neither         | `"idle"`    | `false`        | `false`                      |
 
 #### Pending UI, Back/Forward included
 
@@ -40,18 +57,48 @@ on screen:
 | the page has not fully arrived yet             | `isStreaming`: true from the start of the request until the stream ends             |
 | which page is on screen while the request runs | `location`, or `usePathname()` / `useSearchParams()` (see [`./urls.md`](./urls.md)) |
 
-`pendingUrl` covers the network wait. Once the response has arrived a loader
+`pendingUrl` covers the network wait, and `useLinkStatus()` covers more: a
+link's `pending` stays `true` after `pendingUrl` turns `null`, while the
+response streams and React holds the page being left, until the destination
+commits (see [useLinkStatus()](#uselinkstatus)). For a spinner on the clicked
+link, read `useLinkStatus()`; `pendingUrl` names the URL only while the
+request is out.
+
+Once the response has arrived a loader
 may still be streaming, and React keeps the page being left on screen where a
 navigation holds its content (a same-route change, a `transition()` route,
 with or without a view transition). `state` stays `"loading"` through that
-part: for a navigation on its own, `"idle"` commits in the same commit as the
-destination's `useSearchParams()`, `usePathname()` and `useParams()`, so a
-component that reads both does not see the navigation finished on the URL it
-is leaving. A server action, or another navigation started and aborted,
-while React holds that page can still bring `"idle"` with the URL being left.
+part: `"idle"` commits with the destination's `useSearchParams()`,
+`usePathname()` and `useParams()`, so a component that reads both does not
+see the navigation finished on the URL it is leaving. That holds when a
+server action settles, or a newer navigation ends with no page (an external
+redirect, a reload), while React holds the page: `"idle"` waits for the page.
+A newer navigation that fails shows the error screen, and `"idle"` arrives
+with it. A newer click shows at once (`"loading"`, its `pendingUrl`), also
+while an action is in flight. After a server action, `"idle"` arrives with
+the action's revalidated content.
 `isStreaming` can outlast that commit (a loader still streaming below a
 boundary that already showed), so use it for a progress indicator that should
 last until the new page is complete.
+
+While React holds a page, every field follows one rule, whatever the reader
+reads (a selector, the full state): work that starts shows at once
+(`"loading"`, `isStreaming` and `isNavigating` turning `true`, a newer click's
+`pendingUrl`), and what settles waits for the page (`"idle"`, `false`, a
+`null` `pendingUrl`). So a progress bar that reads
+`useNavigation((n) => n.isStreaming)` stays up until the held page shows, even
+when the response stream ended earlier, and agrees with every other
+`useNavigation()` reader on the screen. A page that ends the hold urgently (a
+Back to a page without `transition()`, a link with `transition={false}`)
+shows with its own values in every `useNavigation()` reader, and with its URL
+in `usePathname()`, `useParams()`, `useSearchParams()` and `useSegments()`,
+also when it is the URL React was holding.
+
+The rule holds for readers mounted before the page was handed to React. A
+reader that mounts while the page is held (a menu opened during the wait)
+never saw the hand-over and reads the live values, the destination's `idle`
+and location, until the page shows. This is by design (#1046): its first
+render has no page of its own to wait for.
 
 On Back/Forward the address bar changes at once, before any of this: during
 the wait `window.location` is the entry being fetched, the same URL as
@@ -60,8 +107,28 @@ from the client's history cache restores its page in one commit and reports
 no pending state.
 
 `location` moves in that commit too. A component that first mounts while
-React holds the page being left reads the destination's `location` and URL
-hooks (issue #1046).
+React holds the page being left (a dropdown opened on the old page, a lazy
+component or a `<Suspense>` there that resolves during the hold) reads the
+destination's `state`, `location` and URL hooks, because each hook seeds its
+first value from the router's live state (issue #1046; by design). A menu
+opened while a click's page is held therefore highlights the destination
+link. Components already mounted keep the page on screen's values until the
+destination commits.
+
+A second click while React holds the first click's page works the same way:
+`"loading"` and the second click's `pendingUrl` show at once, and `location`
+stays the page on screen. It moves to the first click's page only if that
+page shows before the second one arrives; if the second page replaces it
+first, the first page never shows and its URL is never `location`.
+
+**One exception: inside an optimistic `clientUrls()` frame.** When a
+cross-route navigation shows the destination's `loading()` frame at the click,
+`usePathname()`, `useSearchParams()` and `useParams()` report the frame's
+destination (see [`./urls.md`](./urls.md)), but `useNavigation()` reports the
+real navigation: `state` is `"loading"` and `location` is the committed URL,
+the page that is still the router's. So `location` is "which page is
+committed", not always "which page the eye sees", and a status reader should
+sit in chrome that survives the swap (see `/client-urls`).
 
 ### useRouter()
 
@@ -93,14 +160,14 @@ function NavigationControls() {
 }
 ```
 
-| Method                   | Behaviour                                                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `push(url, options?)`    | Navigate and add a history entry. Returns a promise.                                                            |
-| `replace(url, options?)` | Navigate and replace the current history entry. Returns a promise.                                              |
-| `refresh()`              | Re-fetch the current route's server data, keeping client state. Returns a promise.                              |
-| `prefetch(url, opts?)`   | Prefetch a target. `{ key: ":source" }` scopes the entry to the source page (parity with `<Link prefetchKey>`). |
-| `back()`                 | `history.back()`; on the first entry of the session it replaces to the app root instead of leaving the app.     |
-| `forward()`              | `history.forward()`.                                                                                            |
+| Method                   | Behaviour                                                                                                                     |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `push(url, options?)`    | Navigate and add a history entry. Returns a promise.                                                                          |
+| `replace(url, options?)` | Navigate and replace the current history entry. Returns a promise.                                                            |
+| `refresh()`              | Re-fetch the current route's server data, keeping client state. Returns a promise.                                            |
+| `prefetch(url, opts?)`   | Prefetch a target. `{ key: ":source" }` scopes the entry to the source page (parity with `<Link prefetchKey>`, see `/links`). |
+| `back()`                 | `history.back()`; on the first entry of the session it replaces to the app root instead of leaving the app.                   |
+| `forward()`              | `history.forward()`.                                                                                                          |
 
 `push` / `replace` options: `scroll` (`false` keeps the current scroll
 position), `revalidate` (default `true`, see below), `transition` (`false`
@@ -187,13 +254,17 @@ const segments = useSegments();
 const part = segments.path[depth];
 ```
 
-Like `useHandle`, it commits with the page: while React holds the page being
-left, `useSegments()` keeps that page's path and segments.
+While React holds the page being left, `useSegments()` keeps that page's
+values. The new page's `path` and `location` commit with it, so its effects
+read them; `segmentIds` come with the page's handle data and can land right
+after its commit, as handle values do (see
+[handle-and-actions](./handle-and-actions.md#when-handle-values-change-by-design)).
 
 ### useLinkStatus()
 
 Track pending state inside a Link component. `pending` is `true` while a
-navigation to this link's `to` is in flight:
+navigation to the link's `to` is in flight, until the page it brings
+commits:
 
 ```tsx
 "use client";
@@ -210,3 +281,38 @@ function LoadingIndicator() {
   <LoadingIndicator />
 </Link>;
 ```
+
+The spinner ends in the commit that shows the destination: its `loading()`
+skeleton without `transition()`, or the page itself under `transition()`,
+where React holds the page being left until the new one is ready. Through a
+server redirect, the clicked link stays pending until the target page
+commits. A newer navigation and an abort end it at once, outside the narrow
+case below. A failure ends it with the error: a route's `errorBoundary()` commits like a page, and a
+failure the router shows at its root (a network error, a response it cannot
+read) replaces the page, links included.
+
+`pending` follows the same rule as `useNavigation()`: a change commits in the
+lane of the notification that carries it. The click's notification goes out
+a task after the click and commits urgently, so the spinner shows at once,
+and an abort or a newer click ends it the same way. The hook starts no
+transition of its own, so it never takes the page's transition types. A
+fully prefetched click whose page commits before that task shows no pending
+state: its page is already there.
+
+One narrow case is a known trade: when another flow's commit (a server
+action's) is handed to React in the same task as the click, before the
+click's notification goes out, the notification commits with that commit.
+If React holds it, the spinner, and `useNavigation()`'s `loading`, show when
+it lands; a newer click or an abort delivered that way ends an earlier
+spinner when it lands too.
+
+The two hooks answer different questions. `pending` is this link's
+navigation; `useNavigation()` is the router's, and its `"idle"` waits for any
+page or tree React holds. So a link whose navigation is aborted while React
+holds another flow's commit reads `pending: false` while `state` stays
+`"loading"` until that commit lands: the frame any link that is not the
+destination reads during a navigation.
+
+`pending` lasts longer than `useNavigation().pendingUrl`, which turns `null`
+when the response arrives. While the response streams, a link reads `pending`
+and `pendingUrl` is `null`.

@@ -1004,12 +1004,11 @@ What it does not cover, each keeping its earlier behaviour:
 - A no-JS form post renders the whole document after the action, so a loader
   that throws there behaves as on a page load, with no call to resolve.
 
-One more thing worth knowing about the report: `useAction` drops an action's
-state once the action has settled and its entry leaves the event controller
-(100 ms after settling, `event-controller.ts` `doSettle`), and
-`revalidationError` goes with `error` and `result`. A component that wants to
-keep a notice up latches it (the skill's example, and the e2e fixture's
-`af-revalidation-error` line).
+One more thing worth knowing about the report: `useAction` keeps an action's
+last settled call until the action is called again (`event-controller.ts`
+`settledActions`), and `revalidationError` stays with `error` and `result`.
+A notice rendered from it stays up until the next save starts, which clears
+it (the skill's example).
 
 For a failure the user should see in place of the data without an error
 boundary, return it from the loader as data (`{ ok: false, reason }`) and

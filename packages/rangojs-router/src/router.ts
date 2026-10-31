@@ -44,6 +44,7 @@ import { createHandleStore, type HandleStore } from "./server/handle-store.js";
 import {
   getRequestContext,
   _getRequestContext,
+  reportedErrorsOf,
 } from "./server/request-context.js";
 import type {
   ErrorPhase,
@@ -315,7 +316,8 @@ export function createRouter<TEnv = any>(
    * Wrapper for invokeOnError that binds the router's onError callback.
    * Uses the shared utility from router/error-handling.ts for consistent behavior.
    *
-   * Deduplicates via per-request WeakSet stored on the ALS request context.
+   * Deduplicates via per-request WeakSet stored on the ALS request context
+   * (background work keeps its own, reportedErrorsOf).
    * A closure-level WeakSet would silently swallow errors if the same object
    * instance is thrown across separate requests (e.g. a singleton error).
    */
@@ -325,7 +327,8 @@ export function createRouter<TEnv = any>(
     context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
     if (error != null && typeof error === "object") {
-      const reportedErrors = _getRequestContext()?._reportedErrors;
+      const reqCtx = _getRequestContext();
+      const reportedErrors = reqCtx && reportedErrorsOf(reqCtx);
       if (reportedErrors) {
         if (reportedErrors.has(error)) return;
         reportedErrors.add(error);
@@ -488,6 +491,7 @@ export function createRouter<TEnv = any>(
     errorContext?: {
       segmentId?: string;
       segmentType?: string;
+      isPartial?: boolean;
     },
   ): Promise<T> => {
     // One ALS read serves both the store lookup and the onError closure.
@@ -520,6 +524,7 @@ export function createRouter<TEnv = any>(
           env: reqCtx.env as TEnv,
           segmentId: errorContext?.segmentId,
           segmentType: errorContext?.segmentType as any,
+          isPartial: errorContext?.isPartial,
           handledByBoundary: true,
         });
       });
@@ -542,7 +547,6 @@ export function createRouter<TEnv = any>(
       params?: Record<string, string>;
       env?: TEnv;
       isPartial?: boolean;
-      requestStartTime?: number;
     },
     useDefaultErrorBoundary?: boolean,
   ): Promise<LoaderDataResult<T>> {
@@ -592,7 +596,6 @@ export function createRouter<TEnv = any>(
               env: errorContext.env,
               isPartial: errorContext.isPartial,
               handledByBoundary: ctx.handledByBoundary,
-              requestStartTime: errorContext.requestStartTime,
             });
             if (emitTelemetry) {
               const errorObj =

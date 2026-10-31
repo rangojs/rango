@@ -47,6 +47,7 @@ import {
 import { createAppShellRef } from "./app-shell.js";
 import { bootLog, IS_BROWSER_DEBUG } from "./logging.js";
 import {
+  applyDocumentLocationState,
   clearLocationStateOnDocumentLoad,
   stripShellMissMarker,
 } from "./history-state.js";
@@ -274,8 +275,10 @@ export async function initBrowserApp(
     setSuspenseAuditStreamProbe(() => eventController.getState().isStreaming);
   }
 
-  // The document's entry, after the clearOnReload pass and under the version
-  // set above: what readers get once they have hydrated.
+  // The state the document response carried, after the clearOnReload pass
+  // and under the version set above.
+  applyDocumentLocationState(initialPayload.metadata?.locationState);
+  // The document's entry: what readers get once they have hydrated.
   eventController.commitLocationState(window.history.state);
 
   // Initialize event controller with segment order (even without handles)
@@ -614,6 +617,7 @@ export async function initBrowserApp(
 
             const historyKey = generateHistoryKey(window.location.href, {
               intercept: responseIsIntercept,
+              interceptSource: interceptSourceUrl ?? undefined,
             });
             store.setHistoryKey(historyKey);
             const currentHandleData = liveHandleDataForCache(
