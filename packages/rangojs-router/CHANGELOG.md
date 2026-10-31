@@ -39,6 +39,43 @@ url, { partial: { prefetch: true } })` still gets a speculative one; add
 `X-Rango-Prefetch === "1"` to recognise a prefetch should check that the
 header is present.
 
+### Fixed: `@rangojs/router/testing/e2e` stops the whole dev or preview server, not only `pnpm` ([#1352](https://github.com/rangojs/rango/pull/1352))
+
+**Before.** `useFixture` started `pnpm dev` or `pnpm preview` without making it a
+process-group leader, so its teardown's group kill threw `ESRCH` and fell back
+to stopping `pnpm` alone. The vite process `pnpm` spawned kept running after the
+suite, holding its port and memory, and a teardown could time out waiting on it.
+
+**After.** The server is spawned detached and the teardown signals its whole
+process group, waits until no process of the group is left, and sends SIGKILL
+(logging the pid) to a group that still has one after the wait. Windows is
+unchanged: the server is not detached there and `taskkill /t` ends the tree.
+Nothing changes in how you call `useFixture`.
+
+### Changed: `rango generate` reads an inline `createRouter().routes(urls(...))` and stops on a root tree it cannot read ([#1349](https://github.com/rangojs/rango/pull/1349))
+
+**Before.** `rango generate` read a router's tree only from a variable or a
+builder function. An inline call, `createRouter({}).routes(urls(...))` or
+`createRouter({ urls: urls(...) })`, was skipped: the command exited 0,
+printed nothing and wrote no `router.named-routes.gen.ts`, so `href()` and
+`reverse()` had no route names to check. A mount argument of any other shape,
+such as `.routes(buildUrls())`, was skipped the same way.
+
+**Now.** An inline `urls(...)` or `clientUrls(...)` call is read like a
+builder function, includes and all, under its own name or a renamed import
+(`import { urls as u } from "@rangojs/router"`), and `as`, `satisfies` and
+parentheses around a mount are unwrapped. `vite dev`'s static generation uses
+the same reader, so it now also writes `router.named-routes.gen.ts` for an
+inline `urls()` router. A mount argument the static parser cannot read
+is reported as `unresolvable-routes`, naming the mount: plain
+`rango generate` exits 1 and writes nothing, `--static` warns, and
+`--runtime` reads the real tree. A variable whose value is not a `urls()`
+call (`const tree = buildUrls()`) is still not reported. Test files, Flight
+tests' `*.rsc-test.*` included, are no longer read as router roots by
+`rango generate` or `vite dev`, so their inline routers get no
+`named-routes.gen.ts` beside them; the default `discovery.exclude` lists
+`*.rsc-test.*` too.
+
 ### Changed: a prefetch a `revalidate()` kept from the page being left is shared by the pages with equal values of what it read (rango-t242)
 
 **Before.** Since 0.32.0, a `revalidate()` that read the page being left
@@ -195,6 +232,37 @@ renders. When a `parallel()` fills every held slot, nothing but `when()` tells
 them apart, and that rule applies to all of them. `when()` selects an
 intercept; it does not authorize one: guard data in the target route's
 middleware or the intercept's loaders. No change in your code.
+
+### Fixed: a layout with `parallel()` slots under a route's loader no longer remounts after an action or a same-route navigation ([#1350](https://github.com/rangojs/rango/pull/1350))
+
+**Before.** A child layout with `parallel()` slots gets a copy of its route's
+loaders, so a slot's `useLoader()` can read them through the route's
+`loading()` fallback. Two shapes sent that copy on one request and not on the
+next, so the layout gained or lost a loader entry, and React remounted it and
+its `<Outlet />`, resetting its local state:
+
+- a route loader held with `revalidate(() => false)` and no `loading()`: the
+  document sent no copy, but an action or a same-route navigation (and Back
+  after it) sent the copy alone;
+- `loading(fallback)` with the route's handler held (`revalidate(() => false)`
+  on the route): the document sent the copy, but an action that re-ran the
+  loader dropped it.
+
+`loading(false)` also sent the loader's data twice on every document.
+
+```tsx
+path("/p", Page, { name: "p" }, () => [
+  loader(Data, () => [revalidate(() => false)]),
+  layout(Inner, () => [parallel({ "@side": SideReadingUseLoaderData })]),
+]);
+// Before: an action on /p, or a link to /p?x=2, remounted Inner.
+// After:  Inner keeps its state.
+```
+
+**Now.** The copy is sent only when the route renders a `loading()` fallback
+(including `loading(fallback, { ssr: false })`), and then on every request;
+with no `loading()` or `loading(false)` it is never sent. Slots read the same
+data. No change in your code.
 
 ## 0.32.0 (2026-10-30)
 

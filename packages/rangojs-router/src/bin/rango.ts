@@ -1,4 +1,5 @@
-import { resolve, dirname } from "node:path";
+#!/usr/bin/env node
+import { resolve, dirname, basename } from "node:path";
 import { readFileSync, statSync, existsSync } from "node:fs";
 import {
   findTsFiles,
@@ -8,6 +9,7 @@ import {
   detectUnresolvableIncludesForUrlsFile,
   findNestedRouterConflict,
   formatNestedRouterConflictError,
+  isRoutableSourceFile,
   type UnresolvableInclude,
 } from "../build/generate-route-types.ts";
 
@@ -94,6 +96,19 @@ Examples:
 }
 
 /**
+ * A createRouter() file that is not a test: a test builds its own router (a
+ * Flight test's `*.rsc-test.tsx` usually mounts an inline urls() tree), and a
+ * named-routes.gen.ts beside it would merge its routes into the app's global
+ * GeneratedRouteMap. The same rule findRouterFiles() applies in Vite.
+ */
+function isRouterFile(filePath: string, source: string): boolean {
+  return (
+    isRoutableSourceFile(basename(filePath)) &&
+    /\bcreateRouter\s*[<(]/.test(source)
+  );
+}
+
+/**
  * Walk up from a file path to find the project root (directory containing
  * package.json or vite.config.ts).
  */
@@ -141,7 +156,7 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
   for (const filePath of files) {
     try {
       const source = readFileSync(filePath, "utf-8");
-      if (/\bcreateRouter\s*[<(]/.test(source)) {
+      if (isRouterFile(filePath, source)) {
         routerFiles.push(filePath);
       }
       // Both spellings, matching the writer's own gate: "clientUrls(" does
@@ -181,7 +196,8 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
   // Deduplicate diagnostics (router and urls detection may find the same issue)
   const seen = new Set<string>();
   const uniqueDiagnostics = allDiagnostics.filter((d) => {
-    const key = `${d.sourceFile}:${d.pathPrefix}:${d.reason}`;
+    // Every unreadable routes mount has pathPrefix "/": its detail names it.
+    const key = `${d.sourceFile}:${d.pathPrefix}:${d.reason}${d.reason === "unresolvable-routes" ? `:${d.detail}` : ""}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -192,10 +208,11 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
     console.error("\n[rango] Unresolvable routes detected:\n");
     formatDiagnostics(uniqueDiagnostics);
     console.error(
-      "\nThe static parser cannot resolve these includes or basename because " +
-        "they use factory functions or dynamic expressions. A basename must be " +
-        "a string literal or a top-level const (in the router file or imported " +
-        "from a relative module).\n\n" +
+      "\nThe static parser cannot resolve these includes, routes or basename " +
+        "because they use factory functions or dynamic expressions. A router's " +
+        "routes must be a urls() call, a builder function or a variable holding " +
+        "urls(); a basename must be a string literal or a top-level const (in " +
+        "the router file or imported from a relative module).\n\n" +
         "Options:\n" +
         "  rango generate <path> --runtime   Use Vite-based discovery (requires vite)\n" +
         "  rango generate <path> --static    Accept partial output (missing routes or basename prefix above)\n",
@@ -255,7 +272,7 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
   for (const filePath of files) {
     try {
       const source = readFileSync(filePath, "utf-8");
-      if (/\bcreateRouter\s*[<(]/.test(source)) {
+      if (isRouterFile(filePath, source)) {
         routerEntries.push(filePath);
       }
       // Also generate per-module types for urls files. Both spellings — a
@@ -281,6 +298,10 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
     process.exit(1);
   }
 
+  // Loads from its own chunk only because the bin is built with esbuild
+  // --splitting (package.json "build"). A single-file bundle folds this module
+  // in and hoists its Vite imports to the top, so every command, --help
+  // included, failed without vite installed (rango-t211).
   let discoverAndWriteRouteTypes: typeof import("../build/runtime-discovery.ts").discoverAndWriteRouteTypes;
   try {
     const mod = await import("../build/runtime-discovery.ts");
@@ -290,9 +311,12 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
       err.code === "ERR_MODULE_NOT_FOUND" ||
       err.code === "MODULE_NOT_FOUND"
     ) {
+      // runtime-discovery checks vite and @vitejs/plugin-rsc itself and names
+      // what to install, so reaching here means a bundled chunk file is
+      // missing: the installed package is incomplete.
       console.error(
-        "[rango] Runtime discovery requires 'vite' and '@vitejs/plugin-rsc'.\n" +
-          "Install them with: pnpm add -D vite @vitejs/plugin-rsc",
+        `[rango] Failed to load runtime discovery: ${err.message}\n` +
+          "The installed @rangojs/router looks broken (a CLI chunk is missing). Reinstall it.",
       );
     } else {
       console.error(`[rango] Failed to load runtime discovery: ${err.message}`);
@@ -320,9 +344,11 @@ function formatDiagnostics(
     const prefix =
       d.reason === "unresolvable-basename"
         ? "createRouter basename"
-        : d.namePrefix
-          ? `${d.namePrefix}.*`
-          : `${d.pathPrefix}*`;
+        : d.reason === "unresolvable-routes"
+          ? "createRouter routes"
+          : d.namePrefix
+            ? `${d.namePrefix}.*`
+            : `${d.pathPrefix}*`;
     console.error(`  ${prefix}`);
     console.error(`    Reason:  ${d.reason} -- ${d.detail}`);
     console.error(`    Source:  ${d.sourceFile}`);

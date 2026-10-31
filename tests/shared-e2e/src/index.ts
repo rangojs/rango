@@ -58,6 +58,8 @@ export { runActionStaleNavigationTests } from "./action-stale-navigation-scenari
 export type { ActionStaleNavigationScenarioOptions } from "./action-stale-navigation-scenario.js";
 export { runActionHeldSegmentsTests } from "./action-held-segments-scenario.js";
 export type { ActionHeldSegmentsScenarioOptions } from "./action-held-segments-scenario.js";
+export { runParallelLoaderInheritHeldTests } from "./parallel-loader-inherit-held-scenario.js";
+export type { ParallelLoaderInheritHeldScenarioOptions } from "./parallel-loader-inherit-held-scenario.js";
 export { runActionFollowUpTests } from "./action-follow-up-scenario.js";
 export type { ActionFollowUpScenarioOptions } from "./action-follow-up-scenario.js";
 export { runHandlesAfterAwaitTests } from "./handles-after-await-scenario.js";

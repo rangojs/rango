@@ -7,8 +7,8 @@
  *
  * Sits in src/vite/, not src/vite/discovery/: the loader hook URL below
  * resolves against this module's import.meta.url, and the published bundles
- * (dist/vite/index.js, dist/bin/rango.js) ship the hook at the same relative
- * path.
+ * (dist/vite/index.js, and the CLI's code-split chunks in dist/bin/) ship the
+ * hook at the same relative path.
  */
 
 import type { ViteDevServer } from "vite";

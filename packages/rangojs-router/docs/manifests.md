@@ -274,10 +274,32 @@ Concretely:
   `"unresolvable-basename"`: every pattern would lack the prefix. The basename
   is read from the `createRouter` call whose urls the gen file uses. A basename
   inside a spread (`{ ...shared }`) is not read and not reported.
+- The router's own tree is read from `.routes(x)` or `createRouter({ urls: x })`
+  when `x` is a variable, a builder function (`({ path }) => [...]`) or an
+  inline `urls(...)` / `clientUrls(...)` call, with `as`, `satisfies` and
+  parentheses unwrapped. The call is recognised by its name or by a renamed
+  named import from `@rangojs/router` or `@rangojs/router/client`
+  (`import { urls as u }`); a `urls` imported from any other module under
+  another name is not read. Any other `x` (`.routes(buildUrls())`,
+  `urls: mod.tree`) is reported as `"unresolvable-routes"`, naming the mount.
+  The tree comes from the first `createRouter` chain with a readable mount; a
+  chain whose mounts are all unreadable is reported only when the file has no
+  other. A variable whose value is not a `urls()` call
+  (`const tree = buildUrls()`) is still not reported. Before #1349 an inline
+  `urls(...)` call was neither read nor reported: the CLI exited 0 and wrote no
+  `router.named-routes.gen.ts`, so `href()` and `reverse()` lost the route
+  names without a word.
+- Test files are never router roots: `*.test.*`, `*.spec.*` and a Flight
+  test's `*.rsc-test.*` are skipped by `findRouterFiles` and by the CLI's
+  router classification (`isRoutableSourceFile`). A Flight test
+  usually mounts an inline `urls(...)` tree; read as a router, it would get a
+  `named-routes.gen.ts` from the dev scan whose global `GeneratedRouteMap`
+  merges its fixture routes into the app's (cloudflare-basic's `test/` has ten
+  such files).
 - The parser reads a const's initializer and does not track later mutation:
   after `SITE.basename = "/b"` the gen file still uses the initial value. Use
   a string literal, a plain const, or an object declared `as const`.
-- In default mode, any unresolvable include or basename causes a hard error
+- In default mode, any unresolvable include, routes mount or basename causes a hard error
   with the list of diagnostics and the suggestion to use `--runtime`.
 - In `--static` mode, partial output is accepted with a warning (for a
   basename, the gen file is written without the prefix).

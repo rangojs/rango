@@ -161,7 +161,6 @@ export interface ResolvedSegment {
   parallelName?: string; // For parallels: the parallel group name (used to match with revalidations)
   // Loader-specific fields
   loaderId?: string; // For loaders: the loader $$id identifier
-  _inherited?: boolean; // For inherited loaders: dedup marker for buildMatchResult
   loaderData?: any; // For loaders: the resolved data from loader execution
   /**
    * True when this loader was awaited before first flush

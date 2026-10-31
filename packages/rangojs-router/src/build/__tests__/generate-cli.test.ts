@@ -4,6 +4,7 @@ import {
   cpSync,
   mkdtempSync,
   mkdirSync,
+  realpathSync,
   symlinkSync,
   writeFileSync,
   rmSync,
@@ -711,17 +712,17 @@ const fixturesRoot = join(__dirname, "__fixtures__");
 const commandTempDirs: string[] = [];
 
 /**
- * A spawned CLI spends nearly all its time loading typescript and vite, and
- * spawnSync holds the worker until the child exits. Measured on a 10-core
- * machine, a static-mode run: 0.5 s alone, 0.5-2.5 s beside 12 busy loops,
- * 3.7-6.1 s in full test:unit runs at load average 30-50 (past the 5 s
- * default); a --runtime run: 2.4 s, 2.5-10.1 s and 11.9-15.7 s. A spawned
- * case's test timeout is the child's 30 s kill timeout: vitest cannot end a
- * synchronous spawn sooner, so a shorter one only fails a correct run that
- * was slow.
+ * A spawned CLI spends nearly all its time loading typescript (and vite, for
+ * --runtime), and spawnSync holds the worker until the child exits. Measured
+ * on a 10-core machine, a static-mode run: 0.5 s alone, 0.5-2.5 s beside 12
+ * busy loops, 3.7-6.1 s in full test:unit runs at load average 30-50 (past
+ * the 5 s default); a --runtime run: 2.4 s, 2.5-10.1 s and 11.9-15.7 s. A
+ * spawned case's test timeout is the child's 30 s kill timeout: vitest cannot
+ * end a synchronous spawn sooner, so a shorter one only fails a correct run
+ * that was slow.
  */
-function spawnRango(args: string, env?: NodeJS.ProcessEnv) {
-  const result = spawnSync("node", [rangoBin, ...args.split(" ")], {
+function spawnRango(args: string, env?: NodeJS.ProcessEnv, bin = rangoBin) {
+  const result = spawnSync("node", [bin, ...args.split(" ")], {
     encoding: "utf-8",
     cwd: packageRoot,
     timeout: 30_000,
@@ -792,6 +793,40 @@ function cloneFixtureDir(name: string): string {
   return dest;
 }
 
+/**
+ * Copies the built CLI (dist/bin) beside a node_modules that holds only the
+ * dependencies its static path needs, typescript and picomatch, as in a
+ * consumer's install without vite (an optional peer dependency). Returns the
+ * copied rango.js and an env without NODE_PATH: pnpm's bin shims point it at
+ * the store's hoisted node_modules, where vite resolves.
+ */
+function cloneBinWithoutVite(): { bin: string; env: NodeJS.ProcessEnv } {
+  const tempRoot = mkdtempSync(join(tmpdir(), "rango-cli-no-vite-"));
+  commandTempDirs.push(tempRoot);
+  cpSync(join(packageRoot, "dist", "bin"), join(tempRoot, "bin"), {
+    recursive: true,
+  });
+  const modules = join(tempRoot, "node_modules");
+  mkdirSync(modules);
+  for (const dep of ["typescript", "picomatch"]) {
+    symlinkSync(
+      realpathSync(join(packageRoot, "node_modules", dep)),
+      join(modules, dep),
+      "dir",
+    );
+  }
+  writeFileSync(join(tempRoot, "package.json"), '{ "type": "module" }\n');
+  const { NODE_PATH: _nodePath, ...env } = process.env;
+  // Precondition: nothing above the copy resolves vite either.
+  const probe = spawnSync(
+    "node",
+    ["--input-type=module", "-e", 'await import("vite")'],
+    { cwd: join(tempRoot, "bin"), encoding: "utf-8", timeout: 30_000, env },
+  );
+  expect(probe.stderr).toContain("ERR_MODULE_NOT_FOUND");
+  return { bin: join(tempRoot, "bin", "rango.js"), env };
+}
+
 describe("CLI command-level tests", () => {
   afterEach(() => {
     for (const dir of commandTempDirs) {
@@ -815,6 +850,43 @@ describe("CLI command-level tests", () => {
     expect(content).toContain("home");
     expect(content).toContain("about");
     expect(content).toContain("api.health");
+  }, 30_000);
+
+  // Regression (rango-t211): the CLI bundle folded the runtime-discovery code
+  // in, so its top-level `import ... from "vite"` failed every command.
+  it("built binary runs --help without vite installed", () => {
+    const { bin, env } = cloneBinWithoutVite();
+    const result = spawnRango("--help", env, bin);
+    expect(result.combined).not.toContain("ERR_MODULE_NOT_FOUND");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Usage: rango generate");
+  }, 30_000);
+
+  it("built binary runs a static generate without vite installed", () => {
+    const { bin, env } = cloneBinWithoutVite();
+    const fixtureDir = cloneFixtureDir("app");
+    const genPath = join(fixtureDir, "router.named-routes.gen.ts");
+    const result = spawnRango(
+      `generate ${join(fixtureDir, "router.tsx")}`,
+      env,
+      bin,
+    );
+    expect(result.combined).not.toContain("ERR_MODULE_NOT_FOUND");
+    expect(result.status).toBe(0);
+    expect(readFileSync(genPath, "utf-8")).toContain("api.health");
+  }, 30_000);
+
+  it("built binary's --runtime without vite names what to install", () => {
+    const { bin, env } = cloneBinWithoutVite();
+    const fixtureDir = cloneFixtureDir("app");
+    const result = spawnRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+      env,
+      bin,
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Runtime discovery requires 'vite'");
+    expect(result.stderr).not.toContain("ERR_MODULE_NOT_FOUND");
   }, 30_000);
 
   it("classifies a clientUrls-only module (no lowercase urls( token)", async () => {
@@ -849,6 +921,9 @@ export default clientUrls(({ path }) => [
     const genPath = join(fixtureDir, "router.named-routes.gen.ts");
     const result = spawnRango(`generate ${routerFile} --runtime`);
     expect(result.status).toBe(0);
+    // The loader hook for cloudflare:* imports resolves next to its chunk
+    // (src/vite/temp-rsc-server.ts); a chunk move only warns, so pin it here.
+    expect(result.combined).not.toContain("Could not register");
     expect(existsSync(genPath)).toBe(true);
 
     const content = readFileSync(genPath, "utf-8");
@@ -1109,6 +1184,138 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
       );
     },
   );
+
+  // rango-t42: a root tree passed as an inline urls() call wrote no gen file
+  // and printed nothing, so href()/reverse() silently lost their route names.
+  function writeInlineUrlsRouter(mount: (tree: string) => string): {
+    routerFile: string;
+    genPath: string;
+  } {
+    const dir = mkdtempSync(join(tmpdir(), "rango-cli-inline-urls-"));
+    commandTempDirs.push(dir);
+    writeFileSync(
+      join(dir, "api.tsx"),
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const apiUrls = urls(({ path }) => [
+  path("/health", handler, { name: "health" }),
+]);
+`,
+    );
+    const routerFile = join(dir, "router.tsx");
+    const tree = `urls(({ path, include }) => [
+  path("/", () => null, { name: "home" }),
+  path("/about", () => null, { name: "about" }),
+  include("/api", apiUrls, { name: "api" }),
+])`;
+    writeFileSync(
+      routerFile,
+      `import { createRouter, urls } from "@rangojs/router";
+import { apiUrls } from "./api.js";
+import { buildUrls } from "./build.js";
+export const router = ${mount(tree)};
+`,
+    );
+    return { routerFile, genPath: join(dir, "router.named-routes.gen.ts") };
+  }
+
+  it.each([
+    [
+      ".routes(urls(...))",
+      (tree: string) => `createRouter({}).routes(${tree})`,
+    ],
+    [
+      "{ urls: urls(...) }",
+      (tree: string) => `createRouter({ urls: ${tree} })`,
+    ],
+    [
+      "(urls(...) satisfies T)",
+      (tree: string) => `createRouter({}).routes((${tree} satisfies T))`,
+    ],
+    [
+      "unreadable helper chain before the app's",
+      (tree: string) =>
+        `createRouter({}).routes(buildUrls());\nexport const app = createRouter({}).routes(${tree})`,
+    ],
+  ])(
+    "default mode writes named routes for an inline %s root tree",
+    async (_label, mount) => {
+      const { routerFile, genPath } = writeInlineUrlsRouter(mount);
+      const result = await runRango(`generate ${routerFile}`);
+      expect(result.combined).not.toContain("Unresolvable");
+      expect(result.status).toBe(0);
+      const content = readFileSync(genPath, "utf-8");
+      expect(content).toContain('home: "/",');
+      expect(content).toContain('about: "/about",');
+      expect(content).toContain('"api.health": "/api/health",');
+    },
+  );
+
+  it("default mode writes named routes for an inline root tree under a renamed urls import", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rango-cli-inline-alias-"));
+    commandTempDirs.push(dir);
+    const routerFile = join(dir, "router.tsx");
+    writeFileSync(
+      routerFile,
+      `import { createRouter, urls as u } from "@rangojs/router";
+export const router = createRouter({}).routes(u(({ path }) => [
+  path("/", () => null, { name: "home" }),
+]));
+`,
+    );
+    const result = await runRango(`generate ${routerFile}`);
+    expect(result.combined).not.toContain("Unresolvable");
+    expect(result.status).toBe(0);
+    expect(
+      readFileSync(join(dir, "router.named-routes.gen.ts"), "utf-8"),
+    ).toContain('home: "/",');
+  });
+
+  it("default mode hard-fails on a root tree it cannot read and names the call", async () => {
+    const { routerFile, genPath } = writeInlineUrlsRouter(
+      () => "createRouter({}).routes(buildUrls())",
+    );
+    const result = await runRango(`generate ${routerFile}`);
+    expect(result.status).toBe(1);
+    expect(result.combined).toContain("Unresolvable routes detected");
+    expect(result.combined).toContain("  createRouter routes\n");
+    expect(result.combined).toContain("unresolvable-routes");
+    expect(result.combined).toContain("`.routes(buildUrls())`");
+    expect(result.combined).toContain("--runtime");
+    expect(existsSync(genPath)).toBe(false);
+  });
+
+  it("--static warns on each root tree it cannot read", async () => {
+    const { routerFile } = writeInlineUrlsRouter(
+      () => "createRouter({ urls: mod.tree }).routes(buildUrls())",
+    );
+    const result = await runRango(`generate ${routerFile} --static`);
+    expect(result.status).toBe(0);
+    expect(result.combined).toContain("partial output (unresolvable routes)");
+    expect(result.combined).toContain("`urls: mod.tree`");
+    expect(result.combined).toContain("`.routes(buildUrls())`");
+  });
+
+  it("a directory run writes no named routes beside a Flight test's inline router", async () => {
+    const { routerFile, genPath } = writeInlineUrlsRouter(
+      (tree) => `createRouter({}).routes(${tree})`,
+    );
+    const dir = join(routerFile, "..");
+    const flightTest = join(dir, "page.rsc-test.tsx");
+    writeFileSync(
+      flightTest,
+      `import { createRouter, urls } from "@rangojs/router";
+const router = createRouter({}).routes(urls(({ path }) => [
+  path("/fixture", () => null, { name: "fixture" }),
+]));
+`,
+    );
+    const result = await runRango(`generate ${dir}`);
+    expect(result.status).toBe(0);
+    expect(result.combined).toContain("(1 router)");
+    expect(readFileSync(genPath, "utf-8")).toContain('home: "/",');
+    expect(existsSync(namedRoutesGenPathFor(flightTest))).toBe(false);
+  });
 
   it("--config without --runtime is ignored with a warning", async () => {
     const fixtureDir = cloneFixtureDir("app");

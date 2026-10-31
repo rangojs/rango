@@ -115,7 +115,6 @@ import type {
 import { isPlaceholder } from "../types/segments.js";
 import { interceptMatched } from "../browser/intercept-utils.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
-import { debugLog } from "./logging.js";
 import { appendMetric } from "./metrics.js";
 import {
   collectInterceptTargetNames,
@@ -132,83 +131,11 @@ export async function collectSegments(
   return segments;
 }
 
-/**
- * Deduplicate inherited loader segments by loaderId.
- *
- * When a route has loaders and a child layout has parallel slots, the same
- * loader is resolved twice: once for the route and once inherited into the
- * layout (tagged with `_inherited`). The inherited copy is only needed when
- * the route uses `loading()` — in that case, the loader data is inside a
- * LoaderBoundary/Suspense that parallel slots can't reach through. Without
- * loading(), useLoader() traverses parent contexts and finds the data.
- */
-function deduplicateLoaderSegments(
-  segments: ResolvedSegment[],
-  logPrefix: string,
-): { segments: ResolvedSegment[]; removedIds: Set<string> } {
-  // Single pass: original (non-inherited) loaderIds, all loaderIds grouped by
-  // namespace, and namespaces of segments that declare loading().
-  const originalLoaders = new Set<string>();
-  const loaderIdsByNamespace = new Map<string, string[]>();
-  const namespacesWithLoading = new Set<string>();
-  for (const s of segments) {
-    if (s.type === "loader" && s.loaderId) {
-      if (!s._inherited) originalLoaders.add(s.loaderId);
-      const ids = loaderIdsByNamespace.get(s.namespace);
-      if (ids) ids.push(s.loaderId);
-      else loaderIdsByNamespace.set(s.namespace, [s.loaderId]);
-    } else if (
-      s.type !== "loader" &&
-      s.loading !== undefined &&
-      s.loading !== false
-    ) {
-      namespacesWithLoading.add(s.namespace);
-    }
-  }
-
-  const loadersWithLoading = new Set<string>();
-  for (const ns of namespacesWithLoading) {
-    for (const id of loaderIdsByNamespace.get(ns) ?? []) {
-      loadersWithLoading.add(id);
-    }
-  }
-
-  const result: ResolvedSegment[] = [];
-  const removedIds = new Set<string>();
-
-  for (const s of segments) {
-    if (
-      s.type === "loader" &&
-      s.loaderId &&
-      s._inherited &&
-      originalLoaders.has(s.loaderId) &&
-      !loadersWithLoading.has(s.loaderId)
-    ) {
-      removedIds.add(s.id);
-      continue;
-    }
-    result.push(s);
-  }
-
-  if (removedIds.size > 0) {
-    debugLog(
-      logPrefix,
-      `deduped ${removedIds.size} inherited loader segment(s)`,
-    );
-  }
-
-  return { segments: result, removedIds };
-}
-
 export function buildMatchResult<TEnv>(
   allSegments: ResolvedSegment[],
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
 ): MatchResult {
-  const logPrefix = ctx.isFullMatch
-    ? "[Router.match]"
-    : "[Router.matchPartial]";
-
   let allIds: string[];
   let segmentsToRender: ResolvedSegment[];
   let resolvedIds: string[];
@@ -271,19 +198,11 @@ export function buildMatchResult<TEnv>(
     }
   }
 
-  const { segments: dedupedSegments, removedIds } = deduplicateLoaderSegments(
-    segmentsToRender,
-    logPrefix,
-  );
-
-  const matchedIds =
-    removedIds.size > 0 ? allIds.filter((id) => !removedIds.has(id)) : allIds;
-
-  // One pass over dedupedSegments: strip the internal _handlerRan marker and
+  // One pass over segmentsToRender: strip the internal _handlerRan marker and
   // collect the diff ids (id is unchanged by the strip) together.
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
-  for (const s of dedupedSegments) {
+  for (const s of segmentsToRender) {
     if (s._handlerRan === undefined) {
       cleanedSegments.push(s);
     } else {
@@ -303,7 +222,7 @@ export function buildMatchResult<TEnv>(
 
   return {
     segments: cleanedSegments,
-    matched: matchedIds,
+    matched: allIds,
     diff,
     resolvedIds,
     params: ctx.matched.params,
