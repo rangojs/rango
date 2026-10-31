@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Fixed: `rango generate` reads an inline `createRouter().routes(urls(...))` and stops on a root tree it cannot read (PR_LINK)
+### Fixed: `rango generate` reads an inline `createRouter().routes(urls(...))` and stops on a root tree it cannot read ([#1349](https://github.com/rangojs/rango/pull/1349))
 
 **Before.** `rango generate` read a router's tree only from a variable or a
 builder function. An inline call, `createRouter({}).routes(urls(...))` or
