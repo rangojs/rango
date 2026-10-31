@@ -108,7 +108,7 @@ describe("navigation-store cross-tab invalidation", () => {
     });
   });
 
-  it("a server action whose response rotated the state flushes without rotating and sends the full broadcast", () => {
+  it("a server action whose response rotated the state flushes, rotates once more and sends the full broadcast", () => {
     const store = makeStore();
 
     // The response's Set-Cookie reaches the jar during the flight; the
@@ -119,7 +119,9 @@ describe("navigation-store cross-tab invalidation", () => {
     exitActionFence();
 
     expect(markPrefetchesStaleMock).not.toHaveBeenCalled();
-    expect(clearPrefetchCacheMock).toHaveBeenCalledExactlyOnceWith(false);
+    // A newer value than the server's, which a tab that already read the
+    // jar still adopts.
+    expect(clearPrefetchCacheMock).toHaveBeenCalledExactlyOnceWith();
     expect(channel.postMessage).toHaveBeenCalledWith({
       type: "invalidate",
       path: "/products",
@@ -127,6 +129,21 @@ describe("navigation-store cross-tab invalidation", () => {
       rangoState: "build:sender",
       stateCookieName: "rango-state_router",
     });
+  });
+
+  it("one rotation makes one landing of an overlapping batch flush", () => {
+    const store = makeStore();
+
+    enterActionFence();
+    enterActionFence();
+    noteStateRotation();
+    store.markCacheAsStaleAndBroadcast();
+    exitActionFence();
+    store.markCacheAsStaleAndBroadcast();
+    exitActionFence();
+
+    expect(clearPrefetchCacheMock).toHaveBeenCalledOnce();
+    expect(markPrefetchesStaleMock).toHaveBeenCalledOnce();
   });
 
   it("a rotation seen before the action's fence went up does not count", () => {

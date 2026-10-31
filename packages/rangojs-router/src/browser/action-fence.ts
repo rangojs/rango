@@ -40,10 +40,12 @@ let fenceCount = 0;
 
 /**
  * Whether a cookie read saw the state rotate externally while the fence was
- * up (navigation-store-handle.ts reports it). Almost always the action's own
- * server-seat `invalidateClientCache()` `Set-Cookie`; a sibling tab's
- * rotation in that window reads the same and costs one full flush, today's
- * behavior. navigation-store.ts reads it when the action lands.
+ * up and no action's landing took it yet (navigation-store-handle.ts reports
+ * it). Almost always an action's own server-seat `invalidateClientCache()`
+ * `Set-Cookie`; a sibling tab's rotation in that window reads the same and
+ * costs one full flush, today's behavior. navigation-store.ts takes it when
+ * an action lands, so one rotation makes one landing flush, not every later
+ * landing of the batch.
  */
 let rotatedInFence = false;
 
@@ -62,11 +64,13 @@ export function noteStateRotation(): void {
 }
 
 /**
- * Whether the state rotated externally since the fence went up. False with
- * the fence down.
+ * Whether the state rotated externally since the fence went up or the last
+ * landing took it, and clear it. False with the fence down.
  */
-export function stateRotatedInActionFence(): boolean {
-  return fenceCount > 0 && rotatedInFence;
+export function takeStateRotationInActionFence(): boolean {
+  const rotated = fenceCount > 0 && rotatedInFence;
+  rotatedInFence = false;
+  return rotated;
 }
 
 export function isActionFenceActive(): boolean {

@@ -2133,10 +2133,11 @@ change (see Contract Change Process).
   page they show (`finalizeAction` in `browser/server-action-bridge.ts`,
   `markCacheAsStaleAndBroadcast()` in `browser/navigation-store.ts`). It
   flushes nothing and rotates nothing (#1329). `invalidateClientCache()` in
-  the action still rotates the state: its `Set-Cookie` strands this tab's
-  prefetch keys, the prefetch map is flushed without a second rotation, and
-  the broadcast is today's full one, so other tabs adopt the new state and
-  flush theirs. `keepClientCache()` turns R1 and R3 off for that action. An
+  the action still rotates the state: the landing sees its `Set-Cookie`,
+  flushes the prefetch map, rotates once more and sends the full broadcast,
+  as every action did before, so other tabs adopt the newer state and flush
+  theirs (a tab that already read the server's value would refuse an equal
+  one and rotate on its own). `keepClientCache()` turns R1 and R3 off for that action. An
   action with no response (a network failure, or an abort before the
   response) invalidates nothing.
 - **R2. The action's own response is its revalidation.** The server re-renders
@@ -2239,9 +2240,11 @@ change (see Contract Change Process).
   aborted and lands stale). A click on it shows it at once, then revalidates
   the page once the click settled, as Back onto a stale entry does: its ids
   held, an action error boundary on screen held, `useNavigation()` idle
-  (`revalidateStalePrefetch` in `browser/navigation-bridge.ts`). It never
-  runs while an action is in flight: the click navigated during that
-  action's flight, so its follow-up refetches the page (R3). The pre-write
+  (`revalidateStalePrefetch` in `browser/navigation-bridge.ts`, through the
+  lane `handlePopstate` uses). An action in flight does not hold it back, as
+  it does not hold Back's: that action's follow-up, when it owes one (R3),
+  starts a navigation that supersedes it. An action that starts while it is
+  in flight does not leave it, as it does not leave Back's. The pre-write
   values show for one round trip, a layout loader that re-runs on
   navigation included (3, then 2, then 3): accepted. Pinned by
   semantic-matrix rows PS1-PS3 and `e2e/action-stale-prefetch.test.ts`.

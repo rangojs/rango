@@ -1564,7 +1564,7 @@ describe("navigation-bridge click on a stale prefetch", () => {
     expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves the page to the follow-up of an action in flight", async () => {
+  it("runs while an action is in flight, as Back's revalidation does", async () => {
     const env = setup();
     staleClick(env);
 
@@ -1572,6 +1572,29 @@ describe("navigation-bridge click on a stale prefetch", () => {
     enterActionFence();
     await env.settle(true);
 
-    expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(1);
+    expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(2);
+    expect(fetchPartialUpdateMock.mock.calls[1]![5]).toMatchObject({
+      type: "stale-revalidation",
+    });
+  });
+
+  it("re-renders the page whole when its cached handles are incomplete", async () => {
+    const env = setup();
+    staleClick(env);
+    env.store.getCachedSegments.mockImplementation((key: string) =>
+      key === CART
+        ? {
+            segments: SEGMENTS,
+            stale: false,
+            handleData: { h: {} },
+            handlesPending: true,
+          }
+        : undefined,
+    );
+
+    await env.bridge.navigate("/cart");
+    await env.settle(true);
+
+    expect(fetchPartialUpdateMock.mock.calls[1]![1]).toEqual([]);
   });
 });

@@ -237,21 +237,69 @@ export function createNavigationBridge(
   }
 
   /**
+   * Back's stale-revalidation lane: a background request for the page on
+   * screen (skipLoadingState: useNavigation() stays idle, useLinkStatus shows
+   * nothing) that holds `segmentIds` and an action error boundary on screen,
+   * re-caches the entry (cacheOnly) and commits as kind "revalidate". Used by
+   * a Back/Forward restore of a stale entry (handlePopstate) and after a click
+   * on a stale prefetch (revalidateStalePrefetch).
+   */
+  function revalidateInBackground(
+    url: string,
+    segmentIds: string[],
+    intercept: { isIntercept: boolean; sourceUrl?: string },
+    boundary: string | undefined,
+  ): void {
+    const tx = createNavigationTransaction(store, eventController, url, {
+      skipLoadingState: true,
+      replace: true,
+    });
+
+    fetchPartialUpdate(
+      url,
+      segmentIds,
+      false,
+      tx.handle.signal,
+      tx.with({
+        url,
+        replace: true,
+        scroll: false,
+        intercept: intercept.isIntercept,
+        interceptSourceUrl: intercept.sourceUrl,
+        cacheOnly: true,
+      }),
+      {
+        type: "stale-revalidation",
+        interceptSourceUrl: intercept.sourceUrl,
+        boundary,
+      },
+    )
+      .catch((error) => {
+        if (isBackgroundSuppressible(error)) return;
+        console.error("[Browser] Background revalidation failed:", error);
+      })
+      .finally(() => {
+        tx[Symbol.dispose]();
+      });
+  }
+
+  /**
    * A click that adopted a prefetch a server action marked stale
    * (prefetch/cache.ts isPrefetchStale) committed the pre-write payload, as
    * any prefetched click commits. Once that navigation settled
    * (NavigationEntry.settled: its commit, any `prefetch: false` fill and its
    * stream, so this never supersedes the click (dc-t114) nor cuts a response
-   * that arrived short (rango-d171)), the page revalidates in Back's
-   * stale-revalidation lane (handlePopstate): the ids on screen held, the
-   * action error boundary it shows held, useNavigation() idle.
+   * that arrived short (rango-d171)), the page revalidates in Back's lane
+   * (revalidateInBackground), with the ids on screen and the action error
+   * boundary it shows held, as Back onto a stale entry does.
    *
    * The entry is marked stale first, so a Back onto it revalidates when this
    * one never ran or was left. Nothing runs when the click did not commit,
-   * when the page moved since (a newer navigation aborts the click's entry, a
-   * shallow one moves the history key), or while an action is in flight: the
-   * click navigated during its flight, so its follow-up refetches the page
-   * (server-action-bridge.ts followUp).
+   * or when the page moved since (a newer navigation aborts the click's
+   * entry, a shallow one moves the history key) or another navigation is
+   * open. An action in flight does not hold it back, as it does not hold
+   * Back's: its follow-up, when it owes one, starts a navigation that
+   * supersedes this one.
    */
   function revalidateStalePrefetch(
     entry: NavigationEntry,
@@ -265,49 +313,30 @@ export function createNavigationBridge(
       if (
         store.getHistoryKey() !== historyKey ||
         eventController.getUnsettledNavigation() ||
-        isActionFenceActive() ||
         !isRestorable(cached.segments)
       ) {
         return;
       }
-      const url = window.location.href;
       const historyState = window.history.state;
       const isIntercept = historyState?.intercept === true;
-      const interceptSourceUrl = historyState?.sourceUrl;
       const boundaryAt = isIntercept ? -1 : actionBoundaryAt(cached.segments);
       if (boundaryAt === 0) return;
       const boundary = cached.segments[boundaryAt]?.id;
-      const heldIds = idsAboveBoundary(
-        cached.segments.map((s) => s.id),
+      debugLog("[Browser] Stale prefetch committed, background revalidating");
+      // A deferred Meta still pending when its handles were cached: a whole
+      // render re-streams them (handlePopstate, handlesPending).
+      const segmentIds = cached.handlesPending
+        ? []
+        : idsAboveBoundary(
+            cached.segments.map((s) => s.id),
+            boundary,
+          );
+      revalidateInBackground(
+        window.location.href,
+        segmentIds,
+        { isIntercept, sourceUrl: historyState?.sourceUrl },
         boundary,
       );
-      debugLog("[Browser] Stale prefetch committed, background revalidating");
-      const tx = createNavigationTransaction(store, eventController, url, {
-        skipLoadingState: true,
-        replace: true,
-      });
-      fetchPartialUpdate(
-        url,
-        heldIds,
-        false,
-        tx.handle.signal,
-        tx.with({
-          url,
-          replace: true,
-          scroll: false,
-          intercept: isIntercept,
-          interceptSourceUrl,
-          cacheOnly: true,
-        }),
-        { type: "stale-revalidation", interceptSourceUrl, boundary },
-      )
-        .catch((error) => {
-          if (isBackgroundSuppressible(error)) return;
-          console.error("[Browser] Background revalidation failed:", error);
-        })
-        .finally(() => {
-          tx[Symbol.dispose]();
-        });
     });
   }
 
@@ -933,39 +962,12 @@ export function createNavigationBridge(
               // the deferred-Meta-aborted case, so action/cross-tab SWR keeps the
               // cheap diff path.
               const segmentIds = cached?.handlesPending ? [] : heldIds;
-
-              const tx = createNavigationTransaction(
-                store,
-                eventController,
-                url,
-                { skipLoadingState: true, replace: true },
-              );
-
-              fetchPartialUpdate(
+              revalidateInBackground(
                 url,
                 segmentIds,
-                false,
-                tx.handle.signal,
-                tx.with({
-                  url,
-                  replace: true,
-                  scroll: false,
-                  intercept: isIntercept,
-                  interceptSourceUrl,
-                  cacheOnly: true,
-                }),
-                { type: "stale-revalidation", interceptSourceUrl, boundary },
-              )
-                .catch((error) => {
-                  if (isBackgroundSuppressible(error)) return;
-                  console.error(
-                    "[Browser] Background revalidation failed:",
-                    error,
-                  );
-                })
-                .finally(() => {
-                  tx[Symbol.dispose]();
-                });
+                { isIntercept, sourceUrl: interceptSourceUrl },
+                boundary,
+              );
             }
           };
           // React commits a transition started while window.event is the

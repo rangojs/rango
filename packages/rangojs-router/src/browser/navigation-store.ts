@@ -11,7 +11,7 @@ import type {
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
 import { clearPrefetchCache, markPrefetchesStale } from "./prefetch/cache.js";
-import { stateRotatedInActionFence } from "./action-fence.js";
+import { takeStateRotationInActionFence } from "./action-fence.js";
 import { LoaderStore } from "../loader-store.js";
 import {
   adoptRangoState,
@@ -353,21 +353,23 @@ export function createNavigationStore(
    *
    * When the state rotated during the action (the action called the server
    * seat of `invalidateClientCache()`, whose `Set-Cookie` reached the jar),
-   * this tab's prefetch keys are already stranded: the prefetch map is flushed
-   * without rotating again, and other tabs get today's full broadcast, which
-   * carries the newer state for them to adopt.
+   * it does what every action did before #1329: flush the prefetch map,
+   * rotate the state once more and send the full broadcast. The second
+   * rotation is what lets other tabs adopt: one that already read the
+   * server's value from the shared jar would refuse an equal one and rotate
+   * on its own, stranding this tab's new prefetches.
    */
   function markStaleSoftAndBroadcast(): void {
     markHistoryStale();
     // The read reports an external rotation the jar holds to the fence.
-    getRangoState();
-    if (stateRotatedInActionFence()) {
-      clearPrefetchCache(false);
+    const rangoState = getRangoState();
+    if (takeStateRotationInActionFence()) {
+      clearPrefetchCache();
       broadcastInvalidation(false);
       return;
     }
     markPrefetchesStale();
-    broadcastInvalidation(true);
+    broadcastInvalidation(true, rangoState);
   }
 
   /**
@@ -375,7 +377,10 @@ export function createNavigationStore(
    * that rotated nothing: a receiver that cannot adopt a newer state marks its
    * caches stale instead of flushing them and rotating.
    */
-  function broadcastInvalidation(soft: boolean): void {
+  function broadcastInvalidation(
+    soft: boolean,
+    rangoState: string = getRangoState(),
+  ): void {
     // Only broadcast if cross-tab sync is enabled
     if (!crossTabSync) return;
 
@@ -388,7 +393,7 @@ export function createNavigationStore(
         type: "invalidate",
         path: currentPath,
         segmentIds: currentSegmentIds,
-        rangoState: getRangoState(),
+        rangoState,
         stateCookieName: getRangoStateCookieName(),
         ...(soft && { soft: true }),
       });

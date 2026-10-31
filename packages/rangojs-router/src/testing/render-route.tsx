@@ -558,10 +558,11 @@ export interface TestRouterHandle {
    * Land a server action's response on the page on screen. `loaders` are the
    * loader values after the action's write: they become the data every
    * later response carries, and the page on screen re-renders with them in
-   * the action lane (commitInTransition, kind "action"). Without
-   * `keepClientCache`, production's store then marks every history entry and
-   * every prefetch stale (`markCacheAsStaleAndBroadcast()`), as the action
-   * bridge does: nothing is flushed and the state cookie is not rotated.
+   * the action lane (commitInTransition, kind "action", unless
+   * transition({ when }) gates it off). Without `keepClientCache`,
+   * production's store then marks every history entry and every prefetch
+   * stale (`markCacheAsStaleAndBroadcast()`), as the action bridge does:
+   * nothing is flushed and the state cookie is not rotated.
    * `keepClientCache: true` is the `keepClientCache()` directive: caches stay
    * fresh. The action's own lifecycle (`useAction()`), its follow-up and its
    * redirect are e2e territory.
@@ -1018,8 +1019,17 @@ export async function renderRoute(
     // runs it (navigation-bridge.ts revalidateStalePrefetch).
     const entry = eventController.getUnsettledNavigation();
     if (prefetchedPage && isPrefetchStale(prefetchedPage) && entry) {
+      const href = new URL(target, TEST_ORIGIN).href;
       void entry.settled.then((committed) => {
-        if (committed) void revalidateStalePrefetch(target);
+        // Production's guards: the page is still on screen and no other
+        // navigation is open.
+        if (
+          committed &&
+          eventController.getLocation().href === href &&
+          !eventController.getUnsettledNavigation()
+        ) {
+          void revalidateStalePrefetch(target);
+        }
       });
     }
     // Runs in the caller's task, so a <Link> click's own act() takes it.
@@ -1205,11 +1215,68 @@ export async function renderRoute(
   };
 
   /**
+   * Re-render the page at `url` with the loader data current now, decided by
+   * transition({ when }) as `kind`. `commit()` hands it over as production's
+   * action and stale-revalidation commits do (browser/partial-update.ts):
+   * through commitInTransition unless gated off.
+   */
+  const renderPageAgain = async (
+    url: URL,
+    kind: "action" | "revalidate",
+    renderOptions: { forceAwait?: boolean; isAction?: boolean },
+  ): Promise<{ commit(): Promise<void> }> => {
+    const match = resolve(url.pathname);
+    const segments = buildSegments(routes, match.params, loaderData, mount);
+    const metadata = makeMetadata(url.pathname, segments, match.params);
+    const gatedOff = decideTransitionGatedOff(segments, () => ({
+      kind,
+      from: {
+        url: eventController.getLocation().href,
+        params: eventController.getParams(),
+        routeName: leaf.name,
+        state: window.history.state,
+      },
+      to: {
+        url,
+        params: match.params,
+        routeName: leaf.name,
+        state: window.history.state,
+      },
+    }));
+    const root = await renderSegments(segments, {
+      ...renderOptions,
+      outletPending: options.outletPending,
+      transitionGatedOff: gatedOff,
+    });
+    return {
+      commit: async () => {
+        store.setSegmentIds(segments.map((s) => s.id));
+        const shown = entries.get(entryOnScreen);
+        if (shown) shown.segments = segments;
+        const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
+        await act(async () => {
+          auditTreeCause(kind === "action" ? "action" : "stale-revalidation");
+          if (gatedOff) emit({ root, metadata });
+          else {
+            commitInTransition(
+              store.loaders,
+              emit,
+              segments,
+              { root, metadata },
+              kind,
+              shouldStartViewTransition(segments, gatedOff) ? ["action"] : [],
+            );
+          }
+        });
+      },
+    };
+  };
+
+  /**
    * Back's stale-revalidation lane (navigation-bridge.ts handlePopstate),
    * after a click on a stale prefetch: a background navigation
    * (skipLoadingState) whose response arrives a task later, rendered with
-   * the loader data current then and committed through commitInTransition
-   * with kind "revalidate", unless transition({ when }) gates it off.
+   * the loader data current then, kind "revalidate".
    */
   const revalidateStalePrefetch = async (target: string): Promise<void> => {
     const nextUrl = new URL(target, TEST_ORIGIN);
@@ -1221,49 +1288,12 @@ export async function renderRoute(
       // Outside act(): a navigate() the test starts meanwhile runs its own.
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (handle.signal.aborted) return;
-      const match = resolve(nextUrl.pathname);
-      const segments = buildSegments(routes, match.params, loaderData, mount);
-      const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
-      const gatedOff = decideTransitionGatedOff(segments, () => ({
-        kind: "revalidate",
-        from: {
-          url: eventController.getLocation().href,
-          params: eventController.getParams(),
-          routeName: leaf.name,
-          state: window.history.state,
-        },
-        to: {
-          url: nextUrl,
-          params: match.params,
-          routeName: leaf.name,
-          state: window.history.state,
-        },
-      }));
-      const root = await renderSegments(segments, {
+      const page = await renderPageAgain(nextUrl, "revalidate", {
         forceAwait: true,
-        outletPending: options.outletPending,
-        transitionGatedOff: gatedOff,
       });
       if (handle.signal.aborted) return;
       handle.complete(nextUrl);
-      store.setSegmentIds(segments.map((s) => s.id));
-      const shown = entries.get(entryOnScreen);
-      if (shown) shown.segments = segments;
-      const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
-      await act(async () => {
-        auditTreeCause("stale-revalidation");
-        if (gatedOff) emit({ root, metadata });
-        else {
-          commitInTransition(
-            store.loaders,
-            emit,
-            segments,
-            { root, metadata },
-            "revalidate",
-            shouldStartViewTransition(segments, gatedOff) ? ["action"] : [],
-          );
-        }
-      });
+      await page.commit();
     } finally {
       await act(() => {
         handle[Symbol.dispose]();
@@ -1281,31 +1311,14 @@ export async function renderRoute(
     for (const [loader, data] of actionOptions?.loaders ?? []) {
       loaderData[ensureSyntheticId(loader)] = data;
     }
-    const current = new URL(eventController.getLocation().href);
-    const match = resolve(current.pathname);
-    const segments = buildSegments(routes, match.params, loaderData, mount);
-    const metadata = makeMetadata(current.pathname, segments, match.params);
-    const root = await renderSegments(segments, {
-      outletPending: options.outletPending,
-      isAction: true,
-    });
-    store.setSegmentIds(segments.map((s) => s.id));
-    const shown = entries.get(entryOnScreen);
-    if (shown) shown.segments = segments;
+    const page = await renderPageAgain(
+      new URL(eventController.getLocation().href),
+      "action",
+      { isAction: true },
+    );
     // The action bridge's landing (server-action-bridge.ts finalizeAction).
     if (!actionOptions?.keepClientCache) store.markCacheAsStaleAndBroadcast();
-    const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
-    await act(async () => {
-      auditTreeCause("action");
-      commitInTransition(
-        store.loaders,
-        emit,
-        segments,
-        { root, metadata },
-        "action",
-        [],
-      );
-    });
+    await page.commit();
   };
 
   // A back/forward onto the mounted entry or one a navigation wrote, whose

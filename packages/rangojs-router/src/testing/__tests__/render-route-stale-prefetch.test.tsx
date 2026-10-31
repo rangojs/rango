@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useEffect, useRef, type ReactNode } from "react";
-import { cleanup, waitFor } from "@testing-library/react";
+import { act, cleanup, waitFor } from "@testing-library/react";
 import { Outlet } from "../../client.js";
 import { useNavigation } from "../../browser/react/use-navigation.js";
 import { useParams } from "../../browser/react/use-params.js";
@@ -145,5 +145,46 @@ describe("renderRoute: a click on a prefetch made before a server action", () =>
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(getByTestId("page").textContent).toBe("orders:3");
+  });
+
+  it("a transition() route holds the revalidation until its data lands, idle throughout", async () => {
+    function Reader(): ReactNode {
+      const { data, isLoading } = useLoader(BasketLoader);
+      const idle = useNavigation((nav) => nav.state === "idle");
+      return (
+        <span data-testid="reader">
+          {`${data.count} ${isLoading ? "loading" : "settled"} ${idle ? "idle" : "busy"}`}
+        </span>
+      );
+    }
+    const { getByTestId, router } = await renderRoute(
+      [
+        { path: "/", Component: Header, loaderIds: [BasketLoader.$$id] },
+        { path: "/:page", Component: Reader, transition: {} },
+      ],
+      { request: "/home", loaders: [[BasketLoader, { count: 2 }]] },
+    );
+    router.prefetch("/cart");
+
+    let land!: (value: { count: number }) => void;
+    const written = new Promise<{ count: number }>((r) => (land = r));
+    // The write's data is still pending: React holds the action's own commit
+    // on it (not awaited, as a transition React holds never settles act()).
+    void router.action({ loaders: [[BasketLoader, written]] });
+    await router.navigate("/cart");
+    expect(getByTestId("reader").textContent).toBe("2 settled idle");
+
+    // The revalidation reads the pending post-write data: React holds the
+    // page on the prefetch's values, and useNavigation() stays idle.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(getByTestId("reader").textContent).toMatch(/^2 .* idle$/);
+
+    await act(async () => {
+      land({ count: 3 });
+      await written;
+    });
+    await waitFor(() =>
+      expect(getByTestId("reader").textContent).toBe("3 settled idle"),
+    );
   });
 });
