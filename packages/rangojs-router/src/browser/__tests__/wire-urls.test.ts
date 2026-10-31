@@ -25,6 +25,7 @@ import { setAppVersion } from "../app-version.js";
 import { registerNavigationStore } from "../navigation-store-handle.js";
 import { __resetActionFence } from "../action-fence.js";
 import type { NavigationStore, RscPayload } from "../types.js";
+import { fetchUrlOf } from "../../testing/__tests__/helpers/fetch-url.js";
 
 const ORIGIN = "http://localhost:4173";
 const RANGO_STATE = "v1:100";
@@ -174,6 +175,24 @@ describe("navigation URL (navigation-client.ts)", () => {
     expect(sentUrls()).toEqual([
       `${ORIGIN}/products?_rsc_partial=true&_rsc_segments=&_rsc_stale=true&_rsc_boundary=M0L0L0R0&_rsc_v=v7&_rsc_rid=rid`,
     ]);
+  });
+});
+
+describe("navigation URL, as the source-independence tests build it", () => {
+  // helpers/fetch-url.ts fetchUrlOf derives the prefetch cache keys
+  // the tests store and adopt under; it must stay the URL the client sends.
+  it.each([
+    ["/products", []],
+    ["/products?page=2", ["M0L0", "M0L0L0R0"]],
+    ["/p1.html?ref=x&b=1", ["M0L0L0D0.__rango_runtime_loader_0", "M0L0"]],
+  ] as const)("matches the request for %s holding %j", async (to, ids) => {
+    await navigationClient().fetchPartial({
+      targetUrl: to,
+      previousUrl: `${ORIGIN}/current`,
+      segmentIds: [...ids],
+    });
+
+    expect(sentUrls()).toEqual([fetchUrlOf(to, `${ORIGIN}/current`, ids).href]);
   });
 });
 

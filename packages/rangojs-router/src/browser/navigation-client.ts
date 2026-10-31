@@ -41,6 +41,25 @@ import { cancelAllPrefetches } from "./prefetch/loader.js";
 import { writePartialParams } from "./wire-protocol.js";
 
 /**
+ * The completed prefetch a navigation adopts: the one stored under its
+ * source key, else the one every source page shares. None when the
+ * navigation cannot use a prefetch.
+ */
+export function consumeStoredPrefetch(
+  canUsePrefetch: boolean,
+  sourceKey: string,
+  wildcardKey: string,
+): { entry: DecodedPrefetch | null; hitKey: string | null } {
+  if (!canUsePrefetch) return { entry: null, hitKey: null };
+  const sourced = consumePrefetch(sourceKey);
+  if (sourced) return { entry: sourced, hitKey: sourceKey };
+  const shared = consumePrefetch(wildcardKey);
+  return shared
+    ? { entry: shared, hitKey: wildcardKey }
+    : { entry: null, hitKey: null };
+}
+
+/**
  * Create a navigation client for fetching RSC payloads
  *
  * The client handles building URLs with RSC parameters and
@@ -147,17 +166,13 @@ export function createNavigationClient(
       const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
       const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);
 
-      let cachedEntry: DecodedPrefetch | null = null;
-      let hitKey: string | null = null;
-      if (canUsePrefetch) {
-        cachedEntry = consumePrefetch(cacheKey);
-        if (cachedEntry) {
-          hitKey = cacheKey;
-        } else {
-          cachedEntry = consumePrefetch(wildcardKey);
-          if (cachedEntry) hitKey = wildcardKey;
-        }
-      }
+      const stored = consumeStoredPrefetch(
+        canUsePrefetch,
+        cacheKey,
+        wildcardKey,
+      );
+      const cachedEntry = stored.entry;
+      let hitKey = stored.hitKey;
 
       let inflightEntryPromise: Promise<DecodedPrefetch | null> | null = null;
       if (canUsePrefetch && !cachedEntry) {
