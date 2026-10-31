@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import {
   cpSync,
@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { format } from "node:util";
 import { spawnSync } from "node:child_process";
 import {
   writePerModuleRouteTypesForFile,
@@ -676,7 +677,8 @@ describe("factory fixture", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CLI command-level tests: spawn `rango generate` as a subprocess
+// CLI command-level tests: `rango generate` from src/bin/rango.ts in this
+// worker, and the built dist/bin/rango.js as a subprocess
 // ---------------------------------------------------------------------------
 
 const packageRoot = resolve(__dirname, "..", "..", "..");
@@ -708,7 +710,17 @@ const staticGenPath = join(
 const fixturesRoot = join(__dirname, "__fixtures__");
 const commandTempDirs: string[] = [];
 
-function runRango(args: string, env?: NodeJS.ProcessEnv) {
+/**
+ * A spawned CLI spends nearly all its time loading typescript and vite, and
+ * spawnSync holds the worker until the child exits. Measured on a 10-core
+ * machine, a static-mode run: 0.5 s alone, 0.5-2.5 s beside 12 busy loops,
+ * 3.7-6.1 s in full test:unit runs at load average 30-50 (past the 5 s
+ * default); a --runtime run: 2.4 s, 2.5-10.1 s and 11.9-15.7 s. A spawned
+ * case's test timeout is the child's 30 s kill timeout: vitest cannot end a
+ * synchronous spawn sooner, so a shorter one only fails a correct run that
+ * was slow.
+ */
+function spawnRango(args: string, env?: NodeJS.ProcessEnv) {
   const result = spawnSync("node", [rangoBin, ...args.split(" ")], {
     encoding: "utf-8",
     cwd: packageRoot,
@@ -719,6 +731,49 @@ function runRango(args: string, env?: NodeJS.ProcessEnv) {
     ...result,
     combined: `${result.stdout ?? ""}${result.stderr ?? ""}`,
   };
+}
+
+class CliExit extends Error {}
+
+/**
+ * Runs the static path of `rango generate` (default and --static modes) from
+ * the CLI source, in this worker. That path always ends in process.exit(),
+ * which throws here and so stops the script where the real exit would: a
+ * failing run writes nothing after it. A real exit never returns, so the
+ * first exit code is the run's. A fresh module graph per run gives each run a
+ * new process's module state; typescript and vite are external and load once
+ * per worker. Not for --runtime, which returns before its work ends.
+ */
+async function runRango(
+  args: string,
+): Promise<{ status: number; combined: string }> {
+  const lines: string[] = [];
+  const capture = (...parts: unknown[]) => {
+    lines.push(format(...parts));
+  };
+  const spies = [
+    vi.spyOn(console, "log").mockImplementation(capture),
+    vi.spyOn(console, "warn").mockImplementation(capture),
+    vi.spyOn(console, "error").mockImplementation(capture),
+  ];
+  let exitCode: number | undefined;
+  const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
+    exitCode ??= Number(code ?? 0);
+    throw new CliExit();
+  });
+  const argv = process.argv;
+  process.argv = [argv[0]!, "rango", ...args.split(" ")];
+  vi.resetModules();
+  try {
+    await import("../../bin/rango.js");
+  } catch (error) {
+    if (exitCode === undefined) throw error;
+  } finally {
+    process.argv = argv;
+    exit.mockRestore();
+    for (const spy of spies) spy.mockRestore();
+  }
+  return { status: exitCode ?? 0, combined: lines.join("\n") };
 }
 
 function cloneFixtureDir(name: string): string {
@@ -747,11 +802,12 @@ describe("CLI command-level tests", () => {
 
   // --- Happy paths ---
 
+  // Through the built binary, as a consumer runs it.
   it("default mode succeeds for fully static router", () => {
     const fixtureDir = cloneFixtureDir("app");
     const routerFile = join(fixtureDir, "router.tsx");
     const genPath = join(fixtureDir, "router.named-routes.gen.ts");
-    const result = runRango(`generate ${routerFile}`);
+    const result = spawnRango(`generate ${routerFile}`);
     expect(result.status).toBe(0);
     expect(existsSync(genPath)).toBe(true);
 
@@ -759,9 +815,9 @@ describe("CLI command-level tests", () => {
     expect(content).toContain("home");
     expect(content).toContain("about");
     expect(content).toContain("api.health");
-  });
+  }, 30_000);
 
-  it("classifies a clientUrls-only module (no lowercase urls( token)", () => {
+  it("classifies a clientUrls-only module (no lowercase urls( token)", async () => {
     // "clientUrls(" contains "Urls(" with a CAPITAL U — the classify sniff
     // used to test only the lowercase server token, so `rango generate` on a
     // default-exported clientUrls module silently wrote nothing (the writer
@@ -779,7 +835,7 @@ export default clientUrls(({ path }) => [
 `,
     );
 
-    const result = runRango(`generate ${urlsPath} --static`);
+    const result = await runRango(`generate ${urlsPath} --static`);
     expect(result.status).toBe(0);
 
     const genPath = join(tempRoot, "shop.urls.gen.ts");
@@ -791,7 +847,7 @@ export default clientUrls(({ path }) => [
     const fixtureDir = cloneFixtureDir("app-with-factory");
     const routerFile = join(fixtureDir, "router.tsx");
     const genPath = join(fixtureDir, "router.named-routes.gen.ts");
-    const result = runRango(`generate ${routerFile} --runtime`);
+    const result = spawnRango(`generate ${routerFile} --runtime`);
     expect(result.status).toBe(0);
     expect(existsSync(genPath)).toBe(true);
 
@@ -815,7 +871,7 @@ export default clientUrls(({ path }) => [
     const routerFile = join(fixtureDir, "router.tsx");
     const genPath = join(fixtureDir, "router.named-routes.gen.ts");
     const { VITEST: _vitest, ...env } = process.env;
-    const result = runRango(`generate ${routerFile} --runtime`, env);
+    const result = spawnRango(`generate ${routerFile} --runtime`, env);
     expect(result.combined).not.toContain("$$id");
     expect(result.status).toBe(0);
 
@@ -829,7 +885,7 @@ export default clientUrls(({ path }) => [
     // *.named-routes.gen.js; none exists before the first run.
     const fixtureDir = cloneFixtureDir("app-with-two-routers");
     const { VITEST: _vitest, ...env } = process.env;
-    const result = runRango(
+    const result = spawnRango(
       `generate ${join(fixtureDir, "router.tsx")} --runtime`,
       env,
     );
@@ -849,7 +905,7 @@ export default clientUrls(({ path }) => [
     // unresolved config, so their configResolved never ran (vite-tsconfig-paths
     // matched nothing) and apply: "build" plugins ran in the serve discovery.
     const fixtureDir = cloneFixtureDir("app-with-config-resolver");
-    const result = runRango(
+    const result = spawnRango(
       `generate ${join(fixtureDir, "router.tsx")} --runtime`,
     );
     expect(result.combined).not.toContain("build-only resolver ran");
@@ -892,7 +948,7 @@ export default {
 };
 `,
     );
-    const result = runRango(
+    const result = spawnRango(
       `generate ${join(fixtureDir, "router.tsx")} --runtime`,
     );
     expect(result.combined).toContain(
@@ -923,7 +979,7 @@ export default {
 };
 `,
     );
-    const result = runRango(
+    const result = spawnRango(
       `generate ${join(fixtureDir, "router.tsx")} --runtime`,
     );
     expect(result.combined).not.toContain("Could not resolve the Vite config");
@@ -949,7 +1005,7 @@ export default {
       ].join("\n"),
     );
     const { VITEST: _vitest, ...env } = process.env;
-    const result = runRango(`generate ${brokenFile} --runtime`, env);
+    const result = spawnRango(`generate ${brokenFile} --runtime`, env);
     expect(result.combined).toContain("broken router module");
     expect(result.status).not.toBe(0);
     expect(existsSync(join(fixtureDir, "broken.named-routes.gen.ts"))).toBe(
@@ -959,10 +1015,10 @@ export default {
 
   // --- Non-happy paths ---
 
-  it("default mode hard-fails on unresolvable factory includes", () => {
+  it("default mode hard-fails on unresolvable factory includes", async () => {
     const fixtureDir = cloneFixtureDir("app-with-factory");
     const routerFile = join(fixtureDir, "router.tsx");
-    const result = runRango(`generate ${routerFile}`);
+    const result = await runRango(`generate ${routerFile}`);
     expect(result.status).not.toBe(0);
     // Error output should include the diagnostic and point to --runtime
     expect(result.combined).toContain("Unresolvable routes detected");
@@ -971,11 +1027,11 @@ export default {
     expect(result.combined).toContain("--static");
   });
 
-  it("--static warns and emits partial output without factory routes", () => {
+  it("--static warns and emits partial output without factory routes", async () => {
     const fixtureDir = cloneFixtureDir("app-with-factory");
     const routerFile = join(fixtureDir, "router.tsx");
     const genPath = join(fixtureDir, "router.named-routes.gen.ts");
-    const result = runRango(`generate ${routerFile} --static`);
+    const result = await runRango(`generate ${routerFile} --static`);
     expect(result.status).toBe(0);
     // Warning about partial output
     expect(result.combined).toContain("partial output");
@@ -1016,9 +1072,9 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
     return { routerFile, genPath: join(dir, "router.named-routes.gen.ts") };
   }
 
-  it("default mode hard-fails on an unreadable basename and writes nothing", () => {
+  it("default mode hard-fails on an unreadable basename and writes nothing", async () => {
     const { routerFile, genPath } = writeBasenameRouter("getBase()");
-    const result = runRango(`generate ${routerFile}`);
+    const result = await runRango(`generate ${routerFile}`);
     expect(result.status).toBe(1);
     expect(result.combined).toContain("Unresolvable routes detected");
     expect(result.combined).toContain("  createRouter basename\n");
@@ -1030,9 +1086,9 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
     expect(existsSync(genPath)).toBe(false);
   });
 
-  it("--static warns on an unreadable basename and writes unprefixed patterns", () => {
+  it("--static warns on an unreadable basename and writes unprefixed patterns", async () => {
     const { routerFile, genPath } = writeBasenameRouter("getBase()");
-    const result = runRango(`generate ${routerFile} --static`);
+    const result = await runRango(`generate ${routerFile} --static`);
     expect(result.status).toBe(0);
     expect(result.combined).toContain("partial output (unresolvable routes)");
     expect(result.combined).toContain("unresolvable-basename");
@@ -1043,9 +1099,9 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
 
   it.each([`"/ab"`, "SITE.basename"])(
     "default mode accepts a readable basename (%s) without a diagnostic",
-    (basename) => {
+    async (basename) => {
       const { routerFile, genPath } = writeBasenameRouter(basename);
-      const result = runRango(`generate ${routerFile}`);
+      const result = await runRango(`generate ${routerFile}`);
       expect(result.status).toBe(0);
       expect(result.combined).not.toContain("Unresolvable");
       expect(readFileSync(genPath, "utf-8")).toContain(
@@ -1054,10 +1110,12 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
     },
   );
 
-  it("--config without --runtime is ignored with a warning", () => {
+  it("--config without --runtime is ignored with a warning", async () => {
     const fixtureDir = cloneFixtureDir("app");
     const routerFile = join(fixtureDir, "router.tsx");
-    const result = runRango(`generate ${routerFile} --config some-config.ts`);
+    const result = await runRango(
+      `generate ${routerFile} --config some-config.ts`,
+    );
     expect(result.status).toBe(0);
     expect(result.combined).toContain(
       "--config is only used with --runtime, ignoring",
@@ -1066,9 +1124,9 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
 
   // --- Atomicity (P20 / E11) ---
 
-  it("default mode directory generation is atomic: no partial gen files on failure", () => {
+  it("default mode directory generation is atomic: no partial gen files on failure", async () => {
     const fixtureDir = cloneFixtureDir("app-with-factory");
-    const result = runRango(`generate ${fixtureDir}`);
+    const result = await runRango(`generate ${fixtureDir}`);
     expect(result.status).not.toBe(0);
     expect(result.combined).toContain("Unresolvable routes detected");
 
@@ -1084,10 +1142,10 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
 
   // --- Standalone urls() fail-fast (P21 / E12) ---
 
-  it("default mode fails for standalone urls() with unresolvable factory include", () => {
+  it("default mode fails for standalone urls() with unresolvable factory include", async () => {
     const fixtureDir = cloneFixtureDir("app-with-factory");
     const urlsFile = join(fixtureDir, "urls.tsx");
-    const result = runRango(`generate ${urlsFile}`);
+    const result = await runRango(`generate ${urlsFile}`);
     expect(result.status).not.toBe(0);
     expect(result.combined).toContain("Unresolvable routes detected");
     expect(result.combined).toContain("factory-call");
@@ -1098,11 +1156,11 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
     expect(existsSync(join(fixtureDir, "urls.gen.ts"))).toBe(false);
   });
 
-  it("--static mode succeeds for standalone urls() with partial output", () => {
+  it("--static mode succeeds for standalone urls() with partial output", async () => {
     const fixtureDir = cloneFixtureDir("app-with-factory");
     const urlsFile = join(fixtureDir, "urls.tsx");
     const genPath = join(fixtureDir, "urls.gen.ts");
-    const result = runRango(`generate ${urlsFile} --static`);
+    const result = await runRango(`generate ${urlsFile} --static`);
     expect(result.status).toBe(0);
     expect(result.combined).toContain("partial output");
 
@@ -1117,7 +1175,7 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
     expect(content).not.toContain("docs.page");
   });
 
-  it("fails explicitly for nested router roots when generating a directory", () => {
+  it("fails explicitly for nested router roots when generating a directory", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "rango-nested-router-"));
     commandTempDirs.push(tempRoot);
     const appDir = join(tempRoot, "src", "app");
@@ -1153,7 +1211,7 @@ export const router = createRouter().routes(patterns);
 `,
     );
 
-    const result = runRango(`generate ${tempRoot}`);
+    const result = await runRango(`generate ${tempRoot}`);
 
     expect(result.status).not.toBe(0);
     expect(result.combined).toContain("Nested router roots are not supported");

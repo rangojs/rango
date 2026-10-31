@@ -20,7 +20,7 @@
  * every push the handler made after an await under the orphan, ahead of the
  * route's earlier pushes (a Meta title reverted to the first one).
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 
 vi.mock(
@@ -40,6 +40,7 @@ import {
 } from "../flight.entry.js";
 import {
   createHandle,
+  createLoader,
   createRouter,
   Meta,
   urls,
@@ -47,7 +48,10 @@ import {
 } from "../../index.rsc.js";
 import { collectHandleData } from "../../handle.js";
 import { filterSegmentOrder } from "../../browser/react/filter-segment-order.js";
-import { MemorySegmentCacheStore } from "../../cache/index.js";
+import {
+  MemorySegmentCacheStore,
+  VercelCacheStore,
+} from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { withoutPushedBy } from "../../handles/pushed-by.js";
 import type { HandleData } from "../../server/handle-store.js";
@@ -309,6 +313,134 @@ describe("a streamed route's push after an await stays the route's beside a layo
         titles: [{ title: "Blue Widget" }],
         crumbs: ["layout", "page", "page-late"],
       });
+    });
+  }
+});
+
+/**
+ * A stale cache() record's background re-render (background-revalidation.ts)
+ * skips DSL loaders (skipLoaders). An orphan layout that owns a loader still
+ * pins its own segment there: resolveOwnerLoaders pins it before it registers
+ * the loaders, and resolveOrphanLayout pins it for the handler. So the
+ * refreshed record files the orphan's push as the MISS did.
+ */
+const OrphanData = createLoader(async () => "orphan-data");
+const PageOrphanData = createLoader(async () => "page-orphan-data");
+
+const staleRouter = createRouter({
+  onError: ({ error }) => {
+    errors.push(error instanceof Error ? error.message : String(error));
+  },
+}).routes(
+  urls(({ path, layout, cache, loader }) => [
+    cache({ ttl: 0, swr: 60 }, () => [
+      layout(
+        (ctx: HandlerContext) => {
+          ctx.use(Crumbs)("layout");
+          return <main>shell</main>;
+        },
+        () => [
+          layout(
+            (ctx: HandlerContext) => {
+              ctx.use(Crumbs)("orphan");
+              return <aside>orphan</aside>;
+            },
+            () => [loader(OrphanData)],
+          ),
+          path("/b", () => <p>b</p>, { name: "b" }),
+          path(
+            "/c",
+            (ctx: HandlerContext) => {
+              ctx.use(Crumbs)("page");
+              return <p>c</p>;
+            },
+            { name: "c" },
+            () => [
+              layout(
+                (ctx: HandlerContext) => {
+                  ctx.use(Crumbs)("page-orphan");
+                  return <nav>page orphan</nav>;
+                },
+                () => [loader(PageOrphanData)],
+              ),
+            ],
+          ),
+        ],
+      ),
+    ]),
+  ]),
+);
+
+/** A record's Crumbs pushes, by the segment id that owns them. */
+async function recordCrumbs(data: {
+  handles?: string;
+}): Promise<Record<string, unknown>> {
+  const handles = data.handles
+    ? await deserializeResult<Record<string, Record<string, unknown>>>(
+        data.handles,
+      )
+    : {};
+  return Object.fromEntries(
+    Object.entries(handles).flatMap(([id, byHandle]) =>
+      byHandle[Crumbs.$$id] ? [[id, byHandle[Crumbs.$$id]]] : [],
+    ),
+  );
+}
+
+describe("a stale cache() record's background re-render files an orphan layout that owns a loader under the orphan", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const STALE_OWNERS = {
+    "/b": {
+      M0L0C0L0: ["layout"],
+      M0L0C0L0L0: ["orphan"],
+    },
+    "/c": {
+      M0L0C0L0: ["layout"],
+      M0L0C0L0L0: ["orphan"],
+      M0L0C0L0R1: ["page"],
+      M0L0C0L0R1L0: ["page-orphan"],
+    },
+  };
+
+  for (const { url, name } of CASES) {
+    it(`${name}: the MISS and the refresh write the same owners`, async () => {
+      const values = new Map<string, unknown>();
+      const store = new VercelCacheStore({
+        cache: {
+          async get(key) {
+            const value = values.get(key);
+            return value === undefined ? undefined : structuredClone(value);
+          },
+          async set(key, value) {
+            values.set(key, structuredClone(value));
+          },
+          async delete(key) {
+            values.delete(key);
+          },
+          async expireTag() {},
+        },
+      });
+      const writes: { handles?: string }[] = [];
+      const set = store.set.bind(store);
+      vi.spyOn(store, "set").mockImplementation(async (key, data, ttl, swr) => {
+        writes.push(structuredClone(data));
+        return set(key, data, ttl, swr);
+      });
+      const realNow = Date.now.bind(Date);
+      let offset = 0;
+      vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+      // The MISS writes the record; past its ttl, a stale HIT refreshes it.
+      for (let i = 0; i < 2; i++) {
+        await serveShellRequest(staleRouter, url, { cacheStore: store });
+        offset += 1_100;
+      }
+      expect(errors).toEqual([]);
+      expect(writes).toHaveLength(2);
+      expect(await recordCrumbs(writes[0]!)).toEqual(STALE_OWNERS[url]);
+      expect(await recordCrumbs(writes[1]!)).toEqual(STALE_OWNERS[url]);
     });
   }
 });

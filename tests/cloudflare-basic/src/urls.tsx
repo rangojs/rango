@@ -351,6 +351,7 @@ import { prefetchTransitionPatterns } from "./pages/prefetch-transition.js";
 import { lateHistoryPatterns } from "./pages/late-history.js";
 import { actionStalePatterns } from "./pages/action-stale.js";
 import { handlesAfterAwaitPatterns } from "./pages/handles-after-await.js";
+import { streamedHandleOwnerPatterns } from "./pages/streamed-handle-owner.js";
 import { heldHandlesPatterns } from "./pages/held-handles.js";
 import { historyHandlesPatterns } from "./pages/history-handles.js";
 import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
@@ -382,6 +383,7 @@ import {
   includeScopePublicPatterns,
 } from "./pages/include-scope.js";
 import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
+import { interceptActionSelectPatterns } from "./pages/intercept-action-select.js";
 import { interceptHeldPatterns } from "./pages/intercept-held.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
 import { redirectLoopPatterns } from "./pages/redirect-loop.js";
@@ -3203,6 +3205,10 @@ export const urlpatterns = urls(
         // Meta and Breadcrumbs pushed after an await from each place
         // (e2e/handles-after-await.test.ts).
         include("/", handlesAfterAwaitPatterns, { name: "" }),
+        // A push after real workerd I/O from a loading() route or slot, and a
+        // loader a loader body starts, files under its own segment
+        // (e2e/streamed-handle-owner.test.ts).
+        include("/", streamedHandleOwnerPatterns, { name: "" }),
         // Hidden include-scope names (#1104): nested unnamed includes, and an
         // unnamed include beside a transparent one holding another.
         include("/", includeScopePublicPatterns),
@@ -3289,6 +3295,12 @@ export const urlpatterns = urls(
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {
           name: "interceptWhenShape",
+        }),
+        // A server action from an open intercept re-renders that intercept
+        // (rango-t200; mirrors the router e2e app's /cache-intercept-when
+        // drawer action, intercept-action-select.test.ts).
+        include("/intercept-action-select", interceptActionSelectPatterns, {
+          name: "interceptActionSelect",
         }),
         // Intercept slot handle pushes and held loaders (mirrors the router
         // e2e app's intercept-held).

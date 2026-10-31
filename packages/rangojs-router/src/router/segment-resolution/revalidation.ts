@@ -74,6 +74,7 @@ import {
   track,
   RangoContext,
   runInsideLoaderScope,
+  runAsSegment,
   latchCachedHeaderScope,
   latchPprHeaderScopeForEntries,
 } from "../../server/context.js";
@@ -805,7 +806,7 @@ async function resolveParallelSlotComponent<TEnv>(
       // A throw before the slot streams reaches the owning entry's boundary.
       try {
         if (hasLoadingFallback) {
-          const result = run();
+          const result = runAsSegment(parallelId, run);
           if (result instanceof Promise) {
             warnOnStreamedResponse(result, parallelId);
             result.finally(doneHandler).catch(() => {});
@@ -1174,7 +1175,9 @@ async function resolveRouteComponent<TEnv>(
   }
   if (!actionContext) {
     const result = handleHandlerResult(
-      observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+      runAsSegment(entry.shortCode, () =>
+        observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+      ),
     );
     if (result instanceof Promise) {
       warnOnStreamedResponse(result, entry.id);
@@ -1505,7 +1508,8 @@ export async function resolveOrphanLayout<TEnv>(
       handlerRan = true;
       // Its handler's pushes are its own. Pinned only while it runs: a route
       // under loading() streams its handler, whose pushes after an await
-      // read the pin after this returns.
+      // read the pin after this returns where a runtime lost its
+      // runAsSegment scope (segmentPinOf).
       const internal = context as InternalHandlerContext<any, TEnv>;
       const pinned = internal._currentSegmentId;
       internal._currentSegmentId = orphan.shortCode;

@@ -410,23 +410,29 @@ export async function createMatchContextForPartial<TEnv>(
     id.includes(".@"),
   );
   const skipInterceptForAction = isAction && !clientHasInterceptSegments;
+  // The names an intercept may target this route by, in precedence order:
+  // its own name, then its local name inside include().
+  const interceptNames =
+    snapshot.localRouteName !== matched.routeKey
+      ? [matched.routeKey, snapshot.localRouteName]
+      : [matched.routeKey];
+  const findIntercept = (held?: ReadonlySet<string>) =>
+    findInterceptForRoute(
+      interceptNames,
+      snapshot.manifestEntry.parent,
+      interceptSelectorContext,
+      isAction,
+      held,
+    );
+  // An action re-renders the intercept the client holds, under either name
+  // (one walk over both, findInterceptForRoute); holding none, the first
+  // declared.
   const interceptResult =
     nav.isSameRouteNavigation || skipInterceptForAction
       ? null
-      : findInterceptForRoute(
-          matched.routeKey,
-          snapshot.manifestEntry.parent,
-          interceptSelectorContext,
-          isAction,
-        ) ||
-        (snapshot.localRouteName !== matched.routeKey
-          ? findInterceptForRoute(
-              snapshot.localRouteName,
-              snapshot.manifestEntry.parent,
-              interceptSelectorContext,
-              isAction,
-            )
-          : null);
+      : isAction
+        ? findIntercept(nav.clientSegmentSet) || findIntercept()
+        : findIntercept();
 
   // The page's copy of a clientUrls() layout() loader under the route it
   // leaves holds the destination route's (client-urls/layout-loader-copies.ts).
@@ -451,24 +457,21 @@ export async function createMatchContextForPartial<TEnv>(
   }
 
   // Whether an intercept targets this route at all: the same walk as above
-  // with isAction=true, which skips when(). If one does, the response depends
-  // on the source even when none applied (a when() that rejected it, a
-  // same-route navigation), so it must not share the source-agnostic prefetch
-  // slot (#1007). The walk is over the TARGET's chain, so a route no
-  // intercept targets never depends on the source this way.
-  const targetsIntercept = (routeKey: string): boolean =>
-    findInterceptForRoute(
-      routeKey,
-      snapshot.manifestEntry.parent,
-      null,
-      true,
-    ) !== null;
+  // with isAction=true and nothing held, which skips when(). If one does, the
+  // response depends on the source even when none applied (a when() that
+  // rejected it, a same-route navigation), so it must not share the
+  // source-agnostic prefetch slot (#1007). The walk is over the TARGET's
+  // chain, so a route no intercept targets never depends on the source this
+  // way.
   const interceptTargeted =
     !!interceptResult ||
     (!skipInterceptForAction &&
-      (targetsIntercept(matched.routeKey) ||
-        (snapshot.localRouteName !== matched.routeKey &&
-          targetsIntercept(snapshot.localRouteName))));
+      findInterceptForRoute(
+        interceptNames,
+        snapshot.manifestEntry.parent,
+        null,
+        true,
+      ) !== null);
 
   const isIntercept = !!interceptResult;
   // A normal-route navigation may replay a PPR shell's canonical segment

@@ -106,6 +106,7 @@ import { hashNavigationPatterns } from "./urls/hash-navigation.js";
 import { linkBehaviorPatterns } from "./urls/link-behavior.js";
 import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
 import { handlesAfterAwaitPatterns } from "./urls/handles-after-await.js";
+import { streamedHandleOwnerPatterns } from "./urls/streamed-handle-owner.js";
 import { breadcrumbTrailPatterns } from "./urls/breadcrumb-trail.js";
 import { manifestCacheTestPatterns } from "./urls/manifest-cache-test.js";
 import { authBoundaryPatterns } from "./urls/auth-boundary.js";
@@ -1268,6 +1269,10 @@ export const urlpatterns = urls(
       // Meta and Breadcrumbs pushed after an await from each place
       // (handles-after-await.test.ts).
       include("/", handlesAfterAwaitPatterns, { name: "" }),
+      // A push after a short await from a loading() route or slot, and a
+      // loader a loader body starts, files under its own segment
+      // (streamed-handle-owner.test.ts).
+      include("/", streamedHandleOwnerPatterns, { name: "" }),
       include("/", breadcrumbTrailPatterns, { name: "" }),
 
       // Trailing slash patterns

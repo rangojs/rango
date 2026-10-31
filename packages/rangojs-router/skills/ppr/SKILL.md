@@ -512,6 +512,13 @@ full: a HIT runs no handler, so a handler's `ctx.setLocationState()` does not
 happen on a HIT. Set it from middleware (see `/hooks` `state.md`, "State on a
 document response").
 
+A HIT sends exactly the state set before its render: its headers, which
+make it `private, no-store`, leave before the tail runs, so a write during
+the tail (a loader calling `getRequestContext().setLocationState()`, which
+is not supported) is not sent. A HIT that read a document redirect's cookie
+and then degrades into a reload sets the cookie again from its reload
+script, so the forced MISS still carries the state.
+
 ### Opting out per request with `ctx.dynamic()`
 
 Middleware and handlers can call `ctx.dynamic()` to force this request onto a

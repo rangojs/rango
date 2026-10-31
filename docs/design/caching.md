@@ -491,6 +491,7 @@ Cache keys combine request type prefix, the serving router's id, host, pathname,
 
 - **Prefix**: `doc` (full page), `partial` (navigation), or `intercept:{intercept}` (an intercept navigation). `{intercept}` names the intercept the match selected (`interceptRecordKey`, `src/router/intercept-resolution.ts`): its slot id, `~`, and its position among the intercepts its entry declares for the same slot and target route. See [Intercept Route Cache Namespace](#4-intercept-route-cache-namespace).
 - **Under a `key()`**: a scope with its own `key()` replaces what follows the prefix, never the prefix itself. Its record key is the composed `key()` parts, then the prefix as the last part (`key:tier%3Agold|doc`, `key:tier%3Agold|partial`, `key:tier%3Agold|intercept%3AM0L0.%40modal~0`). See [A key() keeps the request kind](#a-key-keeps-the-request-kind-rango-t201).
+- **Under a store `keyGenerator`**: its result is the record key when it starts with the prefix (`${defaultKey}|en` does); otherwise the prefix follows it as a part of its own (`items|doc`, `items|partial`). See [A keyGenerator result keeps the request kind](#a-keygenerator-result-keeps-the-request-kind-rango-t204).
 - **Router and host**: `{routerId}@{host}` says whose output the entry is. See [The router part](#the-router-part-whose-output-an-entry-is) below.
 - **Search params**: User-facing params are included (sorted, URL-encoded). Router-internal params are excluded: `_rsc*` by prefix, plus an exact allowlist of `__`-prefixed params (`__no_cache`, `__rsc`, `__html`) — deliberately not a blanket `__*` filter, so consumer params like `__variant` still key the cache (see `src/cache/cache-key-utils.ts`).
 - **Partial response capability**: document-cache entries append a fragment-capable variant when `X-Rango-Fragment-Passthrough: 1` is present. The middleware can return before route matching, so its key must mirror the RSC response's `Vary` contract and never serve fragment envelopes to a legacy or context-less client. `X-Rango-Fragment-Recovery: 1` skips that variant's read so the failed fragment retry reaches segment decode and eviction, then the ordinary write path replaces the corrupt response bytes with the valid fallback.
@@ -1561,9 +1562,9 @@ This requires separating:
   loader's position too (`SlotTag.under`), so a loader that pushes, awaits
   a dependency that pushes, and pushes again ends as
   `[own, dependency, own]`, the order its entry's HIT replays. A live push
-  to another segment (the dependency's owning segment is its kickoff's
-  `_currentSegmentId`) removes the replayed slots and lands where it is
-  pushed.
+  to another segment (the dependency's owning segment is the one its
+  kickoff runs for, `segmentPinOf` in `server/context.ts`) removes the
+  replayed slots and lands where it is pushed.
 
   Why the position and not an append: the common shape is a cached loader
   that pushes its own crumb after awaiting the dependency. On the miss the
@@ -1900,7 +1901,9 @@ invariant):
   key) is `encodeURIComponent(value)`;
 - one `key()` part is the key; two or more parts join with `|`, `key()`
   parts first; a lone default part stays raw, so a chain without `key()`
-  keeps its default key or keyGenerator result byte for byte.
+  keeps its default key or keyGenerator result byte for byte (a
+  keyGenerator result that starts with its request kind; one that does not
+  is composed with the kind, rango-t204 below).
 
 Why nothing collides: the router's default keys (`doc:`, `partial:`,
 `intercept:`, `response:<type>:`) never start with `key:` and always hold a
@@ -1979,9 +1982,10 @@ What does not change:
   an intercept never reads a shell.
 - A response route's entry (`resolveKeyFrom(defaultKey, "response:")`): a
   response route answers every request alike, so it passes no kind.
-- A store's `keyGenerator`. It receives the default key, prefix included, and
-  its result is the key. One that ignores `defaultKey` still gives every kind
-  one record; the `keyGenerator` JSDoc (`src/cache/types.ts`) says to keep it.
+- A store's `keyGenerator` here. It receives the default key, prefix
+  included, and a result built on it keeps the kind. One that ignored
+  `defaultKey` still gave every kind one record until rango-t204 (next
+  section).
 
 The cost is one change of stored key strings for every route under a keyed
 `cache()`: each record misses once after the upgrade (the per-router code
@@ -1994,6 +1998,79 @@ misses the first time, and the shell's seeded doc record answers it (a replay
 `packages/rangojs-router/src/testing/__tests__/cached-custom-key-request-kind.rsc-test.tsx`,
 and in the browser by `e2e/cache.test.ts` "cache-intercept-routes", dev and
 production.
+
+#### A keyGenerator result keeps the request kind (rango-t204)
+
+The previous section left one way to lose the kind: a store's
+`keyGenerator`. It receives the default key, prefix included, and its result
+was the record key as it came. A result built on `defaultKey` keeps the
+prefix, but nothing made a keyGenerator build on it, and a natural one does
+not: `() => tenant` or `(ctx) => ctx.url.pathname`. Then a document request,
+a navigation and every intercept navigation of one URL read and wrote one
+record, with the failures listed above: a document GET rendered an
+intercept's body and no page, and a `loading(..., { ssr: false })` fallback
+showed where a live render has none, and the other way round.
+
+So `resolveKeyFrom` gives the scope's own part to `ownParts`
+(`src/cache/cache-scope.ts`): the default key or keyGenerator result, then
+the kind unless that result starts with `{kind}:`. The rule only bites on a
+result that dropped the kind:
+
+| keyGenerator returns      | Document record key          | Navigation record key            |
+| ------------------------- | ---------------------------- | -------------------------------- |
+| `defaultKey`              | `doc:{base}` (unchanged)     | `partial:{base}` (unchanged)     |
+| `` `${defaultKey}\|en` `` | `doc:{base}\|en` (unchanged) | `partial:{base}\|en` (unchanged) |
+| `"items"`                 | `items\|doc`                 | `items\|partial`                 |
+| `` `en:${defaultKey}` ``  | `en%3Adoc%3A{base}\|doc`     | `en%3Apartial%3A{base}\|partial` |
+
+A composed part is URI-encoded, `{base}` included. Under a keyed `cache()`,
+an inner scope's result keeps the kind the same way, as one more composed
+part (`key:tier%3Agold|items|doc`).
+
+Why a part, not a `{kind}:` prefix. The obvious fix prepends `doc:` to a
+result that lacks it. Then the results `x` and `doc:x` both become `doc:x`,
+and a keyGenerator that returns request input (a tenant header) lets one
+value name another's record: a request with `x-tenant: doc:acme` reads and
+writes tenant `acme`'s. Composed, a result without its kind holds no `:`
+(composeCacheKeys encodes every part), and a result kept raw starts with
+`{kind}:`, so the two never meet. Two kinds never share a record either: a
+raw key starts with its own kind's prefix, and a composed one ends with its
+kind. The collision probe in `src/cache/__tests__/cache-scope-chain.test.ts`
+runs results such as `x`, `doc:x`, `doc` and `x|doc` under every kind.
+
+Why keep a result that starts with its kind as it is. That is the shape every
+keyGenerator in the repo's apps and tests uses (`${defaultKey}|en`), which
+then costs no miss. The store JSDoc examples and the caching skill showed the
+prepend form (`${locale}:${defaultKey}`) until this change: it kept the kind,
+but its result does not start with it, so its keys change (`en%3Adoc%3A…|doc`)
+and each such record misses once on Memory and custom stores. The examples
+now build on `defaultKey`. It is also the identity keyGenerator, which keeps
+one shell per URL and its build shell
+(`packages/rangojs-router/docs/design/ppr-shell-resume.md`): partial replay
+resolves the doc record key through the request's keyGenerator
+(`SeededShellStore` under the implicit doc scope, `src/rsc/rsc-rendering.ts`),
+so that key must stay the default key the shell's doc record was stored under.
+
+What does not change:
+
+- The ppr shell partition (`resolvePartition`, `resolveShellPartition`). It
+  is the raw keyGenerator result for the `doc` default key, compared to that
+  key, as before. For one kind the record key is a one-to-one function of
+  the result, so two requests share a shell exactly when they share the doc
+  record the shell was captured with, and the capture's `docKey`, the HIT
+  tail's `fixedDocKey` and replay's lookup through the implicit doc scope all
+  resolve it through `resolveKeyFrom`.
+- A response route's entry and a loader's entry: neither has a request kind.
+- A `keyGenerator` result equal to the default key still partitions nothing.
+
+The cost is one change of stored key strings, only for keyGenerators whose
+result does not start with its kind. `CFCacheStore` and `VercelCacheStore`
+already miss once on a rango upgrade (the data version changes, see
+"Versions"). `MemorySegmentCacheStore` and a custom store miss once per such
+record. Pinned through `serveShellRequest` by
+`packages/rangojs-router/src/testing/__tests__/store-key-generator-request-kind.rsc-test.tsx`
+(intercepts, `loading(..., { ssr: false })`, and per-result shells with
+replay), and by the unit cases in `cache-scope-chain.test.ts`.
 
 #### Loader key results are namespaced (issue #1009)
 

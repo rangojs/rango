@@ -11,6 +11,8 @@ vi.mock("../../server/context", () => ({
   getLoaderBodyTags: () => undefined,
   getLoaderRunIdentity: () => undefined,
   runInsideLoaderRun: <T>(_run: unknown, fn: () => T): T => fn(),
+  runAsSegment: <R>(_segmentId: unknown, fn: () => R): R => fn(),
+  segmentPinOf: (ctx: { _currentSegmentId?: string }) => ctx._currentSegmentId,
   isInsidePushCallbackScope: () => false,
   runInsidePushCallbackScope: <T>(fn: () => T): T => fn(),
 }));

@@ -1121,7 +1121,7 @@ results first, outermost first:
 | deeper nesting                                | Composes the same way; the innermost boundary adds its default key without a `key` of its own, its request kind with one                                     |
 | under a `cache({ store })` on another store   | Also that store's `keyGenerator` result, one part per store: empty for a store that returns the default key while another's differs, none when all return it |
 | `cache(false)`                                | No caching, as before; a `cache()` re-enabled below it stays in the partition                                                                                |
-| no `key` anywhere                             | The default key, or the store's `keyGenerator` result, as before                                                                                             |
+| no `key` anywhere                             | The default key, or the store's `keyGenerator` result, then the request kind when that result does not start with it                                         |
 
 - No `key()` result, whatever it returns, equals a default key or a
   composed key, and no two composed keys are equal: a namespaced result
@@ -1150,10 +1150,15 @@ results first, outermost first:
   empty result there fails key resolution, so the request renders uncached,
   and the router warns once naming the store. On the same store the inner
   boundary's own default key already carries it (or its own `key()`
-  overrides it). Keep the default key in the result
-  (`` `${locale}:${defaultKey}` ``): its prefix is the request kind, and a
-  result without it gives a document request, a navigation and each
-  intercept navigation one record.
+  overrides it). A `keyGenerator` result keeps the request kind: the
+  default key starts with it (`doc:`, `partial:`, `intercept:<intercept>:`),
+  and a result that does not gets it as a last part (`items` is stored as
+  `items|doc` for a document request), so a document request, a navigation
+  and each intercept navigation keep their own record whatever it returns.
+  Build on the default key (`` `${defaultKey}|${locale}` ``) and the result
+  is the key, byte for byte. A prefix before it
+  (`` `${locale}:${defaultKey}` ``) keeps the kind too, but no longer starts
+  with it, so the kind is appended (`en%3Adoc%3A…|doc`).
 - A response route's entry (`path.json()` and the other response routes) is
   keyed the same way, behind a `response:` prefix. A `ppr` route's shell is
   partitioned by the chain's `key()` results, namespaced the same way, since

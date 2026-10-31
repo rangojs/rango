@@ -187,9 +187,10 @@ export const KEY_PART_PREFIX = "key:";
  * (CacheScope.resolveKeyFrom, CacheScope.resolvePartition): the `key()`
  * results of the scope's cache() chain, outermost first, then its default
  * parts: the keyGenerator results of enclosing scopes on another store
- * (#974) and, for a route record key, the scope's own part: without a
+ * (#974) and, for a route record key, the scope's own parts: without a
  * `key()` of its own, its default key (or its store's keyGenerator result,
- * #970); with one, the default key's request kind (`doc`, `partial` or
+ * #970, then the request kind when that result does not start with it,
+ * #1298); with one, the default key's request kind (`doc`, `partial` or
  * `intercept:<intercept>`, routeRecordKind in cache-scope.ts).
  *
  * Key scheme invariant (#975). A `key()` result is often request input,
@@ -209,7 +210,9 @@ export const KEY_PART_PREFIX = "key:";
  * - one `key()` part is the key; two or more parts are joined by `|`,
  *   `key()` parts first;
  * - a lone default part stays raw: with no `key()` on the chain the record
- *   key is the default key or the store's keyGenerator result, unchanged.
+ *   key is the default key or the store's keyGenerator result, unchanged
+ *   when that result starts with its request kind, else that result and
+ *   the kind composed (`items|doc`).
  *
  * Why nothing collides: the router's default keys (`doc:`, `partial:`,
  * `intercept:`, `response:<type>:`) never start with `key:` and hold a `:`.
@@ -218,11 +221,12 @@ export const KEY_PART_PREFIX = "key:";
  * Among composed keys, splitting on `|` recovers each part, a part's kind
  * (a `key:` prefix, or no `:` at all) and its value. A request kind part is
  * a default key's prefix without the URL after it, so it never equals a
- * default key part; a keyGenerator part can equal it (`doc`) only when the
- * keyGenerator returns a constant, which already gives every URL one record.
- * Pinned by the collision probe in
- * src/cache/__tests__/cache-scope-chain.test.ts. A keyGenerator result is
- * the store's own namespace, as before.
+ * default key part. A raw keyGenerator record key starts with its kind and
+ * holds a `:`, so it never equals a composed one, and two kinds' prefixes
+ * differ; a result without its kind is composed with it, never prefixed,
+ * since `doc:` + `x` would be the raw result `doc:x`. Pinned by the
+ * collision probes in src/cache/__tests__/cache-scope-chain.test.ts. A
+ * keyGenerator result is the store's own namespace, as before.
  *
  * Shared with the testing helper `shellCacheKey`, so a test builds the
  * production partition.
