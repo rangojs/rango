@@ -37,6 +37,52 @@ function spawnIdleServer(
   };
 }
 
+/**
+ * A detached leader (exits on SIGTERM) with a grandchild in its group that
+ * ignores SIGTERM, as a `pnpm` whose vite outlives it. Resolves once the
+ * grandchild has installed its handler, with the grandchild's pid.
+ */
+async function spawnGroupServer(): Promise<
+  GuardedServer & { pid: number; grandchild: number }
+> {
+  const grandchildSource =
+    "process.on('SIGTERM', () => {});" +
+    "console.log('ready ' + process.pid);" +
+    "setInterval(() => {}, 1000)";
+  const leaderSource =
+    `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grandchildSource)}], { stdio: ["ignore", "inherit", "ignore"] });` +
+    "setInterval(() => {}, 1000)";
+  const child = spawn(process.execPath, ["-e", leaderSource], {
+    detached: true,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  spawned.push(child.pid!);
+  const done = new Promise<void>((resolve) =>
+    child.once("exit", () => resolve()),
+  );
+  const grandchild = await new Promise<number>((resolve) => {
+    let out = "";
+    child.stdout!.on("data", (data) => {
+      out += String(data);
+      const match = /ready (\d+)/.exec(out);
+      if (match) resolve(Number(match[1]));
+    });
+  });
+  spawned.push(grandchild);
+  return {
+    pid: child.pid!,
+    grandchild,
+    done,
+    kill: (signal = "SIGTERM") => {
+      try {
+        process.kill(-child.pid!, signal);
+      } catch {
+        child.kill(signal);
+      }
+    },
+  };
+}
+
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -127,6 +173,24 @@ describe("ServerGuard", { timeout: 20_000 }, () => {
       expect.stringContaining(String(stubborn.pid)),
     );
   });
+
+  it.skipIf(process.platform === "win32")(
+    "dispose waits for the whole group: SIGKILLs a grandchild that outlives a leader that exited on SIGTERM",
+    async () => {
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const guard = new ServerGuard({ exitWaitMs: 300 });
+      const server = guard.track(await spawnGroupServer());
+
+      await guard.dispose();
+
+      // No wait: dispose() returning is the contract, so a grandchild still
+      // alive here is a leaked server.
+      expect(isAlive(server.grandchild)).toBe(false);
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining(String(server.pid)),
+      );
+    },
+  );
 
   it("a rejecting done neither throws from dispose nor leaves an unhandled rejection", async () => {
     const unhandled = vi.fn();

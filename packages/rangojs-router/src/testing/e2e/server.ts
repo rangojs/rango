@@ -43,11 +43,13 @@ export function runCli(
   // detached makes the child a process-group leader (pgid === pid), so kill()
   // can signal the whole tree. `pnpm dev` spawns vite as a grandchild; without
   // it process.kill(-pid) throws ESRCH, the fallback child.kill() stops only
-  // pnpm, and vite keeps running after the suite.
+  // pnpm, and vite keeps running after the suite. Not on Windows: there
+  // detached opens a console window per server, and kill() already ends the
+  // tree with `taskkill /t`.
   const child = x(name!, args, {
     nodeOptions: {
       ...options,
-      detached: true,
+      detached: process.platform !== "win32",
       env: { ...process.env, CI: "true", ...options.env },
     },
   }).process!;
@@ -157,10 +159,43 @@ async function exitedWithin(done: Promise<unknown>, ms: number) {
   }
 }
 
+/** True while a process of the group led by `pgid` exists (not on Windows). */
+function groupAlive(pgid: number): boolean {
+  if (process.platform === "win32") return false;
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the group exists but belongs to someone else. Only ESRCH is gone.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 /**
- * Stop a server started by `runCli` and wait for it to exit: SIGTERM to the
- * process group, then SIGKILL (and a log naming the pid) for one that outlives
- * the wait, so a leaked server is visible rather than left holding its port.
+ * Resolves true once `server.done` settled and no process of its group is left,
+ * false when `ms` ran out first. The leader (`pnpm`) exiting says nothing about
+ * the vite it spawned, which can outlive it, so the group is polled too.
+ */
+async function groupExitedWithin(
+  server: RunCliHandle,
+  ms: number,
+): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  if (!(await exitedWithin(server.done, ms))) return false;
+  const pgid = server.pid;
+  if (pgid === undefined) return true;
+  while (groupAlive(pgid)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return true;
+}
+
+/**
+ * Stop a server started by `runCli` and wait for its whole process group to
+ * exit: SIGTERM to the group, then SIGKILL (and a log naming the pid) for a
+ * process that outlives the wait, so a leaked server is visible rather than
+ * left holding its port.
  */
 export async function stopServer(
   server: RunCliHandle,
@@ -168,13 +203,13 @@ export async function stopServer(
 ): Promise<void> {
   const exitWaitMs = options.exitWaitMs ?? STOP_WAIT_MS;
   server.kill();
-  if (await exitedWithin(server.done, exitWaitMs)) return;
+  if (await groupExitedWithin(server, exitWaitMs)) return;
   console.error(
     `[rango e2e] server (pid ${server.pid ?? "unknown"}) ignored SIGTERM for ` +
       `${exitWaitMs} ms and was sent SIGKILL`,
   );
   server.kill("SIGKILL");
-  await exitedWithin(server.done, KILL_WAIT_MS);
+  await groupExitedWithin(server, KILL_WAIT_MS);
 }
 
 export function tailOutput(text: string, maxChars = 4000): string {

@@ -10,8 +10,10 @@ to stopping `pnpm` alone. The vite process `pnpm` spawned kept running after the
 suite, holding its port and memory, and a teardown could time out waiting on it.
 
 **After.** The server is spawned detached and the teardown signals its whole
-process group, waits for it to exit, and sends SIGKILL (logging the pid) to one
-that ignores SIGTERM. Nothing changes in how you call `useFixture`.
+process group, waits until no process of the group is left, and sends SIGKILL
+(logging the pid) to a group that still has one after the wait. Windows is
+unchanged: the server is not detached there and `taskkill /t` ends the tree.
+Nothing changes in how you call `useFixture`.
 
 ### Changed: `rango generate` reads an inline `createRouter().routes(urls(...))` and stops on a root tree it cannot read ([#1349](https://github.com/rangojs/rango/pull/1349))
 
