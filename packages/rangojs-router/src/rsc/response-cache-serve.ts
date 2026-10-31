@@ -105,8 +105,9 @@ export async function serveResponseRouteWithCache(
   let cacheKey = `response:${responseType}:${requestKeyBase(reqCtx, url.host, url.pathname, url.searchParams, undefined, reqCtx._searchParamsFilter)}`;
 
   // Keyed like the segment record (CacheScope.resolveKeyFrom): with key()
-  // results on the cache() chain (a full override, namespaced, #975) or an
-  // enclosing scope on another store whose keyGenerator partitions (#974),
+  // results on the cache() chain (they replace the URL part, namespaced,
+  // #975; a response entry has no request kind to keep) or an enclosing
+  // scope on another store whose keyGenerator partitions (#974),
   // `response:` plus the composed key, so a nested cache() never shares an
   // entry across the enclosing partitions (#970); otherwise the store's
   // keyGenerator result (it modifies the default key), else the default key.

@@ -47,6 +47,60 @@ export interface ReconcileResult {
 }
 
 /**
+ * A segment the server sent over its cached copy, keeping the cached
+ * structural properties so the React tree keeps its shape. Changing them
+ * between renders alters the element nesting (with/without
+ * RouteContentWrapper, MountContextProvider, etc.), which remounts components
+ * and destroys useActionState.
+ */
+function mergeCached(
+  fromServer: ResolvedSegment,
+  fromCache: ResolvedSegment,
+  actor: ReconcileActor,
+): ResolvedSegment {
+  let merged = fromServer;
+
+  // When server returns component: null for a layout segment, it means
+  // "this segment doesn't need re-rendering" - preserve the cached component
+  // to maintain the outlet chain and prevent React tree changes
+  if (
+    fromServer.component === null &&
+    fromServer.type === "layout" &&
+    fromCache.component != null
+  ) {
+    merged = { ...merged, component: fromCache.component };
+  }
+
+  // Loading preservation is actor-aware:
+  // - action/stale-revalidation: always preserve cached value to prevent
+  //   tree remount (even when cached is undefined, to avoid adding a
+  //   Suspense boundary that wasn't there before)
+  // - navigation: only when cached is defined (building a new tree)
+  if (
+    fromServer.loading !== fromCache.loading &&
+    (actor !== "navigation" || fromCache.loading !== undefined)
+  ) {
+    merged = { ...merged, loading: fromCache.loading };
+  }
+
+  // mountPath: SSR segments may lack mountPath while revalidated segments
+  // include it. The conditional MountContextProvider wrapper changes tree depth.
+  if (fromServer.mountPath !== fromCache.mountPath) {
+    merged = { ...merged, mountPath: fromCache.mountPath };
+  }
+
+  // Dev-mode assertion: warn if the merged result still differs from cache
+  // in tree-structural properties. This catches bugs where the merge code
+  // above fails to preserve a value it should have.
+  assertSegmentStructure(
+    fromCache,
+    merged,
+    actor === "action" ? "action-bridge" : "partial-update",
+  );
+  return merged;
+}
+
+/**
  * Single source of truth for merging server segments with cached segments.
  *
  * Replaces the duplicated merge loops in server-action-bridge.ts and
@@ -70,7 +124,6 @@ export interface ReconcileResult {
  */
 export function reconcileSegments(input: ReconcileInput): ReconcileResult {
   const { actor, matched, diff, insertMissingDiff } = input;
-  const context = actor === "action" ? "action-bridge" : "partial-update";
 
   // Build lookup maps from arrays
   const serverSegments = new Map<string, ResolvedSegment>();
@@ -111,59 +164,13 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
 
       if (fromServer) {
         const inDiff = diffSet.has(segId);
-        // Preserve cached structural properties to maintain consistent React tree.
-        // Changing these between renders alters the element nesting
-        // (with/without RouteContentWrapper, MountContextProvider, etc.),
-        // causing React to remount components and destroy useActionState.
         if (fromCache) {
-          let merged = fromServer;
-
-          // When server returns component: null for a layout segment, it means
-          // "this segment doesn't need re-rendering" - preserve the cached component
-          // to maintain the outlet chain and prevent React tree changes
-          if (
-            fromServer.component === null &&
-            fromServer.type === "layout" &&
-            fromCache.component != null
-          ) {
-            merged = { ...merged, component: fromCache.component };
-          }
-
-          // Loading preservation is actor-aware:
-          // - action/stale-revalidation: always preserve cached value to prevent
-          //   tree remount (even when cached is undefined, to avoid adding a
-          //   Suspense boundary that wasn't there before)
-          // - navigation: only when cached is defined (building a new tree)
-          if (actor !== "navigation") {
-            if (fromServer.loading !== fromCache.loading) {
-              merged = { ...merged, loading: fromCache.loading };
-            }
-          } else {
-            if (
-              fromCache.loading !== undefined &&
-              fromServer.loading !== fromCache.loading
-            ) {
-              merged = { ...merged, loading: fromCache.loading };
-            }
-          }
-
-          // mountPath: SSR segments may lack mountPath while revalidated segments
-          // include it. The conditional MountContextProvider wrapper changes tree depth.
-          if (fromServer.mountPath !== fromCache.mountPath) {
-            merged = { ...merged, mountPath: fromCache.mountPath };
-          }
-
-          // Dev-mode assertion: warn if the merged result still differs from cache
-          // in tree-structural properties. This catches bugs where the merge code
-          // above fails to preserve a value it should have.
-          assertSegmentStructure(fromCache, merged, context);
-
           if (IS_BROWSER_DEBUG) {
             debugLog(
               `[reconcile] ${segId}: SERVER+CACHE merge (${inDiff ? "in diff" : "not in diff"}, type=${fromServer.type}, component=${fromServer.component === null ? "null→cached" : "server"})`,
             );
           }
-          return merged;
+          return mergeCached(fromServer, fromCache, actor);
         }
         if (IS_BROWSER_DEBUG) {
           debugLog(
@@ -221,11 +228,13 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
 }
 
 /**
- * Reconcile error segments with cached segments.
+ * Reconcile an error-boundary response with cached segments.
  *
- * For error responses, the server returns the error boundary segment.
- * This function overlays error segments onto the full cached tree,
- * preserving sibling layouts that aren't in the error parent chain.
+ * The server returns the error boundary segment and, above it, what the
+ * action's revalidation re-ran (rsc/server-action.ts). This function overlays
+ * them onto the full cached tree, preserving sibling layouts that aren't in
+ * the error parent chain. The error segment replaces its cached copy; every
+ * other segment merges as an action's does (mergeCached).
  */
 export function reconcileErrorSegments(
   cachedSegments: ResolvedSegment[],
@@ -236,7 +245,11 @@ export function reconcileErrorSegments(
 
   const segments = cachedSegments.map((cached) => {
     const fromServer = errorMap.get(cached.id);
-    return fromServer || cached;
+    return !fromServer
+      ? cached
+      : fromServer.type === "error"
+        ? fromServer
+        : mergeCached(fromServer, cached, "action");
   });
 
   const { main, intercept } = splitInterceptSegments(segments);
@@ -246,4 +259,47 @@ export function reconcileErrorSegments(
     mainSegments: main,
     interceptSegments: intercept,
   };
+}
+
+/**
+ * The ids a page holds once an action's error boundary `boundary` shows: the
+ * ones above it. Nothing at or below the boundary ran after the action's
+ * write (its response and the follow-up cut there), so the next request must
+ * not hold it. ShortCodes nest, so those ids start with the boundary's: the
+ * boundary, its loaders (`${id}D…`), its slots and every entry under it. A
+ * sibling with a longer index (`…R10` beside `…R1`) is kept.
+ */
+export function idsAboveBoundary(
+  ids: string[],
+  boundary: string | undefined,
+): string[] {
+  return boundary
+    ? ids.filter(
+        (id) =>
+          !id.startsWith(boundary) || /\d/.test(id.charAt(boundary.length)),
+      )
+    : ids;
+}
+
+/**
+ * The error segment of every action error boundary committed, by identity
+ * (server-action-bridge.ts adds and deletes). An entry shows one while its
+ * cached list still holds that object: a later commit on the entry replaces
+ * the list, and a refetch that holds the boundary keeps it. Weak, so a
+ * replaced boundary is not kept alive. Two routers never share a segment
+ * object. No hook reads it.
+ */
+export const actionBoundaries: WeakSet<ResolvedSegment> = new WeakSet();
+
+/**
+ * The index of the deepest action error boundary in `segments`, -1 for none.
+ * It is that action's outcome, which no GET reproduces: a background refetch
+ * of the page (the follow-up, Back/Forward's stale revalidation, the
+ * cross-tab refresh) holds it and renders what is above it. At 0 nothing is
+ * above it.
+ */
+export function actionBoundaryAt(segments: readonly ResolvedSegment[]): number {
+  let at = segments.length;
+  while (at-- && !actionBoundaries.has(segments[at]));
+  return at;
 }

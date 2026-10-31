@@ -177,6 +177,8 @@ interface DispatchableRouter<TEnv> {
   onTimeout?: OnTimeoutCallback<TEnv>;
   findMatch: ClassifyRequestDeps<TEnv>["findMatch"];
   basename?: string;
+  /** The rango state cookie name (RangoInternal field). */
+  resolvedStateCookieName: string;
   cache?:
     | {
         enabled?: boolean;
@@ -292,6 +294,7 @@ export async function dispatch<TEnv = any>(
       telemetry: router.telemetry,
       timeouts: router.timeouts,
       onTimeout: router.onTimeout,
+      resolvedStateCookieName: router.resolvedStateCookieName,
     },
     callOnError: stages.createErrorReporter<TEnv>(router),
     // A response-route handler's own throw is serialized into the same typed
@@ -345,6 +348,9 @@ export async function dispatch<TEnv = any>(
     cacheProfiles: router.cacheProfiles,
     versions,
   });
+  // The request's start, as the production handler sets it: onError's
+  // `duration` counts from here.
+  requestContext._handlerStart = performance.now();
   // Cache degradation (reportCacheError -> _reportBackgroundError) reaches the
   // router's onError, as in the production handler.
   stages.reportBackgroundErrors(requestContext, req, url, ctx.callOnError);

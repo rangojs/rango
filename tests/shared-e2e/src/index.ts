@@ -60,6 +60,12 @@ export type { ActionFollowUpScenarioOptions } from "./action-follow-up-scenario.
 export { runHandlesAfterAwaitTests } from "./handles-after-await-scenario.js";
 export type { HandlesAfterAwaitScenarioOptions } from "./handles-after-await-scenario.js";
 export { runActionFailureTests } from "./action-failure-scenario.js";
+export { runKeptLayoutSourceTests } from "./kept-layout-source-scenario.js";
+export type { KeptLayoutSourceScenarioOptions } from "./kept-layout-source-scenario.js";
+export { runActionBoundaryTests } from "./action-boundary-scenario.js";
+export type { ActionBoundaryScenarioOptions } from "./action-boundary-scenario.js";
+export { runInterceptBoundaryTests } from "./intercept-boundary-scenario.js";
+export type { InterceptBoundaryScenarioOptions } from "./intercept-boundary-scenario.js";
 export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
 export {
   expectBackOntoAStalePageShowsTheWrite,
@@ -107,16 +113,29 @@ export type { InterceptHistoryScenarioOptions } from "./intercept-history-scenar
 export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
+export { runDocumentLocationStateTests } from "./document-location-state-scenario.js";
 export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario.js";
 export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
+export { runActionLatestCallTests } from "./action-latest-call-scenario.js";
+export type { ActionLatestCallScenarioOptions } from "./action-latest-call-scenario.js";
+export { runActionPersistsTests } from "./action-persists-scenario.js";
+export type { ActionPersistsScenarioOptions } from "./action-persists-scenario.js";
+export { runHookFieldsTests } from "./hook-fields-scenario.js";
+export type { HookFieldsScenarioOptions } from "./hook-fields-scenario.js";
+export { runNavIdleOverlapTests } from "./nav-idle-overlap-scenario.js";
+export type { NavIdleOverlapScenarioOptions } from "./nav-idle-overlap-scenario.js";
 export { runAsyncHandlesTests } from "./async-handles-scenario.js";
 export type { AsyncHandlesScenarioOptions } from "./async-handles-scenario.js";
 export { runHandlesCommitTests } from "./handles-commit-scenario.js";
 export { runVtBackTests } from "./vt-back-scenario.js";
 export type { VtBackScenarioOptions } from "./vt-back-scenario.js";
 export type { HandlesCommitScenarioOptions } from "./handles-commit-scenario.js";
+export { runHandlesOverlapTests } from "./handles-overlap-scenario.js";
+export type { HandlesOverlapScenarioOptions } from "./handles-overlap-scenario.js";
 export type { TxIdleViewTransitionScenarioOptions } from "./tx-idle-view-transition-scenario.js";
 export { runTransitionKindsTests } from "./transition-kinds-scenario.js";
+export { runOptimisticSettleTests } from "./optimistic-settle-scenario.js";
+export type { OptimisticSettleScenarioOptions } from "./optimistic-settle-scenario.js";
 export type { TransitionKindsScenarioOptions } from "./transition-kinds-scenario.js";
 export {
   countViewTransitions,
@@ -125,6 +144,7 @@ export {
   viewTransitionTypes,
 } from "./view-transition-probe.js";
 export type { PeFormStateScenarioOptions } from "./pe-form-state-scenario.js";
+export type { DocumentLocationStateScenarioOptions } from "./document-location-state-scenario.js";
 export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";
 export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
 export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
@@ -927,7 +947,8 @@ const loadMoreItems = (pageNumber: number): string[] =>
  * Link goes to page N+1 carrying every item on screen as a `clearOnReload`
  * slot, plus a slot without options (`lm-sort`). The route's handler sets a
  * `clearOnReload` slot of its own on every request (`lm-server-page`),
- * document loads included.
+ * document loads included, unless the request sends `x-lm-stamp: off`
+ * (skipLoadMoreServerStamp).
  *
  * Loads page 1, then navigates to page 2 on the client. Leaves the page on an
  * entry holding all three slots.
@@ -935,14 +956,15 @@ const loadMoreItems = (pageNumber: number): string[] =>
 async function openLoadMorePageTwo(page: Page, url: string): Promise<void> {
   const items = byTestId(page, "lm-items").locator("li");
 
-  // A document response carries no location state: what the handler set for
-  // this load does not reach history.state, so start-up has nothing of the
-  // server's to drop.
+  // The document carries what the handler set for this load (#1330): start-up
+  // writes it after the clearOnReload pass, so this load keeps it.
   await page.goto(`${url}?page=1`);
   await waitForShellHydration(page);
   await expect(items).toHaveText(loadMoreItems(1));
-  await expect(byTestId(page, "lm-server-page")).toHaveText("none");
-  expect(await locationStateSlots(page)).toEqual({});
+  await expect(byTestId(page, "lm-server-page")).toHaveText("1");
+  expect(await locationStateSlots(page)).toEqual({
+    "ServerPageStamp~r": { page: 1 },
+  });
 
   // A client navigation shows the carried items above the new page's, and
   // delivers the state the handler set for it.
@@ -957,10 +979,39 @@ async function openLoadMorePageTwo(page: Page, url: string): Promise<void> {
   });
 }
 
+/** The load-more fixture's pages, whatever the app's prefix. */
+const isLoadMoreUrl = (url: URL): boolean => url.pathname.endsWith("load-more");
+
 /**
- * What a document load of that entry must leave: the page as the server
- * rendered it, both `~r` slots gone from history.state, the slot without
- * options still applied.
+ * Sends `x-lm-stamp: off` on the load-more document requests while it is on,
+ * so the handler sets no stamp and a document load carries none (#1330). The
+ * stale `~r` stamp a navigation left in the entry then shows if start-up keeps
+ * it: with the stamp, the document's own write of the same slot would replace
+ * it and hide that. Document requests only: a prefetch of the next page made
+ * meanwhile (production) is a fetch, keeps its stamp, and may serve the click
+ * after this is turned off.
+ */
+async function skipLoadMoreServerStamp(
+  page: Page,
+  skip: boolean,
+): Promise<void> {
+  if (!skip) {
+    await page.unroute(isLoadMoreUrl);
+    return;
+  }
+  await page.route(isLoadMoreUrl, (route) => {
+    const request = route.request();
+    if (!request.isNavigationRequest()) return route.fallback();
+    return route.continue({
+      headers: { ...request.headers(), "x-lm-stamp": "off" },
+    });
+  });
+}
+
+/**
+ * What a document load of that entry must leave, its handler's stamp skipped
+ * (skipLoadMoreServerStamp): the page as the server rendered it, both `~r`
+ * slots gone from history.state, the slot without options still applied.
  *
  * The server HTML never contains carried items, so "not shown" would pass
  * before the client applied anything. `lm-sort` comes from history.state too:
@@ -994,8 +1045,10 @@ export async function expectClearOnReloadDropsCarriedState(
   const carried = byTestId(page, "lm-carried-count");
 
   await openLoadMorePageTwo(page, url);
+  await skipLoadMoreServerStamp(page, true);
   await page.reload();
   await expectLoadMorePageTwoAsServerRendered(page);
+  await skipLoadMoreServerStamp(page, false);
 
   await byTestId(page, "lm-more").click();
   await expect(page).toHaveURL(`${url}?page=3`);
@@ -1031,11 +1084,13 @@ export async function expectClearOnReloadDropsStateOnTraversalLoad(
   await markDocument(page);
   await page.goto(`${url}?page=9`);
   await waitForShellHydration(page);
+  await skipLoadMoreServerStamp(page, true);
   await page.goBack();
   await expect(page).toHaveURL(`${url}?page=2`);
   expect(await isMarkedDocument(page)).toBe(false);
 
   await expectLoadMorePageTwoAsServerRendered(page);
+  await skipLoadMoreServerStamp(page, false);
 }
 
 /** How long the load-more fixture's loader holds a page (`?hold=<ms>`). */
@@ -1069,8 +1124,8 @@ const loadMoreCommit = (pageNumber: number, shown: string[]): string =>
  * The load-more fixture at one instant. `content` is what the shared layout
  * holds: the list, the other fixture's panel, or neither. `sharedCarried` is
  * the layout's own reader of the carried items, `carried` the list's, and
- * `serverPage` the state the route's handler set for the entry ("none" for an
- * entry a document load started). `late` is the reader `lm-open-late` mounts:
+ * `serverPage` the state the route's handler set for the entry (a document
+ * load carries it too, #1330; "none" before it is applied). `late` is the reader `lm-open-late` mounts:
  * `<page of the list it is in>:<carried items it reads>`, null until then.
  */
 interface LoadMoreScreen {
@@ -1191,8 +1246,8 @@ export async function expectHeldLoadMoreShowsNoItemTwice(
       page: String(next - 1),
       carried: String(loadMoreThrough(next - 2).length),
       sharedCarried: String(loadMoreThrough(next - 2).length),
-      // Page 1 came with the document, which carries no location state.
-      serverPage: next === 2 ? "none" : String(next - 1),
+      // Page 1 came with the document, which carries its handler's state.
+      serverPage: String(next - 1),
       late: null,
       items: loadMoreThrough(next - 1),
     };
@@ -4008,3 +4063,7 @@ export async function expectDeclinedBakedParamServedLive(
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
 }
+export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
+export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
+export { runOnErrorBackgroundTests } from "./onerror-background-scenario.js";
+export type { OnErrorBackgroundScenarioOptions } from "./onerror-background-scenario.js";

@@ -12,7 +12,8 @@ export type UnresolvableReason =
   | "factory-call"
   | "dynamic-expression"
   | "unresolvable-import"
-  | "file-not-found";
+  | "file-not-found"
+  | "unresolvable-basename";
 
 export interface UnresolvableInclude {
   pathPrefix: string;

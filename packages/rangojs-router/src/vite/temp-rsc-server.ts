@@ -1,12 +1,14 @@
 /**
  * The discovery temp RSC server: a minimal Vite server whose module runner
  * imports the user's router files. Shared by dev discovery
- * (discovery/dev-server-phase.ts) and build discovery
- * (discovery/build-discovery-phase.ts).
+ * (discovery/dev-server-phase.ts), build discovery
+ * (discovery/build-discovery-phase.ts) and `rango generate --runtime`
+ * (build/runtime-discovery.ts).
  *
  * Sits in src/vite/, not src/vite/discovery/: the loader hook URL below
- * resolves against this module's import.meta.url, and the published bundle
- * (dist/vite/index.js) ships the hook at the same relative path.
+ * resolves against this module's import.meta.url, and the published bundles
+ * (dist/vite/index.js, dist/bin/rango.js) ship the hook at the same relative
+ * path.
  */
 
 import type { ViteDevServer } from "vite";
@@ -103,6 +105,8 @@ export async function createTempRscServer(
      * shell capture actually runs.
      */
     realSsrEntry?: boolean;
+    /** Caller-specific plugins, appended after the forwarded user plugins. */
+    plugins?: import("vite").Plugin[];
   } = {},
 ): Promise<ViteDevServer> {
   // Install the Node ESM loader hook before any module evaluation so
@@ -218,6 +222,7 @@ export async function createTempRscServer(
       // IMPORT_REWRITE_PLUGINS) and placed last so framework resolution runs first;
       // Vite re-sorts by `enforce`, so `enforce: "pre"` resolvers still lead.
       ...state.userResolvePlugins,
+      ...(options.plugins ?? []),
     ],
   });
 }

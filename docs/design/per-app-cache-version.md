@@ -302,9 +302,11 @@ before hashing (`digestBundle`), each for a measured reason:
   every action export of the build and sits in a chunk every router runs.
   Hashed as is, adding an action to one app changed every app's version. Each
   module it names is hashed by the routers that reach it, so nothing is lost.
-  This works on the bundler's region comments; a minified server build has
-  none and keeps the map in the hash, which clears more, never less.
-- **The paths in region comments** (`stripRegionPaths`). The bundler prints
+  This works on the bundler's module markers (below): the body runs from the
+  map's marker to the next marker. A minified server build has none, and a
+  map no marker follows is kept; both keep the map in the hash, which clears
+  more, never less.
+- **The paths in module markers** (`stripModulePaths`). The bundler prints
   each module's path above its code, and that path is about the build, not
   the code:
   - it is relative to the directory `vite build` was started from, not to
@@ -324,6 +326,22 @@ before hashing (`digestBundle`), each for a measured reason:
   would have fixed the first of the three and changed the bytes that ship;
   changing the hash input fixes all three and ships the same bytes.
 
+  The marker has two forms. rolldown before 1.2.15 wraps each module in
+  `//#region <id>` and `//#endregion`. 1.2.15 (rolldown/rolldown#11235)
+  prints only `// <id>` where the module starts, and vite 8.2 and later
+  install it: their `rolldown` range (`~1.2.0` in 8.2.0, `~1.2.14` in 8.3.5)
+  takes the latest 1.2 patch. When
+  only the region form was known, a build on vite 8.3.5 hashed the absolute
+  path in plugin-rsc's CSS module id and the whole server-reference map, so
+  the fixture's app A got other versions in every checkout directory and
+  every app's version moved when one app added an action (rango-t228). A
+  `//#region` line is always a marker. A `// ` line can also be a kept
+  comment or a line of a multi-line string, so it counts as a marker only
+  when it names a module of its chunk: the module's id with `\0` printed as
+  two characters, or, for a path, the path relative to some directory (any
+  run of `../` and then a trailing run of the path's segments). A marker
+  that does not match keeps its path in the hash, which clears more.
+
 Module ids need the same care, because a chunk's identity is derived from the
 ids of the modules inside it (`portableModuleId`): the pnpm store directory is
 reduced to `name@version` there too, and so is one id that carries the working
@@ -340,14 +358,14 @@ staged as a `.txt` text module on Cloudflare (3.47 MB in the stress demo).
 
 The SSR output gets exactly this treatment, through the same function. It is
 unminified too, its chunks are named by content hashes of bytes that include
-region comments, and the document version covers it. Hashed raw, with its file
+module markers, and the document version covers it. Hashed raw, with its file
 names, it made the document version depend on the working directory even after
 the RSC side was fixed.
 
 What remains tied to how the build ran is the client build: its file names
 are part of the document version as they are, because stored HTML and open
 tabs hold exactly those names. They are content hashes of minified code, which
-has no region comments. A client build with `build.minify: false` does have
+has no module markers. A client build with `build.minify: false` does have
 them, and then the document version depends on the working directory and the
 pnpm store layout again.
 
@@ -945,7 +963,7 @@ table whose route manifest is large enough to ship as a workerd Text module:
 @cloudflare/vite-plugin imports it through a marker specifier that looked
 like a package nobody had installed, and a package the build cannot find gets
 a per-build value on purpose (`classifyExternal` now knows the marker). The
-last two rows are the working directory, in region comments and then in one
+last two rows are the working directory, in module markers and then in one
 module id ("What is hashed"). No unit test saw any of the four; each has one
 now, and the Cloudflare cache-version e2e builds with `RANGO_MANIFEST_TEXT=1`.
 

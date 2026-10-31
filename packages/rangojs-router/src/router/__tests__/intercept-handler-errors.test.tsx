@@ -207,15 +207,16 @@ function expectModalFallback(
   ).toEqual([]);
   expect(nav.status).toBe(status);
 
-  // Reported once as a boundary-handled handler error on the declaring entry.
-  const declaringShortCode = modal.id.slice(0, -".@modal".length);
+  // Reported once as a boundary-handled handler error on the intercept's
+  // slot, as a streamed one is.
   expect(onError).toHaveBeenCalledTimes(1);
   const [errCtx] = onError.mock.calls[0];
   expect(errCtx).toMatchObject({
     phase: "handler",
     handledByBoundary: true,
     isPartial: true,
-    segmentId: declaringShortCode,
+    segmentId: modal.id,
+    segmentType: "parallel",
   });
   expect(errCtx.error.message).toBe(message);
 }
@@ -379,7 +380,11 @@ describe("intercept handler lanes left unchanged", () => {
     expect(deps.callOnError).toHaveBeenCalledWith(
       expect.objectContaining({ message: "background modal failed" }),
       "handler",
-      expect.objectContaining({ isPartial: true, segmentId: "L9" }),
+      expect.objectContaining({
+        isPartial: true,
+        segmentId: "L9.@modal",
+        segmentType: "parallel",
+      }),
     );
   });
 

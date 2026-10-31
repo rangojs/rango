@@ -558,8 +558,9 @@ analog but operates on loader/query reload, not RSC-segment render.
 
 `<Link prefetch="hover|viewport|render|adaptive|none">` (default: the router's
 `defaultPrefetch`, `"none"` in development and `"viewport"` in production), plus
-`prefetchKey` (`":source"` scopes a prefetch to the originating page for routes
-whose response branches on `currentUrl`). Intercepted plain `<a href>` elements
+`prefetchKey` (`":source"` scopes a prefetch to the originating page; the
+router does so itself for an intercept target and for a `revalidate()` that
+read the source page and kept a segment). Intercepted plain `<a href>` elements
 inside the router basename follow the same default; common static-resource
 extensions are excluded unless `data-prefetch="true"` identifies an application
 route, and `data-prefetch="false"` or `"none"` opts out unsafe GET links. A

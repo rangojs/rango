@@ -711,9 +711,9 @@ type Differences = Partial<Record<Exception | "unnamed", string[]>>;
 type Exception =
   /**
    * Internal-only. A segment whose handler ran is marked (`_handlerRan`,
-   * resolveEntryHandler and the slot loop). Both passes
+   * resolveEntryHandler, resolveOrphanLayout and the slot loop). Both passes
    * mark it now, so the difference is gone; it was the fresh walker's
-   * absent marker. Neither marks an orphan layout or an error segment.
+   * absent marker. Neither marks an error segment.
    * buildMatchResult (match-result.ts) strips it from the segments it
    * returns. Only a partial match reads it before that, for `resolvedIds`
    * (pinned byte for byte by prefetch-false-unflagged.rsc-test.tsx); a full

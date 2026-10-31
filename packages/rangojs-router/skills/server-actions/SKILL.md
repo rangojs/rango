@@ -569,6 +569,10 @@ A few details:
   until a request re-runs them.
 - It holds no segments, so every loader on the page re-runs whatever its
   `revalidate()` says, and the document cache never answers it.
+- If a later action on that page threw into its `errorBoundary()`, the
+  revalidation keeps the boundary on screen: everything above it re-runs,
+  nothing at or below it. Under the router's default boundary at the root,
+  nothing runs. A link from the page re-runs what is at or below the boundary.
 - Going Back or Forward out of an intercept does not abort an action sent from
   the intercept. `useAction()` and your `await` get its real result.
 
@@ -641,6 +645,14 @@ Redirects from actions render the **target** route tree's matched segments
 source page's — the target is what the user sees next. See `/hooks
 useLocationState` for reading flash state on the target page.
 
+The same holds for a form posted without JS (or before hydration): an action
+that redirects with `state` carries it to the target in a one-shot cookie,
+and one that sets it with `getRequestContext().setLocationState()` and does
+not redirect carries it in the re-rendered page. Either way the target reads
+it with `useLocationState` once it has hydrated. Prefer a `303` redirect, so a
+refresh does not post the form again. State that crosses a no-JS redirect
+travels as JSON (see `/hooks` `state.md`, "State on a document response").
+
 Build the target by name rather than a literal path:
 `throw redirect(getRequestContext().reverse("account.settings"))`. It fills
 mount params (`:accountId`, `:locale`) from the page URL the action was called
@@ -704,7 +716,17 @@ is usually too aggressive.
 Throw for genuinely exceptional conditions (network failure, DB outage,
 auth violation). The nearest `errorBoundary()` above the page the action was
 called from catches them, and the boundary renders inside route middleware like
-a normal render.
+a normal render. Above the boundary the response is the action's revalidation,
+as after a success: the layouts' loaders re-run as their `revalidate()`
+decides, so a cart count shows what the action wrote before it threw. A
+route's `errorBoundary()` replaces the route: its handler and loaders do not
+run. A layout's `errorBoundary()` replaces what the layout renders in its
+outlet: the layout's own loaders, slots and orphan layouts revalidate as on a
+success, and nothing inside the outlet runs. A link from the page re-runs
+what the boundary replaced and everything under it; under the router's
+default boundary at the root, the whole page. Back to the page later
+restores it and revalidates it, which replaces the boundary with the route. An action sent from an intercept
+gets the boundary alone.
 
 ```typescript
 // urls.tsx — inside the urls() callback

@@ -278,7 +278,10 @@ the arguments and type of a `urls()` loader's (`ShouldRevalidateFn` from
 `actionUrl`, `actionResult`, `formData`, `method`,
 `routeName`/`fromRouteName`/`toRouteName`, and `stale`. Nothing runs in the
 browser before the request goes out; there is no client-computed decision and
-no hybrid.
+no hybrid. A predicate that reads `currentParams`, `currentUrl` or
+`fromRouteName` and keeps its segment makes a prefetch of that answer
+page-only, as in `urls()` (`/links` → "Shared prefetches and
+`prefetchKey`").
 
 You still write the predicate in the `"use client"` module, or in a
 component's `.use`. The rango Vite plugin hoists each `revalidate()` argument
@@ -450,16 +453,12 @@ function StockPanel() {
 }
 
 function SaveStock({ sku }: { sku: string }) {
+  // Kept until the next save starts.
   const { revalidationError } = useAction(saveStock);
-  const [stale, setStale] = useState(false);
-  // useAction resets to idle once the action has settled: keep the notice.
-  useEffect(() => {
-    if (revalidationError) setStale(true);
-  }, [revalidationError]);
   return (
     <form action={saveStock.bind(null, sku)}>
       <button>Save</button>
-      {stale && (
+      {revalidationError != null && (
         <p role="status">Saved. The stock count could not be refreshed.</p>
       )}
     </form>
@@ -734,8 +733,10 @@ a hard load of the target URL renders the full route.
   values during SSR (live request seeds the SSR store; on ppr routes the
   capture/resume renders seed the shell key's own sorted search — search is
   part of shell identity, so static-part reads are legal).
-  `useNavigation`/`useLinkStatus` report the canonical nav, but a reader
-  inside optimistically-swapped content (destination WITH `loading()`)
+  `useNavigation`/`useLinkStatus` report the canonical nav (while the frame
+  shows, `useNavigation()` is `state: "loading"` with `location` the
+  committed URL, even though the URL hooks already report the frame's
+  destination), but a reader inside optimistically-swapped content (destination WITH `loading()`)
   unmounts at click — put status readers in surviving chrome. Errors: wrap
   throwers in the client `ErrorBoundary`; `useFetchLoader` works unchanged
   (route-independent lane; `revalidate()` deliberately not consulted).

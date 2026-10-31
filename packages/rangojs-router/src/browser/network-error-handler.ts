@@ -28,6 +28,9 @@ export function toNetworkError(
  * Render an error into the segment tree via the onUpdate subscriber so the
  * nearest error boundary catches it. Wrapped in startTransition; RenderErrorThrower
  * throws during render (async rejections do not reach boundaries on their own).
+ * Flagged inTransition like every tree handed over in a transition, so route
+ * state that arrives after it (the failed navigation's idle) waits for its
+ * commit (NavigationProvider's "anchor").
  */
 function emitErrorToBoundary(
   onUpdate: UpdateSubscriber,
@@ -43,6 +46,7 @@ function emitErrorToBoundary(
         segments: [],
         isError: true,
       },
+      inTransition: true,
     });
   });
 }

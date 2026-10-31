@@ -281,6 +281,20 @@ describe("cache-hit parallel loaders", () => {
     expect(map.has("L0.@sidebar")).toBe(true);
     expect(map.has("L0P0.@sidebar")).toBe(false);
   });
+
+  it("buildEntryRevalidateMap keys an orphan layout's slots by the orphan, as the walker names them", () => {
+    const orphan = { ...makeParallelLoaderEntry(), shortCode: "M0L0L0" };
+    const shell = {
+      ...makeParallelLoaderEntry(),
+      shortCode: "M0L0",
+      parallel: {},
+      layout: [orphan],
+    } as EntryData;
+    const map = buildEntryRevalidateMap([shell]);
+
+    expect(map.has("M0L0L0.@sidebar")).toBe(true);
+    expect(map.has("M0L0.@sidebar")).toBe(false);
+  });
 });
 
 describe("cache-hit loaders under an intercept", () => {

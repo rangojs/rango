@@ -267,6 +267,14 @@ layout(LocaleLayout, () => [
 ])
 ```
 
+A rule that reads `currentParams`, `currentUrl` or `fromRouteName` and keeps
+the layout makes prefetches between pages under it page-only: the locale rule
+above keeps the layout on every `/en` to `/en` navigation, so each page
+prefetches its links again (`/links` → "Shared prefetches and `prefetchKey`").
+Write it for chrome that must follow the param; a block that belongs to one
+page goes in its route or in an orphan layout inside its `path()` (above),
+which re-renders with the route and needs no rule.
+
 `revalidate(false)` on a standalone layout only restates the default.
 The return shapes (hard boolean, soft `{ defaultShouldRevalidate }`, or defer)
 and the `revalidate(true | false)` shorthand are covered in `/loader` →

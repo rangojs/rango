@@ -665,9 +665,9 @@ describe("renderRoute: flash state and static writes under #1029", () => {
     expect(note()).toBe("none");
   });
 
-  // renderRoute has one location, so a back/forward restores no tree: a
-  // popstate event hands readers the entry history.state holds, the way the
-  // router's popstate commit does.
+  // A popstate event onto an entry the test wrote restores no tree: it hands
+  // readers the entry history.state holds, the way the router's popstate
+  // commit does.
   it("a popstate event is a back/forward onto the entry: readers take it as it is, an empty flash slot included", async () => {
     function Page(): ReactNode {
       const note = useLocationState(Note);
@@ -705,4 +705,95 @@ describe("renderRoute: flash state and static writes under #1029", () => {
     unmount();
     expect(() => window.dispatchEvent(new Event("popstate"))).not.toThrow();
   });
+
+  const ItemLoader = {
+    __brand: "loader",
+  } as unknown as LoaderDefinition<string>;
+  function Item(): ReactNode {
+    const { data } = useLoader(ItemLoader);
+    const plain = useLocationState<{ from?: string }>();
+    useLocationState(Flash);
+    return <p data-testid="item">{`${data}|${plain?.from ?? "none"}`}</p>;
+  }
+  const mountItems = () =>
+    renderRoute([{ path: "/items/:id", Component: Item }], {
+      request: "/items/1",
+      loaders: [[ItemLoader, "1"]],
+    });
+  type ItemsRouter = Awaited<ReturnType<typeof mountItems>>["router"];
+
+  // An entry the test writes over one a navigation wrote has no `idx`, which
+  // reads as the first entry's. It is not that entry: the tree stays on the
+  // page on screen and readers take the written state.
+  it("a popstate event onto an entry the test wrote over a navigation's keeps the page on screen", async () => {
+    const { getByTestId, router } = await mountItems();
+    const item = () => getByTestId("item").textContent;
+    await act(async () => {
+      await router.navigate("/items/2", {
+        state: { from: "list" },
+        loaders: [[ItemLoader, "2"]],
+      });
+    });
+    expect(item()).toBe("2|list");
+
+    await act(async () => {
+      window.history.replaceState({ state: { from: "test" } }, "");
+      window.dispatchEvent(new Event("popstate"));
+    });
+    expect(item()).toBe("2|test");
+  });
+
+  // The router's own writes to an entry after its commit (a flash read,
+  // Def.write()) keep it that entry: a back onto it restores its page.
+  it.each([
+    {
+      label: "a flash read on a navigation's entry",
+      back: "2",
+      write: async (router: ItemsRouter) => {
+        await router.navigate("/items/2", {
+          state: [Flash({ text: "saved" })],
+          loaders: [[ItemLoader, "2"]],
+        });
+      },
+    },
+    {
+      label: "Def.write() on a navigation's entry",
+      back: "2",
+      write: async (router: ItemsRouter) => {
+        await router.navigate("/items/2", {
+          state: { from: "list" },
+          loaders: [[ItemLoader, "2"]],
+        });
+        Note.write({ text: "written" });
+      },
+    },
+    {
+      label: "Def.write() on the mounted entry",
+      back: "1",
+      write: async () => {
+        Note.write({ text: "written" });
+      },
+    },
+  ])(
+    "a back onto an entry the router wrote to after its commit restores its page ($label)",
+    async ({ back, write }) => {
+      const { getByTestId, router } = await mountItems();
+      await act(async () => write(router));
+      await act(async () => {
+        await router.navigate("/items/3", {
+          state: { from: "list" },
+          loaders: [[ItemLoader, "3"]],
+        });
+      });
+      expect(getByTestId("item").textContent).toBe("3|list");
+
+      await act(async () => {
+        window.history.back();
+      });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      expect(getByTestId("item").textContent?.split("|")[0]).toBe(back);
+    },
+  );
 });

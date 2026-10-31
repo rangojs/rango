@@ -13,14 +13,10 @@ import {
   type InterceptEntry,
   type InterceptSelectorContext,
 } from "../server/context.js";
-import type { MatchApiDeps } from "./types.js";
+import type { ActionContext, MatchApiDeps } from "./types.js";
 import type { RouterContext } from "./router-context.js";
 import { runWithRouterContext } from "./router-context.js";
-import {
-  type ActionContext,
-  type MatchContext,
-  createPipelineState,
-} from "./match-context.js";
+import { type MatchContext, createPipelineState } from "./match-context.js";
 import { createMatchPartialPipeline } from "./match-pipelines.js";
 import { collectMatchResult } from "./match-result.js";
 import {
@@ -257,12 +253,7 @@ export function createMatchHandlers<TEnv = any>(
   async function createMatchContextForPartial(
     request: Request,
     env: TEnv,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    },
+    actionContext?: ActionContext,
   ): Promise<MatchContext<TEnv> | null> {
     return _createMatchContextForPartial(
       request,

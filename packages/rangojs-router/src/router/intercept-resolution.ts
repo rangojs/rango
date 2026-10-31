@@ -184,15 +184,16 @@ export function findInterceptForRoute(
 /**
  * An intercept handler's throw or notFound() renders the declaring entry's
  * boundary as the slot component (catchSegmentError, as for route handlers on
- * partial navigations: 500/404 status, onError "handler"). Responses rethrow.
- * The background re-render (`background`) reports the error the same way and
- * then rethrows it, so a failed re-render aborts its cache write instead of
- * storing the fallback.
+ * partial navigations: 500/404 status, onError "handler" naming the slot).
+ * Responses rethrow. The background re-render (`background`) reports the
+ * error the same way and then rethrows it, so a failed re-render aborts its
+ * cache write instead of storing the fallback.
  */
 function renderInterceptHandlerError<TEnv>(
   pass: ResolutionPass<TEnv>,
   error: unknown,
   parentEntry: EntryData,
+  slotSegmentId: string,
   background: boolean | undefined,
 ): ReactNode {
   if (error instanceof Response) throw error;
@@ -213,6 +214,7 @@ function renderInterceptHandlerError<TEnv>(
       telemetry,
     },
     pass.context.pathname,
+    { id: slotSegmentId, type: "parallel" },
   );
   if (background) throw error;
   return component;
@@ -383,6 +385,7 @@ export async function resolveInterceptEntry<TEnv>(
       pass,
       error,
       parentEntry,
+      slotSegmentId,
       options?.background,
     );
   }
@@ -422,6 +425,7 @@ export async function resolveInterceptEntry<TEnv>(
       context,
       routeKey: interceptEntry.routeName,
       params,
+      isPartial: true,
       recover: !options?.background,
     });
 
@@ -449,6 +453,7 @@ export async function resolveInterceptEntry<TEnv>(
           pass,
           error,
           parentEntry,
+          slotSegmentId,
           options?.background,
         );
       }

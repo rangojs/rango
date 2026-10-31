@@ -705,6 +705,424 @@ describe("createEventController", () => {
   });
 
   // ======================================================================
+  // The latest call (handle-and-actions.md: "If the same action fires
+  // several times, the hook reports the latest call.")
+  // ======================================================================
+
+  describe("getActionState reports the latest call", () => {
+    /** Every distinct state a subscriber is handed, in order. */
+    function record(ctrl: EventController, subscriptionId: string) {
+      const seen: string[] = [];
+      ctrl.subscribeToAction(subscriptionId, (s) => {
+        const line = `${s.state}:${JSON.stringify(s.payload)}:${String(s.result)}:${String(s.error)}`;
+        if (seen.at(-1) !== line) seen.push(line);
+      });
+      return seen;
+    }
+
+    it("the later call settling first: its result, which stays; the earlier call never shows", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      const second = ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      vi.advanceTimersByTime(0);
+
+      second.complete("r2");
+      vi.advanceTimersByTime(0);
+      expect(ctrl.getActionState("addToCart")).toMatchObject({
+        state: "idle",
+        payload: ["second"],
+        result: "r2",
+      });
+
+      // The later call's settle window ends while the earlier one runs: its
+      // result stays until the action's next call (rango-t223).
+      vi.advanceTimersByTime(100);
+      expect(ctrl.getActionState("addToCart")).toMatchObject({
+        state: "idle",
+        payload: ["second"],
+        result: "r2",
+      });
+
+      first.startStreaming().end();
+      first.complete("r1");
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["first"]:null:null',
+        'loading:["second"]:null:null',
+        'idle:["second"]:r2:null',
+      ]);
+    });
+
+    it("an exact reader follows the latest call the same way", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      const second = ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      const token = first.startStreaming();
+      second.complete("r2");
+      expect(ctrl.getActionState("src/cart.ts#addToCart")).toMatchObject({
+        state: "idle",
+        result: "r2",
+      });
+      vi.advanceTimersByTime(100);
+      token.end();
+      first.complete("r1");
+      expect(ctrl.getActionState("src/cart.ts#addToCart").result).toBe("r2");
+    });
+
+    it("calls settling in order: loading until the later call settles", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      const second = ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      vi.advanceTimersByTime(0);
+      first.complete("r1");
+      vi.advanceTimersByTime(100);
+      expect(ctrl.getActionState("addToCart").state).toBe("loading");
+      second.complete("r2");
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["first"]:null:null',
+        'loading:["second"]:null:null',
+        'idle:["second"]:r2:null',
+      ]);
+    });
+
+    it("two calls in the same millisecond: the later one is reported", () => {
+      const ctrl = createController();
+      ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      expect(ctrl.getActionState("addToCart").payload).toEqual(["second"]);
+    });
+
+    it("an earlier call that fails after the later one succeeded reports no error", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      const second = ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      vi.advanceTimersByTime(0);
+      second.complete("r2");
+      vi.advanceTimersByTime(0);
+      first.fail(new Error("out of stock"));
+      expect(ctrl.getActionState("addToCart")).toMatchObject({
+        state: "idle",
+        result: "r2",
+        error: null,
+      });
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["first"]:null:null',
+        'loading:["second"]:null:null',
+        'idle:["second"]:r2:null',
+      ]);
+    });
+
+    it("the later call failing reports its error, and the earlier result never shows", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      const second = ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      const error = new Error("out of stock");
+      second.fail(error);
+      expect(ctrl.getActionState("addToCart")).toMatchObject({
+        state: "idle",
+        error,
+      });
+      first.complete("r1");
+      expect(ctrl.getActionState("addToCart")).toMatchObject({
+        state: "idle",
+        result: null,
+        error,
+      });
+    });
+
+    it("an earlier call that fails before the later one settles reports no error", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      const second = ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      vi.advanceTimersByTime(0);
+      first.fail(new Error("e1"));
+      vi.advanceTimersByTime(0);
+      expect(ctrl.getActionState("addToCart")).toMatchObject({
+        state: "loading",
+        payload: ["second"],
+        error: null,
+      });
+      second.complete("r2");
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["first"]:null:null',
+        'loading:["second"]:null:null',
+        'idle:["second"]:r2:null',
+      ]);
+    });
+
+    it("both calls failing: the later call's error, never the earlier one's", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      const second = ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      vi.advanceTimersByTime(0);
+      second.fail(new Error("e2"));
+      vi.advanceTimersByTime(0);
+      first.fail(new Error("e1"));
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["first"]:null:null',
+        'loading:["second"]:null:null',
+        'idle:["second"]:null:Error: e2',
+      ]);
+    });
+
+    it("three calls settling out of order with mixed failures: only the third call shows", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const one = ctrl.startAction("src/cart.ts#addToCart", ["one"]);
+      vi.advanceTimersByTime(10);
+      const two = ctrl.startAction("src/cart.ts#addToCart", ["two"]);
+      vi.advanceTimersByTime(10);
+      const three = ctrl.startAction("src/cart.ts#addToCart", ["three"]);
+      vi.advanceTimersByTime(0);
+
+      two.fail(new Error("e2"));
+      vi.advanceTimersByTime(0);
+      three.complete("r3");
+      vi.advanceTimersByTime(0);
+      one.fail(new Error("e1"));
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["one"]:null:null',
+        'loading:["two"]:null:null',
+        'loading:["three"]:null:null',
+        'idle:["three"]:r3:null',
+      ]);
+    });
+
+    it("the latest call, aborted, shows nothing", () => {
+      const ctrl = createController();
+      const seen = record(ctrl, "addToCart");
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(0);
+      first.complete("r1");
+      vi.advanceTimersByTime(0);
+      // The later call starts inside the earlier one's settle window and is
+      // aborted: the earlier call's settling entry survives abortAllActions,
+      // and the reader does not fall back to it.
+      ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      vi.advanceTimersByTime(0);
+      ctrl.abortAllActions();
+      expect(ctrl.getInflightActions().size).toBe(1);
+      expect(ctrl.getActionState("addToCart")).toEqual({
+        state: "idle",
+        actionId: null,
+        payload: null,
+        error: null,
+        result: null,
+        revalidationError: null,
+      });
+      vi.runAllTimers();
+
+      expect(seen).toEqual([
+        'loading:["first"]:null:null',
+        'idle:["first"]:r1:null',
+        'loading:["second"]:null:null',
+        "idle:null:null:null",
+      ]);
+    });
+
+    // server-action-bridge.ts: an error-boundary response fails its own call,
+    // then aborts every other call in flight.
+    it("the latest call, aborted by an earlier call's error-boundary response, shows nothing", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      first.fail(new Error("e1"));
+      ctrl.abortAllActions();
+      expect(ctrl.getActionState("addToCart")).toMatchObject({
+        state: "idle",
+        payload: null,
+        error: null,
+      });
+      expect(ctrl.getActionState("src/cart.ts#addToCart").error).toBeNull();
+    });
+
+    it("a name reader follows the latest call across actions with that name; an exact reader keeps its own", () => {
+      const ctrl = createController();
+      const a = ctrl.startAction("src/a.ts#addToCart", ["a"]);
+      vi.advanceTimersByTime(10);
+      const b = ctrl.startAction("src/b.ts#addToCart", ["b"]);
+      b.complete("rb");
+      vi.advanceTimersByTime(100);
+
+      // The name reader: b was the latest call, and its result stays.
+      expect(ctrl.getActionState("addToCart")).toMatchObject({
+        state: "idle",
+        result: "rb",
+      });
+      // The exact reader of a still sees a's call.
+      expect(ctrl.getActionState("src/a.ts#addToCart")).toMatchObject({
+        state: "loading",
+        payload: ["a"],
+      });
+
+      a.complete("ra");
+      expect(ctrl.getActionState("src/a.ts#addToCart")).toMatchObject({
+        state: "idle",
+        result: "ra",
+      });
+      expect(ctrl.getActionState("addToCart").result).toBe("rb");
+      // Past a's settle window: each reader keeps the call it reported.
+      vi.advanceTimersByTime(100);
+      expect(ctrl.getActionState("src/a.ts#addToCart").result).toBe("ra");
+      expect(ctrl.getActionState("addToCart").result).toBe("rb");
+    });
+
+    it("calls of different actions are reported apart", () => {
+      const ctrl = createController();
+      const save = ctrl.startAction("src/cart.ts#save", ["s"]);
+      vi.advanceTimersByTime(10);
+      ctrl.startAction("src/cart.ts#remove", ["r"]);
+      save.complete("saved");
+      expect(ctrl.getActionState("save")).toMatchObject({
+        state: "idle",
+        result: "saved",
+      });
+      expect(ctrl.getActionState("remove")).toMatchObject({
+        state: "loading",
+        payload: ["r"],
+      });
+    });
+
+    it("useNavigation still counts the earlier call while it runs", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("src/cart.ts#addToCart", ["first"]);
+      vi.advanceTimersByTime(10);
+      const second = ctrl.startAction("src/cart.ts#addToCart", ["second"]);
+      second.complete("r2");
+      vi.advanceTimersByTime(100);
+      expect(ctrl.getState().state).toBe("loading");
+      expect(ctrl.getState().inflightActions.map((a) => a.payload)).toEqual([
+        ["first"],
+      ]);
+      first.complete("r1");
+      expect(ctrl.getState().state).toBe("idle");
+    });
+  });
+
+  // rango-t223: an action's last settled call stays until its next call.
+  describe("getActionState keeps an action's last settled call", () => {
+    it("a result, an error and a revalidation error stay past the settle window; the next call reads loading with nothing", () => {
+      const ctrl = createController();
+      const revalidationError = new Error("loader failed");
+      ctrl.startAction("src/cart.ts#save", ["one"]).complete("r1");
+      vi.advanceTimersByTime(1000);
+      expect(ctrl.getInflightActions().size).toBe(0);
+      expect(ctrl.getActionState("src/cart.ts#save")).toMatchObject({
+        state: "idle",
+        actionId: "src/cart.ts#save",
+        payload: ["one"],
+        result: "r1",
+      });
+
+      const error = new Error("out of stock");
+      ctrl.startAction("src/cart.ts#save", ["two"]);
+      expect(ctrl.getActionState("save")).toMatchObject({
+        state: "loading",
+        payload: ["two"],
+        result: null,
+        error: null,
+      });
+      ctrl.abortAllActions();
+      const three = ctrl.startAction("src/cart.ts#save", ["three"]);
+      three.fail(error);
+      vi.advanceTimersByTime(1000);
+      expect(ctrl.getActionState("save")).toMatchObject({
+        state: "idle",
+        payload: ["three"],
+        result: null,
+        error,
+      });
+
+      ctrl
+        .startAction("src/cart.ts#save", ["four"])
+        .complete("r4", revalidationError);
+      vi.advanceTimersByTime(1000);
+      expect(ctrl.getActionState("save")).toMatchObject({
+        state: "idle",
+        result: "r4",
+        error: null,
+        revalidationError,
+      });
+    });
+
+    it("a subscriber that joins after the settle window reads the settled call; the next call notifies it", () => {
+      const ctrl = createController();
+      ctrl.startAction("src/cart.ts#save", ["one"]).complete("r1");
+      vi.advanceTimersByTime(1000);
+
+      const seen: string[] = [];
+      ctrl.subscribeToAction("save", (s) => {
+        const line = `${s.state}:${String(s.result)}`;
+        if (seen.at(-1) !== line) seen.push(line);
+      });
+      expect(ctrl.getActionState("save").result).toBe("r1");
+      const two = ctrl.startAction("src/cart.ts#save", ["two"]);
+      vi.advanceTimersByTime(0);
+      two.complete("r2");
+      vi.runAllTimers();
+      expect(seen).toEqual(["loading:null", "idle:r2"]);
+    });
+
+    it("the latest call, aborted after an earlier call's settle window, shows nothing", () => {
+      const ctrl = createController();
+      ctrl.startAction("src/cart.ts#save", ["one"]).complete("r1");
+      vi.advanceTimersByTime(1000);
+      ctrl.startAction("src/cart.ts#save", ["two"]);
+      ctrl.abortAllActions();
+      vi.runAllTimers();
+      for (const reader of ["save", "src/cart.ts#save"]) {
+        expect(ctrl.getActionState(reader)).toEqual({
+          state: "idle",
+          actionId: null,
+          payload: null,
+          error: null,
+          result: null,
+          revalidationError: null,
+        });
+      }
+    });
+
+    it("an earlier call that settles after a later call started is not kept", () => {
+      const ctrl = createController();
+      const first = ctrl.startAction("src/cart.ts#save", ["first"]);
+      const second = ctrl.startAction("src/cart.ts#save", ["second"]);
+      second.complete("r2");
+      vi.advanceTimersByTime(1000);
+      expect(ctrl.getActionState("save").result).toBe("r2");
+      first.complete("r1");
+      vi.advanceTimersByTime(1000);
+      expect(ctrl.getActionState("save")).toMatchObject({
+        payload: ["second"],
+        result: "r2",
+      });
+    });
+  });
+
+  // ======================================================================
   // Concurrent Actions & Consolidation
   // ======================================================================
 
@@ -1011,6 +1429,36 @@ describe("createEventController", () => {
       expect(observed.some((s) => s.error === error)).toBe(true);
 
       // After settlement timeout, entry is cleaned up
+      vi.advanceTimersByTime(100);
+      expect(ctrl.getInflightActions().size).toBe(0);
+    });
+
+    it("abortAllActions(except) spares that action: it settles with its error once its stream ends", () => {
+      const ctrl = createController();
+      const sibling = ctrl.startAction("hash#sibling", []);
+      const failing = ctrl.startAction("hash#failing", []);
+      const stream = failing.startStreaming();
+      const error = new Error("boundary");
+
+      // fail() waits for the stream; the entry is not settling yet.
+      failing.fail(error);
+      ctrl.abortAllActions(failing.id);
+
+      expect(sibling.signal.aborted).toBe(true);
+      expect(failing.signal.aborted).toBe(false);
+      expect(ctrl.getActionState("hash#sibling").state).toBe("idle");
+      expect(ctrl.getActionState("hash#failing")).toMatchObject({
+        state: "streaming",
+        error: null,
+      });
+      expect(ctrl.getState().state).toBe("loading");
+
+      stream.end();
+      expect(ctrl.getActionState("hash#failing")).toMatchObject({
+        state: "idle",
+        error,
+      });
+      expect(ctrl.getState().state).toBe("idle");
       vi.advanceTimersByTime(100);
       expect(ctrl.getInflightActions().size).toBe(0);
     });

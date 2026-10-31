@@ -110,8 +110,8 @@ describe("nested cache() record keys (#970)", () => {
     expect(a).toBe("key:tier%3Agold|doc%3Alocalhost%2Fa");
     expect(b).toBe("key:tier%3Agold|doc%3Alocalhost%2Fb");
     // Nor do they share the record of a route directly under the outer
-    // cache(), which is keyed by the key() result alone.
-    expect(await recordKey(outer, gold, "/c")).toBe("key:tier%3Agold");
+    // cache(), which is keyed by the key() result and the request kind.
+    expect(await recordKey(outer, gold, "/c")).toBe("key:tier%3Agold|doc");
   });
 
   it("an inner `key: null` (a conditional key) counts as no key(): its routes keep their own records", async () => {
@@ -129,7 +129,7 @@ describe("nested cache() record keys (#970)", () => {
     expect(keys).toEqual({
       a: "key:tier%3Agold|doc%3Alocalhost%2Fa",
       b: "key:tier%3Agold|doc%3Alocalhost%2Fb",
-      c: "key:tier%3Agold",
+      c: "key:tier%3Agold|doc",
     });
   });
 
@@ -148,9 +148,9 @@ describe("nested cache() record keys (#970)", () => {
       "x-variant": "b",
     });
 
-    expect(goldA).toBe("key:tier%3Agold|key:v%3Aa");
-    expect(silverA).toBe("key:tier%3Asilver|key:v%3Aa");
-    expect(goldB).toBe("key:tier%3Agold|key:v%3Ab");
+    expect(goldA).toBe("key:tier%3Agold|key:v%3Aa|doc");
+    expect(silverA).toBe("key:tier%3Asilver|key:v%3Aa|doc");
+    expect(goldB).toBe("key:tier%3Agold|key:v%3Ab|doc");
   });
 
   it("deeper nesting composes transitively; only the innermost scope's missing key() adds its default key", async () => {
@@ -161,7 +161,7 @@ describe("nested cache() record keys (#970)", () => {
         chain({ key: tierKey }, { ttl: 30 }, { key: variantKey }),
         headers,
       ),
-    ).toBe("key:tier%3Agold|key:v%3Aa");
+    ).toBe("key:tier%3Agold|key:v%3Aa|doc");
     expect(
       await recordKey(
         chain({ key: tierKey }, { ttl: 30 }, { key: variantKey }, { ttl: 10 }),
@@ -177,17 +177,17 @@ describe("nested cache() record keys (#970)", () => {
         ),
         headers,
       ),
-    ).toBe("key:tier%3Agold|key:v%3Aa|key:l%3Ade");
+    ).toBe("key:tier%3Agold|key:v%3Aa|key:l%3Ade|doc");
   });
 
-  it("a single keyed scope is keyed by its namespaced key() result, at any depth; no key() keeps the default key", async () => {
+  it("a single keyed scope is keyed by its namespaced key() result and the request kind, at any depth; no key() keeps the default key", async () => {
     const headers = { "x-tier": "gold" };
 
     expect(await recordKey(chain({ key: tierKey }), headers)).toBe(
-      "key:tier%3Agold",
+      "key:tier%3Agold|doc",
     );
     expect(await recordKey(chain({ ttl: 60 }, { key: tierKey }), headers)).toBe(
-      "key:tier%3Agold",
+      "key:tier%3Agold|doc",
     );
     expect(await recordKey(chain({ ttl: 60 }, { ttl: 30 }), headers)).toBe(
       "doc:localhost/pricing",
@@ -267,7 +267,7 @@ describe("nested cache() record keys (#970)", () => {
     // gold's inner /pricing record.
     const single = await recordKey(chain({ key: bare }), crafted, "/other");
     expect(inner).toBe("key:gold|doc%3Alocalhost%2Fpricing");
-    expect(single).toBe("key:gold%7Cdoc%253Alocalhost%252Fpricing");
+    expect(single).toBe("key:gold%7Cdoc%253Alocalhost%252Fpricing|doc");
     expect(single).not.toBe(inner);
     expect(
       await recordKey(chain({ key: tierKey }), crafted, "/other"),
@@ -344,7 +344,7 @@ describe("nested cache() record keys (#970)", () => {
       );
     });
 
-    expect(store.gets).toEqual(["key:tier%3Agold|key:v%3Aa"]);
+    expect(store.gets).toEqual(["key:tier%3Agold|key:v%3Aa|doc"]);
     expect(outerFn).toHaveBeenCalledTimes(1);
     expect(innerFn).toHaveBeenCalledTimes(1);
   });
@@ -406,7 +406,7 @@ describe("nested cache() record keys (#970)", () => {
           {},
         ),
     );
-    expect(store.gets[1]).toBe("key:tier%3Agold|key:v%3Aa");
+    expect(store.gets[1]).toBe("key:tier%3Agold|key:v%3Aa|doc");
     expect(keyGenerator).not.toHaveBeenCalled();
   });
 

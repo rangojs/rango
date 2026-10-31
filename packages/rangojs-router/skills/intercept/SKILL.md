@@ -68,6 +68,7 @@ export const urlpatterns = urls(({ path, layout, intercept, loader, loading }) =
 | ----------------------------------------------------- | ---------------------------------------------------- |
 | Click link `/shop/product/abc`                        | `<ProductModal />` in `@modal`, background preserved |
 | Direct URL `/shop/product/abc`, or a reload           | Full `<ProductPage />` page                          |
+| `router.refresh()`, or another tab's action           | Full `<ProductPage />` page, as a reload             |
 | Back from the open intercept                          | The intercept closes; the source page stays          |
 | Back/Forward onto the intercept's entry               | The intercept over its source page                   |
 | The same, uncached, from a page other than the source | Full `<ProductPage />` page, as a document load      |
@@ -80,6 +81,11 @@ it costs a full page load, from the top, which drops `clearOnReload` location
 state like any document load, and the entry is a full page from then on. In
 dev, an edit that changes the app version clears the history cache, so the
 next Back/Forward onto an intercept entry takes that path.
+
+An intercept is a page in the middle of a navigation. A refresh reloads its
+URL, so `router.refresh()` with the intercept open, and the refresh another
+tab's action triggers, render the full page, as a document load does. The
+entry is a full page from then on.
 
 A server action on `/shop` that calls `redirect("/shop/product/abc")` opens the
 intercept too, and so does a link from `/shop` to a route that redirects
@@ -312,12 +318,13 @@ flagged loader with `ctx.use()` before its first `await` (or one with no
 `loading()`) gets it run in the prefetch instead: one run, no fill for it.
 `loading(…, { prefetch: false })` inside `intercept()` defers nothing.
 
-A prefetch of a route an intercept targets is stored per source page, whether
-or not the intercept applies from that page (`rsc-rendering.ts`
-`x-rsc-prefetch-scope: source`, set from `MatchResult.interceptTargeted`). A
-full page prefetched from a page where `when` is false never serves a click
-from a page where it is true. Routes no intercept targets keep one shared
-prefetch entry.
+A prefetch of a route an intercept targets, or one sent from such a route, is
+stored per source page, whether or not the intercept applies from that page
+(`rsc-rendering.ts` `x-rsc-prefetch-scope: source`, set from
+`MatchResult.interceptTargeted`). A full page prefetched from a page where
+`when` is false never serves a click from a page where it is true. Other
+prefetches keep one shared entry, unless a `revalidate()` that read the source
+page kept a segment (`MatchResult.sourceHeld`, same header).
 
 ```typescript
 // Intercept only when opened from the shop index
@@ -380,9 +387,11 @@ An intercept navigation is cached under that scope with its own `intercept:`
 key, so it never collides with the full-page render of the same URL. The key
 names the intercept the navigation selected, so two intercepts that target one
 route with different `when()` conditions each keep their own record. Both
-hold for the default key: a `cache({ key })` replaces it (see `/caching`). For
-finer control, use `"use cache"` in the intercept handler, or cache the
-intercept's loader: `loader(ProductLoader, () => [cache()])`.
+hold under a `cache({ key })` too: the `key()` replaces the URL part of the
+key, never the request kind, so a document request and a plain navigation
+never read an intercept's record (see `/caching`). For finer control, use
+`"use cache"` in the intercept handler, or cache the intercept's loader:
+`loader(ProductLoader, () => [cache()])`.
 
 ## Errors in an Intercept
 

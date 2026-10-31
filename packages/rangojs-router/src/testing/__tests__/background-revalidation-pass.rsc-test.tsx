@@ -155,6 +155,12 @@ function StampLayout(ctx: HandlerContext): React.ReactNode {
   return <main>shell</main>;
 }
 
+/** A HIT sends the intercept's push; the held layout's stays the client's. */
+function StampModal(ctx: HandlerContext): React.ReactNode {
+  ctx.use(Stamp)(`stamp@g${generation}`);
+  return <dialog>modal</dialog>;
+}
+
 const routes = urls(({ path, cache, layout, intercept, loader }) => [
   // Stale from the start, servable for 60 s.
   cache({ ttl: 0, swr: 60 }, () => [
@@ -164,12 +170,7 @@ const routes = urls(({ path, cache, layout, intercept, loader }) => [
     layout(StampLayout, () => [
       path("/list", () => <ul>list</ul>, { name: "list" }),
       path("/item/:id", () => <article>item</article>, { name: "item" }),
-      intercept(
-        "@modal",
-        ".item",
-        () => <dialog>modal</dialog>,
-        () => [loader(ModalReader)],
-      ),
+      intercept("@modal", ".item", StampModal, () => [loader(ModalReader)]),
     ]),
   ]),
   cache({ ttl: 60 }, () => [
@@ -239,14 +240,17 @@ describe("a stale cache() record's background re-render", () => {
 
     // The client holds the layout, so the MISS writes the record by a
     // re-render (proactive caching), which runs no loader: the visitor's run
-    // is the only one.
+    // is the only one. The empty read pins rango-t195-c1 (an intercept
+    // loader's rendered() read misses the intercept's own push on a MISS but
+    // sees it on a HIT); update it when that is fixed.
     const miss = await open();
     expect(miss.ran).toHaveLength(1);
     expect(miss.shown).toEqual([expect.stringMatching(/^read:#\d+$/)]);
     expect(miss.ran).toContain(miss.shown![0]);
 
-    // The stale HIT replays stamp@g1 and refreshes the record at g2 without
-    // running the loader: the visitor's run reads the replayed handles.
+    // The stale HIT replays the intercept's stamp@g1, not the held layout's,
+    // and refreshes the record at g2 without running the loader: the
+    // visitor's run reads the replayed handles.
     generation = 2;
     clock.advance(1_100);
     const staleHit = await open();

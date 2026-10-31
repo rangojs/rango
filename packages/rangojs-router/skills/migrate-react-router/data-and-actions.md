@@ -245,6 +245,11 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]);
 ```
 
+On an unchanged `:slug` this rule keeps the route after reading `currentParams`,
+so a prefetch of the same product (a tab, `?sort=price`) is stored for the page
+that sent it and the product's other pages prefetch it again. Links to other
+products stay shared. `/links` → "Shared prefetches and `prefetchKey`".
+
 Note: RR7's `shouldRevalidate` controls client-side loader re-fetching. Rango's
 `revalidate()` controls which segments re-run during partial rendering after
 navigation or actions. The intent is the same — skip unnecessary work — but

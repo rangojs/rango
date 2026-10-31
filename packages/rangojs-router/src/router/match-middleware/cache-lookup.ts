@@ -137,8 +137,10 @@ async function ensurePrerenderDeps(): Promise<void> {
  * serveStoredSegments: a prerender entry is a cache hit through the same
  * segment path (prerender-api-design.md, "Core Principle").
  *
- * - `segment-cache`: a cache() record, decoded with its handles replayed by
- *   the lookup; `scope` is the scope whose record answered.
+ * - `segment-cache`: a cache() record, decoded by the lookup, which replays
+ *   its handles on a document request; on a partial one `restoreHandles`
+ *   replays those of the segments it sends. `scope` is the scope whose
+ *   record answered.
  * - `prerender-build`: the bundled build manifest (immutable).
  * - `prerender-overlay`: the writable on-demand overlay. Its entry may be
  *   newer than the client's copy: one that a refresh (possibly inside this
@@ -150,6 +152,7 @@ type StoredSegmentSource =
       segments: ResolvedSegment[];
       shouldRevalidate: boolean;
       scope: CacheScope;
+      restoreHandles?: (sentIds: ReadonlySet<string>) => Promise<void>;
     }
   | { kind: "prerender-build" | "prerender-overlay"; entry: PrerenderEntry };
 
@@ -310,12 +313,15 @@ function cachedSegmentSends<TEnv>(
  * Whether a prerender entry's segment is sent. On a partial navigation the
  * client keeps the segments it holds. The route's own segments (an
  * intercept's included) are sent again when the params changed (e.g., a
- * different guide slug). An overlay entry may be newer than the client's
- * copy: on an action or a stale request they are re-sent too, as a live
+ * different guide slug), and kept on equal params whatever the search: a
+ * prerender does not vary by search. An overlay entry may be newer than the
+ * client's copy: on an action or a stale request they are re-sent too, as a live
  * action re-render re-sends them (revalidation.ts "action:route-segment");
  * the immutable bundled manifest keeps the client's copy. A held segment
  * above the route stays held, as a live walk keeps it ("nav:non-route-skip"),
- * unless its revalidate() rules ask for it when the params changed.
+ * unless its revalidate() rules ask for it when the params changed. A route
+ * segment, or one with rules, kept on equal params marks the match
+ * source-held: the decision hangs on the source's params.
  *
  * Decided once per decoded segment, by object: an intercept variant can hold
  * a layout's parallel and the intercept's slot under one id. decodeStoredEntry
@@ -330,9 +336,17 @@ function storedEntrySends<TEnv>(
   const paramsChanged = !paramsEqual(ctx.matched.params, ctx.prevParams);
   const resendRouteSegments = replaceable && (ctx.isAction || ctx.stale);
   const entryRevalidateMap =
-    paramsChanged && router.buildEntryRevalidateMap
-      ? router.buildEntryRevalidateMap(ctx.entries)
+    ctx.clientSegmentSet.size > 0
+      ? router.buildEntryRevalidateMap?.(ctx.entries)
       : undefined;
+  // A keep that hangs on the source's params is right for this source only:
+  // scope a prefetch of the answer to it, as a predicate that read the
+  // source would (#1331).
+  const heldForSource = (): false => {
+    (ctx.handlerContext as InternalHandlerContext<any, TEnv>)._sourceHeld =
+      true;
+    return false;
+  };
   const decide = (segment: ResolvedSegment): boolean | Promise<boolean> => {
     if (!ctx.clientSegmentSet.has(segment.id)) return true;
     // A fill keeps it (fillSends).
@@ -343,10 +357,16 @@ function storedEntrySends<TEnv>(
     );
     if (fill !== undefined) return fill;
     if (segment.type === "route" || segment.belongsToRoute === true) {
-      return paramsChanged || resendRouteSegments;
+      if (paramsChanged || resendRouteSegments) return true;
+      // Kept on equal params, whatever the search: a source with other
+      // params is sent it.
+      return heldForSource();
     }
     const revalidate = entryRevalidateMap?.get(segment.id)?.revalidate;
     if (!revalidate?.length) return false;
+    // Kept on equal params: from another source the rules run and may send
+    // it.
+    if (!paramsChanged) return heldForSource();
     return router.evaluateRevalidation({
       segment,
       prevParams: ctx.prevParams,
@@ -428,11 +448,15 @@ async function* serveStoredSegments<TEnv>(
   // route is the same case, served from the overlay first (an overlay entry
   // is newer than the build one, and may be the only one). Passthrough
   // routes keep a liveHandler, so a live render (rendersLive) re-renders
-  // them fresh.
+  // them fresh. A pass cut at an error boundary walks live too
+  // (ActionContext.boundary, a follow-up's held one): the evicted handler is
+  // under the cut.
   if (
     (prerenderStoreShortCircuits(ctx.matched.pr, ctx.request) ||
       overlayEligible) &&
-    (!rendersLive(ctx) || !isPassthroughPrerenderRoute)
+    (!rendersLive(ctx) || !isPassthroughPrerenderRoute) &&
+    !ctx.actionContext?.boundary &&
+    !ctx.heldBoundary
   ) {
     await ensurePrerenderDeps();
     stored = await readPrerenderSource(
@@ -485,14 +509,6 @@ async function* serveStoredSegments<TEnv>(
   const segments = fromCache
     ? source.segments
     : await decodeStoredEntry(source.entry, ctx, reqCtx, storedSends!);
-
-  // The stored handler values stand where the MISS's handlers pushed them:
-  // behind what a segment's loaders push before the walk reaches its handler
-  // (HandleStore.holdRecordedValues). A fill holds nothing: on a fill MISS the
-  // browser's merge appends what the fill runs to the held handler values.
-  if (!isFillRequest(ctx.handlerContext)) {
-    reqCtx?._handleStore.holdRecordedValues(segments.map((s) => s.id));
-  }
 
   // Entries above the cache() boundary are not in the record: resolve them
   // fresh, exactly as an uncached render of this request would.
@@ -554,6 +570,8 @@ async function* serveStoredSegments<TEnv>(
   const sends = fromCache
     ? cachedSegmentSends(ctx, source.shouldRevalidate, reqCtx, router)
     : storedSends!;
+  const restoreHandles = fromCache ? source.restoreHandles : undefined;
+  const sentIds = restoreHandles && new Set<string>();
 
   yield* liveSegments;
 
@@ -575,7 +593,22 @@ async function* serveStoredSegments<TEnv>(
       });
     }
     if (!send) keepClientSegment(segment);
+    else sentIds?.add(segment.id);
     yield segment;
+  }
+
+  // A partial cache() HIT replays handler values for the segments it sends
+  // only, decided above after the live entries: a kept segment keeps the
+  // client's, as on a live walk (handle-snapshot.ts restoreHandles;
+  // decodeStoredEntry for a bake).
+  if (sentIds) await restoreHandles!(sentIds);
+
+  // The stored handler values stand where the MISS's handlers pushed them:
+  // behind what a segment's loaders push before the walk reaches its handler
+  // (HandleStore.holdRecordedValues). A fill holds nothing: on a fill MISS the
+  // browser's merge appends what the fill runs to the held handler values.
+  if (!isFillRequest(ctx.handlerContext)) {
+    reqCtx?._handleStore.holdRecordedValues(segments.map((s) => s.id));
   }
 
   if (reqCtx) {
@@ -870,11 +903,15 @@ async function readSegmentCacheSource<TEnv>(
     leaf !== undefined && isPprEntry(leaf)
       ? () => loaderPins(ctx.entries, reqCtx)
       : undefined;
+  // A partial request restores the handle values once it decided which
+  // segments it sends (serveStoredSegments).
+  const deferHandles = !ctx.isFullMatch;
   const explicitLookup = await ctx.cacheScope.lookupRouteDetailed(
     ctx.pathname,
     ctx.matched.params,
     interceptRecordKey(ctx.interceptResult),
     ownedPushes,
+    deferHandles,
   );
   let cacheResult =
     explicitLookup.status === "hit" ? explicitLookup.result : null;
@@ -919,6 +956,7 @@ async function readSegmentCacheSource<TEnv>(
         ctx.matched.params,
         undefined,
         ownedPushes,
+        deferHandles,
       );
     } else if (explicitLookup.status === "bypass") {
       // condition() refused at lookup time (the gate only pre-decides the
@@ -945,6 +983,7 @@ async function readSegmentCacheSource<TEnv>(
     segments: cacheResult.segments,
     shouldRevalidate: cacheResult.shouldRevalidate,
     scope: hitScope,
+    restoreHandles: cacheResult.restoreHandles,
   };
 }
 

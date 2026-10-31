@@ -519,6 +519,16 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "one-prefetch-serves-every-page",
+        "text": "One prefetch serves every page"
+      },
+      {
+        "depth": 3,
+        "id": "prefetchkey",
+        "text": "prefetchKey"
+      },
+      {
+        "depth": 2,
         "id": "why-aggressive-prefetch-is-safe",
         "text": "Why aggressive prefetch is safe"
       },

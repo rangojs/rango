@@ -155,7 +155,11 @@ again. A prerender entry (`storedEntrySends`) re-sends the route's own
 segments when the params changed (and an overlay entry, which can be newer
 than the client's copy, also on an action or a stale request). A held layout
 above the route stays held, as a live walk keeps it, unless its
-`revalidate()` asks for it when the params changed. Each decoded segment
+`revalidate()` asks for it when the params changed. On equal params its
+rules are not asked, so a prefetch that keeps it is scoped to its source
+page (`x-rsc-prefetch-scope: source`, #1331). So is one that keeps the
+route's own segments on equal params after a search-only change: from a
+source with other params they are sent. Each decoded segment
 is decided on its own: an intercept variant can hold a layout's parallel and
 the intercept's slot under one id, and the slot is sent while the held
 parallel is kept. On a partial request the entry replays a handle bucket

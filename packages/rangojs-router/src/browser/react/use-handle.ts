@@ -6,6 +6,7 @@ import { collectHandleData } from "../../handle.js";
 import type { HandleData } from "../types.js";
 import { NavigationStoreContext } from "./context.js";
 import { shallowEqual } from "./shallow-equal.js";
+import { useCommitted } from "./use-route-state.js";
 import type { RouteStateSignal } from "../event-controller.js";
 
 /**
@@ -53,7 +54,7 @@ export function useHandle<T, A, S>(
     return selectorRef.current ? selectorRef.current(collected) : collected;
   };
 
-  const [value, setValue] = useCommitAnchoredState(collect);
+  const [value, setValue] = useCommitAnchoredState(collect, true);
 
   useEffect(() => {
     if (!ctx) return;
@@ -68,25 +69,30 @@ export function useHandle<T, A, S>(
 }
 
 /**
- * Route state the controller's handle notifications drive (useHandle,
- * useSegments) commits with the page it belongs to. NavigationProvider
- * flushes the controller inside every payload update, so a value known then
- * is set in the page's lane. A page handed over urgently (signal "release")
- * takes a value that arrives before it commits the same way: set at default
- * priority, it renders in the page's lane, and the page's effects read it.
- * A page in a transition (signal "anchor") does not: until it commits
+ * Route state the controller's handle notifications drive commits with the
+ * page it belongs to. NavigationProvider flushes the controller inside every
+ * payload update, with signal "anchor" for a page in a transition and
+ * "release" for an urgent one, so the page's own change is set in the page's
+ * lane and the page's effects read it. From the anchor until the page commits
  * (releaseRouteState() from the provider's layout effect, signal "release"),
- * a new value waits, and is applied in the commit's task, right after the
- * page's own commit. In the page's lane, a value that suspends in a revealed
- * <Suspense> (a crumb's content) would hold the page; in a lane of its own,
- * it commits over the page being left and takes the page's transition types
- * (#1165); and a transition entangled with the page misses its commit when it
- * is set after React rendered the page, before its view transition's
- * mutation, and starts a view transition of its own. A value shallow-equal to
- * the last one sets nothing, so a reader renders only when its value moves.
+ * a later change waits and is applied in the commit's task, right after the
+ * page's own commit: set in a lane of its own, it would commit over the page
+ * being left (#1165).
+ *
+ * `waitForRelease`, set by useHandle only: the anchor's own change waits too,
+ * so a handle value lands right after its page's commit, never in its lane. A
+ * handle value can carry a promise that suspends, and in the page's lane one
+ * that suspends in a revealed <Suspense> would hold the page. Nothing
+ * useSegments reads can suspend, so it leaves it off and its path and
+ * location commit with their page.
+ *
+ * A value shallow-equal to the last one sets nothing, so a reader renders only
+ * when its value moves. A release is compared with what React committed, as in
+ * useRouteState.
  */
 export function useCommitAnchoredState<T>(
   init: () => T,
+  waitForRelease?: boolean,
 ): [T, (value: T, signal?: RouteStateSignal) => void] {
   // An app that enables the React Compiler compiles the router too; its memo
   // cache gains nothing here and cost 107 B gzip in the router chunk.
@@ -95,15 +101,18 @@ export function useCommitAnchoredState<T>(
   const ref = useRef<{ last: T; held?: boolean; waiting?: boolean }>({
     last: value,
   });
+  const committed = useCommitted(value);
   const [set] = useState(() => (next: T, signal?: RouteStateSignal): void => {
     const r = ref.current;
     if (signal) r.waiting = signal === "anchor";
     if (!shallowEqual(next, r.last)) {
       r.last = next;
       r.held = true;
+    } else if (signal === "release" && r.last !== committed.current) {
+      r.held = true;
     }
-    // The anchor's own change goes in the page's lane, with the page.
-    if (!r.held || (r.waiting && signal !== "anchor")) return;
+    if (!r.held || (r.waiting && (waitForRelease || signal !== "anchor")))
+      return;
     r.held = false;
     setValue(() => r.last);
   });

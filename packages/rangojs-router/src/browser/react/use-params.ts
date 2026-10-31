@@ -1,11 +1,9 @@
 "use client";
 
-import { useContext, useState, useEffect, useRef } from "react";
-import { NavigationStoreContext } from "./context.js";
+import { useContext } from "react";
 import { shallowEqual } from "./shallow-equal.js";
+import { useUrlValue } from "./use-route-state.js";
 import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
-
-const EMPTY_PARAMS: Record<string, string> = Object.freeze({});
 
 /**
  * Hook to access the current route params.
@@ -45,38 +43,11 @@ export function useParams<T>(
 export function useParams<T>(
   selector?: (params: Record<string, string | undefined>) => T,
 ): T | Record<string, string | undefined> {
-  const ctx = useContext(NavigationStoreContext);
   const optimistic = useContext(OptimisticLocationContext);
-
-  const [value, setValue] = useState<T | Record<string, string>>(() => {
-    const params = ctx
-      ? (ctx.eventController.getHydrationSnapshot()?.params ??
-        ctx.eventController.getParams())
-      : EMPTY_PARAMS;
-    return selector ? selector(params) : params;
-  });
-
-  const prevValue = useRef(value);
-  const selectorRef = useRef(selector);
-  selectorRef.current = selector;
-
-  useEffect(() => {
-    if (!ctx) return;
-
-    const update = () => {
-      const params = ctx.eventController.getParams();
-      const next = selectorRef.current ? selectorRef.current(params) : params;
-
-      if (!shallowEqual(next, prevValue.current)) {
-        prevValue.current = next;
-        setValue(next);
-      }
-    };
-
-    update();
-
-    return ctx.eventController.subscribe(update);
-  }, []);
+  const value = useUrlValue<T | Record<string, string>>(
+    ({ params }) => (selector ? selector(params) : params),
+    shallowEqual,
+  );
 
   if (optimistic) {
     return selector ? selector(optimistic.params) : optimistic.params;

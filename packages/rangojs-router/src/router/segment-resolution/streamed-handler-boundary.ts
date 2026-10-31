@@ -44,6 +44,8 @@ export interface StreamedHandlerOptions<TEnv> {
   context: HandlerContext<any, TEnv>;
   routeKey?: string;
   params: Record<string, string>;
+  /** onError's `isPartial`, as the walk reports a sync handler's error. */
+  isPartial: true | undefined;
   /** False where the rejection must reach the caller (prerender, intercept background re-render). */
   recover: boolean;
 }
@@ -64,6 +66,7 @@ export function trackStreamedHandler<TEnv>(
   const tracked = deps.trackHandler(result as Promise<ReactNode>, {
     segmentId,
     segmentType,
+    isPartial: options.isPartial,
   });
   observeStreamedHandler(
     tracked,

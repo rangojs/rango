@@ -48,6 +48,7 @@ import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import type { TraceSpan } from "../router/tracing.js";
 import {
+  runAsBackgroundWork,
   runWithRequestContext,
   setRequestContextParams,
   UNTRACKED_BACKGROUND_TASK,
@@ -1279,69 +1280,73 @@ export function planShellCapture(input: ShellCaptureInput): void {
   // (observed in production: ~24s of zero I/O before capture start).
   // observePhase reads tracing off the ALS context captured when runBackground
   // registered the task — the foreground request context, tracing intact.
+  // onError marks every error of the capture `background`, the task's own
+  // failure (captureTask's catch) included.
   const serializedTask = async () => {
-    await observePhase(PHASES.background("shell-capture"), async (span) => {
-      span.setAttribute("rango.shell_key", key);
-      // A production page can enqueue several navigation-only captures through
-      // viewport prefetching. Let a later document MISS overtake that queued
-      // speculative work so it can become a shell HIT before the 15s queue
-      // budget expires. Never preempts the active capture. Priority and the
-      // backlog ahead at enqueue ride the span (and the skip event below), so
-      // a skip-queue-timeout diagnoses itself instead of needing a trace dive.
-      const queuePriority = descriptor.navigationOnly
-        ? ("navigation" as const)
-        : ("document" as const);
-      const depths = captureQueueDepths();
-      const queueAhead =
-        (depths.running ? 1 : 0) +
-        depths.document +
-        (queuePriority === "navigation" ? depths.navigation : 0);
-      span.setAttribute("rango.background.queue_priority", queuePriority);
-      span.setAttribute("rango.background.queue_ahead", queueAhead);
-      const queueStart = performance.now();
-      try {
-        await enqueueSerializedCapture(
-          () => {
+    await runAsBackgroundWork(reqCtx, () =>
+      observePhase(PHASES.background("shell-capture"), async (span) => {
+        span.setAttribute("rango.shell_key", key);
+        // A production page can enqueue several navigation-only captures through
+        // viewport prefetching. Let a later document MISS overtake that queued
+        // speculative work so it can become a shell HIT before the 15s queue
+        // budget expires. Never preempts the active capture. Priority and the
+        // backlog ahead at enqueue ride the span (and the skip event below), so
+        // a skip-queue-timeout diagnoses itself instead of needing a trace dive.
+        const queuePriority = descriptor.navigationOnly
+          ? ("navigation" as const)
+          : ("document" as const);
+        const depths = captureQueueDepths();
+        const queueAhead =
+          (depths.running ? 1 : 0) +
+          depths.document +
+          (queuePriority === "navigation" ? depths.navigation : 0);
+        span.setAttribute("rango.background.queue_priority", queuePriority);
+        span.setAttribute("rango.background.queue_ahead", queueAhead);
+        const queueStart = performance.now();
+        try {
+          await enqueueSerializedCapture(
+            () => {
+              span.setAttribute(
+                "rango.background.queue_wait_ms",
+                Math.round(performance.now() - queueStart),
+              );
+              return captureTask(span);
+            },
+            { priority: queuePriority },
+          );
+        } catch (error) {
+          if (error instanceof CaptureQueueFullError) {
+            releaseCaptureGuard(key, guardToken);
+            span.setAttribute("rango.background.outcome", "skip-capacity");
+            publishCaptureDebugEvent(descriptor, {
+              key,
+              outcome: "skip-capacity",
+            });
+            return;
+          }
+          if (error instanceof CaptureQueueWaitTimeoutError) {
+            // Dropped unrun after waiting past the queue budget: no backoff (the
+            // route is not doomed, the isolate was busy) — a later request
+            // re-probes the key.
+            releaseCaptureGuard(key, guardToken);
+            span.setAttribute("rango.background.outcome", "skip-queue-timeout");
             span.setAttribute(
               "rango.background.queue_wait_ms",
-              Math.round(performance.now() - queueStart),
+              Math.round(error.waitedMs),
             );
-            return captureTask(span);
-          },
-          { priority: queuePriority },
-        );
-      } catch (error) {
-        if (error instanceof CaptureQueueFullError) {
-          releaseCaptureGuard(key, guardToken);
-          span.setAttribute("rango.background.outcome", "skip-capacity");
-          publishCaptureDebugEvent(descriptor, {
-            key,
-            outcome: "skip-capacity",
-          });
-          return;
+            publishCaptureDebugEvent(descriptor, {
+              key,
+              outcome: "skip-queue-timeout",
+              queueWaitMs: Math.round(error.waitedMs),
+              queuePriority,
+              queueAhead,
+            });
+            return;
+          }
+          throw error;
         }
-        if (error instanceof CaptureQueueWaitTimeoutError) {
-          // Dropped unrun after waiting past the queue budget: no backoff (the
-          // route is not doomed, the isolate was busy) — a later request
-          // re-probes the key.
-          releaseCaptureGuard(key, guardToken);
-          span.setAttribute("rango.background.outcome", "skip-queue-timeout");
-          span.setAttribute(
-            "rango.background.queue_wait_ms",
-            Math.round(error.waitedMs),
-          );
-          publishCaptureDebugEvent(descriptor, {
-            key,
-            outcome: "skip-queue-timeout",
-            queueWaitMs: Math.round(error.waitedMs),
-            queuePriority,
-            queueAhead,
-          });
-          return;
-        }
-        throw error;
-      }
-    });
+      }),
+    );
   };
   // The capture's own task must NOT enter reqCtx._pendingBackgroundTasks: the
   // capture drains that list before rendering (the write-barrier ordering edge),

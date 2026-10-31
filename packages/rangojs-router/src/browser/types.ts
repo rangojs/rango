@@ -201,13 +201,27 @@ export interface InflightAction {
  * @internal This type is an implementation detail. Use PublicNavigationState instead.
  */
 export interface NavigationState {
-  /** Navigation lifecycle state (idle or loading during navigation) */
+  /**
+   * Lifecycle state: `"loading"` while a navigation is in flight and while a
+   * server action runs, `"idle"` otherwise
+   */
   state: "idle" | "loading";
 
-  /** Whether RSC data is currently streaming (initial load or navigation) */
+  /**
+   * Whether RSC data is currently streaming: a navigation's response, or a
+   * server action's response (initial load, navigation or action)
+   */
   isStreaming: boolean;
 
-  /** Current location */
+  /**
+   * True while a navigation is in flight (fetching or streaming, before its
+   * commit); false during a server action, whose `state` is still `"loading"`.
+   * Drive a navigation progress bar from this and an action spinner from
+   * `state`.
+   */
+  isNavigating: boolean;
+
+  /** The page on screen; moves when the next page shows (`pendingUrl` is the page being fetched) */
   location: NavigationLocation;
 
   /** URL being navigated to (null when idle) */
@@ -239,7 +253,11 @@ export type ActionLifecycleState = "idle" | "loading" | "streaming";
  * @internal This type is an implementation detail and may change without notice.
  */
 export interface TrackedActionState {
-  /** Current lifecycle state of the action */
+  /**
+   * Current lifecycle state of the action. Once the call settles it is
+   * "idle" and the rest of the call's state is kept until the action's next
+   * call.
+   */
   state: ActionLifecycleState;
 
   /** Server action function ID (e.g., "addToCart") */
@@ -251,13 +269,13 @@ export interface TrackedActionState {
   /** Error if action failed */
   error: unknown | null;
 
-  /** Result data from the action (preserved after completion) */
+  /** Result data from the action */
   result: unknown | null;
 
   /**
    * The error of a loader that threw while it re-ran after this successful
-   * action (the first, when several did). The loader also throws at its
-   * useLoader read, where the nearest error boundary catches it.
+   * action (the first, when several did). The loader also throws at its useLoader read, where the nearest
+   * error boundary catches it.
    */
   revalidationError: unknown | null;
 }
@@ -505,6 +523,8 @@ export interface NavigateOptionsInternal extends Omit<
   _skipCache?: boolean;
   /** Server redirects already followed by this navigation chain (0 for a user navigation) */
   _redirectHops?: number;
+  /** The URL a redirected navigation chain started from: a link to it stays pending (useLinkStatus) */
+  _redirectFrom?: string;
 }
 
 /**
@@ -649,7 +669,8 @@ export interface NavigationStore {
         handlesPending?: boolean;
       }
     | undefined;
-  hasHistoryCache(historyKey: string): boolean;
+  /** Whether an intercept entry is cached for the plain `historyKey`, from any source page. */
+  hasInterceptCache(historyKey: string): boolean;
   /**
    * Update only the handleData (and optionally the stale / handlesPending flags)
    * of an existing cache entry. When a flag is omitted the entry's current value
@@ -717,6 +738,8 @@ export interface FetchPartialOptions {
   signal?: AbortSignal;
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;
+  /** Sent as `_rsc_boundary` (wire-params.ts WIRE.boundary). */
+  boundary?: string;
   interceptSourceUrl?: string;
   /** RSC version for cache invalidation detection */
   version?: string;
@@ -802,7 +825,8 @@ export interface ServerActionBridgeConfig {
  */
 export interface NavigationBridge {
   navigate(url: string, options?: NavigateOptionsInternal): Promise<void>;
-  refresh(): Promise<void>;
+  /** `crossTab`: another tab's write; an action's error boundary stays. */
+  refresh(crossTab?: boolean): Promise<void>;
   /** `event`: the popstate event; a traversal the browser animated itself (hasUAVisualTransition) is not animated again. */
   handlePopstate(event?: PopStateEvent): Promise<void>;
   registerLinkInterception(): () => void;

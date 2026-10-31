@@ -107,7 +107,11 @@
  *   3. Diff against previous state with diff[]
  *   4. Render slot content if slots present
  */
-import type { MatchResult, ResolvedSegment } from "../types.js";
+import type {
+  InternalHandlerContext,
+  MatchResult,
+  ResolvedSegment,
+} from "../types.js";
 import { isPlaceholder } from "../types/segments.js";
 import { interceptMatched } from "../browser/intercept-utils.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
@@ -304,6 +308,10 @@ export function buildMatchResult<TEnv>(
     slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
+    ...((ctx.handlerContext as InternalHandlerContext<any, TEnv> | undefined)
+      ?._sourceHeld
+      ? { sourceHeld: true }
+      : {}),
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };
