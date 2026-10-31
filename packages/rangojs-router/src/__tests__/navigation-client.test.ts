@@ -37,14 +37,16 @@ const {
  */
 function makeEntry(
   payload: unknown,
-  scope: "source" | "wildcard" = "wildcard",
+  scope: DecodedPrefetch["scope"] = "wildcard",
   complete = false,
+  paramsLabel?: string,
 ): DecodedPrefetch {
   return {
     payload: Promise.resolve(payload) as Promise<any>,
     streamComplete: Promise.resolve(),
     scope,
     complete,
+    ...(paramsLabel !== undefined && { paramsLabel }),
   };
 }
 
@@ -52,20 +54,32 @@ vi.mock("../browser/rango-state", () => ({
   getRangoState: getRangoStateMock,
 }));
 
-vi.mock("../browser/prefetch/cache", () => ({
-  consumePrefetch: consumePrefetchMock,
-  consumeInflightPrefetch: consumeInflightPrefetchMock,
-  buildPrefetchKey: buildPrefetchKeyMock,
-  buildSourceKey: buildSourceKeyMock,
-  disableFragmentPassthrough: disableFragmentPassthroughMock,
-  isFragmentPassthroughEnabled: isFragmentPassthroughEnabledMock,
-}));
+vi.mock("../browser/prefetch/cache", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../browser/prefetch/cache")>();
+  return {
+    consumePrefetch: consumePrefetchMock,
+    consumeInflightPrefetch: consumeInflightPrefetchMock,
+    buildPrefetchKey: buildPrefetchKeyMock,
+    buildSourceKey: buildSourceKeyMock,
+    disableFragmentPassthrough: disableFragmentPassthroughMock,
+    isFragmentPassthroughEnabled: isFragmentPassthroughEnabledMock,
+    // Pure over the shapes the real cache remembered.
+    paramsCandidateKeys: actual.paramsCandidateKeys,
+    pageMatchesParamsLabel: actual.pageMatchesParamsLabel,
+  };
+});
 
 vi.mock("../browser/prefetch/loader", () => ({
   cancelAllPrefetches: cancelAllPrefetchesMock,
 }));
 
-import { createNavigationClient } from "../browser/navigation-client";
+import {
+  consumeStoredPrefetch,
+  createNavigationClient,
+  wildcardAdoptionFits,
+} from "../browser/navigation-client";
+import { registerCommittedPageReader } from "../browser/navigation-store-handle";
 import { enterActionFence, __resetActionFence } from "../browser/action-fence";
 
 describe("navigation-client", () => {
@@ -851,6 +865,89 @@ describe("navigation-client", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(createFromFetch).toHaveBeenCalledTimes(1);
       expect(result.payload.metadata).toMatchObject({ body: "fresh" });
+    });
+
+    describe("an inflight adopted through the wildcard key that turns out params-scoped", () => {
+      const LABEL = "$k=locale,page&locale=en";
+      const adoptViaWildcard = (entry: DecodedPrefetch) =>
+        consumeInflightPrefetchMock.mockImplementation((key?: string) => {
+          if (!key) return null;
+          const nulls = key.split("\0").length - 1;
+          return nulls === 1 ? Promise.resolve(entry) : null;
+        });
+      const run = async () => {
+        const fetchMock = vi.fn(
+          async () => new Response("fresh", { status: 200 }),
+        );
+        vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+        const createFromFetch = vi.fn(async () => ({
+          metadata: { body: "fresh" },
+        }));
+        const client = createNavigationClient({ createFromFetch } as any);
+        const result = await client.fetchPartial({
+          targetUrl: "/en",
+          previousUrl: "/current",
+          segmentIds: ["root"],
+        });
+        return { fetchMock, result };
+      };
+
+      afterEach(() => {
+        registerCommittedPageReader(() => ({
+          params: {},
+          routeName: undefined,
+        }));
+      });
+
+      it("is served to a page in its group", async () => {
+        registerCommittedPageReader(() => ({
+          params: { locale: "en", page: "2" },
+          routeName: "products",
+        }));
+        adoptViaWildcard(
+          makeEntry({ metadata: { body: "group" } }, "params", true, LABEL),
+        );
+        const { fetchMock, result } = await run();
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(result.payload.metadata).toMatchObject({ body: "group" });
+      });
+
+      it("is discarded by a page outside its group, which refetches", async () => {
+        registerCommittedPageReader(() => ({
+          params: { locale: "fr", page: "1" },
+          routeName: "products",
+        }));
+        adoptViaWildcard(
+          makeEntry({ metadata: { body: "group" } }, "params", true, LABEL),
+        );
+        const { fetchMock, result } = await run();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(result.payload.metadata).toMatchObject({ body: "fresh" });
+      });
+    });
+
+    it("wildcardAdoptionFits: a wildcard entry fits any page, a source one none", () => {
+      const page = { params: { locale: "en" }, routeName: undefined };
+      expect(wildcardAdoptionFits(makeEntry({}), page)).toBe(true);
+      expect(wildcardAdoptionFits(makeEntry({}, "source"), page)).toBe(false);
+      expect(
+        wildcardAdoptionFits(
+          makeEntry({}, "params", false, "$k=locale&locale=en"),
+          null,
+        ),
+      ).toBe(false);
+    });
+
+    it("consumeStoredPrefetch tries the source key, the params keys in order, then the wildcard", () => {
+      const tried: string[] = [];
+      consumePrefetchMock.mockImplementation((key?: string) => {
+        tried.push(key!);
+        return key === "p2" ? makeEntry({}) : null;
+      });
+      const { hitKey } = consumeStoredPrefetch(true, "src", ["p1", "p2"], "w");
+      expect(tried).toEqual(["src", "p1", "p2"]);
+      expect(hitKey).toBe("p2");
+      expect(consumeStoredPrefetch(false, "src", ["p1"], "w").entry).toBeNull();
     });
 
     it("falls back to wildcard key when exact key misses", async () => {

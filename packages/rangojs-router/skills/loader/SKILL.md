@@ -495,8 +495,9 @@ matches in both dev and production. The raw `actionId` string stays available on
 the same context as an escape hatch, alongside `actionResult`, `formData`,
 `actionUrl`, `currentParams`/`nextParams`, `currentUrl`/`nextUrl`,
 `fromRouteName`/`toRouteName`, and the full handler `context`. Reading
-`currentParams`, `currentUrl` or `fromRouteName` and keeping the segment makes
-a prefetch of that answer page-only (`/links` → "Shared prefetches and
+`currentParams` or `fromRouteName` and keeping the segment shares a prefetch
+of that answer only between the pages with equal values of what was read;
+reading `currentUrl` makes it page-only (`/links` → "Shared prefetches and
 `prefetchKey`"); `context` is not tracked.
 
 ### Revalidation Contracts for Loader Dependencies

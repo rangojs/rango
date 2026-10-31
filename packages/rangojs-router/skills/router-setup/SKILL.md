@@ -250,7 +250,8 @@ Notes:
 - `discovery: { include?, exclude? }` filters which files the route-discovery
   scan reads, as root-relative globs (e.g. `include: ["src/routes/**"]`).
   `exclude` replaces the default excludes (`__tests__`, `__mocks__`, `dist`,
-  `coverage`, `*.test.*`, `*.spec.*`) rather than adding to them.
+  `coverage`, `*.test.*`, `*.rsc-test.*`, `*.spec.*`) rather than adding to
+  them.
 - `progressiveChunkSize` sets React's Fizz `progressiveChunkSize` for document
   renders and PPR shell capture. Unset, documents whose route has a
   `loader(Def, { ssr: false })` raise it automatically so that content stays

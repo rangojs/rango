@@ -10,6 +10,7 @@ export const DEFAULT_EXCLUDE_PATTERNS: string[] = [
   "**/dist/**",
   "**/coverage/**",
   "**/*.test.{ts,tsx,js,jsx}",
+  "**/*.rsc-test.{ts,tsx,js,jsx}",
   "**/*.spec.{ts,tsx,js,jsx}",
 ];
 

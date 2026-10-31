@@ -520,11 +520,13 @@ export type InternalHandlerContext<
   /**
    * @internal A revalidate() predicate that read the source page
    * (`currentParams`, `currentUrl`, `fromRouteName`) kept a held segment, so
-   * this match's diff is right for that source only (#1331). Set by
-   * evaluateRevalidation (router/revalidation.ts); match-result.ts turns it
-   * into `sourceHeld`, which scopes a prefetch of the response to its source.
+   * this match's diff is right only for pages with equal values of what the
+   * kept decisions read (#1331, rango-t242). Set by evaluateRevalidation
+   * (router/revalidation.ts) and the stored-entry keep
+   * (match-middleware/cache-lookup.ts); match-result.ts turns it into
+   * `sourceHeld`, which scopes a prefetch of the response to that group.
    */
-  _sourceHeld?: true;
+  _sourceHeld?: import("../router/source-reads.js").SourceHeld;
   /**
    * @internal DSL loaders registered and not started, by `$$id`: a prefetch
    * deferred them, or a pass that skips loaders (`skipLoaders`) did not run
