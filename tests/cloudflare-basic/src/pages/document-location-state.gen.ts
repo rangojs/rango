@@ -2,6 +2,8 @@
 export const routes = {
   docState: "/doc-state",
   docStateCallback: "/doc-state/callback",
+  docStateShell: "/doc-state/shell",
+  docStateShellCallback: "/doc-state/shell-callback",
   docStateTarget: "/doc-state/target",
   docStateVerify: "/doc-state/verify",
 } as const;

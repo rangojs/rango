@@ -11,6 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NOCACHE_SYMBOL } from "../taint.js";
+import { runAsSegment } from "../../server/context.js";
 
 // Mock @vitejs/plugin-rsc/rsc (virtual module, not resolvable in vitest)
 // encodeReply serializes args so different inputs produce different cache keys.
@@ -520,6 +521,46 @@ describe("use cache stale revalidation handle preservation", () => {
     // No background revalidation should be queued
     expect(waitUntilFns).toHaveLength(0);
     expect(mockStore.setItem).not.toHaveBeenCalled();
+  });
+
+  it("a hit in a streamed handler's segment scope takes the claim of the argument that has a pin, not of a request context before it", async () => {
+    const mockStore = { getItem: vi.fn(), setItem: vi.fn() };
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60 } },
+      _handleStore: mockHandleStore,
+      waitUntil: () => {},
+    });
+    const freshHandles = { seg1: { breadcrumbs: ["Cached"] } };
+    mockStore.getItem.mockResolvedValueOnce({
+      value: JSON.stringify("cached-result"),
+      handles: freshHandles,
+      shouldRevalidate: false,
+    });
+    // Tainted, without a segment pin or a claim: the request context.
+    const requestCtx = { [NOCACHE_SYMBOL]: true };
+    const cached = registerCachedFunction(
+      async (_req: any, _ctx: any) => "should-not-run",
+      "test-fn-scoped-caller",
+      "default",
+    );
+
+    const result = await runAsSegment("streamed-seg", () =>
+      cached(requestCtx, makeTaintedCtx()),
+    );
+
+    expect(result).toBe("cached-result");
+    expect(mockAppendHandles).toHaveBeenCalledWith(
+      freshHandles,
+      mockHandleStore,
+      "streamed-seg",
+      claimLoaderPushes,
+    );
   });
 
   it("miss path captures and stores handles", async () => {

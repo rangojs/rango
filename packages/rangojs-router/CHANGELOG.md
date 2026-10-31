@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Fixed: a handle a `loading()` route or slot pushes after an `await` shows in its own place in `useHandle` ([#1262](https://github.com/rangojs/rango/pull/1262))
+
+**Before.** The router does not wait for a route or parallel slot handler
+under `loading()`: it goes on to the route's slots, the next slot or the
+route while that handler runs. A `ctx.use(Handle)` push the handler made
+after its first `await` (a fetch, a timer, any promise) was filed under the
+segment the router had reached by then, so `useHandle` showed it out of
+order. The same went for a loader the handler started after the `await`, for
+the pushes of a `"use cache"` function given the ctx, on a miss and on the
+replay of a hit, and for a loader that another loader's body started after
+an `await`, in any route.
+
+```tsx
+// Under a layout that pushes { label: "Shop" }.
+path(
+  "/product/:id",
+  async (ctx) => {
+    const product = await getProduct(ctx.params.id);
+    ctx.use(Breadcrumbs)({ label: product.name });
+    return <Product product={product} />;
+  },
+  { name: "product" },
+  () => [
+    loading(<ProductSkeleton />),
+    parallel({
+      "@reviews": (ctx) => {
+        ctx.use(Breadcrumbs)({ label: "Reviews" });
+        return <Reviews />;
+      },
+    }),
+  ],
+);
+// Before: useHandle(Breadcrumbs) gave Shop, Reviews, Product.
+// After:  Shop, Product, Reviews.
+```
+
+**After.** Each push lands under the segment whose handler or loader made
+it, wherever the `await` sits, on the document and on a navigation. No
+change in your code. A handler without `loading()` and a push function bound
+before the `await` (`const push = ctx.use(Handle)`) were filed right before,
+and are unchanged.
+
 ### Fixed: a server action from an open intercept keeps that intercept when several target the route ([#1294](https://github.com/rangojs/rango/pull/1294))
 
 **Before.** When several intercepts target one route, each with its own
@@ -28,9 +70,9 @@ fills and renders the one left, its `when()` not evaluated. Among several
 left, it evaluates their `when()` again, with `from` the intercept's source
 page, and the first that passes renders; when none passes, the first of them
 renders. When a `parallel()` fills every held slot, nothing but `when()` tells
-them apart, and that rule applies to all of them. `when()` selects an intercept; it does not authorize one: guard data
-in the target route's middleware or the intercept's loaders. No change in your
-code.
+them apart, and that rule applies to all of them. `when()` selects an
+intercept; it does not authorize one: guard data in the target route's
+middleware or the intercept's loaders. No change in your code.
 
 ## 0.32.0 (2026-10-30)
 
@@ -134,6 +176,28 @@ wins: two `setLocationState(Toasts(...))` calls in one response, or
 value. The `setLocationState`, `createLocationState` and `redirect` JSDoc and
 the `/hooks` `state.md` skill now say so. Write an array once to combine
 messages.
+
+### Fixed: location state on a `ppr` shell HIT ([#1330](https://github.com/rangojs/rango/issues/1330))
+
+Two edges of the new document location state on a `ppr` route:
+
+- **A degraded HIT kept the redirect's state.** A shell HIT that cannot
+  finish its tail reloads the page into a full render. When that HIT had
+  read the one-shot cookie a document redirect left, its headers had already
+  cleared it, so the reload showed no flash. The reload script now sets the
+  cookie again first (from script, so without `HttpOnly`, for the moment the
+  reload takes), and the reload shows the state.
+- **A loader's write never rides a HIT.** A HIT's headers leave before its
+  tail runs, and they are `private, no-store` only when state was set before
+  the render. A loader that called `getRequestContext().setLocationState()`
+  during the tail could put state on a HIT whose headers allowed shared
+  caching. The tail now sends exactly the state set before the render.
+
+Setting location state from a loader is not supported: a loader has no
+`setLocationState`, and a call through `getRequestContext()` may be dropped
+(the payload takes the state before loaders settle). Set it from middleware,
+the handler or an action. The `/loader`, `/ppr` and `/hooks` `state.md`
+skills and the `setLocationState` JSDoc now say so.
 
 ## 0.31.0 (2026-10-30)
 
