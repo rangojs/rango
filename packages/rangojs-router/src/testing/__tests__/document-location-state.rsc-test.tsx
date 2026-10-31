@@ -10,7 +10,7 @@
  * - such a document is never stored by the document cache; a PPR shell never
  *   holds it, and a ppr route whose state is set before the render (middleware,
  *   the cookie) still serves and captures its shell, the state riding the live
- *   payload.
+ *   payload; a HIT's tail sends only that state, never a loader's write.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -31,6 +31,7 @@ import {
 } from "../flight.entry.js";
 import { withLocationStateKey } from "../location-state-key.js";
 import {
+  createLoader,
   createLocationState,
   createRouter,
   getRequestContext,
@@ -97,6 +98,17 @@ const setsNote: Middleware = async (ctx, next) => {
   await next();
 };
 
+/**
+ * Writes state from a loader, through the request context, when the request
+ * asks for it: before its first await, so it runs while the payload is built.
+ */
+const StateWritingLoader = createLoader(async () => {
+  if (getRequestContext().request.headers.get("x-loader-state")) {
+    getRequestContext().setLocationState(Flash({ text: "from loader" }));
+  }
+  return { ok: true };
+});
+
 async function savingAction(_form: FormData): Promise<void> {
   getRequestContext().setLocationState(Flash({ text: "saved" }));
 }
@@ -114,8 +126,9 @@ function makeRouter() {
     .use("/off-host", offHost)
     .use("/too-large", tooLarge)
     .use("/shelled-mw", setsNote)
+    .use("/shelled-loader", setsNote)
     .routes(
-      urls(({ path }) => [
+      urls(({ path, loader }) => [
         path("/verify", FlashPage, { name: "verify" }),
         path("/target", () => <p>target page</p>, { name: "target" }),
         path("/plain", () => <p>plain page</p>, { name: "plain" }),
@@ -143,6 +156,18 @@ function makeRouter() {
           name: "shelledPlain",
           ppr: true,
         }),
+        path(
+          "/shelled-loader",
+          () => <p>shelled loader</p>,
+          { name: "shelledLoader", ppr: true },
+          () => [loader(StateWritingLoader)],
+        ),
+        path(
+          "/shelled-loader-only",
+          () => <p>shelled loader only</p>,
+          { name: "shelledLoaderOnly", ppr: true },
+          () => [loader(StateWritingLoader)],
+        ),
         path("/form", () => <p>form page</p>, { name: "form" }),
       ]),
     );
@@ -526,6 +551,9 @@ describe("caching a document that carries location state (#1330)", () => {
     expect(carried.response.headers.get("cache-control")).toBe(
       "private, no-store",
     );
+    // The HIT read the cookie, so its headers clear it: a refresh is a plain
+    // HIT.
+    expect(stateCookie(carried.response)).toMatch(/Max-Age=0/);
 
     const after = await serveShellRequest(router, "/shelled-plain", {
       cacheStore,
@@ -533,6 +561,51 @@ describe("caching a document that carries location state (#1330)", () => {
     expect(after.shellStatus).toBe("HIT");
     expect(await after.readLocationState()).toBeUndefined();
     expect(after.response.headers.get("cache-control")).not.toBe(
+      "private, no-store",
+    );
+  });
+
+  it("sends a shell HIT only the state set before the render: a loader's write in the tail is not sent", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const router = makeRouter();
+    const miss = await serveShellRequest(router, "/shelled-loader", {
+      cacheStore,
+    });
+    expect(miss.shellStatus).toBe("MISS");
+    expect(await miss.readEntry()).not.toBeNull();
+
+    const hit = await serveShellRequest(router, "/shelled-loader", {
+      cacheStore,
+      headers: { "x-loader-state": "1" },
+    });
+    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.body).toContain("shelled loader");
+    // The middleware's state rides the tail; the loader's, written after the
+    // HIT's headers left, does not.
+    expect(await hit.readLocationState()).toEqual({
+      [NOTE]: { text: "from middleware" },
+    });
+    expect(hit.response.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("sends no state on a shell HIT whose only write is a loader's, and leaves it shareable", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const router = makeRouter();
+    const miss = await serveShellRequest(router, "/shelled-loader-only", {
+      cacheStore,
+    });
+    expect(miss.shellStatus).toBe("MISS");
+
+    const hit = await serveShellRequest(router, "/shelled-loader-only", {
+      cacheStore,
+      headers: { "x-loader-state": "1" },
+    });
+    expect(hit.shellStatus).toBe("HIT");
+    expect(hit.body).toContain("shelled loader only");
+    // Nothing set state before the render, so the HIT left without
+    // `private`: the loader's write must not ride it.
+    expect(await hit.readLocationState()).toBeUndefined();
+    expect(hit.response.headers.get("cache-control")).not.toBe(
       "private, no-store",
     );
   });

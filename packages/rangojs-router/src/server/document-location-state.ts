@@ -14,7 +14,10 @@
  *   reads it on the next GET document request that navigates to the target
  *   pathname (`Sec-Fetch-Dest` a browsing context, where sent), seeds
  *   `_locationState` with its entries (so the render attaches them to the
- *   bootstrap payload, rsc/rsc-rendering.ts) and clears it.
+ *   bootstrap payload, rsc/rsc-rendering.ts) and clears it. A shell HIT that
+ *   degrades into a reload after its headers cleared the cookie sets it
+ *   again from script first (`_carriedLocationStateCookie`), so the reload
+ *   carries the state.
  *
  * A document that carries location state is per visitor: it is marked
  * `_documentLocationState`, never stored by the document cache or as a PPR
@@ -136,7 +139,10 @@ function isNavigationRequest(request: Request): boolean {
  * slots are taken from it (the value comes from the browser).
  */
 export function consumeDocumentLocationState(
-  reqCtx: Pick<RequestContext, "_locationState" | "setCookie">,
+  reqCtx: Pick<
+    RequestContext,
+    "_locationState" | "_carriedLocationStateCookie" | "setCookie"
+  >,
   request: Request,
   url: URL,
   stateCookieName: string,
@@ -159,6 +165,21 @@ export function consumeDocumentLocationState(
   }
   if (entries.length === 0) return;
   reqCtx._locationState = entries;
+  reqCtx._carriedLocationStateCookie = restoreCookieLine(name, raw, secure);
+}
+
+/**
+ * The `document.cookie` line that sets the consumed cookie again, for a
+ * shell HIT that reloads after its headers cleared it (rsc/rsc-rendering.ts
+ * serveShellHit). Script cannot write an `HttpOnly` cookie, so this one is
+ * readable by the page's script for its short life; it carries nothing the
+ * page's payload does not already hold.
+ */
+function restoreCookieLine(name: string, raw: string, secure: boolean): string {
+  return (
+    `${name}=${raw}; Path=/; Max-Age=${DOCUMENT_LOCATION_STATE_MAX_AGE}; ` +
+    `SameSite=Lax${secure ? "; Secure" : ""}`
+  );
 }
 
 /** JSON keeps it as it is: what the cookie can carry without change. */

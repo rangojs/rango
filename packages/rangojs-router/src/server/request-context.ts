@@ -691,6 +691,11 @@ export interface RequestContext<
    * `Cache-Control: private, no-store` and never stored by the document cache
    * or as a PPR shell.
    *
+   * Call it from middleware, a handler or an action. A loader's call
+   * (through `getRequestContext()`) is not supported: the payload takes the
+   * state before loaders settle, so the write may be dropped, and a PPR
+   * shell HIT never sends it.
+   *
    * Multiple calls accumulate entries across definitions. For one definition
    * the last write wins: two entries of the same definition share its slot
    * in history.state, so a later call (or a later entry in one array)
@@ -714,6 +719,16 @@ export interface RequestContext<
    * and it leaves `private, no-store` (server/document-location-state.ts).
    */
   _documentLocationState?: boolean;
+
+  /**
+   * @internal The `document.cookie` line that re-creates the location state
+   * cookie this request consumed (server/document-location-state.ts). The
+   * consuming response clears the cookie in its headers; a shell HIT that
+   * degrades into a reload after those headers left writes this line first
+   * (rsc/shell-serve.ts shellReloadScript), so the reload reads the state
+   * again.
+   */
+  _carriedLocationStateCookie?: string;
 
   /**
    * The matched route name, if the route has an explicit name.
@@ -1025,6 +1040,7 @@ export type PublicRequestContext<
   | "_payloadVisitorLocation"
   | "_locationState"
   | "_documentLocationState"
+  | "_carriedLocationStateCookie"
   | "_routeName"
   | "_prevRouteKey"
   | "_visitorMoved"

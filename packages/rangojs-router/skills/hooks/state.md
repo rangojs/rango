@@ -365,7 +365,15 @@ path("/checkout/callback", async (ctx) => {
 - **`ppr` and cached routes.** A shell HIT and a `cache()` hit run no
   handler, so a handler there cannot set state on that request. Set it from
   middleware, which runs on every request; the HIT still serves, with the
-  state in its live payload.
+  state in its live payload. A HIT sends exactly the state set before its
+  render: its headers leave before its tail runs, so they decide then
+  whether the response is private.
+- **Not from a loader.** A loader has no `setLocationState`, and calling
+  `getRequestContext().setLocationState()` from one is not supported: the
+  payload takes the request's state before loaders settle, so a loader's
+  write may arrive (a `ppr` MISS then renders in full) or be dropped, and a
+  shell HIT never sends it. Set state from middleware, the handler or an
+  action.
 - **The cookie.** It is named after the router's state cookie
   (`<stateCookieName>-ls`, `__Host-` prefixed on https), `HttpOnly`,
   `SameSite=Lax`, `Path=/`, and lives 60 seconds. Only the next GET document
@@ -378,7 +386,11 @@ path("/checkout/callback", async (ctx) => {
   is one such cookie per router: two document redirects within a moment (two
   tabs) keep only the later one's state. Without https there is no `__Host-`
   prefix, so a sibling subdomain could set the cookie: treat state that
-  arrives this way as a message to show, not as a fact to act on.
+  arrives this way as a message to show, not as a fact to act on. A `ppr`
+  shell HIT that read the cookie and then cannot finish its tail reloads the
+  page into a full render; its headers already cleared the cookie, so its
+  reload script sets it again first (from script, so without `HttpOnly`,
+  for the moment the reload takes), and the reload shows the state.
 - **Known limit: a redirect from one router to another.** The cookie is
   named after the redirecting router's state cookie, which holds its router
   id (`<stateCookiePrefix>_<routerId>`), and a router reads only its own. On

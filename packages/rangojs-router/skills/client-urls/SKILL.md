@@ -278,7 +278,10 @@ the arguments and type of a `urls()` loader's (`ShouldRevalidateFn` from
 `actionUrl`, `actionResult`, `formData`, `method`,
 `routeName`/`fromRouteName`/`toRouteName`, and `stale`. Nothing runs in the
 browser before the request goes out; there is no client-computed decision and
-no hybrid.
+no hybrid. A predicate that reads `currentParams`, `currentUrl` or
+`fromRouteName` and keeps its segment makes a prefetch of that answer
+page-only, as in `urls()` (`/links` → "Shared prefetches and
+`prefetchKey`").
 
 You still write the predicate in the `"use client"` module, or in a
 component's `.use`. The rango Vite plugin hoists each `revalidate()` argument

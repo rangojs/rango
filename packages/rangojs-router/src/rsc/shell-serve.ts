@@ -38,6 +38,7 @@ import {
 import { routerKeyPrefix } from "../cache/cache-key-utils.js";
 import { reportCacheError } from "../cache/cache-error.js";
 import { appendMetric } from "../router/metrics.js";
+import { escapeJsonForScript } from "../escape-script.js";
 import type { MetricsStore } from "../server/context.js";
 import { WIRE } from "../wire-params.js";
 
@@ -162,12 +163,22 @@ export function withoutShellMissMarker(request: Request): Request | undefined {
  * the page. window.stop() runs only when it reloads: it keeps the half-sent
  * Flight stream from being closed by DOMContentLoaded, which would throw
  * React's "Connection closed" (#412) before the reload lands.
+ *
+ * `restoreCookie` is the request's `_carriedLocationStateCookie`: the HIT's
+ * headers already cleared the location state cookie a document redirect left
+ * (server/document-location-state.ts), so the script sets it again before it
+ * reloads, and the reload carries the state.
  */
-export function shellReloadScript(): string {
+export function shellReloadScript(restoreCookie?: string): string {
+  const restore =
+    restoreCookie === undefined
+      ? ""
+      : `document.cookie=${escapeJsonForScript(JSON.stringify(restoreCookie))};`;
   return inlineShellScript(
     "(function(){var u=new URL(location.href);" +
       `if(u.searchParams.has(${JSON.stringify(WIRE.shellMiss)}))return;` +
       `u.searchParams.set(${JSON.stringify(WIRE.shellMiss)},"miss");` +
+      restore +
       "try{window.stop()}catch(e){}location.replace(u.href)})()",
   );
 }

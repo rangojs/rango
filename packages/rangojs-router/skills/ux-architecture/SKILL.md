@@ -249,6 +249,11 @@ them right:
   server").
 - A prefetch runs the predicates too, so a loader that holds costs nothing in
   the prefetch of a tab switch.
+- A predicate that reads `currentParams`, `currentUrl` or `fromRouteName` and
+  keeps its segment makes that prefetch page-only (2.6). `bySlug` and
+  `bySearch` keep only on an unchanged slug or query, so the cost is the
+  links between one product's tabs; a layout rule comparing a param that most
+  pages share (a locale, an account) pays it on nearly every link.
 - Unit-test them with `runRevalidate` (`/testing`).
 
 ### 2.5 loading() or an inline Suspense
@@ -315,12 +320,28 @@ The rule: **prefetch broadly, and flag what is expensive.**
 - On a server route, `loading(fallback, { prefetch: false })` keeps the whole
   entry behind that fallback out of the prefetch (`/route`, "`loading()`
   options"). A group's `loading()` takes no options.
-- The default prefetch entry is shared by every source page. When the
-  target's `revalidate()` reads `currentParams`, `currentUrl` or
-  `fromRouteName` and keeps the segment, the router scopes that prefetch to
-  the page that sent it (`x-rsc-prefetch-scope: source`): another page
-  prefetches its own. `prefetchKey=":source"` on the Link scopes every
-  prefetch of it (`src/browser/react/Link.tsx`, `prefetchKey`).
+- One prefetch of a page serves every page that links to it, so a paginated list
+  or a grid does not prefetch each link again after every navigation. The server
+  makes an answer page-only (`x-rsc-prefetch-scope: source`) when sharing it
+  would be wrong: an intercept targets the route or the page sending it, the
+  answer defers a `prefetch: false` unit the page does not show yet, a
+  `revalidate()` on the target read the page being left (`currentParams`,
+  `currentUrl`, `fromRouteName`) and kept its segment, or a prerendered target
+  is reached from a page with the same route params. Only a click from that
+  exact URL, query and hash included, uses a page-only answer, so every page
+  prefetches it again (`/links`, "Shared prefetches and `prefetchKey`").
+- Keep the third case for chrome that must follow a param. A page's own block
+  (a category hero) goes in its route or in a layout inside its `path()`, and
+  links that follow a mount param come from `useReverse`; neither needs a
+  rule. A layout rule comparing `currentParams.locale` around the whole app
+  makes nearly every prefetch page-only (`/app-structure`, "Prefetches are
+  shared").
+- `prefetchKey=":source"` on a Link, or
+  `router.prefetch(url, { key: ":source" })`, makes that link's prefetches
+  page-only. Use it when the target's answer depends on the page through
+  something the server does not track: `context` in a `revalidate()`, or a
+  `Referer` read. It costs the same requests, so set it per link, not
+  app-wide.
 
 ### 2.7 transition() and view transitions
 
@@ -931,6 +952,14 @@ Each entry: what the user sees, why, the fix.
 15. **An effect keyed on a location-state object.** In a group the object is
     the one the navigation passed until the commit, then the history entry's
     copy: the effect runs twice. Fix: key it on a primitive field.
+16. **A page's own block in a shared layout, kept by a rule that reads the
+    page being left** (a category hero in a template over the product pages,
+    re-rendered when `currentParams.category` changes). Nothing looks wrong,
+    but every prefetch under that layout becomes page-only: each page
+    prefetches its links again and the server renders them again. Fix: put
+    the block in its route, or in a layout inside its `path()`; it
+    re-renders on its own params with no rule (`/app-structure`, "Prefetches
+    are shared").
 
 ## 5. Known gaps
 

@@ -710,6 +710,9 @@ Rules of thumb:
   keeps the page being left on screen until the fill answers.
 - A same-route click (`/app/projects/1` to `/app/projects/2`) prefetches a
   flagged loader as usual: only data the page does not have yet is deferred.
+- One prefetch of a page serves every page that links to it. A `revalidate()`
+  that reads the page being left and keeps its segment makes it page-only
+  ([Prefetches are shared](./SKILL.md#prefetches-are-shared)).
 
 Details: `/loader` → "`prefetch: false`", `/client-urls` → "`prefetch: false`".
 
@@ -806,7 +809,10 @@ reverse(".issues", { projectId: "api" }); // /acme/api/issues
 - A server layout stays held when `:projectId` changes (partial rendering by
   design), so links it rendered keep the old project. Render the project
   switcher and nav in a client component with `useReverse(routes)`, or give
-  the layout a `revalidate()` comparing `projectId`.
+  the layout a `revalidate()` comparing `projectId`. Prefer the client
+  component: the rule reads the page being left, so every prefetch between
+  two pages of one project becomes page-only
+  ([Prefetches are shared](./SKILL.md#prefetches-are-shared)).
 - The account layout's `ctx.reverse(".settings")` resolves in the account
   module on every page below it, the project's pages included: it links to
   `/acme/settings`, not the project's settings route.
@@ -853,6 +859,12 @@ export function ProjectNav() {
   );
 }
 ```
+
+`ProjectNavLoader`'s rule has the same cost: it reads `currentParams`, so a
+prefetch from `/acme/web/issues` to `/acme/web/settings` is stored for
+`/acme/web/issues` alone. Use it for links that need the server; links that
+stay inside the project module can come from `useReverse(routes)` in
+`ProjectNav`, with no rule.
 
 ## Why each piece sits where it does
 

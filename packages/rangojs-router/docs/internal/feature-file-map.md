@@ -362,7 +362,12 @@ The public DOM seam is
   `revalidate()` it skipped, or the route's own segments on a search-only
   change. Two tests lock the class:
   [source-independence.rsc-test.tsx](../../src/testing/__tests__/source-independence.rsc-test.tsx)
-  adopts every shared prefetch of its fixture on every other page (loaded
+  adopts every shared prefetch of its fixture
+  ([fixtures/source-independence-router.tsx](../../src/testing/__tests__/fixtures/source-independence-router.tsx),
+  its loaders and predicates in
+  [fixtures/source-independence-data.ts](../../src/testing/__tests__/fixtures/source-independence-data.ts):
+  held layouts, loading(), parallel slots, layout and route loaders and
+  middleware vars, under clientUrls(), Prerender and cache()) on every other page (loaded
   as a document, reached by a client navigation from any page of its family
   (including a page at the source's URL, which adopts the source's
   source-scoped prefetch), or with the target in the tab's history) and compares the tree with that page's own

@@ -10,7 +10,10 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import type { RequestContext } from "../server/request-context.js";
-import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
+import {
+  resolveLocationStateEntries,
+  type LocationStateEntry,
+} from "../browser/react/location-state-shared.js";
 import {
   isRedirectResponse,
   isWebSocketUpgradeResponse,
@@ -343,13 +346,15 @@ export function interceptRedirectForPartial(
  * is populated. A `document` payload (a page load's or a no-JS form post's
  * bootstrap payload) that carries state marks the request
  * `_documentLocationState`: it is the visitor's, so no shared cache keeps it
- * (server/document-location-state.ts).
+ * (server/document-location-state.ts). `locationState` defaults to the
+ * current request context's; a shell HIT's tail passes the state set before
+ * its render (rsc/rsc-rendering.ts serveShellHit).
  */
 export function attachLocationStateIfPresent(
   payload: RscPayload,
   document = false,
+  locationState: LocationStateEntry[] | undefined = getLocationState(),
 ): void {
-  const locationState = getLocationState();
   if (locationState && locationState.length > 0) {
     payload.metadata!.locationState =
       resolveLocationStateEntries(locationState);
