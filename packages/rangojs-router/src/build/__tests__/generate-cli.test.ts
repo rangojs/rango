@@ -4,6 +4,7 @@ import {
   cpSync,
   mkdtempSync,
   mkdirSync,
+  realpathSync,
   symlinkSync,
   writeFileSync,
   rmSync,
@@ -711,7 +712,8 @@ const fixturesRoot = join(__dirname, "__fixtures__");
 const commandTempDirs: string[] = [];
 
 /**
- * A spawned CLI spends nearly all its time loading typescript and vite, and
+ * A spawned CLI spends nearly all its time loading typescript (and vite, for
+ * --runtime), and
  * spawnSync holds the worker until the child exits. Measured on a 10-core
  * machine, a static-mode run: 0.5 s alone, 0.5-2.5 s beside 12 busy loops,
  * 3.7-6.1 s in full test:unit runs at load average 30-50 (past the 5 s
@@ -720,8 +722,8 @@ const commandTempDirs: string[] = [];
  * synchronous spawn sooner, so a shorter one only fails a correct run that
  * was slow.
  */
-function spawnRango(args: string, env?: NodeJS.ProcessEnv) {
-  const result = spawnSync("node", [rangoBin, ...args.split(" ")], {
+function spawnRango(args: string, env?: NodeJS.ProcessEnv, bin = rangoBin) {
+  const result = spawnSync("node", [bin, ...args.split(" ")], {
     encoding: "utf-8",
     cwd: packageRoot,
     timeout: 30_000,
@@ -792,6 +794,40 @@ function cloneFixtureDir(name: string): string {
   return dest;
 }
 
+/**
+ * Copies the built CLI (dist/bin) beside a node_modules that holds only the
+ * dependencies its static path needs, typescript and picomatch, as in a
+ * consumer's install without vite (an optional peer dependency). Returns the
+ * copied rango.js and an env without NODE_PATH: pnpm's bin shims point it at
+ * the store's hoisted node_modules, where vite resolves.
+ */
+function cloneBinWithoutVite(): { bin: string; env: NodeJS.ProcessEnv } {
+  const tempRoot = mkdtempSync(join(tmpdir(), "rango-cli-no-vite-"));
+  commandTempDirs.push(tempRoot);
+  cpSync(join(packageRoot, "dist", "bin"), join(tempRoot, "bin"), {
+    recursive: true,
+  });
+  const modules = join(tempRoot, "node_modules");
+  mkdirSync(modules);
+  for (const dep of ["typescript", "picomatch"]) {
+    symlinkSync(
+      realpathSync(join(packageRoot, "node_modules", dep)),
+      join(modules, dep),
+      "dir",
+    );
+  }
+  writeFileSync(join(tempRoot, "package.json"), '{ "type": "module" }\n');
+  const { NODE_PATH: _nodePath, ...env } = process.env;
+  // Precondition: nothing above the copy resolves vite either.
+  const probe = spawnSync(
+    "node",
+    ["--input-type=module", "-e", 'await import("vite")'],
+    { cwd: join(tempRoot, "bin"), encoding: "utf-8", timeout: 30_000, env },
+  );
+  expect(probe.stderr).toContain("ERR_MODULE_NOT_FOUND");
+  return { bin: join(tempRoot, "bin", "rango.js"), env };
+}
+
 describe("CLI command-level tests", () => {
   afterEach(() => {
     for (const dir of commandTempDirs) {
@@ -815,6 +851,43 @@ describe("CLI command-level tests", () => {
     expect(content).toContain("home");
     expect(content).toContain("about");
     expect(content).toContain("api.health");
+  }, 30_000);
+
+  // Regression (rango-t211): the CLI bundle folded the runtime-discovery code
+  // in, so its top-level `import ... from "vite"` failed every command.
+  it("built binary runs --help without vite installed", () => {
+    const { bin, env } = cloneBinWithoutVite();
+    const result = spawnRango("--help", env, bin);
+    expect(result.combined).not.toContain("ERR_MODULE_NOT_FOUND");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Usage: rango generate");
+  }, 30_000);
+
+  it("built binary runs a static generate without vite installed", () => {
+    const { bin, env } = cloneBinWithoutVite();
+    const fixtureDir = cloneFixtureDir("app");
+    const genPath = join(fixtureDir, "router.named-routes.gen.ts");
+    const result = spawnRango(
+      `generate ${join(fixtureDir, "router.tsx")}`,
+      env,
+      bin,
+    );
+    expect(result.combined).not.toContain("ERR_MODULE_NOT_FOUND");
+    expect(result.status).toBe(0);
+    expect(readFileSync(genPath, "utf-8")).toContain("api.health");
+  }, 30_000);
+
+  it("built binary's --runtime without vite names what to install", () => {
+    const { bin, env } = cloneBinWithoutVite();
+    const fixtureDir = cloneFixtureDir("app");
+    const result = spawnRango(
+      `generate ${join(fixtureDir, "router.tsx")} --runtime`,
+      env,
+      bin,
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Runtime discovery requires 'vite'");
+    expect(result.stderr).not.toContain("ERR_MODULE_NOT_FOUND");
   }, 30_000);
 
   it("classifies a clientUrls-only module (no lowercase urls( token)", async () => {
