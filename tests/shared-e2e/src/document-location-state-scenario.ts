@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { guardHydrationErrors } from "./hydration-guard.js";
 
 /**
  * Location state on document responses (#1330). The fixture
@@ -7,7 +9,9 @@ import { expect, test, type Page } from "@playwright/test";
  * page), `/doc-state/target`, `/doc-state/callback` (a handler redirect with
  * a flash: a payment provider sending the shopper back) and
  * `/doc-state/verify` (a handler that sets a flash on the page itself: an
- * email link). Every page shows the flash (`ds-flash`, "none" without one)
+ * email link), and `/doc-state/shell` (a `ppr` page) with
+ * `/doc-state/shell-callback` redirecting to it with a flash, search kept.
+ * Every page shows the flash (`ds-flash`, "none" without one)
  * and whether it has hydrated (`ds-hydrated`). Both apps call this from a dev
  * and a (production) describe.
  */
@@ -79,6 +83,45 @@ export function runDocumentLocationStateTests(
     expect(await stateCookies(page)).toEqual([]);
 
     await page.reload();
+    await expectHydrated(page);
+    await expect(page.getByTestId("ds-flash")).toHaveText("none");
+  });
+
+  test("a document redirect's flash rides the live tail of a ppr target's shell HIT, once", async ({
+    page,
+  }) => {
+    // A shell of this test's own: the probe keys it.
+    const shellPath = `/doc-state/shell?probe=${randomUUID()}`;
+    const shellStatus = async (): Promise<string | undefined> => {
+      const response = await page.request.get(url(shellPath), {
+        headers: { Accept: "text/html" },
+      });
+      expect(response.status()).toBe(200);
+      return response.headers()["x-rango-shell"];
+    };
+    expect(await shellStatus()).toBe("MISS");
+    // The capture runs in the background of the MISS.
+    await expect(async () => {
+      expect(await shellStatus()).toBe("HIT");
+    }).toPass({ timeout: 20_000 });
+
+    using _ = guardHydrationErrors(page);
+    // goto resolves with the redirect target's response: the shell HIT.
+    const landed = await page.goto(
+      url(shellPath.replace("/doc-state/shell", "/doc-state/shell-callback")),
+    );
+    await expect(page).toHaveURL(url(shellPath));
+    expect(landed?.headers()["x-rango-shell"]).toBe("HIT");
+    expect(landed?.headers()["cache-control"]).toBe("private, no-store");
+    await expectHydrated(page);
+    await expect(page.getByTestId("ds-flash")).toHaveText("shell flash");
+    // The HIT read the one-shot cookie and cleared it.
+    expect(await stateCookies(page)).toEqual([]);
+
+    // A refresh is a plain HIT of the shared shell, without the flash.
+    const reloaded = await page.reload();
+    expect(reloaded?.headers()["x-rango-shell"]).toBe("HIT");
+    expect(reloaded?.headers()["cache-control"]).not.toBe("private, no-store");
     await expectHydrated(page);
     await expect(page.getByTestId("ds-flash")).toHaveText("none");
   });

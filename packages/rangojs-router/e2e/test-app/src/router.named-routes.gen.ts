@@ -213,6 +213,8 @@ export const NamedRoutes = {
   "docs.article": "/docs/:slug",
   docState: "/doc-state",
   docStateCallback: "/doc-state/callback",
+  docStateShell: "/doc-state/shell",
+  docStateShellCallback: "/doc-state/shell-callback",
   docStateTarget: "/doc-state/target",
   docStateVerify: "/doc-state/verify",
   "errors.captureFails": "/errors/capture-fails/:k",

@@ -89,6 +89,7 @@ import {
   type ShellLoaderSeedEntry,
 } from "../../cache/shell-snapshot.js";
 import { contextSet } from "../../context-var.js";
+import { consumeDocumentLocationState } from "../../server/document-location-state.js";
 import { nonce as nonceToken } from "../nonce.js";
 import type { HandlerContext } from "../handler-context.js";
 import { SSR_SETUP_VAR, type SSRSetup } from "../ssr-setup.js";
@@ -1644,6 +1645,44 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
       expect(second.response.headers.get("x-rango-shell")).toBe("MISS");
       await readAll(second.response.body!);
       expect(cf.counts.matches).toBe(matchesBefore + 1);
+    });
+
+    it("a degraded HIT that read a document redirect's state cookie sets it again before it reloads", async () => {
+      const cf = createCfShellFixture();
+      await cf.store.putShell(KEY, shellEntry(), 300, 30);
+      await cf.drain();
+      const router = {
+        ...makeCtx(fullSsrModule(), "stream").ctx.router,
+        match: vi.fn(async () => {
+          throw new ShellRecordUnavailableError("doc:localhost/p");
+        }),
+      } as unknown as HandlerContext<unknown>["router"];
+      const value = encodeURIComponent(
+        JSON.stringify({ p: "/p", s: { __rsc_ls_Flash: { text: "paid" } } }),
+      );
+
+      const { response } = await run({
+        ssrModule: fullSsrModule(),
+        ppr: true,
+        store: cf.store,
+        router,
+        headers: { cookie: `rs-ls=${value}`, "sec-fetch-dest": "document" },
+        // What runRequestPasses does before any middleware.
+        arm: (reqCtx) =>
+          consumeDocumentLocationState(
+            reqCtx,
+            reqCtx.request,
+            reqCtx.url,
+            "rs",
+          ),
+      });
+      expect(response.headers.get("x-rango-shell")).toBe("HIT");
+      const body = await readAll(response.body!);
+      // The headers cleared the cookie before the tail failed; the reload
+      // script writes it again, so the forced MISS reads the state.
+      expect(body).toContain(
+        shellReloadScript(`rs-ls=${value}; Path=/; Max-Age=60; SameSite=Lax`),
+      );
     });
 
     it.each([

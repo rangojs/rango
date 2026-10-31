@@ -292,16 +292,25 @@ describe("partition build-shell probe memo — per router", () => {
 // The degrade's client half (serveShellHit): reload once into a forced MISS.
 // Run against a stand-in window, the way a browser runs the inline script.
 describe("shellReloadScript", () => {
-  function runScript(href: string) {
+  function runScript(href: string, restoreCookie?: string) {
     const calls: string[] = [];
-    const html = shellReloadScript();
+    const html = shellReloadScript(restoreCookie);
     const body = html.replace(/^<script[^>]*>/, "").replace(/<\/script>$/, "");
     const location = {
       href,
       replace: (to: string) => calls.push(`replace ${to}`),
     };
     const window = { stop: () => calls.push("stop") };
-    new Function("window", "location", body)(window, location);
+    const document = {
+      set cookie(line: string) {
+        calls.push(`cookie ${line}`);
+      },
+    };
+    new Function("window", "location", "document", body)(
+      window,
+      location,
+      document,
+    );
     return { calls, html };
   }
 
@@ -316,6 +325,26 @@ describe("shellReloadScript", () => {
   it("does nothing on a URL that already carries the marker (the loop bound)", () => {
     const { calls } = runScript("https://shop.test/p?_rsc_shell=miss");
     expect(calls).toEqual([]);
+  });
+
+  it("sets a document redirect's location state cookie again before it reloads", () => {
+    const line =
+      "__Host-rs-ls=%7B%22p%22%3A%22%2Fp%22%7D; Path=/; Max-Age=60; SameSite=Lax; Secure";
+    const { calls } = runScript("https://shop.test/p", line);
+    expect(calls).toEqual([
+      `cookie ${line}`,
+      "stop",
+      "replace https://shop.test/p?_rsc_shell=miss",
+    ]);
+    // And never on the loop-bound reload itself.
+    expect(
+      runScript("https://shop.test/p?_rsc_shell=miss", line).calls,
+    ).toEqual([]);
+  });
+
+  it("keeps a cookie value from closing its script", () => {
+    const { html } = runScript("https://shop.test/p", "a=</script><b>; Path=/");
+    expect(html.match(/<\/script>/g)).toHaveLength(1);
   });
 
   it("the marker never partitions the shell key", () => {

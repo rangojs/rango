@@ -103,6 +103,28 @@ value. The `setLocationState`, `createLocationState` and `redirect` JSDoc and
 the `/hooks` `state.md` skill now say so. Write an array once to combine
 messages.
 
+### Fixed: location state on a `ppr` shell HIT ([#1330](https://github.com/rangojs/rango/issues/1330))
+
+Two edges of the new document location state on a `ppr` route:
+
+- **A degraded HIT kept the redirect's state.** A shell HIT that cannot
+  finish its tail reloads the page into a full render. When that HIT had
+  read the one-shot cookie a document redirect left, its headers had already
+  cleared it, so the reload showed no flash. The reload script now sets the
+  cookie again first (from script, so without `HttpOnly`, for the moment the
+  reload takes), and the reload shows the state.
+- **A loader's write never rides a HIT.** A HIT's headers leave before its
+  tail runs, and they are `private, no-store` only when state was set before
+  the render. A loader that called `getRequestContext().setLocationState()`
+  during the tail could put state on a HIT whose headers allowed shared
+  caching. The tail now sends exactly the state set before the render.
+
+Setting location state from a loader is not supported: a loader has no
+`setLocationState`, and a call through `getRequestContext()` may be dropped
+(the payload takes the state before loaders settle). Set it from middleware,
+the handler or an action. The `/loader`, `/ppr` and `/hooks` `state.md`
+skills and the `setLocationState` JSDoc now say so.
+
 ## 0.31.0 (2026-10-30)
 
 ### Changed: `rango generate` reads a const `createRouter({ basename })` and stops on one it cannot read ([#1324](https://github.com/rangojs/rango/pull/1324))

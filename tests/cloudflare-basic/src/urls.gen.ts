@@ -81,6 +81,8 @@ export const routes = {
   "dhNav.start": "/dh-nav",
   docState: "/doc-state",
   docStateCallback: "/doc-state/callback",
+  docStateShell: "/doc-state/shell",
+  docStateShellCallback: "/doc-state/shell-callback",
   docStateTarget: "/doc-state/target",
   docStateVerify: "/doc-state/verify",
   documentCache: "/document-cache",

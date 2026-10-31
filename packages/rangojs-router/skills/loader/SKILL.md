@@ -218,7 +218,11 @@ Loaders receive a request-scoped context that shares its read surface with
 route handlers (`params`, `request`, `url`, `env`, `get`, `use`, `reverse`).
 It has no handler-only writers: there is no `ctx.set`, `ctx.headers`, or
 `ctx.setLocationState` (a loader can stream after the response has started,
-so response-shaping belongs in middleware or the handler).
+so response-shaping belongs in middleware or the handler). Calling
+`getRequestContext().setLocationState()` from a loader is not supported
+either: the payload takes the request's location state before loaders
+settle, so such a write may arrive or may be dropped, and a `ppr` shell HIT
+never sends it (see `/hooks` `state.md`, "State on a document response").
 
 ### Full field surface
 
