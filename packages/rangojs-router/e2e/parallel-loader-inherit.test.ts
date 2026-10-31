@@ -108,10 +108,11 @@ async function loadingOffNeverSendsTheCopy(
     "route-level:inherited-data",
   );
 
-  // The action and the navigation name no loader segment but the route's own.
+  // The action and the navigation re-run the route's loader and name its own
+  // segment, and no other.
   expect(bodies.length).toBeGreaterThanOrEqual(2);
   for (const body of await Promise.all(bodies)) {
-    for (const id of inheritLoaderSegmentIds(body)) expect(ids).toContain(id);
+    expect(inheritLoaderSegmentIds(body)).toEqual(ids);
   }
 }
 

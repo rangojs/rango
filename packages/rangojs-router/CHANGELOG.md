@@ -126,6 +126,37 @@ them apart, and that rule applies to all of them. `when()` selects an
 intercept; it does not authorize one: guard data in the target route's
 middleware or the intercept's loaders. No change in your code.
 
+### Fixed: a layout with `parallel()` slots under a route's loader no longer remounts after an action or a same-route navigation ([#1350](https://github.com/rangojs/rango/pull/1350))
+
+**Before.** A child layout with `parallel()` slots gets a copy of its route's
+loaders, so a slot's `useLoader()` can read them through the route's
+`loading()` fallback. Two shapes sent that copy on one request and not on the
+next, so the layout gained or lost a loader entry, and React remounted it and
+its `<Outlet />`, resetting its local state:
+
+- a route loader held with `revalidate(() => false)` and no `loading()`: the
+  document sent no copy, but an action or a same-route navigation (and Back
+  after it) sent the copy alone;
+- `loading(fallback)` with the route's handler held (`revalidate(() => false)`
+  on the route): the document sent the copy, but an action that re-ran the
+  loader dropped it.
+
+`loading(false)` also sent the loader's data twice on every document.
+
+```tsx
+path("/p", Page, { name: "p" }, () => [
+  loader(Data, () => [revalidate(() => false)]),
+  layout(Inner, () => [parallel({ "@side": SideReadingUseLoaderData })]),
+]);
+// Before: an action on /p, or a link to /p?x=2, remounted Inner.
+// After:  Inner keeps its state.
+```
+
+**Now.** The copy is sent only when the route renders a `loading()` fallback
+(including `loading(fallback, { ssr: false })`), and then on every request;
+with no `loading()` or `loading(false)` it is never sent. Slots read the same
+data. No change in your code.
+
 ## 0.32.0 (2026-10-30)
 
 ### Fixed: a prefetch held by a `revalidate()` that read the source page no longer shows another page's layout ([#1333](https://github.com/rangojs/rango/pull/1333))
