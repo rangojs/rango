@@ -145,7 +145,7 @@ describe("client URL server projection", () => {
           pattern: "/accounts/:id",
           name: "account",
           options: {
-            search: { active: "boolean", tab: "string?" },
+            search: { tab: "string?", active: "boolean" },
             trailingSlash: "never",
           },
           loaderIds: ["loaders#session", "loaders#account"],
@@ -155,6 +155,11 @@ describe("client URL server projection", () => {
       ],
       intercepts: [],
     });
+    // Source order (#1322): toEqual above ignores key order.
+    expect(Object.keys(projection.routes[0]?.options.search ?? {})).toEqual([
+      "tab",
+      "active",
+    ]);
     expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
     expect(JSON.stringify(serializeClientUrlPatterns(patterns))).toBe(
       JSON.stringify(projection),

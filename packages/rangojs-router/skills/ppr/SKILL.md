@@ -500,6 +500,18 @@ Rango warns with the shell key and backs capture off instead of rendering the
 same doomed generation on every request. Move a deterministic self-invalidation
 out of render code if you want the shell to persist.
 
+### Location state on a ppr route
+
+A shared shell never holds location state: the capture builds its own
+payload, without it. State set before the render (from middleware, or the
+one-shot cookie a document redirect left for this request) rides the live
+payload: a HIT serves the shell with the state in its tail's payload, a MISS
+carries it and still captures. Either response leaves `private, no-store`.
+State a handler sets skips the capture of that MISS, so that route renders in
+full: a HIT runs no handler, so a handler's `ctx.setLocationState()` does not
+happen on a HIT. Set it from middleware (see `/hooks` `state.md`, "State on a
+document response").
+
 ### Opting out per request with `ctx.dynamic()`
 
 Middleware and handlers can call `ctx.dynamic()` to force this request onto a

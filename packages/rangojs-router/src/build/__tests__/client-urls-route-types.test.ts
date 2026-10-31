@@ -20,8 +20,18 @@ import { generateRouteTypesSource } from "../route-types/codegen.js";
 import {
   buildCombinedRouteMapForRouterFile,
   detectUnresolvableIncludes,
+  resolveSearchSchemas,
   writeCombinedRouteTypes,
 } from "../route-types/router-processing.js";
+import { generateManifestFull } from "../generate-manifest.js";
+import { createRouter, toInternal } from "../../router.js";
+import { clientUrls } from "../../client-urls/client-urls.js";
+import {
+  clearClientUrlProjections,
+  serializeClientUrlPatterns,
+  setClientUrlProjection,
+  type ClientUrlReference,
+} from "../../client-urls/server-projection.js";
 
 describe("clientUrls static route type generation", () => {
   const tempDirs: string[] = [];
@@ -81,6 +91,7 @@ export const router = createRouter()${calls};
   }
 
   afterEach(() => {
+    clearClientUrlProjections();
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -301,6 +312,71 @@ export const router = createRouter({
     writeCombinedRouteTypes(dir, [routerPath]);
 
     expect(readFileSync(genPath, "utf-8")).toBe(runtimeSource);
+  });
+
+  // GitHub #1322: `vite build` writes the gen file from the runtime manifest,
+  // `rango generate` from the static parse; both must emit search keys in
+  // source order or the committed gen file churns between the two.
+  it("writes clientUrls search keys in source order on the build path, matching the static parse", async () => {
+    const dir = createTempDir();
+    writeFileSync(
+      join(dir, "app.urls.tsx"),
+      `import { clientUrls } from "@rangojs/router/client";
+const SearchPage = () => null;
+export default clientUrls(({ path }) => [
+  path("/search", SearchPage, {
+    name: "search",
+    search: { text: "string", page: "number?", sort: "string?", refine: "boolean?" },
+  }),
+]);
+`,
+    );
+    const routerPath = join(dir, "router.tsx");
+    writeFileSync(
+      routerPath,
+      `import { createRouter } from "@rangojs/router";
+import appUrls from "./app.urls.js";
+export const router = createRouter().routes(appUrls);
+`,
+    );
+
+    // Build path: in the RSC environment the module is a client reference,
+    // materialized from its installed projection during discovery.
+    const SearchPage = (): null => null;
+    const source = clientUrls(({ path }) => [
+      path("/search", SearchPage, {
+        name: "search",
+        search: {
+          text: "string",
+          page: "number?",
+          sort: "string?",
+          refine: "boolean?",
+        },
+      }),
+    ]);
+    const reference = Object.assign(() => null, {
+      $$typeof: Symbol.for("react.client.reference"),
+      $$id: "app.urls#search-order",
+    }) as unknown as ClientUrlReference;
+    setClientUrlProjection(reference, serializeClientUrlPatterns(source));
+    const router = toInternal(
+      createRouter({ id: "client-urls-search-order" }).routes(
+        reference as unknown as typeof source,
+      ),
+    );
+    const manifest = await generateManifestFull(router.urlpatterns!);
+    const buildSchemas = resolveSearchSchemas(
+      Object.keys(manifest.routeManifest),
+      manifest.routeSearchSchemas,
+      routerPath,
+    );
+    // The runtime schemas, not the static-parse fallback.
+    expect(buildSchemas).toBe(manifest.routeSearchSchemas);
+
+    const staticParsed = buildCombinedRouteMapForRouterFile(routerPath);
+    expect(generateRouteTypesSource(manifest.routeManifest, buildSchemas)).toBe(
+      generateRouteTypesSource(staticParsed.routes, staticParsed.searchSchemas),
+    );
   });
 
   it("detects unresolvable includes in every direct mount", () => {

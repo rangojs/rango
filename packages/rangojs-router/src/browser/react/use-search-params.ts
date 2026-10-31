@@ -1,14 +1,8 @@
 "use client";
 
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useContext, useMemo } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { useUrlValue } from "./use-route-state.js";
 import type { ReadonlyURLSearchParams } from "../types.js";
 import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
 
@@ -113,38 +107,11 @@ export function useSearchParams(): [ReadonlyURLSearchParams, SetSearchParams] {
   const ctx = useContext(NavigationStoreContext);
   const optimistic = useContext(OptimisticLocationContext);
 
-  // Seed from the store location on BOTH sides (mirrors usePathname): the
-  // SSR store carries the live request's search, the browser store carries
-  // window.location — same URL, so the hydration renders agree. No ctx
-  // (no provider) seeds empty.
-  const [searchParams, setSearchParamsState] =
-    useState<ReadonlyURLSearchParams>(() => {
-      const state = ctx
-        ? (ctx.eventController.getHydrationSnapshot()?.state ??
-          ctx.eventController.getState())
-        : undefined;
-      const location = state?.location as URL | undefined;
-      return new URLSearchParams(location?.searchParams);
-    });
-
-  const prevSearch = useRef(searchParams.toString());
-
-  useEffect(() => {
-    if (!ctx) return;
-
-    const update = () => {
-      const location = ctx.eventController.getState().location as URL;
-      const nextSearch = location.searchParams.toString();
-      if (nextSearch !== prevSearch.current) {
-        prevSearch.current = nextSearch;
-        setSearchParamsState(new URLSearchParams(nextSearch));
-      }
-    };
-
-    update();
-
-    return ctx.eventController.subscribe(update);
-  }, []);
+  // A new object only when the string changes.
+  const searchParams = useUrlValue<ReadonlyURLSearchParams>(
+    (route) => new URLSearchParams(route.location.searchParams),
+    (a, b) => a.toString() === b.toString(),
+  );
 
   // Reads the committed location at CALL time (not the render closure), so a
   // functional init always merges against fresh params even when the caller's

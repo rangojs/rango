@@ -70,6 +70,19 @@ describe("runRevalidate (public testing primitive)", () => {
     expect(await runRevalidate(readFlag, { context })).toBe(true);
   });
 
+  it("leaves a passed context as it came in", async () => {
+    const context = {};
+    // Reads the source page and keeps the segment: the router marks the
+    // context it decided on.
+    expect(
+      await runRevalidate(({ currentParams }) => currentParams.id === "2", {
+        context: context as never,
+        currentParams: { id: "1" },
+      }),
+    ).toBe(false);
+    expect(Object.keys(context)).toEqual([]);
+  });
+
   it("applies the router's default decisions", async () => {
     const defer: ShouldRevalidateFn = () => undefined;
     // A navigation that changes nothing keeps the segment.

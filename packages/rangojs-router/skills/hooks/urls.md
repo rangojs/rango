@@ -123,7 +123,16 @@ click or `router.push()`.
 | Back/Forward, entry fetched again                 | when the fetched page commits; until then the page being left is on screen |
 | a Back/Forward whose fetch fails                  | with the error boundary: they report the entry the browser is on           |
 | `router.push(url, { revalidate: false })`         | at once: nothing is fetched and the page stays                             |
+| `transition={false}` over a held page             | with that page's first screen, also on the URL React was holding           |
 | inside an optimistic `clientUrls()` destination   | at the click, for that branch only (see `/client-urls`)                    |
+
+**A newer click that fails while a page is held.** Click a link, and while
+React holds the page being left (a `transition()` route, or a loader still
+streaming) click another whose request fails: the root error screen replaces
+the app, and the held page never shows. Under that screen `useNavigation()`
+reads `"idle"` with the first click's `location`, and no hook reader is on
+screen to see it. The hooks are not wrong, there is simply nobody left to read
+them; the error boundary's reset brings the app back.
 
 **The hooks can disagree with the address bar.** On Back/Forward the browser
 changes the URL and `history.state` before it tells the router. When the
@@ -142,11 +151,14 @@ whole wait. A Back/Forward served from the history cache has no wait.
 `setSearchParams((prev) => ...)` builds on the same location: called during a
 pending Back/Forward, `prev` is the search of the page on screen.
 
-One gap (issue #1046): a component that first mounts in the page being left
-after the navigation's response has arrived, while React still holds the
-destination behind a loader or a `transition()`, reads the destination's URL
-and params from these hooks. Components that were already mounted are not
-affected. It applies to a push and to Back/Forward alike.
+A component that first mounts in the page being left after the navigation's
+response has arrived, while React still holds the destination behind a loader
+or a `transition()`, reads the destination's URL and params from these hooks
+(issue #1046; by design). Every router hook seeds its first value from the
+router's live state, so a menu opened while a click's page is held highlights
+the destination link. Components already on screen keep the values of the
+page on screen until the destination commits, and then every hook agrees. It
+applies to a push and to Back/Forward alike.
 
 ### useHref()
 

@@ -173,6 +173,7 @@ export const router = createRouter<AppBindings>({
       message: ctx.error.message,
       pathname: ctx.pathname,
       handledByBoundary: ctx.handledByBoundary,
+      background: ctx.background,
       metadata: ctx.metadata,
     });
   },

@@ -277,6 +277,36 @@ Events include `request.start/end/error`, `loader.start/end/error`,
 `handler.error`, `cache.decision`, `revalidation.decision`, `request.timeout`,
 and `request.origin-rejected`.
 
+## Errors reported to onError
+
+`createRouter({ onError })` sees every server error, including errors from
+work no visitor waits on. A stale `cache()` record, document cache entry, PPR
+shell, `"use cache"` function or cached loader is served stale and refreshed
+beside the request. That refresh's error carries `background: true`, with the
+starting request's `request` and `url`, and `handledByBoundary: false`: the
+failed render is not stored, so no one sees its fallback. The stale entry
+keeps serving.
+
+```typescript
+const router = createRouter({
+  onError: ({ error, phase, background, routeKey, duration }) => {
+    errorTracker.capture(error, {
+      // A failed refresh is not a failed page view.
+      level: background ? "warning" : "error",
+      tags: { phase, route: routeKey },
+      extra: { duration },
+    });
+  },
+});
+```
+
+`duration` is the time from the request's start to the error; for a
+`background` error, from the start of the request that started the refresh.
+`segmentId` and `segmentType` name the segment that threw: an intercept's or
+a parallel slot's error reports the slot (`segmentType: "parallel"`), an
+orphan layout's error the orphan layout, even when the owning layout's
+boundary renders the fallback.
+
 ## Debugging revalidation and stale data
 
 When stale UI or unexpected partial renders are the question, use all three

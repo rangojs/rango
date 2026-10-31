@@ -242,6 +242,21 @@ has three modes for producing `.named-routes.gen.ts`:
 | Static, partial  | `--static`  | AST-only, no Vite server                                         | Same, but accepts partial output with warnings          |
 | Runtime          | `--runtime` | Spins up a temp Vite server, imports entry via RSC module runner | 100% of registered routes (`--config` picks the config) |
 
+`--runtime` forwards your resolver plugins (`resolveId` / `load`) to its temp
+server the way `vite dev` does: from a config resolved as `serve` /
+`development`, so a resolver that builds its state in `config` or
+`configResolved` (vite-tsconfig-paths) works and an `apply: "build"` plugin is
+left out. The framework plugins (rango(), `@vitejs/plugin-rsc`, `vite:*`, the
+Cloudflare plugin) are dropped before that resolve, since rango()'s
+`configResolved` would write the static gen files
+(`isFrameworkPlugin` in `src/vite/utils/forward-user-plugins.ts`). An alias a
+plugin's `config()` hook adds still resolves, because Vite's own `alias`
+plugin is in the resolved list and is forwarded with your resolvers.
+`resolve`, `define` and `oxc` themselves come from the config file as
+written, so a `define` or `resolve.conditions` added by a `config` hook is
+missed: a module that reads a `define`d `__FLAG__` at top level throws a
+ReferenceError under `--runtime`.
+
 **Design rule:** when the static parser encounters route tree structures it
 cannot reconstruct (factory function calls, dynamic expressions, conditional
 registrations), it must **fail fast with a clear diagnostic** pointing the
@@ -253,11 +268,26 @@ Concretely:
 - `detectUnresolvableIncludes()` scans router files for `include()` calls
   whose second argument is a function call or expression the parser cannot
   resolve. These are classified as `"factory-call"` or `"unresolvable"`.
-- In default mode, any unresolvable include causes a hard error with the
-  list of unresolvable prefixes and the suggestion to use `--runtime`.
-- In `--static` mode, partial output is accepted with a warning.
+- The same scan reports an explicit `createRouter({ basename })` whose value
+  is not a string literal or a top-level const (in the router file, or an
+  `export const` imported by name from a relative module) as
+  `"unresolvable-basename"`: every pattern would lack the prefix. The basename
+  is read from the `createRouter` call whose urls the gen file uses. A basename
+  inside a spread (`{ ...shared }`) is not read and not reported.
+- The parser reads a const's initializer and does not track later mutation:
+  after `SITE.basename = "/b"` the gen file still uses the initial value. Use
+  a string literal, a plain const, or an object declared `as const`.
+- In default mode, any unresolvable include or basename causes a hard error
+  with the list of diagnostics and the suggestion to use `--runtime`.
+- In `--static` mode, partial output is accepted with a warning (for a
+  basename, the gen file is written without the prefix).
 - In `--runtime` mode, the Vite server evaluates the actual module graph,
-  so factory functions execute and all routes are discovered.
+  so factory functions execute and all routes are discovered. It is the
+  discovery temp server of `vite dev`/`vite build` (`createTempRscServer`):
+  loader/handle/router ids are injected, and the app config's `resolve`,
+  `define`, `oxc` and resolver plugins apply. The config is loaded but not
+  resolved, so those plugins run without their `config`/`configResolved`
+  hooks.
 
 This is intentional: "hard runtime augmentation parity" is not a goal of
 the static parser. The static parser is a fast, dependency-free path for

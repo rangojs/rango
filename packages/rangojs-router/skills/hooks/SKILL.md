@@ -86,7 +86,7 @@ the one for your case.
 | `useHref()`               | Mount-aware href                                               | `(path) => string`                                                              |
 | `useMount()`              | Current include() mount path                                   | `string`                                                                        |
 | `useReverse()`            | Local reverse for imported routes                              | `(name, params?, search?) => string`                                            |
-| `useNavigation()`         | Reactive navigation state                                      | state, location, pendingUrl, isStreaming                                        |
+| `useNavigation()`         | Reactive navigation state                                      | state, location, pendingUrl, isNavigating, isStreaming                          |
 | `useRouter()`             | Stable router actions                                          | push, replace, refresh, prefetch, back, forward                                 |
 | `useSegments()`           | URL path & segment IDs                                         | path, segmentIds, location                                                      |
 | `useLinkStatus()`         | Link pending state                                             | { pending }                                                                     |

@@ -7,6 +7,9 @@ vi.mock("../browser/segment-structure-assert.js", () => ({
 }));
 
 import {
+  actionBoundaries,
+  actionBoundaryAt,
+  idsAboveBoundary,
   reconcileSegments,
   reconcileErrorSegments,
 } from "../browser/segment-reconciler";
@@ -845,6 +848,43 @@ describe("segment-reconciler", () => {
 
       expect(result.segments).toHaveLength(0);
     });
+
+    it("merges a segment re-run above the boundary as an action does, and swaps the error segment raw", () => {
+      const cachedLayout = seg("L0", {
+        type: "layout",
+        component: "layout",
+        loading: "spinner" as any,
+        mountPath: "/shop",
+      });
+      const cachedRoute = seg("L0R0", {
+        component: "route",
+        loading: "route-spinner" as any,
+      });
+      // A layout the action's revalidation re-rendered, and one it held.
+      const reRendered = seg("L0", { type: "layout", component: "layout v2" });
+      const held = seg("L0", { type: "layout", component: null });
+      const errorSegment = seg("L0R0", {
+        type: "error",
+        component: "error-boundary",
+      });
+
+      const rerun = reconcileErrorSegments(
+        [cachedLayout, cachedRoute],
+        [reRendered, errorSegment],
+      );
+      expect(rerun.segments[0]).toEqual({
+        ...reRendered,
+        loading: "spinner",
+        mountPath: "/shop",
+      });
+      expect(rerun.segments[1]).toBe(errorSegment);
+
+      const kept = reconcileErrorSegments(
+        [cachedLayout, cachedRoute],
+        [held, errorSegment],
+      );
+      expect(kept.segments[0]).toMatchObject({ component: "layout" });
+    });
   });
 
   describe("server-provided loader promises", () => {
@@ -877,5 +917,57 @@ describe("segment-reconciler", () => {
 
       expect(result.segments[0].loaderDataPromise).toBe(freshPromise);
     });
+  });
+});
+
+describe("idsAboveBoundary", () => {
+  it("lets go of the boundary, its loaders and slots and everything under it, and keeps a sibling with a longer index", () => {
+    expect(
+      idsAboveBoundary(
+        [
+          "M0L0",
+          "M0L0D0.cart",
+          "M0L0.@aside",
+          "M0L0L1D0.shelf",
+          "M0L0L1",
+          "M0L0L1.@banner",
+          "M0L0L1R0D0.item",
+          "M0L0L1R0",
+          "M0L0L10",
+        ],
+        "M0L0L1",
+      ),
+    ).toEqual(["M0L0", "M0L0D0.cart", "M0L0.@aside", "M0L0L10"]);
+  });
+
+  it("holds every id when no boundary is named", () => {
+    const ids = ["M0L0", "M0L0R0"];
+    expect(idsAboveBoundary(ids, undefined)).toBe(ids);
+  });
+});
+
+describe("actionBoundaryAt", () => {
+  const seg = (id: string, type: ResolvedSegment["type"]) =>
+    ({ id, type }) as ResolvedSegment;
+
+  it("finds the deepest action boundary by identity, not by id", () => {
+    const outer = seg("L0", "error");
+    const inner = seg("L0R0", "error");
+    actionBoundaries.add(outer);
+    actionBoundaries.add(inner);
+    const list = [outer, seg("L0D0.cart", "loader"), inner];
+    expect(actionBoundaryAt(list)).toBe(2);
+    // A copy with the same id is not the boundary the action committed.
+    expect(actionBoundaryAt([seg("L0", "layout"), seg("L0R0", "error")])).toBe(
+      -1,
+    );
+  });
+
+  it("finds none once the boundary is deleted", () => {
+    const boundary = seg("L0R0", "error");
+    actionBoundaries.add(boundary);
+    const list = [seg("L0", "layout"), boundary];
+    actionBoundaries.delete(boundary);
+    expect(actionBoundaryAt(list)).toBe(-1);
   });
 });

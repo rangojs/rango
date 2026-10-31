@@ -23,7 +23,6 @@ import {
   detectUnresolvableIncludes,
   buildCombinedRouteMapForRouterFile,
   extractUrlsFromRouter,
-  extractBasenameFromRouter,
   findNestedRouterConflict,
   findRouterFiles,
   findHostRouterFiles,
@@ -1717,41 +1716,296 @@ export const router = createRouter<AppEnv>({
 });
 
 // ---------------------------------------------------------------------------
-// extractBasenameFromRouter
+// createRouter basename (static parser)
 // ---------------------------------------------------------------------------
 
-describe("extractBasenameFromRouter", () => {
-  it("extracts basename from createRouter({ basename: '/admin' })", () => {
-    const code = `export const router = createRouter({ basename: "/admin" }).routes(patterns);`;
-    expect(extractBasenameFromRouter(code)).toBe("/admin");
+// A non-literal createRouter({ basename }) used to be dropped silently, so
+// every static gen-file pattern lost its prefix (rango-t230, GitHub #1322).
+// An explicit basename the parser cannot read is a `rango generate` diagnostic.
+describe("buildCombinedRouteMapForRouterFile basename", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "rango-basename-"));
   });
 
-  it("extracts basename alongside other options", () => {
-    const code = `export const router = createRouter({ basename: "/v2", document: Doc }).routes(patterns);`;
-    expect(extractBasenameFromRouter(code)).toBe("/v2");
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
   });
 
-  it("returns undefined when no basename is set", () => {
-    const code = `export const router = createRouter({ document: Doc }).routes(patterns);`;
-    expect(extractBasenameFromRouter(code)).toBeUndefined();
+  const ROUTES = `.routes(({ path }) => [
+  path("/", () => null, { name: "home" }),
+  path("/:locale?/account", () => null, { name: "account" }),
+])`;
+
+  function buildWith(
+    head: string,
+    call: string,
+    extraFiles: Record<string, string> = {},
+  ): { routes: Record<string, string>; basenameDiagnostic?: string } {
+    for (const [file, source] of Object.entries(extraFiles)) {
+      mkdirSync(join(dir, file, ".."), { recursive: true });
+      writeFileSync(join(dir, file), source);
+    }
+    const routerPath = join(dir, "router.tsx");
+    writeFileSync(
+      routerPath,
+      `import { createRouter } from "@rangojs/router";
+${head}
+${call ? `export const router = ${call}${ROUTES};` : ""}
+`,
+    );
+    const diagnostic = detectUnresolvableIncludes(routerPath).find(
+      (d) => d.reason === "unresolvable-basename",
+    );
+    return {
+      routes: buildCombinedRouteMapForRouterFile(routerPath).routes,
+      basenameDiagnostic: diagnostic?.detail,
+    };
+  }
+
+  it("applies a string literal basename", () => {
+    const result = buildWith("", `createRouter({ basename: "/admin" })`);
+    expect(result.routes).toEqual({
+      home: "/admin",
+      account: "/admin/:locale?/account",
+    });
+    expect(result.basenameDiagnostic).toBeUndefined();
   });
 
-  it("returns undefined when createRouter has no options", () => {
-    const code = `export const router = createRouter().routes(patterns);`;
-    expect(extractBasenameFromRouter(code)).toBeUndefined();
+  it("applies no prefix when basename is absent", () => {
+    expect(buildWith("", `createRouter({ id: "app" })`).routes.account).toBe(
+      "/:locale?/account",
+    );
+    expect(buildWith("", `createRouter()`).basenameDiagnostic).toBeUndefined();
+  });
+
+  it("resolves shorthand basename from a top-level const", () => {
+    const result = buildWith(
+      `const basename = "/ab";`,
+      `createRouter({ basename })`,
+    );
+    expect(result.routes.account).toBe("/ab/:locale?/account");
+    expect(result.basenameDiagnostic).toBeUndefined();
+  });
+
+  it("reports an unreadable shorthand basename", () => {
+    const result = buildWith(
+      `import { basename } from "some-package";`,
+      `createRouter({ basename })`,
+    );
+    expect(result.routes.account).toBe("/:locale?/account");
+    expect(result.basenameDiagnostic).toContain("basename `basename`");
+  });
+
+  it("does not resolve a member of an object const containing a spread", () => {
+    const result = buildWith(
+      `const defaults = { basename: "/x" };
+const SITE = { basename: "/ab", ...defaults };`,
+      `createRouter({ basename: SITE.basename })`,
+    );
+    expect(result.routes.account).toBe("/:locale?/account");
+    expect(result.basenameDiagnostic).toContain("basename `SITE.basename`");
+  });
+
+  it("reports a default-imported basename", () => {
+    const result = buildWith(
+      `import BASE from "./base.js";`,
+      `createRouter({ basename: BASE })`,
+      { "base.ts": `export default "/ab";\n` },
+    );
+    expect(result.routes.account).toBe("/:locale?/account");
+    expect(result.basenameDiagnostic).toContain("basename `BASE`");
+  });
+
+  it("normalizes the basename without a diagnostic", () => {
+    const trailing = buildWith("", `createRouter({ basename: "/ab/" })`);
+    expect(trailing.routes).toEqual({
+      home: "/ab",
+      account: "/ab/:locale?/account",
+    });
+    expect(trailing.basenameDiagnostic).toBeUndefined();
+
+    const empty = buildWith("", `createRouter({ basename: "" })`);
+    expect(empty.routes.account).toBe("/:locale?/account");
+    expect(empty.basenameDiagnostic).toBeUndefined();
+  });
+
+  it("collapses whitespace in the reported expression", () => {
+    const result = buildWith(
+      `import { getBase } from "./config.js";`,
+      `createRouter({\n  basename: getBase(\n    "site",\n  ),\n})`,
+    );
+    expect(result.basenameDiagnostic).toContain(
+      'basename `getBase( "site", )`',
+    );
+  });
+
+  it("does not report a createRouter spread without an explicit basename", () => {
+    const result = buildWith(
+      `const shared = { basename: "/ab" };`,
+      `createRouter({ ...shared, id: "app" })`,
+    );
+    expect(result.routes.account).toBe("/:locale?/account");
+    expect(result.basenameDiagnostic).toBeUndefined();
   });
 
   it("ignores basename in non-createRouter calls", () => {
-    const code = `const config = someFunction({ basename: "/admin" });`;
-    expect(extractBasenameFromRouter(code)).toBeUndefined();
+    const result = buildWith(
+      `const config = someFunction({ basename: "/admin" });`,
+      `createRouter()`,
+    );
+    expect(result.routes.account).toBe("/:locale?/account");
   });
 
-  // Variable-held basenames are a known gap: the extractor only recognizes
-  // string literals, not identifier references. Runtime discovery still
-  // generates correct gen files at build time.
-  it.todo(
-    "extracts basename from variable reference (e.g. basename: BASENAME)",
-  );
+  it("resolves a same-file const through as/satisfies", () => {
+    const result = buildWith(
+      `const BASE = \`/ab\` as const satisfies string;`,
+      `createRouter({ basename: BASE })`,
+    );
+    expect(result.routes.account).toBe("/ab/:locale?/account");
+  });
+
+  it("resolves a property of an imported object const", () => {
+    const result = buildWith(
+      `import { SITE } from "./site.js";`,
+      `createRouter({ basename: SITE.basename })`,
+      { "site.ts": `export const SITE = { basename: "/ab" } as const;\n` },
+    );
+    expect(result.routes).toEqual({
+      home: "/ab",
+      account: "/ab/:locale?/account",
+    });
+    expect(result.basenameDiagnostic).toBeUndefined();
+  });
+
+  it("resolves an aliased imported const", () => {
+    const result = buildWith(
+      `import { BASE as ROOT } from "./base.js";`,
+      `createRouter({ basename: ROOT })`,
+      { "base.ts": `export const BASE = "/ab";\n` },
+    );
+    expect(result.routes.account).toBe("/ab/:locale?/account");
+  });
+
+  it("does not resolve a reassigned let", () => {
+    const result = buildWith(
+      `let BASE = "/a";\nBASE = "/b";`,
+      `createRouter({ basename: BASE })`,
+    );
+    expect(result.routes.account).toBe("/:locale?/account");
+    expect(result.basenameDiagnostic).toContain("basename `BASE`");
+  });
+
+  it("does not resolve a name shadowed below the top level", () => {
+    const result = buildWith(
+      `const BASE = "/outer";
+function make() {
+  const BASE = "/inner";
+  return createRouter({ basename: BASE })${ROUTES};
+}
+export const router = make();`,
+      "",
+    );
+    expect(result.routes.account).toBe("/:locale?/account");
+    expect(result.basenameDiagnostic).toContain("basename `BASE`");
+  });
+
+  it("reports an unresolvable basename expression", () => {
+    const result = buildWith(
+      `import { getBase } from "./config.js";`,
+      `createRouter({ basename: getBase() })`,
+    );
+    expect(result.routes.account).toBe("/:locale?/account");
+    expect(result.basenameDiagnostic).toContain("basename `getBase()`");
+  });
+
+  it.each([
+    ["a commented-out import", `// import { BASE } from "./wrong.js";`],
+    [
+      "an import inside a string",
+      `const doc = 'import { BASE } from "./wrong.js";';`,
+    ],
+  ])("reads the import binding, not %s", (_label, decoy) => {
+    const result = buildWith(
+      `${decoy}\nimport { BASE } from "./base.js";`,
+      `createRouter({ basename: BASE })`,
+      {
+        "wrong.ts": `export const BASE = "/wrong";\n`,
+        "base.ts": `export const BASE = "/ab";\n`,
+      },
+    );
+    expect(result.routes.account).toBe("/ab/:locale?/account");
+    expect(result.basenameDiagnostic).toBeUndefined();
+  });
+
+  it("reports a type-only import", () => {
+    const result = buildWith(
+      `import type { BASE } from "./base.js";`,
+      `createRouter({ basename: BASE })`,
+      { "base.ts": `export const BASE = "/ab";\n` },
+    );
+    expect(result.routes.account).toBe("/:locale?/account");
+    expect(result.basenameDiagnostic).toContain("basename `BASE`");
+  });
+
+  it.each([
+    ["an export list", `const PUB = "/ab";\nexport { PUB as BASE };`],
+    ["a re-export", `export { BASE } from "./real.js";`],
+  ])("reports a basename the target exports through %s", (_label, exp) => {
+    const result = buildWith(
+      `import { BASE } from "./base.js";`,
+      `createRouter({ basename: BASE })`,
+      {
+        "base.ts": `const BASE = "/wrong";\n${exp}\n`,
+        "real.ts": `export const BASE = "/ab";\n`,
+      },
+    );
+    expect(result.routes.account).toBe("/:locale?/account");
+    expect(result.basenameDiagnostic).toContain("basename `BASE`");
+  });
+
+  it.each([
+    ["in the router file", `declare const BASE = "/x";`, {}],
+    [
+      "in the imported module",
+      `import { BASE } from "./base.js";`,
+      { "base.ts": `export declare const BASE = "/x";\n` },
+    ],
+  ])("reports a declare const %s", (_label, head, files) => {
+    const result = buildWith(head, `createRouter({ basename: BASE })`, files);
+    expect(result.routes.account).toBe("/:locale?/account");
+    expect(result.basenameDiagnostic).toContain("basename `BASE`");
+  });
+
+  it("resolves an import of a directory index", () => {
+    const result = buildWith(
+      `import { BASE } from "./config";`,
+      `createRouter({ basename: BASE })`,
+      { "config/index.ts": `export const BASE = "/ab";\n` },
+    );
+    expect(result.routes.account).toBe("/ab/:locale?/account");
+  });
+
+  it("reads basename from the createRouter call that mounts the urls", () => {
+    const result = buildWith(
+      `const r0 = createRouter({ basename: getB() });`,
+      `createRouter({ basename: "/second" })`,
+    );
+    expect(result.routes.account).toBe("/second/:locale?/account");
+    expect(result.basenameDiagnostic).toBeUndefined();
+  });
+
+  it("takes routes and basename from the same call when two mount urls", () => {
+    const result = buildWith(
+      `const r1 = createRouter({ basename: "/first" }).routes(({ path }) => [
+  path("/one", () => null, { name: "one" }),
+]);`,
+      `createRouter({ basename: getB() })`,
+    );
+    expect(result.routes).toEqual({ one: "/first/one" });
+    expect(result.basenameDiagnostic).toBeUndefined();
+  });
 });
 
 // The dev route-file watcher skips files isInSkippedScanDir() flags (dev-server-phase.ts),

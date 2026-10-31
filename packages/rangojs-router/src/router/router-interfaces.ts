@@ -19,6 +19,7 @@ import type { DefaultVars } from "../types/global-namespace.js";
 import type { ResolvedTimeouts, OnTimeoutCallback } from "./timeout.js";
 import type { ResolvedTracing } from "./tracing.js";
 import type { TelemetrySink } from "./telemetry.js";
+import type { ActionContext } from "./types.js";
 
 /**
  * Options passed to router.fetch(), router.match(), and other request entrypoints.
@@ -583,12 +584,7 @@ export interface RangoInternal<
   matchPartial(
     request: Request,
     input?: RouterRequestInput<TEnv>,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    },
+    actionContext?: ActionContext,
   ): Promise<MatchResult | null>;
 
   /**

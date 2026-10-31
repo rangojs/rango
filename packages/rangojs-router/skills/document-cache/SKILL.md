@@ -228,6 +228,11 @@ suffixes are still appended.
   (`rango-state-fresh` by default), so it is not stored. A stale entry's
   background re-run sets no fresh-reads cookie (no visitor made that
   invalidation), so its invalidation does not keep the refreshed page out.
+- A document that carries location state (`ctx.setLocationState()`, or the
+  one-shot cookie a document redirect left for it): it is the visitor's, so it
+  is not stored, leaves `private, no-store`, and a request that arrives with
+  that cookie, or whose earlier middleware set state, is not answered from a
+  stored entry (see `/hooks` `state.md`, "State on a document response")
 - Non-200 responses
 - A 200 whose render reported an error: a component that threw after the
   response started streaming, such as an async server component whose fetch

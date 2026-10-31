@@ -10,6 +10,7 @@ export interface OnErrorRecord {
   message: string;
   pathname?: string;
   handledByBoundary?: boolean;
+  background?: boolean;
   actionId?: string;
   metadata?: Record<string, unknown>;
 }

@@ -156,6 +156,22 @@ const flaky = () => async (): Promise<ReactNode> => {
 export const ErrorsFlakyCacheHandler = flaky();
 export const ErrorsFlakyPprHandler = flaky();
 
+const captureFailsRuns = new Map<string, number>();
+
+/**
+ * Renders on its first run per :k and throws on every later one: the
+ * visitor's MISS renders, the PPR shell capture that follows it fails.
+ */
+export const ErrorsCaptureFailsHandler: Handler<"errors.captureFails"> = (
+  ctx,
+) => {
+  const k = ctx.params.k;
+  const run = (captureFailsRuns.get(k) ?? 0) + 1;
+  captureFailsRuns.set(k, run);
+  if (run > 1) throw new Error(`capture fails (k=${k})`);
+  return <div data-testid="capture-fails-page">rendered</div>;
+};
+
 export const ErrorsSlotFailingHandler = async (): Promise<ReactNode> => {
   await new Promise((resolve) => setTimeout(resolve, 300));
   throw new Error("Slot failed after the response started");

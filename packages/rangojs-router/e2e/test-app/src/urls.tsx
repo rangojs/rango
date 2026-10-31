@@ -11,10 +11,12 @@ import { lateHistoryPatterns } from "./urls/late-history.js";
 import { actionStalePatterns } from "./urls/action-stale.js";
 import { heldBoundaryPatterns } from "./urls/held-boundary.js";
 import { peFormStatePatterns } from "./urls/pe-form-state.js";
+import { documentLocationStatePatterns } from "./urls/document-location-state.js";
 import { suspenseCasesPatterns } from "./urls/suspense-cases.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
 import { transitionKindsPatterns } from "./urls/transition-kinds.js";
+import { optimisticSettlePatterns } from "./urls/optimistic-settle.js";
 
 import { errorsPatterns } from "./urls/errors.js";
 import {
@@ -28,8 +30,12 @@ import {
 import { hooksPatterns } from "./urls/hooks.js";
 import { renderStabilityPatterns } from "./urls/render-stability.js";
 import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
+import { actionLatestCallPatterns } from "./urls/action-latest-call.js";
+import { actionPersistsPatterns } from "./urls/action-persists.js";
 import { asyncHandlesPatterns } from "./urls/async-handles.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
+import { hookFieldsPatterns } from "./urls/hook-fields.js";
+import { handlesOverlapPatterns } from "./urls/handles-overlap.js";
 import { vtBackPatterns } from "./urls/vt-back.js";
 import { sharedRefetchPatterns } from "./urls/shared-refetch.js";
 import { keyRefreshPatterns } from "./urls/key-refresh.js";
@@ -153,6 +159,8 @@ import clientUrlsInterceptPatterns from "./urls/client-urls-intercept.js";
 import clientUrlsTransitionPatterns from "./urls/client-urls-transition.js";
 import clientUrlsActionPatterns from "./urls/client-urls-action.js";
 import { staleDefaultsPatterns } from "./urls/stale-defaults.js";
+import { actionBoundaryPatterns } from "./urls/action-boundary.js";
+import { interceptBoundaryPatterns } from "./urls/intercept-boundary.js";
 import actionFailureClientPatterns from "./urls/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -173,6 +181,11 @@ import clientUrlsLayoutLoaderPatterns from "./urls/client-urls-layout-loader.js"
 import clientUrlsComponentUsePatterns from "./urls/client-urls-component-use.js";
 import clientUrlsLocalePatterns from "./urls/client-urls-locale.js";
 import clientUrlsCompetePatterns from "./urls/client-urls-compete.js";
+import {
+  keptLayoutSourceBakedPatterns,
+  keptLayoutSourceOneShapePatterns,
+  keptLayoutSourceTwoShapePatterns,
+} from "./urls/kept-layout-source.js";
 import { CompeteServerPage } from "./urls/client-urls-compete.server.js";
 import { settledLaneErrorsPatterns } from "./urls/settled-lane-errors.js";
 import { prefetchRenderErrorsPatterns } from "./urls/prefetch-render-errors.js";
@@ -1109,6 +1122,13 @@ export const urlpatterns = urls(
       include("/client-urls-transition", clientUrlsTransitionPatterns, {
         name: "clientTransition",
       }),
+      // A layout above a clientUrls() group whose revalidate() reads the
+      // source page, per template shape (e2e/kept-layout-source.test.ts).
+      include("/kept-layout-source/two", keptLayoutSourceTwoShapePatterns),
+      include("/kept-layout-source/one", keptLayoutSourceOneShapePatterns),
+      include("/kept-layout-source/baked", keptLayoutSourceBakedPatterns, {
+        name: "keptLayoutSourceBaked",
+      }),
       // Action revalidation over a clientUrls group: the group's projected
       // loaders re-run on the action follow-up (route-owned default true);
       // this parent-chain layout reads the SAME counter and keeps the locked
@@ -1136,6 +1156,16 @@ export const urlpatterns = urls(
       // stale, and an intercept (stale-defaults.test.ts).
       include("/stale-defaults", staleDefaultsPatterns, {
         name: "staleDefaults",
+      }),
+      // An action that throws on a route with its own errorBoundary(), under a
+      // layout whose loader reads its write (action-boundary.test.ts).
+      include("/action-boundary", actionBoundaryPatterns, {
+        name: "actionBoundary",
+      }),
+      // An action that throws inside an intercept, under the layout's
+      // errorBoundary() (intercept-boundary.test.ts).
+      include("/intercept-boundary", interceptBoundaryPatterns, {
+        name: "interceptBoundary",
       }),
       // A no-script document whose inline <Suspense> draws a client component
       // from a loader's answer (client-urls-loader-element.test.ts).
@@ -1183,6 +1213,9 @@ export const urlpatterns = urls(
       include("/", conditionalTransitionPatterns, { name: "" }),
       // #1165: each transition commit carries its kind as a transition type.
       include("/", transitionKindsPatterns, { name: "" }),
+      // Optimistic hook values settle in the page's commit and leave it its
+      // transition types (useLinkStatus, useAction).
+      include("/", optimisticSettlePatterns, { name: "" }),
 
       // #622 follow-up (HIGH): shared layout + client-mount-suspense children
       include("/", clientSuspensePatterns, { name: "" }),
@@ -1208,6 +1241,7 @@ export const urlpatterns = urls(
       // action-held-segments.test.ts, action-follow-up.test.ts).
       include("/", actionStalePatterns),
       include("/", peFormStatePatterns, { name: "" }),
+      include("/", documentLocationStatePatterns, { name: "" }),
       include("/", suspenseCasesPatterns, { name: "sc" }),
 
       // Deferred-handle navigation contract + history-cache fixes (#622 follow-ups)
@@ -1239,8 +1273,16 @@ export const urlpatterns = urls(
       // Hook render-stability fixture (render/commit tracking)
       include("/", renderStabilityPatterns, { name: "" }),
       include("/", navIdleLocationPatterns, { name: "" }),
+      // useAction() reports the latest call of an action called twice.
+      include("/", actionLatestCallPatterns, { name: "" }),
+      // useAction() keeps a settled call until the action's next call.
+      include("/", actionPersistsPatterns, { name: "" }),
       // A navigation's title and crumbs commit with its page.
       include("/", handlesCommitPatterns, { name: "" }),
+      // useNavigation()'s fields in every reader shape while a page is held.
+      include("/", hookFieldsPatterns, { name: "" }),
+      // A second click over a held page: no page held by a pending crumb.
+      include("/", handlesOverlapPatterns, { name: "" }),
       // Async handle values: awaited in SSR, held then swapped on navs.
       include("/", asyncHandlesPatterns, { name: "" }),
       // A cached back/forward animates under transition().
@@ -1906,35 +1948,6 @@ export const urlpatterns = urls(
           </div>
         ),
         { name: "negotiateJsonFirstRsc" },
-      ),
-
-      // Content negotiation + variant-specific middleware test:
-      // Each variant has its own middleware that sets a distinct header.
-      path(
-        "/negotiate-mw-test",
-        () => (
-          <div data-testid="negotiate-mw-rsc-page">
-            <h1>Negotiate MW RSC</h1>
-          </div>
-        ),
-        { name: "negotiateMwRsc" },
-        () => [
-          middleware(async (ctx, next) => {
-            await next();
-            ctx.header("X-Variant-Mw", "html");
-          }),
-        ],
-      ),
-      path.json(
-        "/negotiate-mw-test",
-        () => ({ source: "json" }),
-        { name: "negotiateMwJson" },
-        () => [
-          middleware(async (ctx, next) => {
-            await next();
-            ctx.header("X-Variant-Mw", "json");
-          }),
-        ],
       ),
 
       // SSR stream mode test route

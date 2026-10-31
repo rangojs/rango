@@ -249,7 +249,11 @@ identity".
 The predicate arg carries the action's full context, not just its identity. Match
 _which_ action with `ctx.isAction(addToCart)` (rename-safe); branch on _what it
 returned_ with `ctx.actionResult` — the value your `"use server"` function
-returned, for outcome-conditional revalidation. The arg also exposes `actionId`
+returned, for outcome-conditional revalidation. When the action threw into an
+`errorBoundary()`, a predicate above the boundary still runs, with
+`actionResult` set to the thrown value: check a field's shape before reading
+it (`Array.isArray(actionResult?.items)`). A `redirect()` it throws then redirects, as
+after a success. The arg also exposes `actionId`
 (raw `path#export`), `actionUrl`, `formData` (form-based actions only), `method`,
 and `stale` (the `_rsc_stale` signal that an action ran in this or another tab;
 that Back/Forward revalidation takes an action's defaults, but `isAction()` is
@@ -441,11 +445,11 @@ npx rango generate src/urls.tsx src/api/
 
 Three modes:
 
-| Flag        | Behavior                                                                                                                                    |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| (none)      | Static parser. Exits with an error, writing nothing, if an `include()` can't be resolved statically (factory or dynamic).                   |
-| `--static`  | Static parser, but writes partial output and prints the unresolvable includes as warnings.                                                  |
-| `--runtime` | Vite-based runtime discovery (full coverage; needs `vite`; `@vitejs/plugin-rsc` comes with the router). `--config <path>` picks the config. |
+| Flag        | Behavior                                                                                                                                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| (none)      | Static parser. Exits with an error, writing nothing, if an `include()` can't be resolved statically (factory or dynamic), or an explicit `createRouter` `basename` isn't a string literal or top-level const. |
+| `--static`  | Static parser, but writes partial output (an unreadable basename leaves patterns unprefixed) and prints the diagnostics as warnings.                                                                          |
+| `--runtime` | Vite-based runtime discovery (full coverage; needs `vite`; `@vitejs/plugin-rsc` comes with the router). `--config <path>` picks the config.                                                                   |
 
 ### Auto-detection
 

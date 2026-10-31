@@ -20,6 +20,11 @@ import { prefixBasename } from "../router/basename.js";
  * Supports an optional state parameter to carry location state through the
  * redirect. On the target page, state can be read via useLocationState()
  * (use { flash: true } in createLocationState for read-once flash messages).
+ * On a client navigation or action the state travels in the redirect's
+ * payload. On a document request (a page load, a no-JS form post) it travels
+ * in a one-shot cookie the target's document request reads and clears, as
+ * JSON: give it plain JSON data there. `{ external: true }` carries none.
+ * Two entries of the same definition keep only the last.
  *
  * @param url - The URL to redirect to
  * @param statusOrOptions - HTTP status code (default: 302) or options object

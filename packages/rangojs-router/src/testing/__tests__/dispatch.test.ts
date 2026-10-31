@@ -1009,6 +1009,8 @@ describe("dispatch", () => {
         phase: "cache",
         category: "cache-read",
       });
+      // Counted from the request's start, as the production handler sets it.
+      expect(onError.mock.calls.at(-1)?.[0].duration).toBeGreaterThanOrEqual(0);
     });
 
     it("cache MISS + store putResponse throw -> onError phase cache, category cache-write (serves fresh)", async () => {

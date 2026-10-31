@@ -680,12 +680,22 @@ export interface RequestContext<
   /**
    * Attach location state entries to the current response.
    *
-   * For partial (SPA) requests, the state is included in the RSC payload
-   * metadata and merged into history.pushState on the client. For redirect
-   * responses, the state travels through the redirect payload so the target
-   * page can read it via useLocationState.
+   * For a client navigation or an action, the state is included in the RSC
+   * payload metadata and merged into the entry's history.state on the
+   * client. For a document request (a page load, a no-JS form post), it rides
+   * the document's bootstrap payload and is merged into the entry when the
+   * client starts; readers get it once the page has hydrated. For a redirect,
+   * the state travels with the redirect: in its Flight payload on a
+   * navigation or action, in a one-shot cookie the target's document request
+   * reads on a document request. A document that carries state is sent
+   * `Cache-Control: private, no-store` and never stored by the document cache
+   * or as a PPR shell.
    *
-   * Multiple calls accumulate entries.
+   * Multiple calls accumulate entries across definitions. For one definition
+   * the last write wins: two entries of the same definition share its slot
+   * in history.state, so a later call (or a later entry in one array)
+   * replaces an earlier one. To combine writes, make the state an array and
+   * write it once.
    *
    * @example
    * ```typescript
@@ -696,6 +706,14 @@ export interface RequestContext<
 
   /** @internal Accumulated location state entries */
   _locationState?: LocationStateEntry[];
+
+  /**
+   * @internal Set when a document's payload carries location state
+   * (rsc/rsc-rendering.ts, rsc/progressive-enhancement.ts), a shell HIT's
+   * included. The document is per visitor: the document cache refuses it,
+   * and it leaves `private, no-store` (server/document-location-state.ts).
+   */
+  _documentLocationState?: boolean;
 
   /**
    * The matched route name, if the route has an explicit name.
@@ -832,6 +850,13 @@ export interface RequestContext<
 
   /** @internal Per-request error dedup set for onError reporting */
   _reportedErrors: WeakSet<object>;
+
+  /**
+   * @internal The segment a parallel slot's or orphan layout's error came
+   * from, for the owning entry's catch (segment-resolution/helpers.ts
+   * noteThrower). Per request: an error object can be thrown by several.
+   */
+  _throwers?: WeakMap<object, { id: string; type: string }>;
 
   /**
    * @internal The errors this request printed to the server console, so a
@@ -999,12 +1024,14 @@ export type PublicRequestContext<
   | "_requestKind"
   | "_payloadVisitorLocation"
   | "_locationState"
+  | "_documentLocationState"
   | "_routeName"
   | "_prevRouteKey"
   | "_visitorMoved"
   | "_inActionRevalidation"
   | "_actionRan"
   | "_reportedErrors"
+  | "_throwers"
   | "_printedErrors"
   | "_renderErrors"
   | "_recoveredHandlerErrors"
@@ -1138,6 +1165,46 @@ export function runWithRequestContext<TEnv, T>(
   fn: () => T,
 ): T {
   return requestContextStorage.run(context, fn);
+}
+
+/** Inside background work: the errors its onError reports named. */
+const backgroundWork = new AsyncLocalStorage<WeakSet<object>>();
+
+/**
+ * Run work whose output goes only to a cache, never to the response of the
+ * request that started it, on `context`: a stale entry's refresh (a "use
+ * cache" function, a cached loader, a cache() record, a document), a
+ * navigation's proactive cache() write, a PPR shell capture. No visitor made
+ * the invalidations in it, so they set no fresh-reads cookie
+ * (cache/tag-invalidation.ts), and onError marks every error reported inside
+ * it `background` (router/error-handling.ts invokeOnError). Its failure is
+ * reported inside it too: a catch outside runs on the visitor's frame.
+ */
+export function runAsBackgroundWork<TEnv, T>(
+  context: RequestContext<TEnv>,
+  fn: () => T,
+): T {
+  const reported = backgroundWork.getStore() ?? new WeakSet<object>();
+  return requestContextStorage.run(context, () =>
+    backgroundWork.run(reported, fn),
+  );
+}
+
+/** Whether the caller runs inside runAsBackgroundWork. */
+export function isBackgroundWork(): boolean {
+  return backgroundWork.getStore() !== undefined;
+}
+
+/**
+ * The set onError's dedupe records a reported error in. Background work keeps
+ * its own: an error object both the visitor's render and background work
+ * reach (a memoized rejection, a thrown constant) is reported by each, so a
+ * background report never takes the place of the visitor's.
+ */
+export function reportedErrorsOf(
+  context: RequestContext<any>,
+): WeakSet<object> {
+  return backgroundWork.getStore() ?? context._reportedErrors;
 }
 
 /**
@@ -1745,6 +1812,7 @@ export function createRequestContext<TEnv>(
     _locationState: undefined,
 
     _reportedErrors: new WeakSet<object>(),
+    _throwers: undefined,
     _printedErrors: new WeakSet<object>(),
     _renderErrors: [],
     _metricsStore: undefined,

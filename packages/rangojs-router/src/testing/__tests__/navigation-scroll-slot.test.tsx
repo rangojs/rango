@@ -6,6 +6,7 @@ import { createNavigationTransaction } from "../../browser/navigation-transactio
 import { createPartialUpdater } from "../../browser/partial-update.js";
 import type { NavigationUpdate } from "../../browser/types.js";
 import type { ResolvedSegment } from "../../types.js";
+import { auditTreeCause } from "../../suspense-audit.js";
 import { renderRoute } from "../render-route.js";
 
 // Scroll belongs to the navigation transaction. The transaction decides it
@@ -48,7 +49,14 @@ async function mount() {
   });
   const page = (name: string) => <p data-testid="page">{name}</p>;
   return {
-    emit: (u: NavigationUpdate) => router.store.emitUpdate(u),
+    // Named as production's emitters name it (suspense-audit.ts I6): a
+    // traversal or a navigation by its scroll decision, an action without.
+    emit: (u: NavigationUpdate) => {
+      auditTreeCause(
+        u.scroll?.restore ? "popstate" : u.scroll ? "navigation" : "action",
+      );
+      router.store.emitUpdate(u);
+    },
     update,
     page,
     shown: () => getByTestId("page").textContent,

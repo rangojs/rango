@@ -81,19 +81,38 @@ export interface OnErrorContext<TEnv = any> {
   actionId?: string;
   /** Environment/bindings (platform context) */
   env?: TEnv;
-  /** Duration from request start to error (milliseconds) */
+  /**
+   * Duration from request start to error (milliseconds). For a `background`
+   * error it counts from the start of the request that started the work, so
+   * it includes that response and any wait before the work ran.
+   */
   duration?: number;
   /**
    * Whether this is a partial/navigation request, on an error the segment
-   * walk catches (a handler that throws, a DSL loader that rejects): `true`
-   * for a navigation, unset for a document. An error in the background
-   * re-render of a `cache()` record (a stale HIT's refresh, the write of a
-   * navigation that kept a layout mounted) reports the request that started
-   * it. A streamed (`loading()`) handler's rejection does not carry it, in
-   * either render; the `routing` phase reports `false`.
+   * walk catches (a handler that throws, a streamed `loading()` handler that
+   * rejects, a DSL loader that rejects): `true` for a navigation, unset for a
+   * document. A `cache()` record's refresh or proactive write reports the
+   * request that started it; a PPR shell capture renders a document. The
+   * `routing` phase reports `false`.
    */
   isPartial?: boolean;
-  /** Whether an error boundary caught the error */
+  /**
+   * `true` when the error came from work whose output goes to a cache and
+   * never to the response of the request that started it: a stale `cache()`
+   * record's refresh, the write of a navigation that kept a layout mounted, a
+   * stale document cache entry's re-run, a PPR shell capture, or a stale
+   * `"use cache"` function's or cached loader's refresh, the work's own
+   * failure included. `request` and `url` are the starting request's (a
+   * shell capture's handler errors name the page it captures). A
+   * `router.prerender()` warm's own render is its request's: unset, while a
+   * shell capture it makes is `true`. Unset for every other error.
+   */
+  background?: boolean;
+  /**
+   * Whether an error boundary caught the error and its fallback reached the
+   * response. `false` on a `background` error: the failed render is never
+   * stored, so no visitor sees the fallback.
+   */
   handledByBoundary?: boolean;
   /** Stack trace (if available) */
   stack?: string;

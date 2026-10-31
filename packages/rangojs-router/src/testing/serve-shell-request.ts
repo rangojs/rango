@@ -76,7 +76,6 @@ import {
   type PprReplayStatus,
   type ShellStatus,
 } from "./shell-status.js";
-import { WIRE } from "../wire-params.js";
 import { writePartialParams } from "../browser/wire-protocol.js";
 
 /** Options for {@link serveShellRequest}. */
@@ -116,7 +115,13 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * and segments take an action's revalidation defaults; it renders live, as
    * an action does, so neither the route cache nor the document cache answers
    * or stores it, and a `ppr` route's `replayStatus` is
-   * `{ outcome: "BYPASS", reason: "stale" }`.
+   * `{ outcome: "BYPASS", reason: "stale" }`. `boundary` names the error
+   * segment of a thrown action's boundary the page at `from` shows
+   * (`_rsc_boundary`), as the follow-up an earlier action owes that page
+   * sends it, with `stale: true` and no `segments`: the response renders
+   * every segment above the boundary and nothing at or below it, claims the
+   * boundary in `matched` and sends no segment for it. The server reads it
+   * only beside `stale`.
    */
   partial?:
     | true
@@ -128,6 +133,7 @@ export interface ServeShellRequestOptions<TEnv = any> {
         fill?: boolean;
         interceptSource?: string;
         stale?: boolean;
+        boundary?: string;
       };
   /**
    * POST this form as a submit before hydration: the no-JS request the
@@ -263,6 +269,15 @@ export interface ServeShellRequestResult {
    * hydrates without it.
    */
   readPayloadFormState(): Promise<unknown>;
+  /**
+   * The payload's location state as the browser reads it: the slots
+   * (`Def.__rsc_ls_key` to value) a document's start-up merges into its
+   * entry (or a navigation's commit, for a `partial` request). Undefined when
+   * the payload carries none (or no Flight was rendered). A redirect carries
+   * a document request's state in a `Set-Cookie` instead: pass that cookie
+   * on the request of its target to read what the target's payload carries.
+   */
+  readLocationState(): Promise<Record<string, unknown> | undefined>;
   /**
    * For an `action` request, the call's answer as the browser reads it: its
    * result and the `revalidationError` its loaders' reruns report.
@@ -627,20 +642,23 @@ async function buildRequest(
     fill = false,
     interceptSource,
     stale = false,
+    boundary,
   } = partial === true ? {} : partial;
   if (stale && prefetch) {
     throw new Error(
       "serveShellRequest: partial.stale cannot be combined with partial.prefetch",
     );
   }
-  const target = new URL(url);
-  target.searchParams.set(WIRE.partial, "true");
-  target.searchParams.set(WIRE.segments, segments.join(","));
-  if (rewriteTarget) target.searchParams.set(WIRE.rewriteTarget, rewriteTarget);
-  // As the browser sends them: browser/navigation-client.ts (fill, stale) and
-  // browser/prefetch/fetch.ts (prefetch).
-  if (fill) target.searchParams.set(WIRE.fill, "1");
-  if (stale) target.searchParams.set(WIRE.stale, "true");
+  // As the browser writes them: browser/navigation-client.ts, and
+  // browser/prefetch/fetch.ts for the prefetch header.
+  const target = writePartialParams(new URL(url), {
+    segmentIds: segments,
+    emptySegments: "send",
+    stale,
+    boundary,
+    rewriteTarget,
+    fill,
+  });
   if (prefetch && !headers.has(PREFETCH_HEADER)) {
     headers.set(PREFETCH_HEADER, "1");
   }
@@ -796,6 +814,13 @@ export async function serveShellRequest<TEnv = any>(
         formState?: Promise<unknown>;
       }>(flight);
       return payload.formState;
+    },
+    async readLocationState() {
+      if (!flight) return undefined;
+      const payload = await decodePayload<{
+        metadata?: { locationState?: Record<string, unknown> };
+      }>(flight);
+      return payload.metadata?.locationState;
     },
     async readAction() {
       return flight ? decodeAction(flight) : undefined;

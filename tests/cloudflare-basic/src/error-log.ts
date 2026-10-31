@@ -15,6 +15,7 @@ export interface OnErrorRecord {
   message: string;
   pathname?: string;
   handledByBoundary?: boolean;
+  background?: boolean;
   metadata?: Record<string, unknown>;
 }
 

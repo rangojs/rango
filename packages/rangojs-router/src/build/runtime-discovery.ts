@@ -1,5 +1,6 @@
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import type { Plugin, PluginOption, ViteDevServer } from "vite";
 import {
   generateRouteTypesSource,
   genFileTsPath,
@@ -35,14 +36,13 @@ export async function discoverAndWriteRouteTypes(
   routeCount: number;
   outputFiles: string[];
 }> {
-  let createViteServer: typeof import("vite").createServer;
   let loadConfigFromFile: typeof import("vite").loadConfigFromFile;
-  let rsc: any;
+  let resolveConfig: typeof import("vite").resolveConfig;
 
   try {
     const vite = await import("vite");
-    createViteServer = vite.createServer;
     loadConfigFromFile = vite.loadConfigFromFile;
+    resolveConfig = vite.resolveConfig;
   } catch {
     throw new Error(
       "Runtime discovery requires 'vite'. Install it with: pnpm add -D vite",
@@ -50,61 +50,93 @@ export async function discoverAndWriteRouteTypes(
   }
 
   try {
-    const rscMod = await import("@vitejs/plugin-rsc");
-    rsc = rscMod.default;
+    await import("@vitejs/plugin-rsc");
   } catch {
     throw new Error(
       "Runtime discovery requires '@vitejs/plugin-rsc'. Install it with: pnpm add -D @vitejs/plugin-rsc",
     );
   }
 
-  const { createVersionPlugin } =
-    await import("../vite/plugins/version-plugin.ts");
-  const { createVirtualStubPlugin } =
-    await import("../vite/plugins/virtual-stub-plugin.ts");
+  const { createTempRscServer } = await import("../vite/temp-rsc-server.js");
+  const { createDiscoveryState } = await import("../vite/discovery/state.js");
+  const { discoverClientUrlProjections } =
+    await import("../vite/discovery/client-urls-projection.js");
+  const {
+    isFrameworkPlugin,
+    pickForwardedRunnerConfig,
+    selectForwardableResolvePlugins,
+  } = await import("../vite/utils/forward-user-plugins.js");
 
-  // Load user's vite config to get resolve.alias (unless provided directly)
-  let userResolveAlias: any = opts.resolveAlias;
-  if (!userResolveAlias) {
-    const configPath = opts.configFile;
+  // The discovery temp server of `vite dev/build` (expose-internal-ids, the
+  // cloudflare:* stubs, the user's resolver plugins and resolve/define/oxc).
+  // Resolver plugins are forwarded from a resolved config, as `vite dev` does:
+  // vite-tsconfig-paths and the like build their matchers in config /
+  // configResolved, and resolving drops `apply: "build"` plugins. The
+  // framework plugins are left out of that resolve: rango()'s configResolved
+  // writes the static gen files.
+  const entryPath = resolve(opts.entry);
+  const state = createDiscoveryState(entryPath, undefined);
+  state.projectRoot = opts.root;
+  state.userResolveAlias = opts.resolveAlias;
+  if (!opts.resolveAlias) {
     try {
       const loaded = await loadConfigFromFile(
         { command: "serve", mode: "development" },
-        configPath,
+        opts.configFile,
         opts.root,
       );
-      if (loaded?.config?.resolve?.alias) {
-        userResolveAlias = loaded.config.resolve.alias;
+      if (loaded) {
+        state.userRunnerConfig = pickForwardedRunnerConfig(loaded.config);
+        const userPlugins = (
+          await flattenPluginOptions(loaded.config.plugins)
+        ).filter((p) => !isFrameworkPlugin(p.name ?? ""));
+        try {
+          // The temp server's root, so a resolver's root-relative state
+          // matches the server it runs in.
+          const resolved = await resolveConfig(
+            {
+              ...loaded.config,
+              root: opts.root,
+              configFile: false,
+              plugins: userPlugins,
+            },
+            "serve",
+            "development",
+          );
+          state.userResolvePlugins = selectForwardableResolvePlugins(
+            resolved.plugins,
+          );
+        } catch (err: any) {
+          console.warn(
+            `[rango] Could not resolve the Vite config (${err?.message ?? err}); forwarding its resolver plugins without their config hooks. rango() and rsc() are left out of that resolve, so a plugin that needs the rsc environment fails there`,
+          );
+          // The resolve would have applied `apply`; do the same for the serve
+          // pass, including the function form.
+          const serveEnv = { command: "serve", mode: "development" } as const;
+          state.userResolvePlugins = selectForwardableResolvePlugins(
+            userPlugins.filter((p) =>
+              typeof p.apply === "function"
+                ? p.apply(loaded.config, serveEnv)
+                : p.apply !== "build",
+            ),
+          );
+        }
       }
-    } catch {
-      // Config loading failed; proceed without aliases
+    } catch (err: any) {
+      // Discovery without the app's resolvers fails later on an unrelated
+      // import; name the cause here.
+      console.warn(
+        `[rango] Could not load the Vite config (${err?.message ?? err}); discovering without its resolve config and plugins`,
+      );
     }
   }
 
-  const entryPath = resolve(opts.entry);
-  let tempServer: any = null;
+  let tempServer: ViteDevServer | null = null;
 
   try {
-    tempServer = await createViteServer({
-      root: opts.root,
-      configFile: false,
-      server: { middlewareMode: true },
-      appType: "custom",
-      logLevel: "silent",
+    tempServer = await createTempRscServer(state, {
       cacheDir: "node_modules/.vite_rango_generate",
-      resolve: userResolveAlias ? { alias: userResolveAlias } : undefined,
-      esbuild: { jsx: "automatic", jsxImportSource: "react" },
-      plugins: [
-        rsc({
-          entries: {
-            client: "virtual:entry-client",
-            ssr: "virtual:entry-ssr",
-            rsc: entryPath,
-          },
-        }),
-        createVersionPlugin(),
-        createVirtualStubPlugin(),
-      ],
+      plugins: [missingGenFileStubPlugin()],
     });
 
     const rscEnv = (tempServer.environments as any)?.rsc;
@@ -124,6 +156,14 @@ export async function discoverAndWriteRouteTypes(
         `No routers found in registry after importing ${opts.entry}`,
       );
     }
+
+    // include() of a clientUrls() module resolves from these projections.
+    await discoverClientUrlProjections(
+      state,
+      (tempServer.environments as any)?.ssr,
+      serverMod,
+      rscEnv,
+    );
 
     // Import build utilities for manifest generation
     const buildMod = await rscEnv.runner.import("@rangojs/router/build");
@@ -149,7 +189,11 @@ export async function discoverAndWriteRouteTypes(
       const mountManifests = [];
       for (const mount of mounts) {
         mountManifests.push(
-          await generateManifestFull(mount.patterns, globalMountIndex),
+          await generateManifestFull(
+            mount.patterns,
+            globalMountIndex,
+            router.__basename ? { urlPrefix: router.__basename } : undefined,
+          ),
         );
         globalMountIndex++;
       }
@@ -231,4 +275,47 @@ export async function discoverAndWriteRouteTypes(
       await tempServer.close();
     }
   }
+}
+
+const MISSING_GEN_PREFIX = "\0rango-missing-named-routes-gen:";
+
+/**
+ * expose-router-id makes every createRouter() file import its sibling
+ * `./<name>.named-routes.gen.js`. `vite dev/build` write those from static
+ * parsing before discovery; the CLI does not, so a missing one resolves to an
+ * empty NamedRoutes here and discovery writes the real file. An existing gen
+ * file loads from disk as usual.
+ */
+function missingGenFileStubPlugin(): Plugin {
+  return {
+    name: "@rangojs/router:missing-gen-file-stub",
+    enforce: "pre",
+    resolveId(id, importer) {
+      if (!importer || !id.endsWith(".named-routes.gen.js")) return null;
+      const genPath = genFileTsPath(importer.split("?", 1)[0]);
+      if (id !== `./${basename(genPath, ".ts")}.js` || existsSync(genPath)) {
+        return null;
+      }
+      return MISSING_GEN_PREFIX + genPath;
+    },
+    load(id) {
+      return id.startsWith(MISSING_GEN_PREFIX)
+        ? "export const NamedRoutes = {};\n"
+        : null;
+    },
+  };
+}
+
+/**
+ * Flatten an unresolved `plugins` option (nested arrays, promises, falsy
+ * entries) the way Vite's config resolution does, without running any hook.
+ */
+async function flattenPluginOptions(
+  option: PluginOption | undefined,
+): Promise<Plugin[]> {
+  const value = await option;
+  if (Array.isArray(value)) {
+    return (await Promise.all(value.map(flattenPluginOptions))).flat();
+  }
+  return value ? [value as Plugin] : [];
 }

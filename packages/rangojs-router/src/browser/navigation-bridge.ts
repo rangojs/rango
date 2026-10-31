@@ -45,6 +45,7 @@ import {
 } from "./navigation-store.js";
 import type { EventController } from "./event-controller.js";
 import { isInterceptOnlyCache } from "./intercept-utils.js";
+import { actionBoundaryAt, idsAboveBoundary } from "./segment-reconciler.js";
 import {
   toNetworkError,
   emitNetworkError,
@@ -206,7 +207,10 @@ export function createNavigationBridge(
     error: ServerRedirect,
     url: string,
     hops: number,
-    options: { replace?: boolean; transition?: boolean },
+    options: Pick<
+      NavigateOptionsInternal,
+      "replace" | "transition" | "_redirectFrom"
+    >,
   ): Promise<void> {
     const redirectUrl = validateRedirectOrigin(
       error.url,
@@ -228,6 +232,7 @@ export function createNavigationBridge(
       ...options,
       _skipCache: true,
       _redirectHops: hops + 1,
+      _redirectFrom: options._redirectFrom ?? url,
     });
   }
 
@@ -273,15 +278,18 @@ export function createNavigationBridge(
         targetUrl.pathname === new URL(window.location.href).pathname
       ) {
         // Preserve intercept context from the current history entry so that
-        // popstate uses the correct cache key (:intercept suffix) and restores
-        // the right full-page vs modal semantics.
+        // popstate uses the same cache key and restores the right full-page
+        // vs intercept semantics.
         const currentHistoryState = window.history.state;
         const isIntercept = currentHistoryState?.intercept === true;
         const interceptSourceUrl = isIntercept
           ? currentHistoryState?.sourceUrl
           : undefined;
 
-        const historyKey = generateHistoryKey(url, { intercept: isIntercept });
+        const historyKey = generateHistoryKey(url, {
+          intercept: isIntercept,
+          interceptSource: interceptSourceUrl,
+        });
 
         // Copy current segments to the new history key so back/forward restores instantly.
         // The array itself, not a clone: getPageHistoryKeys reads a shared
@@ -405,25 +413,24 @@ export function createNavigationBridge(
         });
       }
 
-      // Also check if there's an intercept cache entry for this URL
-      // If so, this URL CAN be intercepted, and we shouldn't use the non-intercept cache
-      // because the navigation might result in an intercept (depending on source URL)
-      const interceptHistoryKey = generateHistoryKey(url, { intercept: true });
-      const hasInterceptCache = store.hasHistoryCache(interceptHistoryKey);
-
       // Skip cached SWR for:
       // 1. intercept caches - interception depends on source page context
       // 2. routes that CAN be intercepted - we don't know if this navigation will intercept
       // 3. when leaving intercept - we need fresh non-intercept segments from server
       // 4. redirect-with-state - force re-render so hooks read fresh state
       // 5. stale cache - server action invalidated it, need fresh data with loading state
+      // 6. an error boundary in the list - a link renders the page again; its
+      //    ids would tell the server the client holds what the error replaced
       const hasUsableCache =
         isRestorable(cachedSegments) &&
+        !cachedSegments.some((s) => s.type === "error") &&
         !isInterceptOnlyCache(cachedSegments) &&
-        !hasInterceptCache &&
         !isLeavingIntercept &&
         !cached?.stale &&
-        !options?._skipCache;
+        !options?._skipCache &&
+        // A cached intercept entry for this URL (from any source page) means
+        // the navigation might intercept, depending on the source URL.
+        !store.hasInterceptCache(historyKey);
 
       // Forward navigations always await fetchPartialUpdate before rendering,
       // so useNavigation should always report "loading". skipLoadingState is
@@ -539,7 +546,11 @@ export function createNavigationBridge(
             error,
             url,
             options?._redirectHops ?? 0,
-            { replace: options?.replace, transition: options?.transition },
+            {
+              replace: options?.replace,
+              transition: options?.transition,
+              _redirectFrom: options?._redirectFrom,
+            },
           );
         }
 
@@ -570,9 +581,19 @@ export function createNavigationBridge(
     },
 
     /**
-     * Refresh current route
+     * Refresh current route. A cross-tab refresh holds the action error
+     * boundary the page shows (actionBoundaryAt), as the follow-up does: it
+     * is this tab's own outcome, not a read another tab's write changed. A
+     * refresh the app asks for renders it again.
      */
-    async refresh(): Promise<void> {
+    async refresh(crossTab?: boolean): Promise<void> {
+      const shown =
+        (crossTab &&
+          !store.getInterceptSourceUrl() &&
+          store.getCachedSegments(store.getHistoryKey())?.segments) ||
+        [];
+      const at = actionBoundaryAt(shown);
+      if (at === 0) return;
       eventController.abortNavigation();
 
       const tx = createNavigationTransaction(
@@ -590,7 +611,7 @@ export function createNavigationBridge(
           false,
           tx.handle.signal,
           tx.with({ url: window.location.href, replace: true, scroll: false }),
-          { type: "navigate", refresh: true },
+          { type: "navigate", refresh: true, boundary: shown[at]?.id },
         );
       } catch (error) {
         // Aborted or superseded: bail without rendering a boundary (see navigate()).
@@ -664,8 +685,10 @@ export function createNavigationBridge(
       const isLeavingIntercept =
         !isIntercept && currentInterceptSource !== null;
 
-      // Compute history key from URL (with intercept suffix if applicable)
-      const historyKey = generateHistoryKey(url, { intercept: isIntercept });
+      const historyKey = generateHistoryKey(url, {
+        intercept: isIntercept,
+        interceptSource: interceptSourceUrl,
+      });
 
       debugLog(
         "[Browser] Popstate -",
@@ -716,9 +739,20 @@ export function createNavigationBridge(
             }),
           });
 
+        // An action error boundary the entry shows (actionBoundaryAt) is
+        // held: the page holds the ids above it, so a link renders it again,
+        // and the revalidation below renders above it. Never under an
+        // intercept, as the follow-up (server-action-bridge.ts).
+        const boundaryAt = isIntercept ? -1 : actionBoundaryAt(cachedSegments);
+        const boundary = cachedSegments[boundaryAt]?.id;
+        const heldIds = idsAboveBoundary(
+          cachedSegments.map((s) => s.id),
+          boundary,
+        );
+
         // Update store to point to this history entry
         store.setHistoryKey(historyKey);
-        store.setSegmentIds(cachedSegments.map((s) => s.id));
+        store.setSegmentIds(heldIds);
         store.setCurrentUrl(url);
         store.setPath(new URL(url).pathname);
 
@@ -797,8 +831,9 @@ export function createNavigationBridge(
                 onUpdate({ ...popstateUpdate, inTransition: true });
               });
             }
-            // SWR: If stale, trigger background revalidation
-            if (isStale) {
+            // SWR: If stale, trigger background revalidation. Nothing is
+            // above a boundary at the page's first segment.
+            if (isStale && boundaryAt !== 0) {
               debugLog("[Browser] Cache is stale, background revalidating...");
               // Background revalidation - don't await, just fire and forget.
               // When the entry's handles are incomplete (a deferred Meta was still
@@ -810,9 +845,7 @@ export function createNavigationBridge(
               // would stay the pre-resolution carry. handlesPending is set only for
               // the deferred-Meta-aborted case, so action/cross-tab SWR keeps the
               // cheap diff path.
-              const segmentIds = cached?.handlesPending
-                ? []
-                : cachedSegments.map((s) => s.id);
+              const segmentIds = cached?.handlesPending ? [] : heldIds;
 
               const tx = createNavigationTransaction(
                 store,
@@ -834,7 +867,7 @@ export function createNavigationBridge(
                   interceptSourceUrl,
                   cacheOnly: true,
                 }),
-                { type: "stale-revalidation", interceptSourceUrl },
+                { type: "stale-revalidation", interceptSourceUrl, boundary },
               )
                 .catch((error) => {
                   if (isBackgroundSuppressible(error)) return;
@@ -989,7 +1022,7 @@ export function createNavigationBridge(
 
       // Register cross-tab refresh callback with the store
       store.setCrossTabRefreshCallback(() => {
-        this.refresh();
+        this.refresh(true);
       });
 
       window.addEventListener("popstate", handlePopstate);

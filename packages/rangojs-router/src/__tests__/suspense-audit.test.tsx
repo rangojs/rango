@@ -37,6 +37,10 @@ import {
 } from "../suspense-audit.js";
 import { renderRoute } from "../testing/render-route.js";
 import type { ResolvedSegment } from "../types.js";
+import { allowSuspenseAuditViolations } from "./kit/suspense-audit-lock.js";
+
+// Provokes every invariant on purpose and asserts the reports itself.
+allowSuspenseAuditViolations("the audit's own tests");
 
 /**
  * The dev-only suspense audit (suspense-audit.ts), against real React: each

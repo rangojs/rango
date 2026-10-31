@@ -13,6 +13,7 @@ import { createNavigationBridge } from "../browser/navigation-bridge.js";
 import { NavigationProvider } from "../browser/react/NavigationProvider.js";
 import { useHandle } from "../browser/react/use-handle.js";
 import { commitInTransition } from "../browser/partial-update.js";
+import { auditTreeCause } from "../suspense-audit.js";
 import type {
   NavigationBridge,
   NavigationStore,
@@ -180,6 +181,7 @@ describe("NavigationProvider: a history-cache page's handle pushes", () => {
 
     await act(async () => {
       controller.setLocation(new URL("/2", ORIGIN));
+      auditTreeCause("navigation");
       commitInTransition(
         store.loaders,
         (update) => store.emitUpdate(update),
