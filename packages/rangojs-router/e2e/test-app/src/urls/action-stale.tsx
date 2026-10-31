@@ -19,7 +19,8 @@ import { actionStaleState, wait } from "./action-stale.store.js";
 // with ?prefetch=render (or =fill: the fill page's, on hover, passing on
 // ?fillDelay), so no other case has a prefetch to consume. Bodies:
 // tests/shared-e2e/src/action-stale-navigation-scenario.ts,
-// action-held-segments-scenario.ts and action-follow-up-scenario.ts.
+// action-held-segments-scenario.ts, action-follow-up-scenario.ts and
+// action-stale-prefetch-scenario.ts.
 function ActionStaleLayout() {
   return (
     <div data-testid="as-layout">
@@ -60,14 +61,30 @@ const ActionStalePdp: Handler = (ctx) => {
       <Link to="/action-stale/item" prefetch="none" data-testid="as-to-item">
         Item
       </Link>
+      <Link
+        to="/action-stale/basket"
+        prefetch="none"
+        data-testid="as-to-basket"
+      >
+        Basket
+      </Link>
       {prefetch === "render" && (
-        <Link
-          to="/action-stale/other"
-          prefetch="render"
-          data-testid="as-to-other-prefetched"
-        >
-          Other, prefetched
-        </Link>
+        <>
+          <Link
+            to="/action-stale/other"
+            prefetch="render"
+            data-testid="as-to-other-prefetched"
+          >
+            Other, prefetched
+          </Link>
+          <Link
+            to="/action-stale/basket"
+            prefetch="render"
+            data-testid="as-to-basket-prefetched"
+          >
+            Basket, prefetched
+          </Link>
+        </>
       )}
       {prefetch === "fill" && (
         <Link
@@ -138,6 +155,21 @@ const ActionStaleFill: Handler = async () => {
   );
 };
 
+// Reads the cart, after 300 ms, in the route itself: a prefetch of it carries
+// the cart as it was then (#1329).
+const ActionStaleBasket: Handler = async () => {
+  await wait(300);
+  const { cart } = actionStaleState();
+  return (
+    <div data-testid="as-basket-page">
+      <p data-testid="as-basket">{`basket:${cart}`}</p>
+      <Link to="/action-stale/pdp" prefetch="none" data-testid="as-to-pdp">
+        Product
+      </Link>
+    </div>
+  );
+};
+
 const ActionStaleItem: Handler = () => (
   <div data-testid="as-item-page">Item page</div>
 );
@@ -181,6 +213,7 @@ export const actionStalePatterns = urls(
       path("/action-stale/other", ActionStaleOther),
       path("/action-stale/slow", ActionStaleSlow),
       path("/action-stale/read", ActionStaleRead),
+      path("/action-stale/basket", ActionStaleBasket),
       path("/action-stale/transition", ActionStaleTransition, () => [
         transition(),
       ]),

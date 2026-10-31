@@ -11,6 +11,7 @@ const {
   cancelAllPrefetchesMock,
   disableFragmentPassthroughMock,
   isFragmentPassthroughEnabledMock,
+  isPrefetchStaleMock,
 } = vi.hoisted(() => ({
   getRangoStateMock: vi.fn(() => "v1:abc"),
   consumePrefetchMock: vi.fn((_key?: string): DecodedPrefetch | null => null),
@@ -28,6 +29,7 @@ const {
   cancelAllPrefetchesMock: vi.fn(),
   disableFragmentPassthroughMock: vi.fn(),
   isFragmentPassthroughEnabledMock: vi.fn(() => true),
+  isPrefetchStaleMock: vi.fn((_entry?: unknown) => false),
 }));
 
 /**
@@ -44,6 +46,7 @@ function makeEntry(
     payload: Promise.resolve(payload) as Promise<any>,
     streamComplete: Promise.resolve(),
     scope,
+    epoch: 0,
     complete,
   };
 }
@@ -59,6 +62,7 @@ vi.mock("../browser/prefetch/cache", () => ({
   buildSourceKey: buildSourceKeyMock,
   disableFragmentPassthrough: disableFragmentPassthroughMock,
   isFragmentPassthroughEnabled: isFragmentPassthroughEnabledMock,
+  isPrefetchStale: isPrefetchStaleMock,
 }));
 
 vi.mock("../browser/prefetch/loader", () => ({
@@ -752,6 +756,45 @@ describe("navigation-client", () => {
       });
 
       expect(result.fullyPrefetched).toBe(false);
+    });
+
+    // #1329: an entry a server action marked stale is served like any other;
+    // the result says so, and the bridge revalidates once the click settled.
+    it("reports a stale stored hit and a stale in-flight adoption as stalePrefetch", async () => {
+      vi.stubGlobal("fetch", vi.fn() as unknown as typeof fetch);
+      const client = createNavigationClient({
+        createFromFetch: vi.fn(),
+      } as any);
+      const stale = makeEntry({ metadata: { matched: [], diff: [] } });
+      isPrefetchStaleMock.mockImplementation((entry) => entry === stale);
+
+      consumePrefetchMock.mockReturnValue(stale);
+      const hit = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+      expect(hit.stalePrefetch).toBe(true);
+
+      consumePrefetchMock.mockReturnValue(null);
+      consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(stale));
+      const adopted = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+      expect(adopted.stalePrefetch).toBe(true);
+
+      const fresh = makeEntry({ metadata: { matched: [], diff: [] } });
+      consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(fresh));
+      const freshHit = await client.fetchPartial({
+        targetUrl: "/products",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+      expect(freshHit.stalePrefetch).toBe(false);
+      isPrefetchStaleMock.mockReset();
+      isPrefetchStaleMock.mockReturnValue(false);
     });
 
     it("reuses an in-flight prefetch entry without fetching or re-decoding", async () => {

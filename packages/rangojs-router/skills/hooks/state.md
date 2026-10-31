@@ -619,9 +619,11 @@ from module-level callbacks too. Imported from the root entry `@rangojs/router`,
 it is selected by export conditions:
 
 - **Client** (client component or module): marks the history cache stale,
-  flushes the prefetch cache, rotates the router state, and notifies other tabs
-  — the same thing a completed server action does. During SSR of a client
-  component it is a no-op (dev warning).
+  flushes the prefetch cache, rotates the router state, and notifies other
+  tabs, which adopt the new state and flush theirs. That is more than a
+  completed server action does: an action marks history and prefetches stale
+  and rotates nothing. During SSR of a client component it is a no-op (dev
+  warning).
 - **Server** (handler, server component, middleware, loader, or action): writes
   a rotated state `Set-Cookie` for the responding client, which marks its
   caches stale when it next reads them. Idempotent within a request; throws
@@ -630,9 +632,10 @@ it is selected by export conditions:
   from handler code writes the cookie only on the renders that run it (a
   MISS); call it from middleware, which runs on every request, HITs included.
 
-Server actions already invalidate automatically; to suppress that for a no-op
-action, call `keepClientCache()` inside it (see `/server-actions` → "Client
-Cache After an Action").
+Server actions already mark the caches stale automatically; to suppress that
+for a no-op action, call `keepClientCache()` inside it, and for the full flush
+and rotation, call `invalidateClientCache()` inside it (see `/server-actions` →
+"Client Cache After an Action").
 
 ```tsx
 "use client";

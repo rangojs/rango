@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Breaking: a server action marks prefetches stale instead of flushing them, and stops rotating the state cookie ([#1329](https://github.com/rangojs/rango/issues/1329))
+
+**Before.** Every action without `keepClientCache()` flushed the prefetch
+cache and rotated the `rango-state` cookie. Every visible link prefetched
+again after each action, and other tabs flushed theirs.
+
+**Now.** A prefetch made before the action stays. A click on it shows the
+page at once, then revalidates it in the background, as Back does on a page
+an action made stale; `useNavigation()` stays idle and nothing remounts. The
+pre-write values show for one round trip, a layout loader that re-runs on
+navigation included. Visible links do not prefetch again; a new hover
+replaces a stale prefetch with a fresh one. Other tabs that share a segment
+with the page mark their history and prefetches stale and refresh. The
+cookie is not rotated, so a partial response a route caches with its own
+`Cache-Control` stays in the browser's HTTP cache until its max-age. Tabs
+that share no segment with the page, and apps with `crossTabSync: false`,
+are no longer told. For the old full flush, call `invalidateClientCache()` in
+the action: other tabs then adopt the rotated state, flush and refresh.
+`keepClientCache()` is unchanged.
+
+```text
+/product/1: /cart prefetched (cart:2), click "Add to cart"
+  before: the prefetch is dropped; the click on /cart requests it (cart:3)
+  now:    the click on /cart shows the prefetch at once (cart:2),
+          then one background revalidation (cart:3)
+```
+
+```ts
+// The old behavior, for an action whose write makes every prefetch wrong.
+"use server";
+import { invalidateClientCache } from "@rangojs/router";
+
+export async function switchCurrency(currency: string) {
+  await prefs.set({ currency });
+  invalidateClientCache();
+}
+```
+
+`@rangojs/router/testing`: `renderRoute`'s router handle gains `prefetch(url)`
+and `action({ loaders, keepClientCache })`, so a test can run an action and
+then a click on a stale prefetch.
+
 ### Fixed: a handle a `loading()` route or slot pushes after an `await` shows in its own place in `useHandle` ([#1262](https://github.com/rangojs/rango/pull/1262))
 
 **Before.** The router does not wait for a route or parallel slot handler

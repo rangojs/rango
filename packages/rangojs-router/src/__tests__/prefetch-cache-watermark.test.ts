@@ -16,6 +16,7 @@ vi.mock("../browser/rango-state", () => ({
 import {
   clearPrefetchCache,
   currentGeneration,
+  currentPrefetchEpoch,
   hasPrefetch,
   consumePrefetch,
   initPrefetchCache,
@@ -29,6 +30,7 @@ function makeEntry(): DecodedPrefetch {
     payload: Promise.resolve({} as RscPayload),
     streamComplete: Promise.resolve(),
     scope: "wildcard",
+    epoch: currentPrefetchEpoch(),
     complete: false,
   };
 }

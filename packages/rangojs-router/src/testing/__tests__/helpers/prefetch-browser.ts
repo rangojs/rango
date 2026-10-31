@@ -43,6 +43,7 @@ import {
   buildSourceKey,
   clearPrefetchCache,
   currentGeneration,
+  currentPrefetchEpoch,
   storePrefetch,
   type DecodedPrefetch,
 } from "../../../browser/prefetch/cache.js";
@@ -163,6 +164,7 @@ export function storePrefetchOf(
     } as unknown as RscPayload),
     streamComplete: Promise.resolve(),
     scope,
+    epoch: currentPrefetchEpoch(),
     complete: true,
     respawn: entry,
   });

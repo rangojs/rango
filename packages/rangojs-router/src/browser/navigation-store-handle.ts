@@ -12,6 +12,7 @@
  * navigation store into bundles that previously lacked it.
  */
 
+import { noteStateRotation } from "./action-fence.js";
 import { setRangoStateObserver } from "./rango-state.js";
 import type { NavigationStore } from "./types.js";
 
@@ -23,11 +24,14 @@ let registeredStore: NavigationStore | null = null;
  * sibling tab, a server `Set-Cookie`, or a cookie clear), mark this tab's
  * history cache stale. The history cache is not state-keyed, so the value
  * rotation alone does not reach it. No broadcast, no prefetch clear, no
- * re-rotation — the value already changed externally.
+ * re-rotation — the value already changed externally. A rotation seen while
+ * an action is in flight is recorded on the fence: the action's landing then
+ * sends the full broadcast (navigation-store.ts markCacheAsStaleAndBroadcast).
  */
 export function registerNavigationStore(store: NavigationStore): void {
   registeredStore = store;
   setRangoStateObserver(() => {
+    noteStateRotation();
     registeredStore?.markHistoryCacheStale();
   });
 }

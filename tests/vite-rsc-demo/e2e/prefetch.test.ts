@@ -3,7 +3,9 @@ import {
   test as base,
   expect as baseExpect,
   type Page,
+  type Request,
 } from "@playwright/test";
+import { readState, readTexts, recordTexts, sameElement } from "@shared/e2e";
 import { waitForHydration, expectNoPageError } from "./helper";
 import { useFixture } from "./fixture";
 
@@ -43,6 +45,96 @@ async function expectCountToRemain(
       },
     )
     .toBe(true);
+}
+
+/**
+ * A server action without a directive (the /todos form) marks the prefetches
+ * made before it stale (#1329) instead of flushing them. From /todos, with the
+ * "Stale click" link prefetched on hover before the action:
+ *  1. the action keeps the state, and the link does not prefetch again;
+ *  2. a click with no pointer move over the link (a hover would replace the
+ *     stale prefetch) shows the prefetch made before the write at once, with
+ *     no request of its own;
+ *  3. exactly one stale revalidation follows, for the segments on screen;
+ *  4. the page then shows the write (one more todo), updated in place.
+ */
+async function expectStaleClickSequence(
+  expectFn: ExpectLike,
+  page: Page,
+): Promise<void> {
+  // Wait for the todos page to fully load (loader has latency)
+  await expectFn(page.locator("button:has-text('Add Todo')")).toBeVisible({
+    timeout: 15000,
+  });
+
+  // Track the link's prefetches (with their X-Rango-State values) and the
+  // navigation requests the click sends
+  const prefetchStates: string[] = [];
+  const navigations: Request[] = [];
+  let prefetchFinished = false;
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      !url.searchParams.has("_rsc_partial") ||
+      url.pathname !== "/stale-click"
+    ) {
+      return;
+    }
+    if (request.headers()["x-rango-prefetch"] === "1") {
+      prefetchStates.push(request.headers()["x-rango-state"] ?? "");
+    } else {
+      navigations.push(request);
+    }
+  });
+  page.on("requestfinished", (request) => {
+    if (request.headers()["x-rango-prefetch"] === "1") prefetchFinished = true;
+  });
+
+  // Hover the link to trigger its prefetch
+  const link = page.locator('nav a:text-is("Stale click")');
+  await link.hover();
+
+  // Wait for prefetch to complete: leaving the link cancels one in flight
+  await expectFn.poll(() => prefetchStates.length, { timeout: 5000 }).toBe(1);
+  await expectFn.poll(() => prefetchFinished, { timeout: 15000 }).toBe(true);
+
+  // Move cursor away from the link
+  await page.locator("h1").first().hover();
+
+  // Perform server action: add a todo
+  const input = page.locator('input[placeholder="What needs to be done?"]');
+  await input.fill("Prefetch Stale Test");
+  await page.locator("button:has-text('Add Todo')").click();
+
+  // Wait for action to complete (button returns to "Add Todo")
+  await expectFn(page.locator("button:has-text('Add Todo')")).toBeVisible({
+    timeout: 10000,
+  });
+
+  await page.waitForTimeout(1000);
+  expectFn(await readState(page)).toBe(prefetchStates[0]);
+  expectFn(prefetchStates).toHaveLength(1);
+  expectFn(navigations).toHaveLength(0);
+
+  await recordTexts(page, "stale-click-count");
+  await link.dispatchEvent("click");
+  await expectFn(page).toHaveURL(/\/stale-click$/);
+  await expectFn
+    .poll(async () => (await readTexts(page)).length, { timeout: 15000 })
+    .toBe(2);
+  const [before, after] = (await readTexts(page)).map(Number);
+  expectFn(after, "the write: one more todo").toBe(before! + 1);
+  expectFn(await sameElement(page), "updated in place").toBe(true);
+  await page.waitForTimeout(500);
+  expectFn(navigations, "exactly one request, the revalidation").toHaveLength(
+    1,
+  );
+  const revalidation = new URL(navigations[0]!.url());
+  expectFn(revalidation.searchParams.get("_rsc_stale")).toBe("true");
+  expectFn(revalidation.searchParams.get("_rsc_segments")).toBeTruthy();
+  expectFn(navigations[0]!.headers()["x-rango-state"]).toBe(prefetchStates[0]);
+  expectFn(prefetchStates).toHaveLength(1);
+  expectFn(await readState(page)).toBe(prefetchStates[0]);
 }
 
 /**
@@ -300,7 +392,19 @@ test.describe("prefetch-on-hover (router mode)", () => {
     expect(res.headers.get("cache-control")).toBeNull();
   });
 
-  test("should re-prefetch after server action invalidates cache", async ({
+  test("should keep a prefetch stale after a server action: same state, the click revalidates it", async ({
+    page,
+    devServerURL,
+  }) => {
+    test.slow();
+    using _ = expectNoPageError(page);
+
+    await page.goto(devURL(devServerURL, "/todos"));
+    await waitForHydration(page);
+    await expectStaleClickSequence(expect, page);
+  });
+
+  test("should re-prefetch after a server action calls invalidateClientCache()", async ({
     page,
     devServerURL,
   }) => {
@@ -334,10 +438,10 @@ test.describe("prefetch-on-hover (router mode)", () => {
     // Move cursor away from Blog link
     await page.locator("h1").first().hover();
 
-    // Perform server action: add a todo
-    // This triggers markCacheAsStale -> clearPrefetchCache -> invalidateRangoState
+    // Perform server action: add a todo whose title makes the action call
+    // invalidateClientCache() (flush the prefetch cache, rotate the state)
     const input = page.locator('input[placeholder="What needs to be done?"]');
-    await input.fill("Prefetch Invalidation Test");
+    await input.fill("Prefetch Invalidation Test invalidate");
     await page.locator("button:has-text('Add Todo')").click();
 
     // Wait for action to complete (button returns to "Add Todo")
@@ -655,7 +759,18 @@ base.describe("prefetch-on-hover (router mode) (production)", () => {
   );
 
   base(
-    "should re-prefetch after server action invalidates cache",
+    "should keep a prefetch stale after a server action: same state, the click revalidates it",
+    async ({ page }) => {
+      base.setTimeout(60000);
+
+      await page.goto(f.url("/todos"));
+      await waitForHydration(page);
+      await expectStaleClickSequence(baseExpect, page);
+    },
+  );
+
+  base(
+    "should re-prefetch after a server action calls invalidateClientCache()",
     async ({ page }) => {
       base.setTimeout(60000);
 
@@ -688,9 +803,10 @@ base.describe("prefetch-on-hover (router mode) (production)", () => {
       // Move cursor away from Blog link
       await page.locator("h1").first().hover();
 
-      // Perform server action: add a todo
+      // Perform server action: add a todo whose title makes the action call
+      // invalidateClientCache() (flush the prefetch cache, rotate the state)
       const input = page.locator('input[placeholder="What needs to be done?"]');
-      await input.fill("Prefetch Invalidation Test");
+      await input.fill("Prefetch Invalidation Test invalidate");
       await page.locator("button:has-text('Add Todo')").click();
 
       // Wait for action to complete (button returns to "Add Todo")
