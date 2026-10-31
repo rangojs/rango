@@ -97,17 +97,18 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     });
   }
 
-  function kill() {
+  function kill(signal: NodeJS.Signals = "SIGTERM") {
     if (process.platform === "win32") {
       spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
     } else {
       // Kill entire process group on Unix (wrangler spawns child processes)
       try {
-        process.kill(-child.pid!, "SIGTERM");
+        process.kill(-child.pid!, signal);
       } catch {
         // Process group kill failed, try direct kill
-        child.kill("SIGTERM");
+        child.kill(signal);
       }
+      if (signal === "SIGKILL") return;
       // Force kill after timeout if still running
       setTimeout(() => {
         try {
@@ -126,6 +127,9 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
   return {
     proc: child,
     done,
+    get pid() {
+      return child.pid;
+    },
     findPort,
     kill,
     stdout: () => stdout,
@@ -163,7 +167,7 @@ export function useFixture(options: {
 }) {
   // Owns every process this fixture spawns; afterAll disposes it, whether or
   // not beforeAll got as far as a ready server (ServerGuard says why).
-  let servers = new ServerGuard();
+  let servers: ServerGuard | undefined;
   let baseURL!: string;
 
   const cwd = path.resolve(options.root);
@@ -237,7 +241,7 @@ export function useFixture(options: {
   });
 
   test.afterAll(async () => {
-    await servers.dispose();
+    await servers?.dispose();
   });
 
   return {

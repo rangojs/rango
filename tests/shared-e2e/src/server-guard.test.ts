@@ -1,13 +1,25 @@
 import { spawn } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerGuard, type GuardedServer } from "./server-guard.js";
 
-/** A detached node process that stays alive until it is killed. */
-function spawnIdleServer(): GuardedServer & { pid: number } {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+/** Every pid spawned by a test, so afterEach can reap what a failure leaves. */
+const spawned: number[] = [];
+
+/**
+ * A detached node process that stays alive until it is killed. With
+ * `ignoreSigterm` it survives SIGTERM, so only SIGKILL stops it.
+ */
+function spawnIdleServer(
+  options: { ignoreSigterm?: boolean } = {},
+): GuardedServer & { pid: number } {
+  const script =
+    (options.ignoreSigterm ? "process.on('SIGTERM', () => {});" : "") +
+    "setInterval(() => {}, 1000)";
+  const child = spawn(process.execPath, ["-e", script], {
     detached: true,
     stdio: "ignore",
   });
+  spawned.push(child.pid!);
   const done = new Promise<void>((resolve) =>
     child.once("exit", () => resolve()),
   );
@@ -15,11 +27,11 @@ function spawnIdleServer(): GuardedServer & { pid: number } {
     pid: child.pid!,
     done,
     // The whole group, as the fixtures' runCli().kill() does.
-    kill: () => {
+    kill: (signal = "SIGTERM") => {
       try {
-        process.kill(-child.pid!, "SIGTERM");
+        process.kill(-child.pid!, signal);
       } catch {
-        child.kill();
+        child.kill(signal);
       }
     },
   };
@@ -34,7 +46,21 @@ function isAlive(pid: number): boolean {
   }
 }
 
-describe("ServerGuard", () => {
+// dispose() waits up to its exit wait (10 s by default) before escalating, which
+// is longer than vitest's 5 s default: without this a failing assertion would
+// surface as a timeout instead.
+describe("ServerGuard", { timeout: 20_000 }, () => {
+  afterEach(() => {
+    for (const pid of spawned.splice(0)) {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
+    vi.restoreAllMocks();
+  });
+
   it("dispose stops a server that never became ready", async () => {
     const guard = new ServerGuard();
     // Tracked at spawn, as a beforeAll does before it awaits readiness.
@@ -85,5 +111,45 @@ describe("ServerGuard", () => {
     await guard.dispose();
 
     expect(isAlive(server.pid)).toBe(false);
+  });
+
+  it("dispose sends SIGKILL to a server that ignores SIGTERM and logs its pid", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const guard = new ServerGuard({ exitWaitMs: 300 });
+    const stubborn = guard.track(spawnIdleServer({ ignoreSigterm: true }));
+    // Let the child install its SIGTERM handler before the guard signals it.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    await guard.dispose();
+
+    expect(isAlive(stubborn.pid)).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining(String(stubborn.pid)),
+    );
+  });
+
+  it("a rejecting done neither throws from dispose nor leaves an unhandled rejection", async () => {
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      const guard = new ServerGuard();
+      const server = spawnIdleServer();
+      const rejecting: GuardedServer = {
+        ...server,
+        done: server.done.then(() => {
+          throw new Error("done rejected");
+        }),
+      };
+      guard.track(rejecting);
+
+      await expect(guard.dispose()).resolves.toBeUndefined();
+      // Give a stray rejection time to be reported.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(isAlive(server.pid)).toBe(false);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 });
