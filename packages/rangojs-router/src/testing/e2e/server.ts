@@ -19,7 +19,13 @@ export interface RunCliHandle {
    */
   exitCode: Promise<number | null>;
   findPort: (timeoutMs?: number) => Promise<number>;
-  kill: () => void;
+  /**
+   * Stop the process and what it spawned (the whole process group). SIGTERM by
+   * default; `stopServer` escalates to SIGKILL for a process that outlives the
+   * wait.
+   */
+  kill: (signal?: NodeJS.Signals) => void;
+  readonly pid: number | undefined;
   stdout: () => string;
   stderr: () => string;
 }
@@ -34,9 +40,14 @@ export function runCli(
   // hits EOF immediately, so without CI=true the dev/preview server shuts itself
   // down before it finishes starting. Real CI runners set CI=true; mirror that for
   // locally-spawned servers so they stay alive for the duration of the tests.
+  // detached makes the child a process-group leader (pgid === pid), so kill()
+  // can signal the whole tree. `pnpm dev` spawns vite as a grandchild; without
+  // it process.kill(-pid) throws ESRCH, the fallback child.kill() stops only
+  // pnpm, and vite keeps running after the suite.
   const child = x(name!, args, {
     nodeOptions: {
       ...options,
+      detached: true,
       env: { ...process.env, CI: "true", ...options.env },
     },
   }).process!;
@@ -100,16 +111,16 @@ export function runCli(
     });
   }
 
-  function kill() {
+  function kill(signal: NodeJS.Signals = "SIGTERM") {
     if (process.platform === "win32") {
       spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
     } else {
       // Kill entire process group (Vite spawns child processes like workerd).
       // Falls back to direct kill if process group kill fails.
       try {
-        process.kill(-child.pid!, "SIGTERM");
+        process.kill(-child.pid!, signal);
       } catch {
-        child.kill();
+        child.kill(signal);
       }
     }
   }
@@ -120,9 +131,50 @@ export function runCli(
     exitCode,
     findPort,
     kill,
+    get pid() {
+      return child.pid;
+    },
     stdout: () => stdout,
     stderr: () => stderr,
   };
+}
+
+/** How long `stopServer` waits for SIGTERM to take effect before SIGKILL. */
+const STOP_WAIT_MS = 10_000;
+/** How long `stopServer` waits for the SIGKILL to take effect. */
+const KILL_WAIT_MS = 2_000;
+
+/** Resolves true when `done` settled within `ms`, false when the timer won. */
+async function exitedWithin(done: Promise<unknown>, ms: number) {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  try {
+    return await Promise.race([done.then(() => true as const), timedOut]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Stop a server started by `runCli` and wait for it to exit: SIGTERM to the
+ * process group, then SIGKILL (and a log naming the pid) for one that outlives
+ * the wait, so a leaked server is visible rather than left holding its port.
+ */
+export async function stopServer(
+  server: RunCliHandle,
+  options: { exitWaitMs?: number } = {},
+): Promise<void> {
+  const exitWaitMs = options.exitWaitMs ?? STOP_WAIT_MS;
+  server.kill();
+  if (await exitedWithin(server.done, exitWaitMs)) return;
+  console.error(
+    `[rango e2e] server (pid ${server.pid ?? "unknown"}) ignored SIGTERM for ` +
+      `${exitWaitMs} ms and was sent SIGKILL`,
+  );
+  server.kill("SIGKILL");
+  await exitedWithin(server.done, KILL_WAIT_MS);
 }
 
 export function tailOutput(text: string, maxChars = 4000): string {
