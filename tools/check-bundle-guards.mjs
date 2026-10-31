@@ -272,7 +272,32 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // rotation (navigation-store.ts). None of it can load lazily: it runs on every
 // action exit and every prefetched click, and browser/prefetch/ is not split
 // (AGENTS.md Bundle hygiene). The owner's rule (rango-t84-q2).
-const ROUTER_CHUNK_GZIP_MAX = 51.625 * 1024;
+//
+// Raised 51.125KB -> 51.875KB on 2026-10-31 for rango-t242, measured on
+// cloudflare-basic from main 67e43bd 52143B -> 52789B (+646B gzip, +1641B
+// raw). A prefetch a revalidate() kept from the page being left is shared
+// by the pages with equal values of what the rule read: the browser stores
+// it under the server's label (browser/prefetch/cache.ts buildParamsKey,
+// rememberParamsShape, paramsCandidateKeys; prefetch/fetch.ts
+// prefetchStorageSlot), rebuilds the label of the page on screen from the
+// router store's committed params (src/prefetch-source-scope.ts
+// formatSourceLabel, parseSourceShape; browser/navigation-store-handle.ts
+// getCommittedPage) and looks it up between the page-only and the shared
+// entry (browser/navigation-client.ts consumeStoredPrefetch,
+// wildcardAdoptionFits). None of it can load lazily: a click looks the entry
+// up synchronously, and browser/prefetch/ is on the rejected-splits list
+// (AGENTS.md, Bundle hygiene). By the owner's rule above: 52789B + 256B,
+// rounded up to the next 128B step.
+//
+// Both landed together, rango-t234 (#1343, merged with main 5f5a79a) and
+// rango-t242 (#1344): raised to 52.375KB on 2026-10-31, measured on
+// cloudflare-basic at 53296B gzip, main alone 52789B (+507B: the stale epoch,
+// a click's acceptStale and the served-once rule in browser/prefetch/
+// cache.ts, the refill's slot check in prefetch/fetch.ts, the stale-click
+// revalidation in navigation-bridge.ts scheduleStalePrefetchRevalidation and
+// the soft cross-tab mark in navigation-store.ts). By the owner's rule
+// above: 53296B + 256B, rounded up to the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 52.375 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

@@ -415,6 +415,7 @@ import { settledLaneErrorsPatterns } from "./pages/settled-lane-errors.js";
 import { prefetchRenderErrorsPatterns } from "./pages/prefetch-render-errors.js";
 import {
   keptLayoutSourceBakedPatterns,
+  keptLayoutSourceLocalePatterns,
   keptLayoutSourceOneShapePatterns,
   keptLayoutSourceTwoShapePatterns,
 } from "./pages/kept-layout-source.js";
@@ -1233,6 +1234,11 @@ export const urlpatterns = urls(
         include("/kept-layout-source/one", keptLayoutSourceOneShapePatterns),
         include("/kept-layout-source/baked", keptLayoutSourceBakedPatterns, {
           name: "keptLayoutSourceBaked",
+        }),
+        // The locale rule above paginated pages: one prefetch per locale
+        // (rango-t242).
+        include("/kept-layout-source/i18n", keptLayoutSourceLocalePatterns, {
+          name: "keptLayoutSourceI18n",
         }),
         // Group behind a 5s middleware: pins optimistic presentation vs the
         // gated canonical request (e2e/client-urls-slow.test.ts). The landing

@@ -184,6 +184,7 @@ import clientUrlsLocalePatterns from "./urls/client-urls-locale.js";
 import clientUrlsCompetePatterns from "./urls/client-urls-compete.js";
 import {
   keptLayoutSourceBakedPatterns,
+  keptLayoutSourceLocalePatterns,
   keptLayoutSourceOneShapePatterns,
   keptLayoutSourceTwoShapePatterns,
 } from "./urls/kept-layout-source.js";
@@ -1129,6 +1130,11 @@ export const urlpatterns = urls(
       include("/kept-layout-source/one", keptLayoutSourceOneShapePatterns),
       include("/kept-layout-source/baked", keptLayoutSourceBakedPatterns, {
         name: "keptLayoutSourceBaked",
+      }),
+      // The locale rule above paginated pages: one prefetch per locale
+      // (rango-t242).
+      include("/kept-layout-source/i18n", keptLayoutSourceLocalePatterns, {
+        name: "keptLayoutSourceI18n",
       }),
       // Action revalidation over a clientUrls group: the group's projected
       // loaders re-run on the action follow-up (route-owned default true);

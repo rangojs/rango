@@ -45,7 +45,41 @@ export async function switchCurrency(currency: string) {
 
 `@rangojs/router/testing`: `renderRoute`'s router handle gains `prefetch(url)`
 and `action({ loaders, keepClientCache })`, so a test can run an action and
-then a click on a stale prefetch.
+then a click on a stale prefetch, and `revalidations()` to read the
+revalidation requests it made.
+
+### Changed: a prefetch a `revalidate()` kept from the page being left is shared by the pages with equal values of what it read (rango-t242)
+
+**Before.** Since 0.32.0, a `revalidate()` that read the page being left
+(`currentParams`, `currentUrl`, `fromRouteName`) and kept its segment made
+the prefetch page-only, keyed by the page's full URL. The documented locale
+rule (`currentParams.locale !== nextParams.locale || undefined`) keeps the
+layout on every same-locale navigation, so in an i18n app nearly every page
+prefetched its links again, page 2 of a list included.
+
+**Now.** The server records what the rules that kept a segment read and
+answers `x-rsc-prefetch-scope: params; <label>` with those values; the
+browser stores the answer under them and serves it to every page whose
+committed params give the same values. Under the locale rule, one prefetch
+of a link serves every page of that locale, and a page of another locale
+asks for its own. A category rule groups by category, so the #1331 hero
+stays off `/cart`.
+
+- A param read by name groups by that param. Spreading `currentParams`, or
+  passing it to `JSON.stringify` or `structuredClone`, reads every param.
+  The page's set of params is always part of the group.
+- `fromRouteName` groups by the source's route name.
+- `currentUrl`, an intercept, a `prefetch: false` deferral, and a kept answer
+  that sends no segment stay page-only (`x-rsc-prefetch-scope: source`).
+- A rule on a route, or on a segment inside its `path()`, that read the page
+  being left and kept the segment through the route's default (returning
+  `undefined`, or the `defaultShouldRevalidate` it was given) stays
+  page-only: that default compares the target with the page being left.
+- A prerendered target kept on equal params is shared by the pages with the
+  same params.
+
+No change in your code. `prefetchKey` stays `":source"` only. To share more,
+read the params a rule needs by name rather than spreading `currentParams`.
 
 ### Fixed: a handle a `loading()` route or slot pushes after an `await` shows in its own place in `useHandle` ([#1262](https://github.com/rangojs/rango/pull/1262))
 

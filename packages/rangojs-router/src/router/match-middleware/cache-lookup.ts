@@ -83,6 +83,7 @@ import {
 import { ShellRecordUnavailableError } from "../../cache/shell-snapshot.js";
 import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
+import { markSourceHeld, readsOfAllParams } from "../source-reads.js";
 import { requestHeaders } from "../../server/request-headers.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
 import {
@@ -339,12 +340,15 @@ function storedEntrySends<TEnv>(
     ctx.clientSegmentSet.size > 0
       ? router.buildEntryRevalidateMap?.(ctx.entries)
       : undefined;
-  // A keep that hangs on the source's params is right for this source only:
-  // scope a prefetch of the answer to it, as a predicate that read the
-  // source would (#1331).
+  // A keep that hangs on the source's params is right for the pages with
+  // the same params only: scope a prefetch of the answer to them, as a
+  // predicate that compared every param would (#1331).
   const heldForSource = (): false => {
-    (ctx.handlerContext as InternalHandlerContext<any, TEnv>)._sourceHeld =
-      true;
+    markSourceHeld(
+      ctx.handlerContext as InternalHandlerContext<any, TEnv>,
+      readsOfAllParams(ctx.prevParams),
+      { params: ctx.prevParams, routeName: undefined },
+    );
     return false;
   };
   const decide = (segment: ResolvedSegment): boolean | Promise<boolean> => {

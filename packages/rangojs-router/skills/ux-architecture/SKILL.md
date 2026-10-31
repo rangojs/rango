@@ -249,11 +249,13 @@ them right:
   server").
 - A prefetch runs the predicates too, so a loader that holds costs nothing in
   the prefetch of a tab switch.
-- A predicate that reads `currentParams`, `currentUrl` or `fromRouteName` and
-  keeps its segment makes that prefetch page-only (2.6). `bySlug` and
-  `bySearch` keep only on an unchanged slug or query, so the cost is the
-  links between one product's tabs; a layout rule comparing a param that most
-  pages share (a locale, an account) pays it on nearly every link.
+- A predicate that reads `currentParams` or `fromRouteName` and keeps its
+  segment shares that prefetch only between the pages with equal values of
+  what it read; one that reads `currentUrl` makes it page-only (2.6).
+  `bySlug` keeps only on an unchanged slug, so a product's tabs share their
+  prefetches; `bySearch` reads the URL, so the cost is the links between one
+  query's tabs. A layout rule comparing a param most pages share (a locale,
+  an account) groups by that param and keeps the sharing.
 - Unit-test them with `runRevalidate` (`/testing`).
 
 ### 2.5 loading() or an inline Suspense
@@ -325,16 +327,21 @@ The rule: **prefetch broadly, and flag what is expensive.**
   makes an answer page-only (`x-rsc-prefetch-scope: source`) when sharing it
   would be wrong: an intercept targets the route or the page sending it, the
   answer defers a `prefetch: false` unit the page does not show yet, a
-  `revalidate()` on the target read the page being left (`currentParams`,
-  `currentUrl`, `fromRouteName`) and kept its segment, or a prerendered target
-  is reached from a page with the same route params. Only a click from that
-  exact URL, query and hash included, uses a page-only answer, so every page
-  prefetches it again (`/links`, "Shared prefetches and `prefetchKey`").
-- Keep the third case for chrome that must follow a param. A page's own block
-  (a category hero) goes in its route or in a layout inside its `path()`, and
-  links that follow a mount param come from `useReverse`; neither needs a
-  rule. A layout rule comparing `currentParams.locale` around the whole app
-  makes nearly every prefetch page-only (`/app-structure`, "Prefetches are
+  `revalidate()` on the target read `currentUrl` and kept its segment, a rule
+  on the route (or inside its `path()`) read the page being left and kept the
+  segment through the route's default, or a kept answer sends no segment at
+  all. Only a click from that exact URL, query
+  and hash included, uses a page-only answer, so every page prefetches it
+  again (`/links`, "Shared prefetches and `prefetchKey`").
+- A `revalidate()` that read `currentParams` or `fromRouteName` and kept its
+  segment, or a prerendered target reached from a page with the same route
+  params, groups the answer (`x-rsc-prefetch-scope: params; <label>`): the
+  pages with equal values of what was read share it. A layout rule comparing
+  `currentParams.locale` shares each prefetch between the pages of one locale.
+  Spreading `currentParams` reads every param; read the ones the rule needs by
+  name. A page's own block (a category hero) still goes in its route or in a
+  layout inside its `path()`, and links that follow a mount param come from
+  `useReverse`; neither needs a rule (`/app-structure`, "Prefetches are
   shared").
 - `prefetchKey=":source"` on a Link, or
   `router.prefetch(url, { key: ":source" })`, makes that link's prefetches
@@ -955,8 +962,10 @@ Each entry: what the user sees, why, the fix.
 16. **A page's own block in a shared layout, kept by a rule that reads the
     page being left** (a category hero in a template over the product pages,
     re-rendered when `currentParams.category` changes). Nothing looks wrong,
-    but every prefetch under that layout becomes page-only: each page
-    prefetches its links again and the server renders them again. Fix: put
+    but every prefetch under that layout is shared only between the pages of
+    one category (or with the same params, off the category routes): the
+    other pages prefetch their links again and the server renders them
+    again. Fix: put
     the block in its route, or in a layout inside its `path()`; it
     re-renders on its own params with no rule (`/app-structure`, "Prefetches
     are shared").

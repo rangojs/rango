@@ -278,8 +278,9 @@ the arguments and type of a `urls()` loader's (`ShouldRevalidateFn` from
 `actionUrl`, `actionResult`, `formData`, `method`,
 `routeName`/`fromRouteName`/`toRouteName`, and `stale`. Nothing runs in the
 browser before the request goes out; there is no client-computed decision and
-no hybrid. A predicate that reads `currentParams`, `currentUrl` or
-`fromRouteName` and keeps its segment makes a prefetch of that answer
+no hybrid. A predicate that reads `currentParams` or `fromRouteName` and
+keeps its segment shares a prefetch of that answer only between the pages
+with equal values of what it read, and one that reads `currentUrl` makes it
 page-only, as in `urls()` (`/links` → "Shared prefetches and
 `prefetchKey`").
 

@@ -6,7 +6,7 @@
  * directory first, so the builds never run a stale `dist/vite` (the published
  * entry the fixture would otherwise load through `@rangojs/router/vite`).
  */
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import {
   cpSync,
@@ -71,6 +71,19 @@ export interface FixtureScenario {
   fromParentDirectory?: boolean;
 }
 
+/**
+ * Child processes `run` started and has not seen close. A `beforeAll` that
+ * times out leaves its builds running; cleanup kills these and waits for them,
+ * else a build still writing into the workspace fails the removal (ENOTEMPTY).
+ */
+const liveChildren = new Set<ChildProcess>();
+
+/** Set by the workspace cleanup: `run` starts nothing after it. */
+let cleanedUp = false;
+
+const CLEANED_UP_ERROR = (): Error =>
+  new Error("the fixture workspace was cleaned up");
+
 function run(
   command: string,
   args: string[],
@@ -78,6 +91,10 @@ function run(
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ code: number | null; output: string }> {
   return new Promise((resolvePromise, reject) => {
+    if (cleanedUp) {
+      reject(CLEANED_UP_ERROR());
+      return;
+    }
     // The key comes from rango({ encryptionKey }) only; an inherited
     // RANGO_ENCRYPTION_KEY would stand in when a scenario passes none.
     const env: NodeJS.ProcessEnv = { ...process.env, CI: "true" };
@@ -90,12 +107,32 @@ function run(
     }
     Object.assign(env, extraEnv);
     const child = spawn(command, args, { cwd, env });
+    liveChildren.add(child);
     let output = "";
     child.stdout.on("data", (chunk) => (output += chunk));
     child.stderr.on("data", (chunk) => (output += chunk));
-    child.on("error", reject);
-    child.on("close", (code) => resolvePromise({ code, output }));
+    child.on("error", (error) => {
+      liveChildren.delete(child);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      liveChildren.delete(child);
+      resolvePromise({ code, output });
+    });
   });
+}
+
+/** SIGKILL every child still running and wait until each has closed. */
+async function killLiveChildren(): Promise<void> {
+  await Promise.all(
+    [...liveChildren].map(
+      (child) =>
+        new Promise<void>((done) => {
+          child.once("close", () => done());
+          child.kill("SIGKILL");
+        }),
+    ),
+  );
 }
 
 let pluginEntry: Promise<string> | undefined;
@@ -117,6 +154,9 @@ const pluginDir = join(
  * the package's node_modules so the bundle's bare imports resolve.
  */
 export function bundlePluginFromSource(): Promise<string> {
+  if (cleanedUp) {
+    return Promise.reject(CLEANED_UP_ERROR());
+  }
   pluginEntry ??= (async () => {
     const outDir = join(pluginDir, "vite");
     rmSync(pluginDir, { recursive: true, force: true });
@@ -147,13 +187,15 @@ export function bundlePluginFromSource(): Promise<string> {
 }
 
 /**
- * A directory to hold fixture copies. The returned function removes it, and
- * this process's plugin bundle with it.
+ * A directory to hold fixture copies. `cleanup` kills the builds still
+ * running, then removes the directory and this process's plugin bundle with
+ * it. Builds requested after it are refused.
  */
 export function createFixtureWorkspace(): {
   dir: string;
-  cleanup: () => void;
+  cleanup: () => Promise<void>;
 } {
+  cleanedUp = false;
   // realpath: os.tmpdir() is a symlink on macOS and Vite resolves it, so a
   // root under the link would not be a prefix of its own module ids.
   const dir = realpathSync(
@@ -161,9 +203,19 @@ export function createFixtureWorkspace(): {
   );
   return {
     dir,
-    cleanup: () => {
-      rmSync(dir, { recursive: true, force: true });
-      rmSync(pluginDir, { recursive: true, force: true });
+    cleanup: async () => {
+      cleanedUp = true;
+      await killLiveChildren();
+      // A killed build's last writes can still race the removal; retry the
+      // codes rmSync treats as transient (EBUSY, ENOTEMPTY, EPERM, ...).
+      const options = {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      };
+      rmSync(dir, options);
+      rmSync(pluginDir, options);
       pluginEntry = undefined;
     },
   };

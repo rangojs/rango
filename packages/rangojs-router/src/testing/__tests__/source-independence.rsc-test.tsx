@@ -7,8 +7,10 @@
  * page holds too. A partial answer keeps (omits) the segments the server
  * decided the client may keep, decided against the page that sent the
  * request. The browser stores a prefetch under one key for every source page
- * unless the response says `x-rsc-prefetch-scope: source`, and a page that
- * adopts it renders ITS copy of every kept id. A keep decided for page A and
+ * unless the response says `x-rsc-prefetch-scope: source` (that page only)
+ * or `params; <label>` (the pages with equal values of what the kept rules
+ * read of the source, rango-t242), and a page that adopts it renders ITS
+ * copy of every kept id. A keep decided for page A and
  * applied on page B shows B's copy where B's own request would have sent a
  * new one: the category hero above the product page and /cart.
  *
@@ -40,6 +42,8 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { isInterceptOnlyCache } from "../../browser/intercept-utils.js";
+import { pageMatchesParamsLabel } from "../../browser/prefetch/cache.js";
+import { paramsScopeLabel } from "../../prefetch-source-scope.js";
 import type { ResolvedSegment } from "../../types.js";
 import {
   adoptPrefetch,
@@ -225,6 +229,8 @@ describe("a shared prefetch renders the same on every source page", () => {
       sourceScoped: 0,
       refetched: 0,
       sourceAdopted: 0,
+      paramsShared: 0,
+      paramsMissed: 0,
       equal: 0,
       fresher: 0,
       different: 0,
@@ -259,6 +265,7 @@ describe("a shared prefetch renders the same on every source page", () => {
           resetPrefetchCache();
           storePrefetchOf(screenA, target, prefetched);
           const adopted = await adoptPrefetch(screenB, target, ids);
+          const label = paramsScopeLabel(prefetched.scope);
           if (prefetched.scope === "source") {
             // A source-scoped answer is keyed by the source URL and the ids
             // its request sent: only a page at A's URL holding A's ids adopts
@@ -272,6 +279,17 @@ describe("a shared prefetch renders the same on every source page", () => {
               continue;
             }
             counts.sourceAdopted++;
+          } else if (label !== undefined) {
+            // A params-scoped answer is keyed by what the kept rules read of
+            // A: every page with equal values adopts it, and the property
+            // must then hold for it as for a shared one (rango-t242).
+            const adoptable = pageMatchesParamsLabel(label, screenB.page!);
+            expect(adopted === null, `${triple} [${label}]`).toBe(!adoptable);
+            if (!adopted) {
+              counts.paramsMissed++;
+              continue;
+            }
+            counts.paramsShared++;
           } else {
             expect(adopted, triple).not.toBeNull();
           }
@@ -340,6 +358,10 @@ describe("a shared prefetch renders the same on every source page", () => {
     ).toEqual([]);
     expect(counts.equal).toBeGreaterThan(0);
     expect(counts.sourceScoped).toBeGreaterThan(0);
+    // A params-scoped answer is shared by pages other than A, and refused by
+    // pages outside its group: the property runs over both.
+    expect(counts.paramsShared).toBeGreaterThan(0);
+    expect(counts.paramsMissed).toBeGreaterThan(0);
     if (sameSourceUrl) expect(counts.sourceAdopted).toBeGreaterThan(0);
     // Refetched triples are skipped, not compared: a fixture change that
     // turns many keeps into missing ids would empty the property silently.
@@ -371,6 +393,7 @@ describe("a shared prefetch renders the same on every source page", () => {
         "<section>section:x</section>",
         "<article>url:2:x:visit:2</article>",
       ],
+      locale: ["<section>locale:en</section>", "<section>locale:fr</section>"],
     };
     for (const [family, urls] of Object.entries(SOURCE_INDEPENDENCE_URLS)) {
       const lines = (
@@ -393,13 +416,13 @@ describe("a shared prefetch renders the same on every source page", () => {
   it(
     "every (A, B, T): the prefetch of T made on A, adopted on B, renders as B's own navigation to T",
     () => property(documentPages(), false),
-    60_000,
+    120_000,
   );
 
   it(
     "every (A, B, T), T in the tab's history: the click sends the entry's ids and commits over it",
     () => property(documentPages(), true),
-    60_000,
+    120_000,
   );
 
   /** Every click between two pages of one family. */
@@ -446,5 +469,5 @@ describe("a shared prefetch renders the same on every source page", () => {
     );
     expect(navigated.length).toBeGreaterThan(0);
     await property(navigated, false, true);
-  }, 60_000);
+  }, 120_000);
 });

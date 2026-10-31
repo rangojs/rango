@@ -14,7 +14,15 @@ vi.mock("../browser/navigation-store-handle", () => ({
         ? undefined
         : { routeName: "item", rewriteTarget: shownRewriteTarget, state: null },
   }),
+  getCommittedPage: () => committedPage,
 }));
+
+// The page on screen's params and route name, as the router store committed
+// them (navigation-store-handle.ts getCommittedPage).
+let committedPage: {
+  params: Record<string, string>;
+  routeName: string | undefined;
+} | null = null;
 
 import {
   prefetchDirect,
@@ -404,6 +412,162 @@ describe("prefetch wildcard cache (default source-agnostic)", () => {
     const wildcardKey = "v1:abc\0/photo/42?_rsc_partial=true&_rsc_v=v1";
     expect(consumePrefetch(wildcardKey)).toBeNull();
     expect(consumePrefetch(sourceKey)).not.toBeNull();
+  });
+
+  describe("X-RSC-Prefetch-Scope: params (a revalidate() rule read the source's params)", () => {
+    const LABEL = "$k=locale,page&locale=en";
+    const respond = () =>
+      vi.fn((_url: string | URL) =>
+        Promise.resolve(
+          new Response("payload", {
+            status: 200,
+            headers: { "x-rsc-prefetch-scope": `params; ${LABEL}` },
+          }),
+        ),
+      );
+    const onPage = (href: string, params: Record<string, string>) => {
+      window.location.href = `http://localhost:4173${href}`;
+      (window.location as any).pathname = href;
+      committedPage = { params, routeName: "products" };
+    };
+
+    afterEach(() => {
+      committedPage = null;
+    });
+
+    it("stores under the label's key, with the label on the entry", async () => {
+      setupBrowser();
+      const fetchMock = respond();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      onPage("/en/products/1", { locale: "en", page: "1" });
+      prefetchDirect("/en", ["A0"], "v1");
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+      const target = "/en?_rsc_partial=true&_rsc_v=v1";
+      expect(consumePrefetch(`v1:abc\0${target}`)).toBeNull();
+      const entry = consumePrefetch(`v1:abc\0p:${LABEL}\0${target}`);
+      expect(entry?.scope).toBe("params");
+      expect(entry?.paramsLabel).toBe(LABEL);
+    });
+
+    it("a page with equal values of what the rule read dedupes on it", async () => {
+      setupBrowser();
+      const fetchMock = respond();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      onPage("/en/products/1", { locale: "en", page: "1" });
+      prefetchDirect("/en", ["A0"], "v1");
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      await new Promise((r) => setTimeout(r, 0));
+
+      onPage("/en/products/2", { locale: "en", page: "2" });
+      prefetchDirect("/en", ["A0"], "v1");
+      prefetchQueued("/en", ["A0"], "v1");
+      await new Promise((r) => setTimeout(r, 0));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("a page with other values, or another key set, prefetches again", async () => {
+      setupBrowser();
+      const fetchMock = respond();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      onPage("/en/products/1", { locale: "en", page: "1" });
+      prefetchDirect("/en", ["A0"], "v1");
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      await new Promise((r) => setTimeout(r, 0));
+
+      onPage("/fr/products/1", { locale: "fr", page: "1" });
+      prefetchDirect("/en", ["A0"], "v1");
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      await new Promise((r) => setTimeout(r, 0));
+
+      onPage("/en/about", { locale: "en" });
+      prefetchDirect("/en", ["A0"], "v1");
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    });
+
+    /** A fetch whose replies the test sends, each with its own label. */
+    function heldReplies() {
+      const pending: ((label: string) => void)[] = [];
+      const fetchMock = vi.fn(
+        (_url: string | URL) =>
+          new Promise<Response>((resolve) => {
+            pending.push((label) =>
+              resolve(
+                new Response("payload", {
+                  status: 200,
+                  headers: { "x-rsc-prefetch-scope": `params; ${label}` },
+                }),
+              ),
+            );
+          }),
+      );
+      return {
+        fetchMock,
+        reply: (i: number, label: string) => pending[i]!(label),
+      };
+    }
+    const keyOf = (label: string) =>
+      `v1:abc\0p:${label}\0/en?_rsc_partial=true&_rsc_v=v1`;
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    it("a navigation between the request and the reply: stored under the server's values, not the new page's", async () => {
+      setupBrowser();
+      const { fetchMock, reply } = heldReplies();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      onPage("/en/products/1", { locale: "en", page: "1" });
+      prefetchDirect("/en", ["A0"], "v1");
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+      onPage("/fr/products/1", { locale: "fr", page: "1" });
+      reply(0, LABEL);
+      await settle();
+
+      expect(consumePrefetch(keyOf("$k=locale,page&locale=fr"))).toBeNull();
+      expect(consumePrefetch(keyOf(LABEL))?.paramsLabel).toBe(LABEL);
+    });
+
+    it("a prefetch of one target from a second page while the first is in flight dedupes on it: one request, stored once under the first page's label", async () => {
+      setupBrowser();
+      const { fetchMock, reply } = heldReplies();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      onPage("/en/products/1", { locale: "en", page: "1" });
+      prefetchDirect("/en", ["A0"], "v1");
+      onPage("/fr/products/1", { locale: "fr", page: "1" });
+      prefetchDirect("/en", ["A0"], "v1");
+      prefetchQueued("/en", ["A0"], "v1");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      reply(0, LABEL);
+      await settle();
+      expect(consumePrefetch(keyOf(LABEL))).not.toBeNull();
+      expect(consumePrefetch(keyOf("$k=locale,page&locale=fr"))).toBeNull();
+    });
+
+    it("prefetches of one target from two groups, replies in reverse order: each stored once under its own label, neither clobbers the other", async () => {
+      setupBrowser();
+      const { fetchMock, reply } = heldReplies();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const FR = "$k=locale,page&locale=fr";
+      onPage("/en/products/1", { locale: "en", page: "1" });
+      prefetchDirect("/en", ["A0"], "v1");
+      reply(0, LABEL);
+      await settle();
+      onPage("/fr/products/1", { locale: "fr", page: "1" });
+      prefetchDirect("/en", ["A0"], "v1");
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      reply(1, FR);
+      await settle();
+      // Wait for both streams to drain, so any respawn refill has run.
+      await settle();
+
+      const en = consumePrefetch(keyOf(LABEL));
+      const fr = consumePrefetch(keyOf(FR));
+      expect(en?.paramsLabel).toBe(LABEL);
+      expect(fr?.paramsLabel).toBe(FR);
+      expect(
+        consumePrefetch("v1:abc\0/en?_rsc_partial=true&_rsc_v=v1"),
+      ).toBeNull();
+    });
   });
 
   it("skips same-page prefetch (would poison the wildcard slot)", () => {
