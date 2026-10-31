@@ -43,6 +43,16 @@ export function recordingParams(
         reads.params.add(name);
         return params[name];
       },
+      // A rule may write to the object, as to the plain one it replaces:
+      // what it wrote is its own value, not the source's.
+      set(value: string) {
+        Object.defineProperty(view, name, {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      },
     });
   }
   return view;

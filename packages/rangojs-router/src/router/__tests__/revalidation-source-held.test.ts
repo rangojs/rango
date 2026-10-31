@@ -365,6 +365,18 @@ describe("x-rsc-prefetch-scope of a decision, by what the rule read (rango-t242)
     },
   );
 
+  it("a rule that writes to currentParams does not throw, and what it wrote is not a source read", async () => {
+    const { decision, context } = await evaluate(
+      ({ currentParams }) => {
+        currentParams.locale = "x";
+        return currentParams.locale !== "x";
+      },
+      { source: EN },
+    );
+    expect(decision).toBe(false);
+    expect(headerOf(context)).toBe("params; $k=locale,page");
+  });
+
   it("fromRouteName groups by the source's route name", async () => {
     const { context } = await evaluate(
       ({ fromRouteName }) => fromRouteName === "x",
