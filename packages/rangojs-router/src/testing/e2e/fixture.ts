@@ -10,6 +10,7 @@ import {
   runCli,
   type RunCliHandle,
   type SpawnOptions,
+  stopServer,
   waitForReady,
   warmupDevServer,
 } from "./server.js";
@@ -93,10 +94,7 @@ export function createUseFixture(
         // throw (findPort/waitForReady). Otherwise a beforeAll failure leaves
         // afterAll's cleanup a no-op and orphans the dev server (plus workerd
         // children) for the rest of the run.
-        cleanup = async () => {
-          proc!.kill();
-          await proc!.done;
-        };
+        cleanup = () => stopServer(proc!);
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
         const readyUrl = options.readyPath
@@ -128,10 +126,7 @@ export function createUseFixture(
           });
           // The build is a finite process, but assign cleanup before the await
           // so a hung build is still killed if beforeAll is torn down.
-          cleanup = async () => {
-            buildProc.kill();
-            await buildProc.done;
-          };
+          cleanup = () => stopServer(buildProc);
           // Fail loudly on a nonzero build exit. Without this a failed build is
           // swallowed and preview serves the previous stale dist/ (green
           // production tests against old code), or times out with "Server not
@@ -155,10 +150,7 @@ export function createUseFixture(
         });
         // Switch cleanup to the preview process immediately after spawn, before
         // findPort/waitForReady can throw and orphan it.
-        cleanup = async () => {
-          proc!.kill();
-          await proc!.done;
-        };
+        cleanup = () => stopServer(proc!);
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
         const buildReadyUrl = options.readyPath
