@@ -133,7 +133,7 @@ RULES:
 
 Why: suites bucket dev vs production by grepping describe titles — `production` matches `(production)`, `dev` matches everything else. A mistitled production describe (e.g. `(prod)`, `-build`) silently lands in the dev bucket and production coverage vanishes with no error. Guards: `pnpm check:e2e-bucketing` enforces (CI lint + pre-commit); `pnpm check:e2e-parity` (CI lint runs `--strict`) fails on any top-level fixture-owning describe without a same-file `(production)` sibling unless it is listed in `tools/e2e-parity-allowlist.json` with a non-empty reason. Guard-blind (non-literal mode) describes are reported but do not fail strict mode — the helper that generates them must couple `mode: "build"` with a `(production)` title. Intentional dev-only (HMR, serve-only plugins) must be allowlisted — do not silence gaps by renaming titles.
 
-Runtime check: every bucketed Playwright project declares `metadata: { fixtureMode: "dev" | "build" }` and every app's `useFixture` throws in `beforeAll` (`assertFixtureModeMatchesProject`, `tests/shared-e2e/src/fixture-mode.ts`) when its `mode` disagrees, so a mistitled describe fails instead of silently running against the other server; a new bucketed project needs the tag.
+Runtime check: every app's `useFixture` (and dev-server worker fixture) throws in `beforeAll` (`assertFixtureModeMatchesProject`, `tests/shared-e2e/src/fixture-mode.js`) when its `mode` disagrees with the mode its Playwright project's `grep` buckets (accepts `"x (production)"` only: build; `"x"` only: dev; a project without such a grep is not checked), so a mistitled describe fails instead of silently running against the other server; no per-project tag to add.
 
 ## E2e: running a subset locally
 

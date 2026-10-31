@@ -21,7 +21,6 @@ export type {
 } from "./assert-existing-server.js";
 export { acquireE2eSlot } from "./e2e-slot.js";
 export { assertFixtureModeMatchesProject } from "./fixture-mode.js";
-export type { FixtureMode, FixtureModeTestInfo } from "./fixture-mode.js";
 export { defineFlaggedLoaderDefaultBoundaryTests } from "./flagged-loader-default-boundary.js";
 export type { FlaggedLoaderDefaultBoundaryFixture } from "./flagged-loader-default-boundary.js";
 export { defineSsrShellErrorTests } from "./ssr-shell-error.js";

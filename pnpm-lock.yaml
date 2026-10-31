@@ -785,6 +785,9 @@ importers:
       '@playwright/test':
         specifier: ^1.62.0
         version: 1.63.0
+      '@shared/e2e':
+        specifier: workspace:*
+        version: link:../shared-e2e
       tinyexec:
         specifier: ^0.3.2
         version: 0.3.2

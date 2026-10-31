@@ -57,7 +57,6 @@ export default defineConfig({
     },
     {
       name: "preload-dev",
-      metadata: { fixtureMode: "dev" },
       testMatch: "**/head-script-preload.test.ts",
       grep: /^(?!.*\(production\))/,
       use: {
@@ -68,7 +67,6 @@ export default defineConfig({
     },
     {
       name: "preload-production",
-      metadata: { fixtureMode: "build" },
       testMatch: "**/head-script-preload.test.ts",
       grep: /\(production\)/,
       use: {

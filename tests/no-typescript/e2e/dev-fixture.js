@@ -1,6 +1,6 @@
 import { stripVTControlCharacters, styleText } from "node:util";
 import { test as base, expect } from "@playwright/test";
-import { assertFixtureModeMatchesProject } from "./fixture-mode.js";
+import { assertFixtureModeMatchesProject } from "@shared/e2e";
 import { x } from "tinyexec";
 import { waitForServer } from "./helper.js";
 

@@ -2,7 +2,7 @@ import { type SpawnOptions, spawn } from "node:child_process";
 import path from "node:path";
 import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
-import { assertFixtureModeMatchesProject } from "@shared/e2e/fixture-mode";
+import { assertFixtureModeMatchesProject } from "@shared/e2e";
 import { x } from "tinyexec";
 
 function runCli(options: { command: string; label?: string } & SpawnOptions) {

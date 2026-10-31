@@ -5,7 +5,6 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./fixture-mode": "./src/fixture-mode.ts",
     "./view-transition-stub": "./src/view-transition-stub.ts"
   },
   "scripts": {
