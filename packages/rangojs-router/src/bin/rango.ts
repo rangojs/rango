@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { resolve, dirname, basename } from "node:path";
 import { readFileSync, statSync, existsSync } from "node:fs";
 import {
@@ -297,6 +298,10 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
     process.exit(1);
   }
 
+  // Loads from its own chunk only because the bin is built with esbuild
+  // --splitting (package.json "build"). A single-file bundle folds this module
+  // in and hoists its Vite imports to the top, so every command, --help
+  // included, failed without vite installed (rango-t211).
   let discoverAndWriteRouteTypes: typeof import("../build/runtime-discovery.ts").discoverAndWriteRouteTypes;
   try {
     const mod = await import("../build/runtime-discovery.ts");
@@ -306,9 +311,12 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
       err.code === "ERR_MODULE_NOT_FOUND" ||
       err.code === "MODULE_NOT_FOUND"
     ) {
+      // runtime-discovery checks vite and @vitejs/plugin-rsc itself and names
+      // what to install, so reaching here means a bundled chunk file is
+      // missing: the installed package is incomplete.
       console.error(
-        "[rango] Runtime discovery requires 'vite' and '@vitejs/plugin-rsc'.\n" +
-          "Install them with: pnpm add -D vite @vitejs/plugin-rsc",
+        `[rango] Failed to load runtime discovery: ${err.message}\n` +
+          "The installed @rangojs/router looks broken (a CLI chunk is missing). Reinstall it.",
       );
     } else {
       console.error(`[rango] Failed to load runtime discovery: ${err.message}`);
