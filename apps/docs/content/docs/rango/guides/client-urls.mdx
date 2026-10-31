@@ -298,6 +298,8 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
 ]);
 ```
 
+On an unchanged `:slug` the `ProductLoader` rule keeps the loader after reading `currentParams`, so a prefetch of the same product (a tab, `?sort=price`) is stored for the page that sent it and the product's other pages prefetch it again. Links to other products stay shared. See [One prefetch serves every page](/docs/rango/features/navigation#one-prefetch-serves-every-page).
+
 `isAction` works the same as it does in `urls()`: `isAction()` matches any action, and `isAction(ref)`, `isAction(a, b)`, `isAction(ModuleNamespace)`, and `isAction({ a, b })` match specific ones. `actionId` is the server's `src/...#export` form, but matching by reference is the supported way. `currentParams` and `nextParams` are the server's route params, so they include the params of the `include()` mount. Compare the param that identifies the data. A predicate that always returns `false` keeps showing the old product when only `:slug` changes.
 
 What the predicate sees on each request:
