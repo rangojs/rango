@@ -652,30 +652,44 @@ depend on which page asked. With the defaults it does not: a standalone layout
 is held from every page that shows it, and a route, with any layout inside its
 `path()`, re-renders whenever its params or search change.
 
-When the diff does depend on the page, the server stores the answer for that
-page only (the response carries `x-rsc-prefetch-scope: source`). A click from
-any other page then sends its own request. The server does this in four
-cases:
+When the diff does depend on the page, the server scopes the answer. A
+click from a page outside the scope then sends its own request.
+
+The answer is page-only (`x-rsc-prefetch-scope: source`) when:
 
 - An intercept targets the route, or the page that sent the prefetch,
   whether or not it applies here.
 - The answer defers a `prefetch: false` loader or `loading()` that the page
   does not show yet.
-- A `revalidate()` on the target read the page being left (`currentParams`,
-  `currentUrl` or `fromRouteName`) and kept its segment. That keep was
-  decided for this page's copy, and another page holds a copy rendered for
-  other params.
-- The target is prerendered and the page that asked has the same route
-  params: the stored answer keeps the route on a search-only change, and keeps
-  a layout that has `revalidate()` rules without running them.
+- A `revalidate()` on the target read `currentUrl` and kept its segment.
+- The answer kept a segment for the page that asked and sends no segment at
+  all: a page that adopted it would keep its whole tree.
 
-These page-only entries are keyed by the page's full URL, query string and hash
+The answer is shared between a group of pages
+(`x-rsc-prefetch-scope: params; <label>`) when:
+
+- A `revalidate()` on the target read `currentParams` or `fromRouteName`
+  and kept its segment. That keep was decided from what the rule read, so it
+  is right on every page with equal values of those reads, and only there:
+  another page holds a copy rendered for other params. The server records
+  each param a rule reads by name (a spread, `JSON.stringify` or
+  `structuredClone` reads them all), the route name for `fromRouteName`, and
+  the page's set of params, and answers with the values; the browser stores
+  the answer under them and looks it up with the params of the page on
+  screen. The locale rule (`currentParams.locale !== nextParams.locale`)
+  shares each prefetch between the pages of one locale.
+- The target is prerendered and the page that asked has the same route
+  params: the stored answer keeps a layout that has `revalidate()` rules
+  without running them, which is right for the pages with the same params.
+
+Page-only entries are keyed by the page's full URL, query string and hash
 included, so each page prefetches those targets again: `?page=2` and `?page=3`
-each make their own. The answer stays correct; the cost is the sharing. A
-`revalidate()` that compares `currentParams` on a layout above most of the app
-(a locale, an account, a project) puts every prefetch between pages under it in
-this case. `/app-structure` → "Prefetches are shared" lists the structures that
-need no such rule.
+each make their own. Grouped entries are shared by `?page=2` and `?page=3`
+when the rule did not read the page. The answer stays correct either way;
+the cost is the sharing. Read the params a rule needs by name and avoid
+`currentUrl` in a rule on a layout above most of the app.
+`/app-structure` → "Prefetches are shared" lists the structures that need no
+such rule.
 
 `prefetchKey=":source"` asks for the same scope on one link, for a target
 whose answer depends on the page that sent it in a way the server cannot

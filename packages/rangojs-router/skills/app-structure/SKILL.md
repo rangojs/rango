@@ -113,11 +113,12 @@ here for the rules they share.
    cannot rewrite, and a loop answers 508. Redirect when the new URL should
    show (`/middleware`, "Rewrite").
 9. **Keep prefetches shared.** One prefetch of a page serves every page
-   that links to it. A `revalidate()` that reads the page being left
-   (`currentParams`, `currentUrl`, `fromRouteName`) and keeps its segment
-   makes those prefetches page-only, so each page prefetches its links
-   again. Keep page-specific blocks in their route, and write such a
-   rule only for chrome that shows a param's data
+   that links to it. A `revalidate()` that reads the page being left and
+   keeps its segment shares those prefetches only between the pages with
+   equal values of what it read (`currentParams.locale`: the pages of one
+   locale); one that reads `currentUrl` makes them page-only. Read params
+   by name, keep page-specific blocks in their route, and write such a rule
+   for chrome that shows a param's data
    ([Prefetches are shared](#prefetches-are-shared)).
 
 ## A small app: one module
@@ -234,22 +235,26 @@ sharing as long as no segment's answer depends on the page being left.
 
 The default rules keep it: a standalone layout is held from every page that
 shows it, and a route re-renders when its params or search change. A
-`revalidate()` that reads the page being left (`currentParams`, `currentUrl`,
-`fromRouteName`) and keeps its segment ends it. The server then stores that
-answer for the exact page that sent it, query string and hash included, and each
-page prefetches those links again. The answer stays correct; what is lost is the
-sharing.
+`revalidate()` that reads the page being left and keeps its segment narrows
+it to what the rule read. A rule that reads `currentParams` or
+`fromRouteName` shares the answer between the pages with equal values of
+those reads (the params a rule reads by name, every param when it spreads
+`currentParams`, the route name for `fromRouteName`; the page's set of params
+always counts). A rule that reads `currentUrl` makes it page-only: the server
+stores the answer for the exact page that sent it, query string and hash
+included, and each page prefetches those links again. The answer stays
+correct; what is lost is the sharing.
 
-| What you are placing                                                                                                                               | Put it in                                                                    | Prefetches                                                                                                                                                                        |
-| -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A block that belongs to one page (a category's hero, a product's breadcrumb)                                                                       | that page's route: its handler, or a layout inside its `path()` (below)      | Shared. It re-renders with its route on a param or search change. In a layout other pages share it would need a rule that reads the page being left                               |
-| Links that follow a mount param (`:locale`, `:accountId`, `:projectId`)                                                                            | a client component with `useReverse(routes)` (rule 7)                        | Shared. The links follow `useParams()`, and the layout stays held with no rule                                                                                                    |
-| Chrome that shows a param's data (the locale's messages, a project's name)                                                                         | the layout, with a `revalidate()` comparing `currentParams` and `nextParams` | Page-only for every prefetch where the rule keeps the layout (two pages of one locale or one project). A locale layout around the whole app makes nearly every prefetch page-only |
-| A page whose answer depends on the page that sent it through something the server cannot see (`context` in a `revalidate()`, the `Referer` header) | `prefetchKey=":source"` on the links to it                                   | Page-only, for those links                                                                                                                                                        |
+| What you are placing                                                                                                                               | Put it in                                                                    | Prefetches                                                                                                                                          |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A block that belongs to one page (a category's hero, a product's breadcrumb)                                                                       | that page's route: its handler, or a layout inside its `path()` (below)      | Shared. It re-renders with its route on a param or search change. In a layout other pages share it would need a rule that reads the page being left |
+| Links that follow a mount param (`:locale`, `:accountId`, `:projectId`)                                                                            | a client component with `useReverse(routes)` (rule 7)                        | Shared. The links follow `useParams()`, and the layout stays held with no rule                                                                      |
+| Chrome that shows a param's data (the locale's messages, a project's name)                                                                         | the layout, with a `revalidate()` comparing `currentParams` and `nextParams` | Shared between the pages with the same value of that param where the rule keeps the layout (the pages of one locale or one project)                 |
+| A page whose answer depends on the page that sent it through something the server cannot see (`context` in a `revalidate()`, the `Referer` header) | `prefetchKey=":source"` on the links to it                                   | Page-only, for those links                                                                                                                          |
 
 The third row is the one to weigh: write that rule for chrome that must
-follow the param, and keep everything else that varies by page out of the
-layout.
+follow the param, read the param by name, and keep everything else that
+varies by page out of the layout.
 
 Chrome that one kind of page has (a category's hero and breadcrumbs, a
 product's gallery frame) can be a layout of its own route instead of a

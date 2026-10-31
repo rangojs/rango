@@ -174,6 +174,8 @@ export const NamedRoutes = {
   "keptLayoutSourceBaked.item": "/kept-layout-source/baked/item/:id",
   "keptLayoutSourceBaked.plp": "/kept-layout-source/baked/c/:category",
   "keptLayoutSourceBaked.wishlist": "/kept-layout-source/baked/wishlist",
+  "keptLayoutSourceI18n.home": "/kept-layout-source/i18n/:locale",
+  "keptLayoutSourceI18n.products": "/kept-layout-source/i18n/:locale/products",
   lateHistoryOther: "/late-history/other",
   lateHistoryPage: "/late-history/page",
   loaderCacheDep: "/loader-cache-dep",

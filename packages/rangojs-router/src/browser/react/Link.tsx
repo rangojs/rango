@@ -119,10 +119,12 @@ export interface LinkProps extends Omit<
    * the source page, whether or not it applies (the modal and the full page
    * are both source-specific), when the answer defers a `prefetch: false`
    * unit the source does not hold, when a `revalidate()` of the target read
-   * `currentParams`, `currentUrl` or `fromRouteName` and kept the segment:
-   * that diff is the source page's (#1331), and when a prerendered target
-   * keeps segments on equal params (`storedEntrySends`). Every other
-   * response stays shared. Use the key
+   * `currentUrl` and kept the segment, and when a kept answer sends no
+   * segment. A `revalidate()` that read `currentParams` or `fromRouteName`
+   * and kept the segment, or a prerendered target that keeps segments on
+   * equal params (`storedEntrySends`), shares the answer between the pages
+   * with equal values of what was read (`x-rsc-prefetch-scope: params`,
+   * #1331, rango-t242). Every other response stays shared. Use the key
    * for what the server does not track: `context` in a `revalidate()`, or
    * a `Referer` read.
    *

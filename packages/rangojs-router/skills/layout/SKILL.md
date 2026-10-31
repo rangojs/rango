@@ -267,10 +267,13 @@ layout(LocaleLayout, () => [
 ])
 ```
 
-A rule that reads `currentParams`, `currentUrl` or `fromRouteName` and keeps
-the layout makes prefetches between pages under it page-only: the locale rule
-above keeps the layout on every `/en` to `/en` navigation, so each page
-prefetches its links again (`/links` → "Shared prefetches and `prefetchKey`").
+A rule that reads `currentParams` or `fromRouteName` and keeps the layout
+shares a prefetch between the pages with equal values of what it read: the
+locale rule above keeps the layout on every `/en` to `/en` navigation, so one
+prefetch of a link serves every `/en` page, and a French page prefetches its
+own. Spreading `currentParams` reads every param, so read the ones the rule
+needs by name; a rule that reads `currentUrl` makes the prefetch page-only
+(`/links` → "Shared prefetches and `prefetchKey`").
 Write it for chrome that must follow the param; a block that belongs to one
 page goes in its route or in an orphan layout inside its `path()` (above),
 which re-renders with the route and needs no rule.

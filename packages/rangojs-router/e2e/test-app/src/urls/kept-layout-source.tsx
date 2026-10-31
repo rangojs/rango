@@ -192,3 +192,76 @@ export const keptLayoutSourceBakedPatterns = urls(
     ]),
   ],
 );
+
+// rango-t242: the documented locale rule (guides/i18n.mdx) above paginated
+// pages. The rule reads the source's locale and keeps the layout on a
+// same-locale navigation, so a prefetch is shared by the pages of one locale:
+// page 2 adopts the prefetch of the home link page 1 made.
+const LOCALE_BASE = "/kept-layout-source/i18n";
+
+function KeptLocaleLayout({ locale }: { locale: string }): ReactNode {
+  return (
+    <section data-testid="kls-chrome">
+      <p data-testid="kls-locale">{`locale:${locale}`}</p>
+      <nav>
+        <Link
+          to={`${LOCALE_BASE}/${locale}`}
+          prefetch="hover"
+          data-testid="kls-to-home"
+        >
+          Home
+        </Link>
+        <Link
+          to={`${LOCALE_BASE}/${locale}/products?page=2`}
+          prefetch="hover"
+          data-testid="kls-to-page2"
+        >
+          Page 2
+        </Link>
+        <Link
+          to={`${LOCALE_BASE}/en`}
+          prefetch="hover"
+          data-testid="kls-to-en-home"
+        >
+          English home
+        </Link>
+        <Link
+          to={`${LOCALE_BASE}/fr/products?page=1`}
+          prefetch="hover"
+          data-testid="kls-to-fr"
+        >
+          French products
+        </Link>
+      </nav>
+      <Outlet />
+    </section>
+  );
+}
+
+export const keptLayoutSourceLocalePatterns = urls(
+  ({ layout, path, revalidate }) => [
+    layout(
+      (ctx) => <KeptLocaleLayout locale={String(ctx.params.locale)} />,
+      () => [
+        revalidate(
+          ({ currentParams, nextParams }) =>
+            currentParams.locale !== nextParams.locale || undefined,
+        ),
+        path(
+          "/:locale",
+          (ctx) => <p data-testid="kls-page">{`home:${ctx.params.locale}`}</p>,
+          { name: "home" },
+        ),
+        path(
+          "/:locale/products",
+          (ctx) => (
+            <p data-testid="kls-page">
+              {`products:${ctx.params.locale}:${ctx.url.searchParams.get("page")}`}
+            </p>
+          ),
+          { name: "products" },
+        ),
+      ],
+    ),
+  ],
+);

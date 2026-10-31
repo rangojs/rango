@@ -107,7 +107,7 @@ function makeRespawn(
       payload,
       streamComplete: Promise.resolve(),
       scope: slot.scope,
-      ...(slot.paramsLabel !== undefined && { paramsLabel: slot.paramsLabel }),
+      paramsLabel: slot.paramsLabel,
       complete: true,
       dispose: () => {
         // Rejects (caught) instead of throwing if the branch is already
@@ -206,11 +206,6 @@ export function prefetchStorageSlot(
     key: buildParamsKey(rangoState, label, targetUrl),
     paramsLabel: label,
   };
-}
-
-/** The params-scoped keys a prefetch from the page on screen may dedupe on. */
-function paramsKeysFor(rangoState: string, targetUrl: URL): string[] {
-  return paramsCandidateKeys(rangoState, targetUrl, getCommittedPage());
 }
 
 /**
@@ -397,9 +392,7 @@ function executePrefetchFetch(
         payload,
         streamComplete,
         scope: slot.scope,
-        ...(slot.paramsLabel !== undefined && {
-          paramsLabel: slot.paramsLabel,
-        }),
+        paramsLabel: slot.paramsLabel,
         complete: false,
         stallTimer: timeoutId,
         ...(reserve && {
@@ -490,7 +483,9 @@ function hasPrefetchHit(
   return (
     hasPrefetch(wildcardKey) ||
     hasPrefetch(sourceKey) ||
-    paramsKeysFor(rangoState, targetUrl).some(hasPrefetch)
+    paramsCandidateKeys(rangoState, targetUrl, getCommittedPage()).some(
+      hasPrefetch,
+    )
   );
 }
 
