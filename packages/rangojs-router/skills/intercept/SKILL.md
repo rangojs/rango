@@ -278,9 +278,29 @@ gives `from.url.pathname === "/list/open"`, not `/item/1`. That differs from
 `transition({ when })`'s `from`, which is always the committed location on
 screen. `routeName` is set for named routes only. Pass an array of predicates
 for AND logic (all must return true). Omit `when` entirely and the intercept
-always activates. `when` is not re-evaluated during action revalidation, so
-an open modal stays open after an action. A selector that throws does not
-intercept: the full page renders and the error is logged with the route name.
+always activates. A selector that throws does not intercept: the full page
+renders and the error is logged with the route name.
+
+A server action from an open intercept re-renders that intercept, the one
+whose slot the page holds, and opens no other intercept that targets the
+route. Its `when` is not evaluated again, so the intercept stays open after
+the action even when its `when` would now reject. The page can hold the slots
+of more than one of the route's intercepts: two intercepts on one layout that
+fill the same slot share it, and a `parallel()` of an intercept's slot name
+holds that slot whether or not an intercept is open there. Whether they are
+declared for the route's name or its local name inside `include()`, the
+action sets aside the intercepts whose slot a `parallel()` fills on their
+layout and renders the one that is left, its `when` not evaluated. When
+several are left (the same-slot pair), the action evaluates their `when`
+again, with `from` the intercept's source page, and the first that passes
+renders; when none passes, the first of them renders. When a `parallel()`
+fills every held slot, that rule applies to all of them.
+
+`when` selects an intercept; it does not authorize one. An action request
+that names an intercept's slot renders that intercept without its `when`,
+and a navigation request can claim any source page. Guard data in the target
+route's middleware, which runs for every intercept render, or in the
+intercept's loaders.
 
 The server learns `from` from the `X-RSC-Router-Client-Path` header, which the
 rango client sends on every navigation. A partial request without it falls

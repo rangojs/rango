@@ -640,7 +640,8 @@ After main segment serialization in `matchForPrerender()`:
 `when` config conditions are not evaluated at build time (no `InterceptSelectorContext`
 available). All intercepts are pre-rendered unconditionally. `when` is evaluated
 at runtime, where the match selects one intercept (`findInterceptForRoute`: the
-innermost whose `when` passes), and a HIT serves only that one.
+innermost whose `when` passes; on an action, the one whose slot the client
+holds), and a HIT serves only that one.
 
 An intercept a navigation can select but the build does not bake renders live,
 and its handler runs per request with the request's context. A handler that

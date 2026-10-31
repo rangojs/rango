@@ -236,6 +236,22 @@ function positionalParts(parts: readonly (string | null)[]): string[] {
 }
 
 /**
+ * A route record key's own parts (CacheScope.resolveKeyFrom): `own`, the
+ * scope's default key or its store's keyGenerator result (undefined under a
+ * `key()` of its own), then the request `kind` unless `own` starts with
+ * `{kind}:`. A default key does, and so does a keyGenerator result built on
+ * `defaultKey` (`${defaultKey}|x`), which stays byte for byte. One that
+ * ignores `defaultKey` (a constant, the pathname) gave a document, a
+ * navigation and each intercept navigation one record, so a document GET
+ * rendered an intercept's. The kind is a part, never a `{kind}:` prefix: a
+ * prefix would give the results `x` and `doc:x` one record.
+ */
+function ownParts(own: string | undefined, kind: string | undefined): string[] {
+  if (own === undefined) return kind === undefined ? [] : [kind];
+  return kind === undefined || own.startsWith(`${kind}:`) ? [own] : [own, kind];
+}
+
+/**
  * One key resolution per request, resolver (`by`: a `key()` or a store's
  * keyGenerator) and `slot`, held on the request context (`_resolvedCacheKeys`,
  * see CacheScope.resolveKeyFrom).
@@ -530,8 +546,10 @@ export class CacheScope {
    * replaces the URL part, and its store's keyGenerator does not run. It
    * appends `kind` instead (routeRecordKind): the `key()` decides which
    * requests of one kind share a record, never that a document, a
-   * navigation and an intercept navigation do. With no partition part it is
-   * resolveDefaultKey alone. With a `key()` on the chain but no request
+   * navigation and an intercept navigation do. A keyGenerator result that
+   * does not start with its kind gets `kind` after it too (ownParts). With
+   * no partition part it is resolveDefaultKey alone, or that result and
+   * `kind` composed. With a `key()` on the chain but no request
    * context it rejects (keyWithoutContextError). `partitionedPrefix`
    * prefixes a key built from partition parts only (the response family's
    * `response:`, which passes no `kind`: a response route answers every
@@ -556,7 +574,9 @@ export class CacheScope {
     if (!requestCtx || !this.mayPartition) {
       return this.keyFns.length > 0
         ? Promise.reject(keyWithoutContextError())
-        : this.resolveDefaultKey(requestCtx, defaultKey);
+        : this.resolveDefaultKey(requestCtx, defaultKey).then((own) =>
+            composeCacheKeys([], ownParts(own, kind)),
+          );
     }
     return Promise.all([
       this.resolvePartitionParts(requestCtx, defaultKey),
@@ -565,10 +585,11 @@ export class CacheScope {
         : this.resolveDefaultKey(requestCtx, defaultKey),
     ]).then(([[keys, storeParts], ownDefault]) => {
       const generated = positionalParts(storeParts);
-      if (keys.length === 0 && generated.length === 0) return ownDefault!;
-      const last = ownDefault ?? kind;
-      if (last !== undefined) generated.push(last);
-      return partitionedPrefix + composeCacheKeys(keys, generated);
+      const own = ownParts(ownDefault, kind);
+      if (keys.length === 0 && generated.length === 0) {
+        return composeCacheKeys([], own);
+      }
+      return partitionedPrefix + composeCacheKeys(keys, [...generated, ...own]);
     });
   }
 

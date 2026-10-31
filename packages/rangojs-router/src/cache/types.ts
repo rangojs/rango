@@ -93,16 +93,21 @@ export interface SegmentCacheStore<TEnv = unknown> {
   /**
    * Custom key generator applied to all cache operations using this store.
    * Receives the full RequestContext and the default-generated key.
-   * Return value becomes the final cache key (unless route overrides with `key` option).
+   * The return value is the cache key (unless route overrides with `key`
+   * option), with a route record's request kind appended when it does not
+   * start with that kind (below).
    *
    * Resolution priority:
    * 1. Route-level `key` function (replaces the URL part; the request kind stays)
    * 2. Store-level `keyGenerator` (modifies default key)
    * 3. Default key generation (prefix:pathname:params)
    *
-   * Keep `defaultKey` in the result: its prefix names the request kind (a
-   * document, a navigation or an intercept navigation), whose records hold
-   * different segments. A result without it gives every kind one record.
+   * A route record keeps its request kind (a document, a navigation or an
+   * intercept navigation), whose records hold different segments: the kind
+   * is `defaultKey`'s prefix (`doc:`, `partial:`, `intercept:<intercept>:`),
+   * and a result that does not start with it gets the kind appended as a
+   * key part of its own. Build on `defaultKey` (`${defaultKey}|${segment}`)
+   * and the result is the record key byte for byte.
    *
    * Return `defaultKey` unchanged to leave a request unpartitioned. An empty
    * string is not a key: where the result partitions a nested cache() on
@@ -114,7 +119,7 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {
    *   const segment = ctx.request.headers.get('x-user-segment') || 'default';
-   *   return `${segment}:${defaultKey}`;
+   *   return `${defaultKey}|${segment}`;
    * }
    * ```
    *
@@ -122,7 +127,7 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {
    *   const region = ctx.env.REGION || 'us';
-   *   return `${region}:${defaultKey}`;
+   *   return `${defaultKey}|${region}`;
    * }
    * ```
    *
@@ -130,7 +135,7 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {
    *   const locale = cookies().get('locale')?.value || 'en';
-   *   return `${locale}:${defaultKey}`;
+   *   return `${defaultKey}|${locale}`;
    * }
    * ```
    */

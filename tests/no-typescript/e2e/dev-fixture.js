@@ -1,5 +1,6 @@
 import { stripVTControlCharacters, styleText } from "node:util";
 import { test as base, expect } from "@playwright/test";
+import { assertFixtureModeMatchesProject } from "@shared/e2e";
 import { x } from "tinyexec";
 import { waitForServer } from "./helper.js";
 
@@ -7,7 +8,13 @@ import { waitForServer } from "./helper.js";
 // dev tests on that worker.
 export const test = base.extend({
   devServerURL: [
-    async ({}, use) => {
+    async ({}, use, workerInfo) => {
+      // A dev server serves the dev project only; a "(production)" describe
+      // written with devTest would run against it in the production project.
+      assertFixtureModeMatchesProject("dev", {
+        titlePath: base.info().titlePath,
+        project: workerInfo.project,
+      });
       // detached so teardown can signal the whole process group (pnpm spawns
       // vite as a grandchild). Each Playwright worker gets an isolated Vite
       // cache dir so concurrent dev servers don't race on the shared

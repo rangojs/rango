@@ -155,10 +155,11 @@ export interface MatchHandlerDeps<TEnv = any> {
   defaultErrorBoundary: ReactNode | ErrorBoundaryHandler | undefined;
   findMatch: (pathname: string, ms?: any) => any;
   findInterceptForRoute: (
-    routeKey: string,
+    routeKeys: string | readonly string[],
     parentEntry: EntryData | null,
     selectorContext: InterceptSelectorContext | null,
     isAction: boolean,
+    held?: ReadonlySet<string>,
   ) => { intercept: InterceptEntry; entry: EntryData } | null;
   telemetry?: TelemetrySink;
   /**

@@ -26,7 +26,7 @@ import {
 } from "./segment-resolution/revalidation.js";
 import { fillSends } from "./segment-resolution/prefetch-deferral.js";
 import type { ResolutionPass } from "./segment-resolution/resolution-pass.js";
-import { getRouterContext } from "./router-context.js";
+import { getRouterContext, type InterceptResult } from "./router-context.js";
 import { runInSegmentTagScope } from "../cache/cache-tag.js";
 import {
   RangoContext,
@@ -61,18 +61,11 @@ function latchPprHeaderScopeForInterceptTarget(
  * If no when() conditions are defined, the intercept always activates.
  * A selector that throws yields the conservative default, no intercept (the
  * full page renders), and is logged; it never fails the request.
- *
- * During action revalidation, when() is NOT evaluated.
  */
 export function evaluateInterceptWhen(
   intercept: InterceptEntry,
   selectorContext: InterceptSelectorContext | null,
-  isAction: boolean,
 ): boolean {
-  if (isAction) {
-    return true;
-  }
-
   if (!intercept.when || intercept.when.length === 0) {
     return true;
   }
@@ -93,9 +86,34 @@ export function evaluateInterceptWhen(
 }
 
 /**
- * Find an intercept for the target route by walking up the entry chain.
- * Returns the first (innermost) matching intercept along with the entry that defines it.
+ * Walk the intercepts declared along `fromEntry`'s chain in selection order,
+ * an entry's own and then its orphans' (nested ones included) in render
+ * order, from `fromEntry` up, until `pick` returns a value. Tolerates partial
+ * entries (unit-test mocks omit the arrays); real registration always
+ * populates layout/intercept.
  */
+function findOnChain<T>(
+  fromEntry: EntryData | null,
+  pick: (intercept: InterceptEntry, entry: EntryData) => T | undefined,
+): T | undefined {
+  const visit = (entry: EntryData): T | undefined => {
+    for (const intercept of entry.intercept ?? []) {
+      const found = pick(intercept, entry);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+  let current: EntryData | null = fromEntry;
+  let prev: EntryData | null = null;
+  while (current) {
+    const found = visit(current) ?? findInOrphans(current, visit, prev);
+    if (found !== undefined) return found;
+    prev = current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
 /**
  * Collect every intercept TARGET route name reachable from an origin entry —
  * the same chain walk findInterceptForRoute() performs when this location is
@@ -111,55 +129,78 @@ export function collectInterceptTargetNames(
   fromEntry: EntryData | null,
 ): string[] {
   const names = new Set<string>();
-  // Tolerate partial entries (unit-test mocks omit the arrays); real
-  // registration always populates layout/intercept.
-  const add = (source: EntryData): undefined => {
-    for (const intercept of source.intercept ?? []) {
-      names.add(intercept.routeName);
-    }
+  findOnChain(fromEntry, (intercept) => {
+    names.add(intercept.routeName);
     return undefined;
-  };
-  let current: EntryData | null = fromEntry;
-  let prev: EntryData | null = null;
-  while (current) {
-    add(current);
-    findInOrphans(current, add, prev);
-    prev = current;
-    current = current.parent;
-  }
+  });
   return [...names];
 }
 
+/**
+ * The intercept for the target route, with the entry that declares it.
+ * `targetRouteKeys` are the names it may be declared for, in precedence
+ * order: the route's own name, then its local name inside include()
+ * (match-api.ts). A navigation, or an action with no `held`, takes the first
+ * along the chain from `fromEntry` up under the first name that has one: on a
+ * navigation, the first whose when() passes; on an action, the first, when()
+ * not evaluated.
+ *
+ * An action given `held` (the request's segment ids) re-renders the intercept
+ * on screen: one whose slot id the client holds, null when it holds none. Its
+ * candidates are collected under every name in one walk, the route's own
+ * name's first: a held id under the own name (a parallel() default of the
+ * slot's name) must not win before the local name is looked at. One held:
+ * that one, when() not evaluated, so an open intercept stays open when its
+ * when() would now reject. Several held (intercepts on one entry that fill one
+ * slot share its id, as does a parallel() slot of that name): the ones whose
+ * slot has no parallel() default on their entry, if any (a default holds its
+ * slot id whether or not an intercept is open there). One left: that one,
+ * when() not evaluated. Else the first whose when() passes against the
+ * action's intercept source, else the first.
+ */
 export function findInterceptForRoute(
-  targetRouteKey: string,
+  targetRouteKeys: string | readonly string[],
   fromEntry: EntryData | null,
   selectorContext: InterceptSelectorContext | null = null,
   isAction: boolean = false,
-): { intercept: InterceptEntry; entry: EntryData } | null {
-  const match = (source: EntryData) => {
-    for (const intercept of source.intercept) {
-      if (
-        intercept.routeName === targetRouteKey &&
-        evaluateInterceptWhen(intercept, selectorContext, isAction)
-      ) {
-        return { intercept, entry: source };
-      }
+  held?: ReadonlySet<string>,
+): InterceptResult | null {
+  const names =
+    typeof targetRouteKeys === "string" ? [targetRouteKeys] : targetRouteKeys;
+  if (!isAction || !held) {
+    for (const name of names) {
+      const found = findOnChain(fromEntry, (intercept, entry) =>
+        intercept.routeName === name &&
+        (isAction || evaluateInterceptWhen(intercept, selectorContext))
+          ? { intercept, entry }
+          : undefined,
+      );
+      if (found) return found;
+    }
+    return null;
+  }
+  const byName: InterceptResult[][] = names.map(() => []);
+  findOnChain(fromEntry, (intercept, entry) => {
+    const rank = names.indexOf(intercept.routeName);
+    if (rank !== -1 && held.has(interceptSlotId(entry, intercept))) {
+      byName[rank]!.push({ intercept, entry });
     }
     return undefined;
-  };
-  let current: EntryData | null = fromEntry;
-  let prev: EntryData | null = null;
-
-  while (current) {
-    // current first, then its orphans (nested ones included) in render order.
-    const found = match(current) ?? findInOrphans(current, match, prev);
-    if (found) return found;
-
-    prev = current;
-    current = current.parent;
-  }
-
-  return null;
+  });
+  const open = byName.flat();
+  if (open.length < 2) return open[0] ?? null;
+  // A parallel() default of the slot's name holds its slot id whichever
+  // intercept is open, so a candidate that has one proves nothing about what
+  // is on screen: among several, the ones without a default are the open ones.
+  const unshadowed = open.filter(
+    (c) => !c.entry.parallel?.[c.intercept.slotName],
+  );
+  const pool = unshadowed.length > 0 ? unshadowed : open;
+  if (pool.length === 1) return pool[0]!;
+  return (
+    pool.find((c) => evaluateInterceptWhen(c.intercept, selectorContext)) ??
+    pool[0]!
+  );
 }
 
 /**

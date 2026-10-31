@@ -44,6 +44,88 @@ change in your code. A handler without `loading()` and a push function bound
 before the `await` (`const push = ctx.use(Handle)`) were filed right before,
 and are unchanged.
 
+### Fixed: under a store `keyGenerator` that ignores `defaultKey`, a document request and a plain navigation never render an intercept's record ([#1298](https://github.com/rangojs/rango/pull/1298))
+
+**Before.** A store `keyGenerator`'s result was the record key as returned.
+The default key it receives starts with the request kind (`doc:`,
+`partial:`, `intercept:<intercept>:`), and a result that did not keep it
+gave a document request, a client navigation and every intercept navigation
+to the URL one record. So the defects #1293 fixed under `cache({ key })`
+happened without any `key()`: after an intercept navigation stored its
+record, a reload of the item URL rendered the intercept and no page, and a
+layout's `loading(..., { ssr: false })` fallback showed on a navigation after
+a document load as it never does live, or streamed on a document load after
+a navigation.
+
+```ts
+const store = new MemorySegmentCacheStore({
+  // A tenant per host, ignoring defaultKey.
+  keyGenerator: (ctx) => `tenant:${ctx.url.host}${ctx.url.pathname}`,
+});
+// /list -> /item/1 stored the intercept's record under that key; a reload
+// of /item/1 then rendered the layout with ItemModal and no ItemPage.
+```
+
+**Now.** A route record keeps its request kind whatever the `keyGenerator`
+returns. A result that starts with its kind, which every result built on
+`defaultKey` (`` `${defaultKey}|${tenant}` ``) and the default key itself
+do, is the key as before, byte for byte. A result that does not gets the kind
+as a last part: `items` is stored as `items|doc`, `items|partial` or
+`items|intercept%3A…`. An empty result, which was the key `""` for every
+kind, is stored as `|doc`, `|partial` or `|intercept%3A…`; where a result
+partitions a nested `cache()` or a ppr shell, `""` still fails key
+resolution, as before.
+
+**The documented `${x}:${defaultKey}` examples change keys.** The store
+`keyGenerator` JSDoc and the caching skill showed the prepend form
+(`` `${locale}:${defaultKey}` ``). It kept the request kind, but its result
+does not start with it, so its records get new keys: `en:doc:…` is now
+stored as `en%3Adoc%3A…|doc`. On `MemorySegmentCacheStore` and a custom
+store each such record misses once and is stored again, and the old one
+expires with its TTL; `CFCacheStore` and `VercelCacheStore` already miss
+every record once on a rango upgrade, so they lose nothing more. Build on
+`defaultKey` instead, `` `${defaultKey}|${locale}` ``, as the examples now
+do: a result that starts with `defaultKey` is the record key as you return
+it.
+
+On a `ppr` route under a `cache()` whose store has a `keyGenerator` that
+ignores `defaultKey`, the first navigation after a document request is now
+answered from the PPR shell (`x-rango-ppr-replay: HIT`) instead of the
+document's record (`BYPASS`), as under a `keyGenerator` built on
+`defaultKey`. The PPR shell partition (the raw result), a loader's entry and
+a response route's entry are unchanged. Your `keyGenerator` keeps working
+unchanged.
+
+### Fixed: a server action from an open intercept keeps that intercept when several target the route ([#1294](https://github.com/rangojs/rango/pull/1294))
+
+**Before.** When several intercepts target one route, each with its own
+`when()`, a server action submitted while one of them was open re-rendered
+the first intercept declared for the route, whichever was open: an action
+skipped `when()`. With `@modal` (from /list) declared before `@drawer` (from
+/other), an action from the drawer opened over /other opened the modal next
+to it, and the drawer's loaders did not re-run, so it kept the data it had
+before the action. Two intercepts on one layout that fill the same slot showed
+the other intercept's content and loader data in that slot. The same happened
+under `cache()`, over a `Prerender()` route, and inside an `include()` whose
+intercepts target the route by its own name and by its local name.
+
+**Now.** An action re-renders the intercept on screen, the one whose slot the
+page holds: its loaders re-run as after any action, and no other intercept
+opens. An open intercept still stays open after an action when its `when()`
+would now reject, also beside a `parallel()` default of another intercept's
+slot name. When the page holds the slots of more than one of the route's
+intercepts (two that fill one slot share it, and a `parallel()` of an
+intercept's slot name holds that slot whether or not an intercept is open
+there), whether they are declared for the route's name or its local name
+inside `include()`, the action sets aside the ones whose slot a `parallel()`
+fills and renders the one left, its `when()` not evaluated. Among several
+left, it evaluates their `when()` again, with `from` the intercept's source
+page, and the first that passes renders; when none passes, the first of them
+renders. When a `parallel()` fills every held slot, nothing but `when()` tells
+them apart, and that rule applies to all of them. `when()` selects an
+intercept; it does not authorize one: guard data in the target route's
+middleware or the intercept's loaders. No change in your code.
+
 ## 0.32.0 (2026-10-30)
 
 ### Fixed: a prefetch held by a `revalidate()` that read the source page no longer shows another page's layout ([#1333](https://github.com/rangojs/rango/pull/1333))

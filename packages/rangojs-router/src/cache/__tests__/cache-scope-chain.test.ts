@@ -335,6 +335,136 @@ describe("cache() key() results are namespaced (#975)", () => {
   });
 });
 
+describe("a store keyGenerator result keeps the request kind (rango-t204)", () => {
+  type KeyGenerator = NonNullable<SegmentCacheStore["keyGenerator"]>;
+
+  /** The request each kind sends for /pricing, and its intercept. */
+  const KIND_REQUESTS = {
+    document: { url: "/pricing", intercept: undefined },
+    navigation: { url: "/pricing?_rsc_partial=1", intercept: undefined },
+    modal: { url: "/pricing?_rsc_partial=1", intercept: "M0L0.@modal~0" },
+  } as const;
+
+  type RequestKind = keyof typeof KIND_REQUESTS;
+
+  const DEFAULT_KEYS: Record<RequestKind, string> = {
+    document: "doc:localhost/pricing",
+    navigation: "partial:localhost/pricing",
+    modal: "intercept:M0L0.@modal~0:localhost/pricing",
+  };
+
+  /** The record key each kind reads under `scope`, on a store with `keyGenerator`. */
+  async function keysOf(
+    keyGenerator: KeyGenerator,
+    scope: CacheScope = chain({ ttl: 60 }),
+    headers: Record<string, string> = {},
+  ): Promise<Record<RequestKind, string>> {
+    const out = {} as Record<RequestKind, string>;
+    for (const [kind, { url, intercept }] of Object.entries(KIND_REQUESTS)) {
+      const store = recordingStore({ keyGenerator });
+      await runWithRequestContext(requestFor(headers, store, url), () =>
+        scope.lookupRoute("/pricing", {}, intercept),
+      );
+      out[kind as RequestKind] = store.gets[0];
+    }
+    return out;
+  }
+
+  it("a result built on defaultKey keeps its record key byte for byte", async () => {
+    const generators: Record<string, (defaultKey: string) => string> = {
+      identity: (defaultKey) => defaultKey,
+      "defaultKey then a part": (defaultKey) => `${defaultKey}|en`,
+    };
+    for (const [name, generate] of Object.entries(generators)) {
+      expect(await keysOf((_ctx, d) => generate(d)), name).toEqual({
+        document: generate(DEFAULT_KEYS.document),
+        navigation: generate(DEFAULT_KEYS.navigation),
+        modal: generate(DEFAULT_KEYS.modal),
+      });
+    }
+  });
+
+  it("a result that drops the kind gets it as a last part: a document, a navigation and each intercept navigation read their own", async () => {
+    expect(await keysOf(() => "items")).toEqual({
+      document: "items|doc",
+      navigation: "items|partial",
+      modal: "items|intercept%3AM0L0.%40modal~0",
+    });
+    expect(await keysOf((ctx) => ctx.url.pathname)).toEqual({
+      document: "%2Fpricing|doc",
+      navigation: "%2Fpricing|partial",
+      modal: "%2Fpricing|intercept%3AM0L0.%40modal~0",
+    });
+    // A prefix before defaultKey moves the kind off the front.
+    expect(await keysOf((_ctx, d) => `en:${d}`)).toEqual({
+      document: "en%3Adoc%3Alocalhost%2Fpricing|doc",
+      navigation: "en%3Apartial%3Alocalhost%2Fpricing|partial",
+      modal:
+        "en%3Aintercept%3AM0L0.%40modal~0%3Alocalhost%2Fpricing|intercept%3AM0L0.%40modal~0",
+    });
+  });
+
+  it("under a keyed cache(), an inner scope's result keeps the kind too", async () => {
+    const scope = chain({ key: tierKey }, { ttl: 30 });
+    const gold = { "x-tier": "gold" };
+    expect(await keysOf(() => "items", scope, gold)).toEqual({
+      document: "key:tier%3Agold|items|doc",
+      navigation: "key:tier%3Agold|items|partial",
+      modal: "key:tier%3Agold|items|intercept%3AM0L0.%40modal~0",
+    });
+    expect(await keysOf((_ctx, d) => `${d}|en`, scope, gold)).toEqual({
+      document: "key:tier%3Agold|doc%3Alocalhost%2Fpricing%7Cen",
+      navigation: "key:tier%3Agold|partial%3Alocalhost%2Fpricing%7Cen",
+      modal:
+        "key:tier%3Agold|intercept%3AM0L0.%40modal~0%3Alocalhost%2Fpricing%7Cen",
+    });
+  });
+
+  it("collision probe: no two results, under any two kinds, share a record", async () => {
+    const results = [
+      "x",
+      "doc:x",
+      "doc",
+      "partial:x",
+      "partial",
+      "intercept:M0L0.@modal~0:x",
+      "x|doc",
+      "x%7Cdoc",
+      "",
+      "|",
+    ];
+    const seen = new Map<string, string>();
+    for (const result of results) {
+      const keys = await keysOf(() => result);
+      for (const [kind, key] of Object.entries(keys)) {
+        const label = `${kind} ${JSON.stringify(result)}`;
+        expect(seen.get(key), `${label} -> ${key}`).toBeUndefined();
+        seen.set(key, label);
+      }
+    }
+    expect(seen.size).toBe(results.length * Object.keys(KIND_REQUESTS).length);
+  });
+
+  it("the shell partition is the raw result, as before", async () => {
+    const cases: [KeyGenerator, string | null][] = [
+      [() => "items", "items"],
+      [(_ctx, d) => `${d}|en`, "doc:localhost/pricing|en"],
+      [(_ctx, d) => d, null],
+    ];
+    for (const [keyGenerator, partition] of cases) {
+      const store = recordingStore({ keyGenerator });
+      await runWithRequestContext(requestFor({}, store), async () => {
+        await expect(
+          resolveShellPartition(chain({ ttl: 60 }), store, "/pricing", {}),
+        ).resolves.toBe(partition);
+        await expect(
+          resolveShellPartition(null, store, "/pricing", {}),
+        ).resolves.toBe(partition);
+      });
+    }
+  });
+});
+
 describe("a nested cache() inherits the enclosing condition() (#974)", () => {
   it("an enclosing condition() returning false bypasses a nested scope's read: no key, no store read", async () => {
     const keyFn = vi.fn(tierKey);

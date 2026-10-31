@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0",
+    "@shared/e2e": "workspace:*",
     "tinyexec": "^0.3.2",
     "vite": "catalog:"
   }

@@ -356,7 +356,8 @@ export interface VercelCacheStoreOptions<TEnv = unknown> {
 
   /**
    * Custom key generator applied to all cache operations (region/locale/user
-   * segmentation). Receives the request context and the default key.
+   * segmentation). Receives the request context and the default key. A route
+   * record keeps its request kind (see SegmentCacheStore.keyGenerator).
    */
   keyGenerator?: (
     ctx: RequestContext<TEnv>,
