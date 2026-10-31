@@ -54,6 +54,12 @@ export { runRedispatchedDomContentLoadedTests } from "./redispatched-dom-content
 export type { RedispatchedDomContentLoadedScenarioOptions } from "./redispatched-dom-content-loaded-scenario.js";
 export { runActionStaleNavigationTests } from "./action-stale-navigation-scenario.js";
 export type { ActionStaleNavigationScenarioOptions } from "./action-stale-navigation-scenario.js";
+export {
+  readState,
+  readTexts,
+  recordTexts,
+  sameElement,
+} from "./action-stale-fixture.js";
 export { runActionStalePrefetchTests } from "./action-stale-prefetch-scenario.js";
 export type { ActionStalePrefetchScenarioOptions } from "./action-stale-prefetch-scenario.js";
 export { runActionHeldSegmentsTests } from "./action-held-segments-scenario.js";

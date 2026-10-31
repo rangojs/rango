@@ -1,11 +1,15 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import {
   navigations,
   openProductPage,
   prefetched,
   readNavigationStates,
+  readState,
+  readTexts,
   recordNavigationStates,
   recordPartials,
+  recordTexts,
+  sameElement,
   waitForSettled,
   waitForShown,
 } from "./action-stale-fixture.js";
@@ -32,66 +36,6 @@ export interface ActionStalePrefetchScenarioOptions {
   url: (pathname: string) => string;
   /** Load every module the cases use once per worker (a dev server). */
   warmUp: boolean;
-}
-
-/** The state cookie's value (`rango-state…`), or null. */
-async function readState(page: Page): Promise<string | null> {
-  return page.evaluate(() => {
-    for (const part of document.cookie.split(";")) {
-      const trimmed = part.trim();
-      const eq = trimmed.indexOf("=");
-      if (eq > 0 && trimmed.slice(0, eq).startsWith("rango-state")) {
-        return trimmed.slice(eq + 1);
-      }
-    }
-    return null;
-  });
-}
-
-/**
- * Records every text `testId` shows from now on (one entry per change), and
- * keeps the first element shown with it so a remount can be told from an
- * update in place.
- */
-async function recordTexts(page: Page, testId: string): Promise<void> {
-  await page.evaluate((id) => {
-    const seen: string[] = [];
-    let last: string | null | undefined;
-    let first: Element | null = null;
-    const read = (): void => {
-      const element = document.querySelector(`[data-testid="${id}"]`);
-      if (!element) return;
-      if (!first) first = element;
-      const text = element.textContent;
-      if (text === last) return;
-      last = text;
-      seen.push(text ?? "");
-    };
-    read();
-    new MutationObserver(read).observe(document.body, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-    Object.assign(self, {
-      __asTexts: seen,
-      __asSameElement: () =>
-        first !== null &&
-        document.querySelector(`[data-testid="${id}"]`) === first,
-    });
-  }, testId);
-}
-
-async function readTexts(page: Page): Promise<string[]> {
-  return page.evaluate(
-    () => (self as unknown as { __asTexts: string[] }).__asTexts,
-  );
-}
-
-async function sameElement(page: Page): Promise<boolean> {
-  return page.evaluate(() =>
-    (self as unknown as { __asSameElement(): boolean }).__asSameElement(),
-  );
 }
 
 function prefetchesOf(
