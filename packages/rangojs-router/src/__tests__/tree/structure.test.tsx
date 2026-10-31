@@ -266,7 +266,9 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
     );
   });
 
-  it("loading false: a LoaderBoundary without RouteContentWrapper", async () => {
+  // The server never sends `loading: false`: the walkers emit loading(false)
+  // as null (the first row). These two pin renderSegments' own branch for it.
+  it("loading false (never sent by the server): a LoaderBoundary without RouteContentWrapper", async () => {
     await expectShape(
       () => [layout(), route({ loading: false })],
       [
@@ -279,7 +281,7 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
     );
   });
 
-  it("loading false with a loader: the loader's error boundary inside the LoaderBoundary", async () => {
+  it("loading false (never sent by the server) with a loader: the loader's error boundary inside the LoaderBoundary", async () => {
     await expectShape(
       () => [layout(), routeLoader(), route({ loading: false })],
       [

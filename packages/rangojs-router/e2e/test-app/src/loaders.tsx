@@ -855,6 +855,12 @@ export const ParallelInheritLoader = createLoader(async () => {
   return { source: "route-level", value: "inherited-data" };
 });
 
+/** Counts its runs, so a suite sees an action's revalidation land. */
+let parallelInheritRuns = 0;
+export const ParallelInheritRunsLoader = createLoader(async () => {
+  return { runs: ++parallelInheritRuns };
+});
+
 // ============================================================================
 // Parallel loader revalidation (orphan layout) test
 // ============================================================================

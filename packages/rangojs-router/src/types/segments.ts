@@ -161,7 +161,14 @@ export interface ResolvedSegment {
   parallelName?: string; // For parallels: the parallel group name (used to match with revalidations)
   // Loader-specific fields
   loaderId?: string; // For loaders: the loader $$id identifier
-  _inherited?: boolean; // For inherited loaders: dedup marker for buildMatchResult
+  /**
+   * @internal Server-side marker on a route loader's copy inherited into a
+   * child layout with parallel slots, when the route renders no loading()
+   * fallback on any request (inheritedCopyRedundant, revalidation.ts):
+   * buildMatchResult drops the copy beside the route's own loader segment.
+   * Stripped from the wire payload, like `_handlerRan`.
+   */
+  _redundantCopy?: true;
   loaderData?: any; // For loaders: the resolved data from loader execution
   /**
    * True when this loader was awaited before first flush

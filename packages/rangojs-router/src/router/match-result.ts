@@ -133,43 +133,27 @@ export async function collectSegments(
 }
 
 /**
- * Deduplicate inherited loader segments by loaderId.
+ * Drop redundant inherited loader copies.
  *
  * When a route has loaders and a child layout has parallel slots, the same
  * loader is resolved twice: once for the route and once inherited into the
- * layout (tagged with `_inherited`). The inherited copy is only needed when
- * the route uses `loading()` — in that case, the loader data is inside a
- * LoaderBoundary/Suspense that parallel slots can't reach through. Without
- * loading(), useLoader() traverses parent contexts and finds the data.
+ * layout. The copy is only needed when the route renders a `loading()`
+ * fallback: the route's loader data is then inside a LoaderBoundary that
+ * parallel slots can't reach through. Without one, useLoader() traverses
+ * parent contexts and finds the data. The walker decides which copies are
+ * redundant from the route entry, the same on every request
+ * (inheritedCopyRedundant, segment-resolution/revalidation.ts), and marks
+ * them `_redundantCopy`; a marked copy goes when the route's own copy is in
+ * the same result.
  */
 function deduplicateLoaderSegments(
   segments: ResolvedSegment[],
   logPrefix: string,
 ): { segments: ResolvedSegment[]; removedIds: Set<string> } {
-  // Single pass: original (non-inherited) loaderIds, all loaderIds grouped by
-  // namespace, and namespaces of segments that declare loading().
   const originalLoaders = new Set<string>();
-  const loaderIdsByNamespace = new Map<string, string[]>();
-  const namespacesWithLoading = new Set<string>();
   for (const s of segments) {
-    if (s.type === "loader" && s.loaderId) {
-      if (!s._inherited) originalLoaders.add(s.loaderId);
-      const ids = loaderIdsByNamespace.get(s.namespace);
-      if (ids) ids.push(s.loaderId);
-      else loaderIdsByNamespace.set(s.namespace, [s.loaderId]);
-    } else if (
-      s.type !== "loader" &&
-      s.loading !== undefined &&
-      s.loading !== false
-    ) {
-      namespacesWithLoading.add(s.namespace);
-    }
-  }
-
-  const loadersWithLoading = new Set<string>();
-  for (const ns of namespacesWithLoading) {
-    for (const id of loaderIdsByNamespace.get(ns) ?? []) {
-      loadersWithLoading.add(id);
+    if (s.type === "loader" && s.loaderId && !s._redundantCopy) {
+      originalLoaders.add(s.loaderId);
     }
   }
 
@@ -178,11 +162,10 @@ function deduplicateLoaderSegments(
 
   for (const s of segments) {
     if (
+      s._redundantCopy &&
       s.type === "loader" &&
       s.loaderId &&
-      s._inherited &&
-      originalLoaders.has(s.loaderId) &&
-      !loadersWithLoading.has(s.loaderId)
+      originalLoaders.has(s.loaderId)
     ) {
       removedIds.add(s.id);
       continue;
@@ -279,15 +262,16 @@ export function buildMatchResult<TEnv>(
   const matchedIds =
     removedIds.size > 0 ? allIds.filter((id) => !removedIds.has(id)) : allIds;
 
-  // One pass over dedupedSegments: strip the internal _handlerRan marker and
-  // collect the diff ids (id is unchanged by the strip) together.
+  // One pass over dedupedSegments: strip the internal _handlerRan and
+  // _redundantCopy markers and collect the diff ids (id is unchanged by the
+  // strip) together.
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of dedupedSegments) {
-    if (s._handlerRan === undefined) {
+    if (s._handlerRan === undefined && s._redundantCopy === undefined) {
       cleanedSegments.push(s);
     } else {
-      const { _handlerRan: _drop, ...rest } = s;
+      const { _handlerRan: _ran, _redundantCopy: _copy, ...rest } = s;
       cleanedSegments.push(rest as ResolvedSegment);
     }
     diff.push(s.id);
