@@ -434,7 +434,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]);
 ```
 
-On an unchanged `:slug` this rule keeps the route after reading `currentParams`, so a prefetch of the same product (a tab, `?sort=price`) is stored for the page that sent it and the product's other pages prefetch it again. Links to other products stay shared. See [One prefetch serves every page](/docs/rango/features/navigation#one-prefetch-serves-every-page).
+On an unchanged `:slug` this rule keeps the route after reading `currentParams`, so a prefetch of the same product (a tab, `?sort=price`) is shared by the pages of that product (the rule read its slug): one prefetch of a tab serves every page of the product. Links to other products stay shared. See [One prefetch serves every page](/docs/rango/features/navigation#one-prefetch-serves-every-page).
 
 RR7's `shouldRevalidate` controls client-side loader re-fetching. Rango's `revalidate()` controls which segments and loaders re-run on the server during partial rendering after navigation or actions; in a `clientUrls()` group, a loader's `revalidate()` predicate runs there too, with the same arguments as in `urls()`. The intent is the same — skip unnecessary work. To react to one specific action, match it by reference with `ctx.isAction(updateProfile)` rather than comparing `actionId` strings. See [Choosing what revalidates](/docs/rango/guides/server-actions#choosing-what-revalidates).
 

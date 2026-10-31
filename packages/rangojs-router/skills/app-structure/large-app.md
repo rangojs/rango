@@ -862,8 +862,8 @@ export function ProjectNav() {
 ```
 
 `ProjectNavLoader`'s rule has the same cost: it reads `currentParams`, so a
-prefetch from `/acme/web/issues` to `/acme/web/settings` is stored for
-`/acme/web/issues` alone. Use it for links that need the server; links that
+prefetch from `/acme/web/issues` to `/acme/web/settings` is shared only by
+the pages of the `web` project with the same set of params. Use it for links that need the server; links that
 stay inside the project module can come from `useReverse(routes)` in
 `ProjectNav`, with no rule.
 
