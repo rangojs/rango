@@ -419,19 +419,23 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   /**
    * Custom key generator applied to all cache operations.
    * Receives the full RequestContext (including env) and the default-generated key.
-   * Return value becomes the final cache key (unless route overrides with `key` option).
+   * The return value is the cache key (unless route overrides with `key`
+   * option), except that a route record keeps its request kind: a result that
+   * does not start with `defaultKey`'s prefix (`doc:`, `partial:`,
+   * `intercept:<intercept>:`) gets the kind appended (see
+   * SegmentCacheStore.keyGenerator).
    *
    * Reserved prefixes: tag-invalidation markers live in the SAME KV namespace as
    * data, keyed `__tag__/<tag>` (and `__tagmarker__/<tag>` for the L1 cache). A
    * returned key must NOT begin with `__tag__/` or `__tagmarker__/`, or it can
    * collide with a tag marker and corrupt invalidation. The documented
-   * prepend-style generators below are safe.
+   * generators below start with `defaultKey` and are safe.
    *
    * @example Using headers for user segmentation
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {
    *   const segment = ctx.request.headers.get('x-user-segment') || 'default';
-   *   return `${segment}:${defaultKey}`;
+   *   return `${defaultKey}|${segment}`;
    * }
    * ```
    *
@@ -439,7 +443,7 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {
    *   const region = ctx.env.REGION || 'us';
-   *   return `${region}:${defaultKey}`;
+   *   return `${defaultKey}|${region}`;
    * }
    * ```
    *
@@ -447,7 +451,7 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    * ```typescript
    * keyGenerator: (ctx, defaultKey) => {
    *   const locale = cookies().get('locale')?.value || 'en';
-   *   return `${locale}:${defaultKey}`;
+   *   return `${defaultKey}|${locale}`;
    * }
    * ```
    */

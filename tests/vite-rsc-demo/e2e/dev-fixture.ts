@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { stripVTControlCharacters, styleText } from "node:util";
 import { test as base, expect } from "@playwright/test";
+import { assertFixtureModeMatchesProject } from "@shared/e2e";
 import { x } from "tinyexec";
 
 type DevServerFixture = {
@@ -9,7 +10,13 @@ type DevServerFixture = {
 
 export const test = base.extend<{}, DevServerFixture>({
   devServerURL: [
-    async ({}, use) => {
+    async ({}, use, workerInfo) => {
+      // A dev server serves the dev project only; a "(production)" describe
+      // written with devTest would run against it in the production project.
+      assertFixtureModeMatchesProject("dev", {
+        titlePath: base.info().titlePath,
+        project: workerInfo.project,
+      });
       const child = x("pnpm", ["dev"], {
         nodeOptions: { cwd: process.cwd() },
       }).process!;

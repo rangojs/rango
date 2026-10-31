@@ -3,7 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
-import { consoleGuardMode, installConsoleGuard } from "@shared/e2e";
+import {
+  assertFixtureModeMatchesProject,
+  consoleGuardMode,
+  installConsoleGuard,
+} from "@shared/e2e";
 import { x } from "tinyexec";
 
 function sanitizeNodeOptions(value?: string): string | undefined {
@@ -174,6 +178,7 @@ export function useFixture(options: {
   }
 
   test.beforeAll(async ({}, testInfo) => {
+    assertFixtureModeMatchesProject(options.mode, testInfo);
     if (options.mode === "dev") {
       const sharedURL = !options.isolatedServer && testInfo.project.use.baseURL;
       if (sharedURL) {
