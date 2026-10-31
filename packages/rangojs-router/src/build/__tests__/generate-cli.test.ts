@@ -713,14 +713,13 @@ const commandTempDirs: string[] = [];
 
 /**
  * A spawned CLI spends nearly all its time loading typescript (and vite, for
- * --runtime), and
- * spawnSync holds the worker until the child exits. Measured on a 10-core
- * machine, a static-mode run: 0.5 s alone, 0.5-2.5 s beside 12 busy loops,
- * 3.7-6.1 s in full test:unit runs at load average 30-50 (past the 5 s
- * default); a --runtime run: 2.4 s, 2.5-10.1 s and 11.9-15.7 s. A spawned
- * case's test timeout is the child's 30 s kill timeout: vitest cannot end a
- * synchronous spawn sooner, so a shorter one only fails a correct run that
- * was slow.
+ * --runtime), and spawnSync holds the worker until the child exits. Measured
+ * on a 10-core machine, a static-mode run: 0.5 s alone, 0.5-2.5 s beside 12
+ * busy loops, 3.7-6.1 s in full test:unit runs at load average 30-50 (past
+ * the 5 s default); a --runtime run: 2.4 s, 2.5-10.1 s and 11.9-15.7 s. A
+ * spawned case's test timeout is the child's 30 s kill timeout: vitest cannot
+ * end a synchronous spawn sooner, so a shorter one only fails a correct run
+ * that was slow.
  */
 function spawnRango(args: string, env?: NodeJS.ProcessEnv, bin = rangoBin) {
   const result = spawnSync("node", [bin, ...args.split(" ")], {
@@ -922,6 +921,9 @@ export default clientUrls(({ path }) => [
     const genPath = join(fixtureDir, "router.named-routes.gen.ts");
     const result = spawnRango(`generate ${routerFile} --runtime`);
     expect(result.status).toBe(0);
+    // The loader hook for cloudflare:* imports resolves next to its chunk
+    // (src/vite/temp-rsc-server.ts); a chunk move only warns, so pin it here.
+    expect(result.combined).not.toContain("Could not register");
     expect(existsSync(genPath)).toBe(true);
 
     const content = readFileSync(genPath, "utf-8");

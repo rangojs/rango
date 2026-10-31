@@ -295,9 +295,12 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
       err.code === "ERR_MODULE_NOT_FOUND" ||
       err.code === "MODULE_NOT_FOUND"
     ) {
+      // runtime-discovery checks vite and @vitejs/plugin-rsc itself and names
+      // what to install, so reaching here means a bundled chunk file is
+      // missing: the installed package is incomplete.
       console.error(
-        "[rango] Runtime discovery requires 'vite' and '@vitejs/plugin-rsc'.\n" +
-          "Install them with: pnpm add -D vite @vitejs/plugin-rsc",
+        `[rango] Failed to load runtime discovery: ${err.message}\n` +
+          "The installed @rangojs/router looks broken (a CLI chunk is missing). Reinstall it.",
       );
     } else {
       console.error(`[rango] Failed to load runtime discovery: ${err.message}`);
