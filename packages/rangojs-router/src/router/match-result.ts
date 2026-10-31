@@ -297,6 +297,9 @@ export function buildMatchResult<TEnv>(
   // origin — the browser-local clientUrls matcher declines its optimistic
   // presentation for these (see collectInterceptTargetNames).
   const interceptTargets = collectInterceptTargetNames(ctx.manifestEntry);
+  const sourceHeld = (
+    ctx.handlerContext as InternalHandlerContext<any, TEnv> | undefined
+  )?._sourceHeld;
 
   return {
     segments: cleanedSegments,
@@ -308,10 +311,7 @@ export function buildMatchResult<TEnv>(
     slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
-    ...((ctx.handlerContext as InternalHandlerContext<any, TEnv> | undefined)
-      ?._sourceHeld
-      ? { sourceHeld: true }
-      : {}),
+    ...(sourceHeld ? { sourceHeld } : {}),
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };

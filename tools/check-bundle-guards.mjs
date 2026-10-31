@@ -262,7 +262,23 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // 51836B), to pin the link's pending in both apps. The owner's rule
 // (rango-t84-q2): the measured size plus 256B, rounded up to the next 128B
 // step.
-const ROUTER_CHUNK_GZIP_MAX = 51.125 * 1024;
+//
+// Raised 51.125KB -> 51.875KB on 2026-10-31 for rango-t242, measured on
+// cloudflare-basic from main 67e43bd 52143B -> 52789B (+646B gzip, +1641B
+// raw). A prefetch a revalidate() kept from the page being left is shared
+// by the pages with equal values of what the rule read: the browser stores
+// it under the server's label (browser/prefetch/cache.ts buildParamsKey,
+// rememberParamsShape, paramsCandidateKeys; prefetch/fetch.ts
+// prefetchStorageSlot), rebuilds the label of the page on screen from the
+// router store's committed params (src/prefetch-source-scope.ts
+// formatSourceLabel, parseSourceShape; browser/navigation-store-handle.ts
+// getCommittedPage) and looks it up between the page-only and the shared
+// entry (browser/navigation-client.ts consumeStoredPrefetch,
+// wildcardAdoptionFits). None of it can load lazily: a click looks the entry
+// up synchronously, and browser/prefetch/ is on the rejected-splits list
+// (AGENTS.md, Bundle hygiene). By the owner's rule above: 52789B + 256B,
+// rounded up to the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 51.875 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

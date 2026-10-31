@@ -27,7 +27,11 @@ import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import { expandPayloadFragments } from "../segment-fragments.js";
 import { initRangoState } from "./rango-state.js";
-import { registerNavigationStore } from "./navigation-store-handle.js";
+import {
+  committedPageOf,
+  registerCommittedPageReader,
+  registerNavigationStore,
+} from "./navigation-store-handle.js";
 import { initPrefetchCache } from "./prefetch/cache.js";
 import {
   auditTreeCause,
@@ -286,6 +290,9 @@ export async function initBrowserApp(
 
   // Initialize route params
   eventController.setParams(initialPayload.metadata?.params ?? {});
+  // The page a prefetch is sent from, read by the prefetch cache at request
+  // time (browser/prefetch/cache.ts paramsCandidateKeys).
+  registerCommittedPageReader(committedPageOf(eventController, store));
 
   // Initialize handle data from initial payload BEFORE hydration
   // This ensures useHandle returns correct data during hydration to avoid mismatch

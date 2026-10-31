@@ -31,6 +31,9 @@
  *   route render a var its middleware sets from the destination, the route
  *   one from its own middleware; the held-by-default layout and the
  *   destination-only route have a loading().
+ * - locale: the documented locale rule above two routes, so a prefetch the
+ *   rule keeps the layout for is shared by the pages of one locale
+ *   (`x-rsc-prefetch-scope: params`, rango-t242).
  */
 import React from "react";
 import {
@@ -309,6 +312,28 @@ export const sourceIndependenceRouter: Rango<any, any> = createRouter(
                 ),
               ],
             ),
+            // The documented locale rule (guides/layouts.mdx): a prefetch
+            // it keeps the layout for is shared by the pages of one locale
+            // (`x-rsc-prefetch-scope: params`), of either route.
+            layout(
+              (ctx) => <section>{`locale:${ctx.params.locale}`}</section>,
+              () => [
+                revalidate(
+                  ({ currentParams, nextParams }) =>
+                    currentParams.locale !== nextParams.locale || undefined,
+                ),
+                path(
+                  "/l/:locale/products",
+                  (ctx) => (
+                    <ul>{`products:${ctx.url.searchParams.get("page")}`}</ul>
+                  ),
+                  { name: "localeProducts" },
+                ),
+                path("/l/:locale/about", () => <article>about</article>, {
+                  name: "localeAbout",
+                }),
+              ],
+            ),
             layout(
               () => <section>boxes</section>,
               () => [
@@ -385,5 +410,11 @@ export const SOURCE_INDEPENDENCE_URLS: Record<string, readonly string[]> = {
     "/f/ix/list",
     "/f/ix/item/1",
     "/f/ix/item/2",
+  ],
+  locale: [
+    "/l/en/products?page=1",
+    "/l/en/products?page=2",
+    "/l/en/about",
+    "/l/fr/products?page=1",
   ],
 };
