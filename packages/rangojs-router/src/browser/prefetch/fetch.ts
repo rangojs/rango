@@ -16,9 +16,12 @@
  */
 
 import {
+  buildParamsKey,
   buildPrefetchKey,
   buildSourceKey,
   hasPrefetch,
+  paramsCandidateKeys,
+  rememberParamsShape,
   markPrefetchInflight,
   setInflightPromiseWithAliases,
   storePrefetch,
@@ -27,7 +30,9 @@ import {
   currentGeneration,
   isFragmentPassthroughEnabled,
   type DecodedPrefetch,
+  type PrefetchScope,
 } from "./cache.js";
+import { paramsScopeLabel } from "../../prefetch-source-scope.js";
 import { getRangoState } from "../rango-state.js";
 import { isActionFenceActive } from "../action-fence.js";
 import { enqueuePrefetch } from "./queue.js";
@@ -37,7 +42,10 @@ import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../../segment-fragments.js";
 import { PREFETCH_HEADER } from "../../prefetch-markers.js";
 import type { RscPayload } from "../types.js";
-import { getRegisteredStore } from "../navigation-store-handle.js";
+import {
+  getCommittedPage,
+  getRegisteredStore,
+} from "../navigation-store-handle.js";
 import { writePartialParams } from "../wire-protocol.js";
 
 /**
@@ -87,7 +95,7 @@ export function setPrefetchDecoder(fn: PrefetchDecoder): void {
 function makeRespawn(
   storageKey: string,
   reserve: ReadableStream<Uint8Array>,
-  scope: "source" | "wildcard",
+  slot: PrefetchSlot,
 ): () => DecodedPrefetch {
   return () => {
     const [body, nextReserve] = reserve.tee();
@@ -98,7 +106,8 @@ function makeRespawn(
     const entry: DecodedPrefetch = {
       payload,
       streamComplete: Promise.resolve(),
-      scope,
+      scope: slot.scope,
+      ...(slot.paramsLabel !== undefined && { paramsLabel: slot.paramsLabel }),
       complete: true,
       dispose: () => {
         // Rejects (caught) instead of throwing if the branch is already
@@ -107,7 +116,7 @@ function makeRespawn(
         nextReserve.cancel().catch(() => {});
       },
     };
-    entry.respawn = makeRespawn(storageKey, nextReserve, scope);
+    entry.respawn = makeRespawn(storageKey, nextReserve, slot);
     // Parity with the original path: a rejected decode must not stay
     // consumable. Clean bytes should never fail to decode, but if they do,
     // evict (identity-guarded) so navigation refetches instead.
@@ -165,20 +174,43 @@ function buildPrefetchUrl(
   });
 }
 
+/** Where a completed prefetch is stored, and the label of a params scope. */
+export interface PrefetchSlot {
+  scope: PrefetchScope;
+  key: string;
+  paramsLabel?: string;
+}
+
 /**
  * Where a completed prefetch is stored: under the source key when the Link
- * forced it or the response says `X-RSC-Prefetch-Scope: source`, else under
- * the key every source page shares (#1331).
+ * forced it or the response says `X-RSC-Prefetch-Scope: source`; under the
+ * label's key when it says `params; <label>`, for the pages with equal values
+ * of what a revalidate() rule read; else under the key every source page
+ * shares (#1331, rango-t242).
  */
 export function prefetchStorageSlot(
   forceSourceScope: boolean,
   scopeHeader: string | null,
   sourceKey: string,
   wildcardKey: string,
-): { scope: "source" | "wildcard"; key: string } {
-  return forceSourceScope || scopeHeader === "source"
-    ? { scope: "source", key: sourceKey }
-    : { scope: "wildcard", key: wildcardKey };
+  rangoState: string,
+  targetUrl: URL,
+): PrefetchSlot {
+  if (forceSourceScope || scopeHeader === "source") {
+    return { scope: "source", key: sourceKey };
+  }
+  const label = paramsScopeLabel(scopeHeader);
+  if (label === undefined) return { scope: "wildcard", key: wildcardKey };
+  return {
+    scope: "params",
+    key: buildParamsKey(rangoState, label, targetUrl),
+    paramsLabel: label,
+  };
+}
+
+/** The params-scoped keys a prefetch from the page on screen may dedupe on. */
+function paramsKeysFor(rangoState: string, targetUrl: URL): string[] {
+  return paramsCandidateKeys(rangoState, targetUrl, getCommittedPage());
 }
 
 /**
@@ -207,14 +239,16 @@ export function prefetchStorageSlot(
  *   `sourceKey` so same-source navigations adopt directly via their own
  *   source key. Storage key is chosen at response time from the
  *   `X-RSC-Prefetch-Scope` header — `"source"` → `sourceKey` (a route an
- *   intercept targets), anything else → `wildcardKey`. The entry records its scope
- *   so cross-source navigations that adopted via `wildcardKey` can bail out
- *   in `navigation-client.ts` when the adopted entry turns out source-scoped.
+ *   intercept targets), `"params; <label>"` → the label's key, anything else
+ *   → `wildcardKey`. The entry records its scope (and label) so cross-source
+ *   navigations that adopted via `wildcardKey` can bail out in
+ *   `navigation-client.ts` when the adopted entry turns out source-scoped,
+ *   or params-scoped to a group their page is not in.
  */
 function executePrefetchFetch(
   wildcardKey: string,
   sourceKey: string,
-  fetchUrl: string,
+  targetUrl: URL,
   forceSourceScope: boolean,
   /** Rango state captured once by the caller (keys + header share one read). */
   rangoState: string,
@@ -269,7 +303,7 @@ function executePrefetchFetch(
       });
   }
 
-  const promise: Promise<DecodedPrefetch | null> = fetch(fetchUrl, {
+  const promise: Promise<DecodedPrefetch | null> = fetch(targetUrl.toString(), {
     priority: "low" as RequestPriority,
     // During an action's flight the state is not rotated, so the old
     // X-Rango-State still matches the Vary-keyed HTTP-cache entry; bypass it so
@@ -304,12 +338,18 @@ function executePrefetchFetch(
         return null;
       }
 
-      const { scope, key: storageKey } = prefetchStorageSlot(
+      // The one place the storage key is decided: from the header, with the
+      // values the server read. A key computed when the fetch was scheduled
+      // and written again later would undo it (vercel/next.js#91488).
+      const slot = prefetchStorageSlot(
         forceSourceScope,
         response.headers.get("x-rsc-prefetch-scope"),
         sourceKey,
         wildcardKey,
+        rangoState,
+        targetUrl,
       );
+      const storageKey = slot.key;
 
       // Track stream completion off a tee so navigation's scroll/revalidation
       // gating matches the fresh-fetch path; decode the other branch. The
@@ -356,7 +396,10 @@ function executePrefetchFetch(
       const entry: DecodedPrefetch = {
         payload,
         streamComplete,
-        scope,
+        scope: slot.scope,
+        ...(slot.paramsLabel !== undefined && {
+          paramsLabel: slot.paramsLabel,
+        }),
         complete: false,
         stallTimer: timeoutId,
         ...(reserve && {
@@ -365,7 +408,10 @@ function executePrefetchFetch(
           },
         }),
       };
-      storePrefetch(storageKey, entry, gen);
+      storePrefetch(storageKey, entry, gen, inflightKeys[0]);
+      if (slot.paramsLabel !== undefined) {
+        rememberParamsShape(targetUrl, slot.paramsLabel);
+      }
       // The stall timeout now owns the body stream: arm eviction (publishedKey)
       // and clear the timer once the stream completes. The tee's finally resolves
       // streamComplete on normal completion AND on abort, so a healthy body pays
@@ -391,7 +437,7 @@ function executePrefetchFetch(
         if (decode.status === "fulfilled" && endedCleanly) {
           entry.complete = true;
           if (reserve) {
-            entry.respawn = makeRespawn(storageKey, reserve, scope);
+            entry.respawn = makeRespawn(storageKey, reserve, slot);
             // Refill after an early adoption. A click that lands before this
             // point adopts the entry with respawn unarmed and leaves the slot
             // empty — via either path: pre-headers inflight adoption makes
@@ -425,7 +471,8 @@ function executePrefetchFetch(
 }
 
 /**
- * Dedup check for prefetch entry presence.
+ * Dedup check for prefetch entry presence: the wildcard key, the source key,
+ * or a params-scoped answer whose group the page on screen is in.
  *
  * Forced `:source` must NOT dedupe against a pre-existing wildcard entry —
  * otherwise the source slot would stay unpopulated and navigation from
@@ -436,10 +483,15 @@ function hasPrefetchHit(
   forceSourceScope: boolean,
   wildcardKey: string,
   sourceKey: string,
+  rangoState: string,
+  targetUrl: URL,
 ): boolean {
-  return forceSourceScope
-    ? hasPrefetch(sourceKey)
-    : hasPrefetch(wildcardKey) || hasPrefetch(sourceKey);
+  if (forceSourceScope) return hasPrefetch(sourceKey);
+  return (
+    hasPrefetch(wildcardKey) ||
+    hasPrefetch(sourceKey) ||
+    paramsKeysFor(rangoState, targetUrl).some(hasPrefetch)
+  );
 }
 
 /**
@@ -477,7 +529,15 @@ export function prefetchDirect(
   const rangoState = getRangoState();
   const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
   const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
-  if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
+  if (
+    hasPrefetchHit(
+      forceSourceScope,
+      wildcardKey,
+      sourceKey,
+      rangoState,
+      targetUrl,
+    )
+  ) {
     if (IS_BROWSER_DEBUG) {
       debugLog("[prefetch] direct dedup (key already exists)", {
         url,
@@ -500,7 +560,7 @@ export function prefetchDirect(
   executePrefetchFetch(
     wildcardKey,
     sourceKey,
-    targetUrl.toString(),
+    targetUrl,
     forceSourceScope,
     rangoState,
     routerId,
@@ -532,7 +592,15 @@ export function prefetchQueued(
   const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
   const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
   const queueKey = forceSourceScope ? sourceKey : wildcardKey;
-  if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
+  if (
+    hasPrefetchHit(
+      forceSourceScope,
+      wildcardKey,
+      sourceKey,
+      rangoState,
+      targetUrl,
+    )
+  ) {
     if (IS_BROWSER_DEBUG) {
       debugLog("[prefetch] queued dedup (key already exists)", {
         url,
@@ -543,11 +611,18 @@ export function prefetchQueued(
     }
     return queueKey;
   }
-  const fetchUrlStr = targetUrl.toString();
   enqueuePrefetch(queueKey, (signal) => {
     // Re-check at execution time: a hover-triggered prefetchDirect may
     // have started or completed this key while the item sat in the queue.
-    if (hasPrefetchHit(forceSourceScope, wildcardKey, sourceKey)) {
+    if (
+      hasPrefetchHit(
+        forceSourceScope,
+        wildcardKey,
+        sourceKey,
+        rangoState,
+        targetUrl,
+      )
+    ) {
       return Promise.resolve();
     }
     if (!forceSourceScope && isSamePage(url)) {
@@ -556,7 +631,7 @@ export function prefetchQueued(
     return executePrefetchFetch(
       wildcardKey,
       sourceKey,
-      fetchUrlStr,
+      targetUrl,
       forceSourceScope,
       rangoState,
       routerId,

@@ -18,12 +18,17 @@ import {
 } from "../../../browser/segment-reconciler.js";
 import { isPlaceholder } from "../../../types/segments.js";
 import type { ResolvedSegment } from "../../../types.js";
+import type { SourcePage } from "../../../prefetch-source-scope.js";
 
 /** A partial response's metadata, as the browser decodes it. */
 export interface Answer {
   segments: ResolvedSegment[];
   matched: string[];
   diff: string[];
+  /** The page's params, which the router store commits with it. */
+  params?: Record<string, string>;
+  /** The page's public route name. */
+  routeName?: string;
 }
 
 /** What a tab shows: the URL and the segments its tree is built from. */
@@ -32,6 +37,12 @@ export interface Screen {
   segments: ResolvedSegment[];
   /** The ids the page's next request sends. */
   matched: string[];
+  /**
+   * The params and route name the router store committed with the page
+   * (navigation-store-handle.ts getCommittedPage): the group a params-scoped
+   * prefetch is looked up for. None: no params-scoped lookup.
+   */
+  page?: SourcePage;
 }
 
 /**

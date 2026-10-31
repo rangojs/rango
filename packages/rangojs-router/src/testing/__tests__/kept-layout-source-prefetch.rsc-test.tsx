@@ -8,11 +8,14 @@
  * (PLPs, a product page, /cart) renders a category hero on category pages,
  * and its revalidate() re-renders it when the category changes. A prefetch
  * of /cart sent from a product page holds the layout. The browser keeps a
- * prefetch shared between source pages unless the response says
- * `x-rsc-prefetch-scope: source` (browser/prefetch/fetch.ts), and a page
- * that adopts it keeps ITS copy of every segment the answer held
- * (browser/segment-reconciler.ts): clicked from a category page, the cart
- * rendered under that page's hero.
+ * prefetch shared between source pages unless the response scopes it
+ * (browser/prefetch/fetch.ts), and a page that adopts it keeps ITS copy of
+ * every segment the answer held (browser/segment-reconciler.ts): clicked
+ * from a category page, the cart rendered under that page's hero.
+ *
+ * The answer is scoped to the pages with equal values of what the kept rule
+ * read (`x-rsc-prefetch-scope: params; <label>`, rango-t242): the product
+ * pages share it, a category page is not in the group.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -42,6 +45,8 @@ import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { reconcileSegments } from "../../browser/segment-reconciler.js";
 import type { ResolvedSegment, ShouldRevalidateFn } from "../../types.js";
+import { pageMatchesParamsLabel } from "../../browser/prefetch/cache.js";
+import { paramsScopeLabel } from "../../prefetch-source-scope.js";
 import group from "./fixtures/kept-layout-source.js";
 
 const BasketLoader = createLoader(async () => ({ items: 0 }));
@@ -117,6 +122,22 @@ const router = createRouter({}).routes(
           (ctx) => <Template category={categoryOf(ctx.params)} />,
           () => [include("/plain", group, { name: "plain" })],
         ),
+        // The documented locale rule (guides/i18n.mdx).
+        layout(
+          (ctx) => <nav>{`locale:${ctx.params.locale}`}</nav>,
+          () => [
+            revalidate(
+              ({ currentParams, nextParams }) =>
+                currentParams.locale !== nextParams.locale || undefined,
+            ),
+            path("/i18n/:locale", () => <h1>home</h1>, { name: "i18nHome" }),
+            path(
+              "/i18n/:locale/products",
+              (ctx) => <ul>{`page:${ctx.url.searchParams.get("page")}`}</ul>,
+              { name: "i18nProducts" },
+            ),
+          ],
+        ),
       ],
     ),
   ]),
@@ -126,6 +147,8 @@ interface Metadata {
   segments: ResolvedSegment[];
   matched: string[];
   diff: string[];
+  params: Record<string, string>;
+  routeName?: string;
 }
 
 async function metadataOf(result: ServeShellRequestResult): Promise<Metadata> {
@@ -153,6 +176,16 @@ const prefetch = (from: string, held: Metadata, to: string) =>
 const scopeOf = (result: ServeShellRequestResult) =>
   result.response.headers.get("x-rsc-prefetch-scope");
 
+/**
+ * Whether a page standing on `page` adopts the answer: it is in the group
+ * the answer's params scope names (browser/prefetch/cache.ts).
+ */
+const sharedWith = (result: ServeShellRequestResult, page: Metadata) =>
+  pageMatchesParamsLabel(paramsScopeLabel(scopeOf(result))!, {
+    params: page.params,
+    routeName: page.routeName,
+  });
+
 /** The template's segment: the layout right above the group's route. */
 const templateOf = (page: Metadata): ResolvedSegment =>
   page.segments.filter((s) => s.type === "layout").at(-1)!;
@@ -167,8 +200,9 @@ beforeEach(async () => {
 });
 
 describe("a prefetch a revalidate() answered from the source page", () => {
-  it("held the template from a product page: the answer is scoped to that page", async () => {
+  it("held the template from a product page: the answer is scoped to the product pages", async () => {
     const product = await standingOn("/p/1");
+    const otherProduct = await standingOn("/p/2");
     const category = await standingOn("/c/audio");
     const template = templateOf(product).id;
     expect(templateOf(category).id).toBe(template);
@@ -192,7 +226,11 @@ describe("a prefetch a revalidate() answered from the source page", () => {
       templateOf(category),
     );
 
-    expect(scopeOf(fromProduct)).toBe("source");
+    // The rule read `category`, absent on a product page: the group is the
+    // pages with a product page's params, so the category page is not in it.
+    expect(scopeOf(fromProduct)).toBe("params; $k=productId");
+    expect(sharedWith(fromProduct, otherProduct)).toBe(true);
+    expect(sharedWith(fromProduct, category)).toBe(false);
   });
 
   it("re-rendered the template from a category page: the answer is shared", async () => {
@@ -215,7 +253,7 @@ describe("a prefetch a revalidate() answered from the source page", () => {
 });
 
 describe("a prefetch of a prerendered target served from its stored entry", () => {
-  it("held the template from a page with the same params, its revalidate() not asked: the answer is scoped to that page", async () => {
+  it("held the template from a page with the same params, its revalidate() not asked: the answer is scoped to pages with those params", async () => {
     const wishlist = await standingOn("/baked/wishlist");
     const category = await standingOn("/baked/c/audio");
     const template = templateOf(wishlist).id;
@@ -233,7 +271,9 @@ describe("a prefetch of a prerendered target served from its stored entry", () =
     const answer = await metadataOf(fromWishlist);
     expect(answer.matched).toContain(template);
     expect(answer.diff).not.toContain(template);
-    expect(scopeOf(fromWishlist)).toBe("source");
+    // Equal params decided the keep: every param is in the group.
+    expect(scopeOf(fromWishlist)).toBe("params; $k=");
+    expect(sharedWith(fromWishlist, category)).toBe(false);
   });
 
   it("re-rendered the template from a category page: the answer is shared", async () => {
@@ -250,7 +290,7 @@ describe("a prefetch of a prerendered target served from its stored entry", () =
     expect(scopeOf(fromCategory)).toBeNull();
   });
 
-  it("kept the route's own segment on a search-only change: the answer is scoped to that page", async () => {
+  it("kept the route's own segment on a search-only change, sending nothing: the answer is scoped to that page", async () => {
     const tabA = await standingOn("/baked/item/1?tab=a");
     const item2 = await standingOn("/baked/item/2");
     const route = routeOf(tabA).id;
@@ -276,6 +316,10 @@ describe("a prefetch of a prerendered target served from its stored entry", () =
     });
     expect(adopted.segments.find((s) => s.id === route)).toBe(routeOf(item2));
 
+    // It sends nothing: a page that adopted it would commit treeless and
+    // keep its whole tree, so only its source may (source-reads.ts
+    // prefetchScopeOf).
+    expect(answer.diff).toEqual([]);
     expect(scopeOf(fromTabA)).toBe("source");
   });
 
@@ -290,5 +334,61 @@ describe("a prefetch of a prerendered target served from its stored entry", () =
     );
     expect((await metadataOf(fromItem2)).diff).toContain(route);
     expect(scopeOf(fromItem2)).toBeNull();
+  });
+});
+
+describe("a prefetch the locale rule kept the layout for (rango-t242)", () => {
+  /** The locale layout: the one right above the route. */
+  const localeLayoutOf = (page: Metadata): ResolvedSegment =>
+    page.segments.filter((s) => s.type === "layout").at(-1)!;
+
+  it("from page 1 of /en is shared by page 2, which renders it as its own request", async () => {
+    const page1 = await standingOn("/i18n/en/products?page=1");
+    const page2 = await standingOn("/i18n/en/products?page=2");
+
+    const fromPage1 = await prefetch(
+      "/i18n/en/products?page=1",
+      page1,
+      "/i18n/en",
+    );
+    expect(scopeOf(fromPage1)).toBe("params; $k=locale&locale=en");
+    expect(sharedWith(fromPage1, page2)).toBe(true);
+
+    // Page 2 adopting it keeps its own copy of the layout, as its own request
+    // does.
+    const answer = await metadataOf(fromPage1);
+    const own = await metadataOf(
+      await prefetch("/i18n/en/products?page=2", page2, "/i18n/en"),
+    );
+    expect(answer.diff).toEqual(own.diff);
+    expect(answer.matched).toEqual(own.matched);
+    const adopted = reconcileSegments({
+      actor: "navigation",
+      matched: answer.matched,
+      diff: answer.diff,
+      serverSegments: answer.segments,
+      cachedSegments: page2.segments,
+      insertMissingDiff: true,
+    });
+    expect(
+      adopted.segments.find((s) => s.id === localeLayoutOf(page2).id),
+    ).toBe(localeLayoutOf(page2));
+  });
+
+  it("from /fr is not shared with an /en page", async () => {
+    const fr = await standingOn("/i18n/fr/products?page=1");
+    const en = await standingOn("/i18n/en/products?page=2");
+
+    // The locale changes: the layout re-renders, the answer is shared.
+    const fromFr = await prefetch("/i18n/fr/products?page=1", fr, "/i18n/en");
+    expect(scopeOf(fromFr)).toBeNull();
+
+    const fromFrToFr = await prefetch(
+      "/i18n/fr/products?page=1",
+      fr,
+      "/i18n/fr",
+    );
+    expect(scopeOf(fromFrToFr)).toBe("params; $k=locale&locale=fr");
+    expect(sharedWith(fromFrToFr, en)).toBe(false);
   });
 });

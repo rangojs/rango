@@ -301,10 +301,11 @@ export interface MatchResult {
   interceptTargeted?: true;
   /**
    * Set on a partial match when a revalidate() predicate read the source page
-   * and kept a held segment: the diff is that source's. The RSC handler
-   * scopes its prefetch entry to it, like `interceptTargeted` (#1331).
+   * and kept a held segment: the diff is right for the pages with equal values
+   * of what it read. The RSC handler scopes its prefetch entry to that group,
+   * or to the source page when the predicate read `currentUrl` (#1331).
    */
-  sourceHeld?: true;
+  sourceHeld?: import("../router/source-reads.js").SourceHeld;
   /**
    * Redirect URL for trailing slash normalization.
    * When set, the RSC handler should return a 308 redirect to this URL
