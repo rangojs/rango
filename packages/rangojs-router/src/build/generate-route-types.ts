@@ -34,6 +34,7 @@ export {
   formatNestedRouterConflictError,
   findRouterFiles,
   findHostRouterFiles,
+  isRoutableSourceFile,
   writeCombinedRouteTypes,
   genFileTsPath,
   resolveSearchSchemas,

@@ -9,9 +9,11 @@
  *   browser/prefetch/fetch.ts send (writePartialParams, the prefetch header,
  *   X-RSC-Router-Client-Path);
  * - the prefetch cache (browser/prefetch/cache.ts): the keys
- *   (buildSourceKey, buildPrefetchKey), the slot a prefetch is stored in
- *   (prefetchStorageSlot, prefetch/fetch.ts) and the slot a click adopts
- *   from (consumeStoredPrefetch, navigation-client.ts);
+ *   (buildSourceKey, buildPrefetchKey, paramsCandidateKeys), the slot a
+ *   prefetch is stored in (prefetchStorageSlot, prefetch/fetch.ts) and the
+ *   slot a click adopts from (consumeStoredPrefetch, navigation-client.ts),
+ *   with the page on screen's params and route name as the router store
+ *   commits them (the answer's metadata);
  * - reconcileSegments (browser/segment-reconciler.ts).
  *
  * Restated, and pinned to production by prefetch-browser-commit.test.tsx
@@ -43,9 +45,12 @@ import {
   buildSourceKey,
   clearPrefetchCache,
   currentGeneration,
+  paramsCandidateKeys,
+  rememberParamsShape,
   storePrefetch,
   type DecodedPrefetch,
 } from "../../../browser/prefetch/cache.js";
+import type { SourcePage } from "../../../prefetch-source-scope.js";
 import { prefetchStorageSlot } from "../../../browser/prefetch/fetch.js";
 import { consumeStoredPrefetch } from "../../../browser/navigation-client.js";
 import { isInterceptOnlyCache } from "../../../browser/intercept-utils.js";
@@ -81,13 +86,24 @@ export async function answerOf(
 
 const pathOf = (url: URL): string => url.pathname + url.search;
 
+/** The page an answer commits, as the router store holds it. */
+export const pageOf = (answer: Answer): SourcePage => ({
+  params: answer.params ?? {},
+  routeName: answer.routeName,
+});
+
 /** A document load of `href`: every segment rendered. */
 export async function loadScreen(serve: Serve, href: string): Promise<Screen> {
   const url = new URL(href, ORIGIN);
   const answer = await answerOf(
     await serve(pathOf(url), { partial: { from: pathOf(url) } }),
   );
-  return { href: url.href, segments: answer.segments, matched: answer.matched };
+  return {
+    href: url.href,
+    segments: answer.segments,
+    matched: answer.matched,
+    page: pageOf(answer),
+  };
 }
 
 /** A response to the page on `from`. */
@@ -151,22 +167,28 @@ export function storePrefetchOf(
   fetched: Fetched,
 ): void {
   const fetchUrl = fetchUrlOf(to, from.href, from.matched);
-  const { scope, key } = prefetchStorageSlot(
+  const slot = prefetchStorageSlot(
     false,
     fetched.scope,
     buildSourceKey(RANGO_STATE, from.href, fetchUrl),
     buildPrefetchKey(RANGO_STATE, fetchUrl),
+    RANGO_STATE,
+    fetchUrl,
   );
   const entry = (): DecodedPrefetch => ({
     payload: Promise.resolve({
       metadata: fetched.answer,
     } as unknown as RscPayload),
     streamComplete: Promise.resolve(),
-    scope,
+    scope: slot.scope,
+    paramsLabel: slot.paramsLabel,
     complete: true,
     respawn: entry,
   });
-  storePrefetch(key, entry(), currentGeneration());
+  storePrefetch(slot.key, entry(), currentGeneration());
+  if (slot.paramsLabel !== undefined) {
+    rememberParamsShape(fetchUrl, slot.paramsLabel);
+  }
 }
 
 /**
@@ -182,6 +204,7 @@ export async function adoptPrefetch(
   const { entry } = consumeStoredPrefetch(
     true,
     buildSourceKey(RANGO_STATE, from.href, fetchUrl),
+    paramsCandidateKeys(RANGO_STATE, fetchUrl, from.page ?? null),
     buildPrefetchKey(RANGO_STATE, fetchUrl),
   );
   if (!entry) return null;
@@ -258,10 +281,11 @@ export function createPrefetchBrowser(serve: Serve): PrefetchBrowser {
           href,
           segments: fresh.answer.segments,
           matched: fresh.answer.matched,
+          page: pageOf(fresh.answer),
         });
         return { screen, adoption: "refetched" };
       }
-      show({ href, segments, matched: answer.matched });
+      show({ href, segments, matched: answer.matched, page: pageOf(answer) });
       return { screen, adoption: adopted ? "prefetch" : "fetched" };
     },
   };

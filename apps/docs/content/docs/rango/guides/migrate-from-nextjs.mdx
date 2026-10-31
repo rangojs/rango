@@ -402,7 +402,7 @@ parallel({ "@sidebar": BlogSidebar }, () => [
 ]);
 ```
 
-The sidebar rule reads `currentParams` and keeps the sidebar on an unchanged `:slug`, so a prefetch of the same post (another tab, `?sort=`) is stored for the page that sent it and the post's other pages prefetch it again. Links to other posts stay shared. See [One prefetch serves every page](/docs/rango/features/navigation#one-prefetch-serves-every-page).
+The sidebar rule reads `currentParams` and keeps the sidebar on an unchanged `:slug`, so a prefetch of the same post (another tab, `?sort=`) is shared by the pages of that post (the rule read its slug): one prefetch of a tab serves every page of the post. Links to other posts stay shared. See [One prefetch serves every page](/docs/rango/features/navigation#one-prefetch-serves-every-page).
 
 The two axes compose: `updateTag()` / `revalidateTag()` bust cached values; `revalidate()` selects which segments re-render and stream to the client after an action. Server-side caching itself — the `cache()` DSL, loader-level `cache()`, and `"use cache"` — is a third, separate control: what gets cached and for how long. See [Caching](/docs/rango/features/caching) and [use cache](/docs/rango/guides/use-cache).
 
