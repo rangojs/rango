@@ -649,6 +649,11 @@ parallel({ "@sidebar": BlogSidebar }, () => [
 ]);
 ```
 
+The sidebar rule reads `currentParams` and keeps the sidebar on an unchanged
+`:slug`, so a prefetch of the same post (another tab, `?sort=`) is stored for
+the page that sent it and the post's other pages prefetch it again. Links to
+other posts stay shared. `/links` → "Shared prefetches and `prefetchKey`".
+
 **Server-side caching** — `cache()` DSL, loader-level `cache()`, and `"use cache"`
 control what gets cached and for how long. This is separate from `revalidate()`:
 
