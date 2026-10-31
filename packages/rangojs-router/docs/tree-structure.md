@@ -14,8 +14,12 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
 
 - `src/segment-system.tsx` - `renderSegments()` builds the React tree from segments.
   The `loading` property determines tree structure:
-  - `undefined` / `null` -> OutletProvider directly (no boundary)
-  - `false` -> LoaderBoundary + OutletProvider (boundary, no RouteContentWrapper)
+  - `undefined` / `null` -> OutletProvider directly (no boundary). The walkers
+    emit `loading(false)` as `null` (`router/segment-resolution/revalidation.ts`,
+    `router/intercept-resolution.ts`, `router/prerender-match.ts`), so it renders
+    here, as does a `loading(fallback, { ssr: false })` document.
+  - `false` -> LoaderBoundary + OutletProvider (boundary, no RouteContentWrapper).
+    `renderSegments` keeps this branch, but the server never sends `false`.
   - truthy (ReactNode) -> LoaderBoundary + OutletProvider + RouteContentWrapper
   - a `clientUrls()` group segment (`segment.clientGroup` set) -> ONE wrapper
     shape per group mount, with no LoaderBoundary/RouteContentWrapper
@@ -81,7 +85,24 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
    cached `loading` value if it differs from the server value. The server may
    return different `loading` values based on `isSSR` context.
 
-4. Run `pnpm --filter @rangojs/router exec playwright test loader-behavior` after
+4. A loader entry is a wrapper too: a segment with loaders gets a
+   `StreamedLoaderErrorBoundary` (`renderSegments`), so the loader segments a
+   layout holds must not differ between render paths. A route's loaders
+   inherited into a child layout with parallel slots are one such case:
+   whether the copy is redundant is decided from the route entry, the same on
+   every request (`inheritedCopyRedundant` in
+   `router/segment-resolution/revalidation.ts`), never from a segment's
+   `loading`, which is `null` on a `loading(fallback, { ssr: false })`
+   document and the fallback on its partials. The walkers never resolve a
+   redundant copy, on any request: dropping one later only beside the route's
+   own copy sent it alone on an action or a same-route navigation that held
+   the route's loader (its `revalidate()` declines), so the layout gained a
+   loader entry and remounted.
+   `src/testing/__tests__/inherited-loader-copy.rsc-test.tsx` pins it on the
+   document, a navigation and an action, with and without the route's loader
+   held.
+
+5. Run `pnpm --filter @rangojs/router exec playwright test loader-behavior` after
    any changes to these files. The skipSSR tests (`loading(fallback, { ssr: false })`)
    specifically catch tree structure regressions. Changes that touch the
    client group key also need `e2e/client-urls.test.ts` (param-nav hold and the

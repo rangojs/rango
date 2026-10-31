@@ -65,6 +65,7 @@ import {
   noteThrower,
 } from "./helpers.js";
 import { applyViewTransitionDefault } from "./view-transition-default.js";
+import { isRenderableLoading } from "../../types/boundaries.js";
 import { isLayoutLoaderCopy } from "../../client-urls/layout-loader-copies.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeSegmentHandler } from "../instrument.js";
@@ -266,6 +267,28 @@ export function ownerOf(
     loadingDisabled: entry.loading === false,
     traceSource: "loader",
   };
+}
+
+/**
+ * A route's loader copies inherited into a child layout with parallel slots
+ * are redundant beside the route's own loader segments: true when the route
+ * renders no loading() fallback on any request, so nothing hides the route's
+ * copy from useLoader() in the slots. A redundant copy is never resolved, on
+ * any request: the walkers check this before they inherit.
+ *
+ * Decided from the entry, never from the route segment's `loading`, which
+ * differs between requests: `loading(fallback, { ssr: false })` is `null` on
+ * a document (applyDocumentModeLoading) and the fallback on partials, and the
+ * walkers emit `loading(false)` as `null` too. A copy sent on one request and
+ * not on the next gives the layout a loader entry it did not have, so
+ * renderSegments wraps it in StreamedLoaderErrorBoundary and React remounts
+ * it with its Outlet (docs/tree-structure.md). Resolving a redundant copy and
+ * dropping it from the payload later is not enough: when the route's own
+ * loader is held (its revalidate() declines), the copy is new to the client,
+ * so it re-runs and is sent without the route's copy beside it.
+ */
+export function inheritedCopyRedundant(route: EntryData): boolean {
+  return !isRenderableLoading(route.loading) && route.loadingSsr !== false;
 }
 
 /**
@@ -657,7 +680,8 @@ export async function resolveLoadersOnly<TEnv>(
         entry.type === "route" &&
         entry.loader &&
         entry.loader.length > 0 &&
-        Object.keys(layoutEntry.parallel).length > 0
+        Object.keys(layoutEntry.parallel).length > 0 &&
+        !inheritedCopyRedundant(entry)
       ) {
         const inherited = await resolveOwnerLoaders(
           pass,
@@ -667,7 +691,6 @@ export async function resolveLoadersOnly<TEnv>(
         for (const seg of inherited.segments) {
           if (!seenIds.has(seg.id)) {
             seenIds.add(seg.id);
-            seg._inherited = true;
             allLoaderSegments.push(seg);
           }
         }
@@ -1478,17 +1501,14 @@ export async function resolveOrphanLayout<TEnv>(
     parentRouteEntry &&
     parentRouteEntry.loader &&
     parentRouteEntry.loader.length > 0 &&
-    Object.keys(orphan.parallel).length > 0
+    Object.keys(orphan.parallel).length > 0 &&
+    !inheritedCopyRedundant(parentRouteEntry)
   ) {
     const inheritedResult = await resolveOwnerLoaders(
       pass,
       ownerOf(parentRouteEntry, orphan.shortCode),
       belongsToRoute,
     );
-    // Tag as inherited so buildMatchResult can deduplicate when safe
-    for (const s of inheritedResult.segments) {
-      s._inherited = true;
-    }
     segments.push(...inheritedResult.segments);
     matchedIds.push(...inheritedResult.matchedIds);
   }
