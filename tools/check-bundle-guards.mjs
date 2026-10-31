@@ -262,7 +262,17 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // 51836B), to pin the link's pending in both apps. The owner's rule
 // (rango-t84-q2): the measured size plus 256B, rounded up to the next 128B
 // step.
-const ROUTER_CHUNK_GZIP_MAX = 51.125 * 1024;
+//
+// Raised 51.125KB -> 51.625KB on 2026-10-31 for rango-t234 (#1329), measured
+// on cloudflare-basic at 52535B gzip (Vite's report: main 52.75kB ->
+// 53.15kB). A server action marks prefetches stale instead of flushing them:
+// the prefetch cache keeps a stale bit per entry (browser/prefetch/cache.ts),
+// a click on a stale entry commits it and sends one stale revalidation
+// (navigation-bridge.ts), and the cross-tab channel tells a soft mark from a
+// rotation (navigation-store.ts). None of it can load lazily: it runs on every
+// action exit and every prefetched click, and browser/prefetch/ is not split
+// (AGENTS.md Bundle hygiene). The owner's rule (rango-t84-q2).
+const ROUTER_CHUNK_GZIP_MAX = 51.625 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
