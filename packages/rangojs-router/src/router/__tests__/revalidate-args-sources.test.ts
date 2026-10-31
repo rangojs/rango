@@ -73,16 +73,30 @@ const SOURCES: readonly [Source, Source] = [
 
 const DESTINATION = "http://localhost/item/2";
 
-/** The segment kinds evaluateRevalidation seeds differently. */
+/**
+ * The segment kinds evaluateRevalidation seeds differently. A parallel slot
+ * the client does not hold is seeded by its call site
+ * (segment-resolution/revalidation.ts): under a held parent with
+ * "skip-parent-chain", which a predicate may keep.
+ */
 const KINDS: readonly {
   name: string;
   type: ResolvedSegment["type"];
   belongsToRoute: boolean;
+  defaultOverride?: { value: boolean; reason: string };
 }[] = [
   { name: "a route", type: "route", belongsToRoute: true },
   { name: "a route's loader", type: "loader", belongsToRoute: true },
   { name: "a layout", type: "layout", belongsToRoute: false },
   { name: "a layout's loader", type: "loader", belongsToRoute: false },
+  { name: "a layout's parallel slot", type: "parallel", belongsToRoute: false },
+  { name: "a route's parallel slot", type: "parallel", belongsToRoute: true },
+  {
+    name: "a parallel slot the client does not hold, under a held layout",
+    type: "parallel",
+    belongsToRoute: false,
+    defaultOverride: { value: false, reason: "skip-parent-chain" },
+  },
 ];
 
 const formData = new FormData();
@@ -119,8 +133,10 @@ async function evaluate(
         type: kind.type,
         belongsToRoute: kind.belongsToRoute,
         layoutName: kind.type === "layout" ? "shell" : undefined,
+        slot: kind.type === "parallel" ? "@side" : undefined,
         params: { id: "2" },
       } as ResolvedSegment,
+      defaultOverride: kind.defaultOverride,
       prevParams: source.params,
       getPrevSegment: null,
       request,
@@ -219,20 +235,25 @@ describe("revalidate() arguments: only a tracked getter may carry the source pag
   });
 
   it.each(Object.keys(FIELDS) as Field[])(
-    "%s: a segment kept after reading it is source-held exactly when it is a tracked getter",
+    "%s: a segment of every kind kept after reading it is source-held exactly when it is a tracked getter",
     async (field) => {
       const tracked = isGetter(await argumentsOf({}), field);
-      const { decision, sourceHeld } = await evaluate((a) => {
-        void a[field];
-        return false;
-      });
-      expect(decision).toBe(false);
-      expect(
-        sourceHeld,
-        tracked
-          ? `a segment kept after reading ${field} must mark the match source-held`
-          : `reading ${field} must not scope a kept segment to its source`,
-      ).toBe(tracked);
+      for (const kind of KINDS) {
+        const { decision, sourceHeld } = await evaluate(
+          (a) => {
+            void a[field];
+            return false;
+          },
+          { kind },
+        );
+        expect(decision, kind.name).toBe(false);
+        expect(
+          sourceHeld,
+          tracked
+            ? `${kind.name} kept after reading ${field} must mark the match source-held`
+            : `reading ${field} must not scope ${kind.name} kept to its source`,
+        ).toBe(tracked);
+      }
     },
   );
 });

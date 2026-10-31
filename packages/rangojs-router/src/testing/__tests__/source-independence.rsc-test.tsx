@@ -26,7 +26,7 @@
  * T's fresh render where its own request keeps B's copy, which a held
  * layout's contract leaves open.
  */
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock(
   "@vitejs/plugin-rsc/rsc/server",
@@ -62,15 +62,25 @@ import {
   sourceIndependenceRouter as router,
 } from "./fixtures/source-independence-router.js";
 
-const cacheStore = new MemorySegmentCacheStore();
+let cacheStore: MemorySegmentCacheStore;
 const serve: Serve = (url, options) =>
   serveShellRequest(router, url, { cacheStore, ...options });
 
 const PAGES = Object.values(SOURCE_INDEPENDENCE_URLS).flat();
 
-/** A document GET of every page: bakes the Prerender routes, fills cache(). */
+/**
+ * A cold store, then every page requested twice: the document GET bakes the
+ * Prerender routes and fills cache()'s document entries, the partial request
+ * holding nothing fills its partial ones. Every later request is a HIT, so
+ * the entry a test reads does not depend on which tests ran before it.
+ */
 async function warm(): Promise<void> {
-  for (const page of PAGES) await serve(page, {});
+  await resetShellTestState();
+  cacheStore = new MemorySegmentCacheStore();
+  for (const page of PAGES) {
+    await serve(page, {});
+    await loadScreen(serve, page);
+  }
 }
 
 const heroOf = async (segments: ResolvedSegment[]): Promise<string[]> =>
@@ -89,10 +99,7 @@ const VARIANTS = [
 ] as const;
 
 describe("the #1331 report, as it showed on the live app", () => {
-  beforeAll(async () => {
-    await resetShellTestState();
-    await warm();
-  });
+  beforeEach(warm);
 
   it.each(VARIANTS)(
     "%s: a product prefetched on search and clicked from a category page shows no hero, nor does /cart after it",
@@ -183,8 +190,10 @@ describe("a shared prefetch renders the same on every source page", () => {
     return map.get(key)!;
   };
 
-  beforeAll(async () => {
-    await resetShellTestState();
+  beforeEach(async () => {
+    screens.clear();
+    prefetches.clear();
+    directs.clear();
     await warm();
     for (const page of PAGES) {
       screens.set(page, await loadScreen(serve, page));
@@ -332,7 +341,51 @@ describe("a shared prefetch renders the same on every source page", () => {
     expect(counts.equal).toBeGreaterThan(0);
     expect(counts.sourceScoped).toBeGreaterThan(0);
     if (sameSourceUrl) expect(counts.sourceAdopted).toBeGreaterThan(0);
+    // Refetched triples are skipped, not compared: a fixture change that
+    // turns many keeps into missing ids would empty the property silently.
+    expect(counts.refetched / counts.triples).toBeLessThan(0.05);
   }
+
+  /**
+   * What the property compares carries each feature the fixture declares:
+   * loading() fallbacks, slots, loader data (renderedOf `data=`) and the
+   * values middleware sets, in every family.
+   */
+  it("the fixture's pages render loading(), parallel slots, loader data and middleware vars in every family", async () => {
+    const template = [
+      "loading=<p>template-loading</p>",
+      "parallel(@filters)",
+      "loading=<p>filters-loading</p>",
+      '"deal":"deal:speakers"',
+      '"product":"product:p1:-"',
+    ];
+    const expected: Record<string, string[]> = {
+      shop: template,
+      baked: template,
+      cached: [...template, '"product":"product:p1:x"'],
+      field: [
+        "loading=<p>plain-loading</p>",
+        "loading=<p>dest-loading</p>",
+        "parallel(@side)",
+        '"band":"high"',
+        "<section>section:x</section>",
+        "<article>url:2:x:visit:2</article>",
+      ],
+    };
+    for (const [family, urls] of Object.entries(SOURCE_INDEPENDENCE_URLS)) {
+      const lines = (
+        await Promise.all(
+          urls.map((url) => renderedTree(screens.get(url)!.segments)),
+        )
+      ).flat();
+      expect(
+        expected[family]!.filter(
+          (marker) => !lines.some((line) => line.includes(marker)),
+        ),
+        `${family}: markers no page renders`,
+      ).toEqual([]);
+    }
+  });
 
   const documentPages = (): PageB[] =>
     PAGES.map((page) => ({ label: page, screen: screens.get(page)! }));
