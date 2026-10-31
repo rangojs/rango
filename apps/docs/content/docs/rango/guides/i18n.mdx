@@ -229,7 +229,7 @@ export const urlpatterns = urls(({ layout, include }) => [
 
 `<FormattedMessage>`, `useIntl()`, and friends now work in any client component under the layout. Server components and handlers can't read the client provider's context; call `createIntl({ locale, messages })` (from `@formatjs/intl` or `react-intl`) directly with the same `messages` map for server-rendered text.
 
-A standalone layout is kept across navigations between the routes it wraps, even when params change (see [Layouts](/docs/rango/guides/layouts#revalidation)). If users can switch between `/en/...` and `/fr/...` with a client-side link, add a `revalidate()` to the layout that compares `currentParams.locale` with `nextParams.locale` so it reloads the messages. That rule makes prefetches between pages of one locale page-only, so each page prefetches its links again ([Navigation](/docs/rango/features/navigation#one-prefetch-serves-every-page)).
+A standalone layout is kept across navigations between the routes it wraps, even when params change (see [Layouts](/docs/rango/guides/layouts#revalidation)). If users can switch between `/en/...` and `/fr/...` with a client-side link, add a `revalidate()` to the layout that compares `currentParams.locale` with `nextParams.locale` so it reloads the messages. The rule reads only the locale of the page being left, so a prefetch it keeps the layout for is shared by every page of that locale: page 2 of a list adopts the links page 1 prefetched, and an `/fr` page prefetches its own ([Navigation](/docs/rango/features/navigation#one-prefetch-serves-every-page)). Read `currentParams.locale` by name; spreading `currentParams` reads every param and narrows the sharing to pages with the same params.
 
 ## Pitfalls
 

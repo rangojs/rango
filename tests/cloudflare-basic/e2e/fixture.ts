@@ -7,6 +7,7 @@ import {
   assertFixtureModeMatchesProject,
   consoleGuardMode,
   installConsoleGuard,
+  ServerGuard,
 } from "@shared/e2e";
 import { x } from "tinyexec";
 
@@ -96,17 +97,18 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     });
   }
 
-  function kill() {
+  function kill(signal: NodeJS.Signals = "SIGTERM") {
     if (process.platform === "win32") {
       spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
     } else {
       // Kill entire process group on Unix (wrangler spawns child processes)
       try {
-        process.kill(-child.pid!, "SIGTERM");
+        process.kill(-child.pid!, signal);
       } catch {
         // Process group kill failed, try direct kill
-        child.kill("SIGTERM");
+        child.kill(signal);
       }
+      if (signal === "SIGKILL") return;
       // Force kill after timeout if still running
       setTimeout(() => {
         try {
@@ -125,6 +127,9 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
   return {
     proc: child,
     done,
+    get pid() {
+      return child.pid;
+    },
     findPort,
     kill,
     stdout: () => stdout,
@@ -160,7 +165,9 @@ export function useFixture(options: {
    */
   readyPath?: string | false;
 }) {
-  let cleanup: (() => Promise<void>) | undefined;
+  // Owns every process this fixture spawns; afterAll disposes it, whether or
+  // not beforeAll got as far as a ready server (ServerGuard says why).
+  let servers: ServerGuard | undefined;
   let baseURL!: string;
 
   const cwd = path.resolve(options.root);
@@ -179,12 +186,21 @@ export function useFixture(options: {
 
   test.beforeAll(async ({}, testInfo) => {
     assertFixtureModeMatchesProject(options.mode, testInfo);
+    // A guard per run of the hook: Playwright does not cancel a timed-out
+    // hook, so its body can outlive afterAll and must not start anything
+    // under the next run's guard.
+    const guard = (servers = new ServerGuard());
+    // Tracked as soon as it is spawned, before any await.
+    const start = (cli: Parameters<typeof runCli>[0]) => {
+      guard.assertLive();
+      return guard.track(runCli(cli));
+    };
     if (options.mode === "dev") {
       const sharedURL = !options.isolatedServer && testInfo.project.use.baseURL;
       if (sharedURL) {
         baseURL = sharedURL;
       } else {
-        proc = runCli({
+        proc = start({
           command: options.command ?? `pnpm dev`,
           label: `${options.root}:dev`,
           cwd,
@@ -193,10 +209,6 @@ export function useFixture(options: {
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
         await awaitReady();
-        cleanup = async () => {
-          proc.kill();
-          await proc.done;
-        };
       }
     }
     if (options.mode === "build") {
@@ -207,7 +219,7 @@ export function useFixture(options: {
         const hasBuildDep = testInfo.project.dependencies.includes("build");
         const distExists = fs.existsSync(path.join(cwd, "dist"));
         if (!process.env.TEST_SKIP_BUILD && !hasBuildDep && !distExists) {
-          const buildProc = runCli({
+          const buildProc = start({
             command: options.buildCommand ?? `pnpm build`,
             label: `${options.root}:build`,
             cwd,
@@ -215,7 +227,7 @@ export function useFixture(options: {
           });
           await buildProc.done;
         }
-        proc = runCli({
+        proc = start({
           command: options.command ?? `pnpm preview`,
           label: `${options.root}:preview`,
           cwd,
@@ -224,16 +236,12 @@ export function useFixture(options: {
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
         await awaitReady();
-        cleanup = async () => {
-          proc.kill();
-          await proc.done;
-        };
       }
     }
   });
 
   test.afterAll(async () => {
-    await cleanup?.();
+    await servers?.dispose();
   });
 
   return {

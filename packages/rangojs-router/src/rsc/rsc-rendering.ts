@@ -140,6 +140,7 @@ import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
   SEGMENT_FRAGMENT_RECOVERY_HEADER,
 } from "../segment-fragments.js";
+import { prefetchScopeOf } from "../router/source-reads.js";
 
 type PprReplayStatus =
   | { outcome: "HIT"; freshness: "fresh" | "stale" }
@@ -361,10 +362,10 @@ type PreparedRender =
       kind: "payload";
       payload: RscPayload;
       /**
-       * The response depends on the source page: an intercept targets the
-       * route, or it carries deferred units (`prefetch: false`).
+       * `x-rsc-prefetch-scope`, when the response depends on the source
+       * page (prefetchScopeOf).
        */
-      sourceScoped: boolean;
+      prefetchScope: string | undefined;
       pprReplayStatus?: PprReplayStatus;
       /** The key a navigation-only heal capture stores under, when one is needed. */
       healKey?: string;
@@ -857,7 +858,7 @@ function* preparePayloadPlan<TEnv>(
       return {
         kind: "payload",
         payload: buildFullPayload(match, ctx, url, reqCtx, handleStore),
-        sourceScoped: false,
+        prefetchScope: undefined,
         pprReplayStatus,
         healKey,
       };
@@ -898,10 +899,11 @@ function* preparePayloadPlan<TEnv>(
           stateCookieName: ctx.router.resolvedStateCookieName,
         },
       },
-      sourceScoped:
-        result.interceptTargeted === true ||
-        result.sourceHeld === true ||
-        deferring,
+      prefetchScope: prefetchScopeOf(
+        result.interceptTargeted === true || deferring,
+        result.sourceHeld,
+        result.diff.length === 0,
+      ),
       pprReplayStatus,
       healKey,
     };
@@ -925,7 +927,7 @@ function* preparePayloadPlan<TEnv>(
   return {
     kind: "payload",
     payload: buildFullPayload(match, ctx, url, reqCtx, handleStore),
-    sourceScoped: false,
+    prefetchScope: undefined,
   };
 }
 
@@ -1111,7 +1113,7 @@ function renderPreparedRscResponse<TEnv>(
 ): Promise<Response> {
   const { ctx, request, env, url, isPartial, nonce, reqCtx, renderSpan } =
     input;
-  const { payload, pprReplayStatus, sourceScoped } = prepared;
+  const { payload, pprReplayStatus, prefetchScope } = prepared;
   const metricsStore = reqCtx._metricsStore;
 
   const rscHeaders: Record<string, string> = {
@@ -1128,15 +1130,9 @@ function renderPreparedRscResponse<TEnv>(
       serializePprReplayStatus(pprReplayStatus);
   }
   // Tell the client's prefetch cache to scope this response to its source
-  // URL (instead of the default source-agnostic wildcard). A route an
-  // intercept targets renders the modal or the full page depending on the
-  // source, so neither response may be reused from another source: a full
-  // page prefetched where the intercept does not apply would otherwise
-  // serve a later click where it does (#1007). So is a diff a revalidate()
-  // decided from the source page: another page adopting it would keep its
-  // own copy of the segment the answer held (#1331).
-  if (sourceScoped) {
-    rscHeaders["x-rsc-prefetch-scope"] = "source";
+  // (instead of the default source-agnostic wildcard). See prefetchScopeOf.
+  if (prefetchScope !== undefined) {
+    rscHeaders["x-rsc-prefetch-scope"] = prefetchScope;
   }
   // prefetch: false (docs/design/prefetch-false.md, R7). A response that
   // carries deferred units answers one page's prefetch, and a fill is the

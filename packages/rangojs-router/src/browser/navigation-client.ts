@@ -35,28 +35,49 @@ import {
   consumePrefetch,
   disableFragmentPassthrough,
   isFragmentPassthroughEnabled,
+  pageMatchesParamsLabel,
+  paramsCandidateKeys,
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
+import { getCommittedPage } from "./navigation-store-handle.js";
+import type { SourcePage } from "../prefetch-source-scope.js";
 import { cancelAllPrefetches } from "./prefetch/loader.js";
 import { writePartialParams } from "./wire-protocol.js";
 
 /**
  * The completed prefetch a navigation adopts: the one stored under its
- * source key, else the one every source page shares. None when the
- * navigation cannot use a prefetch.
+ * source key, else one stored for a group of source pages the page is in
+ * (`paramsKeys`, paramsCandidateKeys), else the one every source page
+ * shares. None when the navigation cannot use a prefetch.
  */
 export function consumeStoredPrefetch(
   canUsePrefetch: boolean,
   sourceKey: string,
+  paramsKeys: readonly string[],
   wildcardKey: string,
 ): { entry: DecodedPrefetch | null; hitKey: string | null } {
   if (!canUsePrefetch) return { entry: null, hitKey: null };
-  const sourced = consumePrefetch(sourceKey);
-  if (sourced) return { entry: sourced, hitKey: sourceKey };
-  const shared = consumePrefetch(wildcardKey);
-  return shared
-    ? { entry: shared, hitKey: wildcardKey }
-    : { entry: null, hitKey: null };
+  for (const key of [sourceKey, ...paramsKeys, wildcardKey]) {
+    const entry = consumePrefetch(key);
+    if (entry) return { entry, hitKey: key };
+  }
+  return { entry: null, hitKey: null };
+}
+
+/**
+ * Whether a navigation from `page` may serve an in-flight prefetch it
+ * adopted through the wildcard key: not one the server scoped to its own
+ * source page, nor one scoped to a group of source pages `page` is not in.
+ */
+export function wildcardAdoptionFits(
+  entry: DecodedPrefetch,
+  page: SourcePage | null,
+): boolean {
+  if (entry.scope === "source") return false;
+  if (entry.scope === "params") {
+    return pageMatchesParamsLabel(entry.paramsLabel ?? "", page);
+  }
+  return true;
 }
 
 /**
@@ -165,10 +186,14 @@ export function createNavigationClient(
       const rangoState = getRangoState();
       const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
       const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);
+      // The page being left, as the router store committed it: the group a
+      // params-scoped prefetch must have been answered for.
+      const sourcePage = canUsePrefetch ? getCommittedPage() : null;
 
       const stored = consumeStoredPrefetch(
         canUsePrefetch,
         cacheKey,
+        paramsCandidateKeys(rangoState, fetchUrl, sourcePage),
         wildcardKey,
       );
       const cachedEntry = stored.entry;
@@ -350,13 +375,17 @@ export function createNavigationClient(
           if (tx) {
             browserDebugLog(tx, "inflight prefetch unavailable, refetching");
           }
-        } else if (adoptedViaWildcard && entry.scope === "source") {
-          // A wildcard-adopted inflight that turned out source-scoped was
-          // built for a different source page. Discard and refetch.
+        } else if (
+          adoptedViaWildcard &&
+          !wildcardAdoptionFits(entry, sourcePage)
+        ) {
+          // A wildcard-adopted inflight that turned out source-scoped, or
+          // params-scoped to a group this page is not in, was built for a
+          // different source page. Discard and refetch.
           if (tx) {
             browserDebugLog(
               tx,
-              "wildcard inflight turned out source-scoped, refetching",
+              `wildcard inflight turned out ${entry.scope}-scoped, refetching`,
             );
           }
         } else {
