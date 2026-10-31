@@ -2,7 +2,7 @@
 
 import { invalidateClientCache } from "@rangojs/router";
 import { useEffect, useState } from "react";
-import { useLoader, useNavigation } from "@rangojs/router/client";
+import { Link, useLoader, useNavigation } from "@rangojs/router/client";
 import type { LoaderDefinition } from "@rangojs/router/client";
 
 /**
@@ -66,6 +66,38 @@ export function PrefetchFalseInvalidate() {
       hidden
       onClick={() => invalidateClientCache()}
     />
+  );
+}
+
+/**
+ * pf-arm-<c>: a click mounts a hidden `<Link prefetch="render">` to the case,
+ * so a suite starts a speculative prefetch (`X-Rango-Prefetch: 1`, the one a
+ * viewport link sends) when it decides to; the next click unmounts it
+ * (data-armed). Hovering a link sends an intent prefetch instead, which
+ * defers nothing. Unmount it once its prefetch has left: a render link
+ * prefetches again after every navigation, from the page it lands on.
+ */
+export function PrefetchFalseArm({ name, to }: { name: string; to: string }) {
+  const [armed, setArmed] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        data-testid={`pf-arm-${name}`}
+        data-armed={String(armed)}
+        onClick={() => setArmed((on) => !on)}
+        style={{ fontSize: 11, padding: "0 6px" }}
+      >
+        arm
+      </button>
+      {armed && (
+        <span hidden>
+          <Link to={to} prefetch="render">
+            {name}
+          </Link>
+        </span>
+      )}
+    </>
   );
 }
 

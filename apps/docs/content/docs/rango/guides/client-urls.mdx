@@ -421,7 +421,7 @@ Without JavaScript, a browser sees only what the first flush carries. A boundary
 
 ### `prefetch: false`
 
-A `<Link>` prefetch of a group route runs the route's loaders. `loader(Def, { prefetch: false })` keeps one loader out of the route's prefetches, so an expensive loader is not called for every link a visitor might click:
+A `<Link>` prefetch of a group route runs the route's loaders. `loader(Def, { prefetch: false })` keeps one loader out of the route's viewport and render prefetches, so an expensive loader is not called for every link that scrolls into view. A hover, or `router.prefetch()`, is intent to click: its prefetch runs the loader with the rest of the route, and the click sends no follow-up request ([Navigation](/docs/rango/features/navigation#a-hover-prefetch-is-the-navigation-started-early)).
 
 ```tsx
 path("/product/:slug", ProductPage, { name: "product" }, () => [
@@ -431,13 +431,13 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]),
 ```
 
-A click inside the group still shows the destination at once. When the prefetch has been received, the URL and the other loaders' data move with the click too, and one follow-up request runs only the flagged loaders. `useOutlet().pending` turns `false` when the click commits, not when that request answers.
+A click inside the group still shows the destination at once. When a viewport or render prefetch has been received, the URL and the other loaders' data move with the click too, and one follow-up request runs only the flagged loaders. `useOutlet().pending` turns `false` when the click commits, not when that request answers.
 
 - Read the flagged loader inside its own `<Suspense>` to show the page and that fallback at once. With no boundary, React keeps the page being left on screen until the value arrives, as it does with no prefetch.
 - Only data the page does not have yet is skipped. On a click between two params of the same route (`/product/a` to `/product/b`), the prefetch runs the loader as usual.
 - On a `layout()` loader, the option applies to every route inside the layout. A flagged `loader()` on a server layout above the group is skipped too, while that layout is new to the page.
 - `loading()` in a group takes no options, and `loading(fallback, { prefetch: false })` on a server layout above the group skips nothing for the group's routes.
-- Inside `intercept()`, a prefetch from the source page skips the flagged loader. The click opens the modal at once with its `loading()`, and one follow-up request runs that loader. A modal with no `loading()` shows its slot empty until that request answers. `loading(fallback, { prefetch: false })` inside `intercept()` is ignored.
+- Inside `intercept()`, a viewport or render prefetch from the source page skips the flagged loader, and a hover's runs it. The click opens the modal at once with its `loading()`, and one follow-up request runs that loader. A modal with no `loading()` shows its slot empty until that request answers. `loading(fallback, { prefetch: false })` inside `intercept()` is ignored.
 
 ### Shell caching with `ppr`
 

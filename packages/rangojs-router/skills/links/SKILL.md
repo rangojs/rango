@@ -619,7 +619,8 @@ A prefetch is a navigation sent early (a partial request with an
 `X-Rango-Prefetch` header), and by default the server renders everything for
 it: every handler and every loader. That is the point, a click then commits
 without a request, but it is also forty renders for a grid of forty links.
-Keep the expensive part out of the prefetch on the route, not on the link:
+Keep the expensive part out of speculative (viewport, render) prefetches on
+the route, not on the link:
 
 ```tsx
 // skip one loader
@@ -632,7 +633,15 @@ A click that adopts such a prefetch commits what was prefetched, shows the
 fallback for the deferred part, and sends one extra request for it. Only what
 is new to the page is deferred: a segment already on screen (the layout of the
 section you are in, the route itself on `/product/a` to `/product/b`) is
-prefetched as usual. See
+prefetched as usual.
+
+A hover prefetch is treated as intent and runs everything, flagged work
+included (`X-Rango-Prefetch: intent`, where a viewport or render prefetch
+sends `1`); so does `useRouter().prefetch()`. Its click commits complete with
+no extra request. A hover sends that request only when the link has no
+prefetch cached or in flight: on a viewport link whose prefetch has already
+answered, it sends nothing, and the click fetches the deferred part as above.
+See
 `/loader` → "`prefetch: false`" and `/route` → "`loading()` options". To stop
 a link or a whole section from prefetching at all, use the `prefetch` prop or
 `data-prefetch-scope` above.
@@ -660,7 +669,7 @@ The answer is page-only (`x-rsc-prefetch-scope: source`) when:
 - An intercept targets the route, or the page that sent the prefetch,
   whether or not it applies here.
 - The answer defers a `prefetch: false` loader or `loading()` that the page
-  does not show yet.
+  does not show yet (a viewport or render prefetch; a hover's defers nothing).
 - A `revalidate()` on the target read `currentUrl` and kept its segment.
 - A `revalidate()` on the route, or on a segment inside its `path()`, read
   the page being left and kept the segment through the route's default

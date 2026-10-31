@@ -1191,20 +1191,20 @@ The costs and constraints:
 Also available in `clientUrls()` route groups (`/client-urls`), where the
 loader-heavy shape makes it most useful.
 
-## `prefetch: false` — Keep a Loader Out of Prefetches
+## `prefetch: false` — Keep a Loader Out of Speculative Prefetches
 
 A `<Link>` prefetch is a navigation sent early: the server renders every
 handler and every loader for it. With the default `"viewport"` strategy that
 means a grid of forty product links runs forty copies of your slowest loader
 for pages most visitors never open. Pass `prefetch: false` to keep one loader
-out:
+out of those speculative (viewport and render) prefetches:
 
 ```tsx
 import { Suspense } from "react";
 
 path("/product/:slug", ProductPage, { name: "product" }, () => [
   loader(PriceLoader), // cheap: still runs in the prefetch
-  loader(ReviewsLoader, { prefetch: false }), // expensive: skipped in a prefetch
+  loader(ReviewsLoader, { prefetch: false }), // expensive: skipped in a viewport prefetch
   loading(<ProductSkeleton />),
 ]),
 ```
@@ -1212,11 +1212,22 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 (`prefetch` sits beside `ssr` in `LoaderOptions`; combine them as
 `{ ssr: false, prefetch: false }` if you need both.)
 
-What happens:
+A hover is different: the visitor is about to click. A hover prefetch (on a
+`"hover"`, `"viewport"` or `"adaptive"` link, or a delegated plain anchor) and
+`useRouter().prefetch()` send `X-Rango-Prefetch: intent` and run the loader
+with the rest of the page, so the click commits complete and sends no second
+request. A hover sends its prefetch only when the link has none cached or in
+flight: on a link a viewport prefetch already answered, the hover sends
+nothing and the click fills the deferred loader as below. The cost is plain:
+each hover that misses the prefetch cache runs the loader, so a pointer
+passing over a list of `"hover"` links runs it once per link. Touch devices
+have no hover (`"adaptive"` resolves to viewport there) and keep the fill.
 
-- A **prefetch** of the route does not run the loader and does not read its
-  `cache()`; the payload marks it deferred. The rest of the page prefetches as
-  usual.
+What happens in a speculative prefetch:
+
+- A **viewport or render prefetch** of the route does not run the loader and
+  does not read its `cache()`; the payload marks it deferred. The rest of the
+  page prefetches as usual.
 - Only on a loader new to the page. A loader already on screen is never
   deferred: if its revalidation (its `revalidate()` or the default) re-runs
   it, it runs in the prefetch with the rest of the destination, exactly as
@@ -1266,16 +1277,18 @@ function Reviews() {
 
 The limits:
 
-- **A click before its prefetch has answered waits for it, then fetches the
-  deferred part.** The flag is there to keep expensive or slow work out of
-  every prefetch, so that an API that is costly to call is not called for
-  every link a visitor might click. A click that comes while the link's
-  prefetch is still in flight reuses that prefetch, as it does without the
+- **A click before its viewport prefetch has answered waits for it, then
+  fetches the deferred part.** The flag is there to keep expensive or slow
+  work out of every speculative prefetch, so that an API that is costly to
+  call is not called for every link a visitor might click. A click that comes
+  while the link's viewport or render prefetch is still in flight reuses that
+  prefetch, as it does without the
   flag, and sends the fill when the prefetch answers. The page shows no later
   than with no prefetch; the deferred part shows its fallback until the fill
   lands, and can complete later than a click with no prefetch, by up to what
   was left of the prefetch. That is the price of keeping the work out of the
-  prefetch.
+  prefetch. A click while a hover's prefetch is in flight adopts it with no
+  fill: the loader is already running in it.
 - **A navigation started before the fill answers cancels it.** It is
   cancelled when the newer navigation starts, not when that one commits. If
   the newer navigation then ends without replacing the page (a redirect the
@@ -1368,8 +1381,9 @@ The limits:
   data with the URL, and one fill runs the flagged loaders (see
   `/client-urls` → "`prefetch: false`"). A flagged `loading()` defers nothing
   on a group route, from the group or from a server layout above it.
-- **Inside `intercept()`.** In `urls()` and in `clientUrls()`, a prefetch of
-  the intercept's target from its source page defers the flagged loader: the
+- **Inside `intercept()`.** In `urls()` and in `clientUrls()`, a viewport or
+  render prefetch of the intercept's target from its source page defers the
+  flagged loader (a hover's runs it, and its click sends no fill): the
   click opens the modal at once, with its `loading()`, and one fill, sent
   from the source, runs the loader. The page under the modal stays. With no
   `loading()` the slot is empty until the fill answers, as on a plain click
@@ -1388,7 +1402,9 @@ To skip a handler along with its loaders, flag the `loading()` instead (see
 only a boolean; anything else throws `loader() prefetch must be a boolean`.
 
 Test it with `serveShellRequest(router, url, { partial: { prefetch: true } })`
-and `result.readDeferred()` (see `/testing`).
+and `result.readDeferred()` (see `/testing`). That is a speculative prefetch;
+add `headers: { "X-Rango-Prefetch": "intent" }` to serve a hover's, which
+defers nothing.
 
 ## Fetchable Loaders
 

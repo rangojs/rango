@@ -2479,7 +2479,7 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
       return (
         responseUrl.pathname === "/shell-cache/slot-hole" &&
         responseUrl.searchParams.get("probe") === "fragment-prefetch-warm" &&
-        response.request().headers()["x-rango-prefetch"] === "1"
+        response.request().headers()["x-rango-prefetch"] !== undefined
       );
     });
 
@@ -2555,7 +2555,7 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
       return (
         requestUrl.pathname === "/shell-cache/slot-hole" &&
         requestUrl.searchParams.get("probe") === "fragment-prefetch-inflight" &&
-        req.headers()["x-rango-prefetch"] === "1"
+        req.headers()["x-rango-prefetch"] !== undefined
       );
     });
     const prefetchResponse = page.waitForResponse((response) => {

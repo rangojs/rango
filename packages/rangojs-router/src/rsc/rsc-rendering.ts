@@ -102,6 +102,7 @@ import { contextGet } from "../context-var.js";
 import { rewriteShellAudience, rewriteTrail } from "../server/rewrite-trail.js";
 import { visitorShellKey } from "./shell-capture-constants.js";
 import { PREFETCH_HEADER } from "../prefetch-markers.js";
+import { isPrefetchKind } from "../router/segment-resolution/prefetch-deferral.js";
 import { WIRE } from "../wire-params.js";
 import {
   isWarmReplace,
@@ -1191,7 +1192,7 @@ function renderPreparedRscResponse<TEnv>(
         },
   );
   // A prefetch whose render reported an error is not kept (#1170).
-  if (reqCtx._requestKind !== "prefetch" || !isPartial) return rendered;
+  if (!isPrefetchKind(reqCtx._requestKind) || !isPartial) return rendered;
   return rendered.then((response) =>
     markPrefetchOnRenderError(response, reqCtx._renderErrors ?? []),
   );

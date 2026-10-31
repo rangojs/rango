@@ -31,6 +31,20 @@ import { href, Link } from "@rangojs/router/client";
 
 Links without a `prefetch` prop use the router's `defaultPrefetch`, which is `"none"` in development and `"viewport"` in production. Set it with `createRouter({ defaultPrefetch })`; `prefetchCacheTTL`, `prefetchCacheSize`, and `prefetchConcurrency` tune the client prefetch cache ([reference](/docs/rango/reference/create-router#defaultprefetch)). To opt a whole section of the page out, put `data-prefetch-scope="none"` on its container.
 
+### A hover prefetch is the navigation, started early
+
+A hover means the visitor is about to click, and so does a call to `router.prefetch()`. That prefetch asks for exactly what the click would, only earlier: a [`prefetch: false`](/docs/rango/guides/client-urls#prefetch-false) loader and the work behind a flagged `loading()` run in it, and the click that adopts it commits the whole page with no second request. A hover on a `"viewport"` or `"adaptive"` link counts the same way.
+
+A viewport or render prefetch is speculative: it runs for links the visitor may never click, so it still leaves that work out, and the click that adopts it fetches the missing part in one follow-up request.
+
+A hover sends its request only when the link has no prefetch cached or in flight. A link a viewport prefetch already answered is used as it is, with what it left out, so its click still sends the follow-up request. A hover that lands while that viewport prefetch is still waiting in the queue sends the full request itself. On touch devices `"adaptive"` resolves to viewport and nothing counts as a hover.
+
+| Prefetch                                      | Header sent                | `prefetch: false` work |
+| --------------------------------------------- | -------------------------- | ---------------------- |
+| Hover, `router.prefetch()`                    | `X-Rango-Prefetch: intent` | runs in the prefetch   |
+| Viewport, render                              | `X-Rango-Prefetch: 1`      | deferred to the click  |
+| Hover over a link already cached or in flight | none: the entry is used    | as that entry has it   |
+
 ## One prefetch serves every page
 
 A prefetch is stored for its target URL and shared by every page that links to it. A product prefetched on the home page is not fetched again on the search page or on page 2 of a list, and a click from any of them adopts that one entry. Without this, a paginated list or a product grid would prefetch every visible link again after each navigation.
@@ -40,7 +54,7 @@ The answer is a diff against the page that asked: the server leaves out the segm
 | The prefetch answer...                                                                                                                                                                                                             | It is stored as                                       |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | is for a route an intercept targets, or is sent from one                                                                                                                                                                           | page-only                                             |
-| defers a `prefetch: false` loader or `loading()` that the page does not show yet                                                                                                                                                   | page-only                                             |
+| defers a `prefetch: false` loader or `loading()` that the page does not show yet (a viewport or render prefetch)                                                                                                                   | page-only                                             |
 | comes from a `revalidate()` that read `currentUrl` and kept its segment                                                                                                                                                            | page-only                                             |
 | comes from a `revalidate()` that read `currentParams` or `fromRouteName` and kept its segment                                                                                                                                      | shared by the pages with equal values of what it read |
 | comes from a `revalidate()` on a route, or on a segment inside its `path()`, that read the page being left and kept the segment through the route's default (returning `undefined`, or the `defaultShouldRevalidate` it was given) | page-only                                             |

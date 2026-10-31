@@ -17,7 +17,9 @@ import { actionStaleState, wait } from "./action-stale.store.js";
 // answer at set delays; and two pages the document cache stores
 // (/action-stale/cached/*). The product page renders a prefetching link only
 // with ?prefetch=render (or =fill: the fill page's, on hover, passing on
-// ?fillDelay), so no other case has a prefetch to consume. Bodies:
+// ?fillDelay; =fill-render: the same link prefetched on render, a
+// speculative prefetch that defers the page's `prefetch: false` loader), so
+// no other case has a prefetch to consume. Bodies:
 // tests/shared-e2e/src/action-stale-navigation-scenario.ts,
 // action-held-segments-scenario.ts and action-follow-up-scenario.ts.
 function ActionStaleLayout() {
@@ -69,17 +71,19 @@ const ActionStalePdp: Handler = (ctx) => {
           Other, prefetched
         </Link>
       )}
-      {prefetch === "fill" && (
+      {(prefetch === "fill" || prefetch === "fill-render") && (
         <Link
           to={
             fillDelay
               ? `/action-stale/fill?fillDelay=${fillDelay}`
               : "/action-stale/fill"
           }
-          prefetch="hover"
+          prefetch={prefetch === "fill" ? "hover" : "render"}
           data-testid="as-to-fill-prefetched"
         >
-          Fill, prefetched on hover
+          {prefetch === "fill"
+            ? "Fill, prefetched on hover"
+            : "Fill, prefetched on render"}
         </Link>
       )}
     </div>
@@ -125,8 +129,8 @@ const ActionStaleTransition: Handler = async () => {
 };
 
 // Answers after 1500 ms, so a hover prefetch is still in flight at the click
-// right after it; its `prefetch: false` loader is filled after the click
-// commits.
+// right after it. Its `prefetch: false` loader runs in a hover's prefetch,
+// and is filled after the click commits from a render link's.
 const ActionStaleFill: Handler = async () => {
   await wait(1500);
   return (

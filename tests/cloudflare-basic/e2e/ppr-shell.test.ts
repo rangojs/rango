@@ -1647,7 +1647,7 @@ function describePprShell(mode: "dev" | "build") {
         return (
           responseUrl.pathname === "/ppr-shell/slot-hole" &&
           responseUrl.searchParams.get("probe") === "fragment-prefetch-warm" &&
-          response.request().headers()["x-rango-prefetch"] === "1"
+          response.request().headers()["x-rango-prefetch"] !== undefined
         );
       });
 
@@ -1730,7 +1730,7 @@ function describePprShell(mode: "dev" | "build") {
           requestUrl.pathname === "/ppr-shell/slot-hole" &&
           requestUrl.searchParams.get("probe") ===
             "fragment-prefetch-inflight" &&
-          req.headers()["x-rango-prefetch"] === "1"
+          req.headers()["x-rango-prefetch"] !== undefined
         );
       });
       const prefetchResponse = page.waitForResponse((response) => {

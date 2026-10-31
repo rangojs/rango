@@ -10,6 +10,16 @@
 export const PREFETCH_HEADER = "X-Rango-Prefetch";
 
 /**
+ * PREFETCH_HEADER's value on an intent prefetch: a hover or an explicit
+ * `prefetch()` call (browser/prefetch/fetch.ts prefetchDirect). The server
+ * defers nothing in it: `prefetch: false` loaders and the work behind a
+ * flagged `loading()` run, as in the navigation it starts early. A
+ * speculative prefetch (viewport, render) sends `1`, and any value other than
+ * this one reads as speculative.
+ */
+export const PREFETCH_INTENT = "intent";
+
+/**
  * The last row of a prefetch whose render reported an error
  * (rsc/prefetch-render-error.ts): a Flight hint with a code React does not
  * dispatch, so the decoder skips it (pinned by

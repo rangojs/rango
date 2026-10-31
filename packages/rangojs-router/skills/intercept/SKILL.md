@@ -311,12 +311,13 @@ intercepted: it gets the full page.
 ### `prefetch: false` on an intercept's loaders
 
 `loader(Def, { prefetch: false })` inside `intercept()` keeps that loader out
-of a prefetch of the target from the source page:
+of a viewport or render prefetch of the target from the source page (a hover
+prefetch runs it, and its click opens the modal complete with no fill):
 
 ```typescript
 intercept("@modal", "product", <ProductModal />, () => [
   loader(ProductLoader),
-  loader(ReviewsLoader, { prefetch: false }), // skipped in the prefetch
+  loader(ReviewsLoader, { prefetch: false }), // skipped in a viewport prefetch
   loading(<ModalSkeleton />),
 ]);
 ```

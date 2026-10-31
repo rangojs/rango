@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   clientUrls,
   Link,
@@ -61,7 +62,37 @@ function InterceptClientIndex() {
       >
         Open detail (prefetched)
       </Link>
+      <InterceptClientArm to="/client-urls-intercept/detail/delta" />
     </div>
+  );
+}
+
+/**
+ * ci-detail-arm: a click mounts a hidden render link to the target, a
+ * speculative prefetch (`X-Rango-Prefetch: 1`) that defers the modal's
+ * flagged loader; the next click unmounts it. A hover over the link above
+ * sends an intent prefetch instead, which defers nothing.
+ */
+function InterceptClientArm({ to }: { to: string }) {
+  const [armed, setArmed] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="ci-detail-arm"
+        data-armed={String(armed)}
+        onClick={() => setArmed((on) => !on)}
+      >
+        Prefetch as a viewport link would
+      </button>
+      {armed && (
+        <span hidden>
+          <Link to={to} prefetch="render">
+            armed
+          </Link>
+        </span>
+      )}
+    </>
   );
 }
 
