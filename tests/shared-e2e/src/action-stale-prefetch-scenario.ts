@@ -252,6 +252,10 @@ export function runActionStalePrefetchTests(
     const inflight = sent.find(
       (entry) => entry.prefetch && entry.path === "/action-stale/basket",
     )!;
+    // Let the server reach the handler, which reads the cart as it starts:
+    // a loaded dev server can take longer than the action to get there, and
+    // the prefetch would then carry the write. Still well inside its 1500 ms.
+    await page.waitForTimeout(400);
 
     await page.getByTestId("as-add-fast").click();
     await waitForSettledNow(page);
