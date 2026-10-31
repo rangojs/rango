@@ -115,12 +115,19 @@ export interface LinkProps extends Omit<
    * server cannot see.
    *
    * The server scopes a prefetch to its source automatically
-   * (`x-rsc-prefetch-scope: source`) when an intercept targets the route,
-   * whether or not it applies from this page (the modal and the full page
-   * are both source-specific), and when a `revalidate()` of the target
-   * read `currentParams`, `currentUrl` or `fromRouteName` and kept the
-   * segment: that diff is the source page's (#1331). Every other response
-   * stays shared.
+   * (`x-rsc-prefetch-scope: source`) when an intercept targets the route or
+   * the source page, whether or not it applies (the modal and the full page
+   * are both source-specific), when the answer defers a `prefetch: false`
+   * unit the source does not hold, when a `revalidate()` of the target read
+   * `currentParams`, `currentUrl` or `fromRouteName` and kept the segment:
+   * that diff is the source page's (#1331), and when a prerendered target
+   * keeps segments on equal params (`storedEntrySends`). Every other
+   * response stays shared. Use the key
+   * for what the server does not track: `context` in a `revalidate()`, or
+   * a `Referer` read.
+   *
+   * A source-scoped entry is keyed by the source page's full URL, query
+   * and hash included, so every page prefetches the link again.
    *
    * @example
    * ```tsx

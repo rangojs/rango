@@ -311,13 +311,13 @@ flagged loader with `ctx.use()` before its first `await` (or one with no
 `loading()`) gets it run in the prefetch instead: one run, no fill for it.
 `loading(…, { prefetch: false })` inside `intercept()` defers nothing.
 
-A prefetch of a route an intercept targets is stored per source page, whether
-or not the intercept applies from that page (`rsc-rendering.ts`
-`x-rsc-prefetch-scope: source`, set from `MatchResult.interceptTargeted`). A
-full page prefetched from a page where `when` is false never serves a click
-from a page where it is true. Routes no intercept targets keep one shared
-prefetch entry, unless a `revalidate()` that read the source page kept a
-segment (`MatchResult.sourceHeld`, same header).
+A prefetch of a route an intercept targets, or one sent from such a route, is
+stored per source page, whether or not the intercept applies from that page
+(`rsc-rendering.ts` `x-rsc-prefetch-scope: source`, set from
+`MatchResult.interceptTargeted`). A full page prefetched from a page where
+`when` is false never serves a click from a page where it is true. Other
+prefetches keep one shared entry, unless a `revalidate()` that read the source
+page kept a segment (`MatchResult.sourceHeld`, same header).
 
 ```typescript
 // Intercept only when opened from the shop index

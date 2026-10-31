@@ -180,6 +180,8 @@ layout(LocaleLayout, () => [
 ]);
 ```
 
+A rule that reads `currentParams`, `currentUrl` or `fromRouteName` and keeps the layout makes prefetches between the pages under it page-only: the locale rule above keeps the layout on every `/en` to `/en` navigation, so each page prefetches its links again ([Navigation](/docs/rango/features/navigation#one-prefetch-serves-every-page)). Write it for chrome that must follow the param; a block that belongs to one page goes in that page's route, or in an orphan layout inside its `path()`, which re-renders with the route and needs no rule.
+
 `revalidate(false)` on a standalone layout only restates the default. Revalidate callbacks must be synchronous; the full set of return shapes (hard boolean, soft `{ defaultShouldRevalidate }`, or defer) is covered in [Loaders](/docs/rango/features/loaders).
 
 Partial revalidation does not re-run non-revalidated ancestors just to rebuild their `ctx.set()` state. If child segments read data established by this layout or by a handler above them, revalidate the outer segment too.

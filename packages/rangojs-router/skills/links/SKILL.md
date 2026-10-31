@@ -637,6 +637,70 @@ prefetched as usual. See
 a link or a whole section from prefetching at all, use the `prefetch` prop or
 `data-prefetch-scope` above.
 
+### Shared prefetches and `prefetchKey`
+
+A prefetch is stored for its target URL and shared by every page. A link to
+`/products/42` prefetched on the home page is not fetched again on the search
+page or on page 2 of a list, and a click from any of them adopts that one
+entry. This is deliberate: without it, a paginated list or a product grid
+would prefetch every visible link again after each navigation.
+
+The answer is a diff against the page that asked. The server leaves out the
+segments that page already shows, and the click fills them from the copies on
+screen. A shared answer is right on every page as long as that diff does not
+depend on which page asked. With the defaults it does not: a standalone layout
+is held from every page that shows it, and a route, with any layout inside its
+`path()`, re-renders whenever its params or search change.
+
+When the diff does depend on the page, the server stores the answer for that
+page only (the response carries `x-rsc-prefetch-scope: source`). A click from
+any other page then sends its own request. The server does this in four
+cases:
+
+- An intercept targets the route, or the page that sent the prefetch,
+  whether or not it applies here.
+- The answer defers a `prefetch: false` loader or `loading()` that the page
+  does not show yet.
+- A `revalidate()` on the target read the page being left (`currentParams`,
+  `currentUrl` or `fromRouteName`) and kept its segment. That keep was
+  decided for this page's copy, and another page holds a copy rendered for
+  other params.
+- The target is prerendered and the page that asked has the same route
+  params: the stored answer keeps the route on a search-only change, and keeps
+  a layout that has `revalidate()` rules without running them.
+
+These page-only entries are keyed by the page's full URL, query string and hash
+included, so each page prefetches those targets again: `?page=2` and `?page=3`
+each make their own. The answer stays correct; the cost is the sharing. A
+`revalidate()` that compares `currentParams` on a layout above most of the app
+(a locale, an account, a project) puts every prefetch between pages under it in
+this case. `/app-structure` → "Prefetches are shared" lists the structures that
+need no such rule.
+
+`prefetchKey=":source"` asks for the same scope on one link, for a target
+whose answer depends on the page that sent it in a way the server cannot
+see:
+
+```tsx
+<Link to={href} prefetchKey=":source">
+  Back to results
+</Link>;
+// The same for a programmatic prefetch
+router.prefetch(href, { key: ":source" });
+```
+
+The server tracks only the three fields above. Use the key when the
+dependency runs through anything else:
+
+- `context` in a `revalidate()` (the handler context: the request, its
+  headers and cookies, and middleware variables);
+- a handler, loader or middleware that reads the request's `Referer`, which
+  the browser sets to the page that sent the prefetch (unless the page's
+  `Referrer-Policy` strips it).
+
+`":source"` is the only value. It costs the same as a page-only entry, so put
+it on the links that need it, never on every link of an app.
+
 ## When to use what
 
 | Context          | API                                                | Resolves                                  | Use for                                                          |
