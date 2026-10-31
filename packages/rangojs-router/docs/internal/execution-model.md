@@ -1663,8 +1663,12 @@ soft navigation renders the full target page with no intercept. Pinned by the
 A server action from an open intercept re-renders the intercept whose slot the
 client holds (`findInterceptForRoute` in `router/intercept-resolution.ts`),
 not the first one declared for the route. `when()` runs only to choose between
-held intercepts that share a slot, with `from` the intercept source the action
-sends. Pinned by `src/testing/__tests__/action-intercept-selection.rsc-test.tsx`.
+held intercepts that share a slot id (two that fill one slot, or one whose
+slot a `parallel()` of that name fills), with `from` the intercept source the
+action sends. The held intercepts are collected under the route's own name
+and its local name inside `include()` in one walk, own name first: a held
+own-name id must not select before the local name is looked at. Pinned by
+`src/testing/__tests__/action-intercept-selection.rsc-test.tsx`.
 
 ### Async and streaming limits
 

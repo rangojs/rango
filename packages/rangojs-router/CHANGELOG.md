@@ -12,15 +12,21 @@ skipped `when()`. With `@modal` (from /list) declared before `@drawer` (from
 to it, and the drawer's loaders did not re-run, so it kept the data it had
 before the action. Two intercepts on one layout that fill the same slot showed
 the other intercept's content and loader data in that slot. The same happened
-under `cache()` and over a `Prerender()` route.
+under `cache()`, over a `Prerender()` route, and inside an `include()` whose
+intercepts target the route by its own name and by its local name.
 
 **Now.** An action re-renders the intercept on screen, the one whose slot the
 page holds: its loaders re-run as after any action, and no other intercept
 opens. An open intercept still stays open after an action when its `when()`
-would now reject. Two intercepts that fill one slot share that slot, so
-between them the action evaluates `when()` again, with `from` the
-intercept's source page; when neither passes, the first declared renders. No
-change in your code.
+would now reject. When the page holds the slots of more than one of the
+route's intercepts (two that fill one slot share it, and a `parallel()` of an
+intercept's slot name holds that slot while another intercept is open),
+whether they are declared for the route's name or its local name inside
+`include()`, the action evaluates their `when()` again, with `from` the
+intercept's source page, and the first that passes renders; when none
+passes, the first of them renders. `when()` selects an intercept;
+it does not authorize one: guard data in the target route's middleware or the
+intercept's loaders. No change in your code.
 
 ## 0.32.0 (2026-10-30)
 

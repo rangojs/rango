@@ -284,10 +284,20 @@ renders and the error is logged with the route name.
 A server action from an open intercept re-renders that intercept, the one
 whose slot the page holds, and opens no other intercept that targets the
 route. Its `when` is not evaluated again, so the intercept stays open after
-the action even when its `when` would now reject. Two intercepts on one
-layout that fill the same slot share that slot, so between them the action
-evaluates `when` again, with `from` the intercept's source page; when neither
-passes, the first declared renders.
+the action even when its `when` would now reject. When the page holds the
+slots of more than one of the route's intercepts (two intercepts on one layout
+that fill the same slot share it, and a `parallel()` of an intercept's slot
+name holds that slot while another intercept is open), whether they are
+declared for the route's name or its local name inside `include()`, the
+action evaluates their `when` again, with `from` the intercept's source page,
+and the first that passes renders; when none passes, the first of them
+renders.
+
+`when` selects an intercept; it does not authorize one. An action request
+that names an intercept's slot renders that intercept without its `when`,
+and a navigation request can claim any source page. Guard data in the target
+route's middleware, which runs for every intercept render, or in the
+intercept's loaders.
 
 The server learns `from` from the `X-RSC-Router-Client-Path` header, which the
 rango client sends on every navigation. A partial request without it falls

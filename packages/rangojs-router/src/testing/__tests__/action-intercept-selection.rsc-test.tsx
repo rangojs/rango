@@ -78,8 +78,36 @@ const from =
  * - `include names`: `different slots` under `include("/", ..., { name:
  *   "shop" })`, the `@drawer` declared for the bare name "item", which the
  *   route matches as its local name (the route's own name is "shop.item").
+ * - `same slot, split names`: `same slot` under that include, "sheet"
+ *   declared for the local name: the two share the slot's id across names.
+ * - `parallel default`: `different slots` with a `parallel()` default for
+ *   `@modal` on the layout, which holds the modal's slot id while the drawer
+ *   is open.
+ * - `parallel default, include names`: the same under the include, the
+ *   drawer declared for the local name: the held `@modal` id is the route's
+ *   own name's intercept, the drawer its local name's.
  */
-type Shape = "different slots" | "same slot" | "single" | "include names";
+type Shape =
+  | "different slots"
+  | "same slot"
+  | "single"
+  | "include names"
+  | "same slot, split names"
+  | "parallel default"
+  | "parallel default, include names";
+
+/** Shapes mounted under `include("/", ..., { name: "shop" })`. */
+const INCLUDED: ReadonlySet<Shape> = new Set<Shape>([
+  "include names",
+  "same slot, split names",
+  "parallel default, include names",
+]);
+
+/** Shapes whose layout has a `parallel()` default for `@modal`. */
+const PARALLEL_DEFAULT: ReadonlySet<Shape> = new Set<Shape>([
+  "parallel default",
+  "parallel default, include names",
+]);
 
 /** The route the intercepts open over: a live one or a Prerender() one. */
 type Target = "live" | "prerender";
@@ -96,56 +124,72 @@ async function touch(): Promise<string> {
 }
 
 function makeRouter(shape: Shape, cached: boolean, target: Target) {
-  const patterns = urls(({ path, cache, layout, intercept, loader }) => {
-    const source = (pathname: string, name: string) =>
-      path(pathname, () => <ul>{`${name} body`}</ul>, { name });
-    // Called inside the layout's children: a DSL call attaches to the
-    // entry being built.
-    const modal = () =>
-      intercept(
-        "@modal",
-        ".item",
-        interceptHandler("modal"),
-        { when: from("/list") },
-        () => [loader(ModalLoader)],
+  // The drawer, or the sheet, targets the route's local name where its shape
+  // says so.
+  const drawerTarget =
+    shape === "include names" || shape === "parallel default, include names"
+      ? "item"
+      : ".item";
+  const sheetTarget = shape === "same slot, split names" ? "item" : ".item";
+  const patterns = urls(
+    ({ path, cache, layout, intercept, loader, parallel }) => {
+      const source = (pathname: string, name: string) =>
+        path(pathname, () => <ul>{`${name} body`}</ul>, { name });
+      // Called inside the layout's children: a DSL call attaches to the
+      // entry being built.
+      const modal = () =>
+        intercept(
+          "@modal",
+          ".item",
+          interceptHandler("modal"),
+          { when: from("/list") },
+          () => [loader(ModalLoader)],
+        );
+      const drawer = () =>
+        intercept(
+          "@drawer",
+          drawerTarget,
+          interceptHandler("drawer"),
+          { when: from("/other") },
+          () => [loader(DrawerLoader)],
+        );
+      const sheet = () =>
+        intercept(
+          "@modal",
+          sheetTarget,
+          interceptHandler("sheet"),
+          { when: from("/other") },
+          () => [loader(SheetLoader)],
+        );
+      const intercepts = () =>
+        shape === "single"
+          ? [drawer()]
+          : shape === "same slot" || shape === "same slot, split names"
+            ? [modal(), sheet()]
+            : [modal(), drawer()];
+      const parallels = () =>
+        PARALLEL_DEFAULT.has(shape)
+          ? [parallel({ "@modal": () => <aside>no modal</aside> })]
+          : [];
+      const tree = layout(
+        () => <main>shell</main>,
+        () => [
+          ...parallels(),
+          source("/list", "list"),
+          source("/other", "other"),
+          path(
+            "/item/:id",
+            target === "prerender" ? PrerenderedItem : liveItem,
+            { name: "item" },
+          ),
+          ...intercepts(),
+        ],
       );
-    const drawer = () =>
-      intercept(
-        "@drawer",
-        shape === "include names" ? "item" : ".item",
-        interceptHandler("drawer"),
-        { when: from("/other") },
-        () => [loader(DrawerLoader)],
-      );
-    const sheet = () =>
-      intercept(
-        "@modal",
-        ".item",
-        interceptHandler("sheet"),
-        { when: from("/other") },
-        () => [loader(SheetLoader)],
-      );
-    const intercepts = () =>
-      shape === "different slots" || shape === "include names"
-        ? [modal(), drawer()]
-        : shape === "same slot"
-          ? [modal(), sheet()]
-          : [drawer()];
-    const tree = layout(
-      () => <main>shell</main>,
-      () => [
-        source("/list", "list"),
-        source("/other", "other"),
-        path("/item/:id", target === "prerender" ? PrerenderedItem : liveItem, {
-          name: "item",
-        }),
-        ...intercepts(),
-      ],
-    );
-    return cached ? [cache({ ttl: 600 }, () => [tree])] : [tree];
-  });
+      return cached ? [cache({ ttl: 600 }, () => [tree])] : [tree];
+    },
+  );
   return createRouter({}).routes(
-    shape === "include names"
+    INCLUDED.has(shape)
       ? urls(({ include }) => [include("/", patterns, { name: "shop" })])
       : patterns,
   );
@@ -270,6 +314,26 @@ const CASES: ReadonlyArray<{
     open: "drawer",
     others: ["modal"],
   },
+  // The page holds a slot id an intercept under the route's own name
+  // matches, while the open one is under its local name, or shares that id.
+  {
+    shape: "same slot, split names",
+    source: "/other",
+    open: "sheet",
+    others: ["modal"],
+  },
+  {
+    shape: "parallel default, include names",
+    source: "/other",
+    open: "drawer",
+    others: ["modal"],
+  },
+  {
+    shape: "parallel default",
+    source: "/other",
+    open: "drawer",
+    others: ["modal"],
+  },
   // Controls: the first intercept declared is the open one, or the only one.
   {
     shape: "different slots",
@@ -278,6 +342,18 @@ const CASES: ReadonlyArray<{
     others: ["drawer"],
   },
   { shape: "same slot", source: "/list", open: "modal", others: ["sheet"] },
+  {
+    shape: "same slot, split names",
+    source: "/list",
+    open: "modal",
+    others: ["sheet"],
+  },
+  {
+    shape: "parallel default, include names",
+    source: "/list",
+    open: "modal",
+    others: ["drawer"],
+  },
   { shape: "single", source: "/other", open: "drawer", others: [] },
 ];
 

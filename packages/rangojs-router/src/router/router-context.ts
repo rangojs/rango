@@ -94,7 +94,7 @@ export interface RouterContext<TEnv = any> {
   ) => CacheScope | null;
 
   findInterceptForRoute: (
-    routeKey: string,
+    routeKeys: string | readonly string[],
     parentEntry: EntryData | null,
     selectorContext: InterceptSelectorContext,
     isAction: boolean,

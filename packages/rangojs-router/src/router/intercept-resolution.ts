@@ -136,44 +136,54 @@ export function collectInterceptTargetNames(
 }
 
 /**
- * The intercept for the target route, with the entry that declares it: the
- * first along the chain from `fromEntry` up whose when() passes. On an action
- * (`isAction`) with no `held`, the first, when() not evaluated.
+ * The intercept for the target route, with the entry that declares it.
+ * `targetRouteKeys` are the names it may be declared for, in precedence
+ * order: the route's own name, then its local name inside include()
+ * (match-api.ts). A navigation, or an action with no `held`, takes the first
+ * along the chain from `fromEntry` up under the first name that has one: on a
+ * navigation, the first whose when() passes; on an action, the first, when()
+ * not evaluated.
  *
  * An action given `held` (the request's segment ids) re-renders the intercept
- * on screen: one whose slot id the client holds, null when it holds none. One
- * held: that one, when() not evaluated, so an open intercept stays open when
- * its when() would now reject. Several held (intercepts on one entry that fill
- * one slot share its id, as does a parallel() slot of that name): the first
- * whose when() passes against the action's intercept source, else the first.
+ * on screen: one whose slot id the client holds, null when it holds none. Its
+ * candidates are collected under every name in one walk, the route's own
+ * name's first: a held id under the own name (a parallel() default of the
+ * slot's name) must not win before the local name is looked at. One held:
+ * that one, when() not evaluated, so an open intercept stays open when its
+ * when() would now reject. Several held (intercepts on one entry that fill one
+ * slot share its id, as does a parallel() slot of that name): the first whose
+ * when() passes against the action's intercept source, else the first.
  */
 export function findInterceptForRoute(
-  targetRouteKey: string,
+  targetRouteKeys: string | readonly string[],
   fromEntry: EntryData | null,
   selectorContext: InterceptSelectorContext | null = null,
   isAction: boolean = false,
   held?: ReadonlySet<string>,
 ): InterceptResult | null {
+  const names =
+    typeof targetRouteKeys === "string" ? [targetRouteKeys] : targetRouteKeys;
   if (!isAction || !held) {
-    return (
-      findOnChain(fromEntry, (intercept, entry) =>
-        intercept.routeName === targetRouteKey &&
+    for (const name of names) {
+      const found = findOnChain(fromEntry, (intercept, entry) =>
+        intercept.routeName === name &&
         (isAction || evaluateInterceptWhen(intercept, selectorContext))
           ? { intercept, entry }
           : undefined,
-      ) ?? null
-    );
+      );
+      if (found) return found;
+    }
+    return null;
   }
-  const open: InterceptResult[] = [];
+  const byName: InterceptResult[][] = names.map(() => []);
   findOnChain(fromEntry, (intercept, entry) => {
-    if (
-      intercept.routeName === targetRouteKey &&
-      held.has(interceptSlotId(entry, intercept))
-    ) {
-      open.push({ intercept, entry });
+    const rank = names.indexOf(intercept.routeName);
+    if (rank !== -1 && held.has(interceptSlotId(entry, intercept))) {
+      byName[rank]!.push({ intercept, entry });
     }
     return undefined;
   });
+  const open = byName.flat();
   if (open.length < 2) return open[0] ?? null;
   return (
     open.find((c) => evaluateInterceptWhen(c.intercept, selectorContext)) ??

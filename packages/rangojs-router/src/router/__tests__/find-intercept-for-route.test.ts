@@ -10,16 +10,25 @@ import type {
  * findInterceptForRoute: a navigation selects the first intercept along the
  * chain whose when() passes; an action selects the intercept the client
  * holds, by its slot id, and evaluates when() only between held intercepts
- * that share that id. With no held ids (targetsIntercept in match-api.ts),
- * an action takes the first declared.
+ * that share that id. With no held ids (interceptTargeted in match-api.ts),
+ * an action takes the first declared. Under include() a route has two names,
+ * its own and its local one: a navigation tries them in turn, an action
+ * collects its held intercepts under both in one walk.
  */
 
 function intercept(
   slotName: `@${string}`,
   when: InterceptEntry["when"] = [],
+  routeName = "item",
 ): InterceptEntry {
-  return { slotName, routeName: "item", handler: null, loader: [], when };
+  return { slotName, routeName, handler: null, loader: [], when };
 }
+
+/**
+ * A route mounted by include(..., { name: "shop" }): its own name, then its
+ * local name.
+ */
+const SHOP_ITEM = ["shop.item", "item"] as const;
 
 function layout(intercepts: InterceptEntry[]): EntryData {
   return {
@@ -48,9 +57,10 @@ function select(
   ctx: InterceptSelectorContext | null,
   isAction: boolean,
   held?: string[],
+  names: string | readonly string[] = "item",
 ): InterceptEntry | undefined {
   return findInterceptForRoute(
-    "item",
+    names,
     entry,
     ctx,
     isAction,
@@ -145,5 +155,58 @@ describe("findInterceptForRoute", () => {
     } as unknown as EntryData;
     expect(select(child, source("/list"), false)).toBe(inner);
     expect(select(child, source("/list"), true, ["M0L0.@outer"])).toBe(outer);
+  });
+
+  it("navigation: the route's own name along the whole chain before its local name", () => {
+    const own = intercept("@modal", [from("/other")], "shop.item");
+    const local = intercept("@drawer", [from("/other")], "item");
+    const child = {
+      shortCode: "M0L0L0",
+      intercept: [local],
+      layout: [],
+      parent: layout([own]),
+    } as unknown as EntryData;
+    expect(select(child, source("/other"), false, undefined, SHOP_ITEM)).toBe(
+      own,
+    );
+    expect(select(child, source("/other"), false, undefined, ["item"])).toBe(
+      local,
+    );
+  });
+
+  it("action: one walk over both names, so a held own-name slot (a parallel() default's) does not win before the local name", () => {
+    const modal = intercept("@modal", [from("/list")], "shop.item");
+    const drawer = intercept("@drawer", [from("/other")], "item");
+    const entry = layout([modal, drawer]);
+    const held = ["M0L0", "M0L0.@modal", "M0L0.@drawer"];
+    expect(select(entry, source("/other"), true, held, SHOP_ITEM)).toBe(drawer);
+    expect(select(entry, source("/list"), true, held, SHOP_ITEM)).toBe(modal);
+  });
+
+  it("action: a same-slot pair split across the two names is told apart by when()", () => {
+    const modal = intercept("@modal", [from("/list")], "shop.item");
+    const sheet = intercept("@modal", [from("/other")], "item");
+    const entry = layout([modal, sheet]);
+    const held = ["M0L0.@modal"];
+    expect(select(entry, source("/other"), true, held, SHOP_ITEM)).toBe(sheet);
+    expect(select(entry, source("/list"), true, held, SHOP_ITEM)).toBe(modal);
+    // Neither passing: the own name's first.
+    expect(select(entry, source("/"), true, held, SHOP_ITEM)).toBe(modal);
+  });
+
+  it("action: a held local-name intercept alone is selected without when()", () => {
+    const toModal = from("/list");
+    const modal = intercept("@modal", [toModal], "shop.item");
+    const drawer = intercept("@drawer", [() => false], "item");
+    expect(
+      select(
+        layout([modal, drawer]),
+        source("/list"),
+        true,
+        ["M0L0.@drawer"],
+        SHOP_ITEM,
+      ),
+    ).toBe(drawer);
+    expect(toModal).not.toHaveBeenCalled();
   });
 });

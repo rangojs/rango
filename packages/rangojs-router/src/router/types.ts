@@ -91,7 +91,7 @@ export interface MatchApiDeps<TEnv = any> {
   findMatch: (pathname: string, ms?: any) => any;
   getMetricsStore: () => any;
   findInterceptForRoute: (
-    routeKey: string,
+    routeKeys: string | readonly string[],
     parentEntry: EntryData | null,
     selectorContext: InterceptSelectorContext | null,
     isAction: boolean,
