@@ -2,9 +2,8 @@
  * A route's loaders are inherited into a child layout that has parallel
  * slots (resolveOrphanLayout and the loader-only pass,
  * router/segment-resolution/revalidation.ts), so a slot's useLoader() reaches
- * them through a route `loading()` boundary. buildMatchResult
- * (router/match-result.ts) drops that copy when the route's own loader
- * segment is in the same payload and no fallback hides it.
+ * them through a route `loading()` boundary. When no fallback hides the
+ * route's own loader segments, the copy is redundant and never resolved.
  *
  * Which copies a payload carries must agree on every request of a route: a
  * layout that holds a loader entry on one render and none on the next gains
@@ -13,9 +12,12 @@
  * from the route entry, the same on the document and on partials
  * (inheritedCopyRedundant):
  *
- * - no `loading()`, or `loading(false)`: the copy is dropped everywhere. The
+ * - no `loading()`, or `loading(false)`: no copy, on any request. The
  *   walkers emit `loading(false)` as `loading: null`, which used to read as a
- *   declared fallback and sent the copy on every request (rango-t156).
+ *   declared fallback and sent the copy on every request (rango-t156). With
+ *   the route's own loader held (its revalidate() declines), a copy resolved
+ *   and dropped only beside the route's own reached an action or a
+ *   same-route navigation alone.
  * - `loading(fallback)`: the copy is kept everywhere, including a partial
  *   that carries the route's loader segments without the route segment.
  * - `loading(fallback, { ssr: false })`: a document renders no fallback (its
@@ -23,7 +25,8 @@
  *   The copy is kept everywhere, so the client's held document segments and
  *   a later answer give the layout the same loader entries.
  *
- * The server-only copy marker never reaches the payload.
+ * No copy marker reaches the payload: main's kept copies carried
+ * `_inherited: true` to the client.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -120,6 +123,28 @@ const router = createRouter({
             layout(Inner, () => [parallel({ "@side": Side })]),
           ],
         ),
+        // The route's own loader is held on every partial, so an action or a
+        // same-route navigation re-runs nothing of the route. A copy for the
+        // layout would be new to the client there and run on its own.
+        path(
+          "/held-loader-plain",
+          () => <article>held loader plain</article>,
+          { name: "heldLoaderPlain" },
+          () => [
+            loader(Data, () => [revalidate(() => false)]),
+            layout(Inner, () => [parallel({ "@side": Side })]),
+          ],
+        ),
+        path(
+          "/held-loader-off",
+          () => <article>held loader off</article>,
+          { name: "heldLoaderOff" },
+          () => [
+            loader(Data, () => [revalidate(() => false)]),
+            loading(false),
+            layout(Inner, () => [parallel({ "@side": Side })]),
+          ],
+        ),
       ],
     ),
   ]),
@@ -148,6 +173,11 @@ function dataSegments(payload: Payload): string[] {
   return payload.segments
     .filter((s) => s.type === "loader" && s.id.endsWith(`.${Data.$$id}`))
     .map((s) => s.id);
+}
+
+/** The ids of `Data`'s segments a payload's `matched` keeps on the client. */
+function matchedData(payload: Payload): string[] {
+  return payload.matched.filter((id) => id.endsWith(`.${Data.$$id}`));
 }
 
 /** Every key the payload's segments carry, across all of them. */
@@ -240,15 +270,55 @@ describe("a route loader inherited into a layout with parallel slots", () => {
     expect(action.matched).toEqual(expect.arrayContaining(ids));
   });
 
-  it.each(["/plain", "/off", "/fallback", "/ssr-off", "/held"])(
-    "%s: no server-only copy marker reaches the payload",
-    async (url) => {
-      const { document, navigation, action } = await everyRequestOf(url);
-      for (const payload of [document, navigation, action]) {
-        const keys = segmentKeys(payload);
-        expect(keys.has("_inherited")).toBe(false);
-        expect(keys.has("_redundantCopy")).toBe(false);
+  it.each([
+    ["no loading()", "/held-loader-plain"],
+    ["loading(false)", "/held-loader-off"],
+  ])(
+    "%s with the route's loader held: the document, an action and a same-route navigation agree on the copies",
+    async (_label, url) => {
+      // The layout's copy was resolved and dropped only beside the route's
+      // own. With the route's loader held, an action or a same-route
+      // navigation re-ran the copy, new to the client, and sent it alone:
+      // the layout gained a loader entry and remounted.
+      const document = await documentOf(url);
+      const action = await read(
+        await serveShellRequest(router, url, {
+          cacheStore: new MemorySegmentCacheStore(),
+          action: { ref: touch, id: TOUCH_ACTION, segments: document.matched },
+        }),
+      );
+      const navigation = await read(
+        await serveShellRequest(router, `${url}?x=2`, {
+          cacheStore: new MemorySegmentCacheStore(),
+          partial: { from: url, segments: document.matched },
+        }),
+      );
+      expect(errors).toEqual([]);
+      const ids = dataSegments(document);
+      expect(ids).toHaveLength(1);
+      // The held loader runs on neither partial, and nothing runs for it.
+      expect(dataSegments(action)).toEqual([]);
+      expect(dataSegments(navigation)).toEqual([]);
+      for (const payload of [document, action, navigation]) {
+        expect(matchedData(payload)).toEqual(ids);
       }
     },
   );
+
+  it.each([
+    "/plain",
+    "/off",
+    "/fallback",
+    "/ssr-off",
+    "/held",
+    "/held-loader-plain",
+    "/held-loader-off",
+  ])("%s: no server-only copy marker reaches the payload", async (url) => {
+    const { document, navigation, action } = await everyRequestOf(url);
+    for (const payload of [document, navigation, action]) {
+      const keys = segmentKeys(payload);
+      expect(keys.has("_inherited")).toBe(false);
+      expect(keys.has("_redundantCopy")).toBe(false);
+    }
+  });
 });

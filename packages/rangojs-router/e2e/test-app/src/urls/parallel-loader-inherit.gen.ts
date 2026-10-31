@@ -2,6 +2,8 @@
 export const routes = {
   parallelLoaderInherit: "/parallel-loader-inherit",
   parallelLoaderInheritHeld: "/parallel-loader-inherit-held",
+  parallelLoaderInheritHeldLoader: "/parallel-loader-inherit-held-loader",
+  parallelLoaderInheritHeldLoaderOff: "/parallel-loader-inherit-held-loader-off",
   parallelLoaderInheritLoading: "/parallel-loader-inherit-loading",
   parallelLoaderInheritLoadingOff: "/parallel-loader-inherit-loading-off",
   parallelLoaderInheritSsrOff: "/parallel-loader-inherit-ssr-off",

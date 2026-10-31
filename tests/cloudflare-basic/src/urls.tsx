@@ -365,6 +365,7 @@ import {
   actionFailurePatterns,
 } from "./pages/action-failure.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
+import { parallelLoaderInheritPatterns } from "./pages/parallel-loader-inherit.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { documentLocationStatePatterns } from "./pages/document-location-state.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
@@ -3191,6 +3192,9 @@ export const urlpatterns = urls(
         // layout-hold contract (mirrors the router e2e app).
         include("/", prefetchTransitionPatterns, { name: "" }),
         include("/", heldBoundaryPatterns, { name: "" }),
+        // A held route loader read from a child layout's parallel slot
+        // (e2e/parallel-loader-inherit.test.ts).
+        include("/", parallelLoaderInheritPatterns, { name: "" }),
         include("/", lateHistoryPatterns, { name: "" }),
         // An action that does not land on the page on screen: the follow-up
         // revalidation (e2e/action-stale-navigation.test.ts,

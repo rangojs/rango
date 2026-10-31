@@ -93,10 +93,14 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
    every request (`inheritedCopyRedundant` in
    `router/segment-resolution/revalidation.ts`), never from a segment's
    `loading`, which is `null` on a `loading(fallback, { ssr: false })`
-   document and the fallback on its partials. `buildMatchResult` drops a copy
-   marked redundant beside the route's own (`router/match-result.ts`).
+   document and the fallback on its partials. The walkers never resolve a
+   redundant copy, on any request: dropping one later only beside the route's
+   own copy sent it alone on an action or a same-route navigation that held
+   the route's loader (its `revalidate()` declines), so the layout gained a
+   loader entry and remounted.
    `src/testing/__tests__/inherited-loader-copy.rsc-test.tsx` pins it on the
-   document, a navigation and an action.
+   document, a navigation and an action, with and without the route's loader
+   held.
 
 5. Run `pnpm --filter @rangojs/router exec playwright test loader-behavior` after
    any changes to these files. The skipSSR tests (`loading(fallback, { ssr: false })`)

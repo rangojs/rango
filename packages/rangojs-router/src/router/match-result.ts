@@ -115,7 +115,6 @@ import type {
 import { isPlaceholder } from "../types/segments.js";
 import { interceptMatched } from "../browser/intercept-utils.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
-import { debugLog } from "./logging.js";
 import { appendMetric } from "./metrics.js";
 import {
   collectInterceptTargetNames,
@@ -132,66 +131,11 @@ export async function collectSegments(
   return segments;
 }
 
-/**
- * Drop redundant inherited loader copies.
- *
- * When a route has loaders and a child layout has parallel slots, the same
- * loader is resolved twice: once for the route and once inherited into the
- * layout. The copy is only needed when the route renders a `loading()`
- * fallback: the route's loader data is then inside a LoaderBoundary that
- * parallel slots can't reach through. Without one, useLoader() traverses
- * parent contexts and finds the data. The walker decides which copies are
- * redundant from the route entry, the same on every request
- * (inheritedCopyRedundant, segment-resolution/revalidation.ts), and marks
- * them `_redundantCopy`; a marked copy goes when the route's own copy is in
- * the same result.
- */
-function deduplicateLoaderSegments(
-  segments: ResolvedSegment[],
-  logPrefix: string,
-): { segments: ResolvedSegment[]; removedIds: Set<string> } {
-  const originalLoaders = new Set<string>();
-  for (const s of segments) {
-    if (s.type === "loader" && s.loaderId && !s._redundantCopy) {
-      originalLoaders.add(s.loaderId);
-    }
-  }
-
-  const result: ResolvedSegment[] = [];
-  const removedIds = new Set<string>();
-
-  for (const s of segments) {
-    if (
-      s._redundantCopy &&
-      s.type === "loader" &&
-      s.loaderId &&
-      originalLoaders.has(s.loaderId)
-    ) {
-      removedIds.add(s.id);
-      continue;
-    }
-    result.push(s);
-  }
-
-  if (removedIds.size > 0) {
-    debugLog(
-      logPrefix,
-      `deduped ${removedIds.size} inherited loader segment(s)`,
-    );
-  }
-
-  return { segments: result, removedIds };
-}
-
 export function buildMatchResult<TEnv>(
   allSegments: ResolvedSegment[],
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
 ): MatchResult {
-  const logPrefix = ctx.isFullMatch
-    ? "[Router.match]"
-    : "[Router.matchPartial]";
-
   let allIds: string[];
   let segmentsToRender: ResolvedSegment[];
   let resolvedIds: string[];
@@ -254,24 +198,15 @@ export function buildMatchResult<TEnv>(
     }
   }
 
-  const { segments: dedupedSegments, removedIds } = deduplicateLoaderSegments(
-    segmentsToRender,
-    logPrefix,
-  );
-
-  const matchedIds =
-    removedIds.size > 0 ? allIds.filter((id) => !removedIds.has(id)) : allIds;
-
-  // One pass over dedupedSegments: strip the internal _handlerRan and
-  // _redundantCopy markers and collect the diff ids (id is unchanged by the
-  // strip) together.
+  // One pass over segmentsToRender: strip the internal _handlerRan marker and
+  // collect the diff ids (id is unchanged by the strip) together.
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
-  for (const s of dedupedSegments) {
-    if (s._handlerRan === undefined && s._redundantCopy === undefined) {
+  for (const s of segmentsToRender) {
+    if (s._handlerRan === undefined) {
       cleanedSegments.push(s);
     } else {
-      const { _handlerRan: _ran, _redundantCopy: _copy, ...rest } = s;
+      const { _handlerRan: _drop, ...rest } = s;
       cleanedSegments.push(rest as ResolvedSegment);
     }
     diff.push(s.id);
@@ -284,7 +219,7 @@ export function buildMatchResult<TEnv>(
 
   return {
     segments: cleanedSegments,
-    matched: matchedIds,
+    matched: allIds,
     diff,
     resolvedIds,
     params: ctx.matched.params,

@@ -216,6 +216,8 @@ export const NamedRoutes = {
   optSettleVtRedirect: "/opt-settle/vt/r",
   orphanFetch: "/orphan-fetch",
   outerLive: "/outer-live",
+  parallelLoaderInheritHeldLoader: "/parallel-loader-inherit-held-loader",
+  parallelLoaderInheritHeldLoaderOff: "/parallel-loader-inherit-held-loader-off",
   "parallelNewSlotReval.noSlot": "/parallel-new-slot-reval/no-slot",
   "parallelNewSlotReval.withSlot": "/parallel-new-slot-reval/with-slot",
   peFormState: "/pe-form-state",

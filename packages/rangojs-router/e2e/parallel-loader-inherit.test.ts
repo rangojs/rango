@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { runParallelLoaderInheritHeldTests } from "@shared/e2e";
 import { useFixture } from "./fixture";
 import { waitForHydration, testId, expectNoPageError } from "./helper";
 
@@ -11,48 +12,107 @@ import { waitForHydration, testId, expectNoPageError } from "./helper";
  *   1. Without loading() — loaderData is on OutletProvider props
  *   2. With loading()    — loaderData is inside a LoaderBoundary element
  *   3. loading(false)    — no boundary: the layout's inherited copy of the
- *      loader is redundant and never sent (rango-t156)
+ *      loader is redundant and never sent, on the document, an action or a
+ *      same-route navigation (rango-t156)
  *
  * The copy the layout holds must be the same on every request of a route, or
- * the layout gains or loses a loader entry and remounts. Variants 4 and 5
+ * the layout gains or loses a loader entry and remounts. Variants 3 to 7
  * keep local state in the layout across an action:
  *   4. loading(fallback) with the route's handler held: the action's payload
  *      carries the loader without the route segment
  *   5. loading(fallback, { ssr: false }): the document has no fallback and
  *      the action carries it
+ *   6, 7. the route's loader held, with no loading() and with loading(false):
+ *      tests/shared-e2e/src/parallel-loader-inherit-held-scenario.ts, which
+ *      cloudflare-basic runs too
  */
 
 /**
- * How many loader entries a document's Flight payload names. The routes
- * compared share every ancestor, so the difference is their own loaders.
+ * The ParallelInheritLoader segment ids a Flight payload (a document's inline
+ * one or an RSC response) names: the route's own `<route>D0.<$$id>` and, when
+ * sent, the layout's copy `<route>L0D0.<$$id>`. Every loader id ends in
+ * `#<export name>` in dev and production.
  */
-async function loaderEntries(page: Page, url: string): Promise<number> {
-  const response = await page.request.get(url);
-  expect(response.ok()).toBe(true);
-  return (await response.text()).split("loaderId").length - 1;
+function inheritLoaderSegmentIds(body: string): Set<string> {
+  return new Set(
+    body.match(/[A-Z][A-Z0-9]*D\d+\.[^"\\\s]*#ParallelInheritLoader\b/g) ?? [],
+  );
 }
 
-async function loadingOffDropsTheCopy(page: Page, url: (p: string) => string) {
-  using _ = expectNoPageError(page);
-  await page.goto(url("/parallel-loader-inherit-loading-off"));
-  await waitForHydration(page);
+async function documentLoaderSegmentIds(
+  page: Page,
+  url: string,
+): Promise<Set<string>> {
+  const response = await page.request.get(url);
+  expect(response.ok()).toBe(true);
+  return inheritLoaderSegmentIds(await response.text());
+}
 
+async function loadingOffNeverSendsTheCopy(
+  page: Page,
+  url: (p: string) => string,
+) {
+  using _ = expectNoPageError(page);
+  // loading(fallback) sends the layout's copy beside the route's own; no
+  // loading() sends only the route's own.
+  expect(
+    (
+      await documentLoaderSegmentIds(
+        page,
+        url("/parallel-loader-inherit-loading"),
+      )
+    ).size,
+  ).toBe(2);
+  expect(
+    (await documentLoaderSegmentIds(page, url("/parallel-loader-inherit")))
+      .size,
+  ).toBe(1);
+
+  // Every Flight payload of this route the page receives from here on: the
+  // action's and the navigation's.
+  const path = "/parallel-loader-inherit-loading-off";
+  const bodies: Promise<string>[] = [];
+  page.on("response", (response) => {
+    if (
+      response.url().includes(path) &&
+      response.headers()["content-type"]?.includes("text/x-component")
+    ) {
+      bodies.push(response.text().catch(() => ""));
+    }
+  });
+
+  const ids = await documentLoaderSegmentIds(page, url(path));
+  // loading(false) sends only the route's own, as no loading() does.
+  expect(ids.size).toBe(1);
+
+  await page.goto(url(path));
+  await waitForHydration(page);
   await expect(testId(page, "parallel-loader-page-loading-off")).toBeVisible();
   await expect(testId(page, "parallel-loader-data")).toHaveText(
     "route-level:inherited-data",
   );
+  await testId(page, "inherit-probe-click").click();
+  await expect(testId(page, "inherit-probe-clicks")).toHaveText("1");
 
-  const plain = await loaderEntries(page, url("/parallel-loader-inherit"));
-  const withFallback = await loaderEntries(
-    page,
-    url("/parallel-loader-inherit-loading"),
+  const renders = async () =>
+    Number(await testId(page, "pli-renders").textContent());
+  const before = await renders();
+  await testId(page, "inherit-probe-action").click();
+  await expect.poll(renders).toBeGreaterThan(before);
+  await expect(testId(page, "inherit-probe-clicks")).toHaveText("1");
+
+  await testId(page, "pli-nav").click();
+  await expect(testId(page, "pli-x")).toHaveText("2");
+  await expect(testId(page, "inherit-probe-clicks")).toHaveText("1");
+  await expect(testId(page, "parallel-loader-data")).toHaveText(
+    "route-level:inherited-data",
   );
-  // loading(fallback) sends the layout's copy beside the route's own.
-  expect(withFallback).toBeGreaterThan(plain);
-  // loading(false) sends only the route's own, as no loading() does.
-  expect(
-    await loaderEntries(page, url("/parallel-loader-inherit-loading-off")),
-  ).toBe(plain);
+
+  // The action and the navigation name no loader segment but the route's own.
+  expect(bodies.length).toBeGreaterThanOrEqual(2);
+  for (const body of await Promise.all(bodies)) {
+    for (const id of inheritLoaderSegmentIds(body)) expect(ids).toContain(id);
+  }
 }
 
 async function actionKeepsTheLayout(page: Page, url: string) {
@@ -107,10 +167,10 @@ test.describe("parallel-loader-inherit", () => {
     );
   });
 
-  test("loading(false): the slot reads the route's own copy, and the layout's is not sent", async ({
+  test("loading(false): the slot reads the route's own copy, and the layout's is not sent on the document, an action or a navigation", async ({
     page,
   }) => {
-    await loadingOffDropsTheCopy(page, f.url);
+    await loadingOffNeverSendsTheCopy(page, f.url);
   });
 
   test("loading() with the route's handler held: an action keeps the layout mounted", async ({
@@ -124,6 +184,8 @@ test.describe("parallel-loader-inherit", () => {
   }) => {
     await actionKeepsTheLayout(page, f.url("/parallel-loader-inherit-ssr-off"));
   });
+
+  runParallelLoaderInheritHeldTests({ url: (pathname) => f.url(pathname) });
 });
 
 test.describe("parallel-loader-inherit (production)", () => {
@@ -156,10 +218,10 @@ test.describe("parallel-loader-inherit (production)", () => {
     );
   });
 
-  test("loading(false): the slot reads the route's own copy, and the layout's is not sent, in production", async ({
+  test("loading(false): the slot reads the route's own copy, and the layout's is not sent on the document, an action or a navigation, in production", async ({
     page,
   }) => {
-    await loadingOffDropsTheCopy(page, f.url);
+    await loadingOffNeverSendsTheCopy(page, f.url);
   });
 
   test("loading() with the route's handler held: an action keeps the layout mounted, in production", async ({
@@ -173,4 +235,6 @@ test.describe("parallel-loader-inherit (production)", () => {
   }) => {
     await actionKeepsTheLayout(page, f.url("/parallel-loader-inherit-ssr-off"));
   });
+
+  runParallelLoaderInheritHeldTests({ url: (pathname) => f.url(pathname) });
 });
