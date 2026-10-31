@@ -112,6 +112,13 @@ here for the rules they share.
    keeps the visitor's URL. A loader, handler or server action
    cannot rewrite, and a loop answers 508. Redirect when the new URL should
    show (`/middleware`, "Rewrite").
+9. **Keep prefetches shared.** One prefetch of a page serves every page
+   that links to it. A `revalidate()` that reads the page being left
+   (`currentParams`, `currentUrl`, `fromRouteName`) and keeps its segment
+   makes those prefetches page-only, so each page prefetches its links
+   again. Keep page-specific blocks in their route, and write such a
+   rule only for chrome that shows a param's data
+   ([Prefetches are shared](#prefetches-are-shared)).
 
 ## A small app: one module
 
@@ -216,6 +223,68 @@ name a route alike. One unnamed level in the root module is fine.
 
 For where boundaries and `revalidate()` rules go inside that chrome so
 navigations stay smooth, see the `ux-architecture` skill.
+
+## Prefetches are shared
+
+In production every visible `<Link>` prefetches its page, and one prefetch
+of a page serves every page that links to it: a product prefetched on the
+home page is not fetched again on the search page or on page 2 of a list
+(`/links` → "Shared prefetches and `prefetchKey`"). A structure keeps that
+sharing as long as no segment's answer depends on the page being left.
+
+The default rules keep it: a standalone layout is held from every page that
+shows it, and a route re-renders when its params or search change. A
+`revalidate()` that reads the page being left (`currentParams`, `currentUrl`,
+`fromRouteName`) and keeps its segment ends it. The server then stores that
+answer for the exact page that sent it, query string and hash included, and each
+page prefetches those links again. The answer stays correct; what is lost is the
+sharing.
+
+| What you are placing                                                                                                                               | Put it in                                                                    | Prefetches                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A block that belongs to one page (a category's hero, a product's breadcrumb)                                                                       | that page's route: its handler, or a layout inside its `path()` (below)      | Shared. It re-renders with its route on a param or search change. In a layout other pages share it would need a rule that reads the page being left                               |
+| Links that follow a mount param (`:locale`, `:accountId`, `:projectId`)                                                                            | a client component with `useReverse(routes)` (rule 7)                        | Shared. The links follow `useParams()`, and the layout stays held with no rule                                                                                                    |
+| Chrome that shows a param's data (the locale's messages, a project's name)                                                                         | the layout, with a `revalidate()` comparing `currentParams` and `nextParams` | Page-only for every prefetch where the rule keeps the layout (two pages of one locale or one project). A locale layout around the whole app makes nearly every prefetch page-only |
+| A page whose answer depends on the page that sent it through something the server cannot see (`context` in a `revalidate()`, the `Referer` header) | `prefetchKey=":source"` on the links to it                                   | Page-only, for those links                                                                                                                                                        |
+
+The third row is the one to weigh: write that rule for chrome that must
+follow the param, and keep everything else that varies by page out of the
+layout.
+
+Chrome that one kind of page has (a category's hero and breadcrumbs, a
+product's gallery frame) can be a layout of its own route instead of a
+template shared with other pages. A layout declared inside a `path()` belongs
+to that route (`/layout`, "Orphan Layout"):
+
+```tsx
+urls(({ path, layout }) => [
+  path("/c/:category", CategoryPage, { name: "category" }, () => [
+    layout(CategoryLayout), // the hero: re-renders with the category
+  ]),
+  path("/p/:slug", ProductPage, { name: "product" }, () => [
+    layout(ProductLayout),
+  ]),
+]);
+```
+
+- **No rule, shared prefetches.** It re-renders on its route's param or
+  search change by default, so nothing reads the page being left.
+- **It cannot leak.** The category's layout is not in the product page's
+  tree, so no navigation can keep it above a product page or the cart.
+- **What it costs.** Its handler runs on every param or search change of its
+  route, `?page=2` included; cache an expensive read with `"use cache"`. Without
+  a `transition()` in its chain (the route, this layout or a layout above) it
+  remounts on a param change, like the route. A navigation to another route
+  mounts that route's layout: nothing is held between them.
+- **In a `clientUrls()` group** a `path()` takes no `layout()`, only
+  `loader()`, `loading()` and `transition()` (`/client-urls`). A group
+  layout has no `revalidate()` of its own: it is a client component, so the
+  params it reads with `useParams()` are always the current page's. Its
+  loaders are held on navigation like a server layout's, though, so hero
+  data from a layout loader needs a rule that reads the page being left.
+  Put the block in the route component and its data in a loader on the
+  `path()`: that loader re-runs when the params or search change, with no
+  rule.
 
 ## Growing an app
 

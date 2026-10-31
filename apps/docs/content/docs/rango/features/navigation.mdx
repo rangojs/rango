@@ -31,6 +31,37 @@ import { href, Link } from "@rangojs/router/client";
 
 Links without a `prefetch` prop use the router's `defaultPrefetch`, which is `"none"` in development and `"viewport"` in production. Set it with `createRouter({ defaultPrefetch })`; `prefetchCacheTTL`, `prefetchCacheSize`, and `prefetchConcurrency` tune the client prefetch cache ([reference](/docs/rango/reference/create-router#defaultprefetch)). To opt a whole section of the page out, put `data-prefetch-scope="none"` on its container.
 
+## One prefetch serves every page
+
+A prefetch is stored for its target URL and shared by every page that links to it. A product prefetched on the home page is not fetched again on the search page or on page 2 of a list, and a click from any of them adopts that one entry. Without this, a paginated list or a product grid would prefetch every visible link again after each navigation.
+
+The answer is a diff against the page that asked: the server leaves out the segments that page already shows, and the click fills them from the copies on screen. With the default rules the diff is the same from every page, since a standalone layout is held from every page that shows it and a route re-renders whenever its params or search change. When it is not, the server marks the answer page-only (`x-rsc-prefetch-scope: source`), and a click from any other page sends its own request:
+
+| The prefetch answer...                                                                                                                                         | It is stored as |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| is for a route an intercept targets, or is sent from one                                                                                                       | page-only       |
+| defers a `prefetch: false` loader or `loading()` that the page does not show yet                                                                               | page-only       |
+| comes from a `revalidate()` that read `currentParams`, `currentUrl` or `fromRouteName` and kept its segment                                                    | page-only       |
+| is for a prerendered route, asked from a page with the same route params (a search-only change, or another route under a layout that has `revalidate()` rules) | page-only       |
+| anything else                                                                                                                                                  | shared          |
+
+A page-only entry is keyed by the full URL of the page that sent it, query string and hash included, so each page prefetches it again. The answer stays correct; what is lost is the sharing. That matters most for a layout rule above most of the app: a locale layout that compares `currentParams.locale` with `nextParams.locale` makes nearly every prefetch page-only. Keep blocks that belong to one page (a category's hero) in that page's route, in its handler or in a layout declared inside its `path()`: they re-render with the route on a param or search change, need no rule, and are not in any other page's tree. Keep the rule for chrome that must follow the param.
+
+### `prefetchKey`
+
+`prefetchKey=":source"` makes one link's prefetches page-only. Use it when the target's answer depends on the page that sent it in a way the server cannot see: a `revalidate()` that reads `context` (the request, its headers and cookies), or a handler, loader or middleware that reads the `Referer` header (unless the page's `Referrer-Policy` strips it).
+
+```tsx
+<Link to={href} prefetchKey=":source">
+  Back to results
+</Link>;
+
+// The same for a programmatic prefetch
+router.prefetch(href, { key: ":source" });
+```
+
+`":source"` is the only value. It has the same cost as any page-only entry, so set it on the links that need it, not across an app.
+
 ## Why aggressive prefetch is safe
 
 Aggressive client caching is only as good as its invalidation, and that is where client routers usually lose user trust. Rango's client cache is invalidated automatically and coherently:

@@ -160,14 +160,14 @@ function NavigationControls() {
 }
 ```
 
-| Method                   | Behaviour                                                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| `push(url, options?)`    | Navigate and add a history entry. Returns a promise.                                                            |
-| `replace(url, options?)` | Navigate and replace the current history entry. Returns a promise.                                              |
-| `refresh()`              | Re-fetch the current route's server data, keeping client state. Returns a promise.                              |
-| `prefetch(url, opts?)`   | Prefetch a target. `{ key: ":source" }` scopes the entry to the source page (parity with `<Link prefetchKey>`). |
-| `back()`                 | `history.back()`; on the first entry of the session it replaces to the app root instead of leaving the app.     |
-| `forward()`              | `history.forward()`.                                                                                            |
+| Method                   | Behaviour                                                                                                                     |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `push(url, options?)`    | Navigate and add a history entry. Returns a promise.                                                                          |
+| `replace(url, options?)` | Navigate and replace the current history entry. Returns a promise.                                                            |
+| `refresh()`              | Re-fetch the current route's server data, keeping client state. Returns a promise.                                            |
+| `prefetch(url, opts?)`   | Prefetch a target. `{ key: ":source" }` scopes the entry to the source page (parity with `<Link prefetchKey>`, see `/links`). |
+| `back()`                 | `history.back()`; on the first entry of the session it replaces to the app root instead of leaving the app.                   |
+| `forward()`              | `history.forward()`.                                                                                                          |
 
 `push` / `replace` options: `scroll` (`false` keeps the current scroll
 position), `revalidate` (default `true`, see below), `transition` (`false`
