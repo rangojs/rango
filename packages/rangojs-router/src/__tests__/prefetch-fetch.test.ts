@@ -800,6 +800,28 @@ describe('prefetchKey=":source" opt-out', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it("a queued prefetch is kept when only the committed page's hash moves before it runs", async () => {
+      loadingBack();
+      const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+        Promise.resolve({ ok: false, body: null } as unknown as Response),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      prefetchQueued("/p/2", ["A0"], "v1");
+      // A hash-only change commits the same page: the ids queued still name
+      // it, and the source is sent as it was queued.
+      committedUrl = "http://localhost:4173/c/audio#top";
+
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      const headers = fetchMock.mock.calls[0]![1]!.headers as Record<
+        string,
+        string
+      >;
+      expect(headers["X-RSC-Router-Client-Path"]).toBe(
+        "http://localhost:4173/c/audio",
+      );
+    });
+
     it("names a committed path as an absolute URL, as navigation sends it", async () => {
       loadingBack();
       // The store keeps a URL as navigate() was given it, often a path.

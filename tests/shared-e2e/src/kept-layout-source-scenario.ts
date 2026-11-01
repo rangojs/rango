@@ -105,18 +105,22 @@ function recordSources(
 }
 
 /**
- * Hold every RSC request for `path` for `ms` before it goes out. `started`
- * resolves once the first such request is sent.
+ * Hold every RSC request for `path` until `release()` is called, never on a
+ * timer: a slow worker must not let the held request finish before the test
+ * has clicked. `started` resolves once the first such request is sent.
  */
-async function delayPartials(
+async function holdPartials(
   page: Page,
   path: string,
-  ms: number,
-): Promise<{ started: Promise<unknown> }> {
+): Promise<{ started: Promise<unknown>; release: () => void }> {
   const isPartial = (url: URL) =>
     url.pathname === path && url.searchParams.has("_rsc_partial");
+  let release: () => void = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   await page.route(isPartial, async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, ms));
+    await released;
     // A newer navigation aborts the request while it waits.
     await route.continue().catch(() => {});
   });
@@ -124,6 +128,7 @@ async function delayPartials(
     started: page.waitForRequest((request) =>
       isPartial(new URL(request.url())),
     ),
+    release,
   };
 }
 
@@ -131,9 +136,14 @@ async function delayPartials(
  * Open product 1, push it out of the router's 20-entry history cache, go to
  * the category page (hero shown), then Back to product 1 with its RSC
  * request held: window.location is product 1 while the router still shows
- * the category page. Resolves once that request has started.
+ * the category page. Resolves once that request has started, with the
+ * function that lets it go; the Back stays uncommitted until it is called.
  */
-async function startSlowBackToProduct(page: Page, url: string, base: string) {
+async function startSlowBackToProduct(
+  page: Page,
+  url: string,
+  base: string,
+): Promise<() => void> {
   await open(page, url);
   for (let i = 0; i < 20; i++) {
     await plainClick(page, `${base}/p/f${i}`);
@@ -143,12 +153,13 @@ async function startSlowBackToProduct(page: Page, url: string, base: string) {
   await expect(page.getByTestId("kls-page")).toHaveText("plp:audio");
   await expect(page.getByTestId("kls-hero")).toHaveText("hero:audio");
 
-  const back = await delayPartials(page, `${base}/p/1`, 2000);
+  const back = await holdPartials(page, `${base}/p/1`);
   await page.evaluate(() => history.go(-21));
   await back.started;
   await expect(page).toHaveURL(new RegExp(`${base}/p/1$`));
   // The Back has not committed: the category page is still on screen.
   await expect(page.getByTestId("kls-page")).toHaveText("plp:audio");
+  return back.release;
 }
 
 export function runKeptLayoutSourceTests(
@@ -235,37 +246,53 @@ export function runKeptLayoutSourceTests(
   test("a product clicked (prefetched on hover) while a slow Back loads shows no hero there or on /cart", async ({
     page,
   }) => {
-    await startSlowBackToProduct(page, options.url(`${two}/p/1`), two);
-    const p2 = recordSources(page, `${two}/p/2`);
+    const release = await startSlowBackToProduct(
+      page,
+      options.url(`${two}/p/1`),
+      two,
+    );
+    try {
+      const p2 = recordSources(page, `${two}/p/2`);
 
-    await page.getByTestId("kls-to-p2").click();
-    await expect(page).toHaveURL(new RegExp(`${two}/p/2$`));
-    await expect(page.getByTestId("kls-page")).toHaveText("product:2");
-    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
-    // The hover's prefetch served the click, sent from the page on screen.
-    expect(p2[0]).toEqual({ prefetch: true, from: `${two}/c/audio` });
+      await page.getByTestId("kls-to-p2").click();
+      await expect(page).toHaveURL(new RegExp(`${two}/p/2$`));
+      await expect(page.getByTestId("kls-page")).toHaveText("product:2");
+      await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+      // The hover's prefetch served the click, sent from the page on screen.
+      expect(p2[0]).toEqual({ prefetch: true, from: `${two}/c/audio` });
 
-    await page.getByTestId("kls-to-cart").click();
-    await expect(page.getByTestId("kls-page")).toHaveText("cart");
-    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+      await page.getByTestId("kls-to-cart").click();
+      await expect(page.getByTestId("kls-page")).toHaveText("cart");
+      await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+    } finally {
+      release();
+    }
   });
 
   test("a product clicked (not prefetched) while a slow Back loads shows no hero there or on /cart", async ({
     page,
   }) => {
-    await startSlowBackToProduct(page, options.url(`${two}/p/1`), two);
-    const p2 = recordSources(page, `${two}/p/2`);
+    const release = await startSlowBackToProduct(
+      page,
+      options.url(`${two}/p/1`),
+      two,
+    );
+    try {
+      const p2 = recordSources(page, `${two}/p/2`);
 
-    await plainClick(page, `${two}/p/2`);
-    await expect(page).toHaveURL(new RegExp(`${two}/p/2$`));
-    await expect(page.getByTestId("kls-page")).toHaveText("product:2");
-    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
-    // One navigation request, sent from the page on screen.
-    expect(p2).toEqual([{ prefetch: false, from: `${two}/c/audio` }]);
+      await plainClick(page, `${two}/p/2`);
+      await expect(page).toHaveURL(new RegExp(`${two}/p/2$`));
+      await expect(page.getByTestId("kls-page")).toHaveText("product:2");
+      await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+      // One navigation request, sent from the page on screen.
+      expect(p2).toEqual([{ prefetch: false, from: `${two}/c/audio` }]);
 
-    await page.getByTestId("kls-to-cart").click();
-    await expect(page.getByTestId("kls-page")).toHaveText("cart");
-    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+      await page.getByTestId("kls-to-cart").click();
+      await expect(page.getByTestId("kls-page")).toHaveText("cart");
+      await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+    } finally {
+      release();
+    }
   });
 
   // The locale rule above paginated pages ("/kept-layout-source/i18n").

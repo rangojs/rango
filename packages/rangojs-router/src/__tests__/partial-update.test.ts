@@ -577,6 +577,15 @@ describe("partial-update", () => {
         vi.stubGlobal("window", {
           location: { origin: "http://localhost", href: opts.addressBar },
         });
+        // The transaction as it was before rango-t250: it carried
+        // window.location.href as currentUrl, and the updater read it. Kept
+        // so these cases are red against that code and pin that the address
+        // bar is never the source.
+        const tx = {
+          ...createMockTx(),
+          traversal: opts.traversal,
+          currentUrl: opts.addressBar,
+        };
         const store = makeNavigationStore({
           initialSegments: [route],
           // The entry on screen: the one being left.
@@ -595,7 +604,7 @@ describe("partial-update", () => {
           undefined,
           false,
           undefined,
-          { ...createMockTx(), traversal: opts.traversal },
+          tx,
           opts.mode,
         );
         return (client.fetchPartial as any).mock.calls[0][0].previousUrl;

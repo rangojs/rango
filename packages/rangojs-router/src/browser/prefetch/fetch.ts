@@ -141,6 +141,11 @@ function committedHref(): string {
     : window.location.href;
 }
 
+function withoutHash(href: string): string {
+  const hash = href.indexOf("#");
+  return hash === -1 ? href : href.slice(0, hash);
+}
+
 /**
  * Check if a URL resolves to the committed page (same pathname + search).
  * Used to prevent same-page prefetching, which produces a trivial diff
@@ -655,9 +660,10 @@ export function prefetchQueued(
     }
     // The segment ids and the source were read when it was queued: once the
     // committed page has moved, they name a page no longer on screen.
+    // A hash-only change commits the same page, so the hash is not compared.
     const committed = committedHref();
     if (
-      committed !== sourceHref ||
+      withoutHash(committed) !== withoutHash(sourceHref) ||
       (!forceSourceScope && isSamePage(url, committed))
     ) {
       return Promise.resolve();
