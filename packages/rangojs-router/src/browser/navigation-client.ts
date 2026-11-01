@@ -130,6 +130,11 @@ export function createNavigationClient(
         fill,
       } = options;
 
+      // The page left, absolute: the router store keeps a committed URL as
+      // navigate() was given it, often a path. The header and the source
+      // prefetch key name it as prefetch/fetch.ts does, so they agree.
+      const sourceHref = new URL(previousUrl, window.location.origin).href;
+
       const debugEnabled = isBrowserDebugEnabled();
       const tx = debugEnabled
         ? startBrowserTransaction(staleRevalidation ? "revalidate" : "navigate")
@@ -185,7 +190,7 @@ export function createNavigationClient(
         !staleRevalidation && !hmr && !fill && !interceptSourceUrl;
       const rangoState = getRangoState();
       const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
-      const cacheKey = buildSourceKey(rangoState, previousUrl, fetchUrl);
+      const cacheKey = buildSourceKey(rangoState, sourceHref, fetchUrl);
       // The page being left, as the router store committed it: the group a
       // params-scoped prefetch must have been answered for.
       const sourcePage = canUsePrefetch ? getCommittedPage() : null;
@@ -302,7 +307,7 @@ export function createNavigationClient(
               cache: "no-store" as RequestCache,
             }),
             headers: {
-              "X-RSC-Router-Client-Path": previousUrl,
+              "X-RSC-Router-Client-Path": sourceHref,
               // Reuse the single per-operation read (see rangoState above): the
               // cache-key lookup and this header must agree on one value, and the
               // cookie read has side effects (external-rotation notify) we do not
