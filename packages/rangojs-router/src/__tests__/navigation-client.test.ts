@@ -1086,8 +1086,8 @@ describe("navigation-client", () => {
 
     // A prefetch whose render reported an error is evicted when its stream
     // ends (browser/prefetch/fetch.ts, PREFETCH_FAILED_ROW), so a click finds
-    // no entry and fetches; prefetch responses carry no Cache-Control, so the
-    // default cache mode reaches the server (#1170).
+    // no entry and fetches; a prefetch with a live part carries no
+    // Cache-Control, so the default cache mode reaches the server (#1170).
     describe("a prefetch whose render reported an error", () => {
       /** Navigate once; returns the fetch calls and the result. */
       async function click(): Promise<{

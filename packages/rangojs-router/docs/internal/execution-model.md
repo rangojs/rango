@@ -2823,8 +2823,9 @@ should not be treated as equivalent.
   this lane: the server ends it with `PREFETCH_FAILED_ROW`
   (`rsc/prefetch-render-error.ts`), `teeWithCompletion` reports it as not
   ended cleanly and `browser/prefetch/fetch.ts` evicts it, and the click
-  sends its own request, which no HTTP cache answers (no prefetch carries
-  `Cache-Control`), so a loader that recovered shows its data and one that
+  sends its own request, which no HTTP cache answers (a prefetch with a live
+  part, the only kind that can fail here, carries no `Cache-Control`), so a
+  loader that recovered shows its data and one that
   fails again throws at its read as on a plain click (#1170). The
   one exception is the background refresh after back/forward onto a stale
   entry (`stale-revalidation`): nobody asked for it and the page on screen

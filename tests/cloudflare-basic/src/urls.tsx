@@ -421,6 +421,7 @@ import {
   keptLayoutSourceTwoShapePatterns,
 } from "./pages/kept-layout-source.js";
 import { docCacheSourcePatterns } from "./pages/doc-cache-source.js";
+import { prefetchStoredPatterns } from "./pages/prefetch-stored.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
 import clientUrlsLoaderElementPatterns from "./client-urls-loader-element/urls.js";
@@ -1244,6 +1245,11 @@ export const urlpatterns = urls(
         // A kept hero above a PLP the document cache stores: its partial is
         // the source page's only (e2e/doc-cache-source.test.ts).
         include("/doc-cache-source", docCacheSourcePatterns),
+        // Prefetch answers served from storage: cache() records, a Prerender
+        // entry, the document cache (e2e/prefetch-stored.test.ts).
+        include("/prefetch-stored", prefetchStoredPatterns, {
+          name: "prefetchStored",
+        }),
         // Group behind a 5s middleware: pins optimistic presentation vs the
         // gated canonical request (e2e/client-urls-slow.test.ts). The landing
         // route sits OUTSIDE the middleware so the loader redirect is not

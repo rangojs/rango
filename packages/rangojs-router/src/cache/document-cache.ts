@@ -357,6 +357,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         if (!cached.shouldRevalidate) {
           // Fresh hit - return immediately
           log(`[DocumentCache] HIT ${typeLabel}: ${url.pathname}`);
+          // Nothing in it runs: its loaders' output is replayed, and no
+          // failed render is ever stored (throwIfRenderErrored). A prefetch
+          // answered with it leaves with the router's prefetch Cache-Control
+          // (rsc/request-stages.ts).
+          requestCtx._servedFromStorage = true;
           return drainOnResponseCallbacks(
             addCacheStatusHeader(cached.response, "HIT"),
             requestCtx,

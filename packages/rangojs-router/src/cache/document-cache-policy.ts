@@ -132,6 +132,24 @@ export function shouldCacheResponse(
 }
 
 /**
+ * Whether a response carries one client's state, which a stored copy would
+ * replay to that client's later requests: a per-client signal header (a state
+ * cookie rotation, `x-rango-keep-cache`) or location state. The stored
+ * prefetch Cache-Control (rsc/request-stages.ts) is not sent on
+ * one.
+ */
+export function carriesClientState(
+  response: Response,
+  requestCtx: Pick<RequestContext, "_locationState" | "_documentLocationState">,
+): boolean {
+  return (
+    hasPerClientSignal(response.headers) ||
+    (requestCtx._locationState?.length ?? 0) > 0 ||
+    requestCtx._documentLocationState === true
+  );
+}
+
+/**
  * Whether this cache will store the response the current render produces, as
  * far as the render can tell: the middleware runs it (a MISS or a stale
  * refresh) and the response stub already opts in. payloadInitialTheme

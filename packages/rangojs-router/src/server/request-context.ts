@@ -680,6 +680,15 @@ export interface RequestContext<
   _payloadSourceScoped?: boolean;
 
   /**
+   * @internal Set when the answer has nothing live in it, so nothing in it can
+   * fail after the 200's headers left: the document cache middleware on a
+   * fresh HIT, and the RSC handler when the partial match came from storage
+   * (MatchResult.fromStorage). finalizeRequestResponse (rsc/request-stages.ts)
+   * sends such a prefetch the router's prefetch Cache-Control.
+   */
+  _servedFromStorage?: boolean;
+
+  /**
    * @internal What the request says it is: a speculative `<Link>` prefetch,
    * an intent prefetch (hover, `prefetch()`) or a fill (`prefetch: false`),
    * read once at creation (segment-resolution/prefetch-deferral.ts
@@ -1055,6 +1064,7 @@ export type PublicRequestContext<
   | "_payloadVisitorTheme"
   | "_payloadDeferred"
   | "_payloadSourceScoped"
+  | "_servedFromStorage"
   | "_requestKind"
   | "_payloadVisitorLocation"
   | "_locationState"

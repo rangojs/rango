@@ -306,6 +306,17 @@ export interface MatchResult {
    */
   sourceHeld?: import("../router/source-reads.js").SourceHeld;
   /**
+   * Set on a partial match whose answer has nothing live in it: the cache
+   * lookup served it (a cache() record, a Prerender entry, a shell replay's
+   * record, not a stale cache() record or stale overlay entry), it sends a
+   * segment, every segment it
+   * sends is one that lookup decoded, and no loader ran. A stored segment
+   * cannot fail after the headers left, since every writer refuses a failed
+   * render; a live segment or a loader can. The RSC handler marks the request
+   * `_servedFromStorage` from it.
+   */
+  fromStorage?: true;
+  /**
    * Redirect URL for trailing slash normalization.
    * When set, the RSC handler should return a 308 redirect to this URL
    * instead of rendering the page.

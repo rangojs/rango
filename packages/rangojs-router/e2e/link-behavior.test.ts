@@ -83,7 +83,7 @@ test.describe("link-behavior", () => {
     expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("intent");
   });
 
-  test("prefetch hover then navigate serves the click from the in-memory prefetch; a new document's prefetch reaches the server", async ({
+  test("prefetch hover then navigate serves the click from the in-memory prefetch", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -138,14 +138,10 @@ test.describe("link-behavior", () => {
     await page.waitForTimeout(500);
     expect(blogResponses).toEqual([]);
 
-    // A new document has no in-memory prefetch, and prefetch responses carry
-    // no Cache-Control (#1170): its prefetch is answered by the server.
-    blogResponses.length = 0;
-    await hoverPrefetch();
-    expect(blogResponses.length).toBeGreaterThan(0);
-    for (const resp of blogResponses) {
-      expect(resp.fromCache).toBe(false);
-    }
+    // What answers a new document's prefetch (it has no in-memory copy) is the
+    // server for a live answer and the HTTP cache for a stored one, and
+    // /blog's is either by its cache() record. prefetch-stored.test.ts pins
+    // each case on a route whose answer is known (#1170).
 
     await cdp.detach();
   });
@@ -319,7 +315,7 @@ test.describe("link-behavior (production)", () => {
     expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("intent");
   });
 
-  test("prefetch hover then navigate serves the click from the in-memory prefetch; a new document's prefetch reaches the server", async ({
+  test("prefetch hover then navigate serves the click from the in-memory prefetch", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -374,14 +370,10 @@ test.describe("link-behavior (production)", () => {
     await page.waitForTimeout(500);
     expect(blogResponses).toEqual([]);
 
-    // A new document has no in-memory prefetch, and prefetch responses carry
-    // no Cache-Control (#1170): its prefetch is answered by the server.
-    blogResponses.length = 0;
-    await hoverPrefetch();
-    expect(blogResponses.length).toBeGreaterThan(0);
-    for (const resp of blogResponses) {
-      expect(resp.fromCache).toBe(false);
-    }
+    // What answers a new document's prefetch (it has no in-memory copy) is the
+    // server for a live answer and the HTTP cache for a stored one, and
+    // /blog's is either by its cache() record. prefetch-stored.test.ts pins
+    // each case on a route whose answer is known (#1170).
 
     await cdp.detach();
   });

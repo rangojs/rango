@@ -22,8 +22,8 @@ import type { RscPayload } from "../browser/types";
  * A prefetch whose render reported an error ends with PREFETCH_FAILED_ROW
  * (rsc/prefetch-render-error.ts; a loader error is one, #1170). It counts as
  * a stream that did not end cleanly: evicted, never complete, never
- * respawned, so the click and the next hover reach the server (prefetch
- * responses carry no Cache-Control). A click that adopted it keeps the
+ * respawned, so the click and the next hover reach the server (a prefetch
+ * with a live part carries no Cache-Control). A click that adopted it keeps the
  * payload it adopted.
  */
 

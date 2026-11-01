@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
  *
  * The contract: a prefetch whose render reported an error ends cleanly with
  * one more Flight row the decoder skips, and the client drops it as a stream
- * that did not end cleanly: never served, never respawned. No prefetch
+ * that did not end cleanly: never served, never respawned. No live prefetch
  * carries Cache-Control, so the HTTP cache keeps none either. A click after it
  * sends its own request, and a new document's prefetch of the URL reaches the
  * server. A click that adopted the prefetch while it streamed renders all of

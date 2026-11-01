@@ -84,6 +84,9 @@ import {
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
 import { WIRE } from "../wire-params.js";
+import { isPrefetchKind } from "../router/segment-resolution/prefetch-deferral.js";
+import { storedPrefetchCacheControl } from "../router/prefetch-cache-ttl.js";
+import { carriesClientState } from "../cache/document-cache-policy.js";
 import {
   carryLocationStateAcrossRedirect,
   consumeDocumentLocationState,
@@ -103,6 +106,8 @@ export interface StageRouter<TEnv = unknown> {
   readonly onTimeout?: OnTimeoutCallback<TEnv>;
   /** Names the cookie location state crosses a document redirect in. */
   readonly resolvedStateCookieName: string;
+  /** The in-memory prefetch TTL in ms; also a stored prefetch's max-age. */
+  readonly prefetchCacheTTL: number;
 }
 
 /** Report an error through the router's onError. */
@@ -683,6 +688,57 @@ export interface FinalizeRequestOptions<TEnv> {
 }
 
 /**
+ * A prefetch with nothing live in it (`_servedFromStorage`: a document cache
+ * HIT, or a partial whose every sent segment came from storage and ran no
+ * loader) leaves with the router's prefetch Cache-Control, so the browser
+ * HTTP cache can answer a later prefetch or the click with it.
+ * Nothing in such an answer can fail after its 200 left; any other prefetch
+ * carries none (#1170). Set here, after every middleware: the document cache
+ * reads the route's own header when it stores the response (s-maxage), the
+ * browser gets this one, in place of any other the route set.
+ *
+ * Left as it is: a partial sent NOT_REUSED (scoped to its source page, or
+ * carrying deferred units), a header that forbids storing it (`no-store`,
+ * `no-cache`, a zero `max-age`), a redirect a middleware returned after the render (`redirect`,
+ * converted to a Flight redirect above), and a response carrying one
+ * client's state (a per-client signal header, location state), which a
+ * stored copy would replay to later requests.
+ */
+function applyStoredPrefetchCacheControl(
+  response: Response,
+  reqCtx: RequestContext<any>,
+  url: URL,
+  router: StageRouter<any>,
+  redirect: boolean,
+): void {
+  if (
+    redirect ||
+    !reqCtx._servedFromStorage ||
+    !isPrefetchKind(reqCtx._requestKind) ||
+    !url.searchParams.has(WIRE.partial) ||
+    reqCtx._payloadSourceScoped ||
+    reqCtx._payloadDeferred ||
+    response.status !== 200 ||
+    !response.headers.get("content-type")?.startsWith("text/x-component") ||
+    FORBIDS_STORE.test(response.headers.get("cache-control") ?? "") ||
+    carriesClientState(response, reqCtx)
+  ) {
+    return;
+  }
+  const cacheControl = storedPrefetchCacheControl(router.prefetchCacheTTL);
+  if (cacheControl) trySetHeader(response, "cache-control", cacheControl);
+}
+
+/**
+ * A Cache-Control directive that forbids reusing the response unvalidated:
+ * `no-store`, `no-cache`, or a zero `max-age` (`s-maxage` is the shared
+ * caches' and does not match). The route asked for a fresh answer each time;
+ * the router's `max-age` would override it.
+ */
+const FORBIDS_STORE =
+  /(^|[\s,;])(no-store|no-cache|max-age=["']?0+["']?)(?=$|[\s,;=])/i;
+
+/**
  * The response the global chain returned, made ready to leave: a partial or
  * action request's redirect converted, onResponse callbacks drained, the
  * rewrite header, the open-redirect guard and the stream-idle watchdog.
@@ -694,6 +750,7 @@ export function finalizeRequestResponse<TEnv>(
   const { ctx, reqCtx, request, url, env } = opts;
   const router = ctx.router;
   let response: Response;
+  let redirect = false;
   if (opts.hasMiddleware) {
     if (
       url.searchParams.has(WIRE.partial) ||
@@ -704,6 +761,7 @@ export function finalizeRequestResponse<TEnv>(
         ctx.createRedirectFlightResponse,
         { requestOrigin: url.origin, basename: router.basename },
       );
+      redirect = intercepted !== null;
       response = intercepted ?? finalizeResponse(downstream);
     } else {
       response = finalizeResponse(downstream);
@@ -715,6 +773,7 @@ export function finalizeRequestResponse<TEnv>(
   if (opts.rewrittenTo !== undefined) {
     trySetHeader(response, REWRITE_HEADER, opts.rewrittenTo);
   }
+  applyStoredPrefetchCacheControl(response, reqCtx, url, router, redirect);
   opts.beforeGuard?.(response);
 
   // Single open-redirect chokepoint: every response (PE, full-page,

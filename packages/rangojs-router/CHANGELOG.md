@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Changed: a prefetch answered from storage carries `Cache-Control` again, so the browser can reuse it
+
+**Before.** Since 0.25.0 no prefetch response carried `Cache-Control` (#1170).
+A prefetch of a page served whole from a `cache()` record, a Prerender entry
+or the document cache went to the server again from every new document, and
+after the in-memory entry expired, though nothing in it could fail.
+
+**Now.** A prefetch with nothing live in it carries
+`Cache-Control: private, max-age=<prefetchCacheTTL>`, as every prefetch did
+before 0.25.0, and the browser HTTP cache answers a later prefetch, or the
+click, of that URL with it. Nothing live means:
+
+| Prefetch answer                                                                                                                  | `Cache-Control`                |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| Document cache fresh HIT (its loaders' output replayed)                                                                          | `private, max-age=<ttl>`       |
+| Every segment it sends from a `cache()` record or a Prerender entry, no loader runs                                              | `private, max-age=<ttl>`       |
+| A segment rendered live beside stored ones (a layout above a `cache()` the page lacks)                                           | none of the router's           |
+| A loader runs (a stored route's or a Prerender route's)                                                                          | none of the router's           |
+| A live render, a failed one included                                                                                             | none of the router's           |
+| Scoped to its source page, or carrying `prefetch: false` deferred units                                                          | `private, no-cache`, as before |
+| Document cache STALE hit, stale `cache()` record, stale on-demand Prerender entry, navigations, fills, `prefetchCacheTTL: false` | unchanged                      |
+
+A stored copy is safe to keep: no server cache stores a render that reported
+an error, so only a live part can fail after the 200's headers left. The
+header is set after every middleware and replaces a route's own on such a
+prefetch, as before 0.25.0, unless the route's says `no-store`, `no-cache` or
+a zero `max-age` (`max-age=0`, with or without `must-revalidate`);
+the document cache still stores the answer by the route's `s-maxage`. A
+redirect a middleware returns after the render, and a response carrying a
+per-client header (a state cookie rotation, `x-rango-keep-cache`) or location
+state, get none. A server action bumps the state's write part (below), so a
+prefetch after it misses the copy from before the write. Nothing to change in
+your code.
+
 ### Fixed: after a server action, a prefetch is no longer answered from the browser's HTTP cache with the value from before the write
 
 **Before.** Since the action stopped rotating the state cookie (#1329, below),
