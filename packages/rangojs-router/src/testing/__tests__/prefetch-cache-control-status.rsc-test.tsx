@@ -1,5 +1,5 @@
 /**
- * A prefetch response carries no Cache-Control, whatever its status (#1170):
+ * A live prefetch carries no Cache-Control, whatever its status (#1170):
  * the browser HTTP cache would keep a prefetch whose render failed after its
  * 200 went out, and answer a click or a later document's prefetch with it.
  * The in-memory prefetch cache (prefetchCacheTTL) is the only one.

@@ -2,8 +2,9 @@
  * A prefetch whose render reported an error is not kept (#1170). The status
  * left with the headers, so the server ends the body cleanly with one more
  * Flight row the decoder skips, which the browser reads as a stream that did
- * not end cleanly: it evicts the prefetch and never respawns it. Prefetch
- * responses carry no Cache-Control, so the HTTP cache keeps none of it. A
+ * not end cleanly: it evicts the prefetch and never respawns it. A prefetch
+ * with a live part carries no Cache-Control, so the HTTP cache keeps none of
+ * it. A
  * navigation and a document of the same page end as before.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";

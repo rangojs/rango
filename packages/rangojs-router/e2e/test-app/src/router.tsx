@@ -364,6 +364,8 @@ export const router = createRouter<AppEnv>({
   .use("/action-stale/cached/*", createDocumentCacheMiddleware())
   // And for a partial kept for its source page (e2e/doc-cache-source.test.ts).
   .use("/doc-cache-source/*", createDocumentCacheMiddleware())
+  // And for a prefetch it answers (e2e/prefetch-stored.test.ts, rango-t82).
+  .use("/prefetch-stored/doc/*", createDocumentCacheMiddleware())
   // Middleware chain integration test: global layer sets var, header, cookie
   .use("/mw-chain/*", async (ctx, next) => {
     ctx.set("chainGlobal", "from-global");

@@ -3,7 +3,7 @@ import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration, testId } from "./helper";
 
 /**
- * A failed prefetch carries no Cache-Control (no prefetch does, #1170). The
+ * A failed prefetch carries no Cache-Control (no live prefetch does, #1170). The
  * client drops the failed prefetch from its own cache, and the click's fetch
  * of the same URL uses the default cache mode, so a cached 500 would answer it
  * from the browser HTTP cache even after the route recovers. /prefetch-flaky

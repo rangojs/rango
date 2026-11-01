@@ -268,6 +268,31 @@ is right from every page, so it is stored and served as before. Keying the
 entry by the source path instead would split every route's partials by page
 to fix the few whose rules read the source.
 
+A prefetch answered from storage goes the other way: the browser may keep it
+(rango-t82). Since #1170 a prefetch carries no `Cache-Control` of the
+router's, because a live render can fail after its 200 left, and the browser
+HTTP cache then answered the click, or a later document's prefetch, with the
+failure. A stored copy cannot carry one: every writer above refuses a render
+that reported an error. So a prefetch with nothing live in it leaves with
+`private, max-age=<prefetchCacheTTL>`, the header every prefetch had before
+#1170. Nothing live means one of two things, each recorded on the request as
+`_servedFromStorage`. Either this tier answered it with a fresh HIT (its
+loaders' output is replayed; a STALE hit is left out), or the partial match
+came from the cache lookup (`MatchResult.fromStorage`, computed in
+`buildMatchResult`, `src/router/match-result.ts`): a `cache()` record, a
+Prerender entry or a shell replay's record answered, every segment the answer
+sends is one of the objects that lookup decoded (`state.cachedSegments`), and
+none is a loader. By object, not by id: a live layout above a `cache()`
+boundary, or an intercept resolved live, carries a stored segment's id
+without being the stored copy, and a segment wrongly counted as stored would
+bring back the cached failures #1170 removed. `finalizeRequestResponse`
+(`src/rsc/request-stages.ts`) writes the header, after every middleware, so
+this tier still reads the route's own `s-maxage` when it stores the answer,
+and only for a 200 Flight prefetch (either kind) that is not sent
+`private, no-cache` (scoped to its source page, or carrying deferred units).
+A route's own `Cache-Control` on such a prefetch is replaced, as it was
+before #1170.
+
 A stale entry's refresh re-runs the whole downstream pipeline (`next()`) in a
 `waitUntil` task while the visitor's request is still finishing. It used to
 run on the visitor's request context, so a cookie written in the re-run, or a

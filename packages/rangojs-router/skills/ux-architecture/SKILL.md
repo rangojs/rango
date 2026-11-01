@@ -286,8 +286,12 @@ A prefetch is a navigation sent early: the server renders the destination's
 handlers and loaders for it, from the page you are on (`/links`, "What a
 prefetch renders"). A click that adopts a complete prefetch commits with no
 request. Entries live 300 s by default (`prefetchCacheTTL`) in the router's
-memory only (prefetch responses carry no `Cache-Control`), and an action
-drops them unless it calls `keepClientCache()`. A prefetch whose page failed
+memory, and an action drops them unless it calls `keepClientCache()`. The
+browser HTTP cache keeps a prefetch for as long only when nothing in it is
+live: a document cache HIT, or an answer whose every sent segment came from a
+`cache()` record or a Prerender entry and that runs no loader
+(`Cache-Control: private, max-age=<prefetchCacheTTL>`). Any other prefetch
+carries no `Cache-Control` of the router's. A prefetch whose page failed
 is never used: a 500 or 404, and a 200 whose render reported an error (a
 loader that threw, a `loading()` handler that fell back to its
 `errorBoundary()`, an async component that threw). The click sends its own

@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 
-// A prefetch carries no Cache-Control, whatever its status (#1170): the HTTP
-// cache would answer the click, or a later document's prefetch, with a
-// prefetch that failed. Same serializer mock as
+// A live prefetch carries no Cache-Control, whatever its status (#1170): the
+// HTTP cache would answer the click, or a later document's prefetch, with a
+// prefetch that failed. One answered from storage: prefetch-cache-control-
+// stored.rsc-test.tsx (rango-t82). Same serializer mock as
 // rsc-rendering-default-prefetch-primitive.test.ts.
 function pluginRscMock() {
   return {

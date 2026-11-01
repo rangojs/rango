@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Changed: a prefetch answered from storage carries `Cache-Control` again, so the browser can reuse it (rango-t82)
+
+**Before.** Since 0.25.0 no prefetch response carried `Cache-Control` (#1170).
+A prefetch of a page served whole from a `cache()` record, a Prerender entry
+or the document cache went to the server again from every new document, and
+after the in-memory entry expired, though nothing in it could fail.
+
+**Now.** A prefetch with nothing live in it carries
+`Cache-Control: private, max-age=<prefetchCacheTTL>`, as every prefetch did
+before 0.25.0, and the browser HTTP cache answers a later prefetch, or the
+click, of that URL with it. Nothing live means:
+
+| Prefetch answer                                                                        | `Cache-Control`                |
+| -------------------------------------------------------------------------------------- | ------------------------------ |
+| Document cache fresh HIT (its loaders' output replayed)                                | `private, max-age=<ttl>`       |
+| Every segment it sends from a `cache()` record or a Prerender entry, no loader runs    | `private, max-age=<ttl>`       |
+| A segment rendered live beside stored ones (a layout above a `cache()` the page lacks) | none of the router's           |
+| A loader runs (a stored route's or a Prerender route's)                                | none of the router's           |
+| A live render, a failed one included                                                   | none of the router's           |
+| Scoped to its source page, or carrying `prefetch: false` deferred units                | `private, no-cache`, as before |
+| Document cache STALE hit, navigations, fills, `prefetchCacheTTL: false`                | unchanged                      |
+
+A stored copy is safe to keep: no server cache stores a render that reported
+an error, so only a live part can fail after the 200's headers left. The
+header is set after every middleware and replaces a route's own on such a
+prefetch, as before 0.25.0; the document cache still stores the answer by the
+route's `s-maxage`. Nothing to change in your code.
+
 ### Fixed: `rango generate` reads the exported `createRouter` chain, not a helper router earlier in the file (rango-t246)
 
 **Before.** A router file with several `createRouter` chains took routes and

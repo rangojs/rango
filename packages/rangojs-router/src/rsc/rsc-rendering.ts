@@ -871,6 +871,7 @@ function* preparePayloadPlan<TEnv>(
     // showed at once, and ran held work again.
     const deferring = result.segments.some((s) => s.deferred);
     if (deferring) reqCtx._payloadDeferred = true;
+    if (result.fromStorage) reqCtx._servedFromStorage = true;
     return {
       kind: "payload",
       payload: {

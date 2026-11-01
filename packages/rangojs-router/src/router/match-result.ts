@@ -231,9 +231,30 @@ export function buildMatchResult<TEnv>(
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
+    ...(!ctx.isFullMatch && sendsOnlyStored(segmentsToRender, state)
+      ? { fromStorage: true as const }
+      : {}),
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };
+}
+
+/**
+ * Whether a partial answer sends only what the cache lookup decoded from
+ * storage (MatchResult.fromStorage, rango-t82). By object, not by id: a
+ * segment the live walk resolved under a stored one's id (a live layout above
+ * a cache() boundary, an intercept resolved live) is not the stored copy.
+ * Any loader segment ran in this request, so it is live. Defaults to live:
+ * counted stored by mistake, a segment brings back the cached failures #1170
+ * removed.
+ */
+function sendsOnlyStored(
+  sent: readonly ResolvedSegment[],
+  state: MatchPipelineState,
+): boolean {
+  if (!state.cacheHit || !state.cachedSegments) return false;
+  const stored = new Set(state.cachedSegments);
+  return sent.every((s) => s.type !== "loader" && stored.has(s));
 }
 
 export async function collectMatchResult<TEnv>(

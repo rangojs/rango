@@ -179,6 +179,8 @@ interface DispatchableRouter<TEnv> {
   basename?: string;
   /** The rango state cookie name (RangoInternal field). */
   resolvedStateCookieName: string;
+  /** The in-memory prefetch TTL in ms (RangoInternal field). */
+  prefetchCacheTTL: number;
   cache?:
     | {
         enabled?: boolean;
@@ -295,6 +297,7 @@ export async function dispatch<TEnv = any>(
       timeouts: router.timeouts,
       onTimeout: router.onTimeout,
       resolvedStateCookieName: router.resolvedStateCookieName,
+      prefetchCacheTTL: router.prefetchCacheTTL,
     },
     callOnError: stages.createErrorReporter<TEnv>(router),
     // A response-route handler's own throw is serialized into the same typed

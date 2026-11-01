@@ -535,9 +535,12 @@ export interface RangoOptions<TEnv = any> {
    * TTL (in seconds) for the client-side in-memory prefetch cache.
    *
    * Controls how long prefetch responses are kept in the client-side
-   * in-memory cache. Prefetch responses carry no `Cache-Control`, so the
-   * browser's HTTP cache does not keep them: a prefetch whose render failed
-   * after its 200 went out would otherwise answer later requests.
+   * in-memory cache. A prefetch with nothing live in it (a document cache
+   * HIT, or every sent segment from a `cache()` record or a Prerender entry,
+   * with no loader) also carries `Cache-Control: private, max-age=<ttl>`,
+   * so the browser's HTTP cache keeps it as long. Any other prefetch carries
+   * none: a prefetch whose render failed after its 200 went out would
+   * otherwise answer later requests.
    *
    * The cache is automatically invalidated on server actions regardless
    * of TTL, so this is primarily a staleness safety net.

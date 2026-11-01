@@ -7,8 +7,9 @@ import { useFixture } from "./fixture";
  * The test-app router is configured with:
  *   prefetchCacheTTL: 60
  *
- * prefetchCacheTTL sets only the client's in-memory prefetch cache: no
- * response carries Cache-Control for it, a prefetch included (#1170). The
+ * prefetchCacheTTL sets the client's in-memory prefetch cache: no live
+ * response carries Cache-Control for it, a prefetch included (#1170); a
+ * prefetch answered from storage does (prefetch-stored.test.ts, rango-t82). The
  * browser HTTP cache would keep a prefetch whose render failed after its 200
  * went out. Vary still names the custom headers the responses depend on.
  */

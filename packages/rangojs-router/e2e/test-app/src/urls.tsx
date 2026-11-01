@@ -189,6 +189,7 @@ import {
   keptLayoutSourceTwoShapePatterns,
 } from "./urls/kept-layout-source.js";
 import { docCacheSourcePatterns } from "./urls/doc-cache-source.js";
+import { prefetchStoredPatterns } from "./urls/prefetch-stored.js";
 import { CompeteServerPage } from "./urls/client-urls-compete.server.js";
 import { settledLaneErrorsPatterns } from "./urls/settled-lane-errors.js";
 import { prefetchRenderErrorsPatterns } from "./urls/prefetch-render-errors.js";
@@ -1140,6 +1141,11 @@ export const urlpatterns = urls(
       // A kept hero above a PLP the document cache stores: its partial is
       // the source page's only (e2e/doc-cache-source.test.ts, rango-t238).
       include("/doc-cache-source", docCacheSourcePatterns),
+      // Prefetch answers served from storage: cache() records, a Prerender
+      // entry, the document cache (e2e/prefetch-stored.test.ts, rango-t82).
+      include("/prefetch-stored", prefetchStoredPatterns, {
+        name: "prefetchStored",
+      }),
       // Action revalidation over a clientUrls group: the group's projected
       // loaders re-run on the action follow-up (route-owned default true);
       // this parent-chain layout reads the SAME counter and keeps the locked

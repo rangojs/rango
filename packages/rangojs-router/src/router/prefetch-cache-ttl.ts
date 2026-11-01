@@ -1,9 +1,10 @@
 /**
  * Resolve the prefetch cache TTL once, at router init, into the values the
  * rest of the router consumes: seconds, and milliseconds for the client-side
- * in-memory prefetch cache (shipped in payload metadata). Prefetch responses
- * carry no Cache-Control: the browser HTTP cache would keep a prefetch whose
- * render failed after its 200 went out (#1170).
+ * in-memory prefetch cache (shipped in payload metadata). A prefetch with a
+ * live part carries no Cache-Control: the browser HTTP cache would keep a
+ * prefetch whose render failed after its 200 went out (#1170). One answered
+ * from storage carries storedPrefetchCacheControl (rango-t82).
  *
  * `false` disables prefetch caching (seconds 0). A non-finite input
  * (NaN/Infinity, e.g. from an env-derived number that failed to parse) is
@@ -40,4 +41,15 @@ export function resolvePrefetchCacheTTL(
   }
 
   return { seconds, ms: seconds * 1000 };
+}
+
+/**
+ * The Cache-Control of a prefetch answer with nothing live in it
+ * (`_servedFromStorage`, rango-t82): the browser HTTP cache keeps it as long
+ * as the in-memory prefetch cache would. Undefined when prefetch caching is
+ * off.
+ */
+export function storedPrefetchCacheControl(ttlMs: number): string | undefined {
+  const seconds = Math.floor(ttlMs / 1000);
+  return seconds > 0 ? `private, max-age=${seconds}` : undefined;
 }

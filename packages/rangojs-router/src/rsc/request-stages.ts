@@ -84,6 +84,8 @@ import {
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import type { CacheErrorCategory } from "../cache/cache-error.js";
 import { WIRE } from "../wire-params.js";
+import { isPrefetchKind } from "../router/segment-resolution/prefetch-deferral.js";
+import { storedPrefetchCacheControl } from "../router/prefetch-cache-ttl.js";
 import {
   carryLocationStateAcrossRedirect,
   consumeDocumentLocationState,
@@ -103,6 +105,8 @@ export interface StageRouter<TEnv = unknown> {
   readonly onTimeout?: OnTimeoutCallback<TEnv>;
   /** Names the cookie location state crosses a document redirect in. */
   readonly resolvedStateCookieName: string;
+  /** The in-memory prefetch TTL in ms; also a stored prefetch's max-age. */
+  readonly prefetchCacheTTL: number;
 }
 
 /** Report an error through the router's onError. */
@@ -683,6 +687,38 @@ export interface FinalizeRequestOptions<TEnv> {
 }
 
 /**
+ * A prefetch with nothing live in it (`_servedFromStorage`: a document cache
+ * HIT, or a partial whose every sent segment came from storage and ran no
+ * loader) leaves with the router's prefetch Cache-Control, so the browser
+ * HTTP cache can answer a later prefetch or the click with it (rango-t82).
+ * Nothing in such an answer can fail after its 200 left; any other prefetch
+ * carries none (#1170). Set here, after every middleware: the document cache
+ * reads the route's own header when it stores the response (s-maxage), the
+ * browser gets this one. A partial sent NOT_REUSED (scoped to its source
+ * page, or carrying deferred units) keeps it.
+ */
+function applyStoredPrefetchCacheControl(
+  response: Response,
+  reqCtx: RequestContext<any>,
+  url: URL,
+  router: StageRouter<any>,
+): void {
+  if (
+    !reqCtx._servedFromStorage ||
+    !isPrefetchKind(reqCtx._requestKind) ||
+    !url.searchParams.has(WIRE.partial) ||
+    reqCtx._payloadSourceScoped ||
+    reqCtx._payloadDeferred ||
+    response.status !== 200 ||
+    !response.headers.get("content-type")?.startsWith("text/x-component")
+  ) {
+    return;
+  }
+  const cacheControl = storedPrefetchCacheControl(router.prefetchCacheTTL);
+  if (cacheControl) trySetHeader(response, "cache-control", cacheControl);
+}
+
+/**
  * The response the global chain returned, made ready to leave: a partial or
  * action request's redirect converted, onResponse callbacks drained, the
  * rewrite header, the open-redirect guard and the stream-idle watchdog.
@@ -715,6 +751,7 @@ export function finalizeRequestResponse<TEnv>(
   if (opts.rewrittenTo !== undefined) {
     trySetHeader(response, REWRITE_HEADER, opts.rewrittenTo);
   }
+  applyStoredPrefetchCacheControl(response, reqCtx, url, router);
   opts.beforeGuard?.(response);
 
   // Single open-redirect chokepoint: every response (PE, full-page,

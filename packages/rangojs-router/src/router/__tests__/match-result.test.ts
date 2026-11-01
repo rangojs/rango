@@ -482,6 +482,93 @@ describe("match-result", () => {
     });
   });
 
+  describe("buildMatchResult() - fromStorage (rango-t82)", () => {
+    /** A HIT whose stored segments are `stored`, as cache-lookup sets it. */
+    function hitState(stored: ResolvedSegment[]): MatchPipelineState {
+      const state = createPipelineState();
+      state.cacheHit = true;
+      state.cachedSegments = stored;
+      return state;
+    }
+
+    it("is set when every sent segment is a stored one and no loader ran", () => {
+      const layout = createSegment("L0", { type: "layout" });
+      const route = createSegment("L0R0");
+      const result = buildMatchResult(
+        [layout, route],
+        createMockContext(),
+        hitState([layout, route]),
+      );
+      expect(result.fromStorage).toBe(true);
+    });
+
+    it("ignores a held segment the answer does not send", () => {
+      const held = createSegment("L0", { type: "layout", component: null });
+      const route = createSegment("L0R0");
+      const result = buildMatchResult(
+        [held, route],
+        createMockContext({
+          clientSegmentIds: ["L0"],
+          clientSegmentSet: new Set(["L0"]),
+        }),
+        hitState([route]),
+      );
+      expect(result.segments.map((s) => s.id)).toEqual(["L0R0"]);
+      expect(result.fromStorage).toBe(true);
+    });
+
+    it("is unset when a live segment is sent beside the stored ones", () => {
+      const live = createSegment("L0", { type: "layout" });
+      const route = createSegment("L0R0");
+      const result = buildMatchResult(
+        [live, route],
+        createMockContext(),
+        hitState([route]),
+      );
+      expect(result.fromStorage).toBeUndefined();
+    });
+
+    it("is unset when a loader ran", () => {
+      const route = createSegment("L0R0");
+      const loader = createSegment("L0R0D0.stamp", {
+        type: "loader",
+        component: null,
+      });
+      const result = buildMatchResult(
+        [route, loader],
+        createMockContext(),
+        hitState([route]),
+      );
+      expect(result.fromStorage).toBeUndefined();
+    });
+
+    it("is unset when a segment equal to a stored one is a different object", () => {
+      const route = createSegment("L0R0");
+      const result = buildMatchResult(
+        [{ ...route }],
+        createMockContext(),
+        hitState([route]),
+      );
+      expect(result.fromStorage).toBeUndefined();
+    });
+
+    it("is unset without a cache hit, and on a full match", () => {
+      const route = createSegment("L0R0");
+      const miss = createPipelineState();
+      miss.cachedSegments = [route];
+      expect(
+        buildMatchResult([route], createMockContext(), miss).fromStorage,
+      ).toBeUndefined();
+      expect(
+        buildMatchResult(
+          [route],
+          createMockContext({ isFullMatch: true }),
+          hitState([route]),
+        ).fromStorage,
+      ).toBeUndefined();
+    });
+  });
+
   describe("collectMatchResult()", () => {
     it("should collect segments and build result", async () => {
       const ctx = createMockContext({ isFullMatch: true });
