@@ -138,14 +138,30 @@ apps, dev and production; rango-t215).
 
 ### 5) Prefetch, then fill (`prefetch: false`)
 
-A prefetch is a partial request sent early (`X-Rango-Prefetch`). Without the
-flag it runs everything flow 1 runs. With
+A prefetch is a partial request sent early (`X-Rango-Prefetch`), and the
+header's value says which of two kinds it is:
+
+- **Speculative** (`X-Rango-Prefetch: 1`): a viewport or render prefetch, for
+  a link the visitor may never click.
+- **Intent** (`X-Rango-Prefetch: intent`, `PREFETCH_INTENT` in
+  `prefetch-markers.ts`): a hover or an explicit `useRouter().prefetch()`,
+  which the browser sends only when the link has no prefetch cached or in
+  flight. The server reads any other value as speculative.
+
+Without the flag both run everything flow 1 runs. With
 `loader(Def, { prefetch: false })` or `loading(fallback, { prefetch: false })`
-somewhere in the matched tree, it leaves the flagged work out, and the click
-that adopts the prefetch sends a second request for it:
+somewhere in the matched tree, only the speculative kind leaves the flagged
+work out, and the click that adopts that prefetch sends a second request for
+it. An intent prefetch is the navigation sent early: it runs the flagged work
+too (`requestKind` answers `"intent"`, and `match-api.ts` hands
+`partialDeferralMode` `prefetch: true` only for `"prefetch"`; R16 in the
+design), so the click that adopts it commits the whole page
+and sends no fill. A hover never upgrades a speculative entry that is already
+cached or in flight: that entry is used as it is, deferred work included, and
+its click sends the fill.
 
 ```text
-prefetch request (X-Rango-Prefetch)
+speculative prefetch request (X-Rango-Prefetch: 1)
   global middleware
     -> route middleware
       -> layout / handler / orphan / parallel / loaders,
@@ -193,15 +209,15 @@ Three things to keep in mind, because each looks like a bug the first time:
   from `_rsc_segments`, which is the first-render guarantee below doing the
   work.
 
-A prefetch that resolves an intercept (flow 4) defers the intercept's own
-flagged loaders and nothing of the target chain: its plan's scope is built
-from the intercept entry alone. Its fill names the intercept's source, as a
+A speculative prefetch that resolves an intercept (flow 4) defers the
+intercept's own flagged loaders and nothing of the target chain: its plan's
+scope is built from the intercept entry alone. Its fill names the intercept's source, as a
 request from the open modal does, and skips every target-chain entry the
 client does not hold. A flagged `loading()` inside `intercept()` defers
 nothing.
 
-Every other request kind is untouched by the flag: a document request, a
-navigation with no prefetch to adopt, an action revalidation, back/forward, a
+Every other request kind is untouched by the flag: an intent prefetch, a
+document request, a navigation with no prefetch to adopt, an action revalidation, back/forward, a
 no-JS form post, a shell capture, a warm request, an on-demand prerender and
 the `_rsc_loader` lane all run the flagged work as flow 1 to 4 describe.
 
