@@ -1714,8 +1714,8 @@ describe("prefetch in flight when an action marks prefetches stale", () => {
     expect(isPrefetchStale(entry)).toBe(false);
   });
 
-  it("a hover after the mark replaces a stale stored entry with a fresh prefetch", async () => {
-    const fetchMock = vi.fn(() =>
+  it("a hover after the mark replaces a stale stored entry with a fresh intent prefetch", async () => {
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
       Promise.resolve(new Response("payload", { status: 200 })),
     );
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
@@ -1734,6 +1734,12 @@ describe("prefetch in flight when an action marks prefetches stale", () => {
     markPrefetchesStale();
     prefetchDirect("/blog", ["A0"], "v1");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The replacement is a hover's: it defers nothing (R16).
+    const headers = fetchMock.mock.calls[1]![1]!.headers as Record<
+      string,
+      string
+    >;
+    expect(headers["X-Rango-Prefetch"]).toBe("intent");
     const entry = await vi.waitFor(() => {
       const served = consumePrefetch(WILDCARD_KEY);
       expect(served).not.toBeNull();

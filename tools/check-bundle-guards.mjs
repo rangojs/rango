@@ -292,7 +292,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // runs on every action exit and every prefetched click, and browser/prefetch/
 // is not split (AGENTS.md Bundle hygiene). By the owner's rule above: 53296B +
 // 256B, rounded up to the next 128B step. Re-measured at 53290B after the
-// review fixes and a merge of main fdc564c0: the same step, the cap stays.
+// review fixes and a merge of main fdc564c0, and at 53305B after a merge of
+// main 49b9139 (#1353, intent prefetches): the same step, the cap stays.
 const ROUTER_CHUNK_GZIP_MAX = 52.375 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 

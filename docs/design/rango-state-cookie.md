@@ -359,9 +359,11 @@ stale and rotates nothing:
   finishes and is stored stale (a Flight response that arrived is never
   aborted). Visible links are not told (`notifyPrefetchCacheInvalidated()`
   does not run): none prefetches again. `hasPrefetch` treats a stale entry as
-  absent, so a new hover replaces it with a fresh one. A click on a stale
-  entry commits it at once, then the page revalidates once the click settled,
-  in Back's stale-revalidation lane (`scheduleStalePrefetchRevalidation` in
+  absent, so a new hover replaces it with a fresh one, an intent prefetch
+  that defers nothing (R16 in `docs/design/prefetch-false.md`). An intent
+  prefetch made before the action is marked stale like any other. A click on
+  a stale entry commits it at once, then the page revalidates once the click
+  settled, in Back's stale-revalidation lane (`scheduleStalePrefetchRevalidation` in
   `navigation-bridge.ts`; R7 in `docs/internal/execution-model.md`). Only a
   click takes one: Back/Forward on a history-cache miss and leaving an
   intercept, which never revalidate, fetch fresh instead. A stale entry is
