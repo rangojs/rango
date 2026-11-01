@@ -32,6 +32,7 @@ import {
   createLoader,
   createRouter,
   Prerender,
+  redirect,
   urls,
   type Middleware,
 } from "../../index.rsc.js";
@@ -55,43 +56,61 @@ async function Failing(): Promise<React.ReactNode> {
 
 function app(options: { prefetchCacheTTL?: number | false } = {}) {
   const cacheStore = new MemorySegmentCacheStore();
+  /** Set: the outer middleware answers with a redirect after the render. */
+  const bounce = { on: false };
   const router = createRouter({
     cache: { store: cacheStore },
     ...options,
-  }).routes(
-    urls(({ path, layout, cache, loader, loading, errorBoundary }) => [
-      path("/", () => <p>home</p>, { name: "home" }),
-      path("/live", () => <p>live</p>, { name: "live" }),
-      path("/failing", Failing, { name: "failing" }, () => [
-        loading(<p>loading</p>),
-        errorBoundary(<p>declared-error</p>),
-      ]),
-      cache({ ttl: 300 }, () => [
-        path("/stored", () => <p>stored</p>, { name: "stored" }),
-        path(
-          "/stored-loader",
-          () => <p>stored-loader</p>,
-          { name: "storedLoader" },
-          () => [loader(Stamp)],
+  })
+    .use(async (_ctx, next) => {
+      const response = await next();
+      if (!bounce.on) return response;
+      // External: the partial gets the 200 Flight redirect, not a 204.
+      return redirect("https://accounts.example.com/login", {
+        external: true,
+      });
+    })
+    .use("/stored-no-store", async (ctx, next) => {
+      ctx.header("Cache-Control", "no-store");
+      await next();
+    })
+    .routes(
+      urls(({ path, layout, cache, loader, loading, errorBoundary }) => [
+        path("/", () => <p>home</p>, { name: "home" }),
+        path("/live", () => <p>live</p>, { name: "live" }),
+        path("/failing", Failing, { name: "failing" }, () => [
+          loading(<p>loading</p>),
+          errorBoundary(<p>declared-error</p>),
+        ]),
+        cache({ ttl: 300 }, () => [
+          path("/stored", () => <p>stored</p>, { name: "stored" }),
+          path("/stored-no-store", () => <p>stored-no-store</p>, {
+            name: "storedNoStore",
+          }),
+          path(
+            "/stored-loader",
+            () => <p>stored-loader</p>,
+            { name: "storedLoader" },
+            () => [loader(Stamp)],
+          ),
+        ]),
+        // A live layout above a cache() boundary: the record supplies the
+        // routes, the layout renders live unless the client keeps it.
+        layout(
+          () => <main>live-layout</main>,
+          () => [
+            cache({ ttl: 300 }, () => [
+              path("/under/a", () => <p>under-a</p>, { name: "underA" }),
+              path("/under/b", () => <p>under-b</p>, { name: "underB" }),
+            ]),
+          ],
         ),
+        path("/baked", Baked, { name: "baked" }),
+        path("/baked-loader", BakedWithLoader, { name: "bakedLoader" }, () => [
+          loader(Stamp),
+        ]),
       ]),
-      // A live layout above a cache() boundary: the record supplies the
-      // routes, the layout renders live unless the client keeps it.
-      layout(
-        () => <main>live-layout</main>,
-        () => [
-          cache({ ttl: 300 }, () => [
-            path("/under/a", () => <p>under-a</p>, { name: "underA" }),
-            path("/under/b", () => <p>under-b</p>, { name: "underB" }),
-          ]),
-        ],
-      ),
-      path("/baked", Baked, { name: "baked" }),
-      path("/baked-loader", BakedWithLoader, { name: "bakedLoader" }, () => [
-        loader(Stamp),
-      ]),
-    ]),
-  );
+    );
 
   const serve = (
     url: string,
@@ -118,7 +137,7 @@ function app(options: { prefetchCacheTTL?: number | false } = {}) {
     await settle();
   };
 
-  return { serve, held, prefetch, warm };
+  return { serve, held, prefetch, warm, bounce };
 }
 
 const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
@@ -217,6 +236,27 @@ describe("a prefetch answered from a route cache() record", () => {
     const { prefetch, warm } = app({ prefetchCacheTTL: 60 });
     await warm("/stored");
     expect(cacheControl(await prefetch("/stored"))).toBe("private, max-age=60");
+  });
+
+  it("keeps a route's no-store", async () => {
+    const { prefetch, warm } = app();
+    await warm("/stored-no-store");
+    const hit = await prefetch("/stored-no-store");
+    expect(hit.flight).toContain("stored-no-store");
+    expect(cacheControl(hit)).toBe("no-store");
+  });
+
+  it("carries none when a middleware answers with a redirect after the render", async () => {
+    const { serve, held, warm, bounce } = app();
+    await warm("/stored");
+    const segments = await held("/");
+    bounce.on = true;
+    const redirected = await serve("/stored", {
+      partial: { from: "/", segments, prefetch: true },
+    });
+    expect(redirected.response.status).toBe(200);
+    expect(redirected.flight).toContain("redirect");
+    expect(cacheControl(redirected)).toBeNull();
   });
 });
 

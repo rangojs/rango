@@ -246,13 +246,23 @@ export function buildMatchResult<TEnv>(
  * a cache() boundary, an intercept resolved live) is not the stored copy.
  * Any loader segment ran in this request, so it is live. Defaults to live:
  * counted stored by mistake, a segment brings back the cached failures #1170
- * removed.
+ * removed. A stale cache() record (state.shouldRevalidate, refreshed in the
+ * background) and an answer that sends nothing count as live too: the browser
+ * would keep the first past its refresh, and the second is a source page's
+ * answer.
  */
 function sendsOnlyStored(
   sent: readonly ResolvedSegment[],
   state: MatchPipelineState,
 ): boolean {
-  if (!state.cacheHit || !state.cachedSegments) return false;
+  if (
+    !state.cacheHit ||
+    !state.cachedSegments ||
+    state.shouldRevalidate ||
+    sent.length === 0
+  ) {
+    return false;
+  }
   const stored = new Set(state.cachedSegments);
   return sent.every((s) => s.type !== "loader" && stored.has(s));
 }

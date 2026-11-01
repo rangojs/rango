@@ -552,6 +552,19 @@ describe("match-result", () => {
       expect(result.fromStorage).toBeUndefined();
     });
 
+    it("is unset on a stale record, and on an answer that sends nothing", () => {
+      const route = createSegment("L0R0");
+      const stale = hitState([route]);
+      stale.shouldRevalidate = true;
+      expect(
+        buildMatchResult([route], createMockContext(), stale).fromStorage,
+      ).toBeUndefined();
+      expect(
+        buildMatchResult([], createMockContext(), hitState([route]))
+          .fromStorage,
+      ).toBeUndefined();
+    });
+
     it("is unset without a cache hit, and on a full match", () => {
       const route = createSegment("L0R0");
       const miss = createPipelineState();

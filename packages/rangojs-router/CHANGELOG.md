@@ -14,21 +14,24 @@ after the in-memory entry expired, though nothing in it could fail.
 before 0.25.0, and the browser HTTP cache answers a later prefetch, or the
 click, of that URL with it. Nothing live means:
 
-| Prefetch answer                                                                        | `Cache-Control`                |
-| -------------------------------------------------------------------------------------- | ------------------------------ |
-| Document cache fresh HIT (its loaders' output replayed)                                | `private, max-age=<ttl>`       |
-| Every segment it sends from a `cache()` record or a Prerender entry, no loader runs    | `private, max-age=<ttl>`       |
-| A segment rendered live beside stored ones (a layout above a `cache()` the page lacks) | none of the router's           |
-| A loader runs (a stored route's or a Prerender route's)                                | none of the router's           |
-| A live render, a failed one included                                                   | none of the router's           |
-| Scoped to its source page, or carrying `prefetch: false` deferred units                | `private, no-cache`, as before |
-| Document cache STALE hit, navigations, fills, `prefetchCacheTTL: false`                | unchanged                      |
+| Prefetch answer                                                                                 | `Cache-Control`                |
+| ----------------------------------------------------------------------------------------------- | ------------------------------ |
+| Document cache fresh HIT (its loaders' output replayed)                                         | `private, max-age=<ttl>`       |
+| Every segment it sends from a `cache()` record or a Prerender entry, no loader runs             | `private, max-age=<ttl>`       |
+| A segment rendered live beside stored ones (a layout above a `cache()` the page lacks)          | none of the router's           |
+| A loader runs (a stored route's or a Prerender route's)                                         | none of the router's           |
+| A live render, a failed one included                                                            | none of the router's           |
+| Scoped to its source page, or carrying `prefetch: false` deferred units                         | `private, no-cache`, as before |
+| Document cache STALE hit, stale `cache()` record, navigations, fills, `prefetchCacheTTL: false` | unchanged                      |
 
 A stored copy is safe to keep: no server cache stores a render that reported
 an error, so only a live part can fail after the 200's headers left. The
 header is set after every middleware and replaces a route's own on such a
-prefetch, as before 0.25.0; the document cache still stores the answer by the
-route's `s-maxage`. Nothing to change in your code.
+prefetch, as before 0.25.0, unless the route's says `no-store` or `no-cache`;
+the document cache still stores the answer by the route's `s-maxage`. A
+redirect a middleware returns after the render, and a response carrying a
+per-client header (a state cookie rotation, `x-rango-keep-cache`) or location
+state, get none. Nothing to change in your code.
 
 ### Fixed: `rango generate` reads the exported `createRouter` chain, not a helper router earlier in the file (rango-t246)
 
