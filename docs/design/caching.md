@@ -308,6 +308,18 @@ carrying location state (`carriesClientState`,
 `prefetchCacheTTL`, not the stored entry's remaining lifetime, as before
 #1170; the in-memory prefetch cache keeps the answer that long anyway.
 
+The browser keeps that copy across reloads and new tabs, and only this
+client's own writes make it miss: a server action bumps the state's write
+part, which is in the `Vary` key. A tag invalidation that does not pass
+through this client's action (another user's action, a webhook, a cron job,
+this user's `fetch()` to a route handler that calls `updateTag()`) changes
+nothing the key holds, so a reload can show the page from before it for up to
+`prefetchCacheTTL`. `invalidateClientCache()` rotates only the state of the
+browser whose request calls it, so it closes the gap only when that browser
+invalidates the tag itself (its `fetch()` to a route handler). For an
+invalidation from another user, a webhook or a cron job, lower
+`prefetchCacheTTL` or send `Cache-Control: no-cache` from the route.
+
 A stale entry's refresh re-runs the whole downstream pipeline (`next()`) in a
 `waitUntil` task while the visitor's request is still finishing. It used to
 run on the visitor's request context, so a cookie written in the re-run, or a

@@ -34,7 +34,17 @@ redirect a middleware returns after the render, and a response carrying a
 per-client header (a state cookie rotation, `x-rango-keep-cache`) or location
 state, get none. A server action bumps the state's write part (below), so a
 prefetch after it misses the copy from before the write. Nothing to change in
-your code.
+your code, with one exception: the browser keeps the copy for up to
+`prefetchCacheTTL` (default 300 s), across reloads and new tabs, and only
+this client's own server actions or a state rotation make it miss. A tag
+invalidation that does not pass through this client's action (another user's
+action, a webhook, a cron job, or this user's `fetch()` to a route handler
+that calls `updateTag()`) does not, so a reload can show the page from before
+it. When this browser invalidates the tag itself (its `fetch()` to a route
+handler), call `invalidateClientCache()` in that handler: it rotates only the
+calling browser's state. For an invalidation from another user, a webhook or
+a cron job, lower `prefetchCacheTTL` or send `Cache-Control: no-cache` from
+the route.
 
 ### Fixed: after a server action, a prefetch is no longer answered from the browser's HTTP cache with the value from before the write
 
@@ -443,6 +453,53 @@ path("/p", Page, { name: "p" }, () => [
 with no `loading()` or `loading(false)` it is never sent. Slots read the same
 data. No change in your code.
 
+### Fixed: a link clicked during a slow Back no longer keeps the previous page's layout ([#1357](https://github.com/rangojs/rango/pull/1357))
+
+**Before.** A link clicked or hovered while a Back/Forward that missed the
+history cache was still fetching sent the popped URL as the source page,
+together with the segment ids of the page still on screen. The server judged
+a held layout's `revalidate()` against the popped page and kept it, so a
+layout rendered for another page stayed: the category hero showed above a
+product page.
+
+**Now.** Every request that sends held segment ids names the page on screen
+(the committed URL, or an intercept's source) as the source, so the layout is
+judged against the page it was rendered for. A queued prefetch whose page
+moved before it ran is dropped. No change in your code.
+
+### Fixed: `rango --help` and static `rango generate` run without vite installed ([#1348](https://github.com/rangojs/rango/pull/1348))
+
+**Before.** With the optional `vite` peer not installed, every `rango`
+command, `--help` included, failed with `ERR_MODULE_NOT_FOUND` for `vite`,
+because the bundled CLI loaded the runtime-discovery module's vite imports
+up front. Static runs also paid vite's load time.
+
+**Now.** The CLI is split into chunks: the entry holds only the static path
+(`typescript`, `picomatch`), and `rango generate --runtime` loads vite on
+demand and names what to install when it is missing. No change in your code.
+
+### Fixed: location state on a `ppr` shell HIT ([#1330](https://github.com/rangojs/rango/issues/1330), [#1339](https://github.com/rangojs/rango/pull/1339))
+
+Two edges of the new document location state on a `ppr` route:
+
+- **A degraded HIT kept the redirect's state.** A shell HIT that cannot
+  finish its tail reloads the page into a full render. When that HIT had
+  read the one-shot cookie a document redirect left, its headers had already
+  cleared it, so the reload showed no flash. The reload script now sets the
+  cookie again first (from script, so without `HttpOnly`, for the moment the
+  reload takes), and the reload shows the state.
+- **A loader's write never rides a HIT.** A HIT's headers leave before its
+  tail runs, and they are `private, no-store` only when state was set before
+  the render. A loader that called `getRequestContext().setLocationState()`
+  during the tail could put state on a HIT whose headers allowed shared
+  caching. The tail now sends exactly the state set before the render.
+
+Setting location state from a loader is not supported: a loader has no
+`setLocationState`, and a call through `getRequestContext()` may be dropped
+(the payload takes the state before loaders settle). Set it from middleware,
+the handler or an action. The `/loader`, `/ppr` and `/hooks` `state.md`
+skills and the `setLocationState` JSDoc now say so.
+
 ## 0.32.0 (2026-10-30)
 
 ### Fixed: a prefetch held by a `revalidate()` that read the source page no longer shows another page's layout ([#1333](https://github.com/rangojs/rango/pull/1333))
@@ -545,28 +602,6 @@ wins: two `setLocationState(Toasts(...))` calls in one response, or
 value. The `setLocationState`, `createLocationState` and `redirect` JSDoc and
 the `/hooks` `state.md` skill now say so. Write an array once to combine
 messages.
-
-### Fixed: location state on a `ppr` shell HIT ([#1330](https://github.com/rangojs/rango/issues/1330))
-
-Two edges of the new document location state on a `ppr` route:
-
-- **A degraded HIT kept the redirect's state.** A shell HIT that cannot
-  finish its tail reloads the page into a full render. When that HIT had
-  read the one-shot cookie a document redirect left, its headers had already
-  cleared it, so the reload showed no flash. The reload script now sets the
-  cookie again first (from script, so without `HttpOnly`, for the moment the
-  reload takes), and the reload shows the state.
-- **A loader's write never rides a HIT.** A HIT's headers leave before its
-  tail runs, and they are `private, no-store` only when state was set before
-  the render. A loader that called `getRequestContext().setLocationState()`
-  during the tail could put state on a HIT whose headers allowed shared
-  caching. The tail now sends exactly the state set before the render.
-
-Setting location state from a loader is not supported: a loader has no
-`setLocationState`, and a call through `getRequestContext()` may be dropped
-(the payload takes the state before loaders settle). Set it from middleware,
-the handler or an action. The `/loader`, `/ppr` and `/hooks` `state.md`
-skills and the `setLocationState` JSDoc now say so.
 
 ## 0.31.0 (2026-10-30)
 
