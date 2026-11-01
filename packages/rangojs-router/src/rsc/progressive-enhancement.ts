@@ -13,6 +13,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { printServerError } from "../server/print-server-error.js";
+import { runActionBody } from "../server/cookie-store.js";
 import { createSsrHtmlStage } from "./ssr-setup.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
@@ -187,7 +188,7 @@ async function runFormAction<TEnv>(
       // Meter the no-JS form action as the action phase, same as the JS path.
       actionResult = await observePhase(
         PHASES.action(useActionStateId ?? "useActionState"),
-        () => boundAction(),
+        () => runActionBody(() => boundAction()),
       );
     } catch (error) {
       // Handle thrown redirect (e.g., throw redirect('/path'))
@@ -216,7 +217,7 @@ async function runFormAction<TEnv>(
     try {
       const loadedAction = await ctx.loadServerAction(directActionId);
       actionResult = await observePhase(PHASES.action(directActionId), () =>
-        loadedAction.apply(null, args),
+        runActionBody(() => loadedAction.apply(null, args)),
       );
     } catch (error) {
       // Handle thrown redirect (e.g., throw redirect('/path'))

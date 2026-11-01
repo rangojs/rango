@@ -91,31 +91,48 @@ export function getRawCookieValue(
 }
 
 /**
- * Encode a state value for the wire: `encodeURIComponent(version):timestamp`.
- * Only the build-derived version is encoded (it is arbitrary); the `:`
- * separator and numeric timestamp stay raw, so the `{version}:{timestamp}`
- * shape survives and `:` is a legal cookie-value octet.
+ * Encode a state value for the wire: `encodeURIComponent(version):timestamp`,
+ * plus `:write` when the write part is not 0. Only the build-derived version
+ * is encoded (it is arbitrary); the `:` separators and the numeric parts stay
+ * raw, so the shape survives and `:` is a legal cookie-value octet. A value no
+ * server action has bumped keeps the two-part shape it had before the write
+ * part existed.
  */
-export function encodeStateValue(version: string, timestamp: number): string {
-  return `${encodeURIComponent(version)}:${timestamp}`;
-}
-
-/** Parsed state value. `version` is decoded; `timestamp` is the raw integer. */
-export interface StateValue {
-  version: string;
-  timestamp: number;
+export function encodeStateValue(
+  version: string,
+  timestamp: number,
+  write = 0,
+): string {
+  const base = `${encodeURIComponent(version)}:${timestamp}`;
+  return write === 0 ? base : `${base}:${write}`;
 }
 
 /**
- * Decode a wire value back into `{version, timestamp}`. Returns null for a
- * malformed value (no `:`, empty version, or non-numeric timestamp) so callers
- * mint fresh instead of trusting garbage.
+ * Parsed state value. `version` is decoded; `timestamp` (the invalidation
+ * part) and `write` are the raw integers. `write` is 0 for a two-part value.
+ */
+export interface StateValue {
+  version: string;
+  timestamp: number;
+  write: number;
+}
+
+/**
+ * Decode a wire value back into `{version, timestamp, write}`. Accepts the
+ * two-part `{version}:{timestamp}` (a value no action bumped, or one an open
+ * tab wrote before the write part existed) and the three-part
+ * `{version}:{timestamp}:{write}`. Returns null for a malformed value (no `:`,
+ * empty version, a non-numeric part, or more parts) so callers mint fresh
+ * instead of trusting garbage.
  */
 export function decodeStateValue(raw: string): StateValue | null {
   const colon = raw.indexOf(":");
   if (colon <= 0) return null;
-  const timestamp = Number(raw.slice(colon + 1));
-  if (!Number.isFinite(timestamp)) return null;
+  const parts = raw.slice(colon + 1).split(":");
+  if (parts.length > 2) return null;
+  const timestamp = parseStatePart(parts[0]!);
+  const write = parts.length === 2 ? parseStatePart(parts[1]!) : 0;
+  if (timestamp === null || write === null) return null;
   let version: string;
   try {
     version = decodeURIComponent(raw.slice(0, colon));
@@ -124,7 +141,31 @@ export function decodeStateValue(raw: string): StateValue | null {
     // a thrown URIError here would 500 the server seat or fail client boot.
     return null;
   }
-  return { version, timestamp };
+  return { version, timestamp, write };
+}
+
+function parseStatePart(part: string): number | null {
+  if (part === "") return null;
+  const value = Number(part);
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * The `{version}:{timestamp}` part of a wire value: what every in-memory
+ * comparison on the client reads (the prefetch cache keys, the action
+ * fence's rotation check, the external-rotation observer). A change to it is
+ * a hard invalidation (a deploy, or invalidateClientCache() on either seat);
+ * a change to the write part alone is a server action's write, which marks
+ * caches stale and flushes nothing. The full value, write part included, is
+ * what requests send as `X-Rango-State`, so the browser HTTP cache (Vary)
+ * misses after every write. A raw cut, no decode: the version is
+ * percent-encoded, so the second `:` is always the write separator.
+ */
+export function stateEpoch(raw: string): string {
+  const first = raw.indexOf(":");
+  if (first < 0) return raw;
+  const second = raw.indexOf(":", first + 1);
+  return second < 0 ? raw : raw.slice(0, second);
 }
 
 /**
@@ -132,7 +173,9 @@ export function decodeStateValue(raw: string): StateValue | null {
  * one, so a re-mint inside the same millisecond (or a backward clock step) still
  * differs from the current value. `prevRaw` is the current wire value (the
  * client's in-memory mirror, or the server's inbound header/cookie) or null; its
- * timestamp is the floor. Shared by both seats so the monotonic guard lives once.
+ * timestamp is the floor. The write part starts over (left out): the new
+ * timestamp alone makes the value one no response was cached under. Shared by
+ * both seats so the monotonic guard lives once.
  */
 export function mintStateValue(
   version: string,
@@ -141,6 +184,25 @@ export function mintStateValue(
   const prevTs = prevRaw ? (decodeStateValue(prevRaw)?.timestamp ?? 0) : 0;
   const ts = Math.max(Date.now(), prevTs + 1);
   return encodeStateValue(version, ts);
+}
+
+/**
+ * Bump the write part of `prevRaw`, keeping its timestamp: what the response
+ * of a server action without a directive sets. The new write part is strictly
+ * greater than the previous one (and at least the current time, so two tabs'
+ * writes from the same value rarely meet), so every write gives a value no
+ * response was cached under. Returns null when `prevRaw` is absent or
+ * malformed: a client with no state value sends no `X-Rango-State` and has
+ * nothing in the HTTP cache keyed by one.
+ */
+export function bumpStateWrite(
+  version: string,
+  prevRaw: string | null,
+): string | null {
+  const prev = prevRaw ? decodeStateValue(prevRaw) : null;
+  if (!prev) return null;
+  const write = Math.max(Date.now(), prev.write + 1);
+  return encodeStateValue(version, prev.timestamp, write);
 }
 
 /**

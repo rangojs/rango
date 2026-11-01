@@ -536,8 +536,16 @@ arrives: the history cache (Back renders the cached entry, then revalidates)
 and every prefetch (a click on a link prefetched before the action shows that
 page at once, then revalidates it in the background), and it tells other open
 tabs that share a segment with the page to do the same and refresh. Nothing is
-flushed and the router's state cookie is not rotated. This happens for every
-action that reached the server, including ones that threw. No setup is needed.
+flushed. The action's response bumps only the write part of the router's state
+cookie (`{build}:{invalidation}:{write}`), which every prefetch and navigation
+sends as `X-Rango-State`: responses vary on it, so a partial response a route
+caches with its own `Cache-Control: max-age` is not answered from the
+browser's HTTP cache after the write, in this tab, after a reload, or in
+another tab. The client's in-memory caches read only
+`{build}:{invalidation}`, so the write marks them stale and drops nothing.
+This happens for every action that reached the server, including ones that
+threw or redirected, and for a form posted before hydration. No setup is
+needed.
 
 ```text
 /product/1: /cart prefetched (cart:2), click "Add to cart"
@@ -552,12 +560,12 @@ revalidation, and nothing remounts. A new hover on the link replaces the
 stale prefetch with a fresh one. A stale prefetch answers one click only: a
 second click on the same link fetches the page, and Back/Forward onto a page
 the history cache no longer holds never uses it. Visible links do not
-prefetch again after an action. Two things are no longer reached, because nothing rotates: a partial
-response a route caches with its own `Cache-Control` stays in the browser's
-HTTP cache until its max-age, and a tab that shares no segment with the page
-(or an app with `crossTabSync: false`) is not told. Call
-`invalidateClientCache()` in the action for the full flush: it drops every
-prefetch, rotates the state, and other tabs adopt it.
+prefetch again after an action. A tab that shares no segment with the page
+(or an app with `crossTabSync: false`) is not told: a prefetch it already
+holds stays fresh for it until the prefetch cache's TTL, though its new
+requests send the bumped state. Call `invalidateClientCache()` in the action
+for the full flush: it drops every prefetch, rotates the state's invalidation
+part, and other tabs adopt it.
 
 ### When the user navigates while the action runs
 
@@ -618,7 +626,8 @@ export async function saveDraft(formData: FormData) {
 ```
 
 What it suppresses, for this action only: the stale-marking of the history
-cache and of the prefetches, the cross-tab broadcast, and the background
+cache and of the prefetches, the state cookie's write bump, the cross-tab
+broadcast, and the background
 revalidation the client runs when the user navigated while the action was in
 flight (above). A click on a prefetch made before it shows that prefetch with
 no revalidation. What it does not change:

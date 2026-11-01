@@ -6,12 +6,21 @@
  * requests; the server responds with `Vary: X-Rango-State`, so the browser HTTP
  * cache keys responses by (URL, X-Rango-State value).
  *
- * Value format: `{buildVersion}:{invalidationTimestamp}`
+ * Value format: `{buildVersion}:{invalidationTimestamp}[:{write}]`
  * - Build version: the router's document version. It changes when a deploy
  *   changes the router's server code or the client assets, busting all cached
  *   prefetches at boot; a deploy that changes neither keeps them.
- * - Timestamp rotates on invalidation (invalidateClientCache, either seat). A
- *   server action without it rotates nothing.
+ * - Timestamp rotates on invalidation (invalidateClientCache, either seat).
+ * - Write: bumped by the response of a server action without a directive (its
+ *   `Set-Cookie`, server side, so a no-JS action bumps it too); left out while
+ *   0. It changes the `X-Rango-State` every tab and every reload sends, so
+ *   responses the browser HTTP cache holds from before the write miss.
+ *
+ * The client's in-memory comparisons read only `{buildVersion}:{timestamp}`
+ * (`stateEpoch`): the prefetch cache keys, the action fence's rotation check,
+ * the external-rotation observer below and the cross-tab adopt. A write-only
+ * change is soft: the action marks prefetches stale (navigation-store.ts
+ * markStaleSoftAndBroadcast) and nothing is flushed.
  *
  * Storage is a session cookie named by the server-resolved name passed to
  * initRangoState (`{prefix}_{routerId}`, default prefix `rango-state`). The
@@ -33,6 +42,7 @@ import {
   getRawCookieValue,
   mintStateValue,
   serializeStateCookie,
+  stateEpoch,
 } from "./cookie-name.js";
 
 let cookieName: string = DEFAULT_STATE_COOKIE_PREFIX;
@@ -46,8 +56,10 @@ let externalRotationObserver: ((value: string) => void) | null = null;
 
 /**
  * Register the observer invoked when a read detects an EXTERNAL rotation (a
- * sibling tab, a server `Set-Cookie`, or a cookie clear). Self-rotations
- * (invalidateRangoState) update the mirror synchronously and never fire it.
+ * sibling tab, a server `Set-Cookie`, or a cookie clear) of the
+ * `{version}:{timestamp}` part. A change to the write part alone (a server
+ * action's write) is adopted silently. Self-rotations (invalidateRangoState)
+ * update the mirror synchronously and never fire it.
  */
 export function setRangoStateObserver(
   observer: ((value: string) => void) | null,
@@ -147,11 +159,15 @@ export function getRangoState(): string {
 
   if (read.value !== null) {
     if (read.value !== mirror) {
-      // External rotation (sibling tab / server Set-Cookie): adopt it. The
-      // mirror update makes this idempotent across a burst of reads.
+      // External change (sibling tab / server Set-Cookie): adopt it. The
+      // mirror update makes this idempotent across a burst of reads. Only a
+      // rotation notifies: a write-only bump (a server action's response, or
+      // a sibling tab's) keeps the caches the epoch keys.
+      const rotated =
+        mirror === null || stateEpoch(mirror) !== stateEpoch(read.value);
       mirror = read.value;
       cookieBacked = true;
-      notifyExternalRotation(read.value);
+      if (rotated) notifyExternalRotation(read.value);
     } else {
       cookieBacked = true;
     }
@@ -187,7 +203,12 @@ export function invalidateRangoState(): void {
   writeCookie(cookieName, mirror);
 }
 
-/** Adopt the state carried by a same-origin cache-invalidation broadcast. */
+/**
+ * Adopt the state carried by a same-origin cache-invalidation broadcast when
+ * its timestamp is newer (a rotation). The write part is not compared: a soft
+ * broadcast's newer write is already in the shared jar, and a value that
+ * differs only there is no rotation to adopt.
+ */
 export function adoptRangoState(value: string): boolean {
   const incoming = decodeStateValue(value);
   if (!incoming || incoming.version !== currentVersion) return false;

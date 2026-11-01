@@ -1,6 +1,12 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
 import { isPrefetchRequest } from "@rangojs/router/testing/e2e";
-import { readState, readTexts, recordTexts, sameElement } from "@shared/e2e";
+import {
+  readState,
+  readTexts,
+  recordTexts,
+  sameElement,
+  stateEpochOf,
+} from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import { waitForHydration } from "./helper";
 
@@ -259,11 +265,14 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
     const prefetchCount = targetRequests.length;
 
     // The action (no directive) marks the prefetch stale instead of flushing
-    // it (#1329): the anchor is not prefetched again and the state is kept.
+    // it (#1329): the anchor is not prefetched again and the state's
+    // timestamp is kept. Its response bumps only the write part.
     const written = await incrementCounter(page);
     await page.waitForTimeout(1000);
     expect(targetRequests).toHaveLength(prefetchCount);
-    expect(await readState(page)).toBe(initialState);
+    const writtenState = await readState(page);
+    expect(writtenState).not.toBe(initialState);
+    expect(stateEpochOf(writtenState)).toBe(stateEpochOf(initialState));
     expect(navigations).toHaveLength(0);
 
     // A click with no pointer move over the anchor (a hover would replace the
@@ -297,9 +306,10 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
     const revalidation = new URL(navigations[0]!.url());
     expect(revalidation.searchParams.get("_rsc_stale")).toBe("true");
     expect(revalidation.searchParams.get("_rsc_segments")).toBeTruthy();
-    expect(navigations[0]!.headers()["x-rango-state"]).toBe(initialState);
+    // It sends the bumped state: the browser HTTP cache misses.
+    expect(navigations[0]!.headers()["x-rango-state"]).toBe(writtenState);
     expect(targetRequests).toHaveLength(prefetchCount);
-    expect(await readState(page)).toBe(initialState);
+    expect(await readState(page)).toBe(writtenState);
   });
 
   test("a hover after a server action replaces the stale prefetch with a fresh one: the click shows the write at once and revalidates nothing", async ({
@@ -328,9 +338,12 @@ function runDelegatedPrefetchScopeSpec(f: Fixture): void {
     await expect
       .poll(() => targetRequests.length)
       .toBeGreaterThan(prefetchCount);
-    expect(targetRequests.at(-1)!.headers()["x-rango-state"]).toBe(
-      initialState,
-    );
+    // With the state the action's response bumped: a prefetch the browser
+    // HTTP cache holds from before the write does not answer it.
+    const sentState = targetRequests.at(-1)!.headers()["x-rango-state"];
+    expect(sentState).toBe(await readState(page));
+    expect(sentState).not.toBe(initialState);
+    expect(stateEpochOf(sentState)).toBe(stateEpochOf(initialState));
     await recordTexts(page, "target-count");
     await page.getByTestId("prefetch-invalidation-target").click();
     await expect(page.getByTestId("target-count")).toHaveText(String(written));

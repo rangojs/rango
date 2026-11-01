@@ -5,6 +5,7 @@ import {
   readTexts,
   recordTexts,
   sameElement,
+  stateEpochOf,
 } from "@shared/e2e";
 import { isPrefetchRequest, waitForHydration } from "./helper";
 
@@ -222,7 +223,8 @@ function hostRoutingTests(port: number) {
     const prefetchCount = targetRequests.length;
 
     // The action (no directive) marks the prefetch stale instead of flushing
-    // it (#1329): the anchor is not prefetched again and the state is kept.
+    // it (#1329): the anchor is not prefetched again and the state's
+    // timestamp is kept. Its response bumps only the write part.
     await page.getByTestId("prefetch-action-plain-button").click();
     const output = page.getByTestId("prefetch-action-plain-written");
     await expect(output).not.toBeEmpty();
@@ -230,7 +232,9 @@ function hostRoutingTests(port: number) {
     expect(written).toBeGreaterThan(0);
     await page.waitForTimeout(1000);
     expect(targetRequests).toHaveLength(prefetchCount);
-    expect(await readState(page)).toBe(initialState);
+    const writtenState = await readState(page);
+    expect(writtenState).not.toBe(initialState);
+    expect(stateEpochOf(writtenState)).toBe(stateEpochOf(initialState));
     expect(navigations).toHaveLength(0);
 
     // A click with no pointer move over the anchor (a hover would replace the
@@ -255,9 +259,10 @@ function hostRoutingTests(port: number) {
     const revalidation = new URL(navigations[0]!.url());
     expect(revalidation.searchParams.get("_rsc_stale")).toBe("true");
     expect(revalidation.searchParams.get("_rsc_segments")).toBeTruthy();
-    expect(navigations[0]!.headers()["x-rango-state"]).toBe(initialState);
+    // It sends the bumped state: the browser HTTP cache misses.
+    expect(navigations[0]!.headers()["x-rango-state"]).toBe(writtenState);
     expect(targetRequests).toHaveLength(prefetchCount);
-    expect(await readState(page)).toBe(initialState);
+    expect(await readState(page)).toBe(writtenState);
   });
 
   test("invalidateClientCache() in a server action re-warms a persistent plain anchor with a new state", async ({

@@ -13,6 +13,7 @@ import {
   startBrowserTransaction,
 } from "./logging.js";
 import { getRangoState } from "./rango-state.js";
+import { stateEpoch } from "./cookie-name.js";
 import { isActionFenceActive } from "./action-fence.js";
 import {
   expandPayloadFragments,
@@ -184,9 +185,11 @@ export function createNavigationClient(
       // intercept targets, or when a Link opted in with
       // `prefetchKey=":source"`), then fall back to the wildcard slot shared
       // across source pages.
-      // Both keys embed the Rango state, so state rotation (deploy or
+      // Both keys embed the Rango state's epoch (`{version}:{timestamp}`,
+      // cookie-name.ts stateEpoch), so state rotation (deploy or
       // invalidateClientCache()) auto-invalidates both scopes. A server
-      // action marks entries stale instead: one is still served to a click
+      // action bumps only the write part, which the keys leave out: it marks
+      // entries stale instead, and one is still served to a click
       // (acceptStalePrefetch), whose bridge revalidates its page after it
       // settled (stalePrefetch); for any other caller it is a miss.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
@@ -196,8 +199,9 @@ export function createNavigationClient(
       const canUsePrefetch =
         !staleRevalidation && !hmr && !fill && !interceptSourceUrl;
       const rangoState = getRangoState();
-      const wildcardKey = buildPrefetchKey(rangoState, fetchUrl);
-      const cacheKey = buildSourceKey(rangoState, sourceHref, fetchUrl);
+      const stateKey = stateEpoch(rangoState);
+      const wildcardKey = buildPrefetchKey(stateKey, fetchUrl);
+      const cacheKey = buildSourceKey(stateKey, sourceHref, fetchUrl);
       // The page being left, as the router store committed it: the group a
       // params-scoped prefetch must have been answered for.
       const sourcePage = canUsePrefetch ? getCommittedPage() : null;
@@ -205,7 +209,7 @@ export function createNavigationClient(
       const stored = consumeStoredPrefetch(
         canUsePrefetch,
         cacheKey,
-        paramsCandidateKeys(rangoState, fetchUrl, sourcePage),
+        paramsCandidateKeys(stateKey, fetchUrl, sourcePage),
         wildcardKey,
         acceptStalePrefetch,
       );

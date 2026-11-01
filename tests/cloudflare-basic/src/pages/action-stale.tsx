@@ -232,7 +232,8 @@ function ActionStaleBareLayout() {
   );
 }
 
-const ActionStaleBareBasket: Handler = async () => {
+// With ?prefetch=max-age it links to the max-age page, prefetched on hover.
+const ActionStaleBareBasket: Handler = async (ctx) => {
   await wait(300);
   const { cart } = actionStaleState();
   return (
@@ -245,6 +246,38 @@ const ActionStaleBareBasket: Handler = async () => {
       >
         Hop
       </Link>
+      {ctx.searchParams.get("prefetch") === "max-age" && (
+        <Link
+          to="/action-stale/bare/max-age"
+          prefetch="hover"
+          data-testid="as-to-max-age-prefetched"
+        >
+          Max-age page, prefetched on hover
+        </Link>
+      )}
+    </div>
+  );
+};
+
+// Reads the cart, and its responses carry their own Cache-Control: private,
+// max-age=60 (route middleware), so the browser HTTP cache keeps a prefetch
+// of it, keyed by the URL and the X-Rango-State it sent (Vary). A server
+// action bumps the state's write part, so a prefetch after it, in this tab,
+// after a reload or in a tab opened later, is not answered from there with
+// the cart from before the write. Under the bare layout, a prefetch of it is
+// stored in the slot every source page shares (a source-scoped one is never
+// reused, whatever its route sets). Body:
+// tests/shared-e2e/src/action-stale-http-cache-scenario.ts.
+const cachePrivatelyForAMinute: Middleware = async (ctx, next) => {
+  ctx.header("Cache-Control", "private, max-age=60");
+  await next();
+};
+
+const ActionStaleBareMaxAge: Handler = () => {
+  const { cart } = actionStaleState();
+  return (
+    <div data-testid="as-max-age-page">
+      <p data-testid="as-max-age">{`max-age:${cart}`}</p>
     </div>
   );
 };
@@ -406,6 +439,9 @@ export const actionStalePatterns = urls(
     layout(ActionStaleBareLayout, () => [
       path("/action-stale/bare/basket", ActionStaleBareBasket),
       path("/action-stale/bare/hop", ActionStaleBareHop),
+      path("/action-stale/bare/max-age", ActionStaleBareMaxAge, () => [
+        middleware(cachePrivatelyForAMinute),
+      ]),
     ]),
   ],
 );

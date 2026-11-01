@@ -11,6 +11,7 @@ import {
   recordPartials,
   recordTexts,
   sameElement,
+  stateEpochOf,
   useKey,
   waitForSettled,
   waitForSettledNow,
@@ -20,7 +21,9 @@ import { waitForShellHydration } from "./shell-request.js";
 
 /**
  * A server action without a directive marks the prefetches made before it
- * stale instead of flushing them, and rotates no state (#1329). A click on a
+ * stale instead of flushing them, and rotates no state (#1329): it bumps only
+ * the state's write part, which the in-memory prefetch keys leave out
+ * (action-stale-http-cache-scenario.ts covers what the bump is for). A click on a
  * stale prefetch commits it at once; once the click settled, the page
  * revalidates in the background, as Back onto a stale entry does:
  * useNavigation() stays idle and nothing remounts. Visible links do not
@@ -88,7 +91,11 @@ export function runActionStalePrefetchTests(
     await page.getByTestId("as-add-fast").click();
     await waitForSettled(page);
     await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
-    expect(await readState(page), "the action rotates no state").toBe(state);
+    const written = await readState(page);
+    expect(written, "the action bumps the write part").not.toBe(state);
+    expect(stateEpochOf(written), "the action rotates no state").toBe(
+      stateEpochOf(state),
+    );
     // Visible links keep their (stale) prefetch: none prefetches again.
     await page.waitForTimeout(500);
     expect(prefetchesOf(sent, "/action-stale/basket")).toBe(1);
@@ -124,7 +131,7 @@ export function runActionStalePrefetchTests(
       seen.filter((entry) => entry.shown && entry.state === "loading"),
       `useNavigation() stays idle once the page is shown: ${JSON.stringify(seen)}`,
     ).toEqual([]);
-    expect(await readState(page)).toBe(state);
+    expect(await readState(page)).toBe(written);
   });
 
   test("keepClientCache() keeps the prefetch fresh: the click shows it and nothing revalidates", async ({
@@ -133,9 +140,13 @@ export function runActionStalePrefetchTests(
     test.setTimeout(60000);
     const sent = await openProductPage(page, options, "?prefetch=render");
     await prefetched(sent, "/action-stale/basket");
+    const state = await readState(page);
 
     await page.getByTestId("as-add-keep").click();
     await waitForSettled(page);
+    expect(await readState(page), "keepClientCache() bumps nothing").toBe(
+      state,
+    );
 
     await page.getByTestId("as-to-basket-prefetched").click();
     await expect(page.getByTestId("as-basket")).toHaveText("basket:0");
@@ -409,7 +420,7 @@ export function runActionStalePrefetchTests(
       await page.getByTestId("as-add-fast").click();
       await waitForSettled(page);
       await expect(other.getByTestId("as-cart")).toHaveText("cart:1");
-      expect(await readState(other)).toBe(state);
+      expect(stateEpochOf(await readState(other))).toBe(stateEpochOf(state));
 
       await recordTexts(other, "as-basket");
       await other.getByTestId("as-to-basket-prefetched").click();
