@@ -286,6 +286,10 @@ Concretely:
   (`export const`, `export default`, or a name in `export { ... }`), never from
   a helper chain that is not exported: an unreadable exported mount is
   reported even when a helper above it mounts a readable tree (rango-t246).
+  A chain counts as exported only when it is the value that is exported (the
+  initializer of an exported top-level variable, or the `export default`
+  expression); a chain inside an exported function or class, or passed to
+  another call, does not.
   Among several exported chains the first with a readable mount wins; a chain
   whose mounts are all unreadable is reported only when no other exported chain
   has a readable one. A file with no exported chain falls back to its

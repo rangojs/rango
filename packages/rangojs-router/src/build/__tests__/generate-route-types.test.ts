@@ -2054,6 +2054,20 @@ export const router = make();`,
     expect(result.basenameDiagnostic).toBeUndefined();
   });
 
+  it("takes routes and basename from the same call when two mount urls", () => {
+    const result = buildWith(
+      `const r1 = createRouter({ basename: "/first" }).routes(({ path }) => [
+  path("/one", () => null, { name: "one" }),
+]);`,
+      `createRouter({ basename: getB() })`,
+    );
+    expect(result.routes).toEqual({
+      home: "/",
+      account: "/:locale?/account",
+    });
+    expect(result.basenameDiagnostic).toContain("basename `getB()`");
+  });
+
   it("takes routes and basename from the same call when two exported chains mount urls", () => {
     const result = buildWith(
       `export const r1 = createRouter({ basename: "/first" }).routes(({ path }) => [
@@ -2200,6 +2214,37 @@ ${body}
       expect(unreadable).toEqual([]);
     },
   );
+
+  it.each([
+    [
+      "an exported function",
+      `export function makeTestRouter() {\n  return createRouter({}).routes(urls(({ path }) => [path("/t", () => null, { name: "test" })]));\n}`,
+    ],
+    [
+      "an exported arrow function",
+      `export const makeTestRouter = () => createRouter({}).routes(urls(({ path }) => [path("/t", () => null, { name: "test" })]));`,
+    ],
+    [
+      "an exported class method",
+      `export class Factory {\n  make() {\n    return createRouter({}).routes(urls(({ path }) => [path("/t", () => null, { name: "test" })]));\n  }\n}`,
+    ],
+    [
+      "a variable declared inside an exported function",
+      `export function makeTestRouter() {\n  const router = createRouter({}).routes(urls(({ path }) => [path("/t", () => null, { name: "test" })]));\n  return router;\n}`,
+    ],
+  ])("does not count a chain inside %s as exported", (_label, factory) => {
+    const { routes } = analyze(
+      `const router = createRouter({ basename: "/app" }).routes(${APP_TREE});\nexport default { fetch: router.fetch };\n${factory}`,
+    );
+    expect(routes).toEqual({ app: "/app/a" });
+  });
+
+  it("does not let a function-local name shadow an exported top-level name", () => {
+    const { routes } = analyze(
+      `function make() {\n  const router = createRouter({}).routes(urls(({ path }) => [path("/t", () => null, { name: "test" })]));\n  return router;\n}\nexport { make as helper };\nconst router = createRouter({ basename: "/app" }).routes(${APP_TREE});\nexport { router };`,
+    );
+    expect(routes).toEqual({ app: "/app/a" });
+  });
 
   it("takes the basename from the exported chain", () => {
     const { routes } = analyze(

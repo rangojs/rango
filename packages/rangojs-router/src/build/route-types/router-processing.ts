@@ -281,31 +281,47 @@ function collectExportedLocalNames(sourceFile: ts.SourceFile): Set<string> {
   return names;
 }
 
-// Whether a top-level statement is, or declares a name that is, exported.
-function isExportedStatement(
-  statement: ts.Statement,
+// Whether a createRouter chain is the value a module exports: the initializer
+// of an exported top-level variable (or of one an export list or default
+// export names), or the `export default` / `export =` expression itself,
+// through `as`, `satisfies` and parentheses. A chain inside a function or class
+// body, an argument of another call or a property of an object literal is not
+// exported even when the enclosing declaration is (rango-t246).
+function isExportedChain(
+  chainEnd: ts.CallExpression,
   exportedNames: ReadonlySet<string>,
 ): boolean {
-  if (ts.isExportAssignment(statement)) return true;
-  if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) return true;
-  if (ts.isVariableStatement(statement)) {
-    return statement.declarationList.declarations.some(
-      (decl) => ts.isIdentifier(decl.name) && exportedNames.has(decl.name.text),
-    );
-  }
-  return (
-    (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
-    statement.name !== undefined &&
-    exportedNames.has(statement.name.text)
-  );
-}
-
-function topLevelStatementOf(node: ts.Node): ts.Statement | null {
-  let current: ts.Node = node;
-  while (current.parent && !ts.isSourceFile(current.parent)) {
+  let current: ts.Node = chainEnd;
+  while (
+    current.parent &&
+    (ts.isAsExpression(current.parent) ||
+      ts.isSatisfiesExpression(current.parent) ||
+      ts.isParenthesizedExpression(current.parent))
+  ) {
     current = current.parent;
   }
-  return current.parent ? (current as ts.Statement) : null;
+  const parent = current.parent;
+  if (!parent) return false;
+  if (ts.isExportAssignment(parent))
+    return parent.parent === current.getSourceFile();
+  if (
+    !ts.isVariableDeclaration(parent) ||
+    parent.initializer !== current ||
+    !ts.isIdentifier(parent.name)
+  ) {
+    return false;
+  }
+  const statement = parent.parent.parent;
+  if (
+    !ts.isVariableStatement(statement) ||
+    !ts.isSourceFile(statement.parent)
+  ) {
+    return false;
+  }
+  return (
+    hasModifier(statement, ts.SyntaxKind.ExportKeyword) ||
+    exportedNames.has(parent.name.text)
+  );
 }
 
 // The createRouter chain whose urls the route types and basename come from,
@@ -386,9 +402,7 @@ function findRouterUrls(sourceFile: ts.SourceFile): {
           addMount(call.arguments[0], (text) => `.routes(${text})`);
         }
 
-        const statement = topLevelStatementOf(node);
-        const isExported =
-          statement !== null && isExportedStatement(statement, exportedNames);
+        const isExported = isExportedChain(node, exportedNames);
         if (isExported) anyExported = true;
         if (extracted.length > 0 || unreadable.length > 0) {
           (isExported ? exported : local).push({

@@ -13,7 +13,8 @@ routes and basename without a message.
 
 **Now.** The exported chain (`export const`, `export default`, or a name in
 `export { ... }`) always wins over one that is not exported, in routes and
-basename alike. When its mount cannot be read, `rango generate` reports it as
+basename alike. A chain inside an exported function or class (a test
+factory) is not the exported router and does not count. When its mount cannot be read, `rango generate` reports it as
 unresolvable, as it does for a single-chain file, instead of falling back to
 the helper. Among several exported chains the first one with a readable mount
 still wins, and a file whose chains are all non-exported is read as before.
