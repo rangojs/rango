@@ -22,6 +22,7 @@ import {
   setRequestContextParams,
 } from "../server/request-context.js";
 import { printServerError } from "../server/print-server-error.js";
+import { runActionBody } from "../server/cookie-store.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { resolveActionRefId } from "../router/is-action.js";
 import { getInterceptSourceHeader } from "../router/navigation-snapshot.js";
@@ -203,7 +204,7 @@ export async function executeServerAction<TEnv>(
 
   try {
     loadedAction = await ctx.loadServerAction(actionId);
-    let data = await loadedAction!.apply(null, args);
+    let data = await runActionBody(() => loadedAction!.apply(null, args));
 
     // Intercept redirect Responses: serializing one as the action returnValue
     // would fail, and revalidation would run needlessly.

@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Fixed: after a server action, a prefetch is no longer answered from the browser's HTTP cache with the value from before the write
+
+**Before.** Since the action stopped rotating the state cookie (#1329, below),
+the value every prefetch and navigation sends as `X-Rango-State` stayed the
+same across a write. Responses vary on it, so a partial response that carries
+its own `Cache-Control: max-age` (a route's own header) was answered from the
+browser's HTTP cache after the write: a new hover and the click showed the
+pre-write value with no revalidation, in the tab that ran the action, after a
+reload, and in a tab opened later.
+
+**Now.** The state value has a third part: `{build}:{invalidation}:{write}`.
+The response of a server action without a directive bumps the write part in
+its `Set-Cookie` (server side, so a form posted before hydration bumps it
+too), and every later request of every tab sends the new value, so the
+pre-write entries miss. The client's in-memory caches compare only
+`{build}:{invalidation}`, so the action still marks prefetches stale and
+flushes nothing. `invalidateClientCache()` still rotates the invalidation part;
+`keepClientCache()` bumps nothing. A two-part value, from a tab open across
+the deploy, still parses.
+
+A tab that hears no broadcast of the action (its page shares no segment with
+the acting page, or the app sets `crossTabSync: false`) no longer serves a
+prefetch it made before another tab's write as fresh: its next prefetch or
+navigation reads the bumped state, marks its history and prefetches stale,
+and a click on the prefetched link shows the page, then revalidates it.
+
+```text
+/basket prefetched on hover (Cache-Control: private, max-age=60), cart:0
+click "Add to cart"; hover /basket again; click it
+  before: the hover is answered from the HTTP cache: /basket shows cart:0
+  now:    the hover reaches the server: /basket shows cart:1
+```
+
+Nothing changes in app code. A test that reads the state cookie after an
+action sees a third part; compare its first two parts to tell a rotation from
+a write.
+
 ### Breaking: a server action marks prefetches stale instead of flushing them, and stops rotating the state cookie ([#1329](https://github.com/rangojs/rango/issues/1329))
 
 **Before.** Every action without `keepClientCache()` flushed the prefetch
@@ -18,10 +55,12 @@ click, once: a second click on the same link fetches the page, and so do
 Back/Forward onto a page the history cache no longer holds and leaving an
 intercept. Other tabs that share a segment
 with the page mark their history and prefetches stale and refresh. The
-cookie is not rotated, so a partial response a route caches with its own
-`Cache-Control` stays in the browser's HTTP cache until its max-age. Tabs
+cookie's invalidation part is not rotated; only its write part is bumped
+(above), so a partial response a route caches with its own `Cache-Control`
+misses in the browser's HTTP cache after the write. Tabs
 that share no segment with the page, and apps with `crossTabSync: false`,
-are no longer told. For the old full flush, call `invalidateClientCache()` in
+get no message and do not refresh; they mark their caches stale when they
+next read the bumped state (above). For the old full flush, call `invalidateClientCache()` in
 the action: other tabs then adopt the rotated state, flush and refresh.
 `keepClientCache()` is unchanged.
 

@@ -492,6 +492,17 @@ segments):
 - the request that holds no segments after a prefetch and the page's own
   answer disagree (`browser/partial-update.ts`).
 
+The browser's own HTTP cache is keyed by the client's state value, which every
+prefetch and navigation sends as `X-Rango-State` (`Vary`). The value is
+`{build}:{invalidation}[:{write}]` (`browser/cookie-name.ts`): a deploy or
+`invalidateClientCache()` changes `{build}:{invalidation}`, the part the
+client's in-memory caches key on, and flushes them; a server action without a
+directive bumps only `{write}` in its response's `Set-Cookie`
+(`runActionBody`, `server/cookie-store.ts`), so a partial response a route
+caches with its own `Cache-Control: max-age` misses after the write, in every
+tab and after a reload, while the in-memory prefetches only go stale.
+`docs/design/rango-state-cookie.md` has the whole model.
+
 An action's render is never stored, so after one the record can be older than
 the page the client holds; a stale request that hit it would put the pre-write
 page back on screen. A route-cache entry past its TTL is not a stale request:

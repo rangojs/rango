@@ -5,7 +5,13 @@ import {
   type Page,
   type Request,
 } from "@playwright/test";
-import { readState, readTexts, recordTexts, sameElement } from "@shared/e2e";
+import {
+  readState,
+  readTexts,
+  recordTexts,
+  sameElement,
+  stateEpochOf,
+} from "@shared/e2e";
 import { waitForHydration, expectNoPageError } from "./helper";
 import { useFixture } from "./fixture";
 
@@ -115,7 +121,10 @@ async function expectStaleClickSequence(
   });
 
   await page.waitForTimeout(1000);
-  expectFn(await readState(page)).toBe(prefetchStates[0]);
+  // The action's response keeps the state's timestamp and bumps its write part.
+  const writtenState = await readState(page);
+  expectFn(writtenState).not.toBe(prefetchStates[0]);
+  expectFn(stateEpochOf(writtenState)).toBe(stateEpochOf(prefetchStates[0]));
   expectFn(prefetchStates).toHaveLength(1);
   expectFn(navigations).toHaveLength(0);
 
@@ -135,9 +144,10 @@ async function expectStaleClickSequence(
   const revalidation = new URL(navigations[0]!.url());
   expectFn(revalidation.searchParams.get("_rsc_stale")).toBe("true");
   expectFn(revalidation.searchParams.get("_rsc_segments")).toBeTruthy();
-  expectFn(navigations[0]!.headers()["x-rango-state"]).toBe(prefetchStates[0]);
+  // The revalidation sends the bumped state: the browser HTTP cache misses.
+  expectFn(navigations[0]!.headers()["x-rango-state"]).toBe(writtenState);
   expectFn(prefetchStates).toHaveLength(1);
-  expectFn(await readState(page)).toBe(prefetchStates[0]);
+  expectFn(await readState(page)).toBe(writtenState);
 }
 
 /**

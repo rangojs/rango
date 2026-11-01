@@ -223,6 +223,17 @@ export async function readState(page: Page): Promise<string | null> {
 }
 
 /**
+ * The `{version}:{timestamp}` part of a state value: a server action without
+ * a directive bumps only the write part after it, so this part stays; a
+ * rotation (invalidateClientCache()) changes it.
+ */
+export function stateEpochOf(
+  state: string | null | undefined,
+): string | undefined {
+  return state?.split(":").slice(0, 2).join(":");
+}
+
+/**
  * Records every text `testId` shows from now on (one entry per change), and
  * keeps the first element shown with it so a remount can be told from an
  * update in place. Read the record with readTexts and sameElement.

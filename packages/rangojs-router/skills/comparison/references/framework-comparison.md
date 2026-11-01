@@ -612,7 +612,9 @@ bridge: REST calls, client-observed WebSocket events, authentication changes, or
 middleware/loader decisions.
 
 Server Actions mark the history and prefetch caches stale automatically after a
-response reaches the browser, without rotating the state. If an action knows it
+response reaches the browser, without rotating the state: the response bumps
+only its write part, so the browser HTTP cache misses on responses from before
+the write while the in-memory caches go stale. If an action knows it
 changed nothing that any route renders, `keepClientCache()` is the explicit
 per-response escape hatch: it suppresses that stale-marking, the broadcast, and
 the revalidation fetch. Together,

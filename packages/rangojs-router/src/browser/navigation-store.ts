@@ -11,7 +11,10 @@ import type {
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
 import { clearPrefetchCache, markPrefetchesStale } from "./prefetch/cache.js";
-import { takeStateRotationInActionFence } from "./action-fence.js";
+import {
+  takeStateRotationInActionFence,
+  takeStateWriteInActionFence,
+} from "./action-fence.js";
 import { LoaderStore } from "../loader-store.js";
 import {
   adoptRangoState,
@@ -361,8 +364,11 @@ export function createNavigationStore(
    */
   function markStaleSoftAndBroadcast(): void {
     markHistoryStale();
-    // The read reports an external rotation the jar holds to the fence.
+    // The read reports an external rotation or write the jar holds to the
+    // fence. Either branch below marks every cache stale, so it covers a
+    // write seen so far.
     const rangoState = getRangoState();
+    takeStateWriteInActionFence();
     if (takeStateRotationInActionFence()) {
       clearPrefetchCache();
       broadcastInvalidation(false);
@@ -719,6 +725,18 @@ export function createNavigationStore(
      */
     markHistoryCacheStale(): void {
       markHistoryStale();
+    },
+
+    /**
+     * Mark history entries and prefetches stale, telling no other tab: a
+     * cookie read saw a server action's write part change (rango-state.ts
+     * write observer). What a soft broadcast's receiver does, for a tab the
+     * broadcast does not reach: one whose page shares no segment with the
+     * acting page, or one with crossTabSync off.
+     */
+    markCachesStaleAfterWrite(): void {
+      markHistoryStale();
+      markPrefetchesStale();
     },
 
     /**

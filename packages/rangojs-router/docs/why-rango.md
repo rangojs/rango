@@ -363,11 +363,12 @@ client caching is only as good as its invalidation, and that is where client
 routers usually lose user trust. Rango's client cache is invalidated
 automatically and coherently:
 
-- Every server action invalidates by default: history entries are marked
-  stale (back/forward still paints instantly, then revalidates in the
-  background), the prefetch cache flushes, and a rotating `X-Rango-State`
-  value — sent on every prefetch and keyed into the browser HTTP cache via
-  `Vary` — strands every HTTP-cached payload from before the mutation.
+- Every server action invalidates by default: history entries and prefetches
+  are marked stale (back/forward and a click on a prefetched link still paint
+  instantly, then revalidate in the background), and the action's response
+  bumps the write part of the `X-Rango-State` value — sent on every prefetch
+  and navigation and keyed into the browser HTTP cache via `Vary` — which
+  strands every HTTP-cached payload from before the mutation.
 - Sibling tabs are notified, and the state cookie itself is the cross-tab
   sync channel, so a mutation in one tab cannot serve pre-mutation data in
   another.

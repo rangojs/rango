@@ -8,8 +8,10 @@ import { waitForHydration, isPrefetchRequest, blockPrefetch } from "./helper";
  * Verifies the cycle:
  *   1. App initializes the rango state session cookie
  *   2. A server action without a directive rotates nothing: it marks history
- *      and prefetches stale (#1329), and the next navigation sends the same
- *      X-Rango-State
+ *      and prefetches stale (#1329). Its response bumps only the write part
+ *      (`{version}:{timestamp}:{write}`), and the next navigation sends the
+ *      bumped X-Rango-State, so responses the browser HTTP cache holds from
+ *      before the write miss
  *   3. invalidateClientCache() (either seat) rotates the timestamp, and the
  *      next navigation sends the rotated value, so responses cached under the
  *      old X-Rango-State (via Vary) miss
@@ -18,8 +20,8 @@ import { waitForHydration, isPrefetchRequest, blockPrefetch } from "./helper";
 // rango state lives in a session cookie named `{prefix}_{routerId}` (default
 // prefix `rango-state`, or the bare default when metadata lacks the name) so
 // sibling apps on the same origin don't collide. The helper locates whichever
-// `rango-state...` cookie the app wrote and returns its `{version}:{timestamp}`
-// value.
+// `rango-state...` cookie the app wrote and returns its
+// `{version}:{timestamp}[:{write}]` value.
 async function readRangoState(page: Page): Promise<string | null> {
   return await page.evaluate(() => {
     for (const part of document.cookie.split(";")) {
@@ -33,7 +35,7 @@ async function readRangoState(page: Page): Promise<string | null> {
   });
 }
 
-async function testActionLeavesStateAndNavigationUsesIt(
+async function testActionBumpsWriteAndNavigationUsesIt(
   page: Page,
   url: (path: string) => string,
 ) {
@@ -54,7 +56,8 @@ async function testActionLeavesStateAndNavigationUsesIt(
   expect(initialTimestamp).toBeTruthy();
 
   // Click the server action button — this triggers:
-  //   actionSetSessionCookie() → server action bridge → markCacheAsStaleAndBroadcast()
+  //   actionSetSessionCookie() → its response's Set-Cookie bumps the write part
+  //   → server action bridge → markCacheAsStaleAndBroadcast()
   //   → history and prefetches marked stale, a soft broadcast, no rotation
   await page.click('[data-testid="action-set-cookie-btn"]');
 
@@ -63,9 +66,12 @@ async function testActionLeavesStateAndNavigationUsesIt(
     '[data-testid="action-set-cookie-btn"]:not([disabled])',
   );
 
-  // The state is unchanged
+  // The version and timestamp are unchanged; a write part follows them
   const afterState = await readRangoState(page);
-  expect(afterState).toBe(initialState);
+  const [afterVersion, afterTimestamp, afterWrite] = afterState!.split(":");
+  expect(afterVersion).toBe(initialVersion);
+  expect(afterTimestamp).toBe(initialTimestamp);
+  expect(afterWrite).toMatch(/^\d+$/);
 
   // Set up request listener to capture the X-Rango-State header on next navigation
   const headerPromise = new Promise<string | null>((resolve) => {
@@ -81,9 +87,9 @@ async function testActionLeavesStateAndNavigationUsesIt(
   // Trigger a client-side SPA navigation (Home link in root layout)
   await page.click('[data-testid="nav-home"]');
 
-  // The navigation request sends the unchanged state
+  // The navigation request sends the bumped state
   const sentHeader = await headerPromise;
-  expect(sentHeader).toBe(initialState);
+  expect(sentHeader).toBe(afterState);
 }
 
 async function testRangoStateSurvivesRefresh(
@@ -109,7 +115,7 @@ async function testInvalidatedStateSurvivesRefresh(
   page: Page,
   url: (path: string) => string,
 ) {
-  // Same rationale as testActionLeavesStateAndNavigationUsesIt: keep the post-refresh
+  // Same rationale as testActionBumpsWriteAndNavigationUsesIt: keep the post-refresh
   // click's navigation fetch live so the header waiter sees it.
   await blockPrefetch(page);
 
@@ -169,7 +175,8 @@ async function testKeepCacheLeavesStateUnchanged(
 
   // An action that calls keepClientCache() suppresses the bridge's automatic
   // invalidation: the rango state value does not rotate (no action rotates
-  // it now, #1329), and the history cache stays fresh.
+  // it now, #1329) and its write part is not bumped, and the history cache
+  // stays fresh.
   await page.click('[data-testid="action-keep-cache-btn"]');
   await page.waitForSelector(
     '[data-testid="action-keep-cache-btn"]:not([disabled])',
@@ -316,10 +323,10 @@ test.describe("rango-state invalidation lifecycle (dev)", () => {
     mode: "dev",
   });
 
-  test("server action leaves rango-state unchanged and navigation uses it", async ({
+  test("server action keeps the rango-state timestamp, bumps its write part, and navigation sends it", async ({
     page,
   }) => {
-    await testActionLeavesStateAndNavigationUsesIt(page, f.url);
+    await testActionBumpsWriteAndNavigationUsesIt(page, f.url);
   });
 
   test("rango-state survives page refresh", async ({ page }) => {
@@ -365,10 +372,10 @@ test.describe("rango-state invalidation lifecycle (production)", () => {
     mode: "build",
   });
 
-  test("server action leaves rango-state unchanged and navigation uses it", async ({
+  test("server action keeps the rango-state timestamp, bumps its write part, and navigation sends it", async ({
     page,
   }) => {
-    await testActionLeavesStateAndNavigationUsesIt(page, f.url);
+    await testActionBumpsWriteAndNavigationUsesIt(page, f.url);
   });
 
   test("rango-state survives page refresh", async ({ page }) => {

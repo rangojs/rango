@@ -2172,12 +2172,18 @@ change (see Contract Change Process).
   prefetch stale, and tells other tabs, which do the same and refresh the
   page they show (`finalizeAction` in `browser/server-action-bridge.ts`,
   `markCacheAsStaleAndBroadcast()` in `browser/navigation-store.ts`). It
-  flushes nothing and rotates nothing (#1329). `invalidateClientCache()` in
+  flushes nothing and rotates nothing (#1329). Its response bumps only the
+  write part of the state cookie (`runActionBody` in
+  `server/cookie-store.ts`), which the in-memory caches do not key on, so
+  the landing stays soft; every later request sends the bumped value, so the
+  browser HTTP cache misses on responses from before the write (semantic
+  matrix row PS2). `invalidateClientCache()` in
   the action still rotates the state: the landing sees its `Set-Cookie`,
   flushes the prefetch map, rotates once more and sends the full broadcast,
   as every action did before, so other tabs adopt the newer state and flush
   theirs (a tab that already read the server's value would refuse an equal
-  one and rotate on its own). `keepClientCache()` turns R1 and R3 off for that action. An
+  one and rotate on its own). `keepClientCache()` turns R1 (the write bump
+  included) and R3 off for that action. An
   action with no response (a network failure, or an abort before the
   response) invalidates nothing.
 - **R2. The action's own response is its revalidation.** The server re-renders

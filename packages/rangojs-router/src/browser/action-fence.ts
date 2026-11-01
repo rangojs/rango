@@ -49,18 +49,61 @@ let fenceCount = 0;
  */
 let rotatedInFence = false;
 
+/**
+ * Whether a cookie read saw a write-only change of the state (a server
+ * action's response, this tab's or another's) while the fence was up and no
+ * action's landing took it yet. A landing marks every cache stale, so it
+ * takes this; when the fence drops with it still set (the actions that
+ * landed called keepClientCache(), failed before they were sent, or reloaded
+ * on a version mismatch), the drop hands it to `unlandedWriteHandler`.
+ */
+let wroteInFence = false;
+
+let unlandedWriteHandler: (() => void) | null = null;
+
+/**
+ * Register what runs when the fence drops holding a write no landing took:
+ * the navigation store's markCachesStaleAfterWrite (navigation-store-handle.ts).
+ */
+export function setUnlandedWriteHandler(handler: (() => void) | null): void {
+  unlandedWriteHandler = handler;
+}
+
 export function enterActionFence(): void {
-  if (fenceCount === 0) rotatedInFence = false;
+  if (fenceCount === 0) {
+    rotatedInFence = false;
+    wroteInFence = false;
+  }
   fenceCount++;
 }
 
 export function exitActionFence(): void {
   if (fenceCount > 0) fenceCount--;
+  if (fenceCount === 0 && wroteInFence) {
+    wroteInFence = false;
+    unlandedWriteHandler?.();
+  }
 }
 
 /** A cookie read saw an external state rotation (rango-state.ts observer). */
 export function noteStateRotation(): void {
   if (fenceCount > 0) rotatedInFence = true;
+}
+
+/**
+ * A cookie read saw a write-only change (rango-state.ts write observer).
+ * Returns whether the fence is up and took it; with the fence down the
+ * caller marks the caches stale itself.
+ */
+export function noteStateWrite(): boolean {
+  if (fenceCount === 0) return false;
+  wroteInFence = true;
+  return true;
+}
+
+/** A landing marked every cache stale: a write seen so far is covered. */
+export function takeStateWriteInActionFence(): void {
+  wroteInFence = false;
 }
 
 /**
@@ -81,4 +124,5 @@ export function isActionFenceActive(): boolean {
 export function __resetActionFence(): void {
   fenceCount = 0;
   rotatedInFence = false;
+  wroteInFence = false;
 }

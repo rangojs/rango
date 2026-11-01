@@ -703,6 +703,11 @@ export interface NavigationStore {
    */
   getPageHistoryKeys(historyKey: string): string[];
   markHistoryCacheStale(): void;
+  /**
+   * Mark history entries and prefetches stale without a broadcast: a cookie
+   * read saw another write (rango-state.ts setRangoStateWriteObserver).
+   */
+  markCachesStaleAfterWrite(): void;
   /** A server action without a directive: mark stale, soft broadcast. */
   markCacheAsStaleAndBroadcast(): void;
   /** The client seat of invalidateClientCache(): flush, rotate, broadcast. */

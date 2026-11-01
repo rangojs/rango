@@ -622,8 +622,9 @@ it is selected by export conditions:
   flushes the prefetch cache, rotates the router state, and notifies other
   tabs, which adopt the new state and flush theirs. That is more than a
   completed server action does: an action marks history and prefetches stale
-  and rotates nothing. During SSR of a client component it is a no-op (dev
-  warning).
+  and rotates nothing (its response bumps only the state's write part, so the
+  browser HTTP cache misses on responses from before the write). During SSR
+  of a client component it is a no-op (dev warning).
 - **Server** (handler, server component, middleware, loader, or action): writes
   a rotated state `Set-Cookie` for the responding client, which marks its
   caches stale when it next reads them. Idempotent within a request; throws

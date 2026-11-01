@@ -36,6 +36,7 @@ import {
 } from "./cache.js";
 import { paramsScopeLabel } from "../../prefetch-source-scope.js";
 import { getRangoState } from "../rango-state.js";
+import { stateEpoch } from "../cookie-name.js";
 import { isActionFenceActive } from "../action-fence.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
@@ -209,14 +210,15 @@ export interface PrefetchSlot {
  * forced it or the response says `X-RSC-Prefetch-Scope: source`; under the
  * label's key when it says `params; <label>`, for the pages with equal values
  * of what a revalidate() rule read; else under the key every source page
- * shares (#1331).
+ * shares (#1331). `stateKey` is the state's epoch the other keys were built
+ * with (cookie-name.ts stateEpoch).
  */
 export function prefetchStorageSlot(
   forceSourceScope: boolean,
   scopeHeader: string | null,
   sourceKey: string,
   wildcardKey: string,
-  rangoState: string,
+  stateKey: string,
   targetUrl: URL,
 ): PrefetchSlot {
   if (forceSourceScope || scopeHeader === "source") {
@@ -226,7 +228,7 @@ export function prefetchStorageSlot(
   if (label === undefined) return { scope: "wildcard", key: wildcardKey };
   return {
     scope: "params",
-    key: buildParamsKey(rangoState, label, targetUrl),
+    key: buildParamsKey(stateKey, label, targetUrl),
     paramsLabel: label,
   };
 }
@@ -270,7 +272,10 @@ function executePrefetchFetch(
   sourceHref: string,
   targetUrl: URL,
   forceSourceScope: boolean,
-  /** Rango state captured once by the caller (keys + header share one read). */
+  /**
+   * Rango state captured once by the caller (keys + header share one read).
+   * The header sends it whole; the keys hold its epoch.
+   */
   rangoState: string,
   /**
    * An intent prefetch (prefetchDirect: hover, `prefetch()`): sent as
@@ -376,7 +381,7 @@ function executePrefetchFetch(
         response.headers.get("x-rsc-prefetch-scope"),
         sourceKey,
         wildcardKey,
-        rangoState,
+        stateEpoch(rangoState),
         targetUrl,
       );
       const storageKey = slot.key;
@@ -516,14 +521,14 @@ function hasPrefetchHit(
   forceSourceScope: boolean,
   wildcardKey: string,
   sourceKey: string,
-  rangoState: string,
+  stateKey: string,
   targetUrl: URL,
 ): boolean {
   if (forceSourceScope) return hasPrefetch(sourceKey);
   return (
     hasPrefetch(wildcardKey) ||
     hasPrefetch(sourceKey) ||
-    paramsCandidateKeys(rangoState, targetUrl, getCommittedPage()).some(
+    paramsCandidateKeys(stateKey, targetUrl, getCommittedPage()).some(
       hasPrefetch,
     )
   );
@@ -569,14 +574,15 @@ export function prefetchDirect(
     return;
   }
   const rangoState = getRangoState();
-  const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
-  const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
+  const stateKey = stateEpoch(rangoState);
+  const wildcardKey = buildPrefetchKey(stateKey, targetUrl);
+  const sourceKey = buildSourceKey(stateKey, sourceHref, targetUrl);
   if (
     hasPrefetchHit(
       forceSourceScope,
       wildcardKey,
       sourceKey,
-      rangoState,
+      stateKey,
       targetUrl,
     )
   ) {
@@ -634,15 +640,16 @@ export function prefetchQueued(
     return "";
   }
   const rangoState = getRangoState();
-  const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
-  const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
+  const stateKey = stateEpoch(rangoState);
+  const wildcardKey = buildPrefetchKey(stateKey, targetUrl);
+  const sourceKey = buildSourceKey(stateKey, sourceHref, targetUrl);
   const queueKey = forceSourceScope ? sourceKey : wildcardKey;
   if (
     hasPrefetchHit(
       forceSourceScope,
       wildcardKey,
       sourceKey,
-      rangoState,
+      stateKey,
       targetUrl,
     )
   ) {
@@ -657,6 +664,14 @@ export function prefetchQueued(
     return queueKey;
   }
   enqueuePrefetch(queueKey, (signal) => {
+    // The header sends the state as it is now: a server action that landed
+    // while this sat in the queue bumped the write part, and the value read
+    // when it was queued would be answered by the browser HTTP cache with
+    // pre-write bytes. A rotation since then made the keys obsolete. Read
+    // before the re-check below: a read that sees another tab's write marks
+    // the entries from before it stale, so they no longer count as a hit.
+    const liveState = getRangoState();
+    if (stateEpoch(liveState) !== stateKey) return Promise.resolve();
     // Re-check at execution time: a hover-triggered prefetchDirect may
     // have started or completed this key while the item sat in the queue.
     if (
@@ -664,7 +679,7 @@ export function prefetchQueued(
         forceSourceScope,
         wildcardKey,
         sourceKey,
-        rangoState,
+        stateKey,
         targetUrl,
       )
     ) {
@@ -686,7 +701,7 @@ export function prefetchQueued(
       sourceHref,
       targetUrl,
       forceSourceScope,
-      rangoState,
+      liveState,
       false,
       routerId,
       signal,

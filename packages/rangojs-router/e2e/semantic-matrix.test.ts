@@ -19,6 +19,7 @@ import {
 import {
   expectBackOntoAStalePageShowsTheWrite,
   expectConsole,
+  stateEpochOf,
   warmShellRequestToHit,
 } from "@shared/e2e";
 
@@ -850,7 +851,7 @@ const matrixRows: SemanticMatrixRow[] = [
   {
     id: "PS2",
     contract:
-      "an action without a directive leaves the state cookie unchanged; invalidateClientCache() in an action rotates it",
+      "an action without a directive keeps the state cookie's timestamp and bumps only its write part; invalidateClientCache() in an action rotates the timestamp",
     transport: "js",
     execution: "action-followup",
     scope: "n/a",
@@ -862,11 +863,15 @@ const matrixRows: SemanticMatrixRow[] = [
 
       await landAction(page, "as-add-fast");
       await expect(testId(page, "as-cart")).toHaveText("cart:1");
-      expect(await readStateCookie(page)).toBe(state);
+      const written = await readStateCookie(page);
+      expect(written).not.toBe(state);
+      expect(stateEpochOf(written)).toBe(stateEpochOf(state));
 
       await landAction(page, "as-add-invalidate");
       await expect(testId(page, "as-cart")).toHaveText("cart:2");
-      expect(await readStateCookie(page)).not.toBe(state);
+      expect(stateEpochOf(await readStateCookie(page))).not.toBe(
+        stateEpochOf(state),
+      );
     },
   },
   {
