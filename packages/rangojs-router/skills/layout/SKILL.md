@@ -12,6 +12,12 @@ layout stays mounted while you navigate between the routes it wraps. This skill
 covers layout forms, outlets, orphan layouts (a layout inside a `path()`), and
 layout revalidation.
 
+**Rule: a layout keeps its `<Outlet />` in one place on every branch.** Branch
+around the outlet, never around it and the outlet together: an early
+`return <Outlet />` beside a wrapped one remounts every child segment each time
+the branch flips (state resets, mount effects and the actions they call run
+again). See [Moving the Outlet remounts its children](#moving-the-outlet-remounts-its-children).
+
 Related skills: `/parallel` (named slots rendered by a layout), `/intercept`
 (modal slots), `/route` (the routes a layout wraps), `/router-setup` (the
 `document` shell that renders `<html>`).

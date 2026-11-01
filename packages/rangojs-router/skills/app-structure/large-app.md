@@ -893,6 +893,9 @@ stay inside the project module can come from `useReverse(routes)` in
   user's name): the capture is refused and the page never serves a shell.
 - **`prefetch: false` on every loader**: each click then waits for a fill.
   Flag the expensive, rarely-clicked ones.
+- **A layout that moves its `<Outlet />` between branches** (a bare
+  `return <Outlet />` on one, a wrapped one on another): every page below it
+  remounts when the branch flips. Keep one shape (`/layout`).
 - **A bare `isAction(refs)` predicate**: it is a hard `false` on navigation
   too, so the loader stops following param changes. Use
   `isAction() ? isAction(refs) : undefined` (`/loader`).
