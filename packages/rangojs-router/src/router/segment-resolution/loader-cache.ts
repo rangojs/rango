@@ -287,7 +287,8 @@ export function routeLoaderLanes(
  * The one answer to "is this loader served from the shell record on this
  * request", for its value (resolveLoaderData), for the record's copies of
  * its handle pushes (loaderPins) and for whether a prefetch defers it
- * (servesLoaderPin): all look the loader up here and nowhere else. A condition that makes pins, or one loader's pin, not apply belongs
+ * (servesLoaderPin): all look the loader up here and nowhere else. A
+ * condition that makes pins, or one loader's pin, not apply belongs
  * here or in the seed's decode (shell-snapshot.ts buildShellLoaderSeed),
  * never after a lookup, or the two disagree: issues #1001 and #1003 were the
  * pushes decided from the request's type while the value was decided from

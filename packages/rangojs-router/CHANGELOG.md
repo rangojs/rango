@@ -12,7 +12,8 @@ the loader.
 
 **Now.** A speculative prefetch defers such a loader unless it serves the
 loader from a pin of a shell a document request captured, as a route
-without `ppr` defers it. The warning is gone.
+without `ppr` defers it. The same holds for an `ssr: false` loader behind the
+fallback of a flagged layout. The warning is gone.
 
 | The prefetch                                           | The flagged `ssr: false` loader                         |
 | ------------------------------------------------------ | ------------------------------------------------------- |
