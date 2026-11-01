@@ -26,7 +26,11 @@ vi.mock("../../../cache/segment-codec.js", () => ({
   deserializeResult: vi.fn(),
 }));
 
-import { loaderPins, resolveLoaderData } from "../loader-cache.js";
+import {
+  loaderPins,
+  resolveLoaderData,
+  servesLoaderPin,
+} from "../loader-cache.js";
 import type { EntryData, LoaderEntry } from "../../../server/context.js";
 import type { ShellLoaderSeedEntry } from "../../../cache/shell-snapshot.js";
 import type { RequestContext } from "../../../server/request-context.js";
@@ -268,5 +272,44 @@ describe("the pin a loader's value is served from is the pin its pushes follow",
 
     expect(await served(bake, pins)).toBe("pin");
     expect(loaderPins(both, request(pins))("Bake#L")).toBe("hole");
+  });
+});
+
+/**
+ * servesLoaderPin: whether a prefetch keeps the loader (prefetch-deferral.ts
+ * defersLoader). It says yes exactly where resolveLoaderData serves the pin
+ * without running the body, so a deferred loader is one that would have run.
+ */
+describe("servesLoaderPin answers as resolveLoaderData serves", () => {
+  const bake = loaderEntry("Bake#L", true);
+  const live = loaderEntry("Live#L", false);
+  const pins = { "Bake#L": PIN, "Live#L": PIN };
+
+  it("an ssr: false loader with a pin: served", () => {
+    expect(servesLoaderPin(bake, request(pins))).toBe(true);
+    expect(servesLoaderPin(bake, request({ "Bake#L": LEGACY_PIN }))).toBe(true);
+  });
+
+  it("without a seed, or without its pin: not served", () => {
+    expect(servesLoaderPin(bake, request())).toBe(false);
+    expect(servesLoaderPin(bake, request({ "Live#L": PIN }))).toBe(false);
+  });
+
+  it("a registration without ssr: false is never served a pin", () => {
+    expect(servesLoaderPin(live, request(pins))).toBe(false);
+  });
+
+  it("a capture serves none", () => {
+    expect(servesLoaderPin(bake, request(pins, true))).toBe(false);
+  });
+
+  it("reads the request context by default", () => {
+    mockRequestCtx._shellLoaderSeed = new Map(Object.entries(pins));
+    try {
+      expect(servesLoaderPin(bake)).toBe(true);
+    } finally {
+      mockRequestCtx._shellLoaderSeed = undefined;
+    }
+    expect(servesLoaderPin(bake)).toBe(false);
   });
 });

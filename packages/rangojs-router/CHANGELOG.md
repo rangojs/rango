@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Changed: `prefetch: false` on an `ssr: false` loader of a `ppr` route keeps it out of a prefetch that has no document shell
+
+**Before.** On a `ppr` route, `loader(Def, { ssr: false, prefetch: false })`
+ignored `prefetch: false`, and development warned that the loader "is
+registered with ssr: false and prefetch: false on a ppr route". Every
+viewport prefetch of a page whose shell no document request had captured ran
+the loader.
+
+**Now.** A speculative prefetch defers such a loader unless it serves the
+loader from a pin of a shell a document request captured, as a route
+without `ppr` defers it. The same holds for an `ssr: false` loader behind the
+fallback of a flagged layout. The warning is gone.
+
+| The prefetch                                           | The flagged `ssr: false` loader                         |
+| ------------------------------------------------------ | ------------------------------------------------------- |
+| Replays a document-captured shell (`HIT`)              | served from its pin, never run; the click sends nothing |
+| Replays a navigation-only shell, or misses (cold page) | deferred; the click sends one fill that runs it         |
+| Serves an explicit `cache()` hit                       | deferred; the click sends one fill that runs it         |
+| Hover (`X-Rango-Prefetch: intent`), navigation, fill   | unchanged: runs or is served as before                  |
+
+A cold prefetch still schedules the background shell capture, which runs the
+loader once. A prefetch that defers it is scoped to its source page and
+carries `Cache-Control: private, no-cache`, as every deferring prefetch does.
+Such a loader is now deferrable, so `await ctx.rendered()` in it throws, on
+every request, as in any loader that can be deferred: drop the `ctx.rendered()`
+call or the `prefetch: false` flag.
+
 ### Changed: a prefetch answered from storage carries `Cache-Control` again, so the browser can reuse it
 
 **Before.** Since 0.25.0 no prefetch response carried `Cache-Control` (#1170).

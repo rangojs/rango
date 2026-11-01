@@ -16,6 +16,7 @@ vi.mock("../../internal-debug.js", () => ({
 
 vi.mock("../segment-resolution/loader-cache.js", () => ({
   resolveLoaderData: vi.fn(() => Promise.resolve({ data: "test" })),
+  servesLoaderPin: () => false,
 }));
 
 vi.mock("../segment-resolution/helpers.js", () => ({

@@ -1165,11 +1165,25 @@ A `ppr` route's handler output is stored, so a `loading()` flagged with
 and its partial replay are served as usual and only the live loaders behind
 the fallback are deferred. A live loader registered with `{ prefetch: false }` is
 skipped the same way, and the click that adopts the prefetch sends one fill
-request for it. An `ssr: false` loader is the bake lane and is served from the
-shell, so on a `ppr` route `prefetch: false` is ignored for it, and
-development logs a warning that the loader "is registered with ssr: false
-and prefetch: false on a ppr route"; drop one of the two options. See
-`/loader` → "`prefetch: false`".
+request for it.
+
+An `ssr: false` loader (the bake lane) registered with `{ prefetch: false }`
+is deferred too, unless the prefetch serves it from a pin of a shell a
+document request captured:
+
+| The prefetch                                           | The flagged `ssr: false` loader                                       |
+| ------------------------------------------------------ | --------------------------------------------------------------------- |
+| Replays a shell a document request captured (`HIT`)    | Served from its pin, not deferred, never run; the click sends nothing |
+| Replays a navigation-only shell, or misses (cold page) | Deferred: the click sends one fill that runs it                       |
+| Serves an explicit `cache()` hit                       | Deferred: the click sends one fill that runs it                       |
+| Hover prefetch (`X-Rango-Prefetch: intent`)            | Never deferred                                                        |
+
+A cold prefetch still schedules the background capture that stores the
+page's navigation shell, and that capture runs the loader once. Once a
+document request has captured the page's shell, prefetches replay it and
+serve the loader from its pin, as without the flag. Since such a loader can be deferred, it must not
+`await ctx.rendered()` (it throws on every request, as any deferrable loader
+does). See `/loader` → "`prefetch: false`".
 
 ### The layout-with-loaders playbook (the storefront case)
 

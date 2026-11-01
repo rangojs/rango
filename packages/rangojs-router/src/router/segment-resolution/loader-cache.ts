@@ -285,9 +285,10 @@ export function routeLoaderLanes(
  * records. A capture serves none: its bake-lane loaders execute.
  *
  * The one answer to "is this loader served from the shell record on this
- * request", for its value (resolveLoaderData) and for the record's copies of
- * its handle pushes (loaderPins): both look the loader up here and nowhere
- * else. A condition that makes pins, or one loader's pin, not apply belongs
+ * request", for its value (resolveLoaderData), for the record's copies of
+ * its handle pushes (loaderPins) and for whether a prefetch defers it
+ * (servesLoaderPin): all look the loader up here and nowhere else. A
+ * condition that makes pins, or one loader's pin, not apply belongs
  * here or in the seed's decode (shell-snapshot.ts buildShellLoaderSeed),
  * never after a lookup, or the two disagree: issues #1001 and #1003 were the
  * pushes decided from the request's type while the value was decided from
@@ -297,6 +298,23 @@ function servedPins(
   reqCtx: RequestContext<any> | undefined,
 ): ReadonlyMap<string, ShellLoaderSeedEntry> | undefined {
   return isShellCaptureActive(reqCtx) ? undefined : reqCtx?._shellLoaderSeed;
+}
+
+/**
+ * This request serves `loaderEntry` from a pin (servedPins), so its body does
+ * not decide the value: resolveLoaderData serves a pin to an `ssr: false`
+ * registration only. A prefetch does not defer such a loader
+ * (prefetch-deferral.ts defersLoader): nothing would run, and the pin is the
+ * value the document shows.
+ */
+export function servesLoaderPin(
+  loaderEntry: LoaderEntry,
+  reqCtx: RequestContext<any> | undefined = _getRequestContext(),
+): boolean {
+  return (
+    loaderEntry.bake === true &&
+    servedPins(reqCtx)?.has(loaderEntry.loader.$$id) === true
+  );
 }
 
 /**

@@ -21,6 +21,7 @@ const { resolveLoaderDataMock } = vi.hoisted(() => ({
 }));
 vi.mock("../segment-resolution/loader-cache.js", () => ({
   resolveLoaderData: resolveLoaderDataMock,
+  servesLoaderPin: () => false,
 }));
 
 vi.mock("../segment-resolution/helpers.js", () => ({

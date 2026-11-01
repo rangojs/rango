@@ -187,7 +187,6 @@ const EMPTY_SCOPE: DeferralScope = {
 };
 
 const scopes = new WeakMap<EntryData, DeferralScope>();
-const warnedBakeLoaders = new Set<string>();
 
 /**
  * The deferral scope of a matched chain, memoized on its leaf entry (entries
@@ -206,9 +205,6 @@ export function resolveDeferralScope(
   const loaderIds = new Set<string>();
   const units = new Map<EntryData, DeferralUnit>();
   const chain = new Set(entries);
-  // ssr: false on a ppr route is the bake lane (loader-cache.ts
-  // resolveLoaderData): shell material, served from the record.
-  const pprRoute = isPprEntry(leaf);
   // A clientUrls() group route renders loading() itself and its handler is
   // ClientUrlsRoot (segment-system.tsx keys it by group): a unit would hand
   // React a promise in place of the optimistic destination on screen. So
@@ -228,20 +224,8 @@ export function resolveDeferralScope(
     for (const loaderEntry of entry.loader ?? []) {
       const own = loaderEntry.prefetch === false;
       if (!own && behind.length === 0) continue;
-      if (pprRoute && loaderEntry.bake) {
-        if (
-          process.env.NODE_ENV !== "production" &&
-          loaderEntry.prefetch === false &&
-          !warnedBakeLoaders.has(loaderEntry.loader.$$id)
-        ) {
-          warnedBakeLoaders.add(loaderEntry.loader.$$id);
-          console.warn(
-            `[rango] loader "${loaderEntry.loader.$$id}" is registered with ssr: false and prefetch: false on a ppr route ("${leaf.id}"). ` +
-              `Under ppr an ssr: false loader is baked into the shell and served from it, so prefetch: false is ignored there. Drop one of the two options.`,
-          );
-        }
-        continue;
-      }
+      // An ssr: false loader on a ppr route is in scope too: whether this
+      // request serves it from a shell pin is per request (defersLoader).
       loaders.set(loaderEntry, own ? true : behind);
       loaderIds.add(loaderEntry.loader.$$id);
     }
@@ -529,18 +513,26 @@ export function loaderOwner(
  * does not hold that segment, and the loader is flagged itself or sits behind
  * the fallback of a flagged entry the client does not hold either. Under a
  * flagged layout the client holds, a new route's loaders run.
+ *
+ * `servesPin` (loader-cache.ts servesLoaderPin) answers whether this request
+ * serves the loader from a pin of a document-captured shell. Such a loader
+ * is not deferred: its body does not decide the value, and the pin is what
+ * the document shows. On every other request it would run, so it is
+ * deferred as on a route without ppr. Asked when loaders resolve, after a
+ * replay HIT has armed the pins (rsc-rendering.ts matchPartialWithPprReplay).
  */
 export function defersLoader(
   ctx: HandlerContext<any, any>,
   loaderEntry: LoaderEntry,
   segmentId: string,
+  servesPin: (loaderEntry: LoaderEntry) => boolean,
 ): boolean {
   const plan = getPrefetchDeferral(ctx);
   if (plan?.mode !== "prefetch" || plan.held.has(segmentId)) return false;
   const by = plan.scope.loaders.get(loaderEntry);
-  return (
-    by === true || (by !== undefined && by.some((id) => !plan.held.has(id)))
-  );
+  const deferrable =
+    by === true || (by !== undefined && by.some((id) => !plan.held.has(id)));
+  return deferrable && !servesPin(loaderEntry);
 }
 
 /** A unit whose handler output is not stored: a prefetch can skip it. */

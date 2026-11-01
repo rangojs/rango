@@ -249,8 +249,17 @@ is stored.
 
 **R3. `ssr: false` with `prefetch: false` on a loader.** Outside `ppr` both
 apply: the document awaits the loader, a prefetch skips it. On a `ppr` route
-an `ssr: false` loader is the bake lane (shell material, served from the
-record), so the flag is ignored there and development logs a warning.
+an `ssr: false` loader is the bake lane. A prefetch that serves it from a pin
+of a shell a document request captured (`servedPins` in
+`router/segment-resolution/loader-cache.ts`) does not defer it: its body
+decides nothing there, and the pin is what the document shows. Every other
+prefetch defers it as outside `ppr`: a navigation-only shell (it carries no
+loader pins), a miss (the background capture the prefetch schedules still
+runs it), an explicit `cache()` hit. The answer is per request, so the scope
+lists the loader and `defersLoader` asks `servesLoaderPin`. A deferred one
+also drops the copies of its handle pushes a restored shell record holds
+(`settleLoaderRun`): the fill sends its run's pushes. It is deferrable, so
+`ctx.rendered()` is refused for it (R12).
 
 **R4. Adoption.** A payload that carries deferred units is committed at once
 when the client adopts it, and it is adopted only on the page that prefetched
@@ -449,7 +458,9 @@ when any of these holds:
 
 And never when:
 
-- The route is `ppr` and the loader is `ssr: false` (R3).
+- The route is `ppr`, the loader is `ssr: false` and this request serves it
+  from a pin of a document-captured shell (R3). Not part of the static scope:
+  `defersLoader` asks it per request.
 - The route segment belongs to a `clientUrls()` group and the loader is
   deferrable only through a `loading()` (2 to 4). In a group route's chain
   `resolveDeferralScope` counts no flagged `loading()`, the group's or a
