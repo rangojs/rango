@@ -51,6 +51,7 @@ const store = {
   getInterceptSourceUrl: () => null,
   markCacheAsStaleAndBroadcast: () => {},
   markHistoryCacheStale: () => {},
+  markCachesStaleAfterWrite: () => {},
 };
 
 let fetchMock: ReturnType<typeof vi.fn>;

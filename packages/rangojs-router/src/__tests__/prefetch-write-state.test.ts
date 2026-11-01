@@ -5,7 +5,14 @@ import {
   prefetchQueued,
   setPrefetchDecoder,
 } from "../browser/prefetch/fetch";
-import { initRangoState } from "../browser/rango-state";
+import {
+  initRangoState,
+  setRangoStateObserver,
+  setRangoStateWriteObserver,
+} from "../browser/rango-state";
+import { createNavigationStore } from "../browser/navigation-store";
+import { enterActionFence, exitActionFence } from "../browser/action-fence";
+import { registerNavigationStore } from "../browser/navigation-store-handle";
 import {
   clearPrefetchCache,
   markPrefetchesStale,
@@ -173,5 +180,109 @@ describe("a server action's write bump of the rango state", () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sentState(fetchMock, 0)).toBe("v1:100:5000");
+  });
+
+  /**
+   * A tab that no broadcast reaches (crossTabSync off here; a page that shares
+   * no segment with the acting page reads the same) learns of another tab's
+   * write only from the cookie. The read that sees it marks this tab's
+   * prefetches stale (rango-state.ts write observer, wired by
+   * registerNavigationStore).
+   */
+  describe("seen only through the cookie", () => {
+    let store: ReturnType<typeof createNavigationStore>;
+
+    beforeEach(() => {
+      store = createNavigationStore({
+        initialLocation: { href: SOURCE },
+        crossTabSync: false,
+      });
+      registerNavigationStore(store);
+    });
+
+    afterEach(() => {
+      setRangoStateObserver(null);
+      setRangoStateWriteObserver(null);
+    });
+
+    it("a click takes the prefetch made before it stale", async () => {
+      const fetchMock = stubServer();
+      prefetchDirect("/blog", ["A0"], "v1");
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Another tab's action: only its Set-Cookie reaches this tab.
+      jar.set(NAME, "v1:100:5000");
+
+      const click = await clickBlog();
+      expect(
+        fetchMock,
+        "the click is answered from memory",
+      ).toHaveBeenCalledTimes(1);
+      expect(click.stalePrefetch).toBe(true);
+    });
+
+    it("marks history entries stale", () => {
+      stubServer();
+      store.cacheSegmentsForHistory("/current", []);
+      jar.set(NAME, "v1:100:5000");
+      prefetchDirect("/blog", ["A0"], "v1");
+      expect(store.getCachedSegments("/current")!.stale).toBe(true);
+    });
+
+    it("a prefetch sent with the new value stays fresh through later reads", async () => {
+      const fetchMock = stubServer();
+      prefetchDirect("/blog", ["A0"], "v1");
+      await vi.advanceTimersByTimeAsync(10);
+
+      jar.set(NAME, "v1:100:5000");
+      // The hover's read sees the write and marks the old entry stale, so the
+      // hover prefetches again, sending the new value.
+      prefetchDirect("/blog", ["A0"], "v1");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(sentState(fetchMock, 1)).toBe("v1:100:5000");
+
+      prefetchDirect("/other", ["A0"], "v1");
+      await vi.advanceTimersByTimeAsync(10);
+      const click = await clickBlog();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(click.stalePrefetch).toBe(false);
+    });
+
+    it("a queued prefetch that runs after it does not count the entry from before it as a hit", async () => {
+      const fetchMock = stubServer();
+      // A viewport prefetch waits in the queue while a hover's prefetch of
+      // the same page is answered from before the write.
+      prefetchQueued("/blog", ["A0"], "v1");
+      prefetchDirect("/blog", ["A0"], "v1");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      jar.set(NAME, "v1:100:5000");
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(sentState(fetchMock, 1)).toBe("v1:100:5000");
+    });
+
+    it("the acting tab's landing does not stale a prefetch it sends after it", async () => {
+      const fetchMock = stubServer();
+      prefetchDirect("/blog", ["A0"], "v1");
+      await vi.advanceTimersByTimeAsync(10);
+
+      // This tab's own action: its response's Set-Cookie, then its landing,
+      // inside the action's fence.
+      enterActionFence();
+      jar.set(NAME, "v1:100:5000");
+      store.markCacheAsStaleAndBroadcast();
+      exitActionFence();
+
+      prefetchDirect("/blog", ["A0"], "v1");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(sentState(fetchMock, 1)).toBe("v1:100:5000");
+
+      const click = await clickBlog();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(click.stalePrefetch).toBe(false);
+    });
   });
 });

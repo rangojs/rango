@@ -664,6 +664,14 @@ export function prefetchQueued(
     return queueKey;
   }
   enqueuePrefetch(queueKey, (signal) => {
+    // The header sends the state as it is now: a server action that landed
+    // while this sat in the queue bumped the write part, and the value read
+    // when it was queued would be answered by the browser HTTP cache with
+    // pre-write bytes. A rotation since then made the keys obsolete. Read
+    // before the re-check below: a read that sees another tab's write marks
+    // the entries from before it stale, so they no longer count as a hit.
+    const liveState = getRangoState();
+    if (stateEpoch(liveState) !== stateKey) return Promise.resolve();
     // Re-check at execution time: a hover-triggered prefetchDirect may
     // have started or completed this key while the item sat in the queue.
     if (
@@ -687,12 +695,6 @@ export function prefetchQueued(
     ) {
       return Promise.resolve();
     }
-    // The header sends the state as it is now: a server action that landed
-    // while this sat in the queue bumped the write part, and the value read
-    // when it was queued would be answered by the browser HTTP cache with
-    // pre-write bytes. A rotation since then made the keys obsolete.
-    const liveState = getRangoState();
-    if (stateEpoch(liveState) !== stateKey) return Promise.resolve();
     return executePrefetchFetch(
       wildcardKey,
       sourceKey,

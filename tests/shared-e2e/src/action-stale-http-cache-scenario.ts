@@ -22,7 +22,9 @@ import { waitForShellHydration } from "./shell-request.js";
  * on it: only the state it sends keeps the HTTP cache from answering).
  *
  * The timestamp stays, so the in-memory prefetches only go stale, as before
- * (action-stale-prefetch-scenario.ts).
+ * (action-stale-prefetch-scenario.ts). A tab open across the write that hears
+ * no broadcast of it marks its own when it next reads the bumped state, so a
+ * prefetch it made before the write is not shown as fresh.
  *
  * Fixture: action-stale.tsx in each app. /action-stale/bare/max-age reads the
  * cart and answers with `Cache-Control: private, max-age=60`; the bare basket
@@ -193,5 +195,41 @@ export function runActionStaleHttpCacheTests(
     } finally {
       await other.close();
     }
+  });
+
+  test("a tab that hears no broadcast does not show its pre-write prefetch after another tab's write", async ({
+    page,
+    context,
+  }) => {
+    test.setTimeout(60000);
+    // This tab gets no cross-tab message, as a tab whose page shares no
+    // segment with the acting page (it ignores the broadcast) or one with
+    // crossTabSync: false: the write reaches it only through the state
+    // cookie the action's response set in the shared jar.
+    await page.addInitScript(() => {
+      Reflect.deleteProperty(window, "BroadcastChannel");
+    });
+    const sent = await openSource(page, options);
+    // The pointer stays on the link, so the click below sends no new hover
+    // prefetch: it reads the pre-write entry this one stored.
+    await hoverPrefetch(page, sent, 1);
+    const before = await readState(page);
+
+    const other = await context.newPage();
+    try {
+      await openSource(other, options);
+      await write(other);
+    } finally {
+      await other.close();
+    }
+
+    await page.getByTestId("as-to-max-age-prefetched").click();
+    await expect(page.getByTestId("as-max-age")).toHaveText("max-age:1");
+    expect(sent, "no prefetch after the write").toHaveLength(1);
+    const after = await readState(page);
+    expect(after, "the other tab's action bumped the state").not.toBe(before);
+    expect(stateEpochOf(after), "only its write part").toBe(
+      stateEpochOf(before),
+    );
   });
 }

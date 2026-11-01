@@ -280,7 +280,7 @@ describe("rango-state (cookie)", () => {
     // A server action's Set-Cookie (this tab's or a sibling's) bumps only the
     // write part: the next read sends it (the HTTP cache misses), but the
     // in-memory caches only go stale, so nothing is reported as a rotation.
-    it("adopts a write-only bump silently, and still fires on a later rotation", async () => {
+    it("does not report a write-only bump as a rotation, and still fires on a later rotation", async () => {
       const j = makeJar({ [NAME]: "v1:100" });
       vi.stubGlobal("document", j.jar);
 
@@ -302,6 +302,42 @@ describe("rango-state (cookie)", () => {
       expect(getRangoState()).toBe("v1:200");
       expect(observer).toHaveBeenCalledTimes(1);
       expect(observer).toHaveBeenCalledWith("v1:200");
+    });
+
+    it("tells the write observer once per write-only change, never on a rotation", async () => {
+      const j = makeJar({ [NAME]: "v1:100" });
+      vi.stubGlobal("document", j.jar);
+
+      const {
+        initRangoState,
+        getRangoState,
+        invalidateRangoState,
+        setRangoStateWriteObserver,
+      } = await import("../browser/rango-state");
+      initRangoState("v1", NAME);
+
+      const observer = vi.fn();
+      setRangoStateWriteObserver(observer);
+
+      // Reading the boot value changes nothing.
+      getRangoState();
+      expect(observer).not.toHaveBeenCalled();
+
+      j.set(NAME, "v1:100:5000");
+      getRangoState();
+      getRangoState();
+      expect(observer).toHaveBeenCalledTimes(1);
+
+      j.set(NAME, "v1:100:5001");
+      getRangoState();
+      expect(observer).toHaveBeenCalledTimes(2);
+
+      // A rotation, external or this tab's own, is not a write.
+      j.set(NAME, "v1:200");
+      getRangoState();
+      invalidateRangoState();
+      getRangoState();
+      expect(observer).toHaveBeenCalledTimes(2);
     });
 
     it("keeps a matching-version cookie with a write part on reload", async () => {

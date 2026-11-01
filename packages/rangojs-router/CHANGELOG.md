@@ -22,6 +22,12 @@ flushes nothing. `invalidateClientCache()` still rotates the invalidation part;
 `keepClientCache()` bumps nothing. A two-part value, from a tab open across
 the deploy, still parses.
 
+A tab that hears no broadcast of the action (its page shares no segment with
+the acting page, or the app sets `crossTabSync: false`) no longer serves a
+prefetch it made before another tab's write as fresh: its next prefetch or
+navigation reads the bumped state, marks its history and prefetches stale,
+and a click on the prefetched link shows the page, then revalidates it.
+
 ```text
 /basket prefetched on hover (Cache-Control: private, max-age=60), cart:0
 click "Add to cart"; hover /basket again; click it
@@ -53,7 +59,8 @@ cookie's invalidation part is not rotated; only its write part is bumped
 (above), so a partial response a route caches with its own `Cache-Control`
 misses in the browser's HTTP cache after the write. Tabs
 that share no segment with the page, and apps with `crossTabSync: false`,
-are no longer told. For the old full flush, call `invalidateClientCache()` in
+get no message and do not refresh; they mark their caches stale when they
+next read the bumped state (above). For the old full flush, call `invalidateClientCache()` in
 the action: other tabs then adopt the rotated state, flush and refresh.
 `keepClientCache()` is unchanged.
 

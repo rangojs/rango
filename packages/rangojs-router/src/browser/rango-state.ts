@@ -19,8 +19,12 @@
  * The client's in-memory comparisons read only `{buildVersion}:{timestamp}`
  * (`stateEpoch`): the prefetch cache keys, the action fence's rotation check,
  * the external-rotation observer below and the cross-tab adopt. A write-only
- * change is soft: the action marks prefetches stale (navigation-store.ts
- * markStaleSoftAndBroadcast) and nothing is flushed.
+ * change is soft: prefetches and history entries are marked stale and nothing
+ * is flushed. The tab that ran the action marks its own when it lands
+ * (navigation-store.ts markStaleSoftAndBroadcast) and tells the tabs that
+ * share a segment with it. Any other tab marks its own when a read sees the
+ * write part change (the write observer below), so a tab that ignores the
+ * broadcast or has crossTabSync off does not serve a pre-write prefetch fresh.
  *
  * Storage is a session cookie named by the server-resolved name passed to
  * initRangoState (`{prefix}_{routerId}`, default prefix `rango-state`). The
@@ -53,18 +57,32 @@ let mirror: string | null = null;
 let cookieBacked = false;
 
 let externalRotationObserver: ((value: string) => void) | null = null;
+let externalWriteObserver: (() => void) | null = null;
 
 /**
  * Register the observer invoked when a read detects an EXTERNAL rotation (a
  * sibling tab, a server `Set-Cookie`, or a cookie clear) of the
  * `{version}:{timestamp}` part. A change to the write part alone (a server
- * action's write) is adopted silently. Self-rotations (invalidateRangoState)
- * update the mirror synchronously and never fire it.
+ * action's write) goes to the write observer instead. Self-rotations
+ * (invalidateRangoState) update the mirror synchronously and never fire it.
  */
 export function setRangoStateObserver(
   observer: ((value: string) => void) | null,
 ): void {
   externalRotationObserver = observer;
+}
+
+/**
+ * Register the observer invoked when a read sees the write part change while
+ * the `{version}:{timestamp}` part stays: a server action's response, in this
+ * tab or another, bumped it in the shared jar since the last read. Every read
+ * updates the mirror, and a prefetch reads the state before it starts, so a
+ * prefetch sent with the new value is never one this observer sees as old.
+ */
+export function setRangoStateWriteObserver(
+  observer: (() => void) | null,
+): void {
+  externalWriteObserver = observer;
 }
 
 /** Return the resolved cookie name used to namespace cross-tab messages. */
@@ -160,14 +178,16 @@ export function getRangoState(): string {
   if (read.value !== null) {
     if (read.value !== mirror) {
       // External change (sibling tab / server Set-Cookie): adopt it. The
-      // mirror update makes this idempotent across a burst of reads. Only a
-      // rotation notifies: a write-only bump (a server action's response, or
-      // a sibling tab's) keeps the caches the epoch keys.
+      // mirror update makes this idempotent across a burst of reads. A
+      // rotation notifies the rotation observer; a write-only bump (a server
+      // action's response, or a sibling tab's) keeps the caches the epoch
+      // keys and notifies the write observer, which marks them stale.
       const rotated =
         mirror === null || stateEpoch(mirror) !== stateEpoch(read.value);
       mirror = read.value;
       cookieBacked = true;
       if (rotated) notifyExternalRotation(read.value);
+      else externalWriteObserver?.();
     } else {
       cookieBacked = true;
     }

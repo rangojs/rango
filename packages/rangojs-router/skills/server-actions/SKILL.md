@@ -561,9 +561,10 @@ stale prefetch with a fresh one. A stale prefetch answers one click only: a
 second click on the same link fetches the page, and Back/Forward onto a page
 the history cache no longer holds never uses it. Visible links do not
 prefetch again after an action. A tab that shares no segment with the page
-(or an app with `crossTabSync: false`) is not told: a prefetch it already
-holds stays fresh for it until the prefetch cache's TTL, though its new
-requests send the bumped state. Call `invalidateClientCache()` in the action
+(or an app with `crossTabSync: false`) gets no message and does not refresh;
+its next prefetch or navigation sees the bumped state and marks its own
+history and prefetches stale, so a click on a link it prefetched before the
+write shows that page, then revalidates it. Call `invalidateClientCache()` in the action
 for the full flush: it drops every prefetch, rotates the state's invalidation
 part, and other tabs adopt it.
 

@@ -86,6 +86,37 @@ describe("an action's landing reads its response's state", () => {
     ]);
   });
 
+  it("the landing takes a write seen in flight: the fence's drop marks nothing more", () => {
+    const store = makeStore();
+    const epoch = currentPrefetchEpoch();
+
+    enterActionFence();
+    jar.set(NAME, "v1:100:5000");
+    getRangoState();
+    store.markCacheAsStaleAndBroadcast();
+    exitActionFence();
+
+    expect(currentPrefetchEpoch()).toBe(epoch + 1);
+  });
+
+  it("another tab's write seen during an action that does not land marks the caches when the fence drops", () => {
+    const store = makeStore();
+    store.cacheSegmentsForHistory("/products", []);
+    const epoch = currentPrefetchEpoch();
+
+    // A keepClientCache() action in flight; another tab's action bumps the
+    // write part, and a prefetch or navigation here reads it.
+    enterActionFence();
+    jar.set(NAME, "v1:100:5000");
+    getRangoState();
+    expect(currentPrefetchEpoch(), "nothing marked in flight").toBe(epoch);
+    exitActionFence();
+
+    expect(currentPrefetchEpoch()).toBe(epoch + 1);
+    expect(store.getCachedSegments("/products")!.stale).toBe(true);
+    expect(posted, "no broadcast").toEqual([]);
+  });
+
   it("a rotated timestamp lands hard: the prefetch map is flushed", () => {
     const store = makeStore();
     const generation = currentGeneration();

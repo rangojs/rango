@@ -52,7 +52,19 @@ The value has two kinds of change, and the client tells them apart:
   around the action body on the JS and the no-JS path, so a form posted
   before hydration bumps it too). The timestamp stays, so nothing in memory
   misses and nothing is reported as a rotation: the action marks history and
-  prefetches stale, as #1329 designed. But every request after it, from
+  prefetches stale, as #1329 designed. Any other tab marks its own history
+  and prefetches stale when a `getRangoState()` read first sees the write
+  part change (the write observer, `setRangoStateWriteObserver`, which
+  `registerNavigationStore` wires to `markCachesStaleAfterWrite()`), so a tab
+  the action's broadcast does not reach (it shares no segment with the
+  acting page, or runs with `crossTabSync: false`) does not serve a prefetch
+  from before the write as fresh. While an action of this tab is in flight
+  the write is recorded on the fence instead (`noteStateWrite()` in
+  `action-fence.ts`): the landing marks every cache stale once and takes it,
+  and when no landing does (a `keepClientCache()` action, one that failed
+  before it was sent), the fence's last drop marks them. Every read updates the
+  mirror, and a prefetch reads the state before it starts, so a prefetch sent
+  with the new value is never marked by that read. But every request after it, from
   every tab and after a reload, sends the new whole value, so a response the
   browser HTTP cache holds from before the write (a route's own
   `Cache-Control: max-age`) misses. Before the write part existed the value
@@ -112,7 +124,8 @@ Live paths that rotate / clear:
 | Server action               | the response's `Set-Cookie` bumps the write part (`runActionBody`); `server-action-bridge.ts` → at the response, unless the action called `keepClientCache()`: marks history and prefetches stale, marked (`soft`) broadcast; no rotation (#1329) |
 | `invalidateClientCache()`   | public API (both seats) → rotates cookie / marks caches stale; replaces the removed `useClientCache().clear()` hook                                                                                                                               |
 | Cross-tab broadcast receipt | a sibling tab's namespaced `BroadcastChannel` message → mark history stale; adopt a newer state and clear prefetches without re-rotating; a `soft` message whose state is not newer marks prefetches stale; gated on shared segment IDs           |
-| External cookie rotation    | sibling tab / server `Set-Cookie` / cookie clear detected on the next `getRangoState()` read → external-rotation observer, when `{buildVersion}:{timestamp}` changed (a write-only change is adopted silently)                                    |
+| External cookie rotation    | sibling tab / server `Set-Cookie` / cookie clear detected on the next `getRangoState()` read → external-rotation observer, when `{buildVersion}:{timestamp}` changed                                                                              |
+| External write              | a server action's `Set-Cookie` (this tab's or another's) seen on the next `getRangoState()` read, `{buildVersion}:{timestamp}` unchanged → write observer: marks history and prefetches stale, no broadcast                                       |
 | Dev HMR                     | a version change → `navigationBridge.updateVersion()` → `store.clearHistoryCache()`                                                                                                                                                               |
 
 Note that `clearPrefetchCache()` is the function that clears the in-memory map,
@@ -414,8 +427,9 @@ stale and rotates nothing:
   cannot marks history and prefetches stale; an unmarked message it cannot
   adopt flushes and rotates locally, as before. Every branch refreshes the
   page on screen. A tab that shares no segment with the sender, and every tab
-  under `crossTabSync: false`, is no longer told: with no rotation there is no
-  jar divergence for it to see. An old tab ignores `soft` and flushes and
+  under `crossTabSync: false`, gets no message: its next state read sees the
+  write part change and marks its history and prefetches stale, without a
+  refresh. An old tab ignores `soft` and flushes and
   rotates, which every tab then sees through jar divergence: one flush, never
   staleness.
 - **`invalidateClientCache()` in the action.** Its `Set-Cookie` reaches the
@@ -847,12 +861,12 @@ channel inventory above leaves open:
 
 The resulting matrix — every row at least as strong as today:
 
-| Event                                          | Today                                                                                                                                                | Under this design                                                                                                                                                                                                                                                                                                                                                                                |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Action completes in tab A                      | A marks stale + broadcasts at action start **and** again post-commit (`:656`); B invalidates if segments shared; B's value syncs via `storage` event | invalidation fires once, at response time (post-commit). Since #1329 it is `soft`: a shared-segment B marks history and prefetches stale and refreshes, with no rotation anywhere; B adopts and flushes only when A's message carries a newer state (A's action rotated it). An unrelated B, or any B under `crossTabSync: false`, is not told (no jar divergence either, since nothing rotated) |
-| `invalidateClientCache()` client seat in tab A | n/a (hook: hard clear + broadcast)                                                                                                                   | history marked stale, prefetch map flushed, state rotated, full (unmarked) broadcast: a shared-segment B adopts the newer state, flushes and refreshes; every other tab sees jar divergence at its next fetch                                                                                                                                                                                    |
-| Server rotation (`Set-Cookie`)                 | n/a                                                                                                                                                  | every tab sharing the jar observes the divergence at its next fetch and marks its history stale — no broadcast needed                                                                                                                                                                                                                                                                            |
-| Cookies cleared mid-session                    | no effect — localStorage state survives, stale-keyed entries still hit                                                                               | each tab's next read finds no cookie, mints fresh, marks history stale; every previously cached response unreachable                                                                                                                                                                                                                                                                             |
+| Event                                          | Today                                                                                                                                                | Under this design                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Action completes in tab A                      | A marks stale + broadcasts at action start **and** again post-commit (`:656`); B invalidates if segments shared; B's value syncs via `storage` event | invalidation fires once, at response time (post-commit). Since #1329 it is `soft`: a shared-segment B marks history and prefetches stale and refreshes, with no rotation anywhere; B adopts and flushes only when A's message carries a newer state (A's action rotated it). An unrelated B, or any B under `crossTabSync: false`, gets no message; its next state read sees the write part change and marks its history and prefetches stale |
+| `invalidateClientCache()` client seat in tab A | n/a (hook: hard clear + broadcast)                                                                                                                   | history marked stale, prefetch map flushed, state rotated, full (unmarked) broadcast: a shared-segment B adopts the newer state, flushes and refreshes; every other tab sees jar divergence at its next fetch                                                                                                                                                                                                                                 |
+| Server rotation (`Set-Cookie`)                 | n/a                                                                                                                                                  | every tab sharing the jar observes the divergence at its next fetch and marks its history stale — no broadcast needed                                                                                                                                                                                                                                                                                                                         |
+| Cookies cleared mid-session                    | no effect — localStorage state survives, stale-keyed entries still hit                                                                               | each tab's next read finds no cookie, mints fresh, marks history stale; every previously cached response unreachable                                                                                                                                                                                                                                                                                                                          |
 
 Two boundaries to keep the claims precise: the observer is pull-based (it
 fires at a tab's next jar read — a navigation/prefetch fetch or a popstate
