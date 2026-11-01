@@ -69,6 +69,7 @@ export const NamedRoutes = {
   "shop.products.detail.reviews.edit.index": "/shop/product/:slug/reviews/:reviewId/edit",
   "shop.products.detail.reviews.index": "/shop/product/:slug/reviews",
   "shop.products.detail.view": "/shop/product/:slug",
+  "staleClick.index": "/stale-click",
   "todos.detail": "/todos/:id",
   "todos.index": "/todos",
 } as const;

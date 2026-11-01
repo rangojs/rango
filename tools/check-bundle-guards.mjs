@@ -275,7 +275,22 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // up synchronously, and browser/prefetch/ is on the rejected-splits list
 // (AGENTS.md, Bundle hygiene). By the owner's rule above: 52789B + 256B,
 // rounded up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 51.875 * 1024;
+//
+// Both landed together, #1343 (merged with main 5f5a79a) and #1344: raised to 52.375KB on 2026-10-31, measured on
+// cloudflare-basic at 53296B gzip, main alone 52789B (+507B). #1329: a
+// server action marks prefetches stale instead of flushing them.
+// The prefetch cache keeps a stale epoch per entry, and a click's acceptStale
+// and the served-once rule live in browser/prefetch/cache.ts; the refill's
+// stale check is in prefetch/fetch.ts; a click on a stale entry commits it and
+// sends one stale revalidation (navigation-bridge.ts
+// scheduleStalePrefetchRevalidation); and the cross-tab channel tells a soft
+// mark from a rotation (navigation-store.ts). None of it can load lazily: it
+// runs on every action exit and every prefetched click, and browser/prefetch/
+// is not split (AGENTS.md Bundle hygiene). By the owner's rule above: 53296B +
+// 256B, rounded up to the next 128B step. Re-measured at 53290B after the
+// review fixes and a merge of main fdc564c0, and at 53305B after a merge of
+// main 49b9139 (#1353, intent prefetches): the same step, the cap stays.
+const ROUTER_CHUNK_GZIP_MAX = 52.375 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

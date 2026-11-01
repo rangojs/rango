@@ -16,6 +16,7 @@ import {
   clearPrefetchCache,
   consumePrefetch,
   currentGeneration,
+  currentPrefetchEpoch,
   hasPrefetch,
   initPrefetchCache,
   pageMatchesParamsLabel,
@@ -63,6 +64,7 @@ const entry = (label?: string): DecodedPrefetch => ({
   streamComplete: Promise.resolve(),
   scope: label === undefined ? "wildcard" : "params",
   ...(label !== undefined && { paramsLabel: label }),
+  epoch: currentPrefetchEpoch(),
   complete: true,
 });
 

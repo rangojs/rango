@@ -3,8 +3,10 @@ import { accountPath } from "../../account-path.js";
 import { Brand, BrandLoader } from "../../brand.js";
 import { cacheStore } from "../../cache-store.js";
 import { Document } from "../../document.js";
+import { readCount } from "./actions.js";
 import {
   PrefetchActionInvalidationButton,
+  PrefetchActionPlainButton,
   PrefetchInvalidationButton,
 } from "./PrefetchInvalidationButton.js";
 
@@ -47,9 +49,13 @@ export const router = createRouter({
     }),
     path(
       "/",
-      () => (
+      async (ctx) => (
         <>
           <main data-testid="app">App A home</main>
+          {/* Only the prefetch target shows the count the plain action writes. */}
+          {ctx.searchParams.get("delegated-prefetch") === "1" ? (
+            <p data-testid="target-count">{await readCount()}</p>
+          ) : null}
           <a
             href="/?delegated-prefetch=1"
             data-testid="prefetch-invalidation-target"
@@ -58,6 +64,7 @@ export const router = createRouter({
           </a>
           <PrefetchInvalidationButton />
           <PrefetchActionInvalidationButton />
+          <PrefetchActionPlainButton />
         </>
       ),
       {

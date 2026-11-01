@@ -696,10 +696,11 @@ describe("server-action-bridge simple-redirect finalization (latch)", () => {
 
   // The mutate-then-simple-redirect terminal (X-RSC-Redirect, not aborted)
   // returns a never-settling promise, so the finally never runs. Before the
-  // single latched finalizeAction(), this path invalidated nothing and leaked
-  // the action fence permanently. It must now invalidate exactly once and
-  // release the fence.
-  it("invalidates exactly once and releases the fence on a successful simple redirect", async () => {
+  // single latched finalizeAction(), this path marked nothing stale and leaked
+  // the action fence permanently. It must now mark the caches stale exactly
+  // once (markCacheAsStaleAndBroadcast: history and prefetches stale, #1329)
+  // and release the fence.
+  it("marks the caches stale exactly once and releases the fence on a successful simple redirect", async () => {
     const store = makeNavigationStore(PAGE);
     const markCacheAsStaleAndBroadcast = vi.spyOn(
       store,
@@ -738,9 +739,9 @@ describe("server-action-bridge simple-redirect finalization (latch)", () => {
   });
 
   // keepClientCache() (the x-rango-keep-cache directive) suppresses only the
-  // invalidation; the fence release must still happen, even on the
+  // stale mark; the fence release must still happen, even on the
   // never-settling simple-redirect terminal.
-  it("suppresses invalidation but still releases the fence when keepCache is set", async () => {
+  it("marks nothing stale but still releases the fence when keepCache is set", async () => {
     const store = makeNavigationStore(PAGE);
     const markCacheAsStaleAndBroadcast = vi.spyOn(
       store,

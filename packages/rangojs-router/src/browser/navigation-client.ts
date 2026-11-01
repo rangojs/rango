@@ -35,6 +35,7 @@ import {
   consumePrefetch,
   disableFragmentPassthrough,
   isFragmentPassthroughEnabled,
+  isPrefetchStale,
   pageMatchesParamsLabel,
   paramsCandidateKeys,
   type DecodedPrefetch,
@@ -48,17 +49,19 @@ import { writePartialParams } from "./wire-protocol.js";
  * The completed prefetch a navigation adopts: the one stored under its
  * source key, else one stored for a group of source pages the page is in
  * (`paramsKeys`, paramsCandidateKeys), else the one every source page
- * shares. None when the navigation cannot use a prefetch.
+ * shares. None when the navigation cannot use a prefetch. A stale one only
+ * when `acceptStale` (FetchPartialOptions.acceptStalePrefetch).
  */
 export function consumeStoredPrefetch(
   canUsePrefetch: boolean,
   sourceKey: string,
   paramsKeys: readonly string[],
   wildcardKey: string,
+  acceptStale = false,
 ): { entry: DecodedPrefetch | null; hitKey: string | null } {
   if (!canUsePrefetch) return { entry: null, hitKey: null };
   for (const key of [sourceKey, ...paramsKeys, wildcardKey]) {
-    const entry = consumePrefetch(key);
+    const entry = consumePrefetch(key, { acceptStale });
     if (entry) return { entry, hitKey: key };
   }
   return { entry: null, hitKey: null };
@@ -128,6 +131,7 @@ export function createNavigationClient(
         routerId,
         hmr,
         fill,
+        acceptStalePrefetch = false,
       } = options;
 
       // The page left, absolute: the router store keeps a committed URL as
@@ -181,7 +185,10 @@ export function createNavigationClient(
       // `prefetchKey=":source"`), then fall back to the wildcard slot shared
       // across source pages.
       // Both keys embed the Rango state, so state rotation (deploy or
-      // server-action invalidation) auto-invalidates both scopes.
+      // invalidateClientCache()) auto-invalidates both scopes. A server
+      // action marks entries stale instead: one is still served to a click
+      // (acceptStalePrefetch), whose bridge revalidates its page after it
+      // settled (stalePrefetch); for any other caller it is a miss.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
       // fresh modules), and intercept contexts (source-dependent responses).
       // A prefetch served during an action's flight holds pre-write data:
@@ -200,6 +207,7 @@ export function createNavigationClient(
         cacheKey,
         paramsCandidateKeys(rangoState, fetchUrl, sourcePage),
         wildcardKey,
+        acceptStalePrefetch,
       );
       const cachedEntry = stored.entry;
       let hitKey = stored.hitKey;
@@ -357,6 +365,9 @@ export function createNavigationClient(
       // (complete === true). A still-streaming hit and the fresh path stay false,
       // so only a fully-warmed prefetch commits in a transition (no fallback flash).
       let fullyPrefetched = false;
+      // A prefetch an action marked stale after it was fetched: committed
+      // like any other, then revalidated (FetchPartialResult.stalePrefetch).
+      let stalePrefetch = false;
 
       // The prefetch entry this navigation serves.
       let adopted = cachedEntry;
@@ -393,6 +404,14 @@ export function createNavigationClient(
               `wildcard inflight turned out ${entry.scope}-scoped, refetching`,
             );
           }
+        } else if (!acceptStalePrefetch && isPrefetchStale(entry)) {
+          // An action marked it stale, and this navigation never revalidates
+          // (not a click): drop it and fetch fresh. Its reserve is released;
+          // the decode it started is never read.
+          entry.dispose?.();
+          if (tx) {
+            browserDebugLog(tx, "inflight prefetch is stale, refetching");
+          }
         } else {
           adopted = entry;
         }
@@ -406,6 +425,7 @@ export function createNavigationClient(
         // prefetched"; a still-streaming one keeps streaming its fallbacks like
         // a cold load.
         fullyPrefetched = adopted.complete;
+        stalePrefetch = isPrefetchStale(adopted);
       } else {
         ({ payload: payloadPromise, streamComplete: streamCompletePromise } =
           freshResult());
@@ -442,6 +462,7 @@ export function createNavigationClient(
           const recovery = freshResult(false, true);
           streamCompletePromise = recovery.streamComplete;
           fullyPrefetched = false;
+          stalePrefetch = false;
           payload = await recovery.payload;
           await expandPayloadFragments(payload, deps.createFromReadableStream);
         }
@@ -463,6 +484,7 @@ export function createNavigationClient(
           payload,
           streamComplete: streamCompletePromise,
           fullyPrefetched,
+          stalePrefetch,
         };
       } catch (error) {
         // Convert network-level errors to NetworkError for proper handling

@@ -45,6 +45,7 @@ import {
   buildSourceKey,
   clearPrefetchCache,
   currentGeneration,
+  currentPrefetchEpoch,
   paramsCandidateKeys,
   rememberParamsShape,
   storePrefetch,
@@ -182,6 +183,7 @@ export function storePrefetchOf(
     streamComplete: Promise.resolve(),
     scope: slot.scope,
     paramsLabel: slot.paramsLabel,
+    epoch: currentPrefetchEpoch(),
     complete: true,
     respawn: entry,
   });

@@ -5,11 +5,13 @@ import {
   ActionStaleAddressLoader,
   ActionStaleCartDefaultLoader,
   ActionStaleCartLoader,
+  ActionStaleCountLoader,
   ActionStaleFillLoader,
   ActionStalePlainLoader,
 } from "./action-stale.defs.js";
 import {
   addToActionStaleCart,
+  addToActionStaleCartWith,
   failActionStaleCart,
 } from "./action-stale.actions.js";
 
@@ -60,6 +62,18 @@ export function ActionStaleBar() {
         Add, write first, no delay
       </button>
       <button
+        data-testid="as-add-keep"
+        onClick={() => run(() => addToActionStaleCartWith("keep"))}
+      >
+        Add, keep the client cache
+      </button>
+      <button
+        data-testid="as-add-invalidate"
+        onClick={() => run(() => addToActionStaleCartWith("invalidate"))}
+      >
+        Add, invalidate the client cache
+      </button>
+      <button
         data-testid="as-add-last"
         onClick={() => run(() => addToActionStaleCart("last", 800))}
       >
@@ -79,6 +93,24 @@ export function ActionStaleBar() {
       </button>
     </div>
   );
+}
+
+// The bare layout's add (no loaders read): <html data-as-result> holds the
+// count it wrote.
+export function ActionStaleBareAdd() {
+  return (
+    <button
+      data-testid="as-bare-add"
+      onClick={() => run(() => addToActionStaleCart("first", 0))}
+    >
+      Add, write first, no delay
+    </button>
+  );
+}
+
+export function ActionStaleCount() {
+  const { data } = useLoader(ActionStaleCountLoader);
+  return <p data-testid="as-count">{`count:${data}`}</p>;
 }
 
 // The product page's same-address loader (its rule reads the page left, so

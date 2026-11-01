@@ -1,7 +1,7 @@
 /**
  * Client seat of invalidateClientCache() (the default export condition):
- * SSR no-op, store mark-stale (SWR), and the pre-boot clearPrefetchCache
- * fallback.
+ * SSR no-op, the store's full invalidation (flush, rotate, broadcast), and
+ * the pre-boot clearPrefetchCache fallback.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -37,14 +37,18 @@ describe("invalidateClientCache() (client seat)", () => {
     expect(mockedClear).not.toHaveBeenCalled();
   });
 
-  it("marks the registered store stale and broadcasts (SWR path)", () => {
+  it("runs the store's full invalidation, not the action's stale mark", () => {
     vi.stubGlobal("document", {});
-    const store = { markCacheAsStaleAndBroadcast: vi.fn() };
+    const store = {
+      invalidateCacheAndBroadcast: vi.fn(),
+      markCacheAsStaleAndBroadcast: vi.fn(),
+    };
     mockedGetStore.mockReturnValue(store as never);
 
     invalidateClientCache();
 
-    expect(store.markCacheAsStaleAndBroadcast).toHaveBeenCalledTimes(1);
+    expect(store.invalidateCacheAndBroadcast).toHaveBeenCalledTimes(1);
+    expect(store.markCacheAsStaleAndBroadcast).not.toHaveBeenCalled();
     expect(mockedClear).not.toHaveBeenCalled();
   });
 

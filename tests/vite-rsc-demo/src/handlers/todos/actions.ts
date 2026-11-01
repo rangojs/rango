@@ -1,13 +1,19 @@
 "use server";
 
+import { invalidateClientCache } from "@rangojs/router";
 import { todosStore, generateId, type Todo } from "./data.js";
 
 /**
- * Add a new todo
+ * Add a new todo. A title with "invalidate" also calls invalidateClientCache()
+ * (the e2e fixture for an action that flushes and rotates; without it the
+ * client only marks its prefetches stale).
  */
 export async function addTodo(title: string): Promise<Todo> {
   if (title.includes("error")) {
     throw new Error("Simulated server action error");
+  }
+  if (title.includes("invalidate")) {
+    invalidateClientCache();
   }
   await new Promise((resolve) => setTimeout(resolve, 100));
 

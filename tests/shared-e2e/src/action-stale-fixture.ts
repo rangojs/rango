@@ -207,3 +207,64 @@ export async function readNavigationStates(
         .__asNavigationSeen,
   );
 }
+
+/** The state cookie's value (`rango-state…`), or null. */
+export async function readState(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    for (const part of document.cookie.split(";")) {
+      const trimmed = part.trim();
+      const eq = trimmed.indexOf("=");
+      if (eq > 0 && trimmed.slice(0, eq).startsWith("rango-state")) {
+        return trimmed.slice(eq + 1);
+      }
+    }
+    return null;
+  });
+}
+
+/**
+ * Records every text `testId` shows from now on (one entry per change), and
+ * keeps the first element shown with it so a remount can be told from an
+ * update in place. Read the record with readTexts and sameElement.
+ */
+export async function recordTexts(page: Page, testId: string): Promise<void> {
+  await page.evaluate((id) => {
+    const seen: string[] = [];
+    let last: string | null | undefined;
+    let first: Element | null = null;
+    const read = (): void => {
+      const element = document.querySelector(`[data-testid="${id}"]`);
+      if (!element) return;
+      if (!first) first = element;
+      const text = element.textContent;
+      if (text === last) return;
+      last = text;
+      seen.push(text ?? "");
+    };
+    read();
+    new MutationObserver(read).observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    Object.assign(self, {
+      __asTexts: seen,
+      __asSameElement: () =>
+        first !== null &&
+        document.querySelector(`[data-testid="${id}"]`) === first,
+    });
+  }, testId);
+}
+
+export async function readTexts(page: Page): Promise<string[]> {
+  return page.evaluate(
+    () => (self as unknown as { __asTexts: string[] }).__asTexts,
+  );
+}
+
+/** Whether the element recordTexts first saw is still the one on screen. */
+export async function sameElement(page: Page): Promise<boolean> {
+  return page.evaluate(() =>
+    (self as unknown as { __asSameElement(): boolean }).__asSameElement(),
+  );
+}

@@ -28,6 +28,15 @@ export const ActionStaleCartDefaultLoader = createLoader(
 );
 
 /**
+ * The counted layout's cart read: its revalidate() re-runs it on
+ * every navigation, so every prefetch under the layout carries it.
+ */
+export const ActionStaleCountLoader = createLoader(async () => {
+  await wait(100);
+  return actionStaleState().cart;
+});
+
+/**
  * The product page's loader that reads the cart, with a same-address rule: it holds when
  * the page left and the page asked for are two addresses, and otherwise lets
  * the default decide (an action's revalidation re-runs it). A `#fragment` on

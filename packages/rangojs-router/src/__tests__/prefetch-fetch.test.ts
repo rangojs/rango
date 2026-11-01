@@ -38,7 +38,13 @@ import {
   prefetchQueued,
   setPrefetchDecoder,
 } from "../browser/prefetch/fetch";
-import { clearPrefetchCache, consumePrefetch } from "../browser/prefetch/cache";
+import {
+  clearPrefetchCache,
+  consumePrefetch,
+  hasPrefetch,
+  isPrefetchStale,
+  markPrefetchesStale,
+} from "../browser/prefetch/cache";
 import { resetPrefetchPolicy } from "../browser/prefetch/policy";
 import { abortAllPrefetches } from "../browser/prefetch/queue";
 import { enterActionFence, __resetActionFence } from "../browser/action-fence";
@@ -1777,5 +1783,116 @@ describe("prefetch entry.complete clean-EOF gating (#622 follow-up)", () => {
       timeout: 2_000,
     });
     expect(consumePrefetch(WILDCARD_KEY)).toBeNull();
+  });
+});
+
+// #1329: a server action without a directive marks prefetches stale. A
+// prefetch in flight at that moment is never aborted (its Flight response may
+// already have arrived, and aborting it mid-stream errors the stream): it
+// finishes and is stored stale.
+describe("prefetch in flight when an action marks prefetches stale", () => {
+  beforeEach(() => {
+    setupBrowser();
+  });
+
+  afterEach(() => {
+    clearPrefetchCache();
+    abortAllPrefetches();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  const WILDCARD_KEY = "v1:abc\0/blog?_rsc_partial=true&_rsc_v=v1";
+
+  it("finishes, is stored stale, and is not refilled once a click adopted it", async () => {
+    let answer!: (response: Response) => void;
+    let signal: AbortSignal | undefined;
+    const fetchMock = vi.fn(
+      (_url: string | URL, init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          signal = init?.signal ?? undefined;
+          answer = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    markPrefetchesStale();
+    expect(signal?.aborted).toBe(false);
+    answer(new Response("payload", { status: 200 }));
+
+    const entry = await vi.waitFor(() => {
+      const served = consumePrefetch(WILDCARD_KEY, { acceptStale: true });
+      expect(served).not.toBeNull();
+      return served!;
+    });
+    expect(isPrefetchStale(entry)).toBe(true);
+    await entry.streamComplete;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // A stale entry is served once: the early adoption leaves the slot
+    // empty, so the next click or trigger fetches fresh. Read the slot
+    // through consumePrefetch first: hasPrefetch drops a stale entry itself
+    // and would hide a refill.
+    expect(consumePrefetch(WILDCARD_KEY, { acceptStale: true })).toBeNull();
+    expect(hasPrefetch(WILDCARD_KEY)).toBe(false);
+  });
+
+  it("a prefetch that starts after the mark is fresh", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(new Response("payload", { status: 200 })),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    markPrefetchesStale();
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    const entry = await vi.waitFor(() => {
+      const served = consumePrefetch(WILDCARD_KEY);
+      expect(served).not.toBeNull();
+      return served!;
+    });
+    expect(isPrefetchStale(entry)).toBe(false);
+  });
+
+  it("a hover after the mark replaces a stale stored entry with a fresh intent prefetch", async () => {
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(new Response("payload", { status: 200 })),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    window.location.href = "http://localhost:4173/home";
+    (window.location as any).pathname = "/home";
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    // Stored, and its in-flight flag released.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(hasPrefetch(WILDCARD_KEY)).toBe(true);
+    // A second trigger before the mark dedupes.
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    markPrefetchesStale();
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The replacement is a hover's: it defers nothing (R16).
+    const headers = fetchMock.mock.calls[1]![1]!.headers as Record<
+      string,
+      string
+    >;
+    expect(headers["X-Rango-Prefetch"]).toBe("intent");
+    const entry = await vi.waitFor(() => {
+      const served = consumePrefetch(WILDCARD_KEY);
+      expect(served).not.toBeNull();
+      return served!;
+    });
+    expect(isPrefetchStale(entry)).toBe(false);
   });
 });

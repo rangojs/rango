@@ -404,7 +404,7 @@ Everything after that is decided on the server, while it handles that request:
   the action's `actionResult` and `formData` (above). A loader that holds keeps
   the data the page shows.
 - **The browser's caches.** When the response arrives the browser marks its
-  history cache stale and drops its prefetches, unless the action called
+  history cache and its prefetches stale, unless the action called
   `keepClientCache()` (`/server-actions` → "Client Cache After an Action").
 - **A loader that fails on its rerun** reaches your `onError` on the server,
   and in the browser it throws at its read, below.

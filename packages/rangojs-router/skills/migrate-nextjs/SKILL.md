@@ -838,8 +838,9 @@ router cache — map to Rango's prefetch system: per-Link
 option) warms the target's partial RSC payload before the click, and a click
 on a warmed link commits the prefetched payload as a whole — the complete
 page lands instantly, no fetch waterfall. Prefetched entries survive being
-used (they re-arm in place) and expire by `prefetchCacheTTL`; actions and
-`invalidateClientCache()` flush them so a stale payload is never committed.
+used (they re-arm in place) and expire by `prefetchCacheTTL`.
+`invalidateClientCache()` flushes them; a server action marks them stale, so
+a click on one shows it and then revalidates the page in the background.
 
 ```tsx
 <Link to="/product/widget" prefetch="viewport">

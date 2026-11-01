@@ -30,8 +30,11 @@ import {
   consumeInflightPrefetch,
   consumePrefetch,
   currentGeneration,
+  currentPrefetchEpoch,
   hasPrefetch,
   initPrefetchCache,
+  isPrefetchStale,
+  markPrefetchesStale,
   markPrefetchInflight,
   setInflightPromise,
   storePrefetch,
@@ -48,6 +51,7 @@ function makeEntry(scope: "source" | "wildcard" = "wildcard"): DecodedPrefetch {
     payload: Promise.resolve({} as RscPayload),
     streamComplete: Promise.resolve(),
     scope,
+    epoch: currentPrefetchEpoch(),
     complete: false,
   };
 }
@@ -354,6 +358,132 @@ describe("prefetch cache", () => {
       storePrefetch("s\0/consumed", consumed, currentGeneration());
       expect(consumePrefetch("s\0/consumed")).toBe(consumed);
       expect(consumedDispose).not.toHaveBeenCalled();
+    });
+  });
+
+  // A server action without a directive marks prefetches stale instead of
+  // flushing them (#1329): the entry stays, a click commits it and then
+  // revalidates its page (navigation-bridge.ts).
+  describe("stale epoch", () => {
+    it("marks stored and in-flight entries stale without dropping, aborting, rotating or re-arming", () => {
+      const key = "s\0/cart";
+      const stored = makeEntry();
+      storePrefetch(key, stored, currentGeneration());
+      markPrefetchInflight("s\0/inflight");
+      const gen = currentGeneration();
+
+      markPrefetchesStale();
+
+      expect(isPrefetchStale(stored)).toBe(true);
+      expect(currentGeneration()).toBe(gen);
+      expect(abortAllPrefetchesMock).not.toHaveBeenCalled();
+      expect(invalidateRangoStateMock).not.toHaveBeenCalled();
+      expect(notifyPrefetchCacheInvalidatedMock).not.toHaveBeenCalled();
+      // An in-flight fetch still dedupes; it lands stale.
+      expect(hasPrefetch("s\0/inflight")).toBe(true);
+      // The stored entry is served to a click, and reads as stale.
+      const served = consumePrefetch(key, { acceptStale: true });
+      expect(served).toBe(stored);
+      expect(isPrefetchStale(served!)).toBe(true);
+    });
+
+    it("stores an entry whose fetch began before the mark, stale", () => {
+      const key = "s\0/cart";
+      const gen = currentGeneration();
+      const entry = makeEntry(); // stamped before the mark, as fetch.ts does
+
+      markPrefetchesStale();
+      storePrefetch(key, entry, gen);
+
+      const served = consumePrefetch(key, { acceptStale: true });
+      expect(served).toBe(entry);
+      expect(isPrefetchStale(served!)).toBe(true);
+      // An entry stamped after the mark is fresh.
+      expect(isPrefetchStale(makeEntry())).toBe(false);
+    });
+
+    it("hasPrefetch treats a stale stored entry as absent and drops it", () => {
+      const key = "s\0/cart";
+      const dispose = vi.fn();
+      const entry = makeEntry();
+      entry.dispose = dispose;
+      storePrefetch(key, entry, currentGeneration());
+
+      markPrefetchesStale();
+
+      expect(hasPrefetch(key)).toBe(false);
+      expect(dispose).toHaveBeenCalledOnce();
+      // A click made while its replacement is in flight adopts that one.
+      expect(consumePrefetch(key)).toBeNull();
+    });
+
+    it("a stale entry is a miss for a navigation that never revalidates, and stays for a click", () => {
+      const key = "s\0/cart";
+      const entry = makeEntry();
+      storePrefetch(key, entry, currentGeneration());
+
+      markPrefetchesStale();
+
+      expect(consumePrefetch(key)).toBeNull();
+      expect(consumePrefetch(key, { acceptStale: true })).toBe(entry);
+    });
+
+    // A second click on a persistent link (touch, keyboard: no hover to
+    // replace it) would otherwise show the pre-write payload again, older
+    // than what the first click's revalidation showed, for up to the TTL.
+    it("a stale entry is served once: its slot is not re-armed, and its reserve is released", () => {
+      const key = "s\0/cart";
+      const original = makeEntry();
+      const respawn = vi.fn(() => ({ ...makeEntry(), epoch: original.epoch }));
+      const dispose = vi.fn();
+      original.respawn = respawn;
+      original.dispose = dispose;
+      storePrefetch(key, original, currentGeneration());
+
+      markPrefetchesStale();
+
+      expect(consumePrefetch(key, { acceptStale: true })).toBe(original);
+      expect(respawn).not.toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(consumePrefetch(key, { acceptStale: true })).toBeNull();
+    });
+
+    it("a respawned slot keeps the original fetch's epoch, as it keeps its timestamp", () => {
+      const key = "s\0/cart";
+      const original = makeEntry();
+      original.respawn = () => ({ ...makeEntry(), epoch: original.epoch });
+      storePrefetch(key, original, currentGeneration());
+
+      // Consumed fresh: the slot is re-armed with the original's epoch.
+      expect(consumePrefetch(key)).toBe(original);
+      markPrefetchesStale();
+      const respawned = consumePrefetch(key, { acceptStale: true });
+      expect(respawned).not.toBeNull();
+      expect(isPrefetchStale(respawned!)).toBe(true);
+    });
+
+    it("a stale mark never extends the TTL", () => {
+      vi.useFakeTimers();
+      try {
+        initPrefetchCache(1_000);
+        const key = "s\0/cart";
+        storePrefetch(key, makeEntry(), currentGeneration());
+        vi.advanceTimersByTime(600);
+        markPrefetchesStale();
+        vi.advanceTimersByTime(600);
+        expect(consumePrefetch(key)).toBeNull();
+      } finally {
+        vi.useRealTimers();
+        initPrefetchCache(300_000);
+      }
+    });
+
+    it("a flush still drops stale entries", () => {
+      const key = "s\0/cart";
+      storePrefetch(key, makeEntry(), currentGeneration());
+      markPrefetchesStale();
+      clearPrefetchCache(false);
+      expect(consumePrefetch(key)).toBeNull();
     });
   });
 });

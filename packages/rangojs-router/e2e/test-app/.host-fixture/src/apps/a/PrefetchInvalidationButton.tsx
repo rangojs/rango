@@ -1,9 +1,9 @@
 "use client";
 
 import { invalidateClientCache } from "@rangojs/router";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import type { ReactNode } from "react";
-import { invalidateThroughAction } from "./actions.js";
+import { invalidateThroughAction, plainThroughAction } from "./actions.js";
 
 export function PrefetchInvalidationButton(): ReactNode {
   return (
@@ -26,5 +26,27 @@ export function PrefetchActionInvalidationButton(): ReactNode {
     >
       {isPending ? "Invalidating..." : "Invalidate through action"}
     </button>
+  );
+}
+
+/** Runs the plain action and shows the count it wrote. */
+export function PrefetchActionPlainButton(): ReactNode {
+  const [isPending, startTransition] = useTransition();
+  const [written, setWritten] = useState<number | null>(null);
+  return (
+    <>
+      <button
+        data-testid="prefetch-action-plain-button"
+        disabled={isPending}
+        onClick={() =>
+          startTransition(async () => {
+            setWritten(await plainThroughAction());
+          })
+        }
+      >
+        {isPending ? "Running..." : "Run plain action"}
+      </button>
+      <output data-testid="prefetch-action-plain-written">{written}</output>
+    </>
   );
 }

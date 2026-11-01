@@ -28,7 +28,9 @@ import {
   removePrefetch,
   clearPrefetchInflight,
   currentGeneration,
+  currentPrefetchEpoch,
   isFragmentPassthroughEnabled,
+  isPrefetchStale,
   type DecodedPrefetch,
   type PrefetchScope,
 } from "./cache.js";
@@ -96,6 +98,7 @@ function makeRespawn(
   storageKey: string,
   reserve: ReadableStream<Uint8Array>,
   slot: PrefetchSlot,
+  epoch: number,
 ): () => DecodedPrefetch {
   return () => {
     const [body, nextReserve] = reserve.tee();
@@ -108,6 +111,7 @@ function makeRespawn(
       streamComplete: Promise.resolve(),
       scope: slot.scope,
       paramsLabel: slot.paramsLabel,
+      epoch,
       complete: true,
       dispose: () => {
         // Rejects (caught) instead of throwing if the branch is already
@@ -116,7 +120,7 @@ function makeRespawn(
         nextReserve.cancel().catch(() => {});
       },
     };
-    entry.respawn = makeRespawn(storageKey, nextReserve, slot);
+    entry.respawn = makeRespawn(storageKey, nextReserve, slot, epoch);
     // Parity with the original path: a rejected decode must not stay
     // consumable. Clean bytes should never fail to decode, but if they do,
     // evict (identity-guarded) so navigation refetches instead.
@@ -279,6 +283,9 @@ function executePrefetchFetch(
   signal?: AbortSignal,
 ): Promise<DecodedPrefetch | null> {
   const gen = currentGeneration();
+  // An action that lands while this fetch is out marks it stale without
+  // aborting it: it finishes and is stored stale (cache.ts isPrefetchStale).
+  const epoch = currentPrefetchEpoch();
   const inflightKeys = forceSourceScope
     ? [sourceKey]
     : [wildcardKey, sourceKey];
@@ -421,6 +428,7 @@ function executePrefetchFetch(
         streamComplete,
         scope: slot.scope,
         paramsLabel: slot.paramsLabel,
+        epoch,
         complete: false,
         stallTimer: timeoutId,
         ...(reserve && {
@@ -458,7 +466,7 @@ function executePrefetchFetch(
         if (decode.status === "fulfilled" && endedCleanly) {
           entry.complete = true;
           if (reserve) {
-            entry.respawn = makeRespawn(storageKey, reserve, slot);
+            entry.respawn = makeRespawn(storageKey, reserve, slot, epoch);
             // Refill after an early adoption. A click that lands before this
             // point adopts the entry with respawn unarmed and leaves the slot
             // empty — via either path: pre-headers inflight adoption makes
@@ -469,7 +477,11 @@ function executePrefetchFetch(
             // live again (our own un-adopted entry, a fresh entry, or a new
             // in-flight prefetch), and storePrefetch's generation check drops
             // the sibling if the cache was invalidated since the fetch began.
-            if (!hasPrefetch(storageKey)) {
+            // A stale entry is served at most once (cache.ts consumePrefetch),
+            // so an adopted stale one is not refilled: the next click fetches
+            // fresh. The isPrefetchStale check also keeps hasPrefetch from
+            // dropping (and disposing) our own un-adopted entry once stale.
+            if (!isPrefetchStale(entry) && !hasPrefetch(storageKey)) {
               storePrefetch(storageKey, entry.respawn(), gen);
             }
           }

@@ -143,7 +143,11 @@ type FetchOptions = {
  * request that lists nothing as held is the navigation starting over: the
  * server answers it, with `whole`.
  */
-function createClient(adopted: unknown, whole?: unknown) {
+function createClient(
+  adopted: unknown,
+  whole?: unknown,
+  staleAdoption = false,
+) {
   const fill = deferred<{ payload: any; streamComplete: Promise<void> }>();
   const calls: FetchOptions[] = [];
   const fetchPartial = vi.fn(async (options: FetchOptions) => {
@@ -154,6 +158,8 @@ function createClient(adopted: unknown, whole?: unknown) {
         payload: again ? whole : adopted,
         streamComplete: Promise.resolve(),
         fullyPrefetched: !again,
+        // A prefetch an action marked stale (#1329); the start-over is fresh.
+        stalePrefetch: staleAdoption && !again,
       };
     }
     options.signal?.addEventListener("abort", () =>
@@ -226,6 +232,8 @@ function setup(
       options?: RenderSegmentsOptions,
     ) => Promise<unknown>;
     mode?: UpdateMode;
+    /** The adopted prefetch is one an action marked stale. */
+    staleAdoption?: boolean;
   },
 ) {
   const store = createStore(
@@ -234,6 +242,7 @@ function setup(
   const { client, fill, calls } = createClient(
     adoption.payload,
     options?.whole,
+    options?.staleAdoption,
   );
   const { tx, end } = createTx(store);
   const onUpdate = vi.fn();
@@ -1154,6 +1163,40 @@ describe("the fill landing", () => {
         expect(onUpdate).toHaveBeenCalledTimes(1);
       },
     );
+
+    // #1329: the click adopted a prefetch an action marked stale, and its
+    // fill made it start over. The fresh answer is what commits, so the
+    // bridge must not revalidate after it: the click's mode is told of each
+    // response, and the last one is fresh.
+    it("reports the start-over's fresh answer after a stale adoption, so nothing revalidates after it", async () => {
+      const adoption = unitAdoption({ transition });
+      const onStalePrefetch = vi.fn();
+      const { navigate, fill, calls, tx } = setup(adoption, {
+        staleAdoption: true,
+        mode: { type: "navigate", onStalePrefetch },
+        whole: {
+          metadata: {
+            isPartial: true,
+            segments: [adoption.layout, adoption.filled],
+            matched: adoption.matched,
+            diff: adoption.matched,
+          },
+        },
+      });
+      const navigation = navigate();
+      await flush();
+      expect(onStalePrefetch.mock.calls).toEqual([[true]]);
+
+      fill.resolve({
+        payload: { metadata: { isPartial: false } },
+        streamComplete: Promise.resolve(),
+      });
+      await navigation;
+
+      expect(calls).toHaveLength(3);
+      expect(tx.commit).toHaveBeenCalledTimes(1);
+      expect(onStalePrefetch.mock.calls).toEqual([[true], [false]]);
+    });
   });
 
   it("keeps the streaming token open until the fill has streamed", async () => {
