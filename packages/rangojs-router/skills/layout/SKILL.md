@@ -12,6 +12,12 @@ layout stays mounted while you navigate between the routes it wraps. This skill
 covers layout forms, outlets, orphan layouts (a layout inside a `path()`), and
 layout revalidation.
 
+**Rule: a layout keeps its `<Outlet />` in one place on every branch.** Branch
+around the outlet, never around it and the outlet together: an early
+`return <Outlet />` beside a wrapped one remounts every child segment each time
+the branch flips (state resets, mount effects and the actions they call run
+again). See [Moving the Outlet remounts its children](#moving-the-outlet-remounts-its-children).
+
 Related skills: `/parallel` (named slots rendered by a layout), `/intercept`
 (modal slots), `/route` (the routes a layout wraps), `/router-setup` (the
 `document` shell that renders `<html>`).
@@ -130,6 +136,49 @@ function ShopLayout() {
 ```
 
 A layout's `transition()` config wraps the content that flows through `<Outlet />` — not the layout chrome itself, and not sibling `<ParallelOutlet />` slots. Stacking transitions across nested layouts collapses around the deepest default outlet content. See [skills/view-transitions](../view-transitions/SKILL.md) for the full wrap rules and intercept-modal interaction.
+
+### Moving the Outlet remounts its children
+
+React keeps a subtree mounted only while each element on its path keeps the
+same type at the same position. A layout that returns a bare `<Outlet />` on
+one branch and wraps it on another (a fragment, a `<div>`) moves the outlet,
+so when the branch flips, every child segment unmounts and mounts again:
+client state resets, mount effects run again (an action they call is sent
+again), and the content flashes. Prefer one shape with the branch inside it:
+
+```tsx
+// Remounts the children whenever `promo` flips
+function CategoryLayout({ promo }: { promo: boolean }) {
+  if (!promo) return <Outlet />;
+  return (
+    <>
+      <PromoBanner />
+      <Outlet />
+    </>
+  );
+}
+
+// Keeps them mounted: the outlet keeps its position
+function CategoryLayout({ promo }: { promo: boolean }) {
+  return (
+    <>
+      {promo ? <PromoBanner /> : null}
+      <Outlet />
+    </>
+  );
+}
+```
+
+A stable `key` on the outlet (`<Outlet key="outlet" />` in both branches)
+also keeps the children mounted when the only difference is a top-level
+fragment: React reads a component's unkeyed top-level fragment as a list of
+siblings and matches the keyed outlet across it. It does not help when one
+branch wraps the outlet in an element (a `<div>`, a provider): the outlet then
+sits one level deeper, and keys match only among siblings.
+
+All of this applies to `<ParallelOutlet />` too. To reset the children on
+purpose, change a `key` on a stable wrapper rather than relying on a shape
+change.
 
 ## Named Outlets
 

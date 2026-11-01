@@ -120,6 +120,13 @@ here for the rules they share.
    by name, keep page-specific blocks in their route, and write such a rule
    for chrome that shows a param's data
    ([Prefetches are shared](#prefetches-are-shared)).
+10. **A layout keeps its `<Outlet />` in one place.** Branch inside one shape
+    (`<>{promo ? <Banner /> : null}<Outlet /></>`), never between a bare
+    `return <Outlet />` and a wrapped one: the outlet moves, and every page
+    below remounts when the branch flips, its state reset and its mount
+    effects run again. When an early return is unavoidable and the other
+    branch is only a fragment, give the outlet the same `key` in both
+    (`/layout`, "Moving the Outlet remounts its children").
 
 ## A small app: one module
 

@@ -941,7 +941,9 @@ Each entry: what the user sees, why, the fix.
 8. **Shared chrome in a route component.** It remounts on every navigation to
    another route: its state resets and its own fallbacks show again. Fix: move
    it into a `layout()` (a group `layout()` keeps its instance across its
-   routes; a server layout across everything below it).
+   routes; a server layout across everything below it). A layout that moves
+   its `<Outlet />` between branches remounts the children the same way; see
+   `/layout`, "Moving the Outlet remounts its children".
 9. **`useEffect` fetching.** A spinner after the page has shown, nothing
    prefetched or server-rendered, no re-run after an action, races on fast
    navigations. Fix: a loader read with `useLoader`; `useFetchLoader` for
