@@ -133,6 +133,9 @@ jobs:
       - name: Check generated route files are current
         run: pnpm check:route-gen
 
+      - name: Test the CHANGELOG guard
+        run: pnpm check:changelog
+
   format:
     needs: [debounce]
     runs-on: ubuntu-latest

@@ -57,8 +57,13 @@ jobs:
             echo "changelog: PR lists 3000+ files; cannot verify." >&2
             exit 1
           fi
+          # Compare against the merge base, as the files list does: a branch
+          # behind main would otherwise lack main's newer Unreleased entries
+          # and read as having changed the section.
+          MERGE_BASE=$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" \
+            --jq .merge_base_commit.sha)
           gh api -H "Accept: application/vnd.github.raw" \
-            "repos/$REPO/contents/$CHANGELOG?ref=$BASE_SHA" > base.md
+            "repos/$REPO/contents/$CHANGELOG?ref=$MERGE_BASE" > base.md
           gh api -H "Accept: application/vnd.github.raw" \
             "repos/$HEAD_REPO/contents/$CHANGELOG?ref=$HEAD_SHA" > head.md
           jq -n --rawfile files files.txt --rawfile base base.md --rawfile head head.md \
