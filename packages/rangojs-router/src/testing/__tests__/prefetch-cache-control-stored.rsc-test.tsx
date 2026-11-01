@@ -28,6 +28,7 @@ import {
   type ServeShellRequestOptions,
   type ServeShellRequestResult,
 } from "../flight.entry.js";
+import { createMemoryPrerenderStore } from "../index.js";
 import {
   createLoader,
   createRouter,
@@ -74,6 +75,18 @@ function app(options: { prefetchCacheTTL?: number | false } = {}) {
       ctx.header("Cache-Control", "no-store");
       await next();
     })
+    .use("/stored-max-age-zero", async (ctx, next) => {
+      ctx.header("Cache-Control", "max-age=0");
+      await next();
+    })
+    .use("/stored-must-revalidate", async (ctx, next) => {
+      ctx.header("Cache-Control", "private, max-age=0, must-revalidate");
+      await next();
+    })
+    .use("/stored-max-age-short", async (ctx, next) => {
+      ctx.header("Cache-Control", "max-age=5");
+      await next();
+    })
     .routes(
       urls(({ path, layout, cache, loader, loading, errorBoundary }) => [
         path("/", () => <p>home</p>, { name: "home" }),
@@ -86,6 +99,15 @@ function app(options: { prefetchCacheTTL?: number | false } = {}) {
           path("/stored", () => <p>stored</p>, { name: "stored" }),
           path("/stored-no-store", () => <p>stored-no-store</p>, {
             name: "storedNoStore",
+          }),
+          path("/stored-max-age-zero", () => <p>stored-max-age-zero</p>, {
+            name: "storedMaxAgeZero",
+          }),
+          path("/stored-must-revalidate", () => <p>stored-must-revalidate</p>, {
+            name: "storedMustRevalidate",
+          }),
+          path("/stored-max-age-short", () => <p>stored-max-age-short</p>, {
+            name: "storedMaxAgeShort",
           }),
           path(
             "/stored-loader",
@@ -282,6 +304,82 @@ describe("a prefetch answered from a Prerender entry", () => {
     const scoped = await prefetch("/baked?sort=x", "/baked");
     expect(scoped.response.headers.get("x-rsc-prefetch-scope")).not.toBeNull();
     expect(cacheControl(scoped)).toBe("private, no-cache");
+  });
+});
+
+describe("a prefetch answered from an on-demand Prerender overlay entry", () => {
+  const Hot = Prerender<{ slug: string }>(
+    async () => [],
+    async (ctx) => <h1>{`hot:${ctx.params.slug}`}</h1>,
+    { onDemand: true },
+  );
+
+  function overlayApp(ttl: number) {
+    const router = createRouter({
+      prerender: { store: createMemoryPrerenderStore(), ttl },
+    }).routes(
+      urls(({ path }) => [
+        path("/", () => <p>home</p>, { name: "home" }),
+        path("/hot/:slug", Hot, { name: "hot" }),
+      ]),
+    );
+    const prefetch = async (url: string) => {
+      const home = await serveShellRequest(router, "/", {
+        partial: { from: "/elsewhere" },
+      });
+      return serveShellRequest(router, url, {
+        partial: {
+          from: "/",
+          segments: await matchedOf(home),
+          prefetch: true,
+        },
+      });
+    };
+    return { router, prefetch };
+  }
+
+  it("carries the prefetch Cache-Control when the entry is fresh", async () => {
+    const { router, prefetch } = overlayApp(3600);
+    await router.prerender({ env: {} })("/hot/a");
+    const hit = await prefetch("/hot/a");
+    expect(hit.flight).toContain("hot:a");
+    expect(cacheControl(hit)).toBe(STORED);
+  });
+
+  it("carries none when the entry is stale: it serves while a refresh is due", async () => {
+    // ttl 0: stale as soon as written, so the entry still serves but is not
+    // what the page will hold once its refresh lands.
+    const { router, prefetch } = overlayApp(0);
+    await router.prerender({ env: {} })("/hot/a");
+    const hit = await prefetch("/hot/a");
+    expect(hit.flight).toContain("hot:a");
+    expect(cacheControl(hit)).toBeNull();
+  });
+});
+
+describe("a stored prefetch whose route sets a zero max-age", () => {
+  it("keeps max-age=0", async () => {
+    const { prefetch, warm } = app();
+    await warm("/stored-max-age-zero");
+    const hit = await prefetch("/stored-max-age-zero");
+    expect(hit.flight).toContain("stored-max-age-zero");
+    expect(cacheControl(hit)).toBe("max-age=0");
+  });
+
+  it("keeps max-age=0 with must-revalidate", async () => {
+    const { prefetch, warm } = app();
+    await warm("/stored-must-revalidate");
+    const hit = await prefetch("/stored-must-revalidate");
+    expect(hit.flight).toContain("stored-must-revalidate");
+    expect(cacheControl(hit)).toBe("private, max-age=0, must-revalidate");
+  });
+
+  it("still replaces a route's positive max-age", async () => {
+    const { prefetch, warm } = app();
+    await warm("/stored-max-age-short");
+    const hit = await prefetch("/stored-max-age-short");
+    expect(hit.flight).toContain("stored-max-age-short");
+    expect(cacheControl(hit)).toBe(STORED);
   });
 });
 

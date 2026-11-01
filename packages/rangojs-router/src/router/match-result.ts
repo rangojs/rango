@@ -247,9 +247,10 @@ export function buildMatchResult<TEnv>(
  * Any loader segment ran in this request, so it is live. Defaults to live:
  * counted stored by mistake, a segment brings back the cached failures #1170
  * removed. A stale cache() record (state.shouldRevalidate, refreshed in the
- * background) and an answer that sends nothing count as live too: the browser
- * would keep the first past its refresh, and the second is a source page's
- * answer.
+ * background), a stale on-demand Prerender overlay entry (state.storedStale,
+ * which only the overlay can be: the build manifest never goes stale) and an
+ * answer that sends nothing count as live too: the browser would keep the
+ * first two past their refresh, and the third is a source page's answer.
  */
 function sendsOnlyStored(
   sent: readonly ResolvedSegment[],
@@ -259,6 +260,7 @@ function sendsOnlyStored(
     !state.cacheHit ||
     !state.cachedSegments ||
     state.shouldRevalidate ||
+    state.storedStale ||
     sent.length === 0
   ) {
     return false;

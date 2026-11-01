@@ -282,9 +282,11 @@ came from the cache lookup (`MatchResult.fromStorage`, computed in
 `buildMatchResult`, `src/router/match-result.ts`): a `cache()` record, a
 Prerender entry or a shell replay's record answered, every segment the answer
 sends is one of the objects that lookup decoded (`state.cachedSegments`), and
-none is a loader. A stale `cache()` record, refreshed in the background, and
-an answer that sends nothing count as live: the browser would keep the first
-past its refresh, and the second is one source page's answer. By object, not by id: a live layout above a `cache()`
+none is a loader. A stale `cache()` record, refreshed in the background, a
+stale on-demand Prerender overlay entry (past its soft `staleAt`; it serves
+while its `onRevalidate` is due, `state.storedStale`) and an answer that sends
+nothing count as live: the browser would keep the first two past their
+refresh, and the third is one source page's answer. By object, not by id: a live layout above a `cache()`
 boundary, or an intercept resolved live, carries a stored segment's id
 without being the stored copy, and a segment wrongly counted as stored would
 bring back the cached failures #1170 removed. `finalizeRequestResponse`
@@ -293,7 +295,9 @@ this tier still reads the route's own `s-maxage` when it stores the answer,
 and only for a 200 Flight prefetch (either kind) that is not sent
 `private, no-cache` (scoped to its source page, or carrying deferred units).
 A route's own `Cache-Control` on such a prefetch is replaced, as it was
-before #1170, unless it says `no-store` or `no-cache`. Three more answers are
+before #1170, unless it says `no-store`, `no-cache` or a zero `max-age`
+(`max-age=0`, with or without `must-revalidate`; the route asked for a fresh
+answer each time, and the router's `max-age` would override it). Three more answers are
 left as they are, because the flag records how the render was produced, not
 what the final response is, or because a kept copy would replay one client's
 state: a redirect a middleware returned after the render (converted to a

@@ -239,6 +239,11 @@ export interface MatchPipelineState {
   // Whether cache should be revalidated (SWR)
   shouldRevalidate?: boolean;
 
+  // Whether the prerender entry that answered is past its soft staleAt: it
+  // serves while a refresh is due, so it is not what the page will hold once
+  // that lands (MatchResult.fromStorage counts it live)
+  storedStale?: boolean;
+
   // Source of cache hit ("runtime" or "prerender")
   cacheSource?: "runtime" | "prerender";
 

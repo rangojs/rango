@@ -145,7 +145,8 @@ async function ensurePrerenderDeps(): Promise<void> {
  * - `prerender-build`: the bundled build manifest (immutable).
  * - `prerender-overlay`: the writable on-demand overlay. Its entry may be
  *   newer than the client's copy: one that a refresh (possibly inside this
- *   very action) replaced.
+ *   very action) replaced. `stale`: it is past its soft `staleAt` (serves
+ *   while a refresh is due).
  */
 type StoredSegmentSource =
   | {
@@ -155,7 +156,8 @@ type StoredSegmentSource =
       scope: CacheScope;
       restoreHandles?: (sentIds: ReadonlySet<string>) => Promise<void>;
     }
-  | { kind: "prerender-build" | "prerender-overlay"; entry: PrerenderEntry };
+  | { kind: "prerender-build"; entry: PrerenderEntry }
+  | { kind: "prerender-overlay"; entry: PrerenderEntry; stale: boolean };
 
 /**
  * Decode a prerender entry's segments and replay its handle data into the
@@ -567,6 +569,11 @@ async function* serveStoredSegments<TEnv>(
   state.cacheHit = true;
   state.cacheSource = fromCache ? "runtime" : "prerender";
   if (fromCache) state.shouldRevalidate = source.shouldRevalidate;
+  // Not shouldRevalidate: that one starts the cache() scope's background
+  // revalidation.
+  if (source.kind === "prerender-overlay" && source.stale) {
+    state.storedStale = true;
+  }
   state.cachedSegments = segments;
   const cachedMatchedIds = [...liveMatchedIds, ...segments.map((s) => s.id)];
   state.cachedMatchedIds = cachedMatchedIds;
@@ -811,11 +818,8 @@ async function readPrerenderSource<TEnv>(
       // A stale "removed" marker is rechecked like a stale page: only a
       // refresh that hit notFound() (or declined) stamps one with a ttl or
       // tags. A prerender.remove() marker has neither and never gets here.
-      if (
-        overlay.config.onRevalidate &&
-        reqCtx &&
-        isStoredEntryStale(stored, Date.now())
-      ) {
+      const stale = isStoredEntryStale(stored, Date.now());
+      if (overlay.config.onRevalidate && reqCtx && stale) {
         scheduleOverlayRevalidation(
           serializePrerenderKey(key),
           overlay.config.onRevalidate,
@@ -837,7 +841,7 @@ async function readPrerenderSource<TEnv>(
         )._prerenderRemoved = true;
         return null;
       }
-      return { kind: "prerender-overlay", entry: stored.entry };
+      return { kind: "prerender-overlay", entry: stored.entry, stale };
     }
   }
 

@@ -565,6 +565,15 @@ describe("match-result", () => {
       ).toBeUndefined();
     });
 
+    it("is unset on a stale prerender entry, which serves while its refresh is due", () => {
+      const route = createSegment("L0R0");
+      const stale = hitState([route]);
+      stale.storedStale = true;
+      expect(
+        buildMatchResult([route], createMockContext(), stale).fromStorage,
+      ).toBeUndefined();
+    });
+
     it("is unset without a cache hit, and on a full match", () => {
       const route = createSegment("L0R0");
       const miss = createPipelineState();

@@ -699,7 +699,7 @@ export interface FinalizeRequestOptions<TEnv> {
  *
  * Left as it is: a partial sent NOT_REUSED (scoped to its source page, or
  * carrying deferred units), a header that forbids storing it (`no-store`,
- * `no-cache`), a redirect a middleware returned after the render (`redirect`,
+ * `no-cache`, a zero `max-age`), a redirect a middleware returned after the render (`redirect`,
  * converted to a Flight redirect above), and a response carrying one
  * client's state (a per-client signal header, location state), which a
  * stored copy would replay to later requests.
@@ -729,8 +729,14 @@ function applyStoredPrefetchCacheControl(
   if (cacheControl) trySetHeader(response, "cache-control", cacheControl);
 }
 
-/** A Cache-Control directive that forbids keeping the response unvalidated. */
-const FORBIDS_STORE = /(^|[\s,;])(no-store|no-cache)(?=$|[\s,;=])/i;
+/**
+ * A Cache-Control directive that forbids reusing the response unvalidated:
+ * `no-store`, `no-cache`, or a zero `max-age` (`s-maxage` is the shared
+ * caches' and does not match). The route asked for a fresh answer each time;
+ * the router's `max-age` would override it.
+ */
+const FORBIDS_STORE =
+  /(^|[\s,;])(no-store|no-cache|max-age=["']?0+["']?)(?=$|[\s,;=])/i;
 
 /**
  * The response the global chain returned, made ready to leave: a partial or

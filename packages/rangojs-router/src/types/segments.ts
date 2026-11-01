@@ -308,7 +308,8 @@ export interface MatchResult {
   /**
    * Set on a partial match whose answer has nothing live in it: the cache
    * lookup served it (a cache() record, a Prerender entry, a shell replay's
-   * record, not a stale cache() record), it sends a segment, every segment it
+   * record, not a stale cache() record or stale overlay entry), it sends a
+   * segment, every segment it
    * sends is one that lookup decoded, and no loader ran. A stored segment
    * cannot fail after the headers left, since every writer refuses a failed
    * render; a live segment or a loader can. The RSC handler marks the request
