@@ -187,22 +187,28 @@ export function mintStateValue(
 }
 
 /**
- * Bump the write part of `prevRaw`, keeping its timestamp: what the response
- * of a server action without a directive sets. The new write part is strictly
- * greater than the previous one (and at least the current time, so two tabs'
- * writes from the same value rarely meet), so every write gives a value no
- * response was cached under. Returns null when `prevRaw` is absent or
- * malformed: a client with no state value sends no `X-Rango-State` and has
- * nothing in the HTTP cache keyed by one.
+ * Bump the write part of `prevRaw`, keeping its version and timestamp: what
+ * the response of a server action without a directive sets. Keeping the
+ * version keeps the bump soft for a client still on another build (a form
+ * posted from a document served before a deploy); its own boot handles the
+ * deploy. Returns null when `prevRaw` is absent or malformed: a client with
+ * no state value sends no `X-Rango-State` and has nothing in the HTTP cache
+ * keyed by one.
+ *
+ * The new write part must be one no response was cached under. It is
+ * strictly greater than the previous one, and it is the current time in
+ * microseconds with random low digits: two actions that start from the same
+ * value (two tabs, or two in flight in one tab) can run in the same server
+ * millisecond (a Worker's clock does not move between I/O), and the second
+ * response must not set the value the first one set, under which a prefetch
+ * between them may have been cached with the second write missing.
  */
-export function bumpStateWrite(
-  version: string,
-  prevRaw: string | null,
-): string | null {
+export function bumpStateWrite(prevRaw: string | null): string | null {
   const prev = prevRaw ? decodeStateValue(prevRaw) : null;
   if (!prev) return null;
-  const write = Math.max(Date.now(), prev.write + 1);
-  return encodeStateValue(version, prev.timestamp, write);
+  const fresh = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  const write = Math.max(fresh, prev.write + 1);
+  return encodeStateValue(prev.version, prev.timestamp, write);
 }
 
 /**

@@ -58,9 +58,16 @@ The value has two kinds of change, and the client tells them apart:
   `Cache-Control: max-age`) misses. Before the write part existed the value
   did not change at all on an action, and such a response answered a hover
   after the write with the pre-write page, with no revalidation.
-  `keepClientCache()` bumps nothing; a rotation in the same request covers
-  the bump. The write part is strictly greater than the previous one and at
-  least the current time; a request with no state value gets no bump.
+  `keepClientCache()` bumps nothing, and withdraws a bump already written
+  when it runs after the action body (global middleware after `next()`, a
+  loader of the revalidation); a rotation in the same request covers the
+  bump. The bump keeps the request's version, so a client on another build
+  gets a write, not a rotation. The write part is strictly greater than the
+  previous one, and is the time in microseconds with random low digits: two
+  actions that start from one value in the same server millisecond (a
+  Worker's clock does not move between I/O) must not set the same value, or
+  a prefetch cached between them would answer after the second write. A
+  request with no state value gets no bump.
 
 A two-part value (written before the write part existed, by a tab still
 open across the deploy) parses with write 0. An open tab still running the

@@ -127,7 +127,7 @@ describe("a server action's response and the state's write part", () => {
   });
 
   it("sets a write part greater than the one the request carried", async () => {
-    const ahead = Date.now() + 60_000;
+    const ahead = (Date.now() + 60_000) * 1000;
     const result = await call(
       addToCart,
       "actions/cart#add",

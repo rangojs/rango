@@ -7,7 +7,9 @@
  * stream resolves the route's client references, so the route's JS chunks are
  * imported during prefetch rather than on click. The decoded payload is reused
  * verbatim by navigation, so a prefetched click loads no new code. Two key
- * scopes are in play:
+ * scopes are in play. Wherever a key below says `rangoState`, callers pass the
+ * state's `{version}:{timestamp}` part (cookie-name.ts stateEpoch), not the
+ * whole value: a server action's write bump leaves the keys as they were.
  * - Wildcard (default): built by `buildPrefetchKey(rangoState, target)` —
  *   shape `rangoState\0/target?...`. Shared across all source pages and
  *   source segment trees; `_rsc_segments` is omitted from this key. Invalidated

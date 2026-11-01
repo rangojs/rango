@@ -115,6 +115,7 @@ describe("cookie-name", () => {
   describe("mintStateValue and bumpStateWrite", () => {
     afterEach(() => {
       vi.useRealTimers();
+      vi.restoreAllMocks();
     });
 
     it("mint: a newer timestamp and no write part", () => {
@@ -123,18 +124,31 @@ describe("cookie-name", () => {
       expect(mintStateValue("v1", null)).toBe("v1:1000");
     });
 
-    it("bump: the timestamp kept, the write part strictly greater", () => {
-      vi.useFakeTimers({ now: 1000 });
-      expect(bumpStateWrite("v1", "v1:500")).toBe("v1:500:1000");
-      // A previous write ahead of the clock (or in the same ms) still moves.
-      expect(bumpStateWrite("v1", "v1:500:1000")).toBe("v1:500:1001");
-      expect(bumpStateWrite("v1", "v1:500:4000")).toBe("v1:500:4001");
-      expect(stateEpoch(bumpStateWrite("v1", "v1:500:4000")!)).toBe("v1:500");
+    it("bump: the version and timestamp kept, the write part the time in µs with random low digits", () => {
+      vi.useFakeTimers({ now: 1 });
+      vi.spyOn(Math, "random").mockReturnValue(0.25);
+      expect(bumpStateWrite("v1:500")).toBe("v1:500:1250");
+      expect(bumpStateWrite("old:500")).toBe("old:500:1250");
+      expect(stateEpoch(bumpStateWrite("v1:500:4000")!)).toBe("v1:500");
+    });
+
+    it("bump: a previous write ahead of the clock still moves", () => {
+      vi.useFakeTimers({ now: 1 });
+      vi.spyOn(Math, "random").mockReturnValue(0);
+      expect(bumpStateWrite("v1:500:1000")).toBe("v1:500:1001");
+      expect(bumpStateWrite("v1:500:4000")).toBe("v1:500:4001");
+    });
+
+    it("bump: two bumps of one value in the same millisecond differ", () => {
+      vi.useFakeTimers({ now: 1 });
+      const random = vi.spyOn(Math, "random");
+      random.mockReturnValueOnce(0.1).mockReturnValueOnce(0.2);
+      expect(bumpStateWrite("v1:500")).not.toBe(bumpStateWrite("v1:500"));
     });
 
     it("bump: null without a usable previous value", () => {
-      expect(bumpStateWrite("v1", null)).toBeNull();
-      expect(bumpStateWrite("v1", "garbage")).toBeNull();
+      expect(bumpStateWrite(null)).toBeNull();
+      expect(bumpStateWrite("garbage")).toBeNull();
     });
   });
 

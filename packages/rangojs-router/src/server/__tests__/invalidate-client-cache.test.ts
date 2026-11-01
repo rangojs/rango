@@ -193,11 +193,12 @@ describe("runActionBody: the write bump", () => {
     });
 
   it("bumps the write part and keeps the timestamp, however the body ends", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(5000);
+    vi.spyOn(Date, "now").mockReturnValue(5);
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     const ctx = actionContext("v1:1000");
     await runWithRequestContext(ctx, () => runActionBody(() => "done"));
     expect(setCookies(ctx)).toEqual([
-      "rango-state_router_0=v1:1000:5000; Path=/; SameSite=Lax; Secure",
+      "rango-state_router_0=v1:1000:5500; Path=/; SameSite=Lax; Secure",
     ]);
 
     const thrown = actionContext("v1:1000:7000");
@@ -209,6 +210,40 @@ describe("runActionBody: the write bump", () => {
     expect(setCookies(thrown)).toEqual([
       "rango-state_router_0=v1:1000:7001; Path=/; SameSite=Lax; Secure",
     ]);
+  });
+
+  it("keeps the request's version: a client on another build gets a write, not a rotation", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(5);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const ctx = actionContext("old:1000");
+    await runWithRequestContext(ctx, () => runActionBody(() => {}));
+    expect(setCookies(ctx)).toEqual([
+      "rango-state_router_0=old:1000:5000; Path=/; SameSite=Lax; Secure",
+    ]);
+  });
+
+  it("two actions from the same value in the same millisecond set different values", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(5);
+    const random = vi.spyOn(Math, "random");
+    const values: string[] = [];
+    for (const draw of [0.1, 0.2]) {
+      random.mockReturnValue(draw);
+      const ctx = actionContext("v1:1000");
+      await runWithRequestContext(ctx, () => runActionBody(() => {}));
+      values.push(setCookies(ctx)[0]!);
+    }
+    expect(values[0]).not.toBe(values[1]);
+  });
+
+  it("a keepClientCache() after the body (global middleware, a revalidation loader) withdraws the bump", async () => {
+    const ctx = actionContext("v1:1000");
+    await runWithRequestContext(ctx, async () => {
+      ctx.setCookie("other", "1");
+      await runActionBody(() => {});
+      expect(setCookies(ctx)).toHaveLength(2);
+      keepClientCache();
+    });
+    expect(setCookies(ctx)).toEqual(["other=1"]);
   });
 
   it("returns what the body returns", async () => {
