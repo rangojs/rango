@@ -64,8 +64,8 @@ export const errorsPatterns = urls(
         ),
         path("/client-error", ErrorsClientErrorPage, { name: "clientError" }),
 
-        // A Save action whose revalidation reruns a loader that throws
-        // (dc-t28): the action resolves and the loader throws at its read.
+        // A Save action whose revalidation reruns a loader that throws:
+        // the action resolves and the loader throws at its read.
         // The stock loader skips the toggle action, so Save reruns it.
         layout(RevalidationDemoLayout, () => [
           loader(StockFailureFlagLoader),

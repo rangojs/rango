@@ -921,7 +921,7 @@ differs from navigation and from `errorBoundary()`, and it shows stale data
 silently unless the app reads the report.
 
 How it works. The action lane no longer decodes loader results in the build,
-and since dc-t65 neither does any `forceAwait` lane (a fully prefetched
+and neither does any `forceAwait` lane (a fully prefetched
 click, back/forward, cached segments, leaving an intercept, stale
 revalidation): only the document lane does. A stale revalidation whose
 loader threw commits nothing at all and is logged (`partial-update.ts`). Every settled lane takes

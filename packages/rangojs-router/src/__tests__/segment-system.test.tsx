@@ -478,7 +478,7 @@ describe("segment-system", () => {
       it("hands settled per-loader streams on forceAwait lanes (no loading)", async () => {
         // popstate / stale-revalidation / fully-prefetched commits must stay
         // whole: the awaited lane hands each SETTLED entry to its read, so
-        // nothing suspends there and a loader error throws in place (dc-t65).
+        // nothing suspends there and a loader error throws in place.
         const entry = { __loaderResult: true, ok: true, data: { value: 42 } };
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),
@@ -781,7 +781,7 @@ describe("segment-system", () => {
       // forceAwait does, but hands each settled entry to its read site
       // (buildLoaderStreams) instead of decoding the set in the build: a
       // loader that threw on its rerun throws in place at its useLoader read,
-      // and the action resolves (dc-t28).
+      // and the action resolves.
       it("hands settled per-loader streams to the loading() boundary when isAction is true", async () => {
         const loadingSkeleton = createElement("div", null, "Loading...");
         const entry = { __loaderResult: true, ok: true, data: { count: 5 } };
@@ -1694,11 +1694,11 @@ describe("segment-system", () => {
       });
 
       it("reuses pending parallel loader promise across rerenders with the same loader inputs", async () => {
-        // Router defect (rango-t227), rule 6: renderSegments writes loaderIds
+        // Router defect, rule 6: renderSegments writes loaderIds
         // on the slot's segment object the previous tree was built from
         // (segment-system.tsx `p.loaderIds =`; tools/e2e-console-baseline.json).
         allowSuspenseAuditViolations(
-          "I7 mutated: renderSegments writes loaderIds on a handed slot segment (rango-t227)",
+          "I7 mutated: renderSegments writes loaderIds on a handed slot segment",
         );
         let resolveLoader!: (value: unknown) => void;
         const loaderPromise = new Promise((resolve) => {

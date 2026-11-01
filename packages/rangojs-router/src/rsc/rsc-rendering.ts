@@ -1137,7 +1137,7 @@ function renderPreparedRscResponse<TEnv>(
     rscHeaders["x-rsc-prefetch-scope"] = prefetchScope;
     // A shared cache keys a partial by URL and the ids the client holds, not
     // by its source page (document-cache.ts): stored, a scoped answer would
-    // serve its diff to another page that holds the same ids (rango-t238).
+    // serve its diff to another page that holds the same ids.
     reqCtx._payloadSourceScoped = true;
   }
   // Not reused by a shared cache or the document cache (which also refuses a
@@ -1776,7 +1776,7 @@ function serveShellHit(
       reportCacheError(error, "cache-write", "[ShellServe] retire");
     }
   };
-  /** The first loader pin of the entry that failed to decode (dc-t89). */
+  /** The first loader pin of the entry that failed to decode. */
   let undecodablePin: string | undefined;
 
   const renderTail = async (
@@ -2103,7 +2103,7 @@ function serveShellHit(
       }
       // A pin that failed to decode left its loader to this request's run:
       // this response hydrated once over a prelude rendered from the
-      // capture's value (dc-t89). Retire the entry once the response is
+      // capture's value. Retire the entry once the response is
       // closed, and back the key off so a pin that keeps failing costs one
       // mismatch per window. No reload: that would cost a second page load.
       if (undecodablePin !== undefined) {

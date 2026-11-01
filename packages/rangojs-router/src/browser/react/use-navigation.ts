@@ -27,7 +27,7 @@ interface Snapshot<T> {
 /**
  * A notification while React holds a page: work that starts shows at once
  * (loading, streaming, a newer click's URL), what settles waits for the
- * page's commit (rango-d152), and location moves only with the notification
+ * page's commit, and location moves only with the notification
  * that moves it (the page on screen until the next one shows).
  */
 function hold(

@@ -1,5 +1,5 @@
 /**
- * dc-t92: an `ssr: false` loader that throws on a document load, on a route
+ * An `ssr: false` loader that throws on a document load, on a route
  * with no errorBoundary() on its chain, is answered with the router's default
  * error boundary and a 500: on a plain document, a ppr MISS, and a ppr shell
  * HIT whose loader run throws. Before, the payload carried the error with no
@@ -7,7 +7,7 @@
  * the build rejected above every error boundary (a blank page on the HIT) and
  * the SSR shell failed (the host's raw 500 on the MISS).
  *
- * dc-q61: one status rule. A declared errorBoundary() answers 500 too wherever
+ * One status rule. A declared errorBoundary() answers 500 too wherever
  * the status has not gone out (a document, a ppr MISS); a shell HIT keeps the
  * 200 it sent with its shell.
  */
@@ -138,7 +138,7 @@ describe("an ssr: false loader that throws, with no errorBoundary()", () => {
   });
 });
 
-describe("an ssr: false loader that throws, with a declared errorBoundary() (dc-q61)", () => {
+describe("an ssr: false loader that throws, with a declared errorBoundary()", () => {
   it("a document keeps its own fallback and answers 500", async () => {
     const { serve } = setup();
     failing = true;

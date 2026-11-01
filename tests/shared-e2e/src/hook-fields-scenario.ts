@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 
 /**
  * useNavigation()'s fields read the same in every reader shape while React
- * holds a page (rango-t219), and the URL hooks read the URL the full state
- * reads (rango-t221).
+ * holds a page, and the URL hooks read the URL the full state
+ * reads.
  *
  * Fixture in each app: /hook-fields/:id, a transition() route behind a
  * 400 ms server delay. Each render of the page brings a new stamp that holds
@@ -360,7 +360,7 @@ export function runHookFieldsTests(options: HookFieldsScenarioOptions): void {
     // A click to the URL React holds, with transition() gated off. It renders
     // the held page's segments from the history cache, so its commit waits
     // for the same hold; when the hold ends, React commits the urgent page
-    // before the click's transition (rango-t221).
+    // before the click's transition.
     test(`${variant.name}: a gated-off click to the held page's URL: every reader shape reads each field alike`, async ({
       page,
     }) => {

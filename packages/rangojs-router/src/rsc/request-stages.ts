@@ -691,7 +691,7 @@ export interface FinalizeRequestOptions<TEnv> {
  * A prefetch with nothing live in it (`_servedFromStorage`: a document cache
  * HIT, or a partial whose every sent segment came from storage and ran no
  * loader) leaves with the router's prefetch Cache-Control, so the browser
- * HTTP cache can answer a later prefetch or the click with it (rango-t82).
+ * HTTP cache can answer a later prefetch or the click with it.
  * Nothing in such an answer can fail after its 200 left; any other prefetch
  * carries none (#1170). Set here, after every middleware: the document cache
  * reads the route's own header when it stores the response (s-maxage), the

@@ -241,7 +241,7 @@ export function buildMatchResult<TEnv>(
 
 /**
  * Whether a partial answer sends only what the cache lookup decoded from
- * storage (MatchResult.fromStorage, rango-t82). By object, not by id: a
+ * storage (MatchResult.fromStorage). By object, not by id: a
  * segment the live walk resolved under a stored one's id (a live layout above
  * a cache() boundary, an intercept resolved live) is not the stored copy.
  * Any loader segment ran in this request, so it is live. Defaults to live:

@@ -1,5 +1,5 @@
 /**
- * rango-t82: a prefetch answer with nothing live in it leaves with the
+ * A prefetch answer with nothing live in it leaves with the
  * router's prefetch Cache-Control (`private, max-age=<prefetchCacheTTL>`), so
  * the browser HTTP cache can answer a later prefetch or the click with it.
  * Nothing live means every segment the answer sends came from storage (a

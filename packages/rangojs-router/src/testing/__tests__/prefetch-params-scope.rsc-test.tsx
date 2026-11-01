@@ -1,6 +1,6 @@
 /**
  * The group a prefetch answer is shared by when a revalidate() rule read the
- * page being left and kept a segment (rango-t242), through the public
+ * page being left and kept a segment, through the public
  * serveShellRequest primitive (@rangojs/router/testing/flight): the
  * response's `x-rsc-prefetch-scope: params; <label>` names the pages with
  * equal values of what the kept rules read, and pageMatchesParamsLabel is
@@ -194,7 +194,7 @@ beforeEach(async () => {
   await resetShellTestState();
 });
 
-describe("x-rsc-prefetch-scope through serveShellRequest (rango-t242)", () => {
+describe("x-rsc-prefetch-scope through serveShellRequest", () => {
   it("a fromRouteName rule groups by the source's route: another visit of that route shares it, another route does not", async () => {
     const a = await standingOn("/rn/a");
     const aAgain = await standingOn("/rn/a?tab=2");

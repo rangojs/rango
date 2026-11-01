@@ -4,7 +4,7 @@
  * in-memory prefetch cache (shipped in payload metadata). A prefetch with a
  * live part carries no Cache-Control: the browser HTTP cache would keep a
  * prefetch whose render failed after its 200 went out (#1170). One answered
- * from storage carries storedPrefetchCacheControl (rango-t82).
+ * from storage carries storedPrefetchCacheControl.
  *
  * `false` disables prefetch caching (seconds 0). A non-finite input
  * (NaN/Infinity, e.g. from an env-derived number that failed to parse) is
@@ -45,7 +45,7 @@ export function resolvePrefetchCacheTTL(
 
 /**
  * The Cache-Control of a prefetch answer with nothing live in it
- * (`_servedFromStorage`, rango-t82): the browser HTTP cache keeps it as long
+ * (`_servedFromStorage`): the browser HTTP cache keeps it as long
  * as the in-memory prefetch cache would. Undefined when prefetch caching is
  * off.
  */

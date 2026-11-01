@@ -201,7 +201,7 @@ describe("handleProgressiveEnhancement — boundaryless action error status (C1)
   });
 });
 
-// dc-t66: a no-JS action error's boundary renders inside route middleware, as
+// A no-JS action error's boundary renders inside route middleware, as
 // the JS path's (server-action.ts errorBoundary continuation). Before, it was
 // rendered and returned before route middleware ran.
 describe("handleProgressiveEnhancement — the error boundary renders inside route middleware", () => {

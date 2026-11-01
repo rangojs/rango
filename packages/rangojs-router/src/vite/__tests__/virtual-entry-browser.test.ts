@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VIRTUAL_ENTRY_BROWSER } from "../plugins/virtual-entries.js";
 
-// dc-t93: a server render that failed its shell answers a recovery document
+// A server render that failed its shell answers a recovery document
 // (ssr/shell-error-document.tsx) marked `data-rango-ssr-error`. The entry
 // renders that document with createRoot; every other document is hydrated.
 // The entry runs here with its imports replaced by spies.

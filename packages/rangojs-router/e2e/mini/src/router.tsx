@@ -673,7 +673,7 @@ export const router = createRouter({
           // Redirect from a handler.
           path("/errors/go", () => redirect("/counter"), { name: "errGo" }),
 
-          // dc-t93: a loader read outside Suspense that throws, with only the
+          // A loader read outside Suspense that throws, with only the
           // router's defaultErrorBoundary to catch it.
           path(
             "/errors/shell-loader",

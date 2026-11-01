@@ -485,7 +485,7 @@ ctx.reverse(".product", { slug: "b", locale: "de" }); // switch language
   take unchecked path strings: prefer the typed `useReverse` map.
 - `useReverse` with another module's map, or `useReverse(NamedRoutes)` under
   a mount, gives a wrong URL with no error. Build cross-module links on the
-  server and pass them as props or loader data (dc-t57).
+  server and pass them as props or loader data.
 - A server layout stays held across navigations, its own `:projectId`
   changing included: partial rendering by design. Links it rendered keep the
   old params. Put param-dependent nav links in a client component with

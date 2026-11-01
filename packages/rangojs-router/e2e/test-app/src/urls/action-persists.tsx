@@ -33,8 +33,7 @@ function shell(base: string) {
 }
 
 /**
- * useAction() keeps a settled call until the action's next call (rango-t223;
- * e2e action-persists.test.ts, scenario in
+ * useAction() keeps a settled call until the action's next call (e2e action-persists.test.ts, scenario in
  * tests/shared-e2e/src/action-persists-scenario.ts). Pages a and b under a
  * layout whose chrome reads the action; each page mounts a reader of its
  * own. Every request waits ACTION_PERSISTS_DELAY. /action-persists/:id has

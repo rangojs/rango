@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * The browser's params-scoped prefetch entries (rango-t242): an answer the
+ * The browser's params-scoped prefetch entries: an answer the
  * server labelled `x-rsc-prefetch-scope: params; <label>` is stored under the
  * label and adopted by every page whose own label under the same shape is
  * equal (browser/prefetch/cache.ts, prefetch/fetch.ts prefetchStorageSlot,

@@ -1,6 +1,6 @@
 /**
  * A segment's `ctx.reverse(".name")` resolves in the module that DEFINES the
- * segment (dc-t52). One handler ctx serves the whole request and is built
+ * segment. One handler ctx serves the whole request and is built
  * from the matched route's name, so a parent module's layout used to resolve
  * `.settings` from the matched child module first: on `/acme/web/issues` the
  * account layout linked to the project's settings. The layout, its parallel

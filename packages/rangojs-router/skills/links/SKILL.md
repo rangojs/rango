@@ -457,7 +457,7 @@ export const useAccountReverse = () => useReverse(accountRoutes);
 Components call `useAccountReverse()`; a renamed or moved module changes one
 file. The wrapper resolves like `useReverse`: against the nearest `include()`
 mount, so call a module's hook from components under that module's own mount.
-Inside a nested module it builds a wrong URL with no error (dc-t57); pass
+Inside a nested module it builds a wrong URL with no error; pass
 cross-module links from the server there.
 
 ### How it resolves
@@ -542,7 +542,7 @@ Both happen synchronously during `reverse()` — wrap calls in try/catch (or an 
 
 ### The leading dot is optional
 
-`reverse("post")` and `reverse(".post")` resolve **identically** — the leading dot is cosmetic. The map you import IS the scope, so there is no separate global namespace to disambiguate and the dot carries no meaning; it exists only as a readability convention and for parity with `ctx.reverse(".name")` on the server. A module's `routes` map is right only inside that module's own mount: it resolves against the current mount, so another module's map gives a wrong URL with no error, and `useReverse(NamedRoutes)` is correct only at the root mount (under a mount it double-prefixes). There is no client API for links that cross modules under a nested mount (dc-t57). Build them on the server, where global names resolve fully, and pass them down:
+`reverse("post")` and `reverse(".post")` resolve **identically** — the leading dot is cosmetic. The map you import IS the scope, so there is no separate global namespace to disambiguate and the dot carries no meaning; it exists only as a readability convention and for parity with `ctx.reverse(".name")` on the server. A module's `routes` map is right only inside that module's own mount: it resolves against the current mount, so another module's map gives a wrong URL with no error, and `useReverse(NamedRoutes)` is correct only at the root mount (under a mount it double-prefixes). There is no client API for links that cross modules under a nested mount. Build them on the server, where global names resolve fully, and pass them down:
 
 ```tsx
 // server layout or handler

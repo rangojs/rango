@@ -33,7 +33,7 @@
  *   destination-only route have a loading().
  * - locale: the documented locale rule above two routes, so a prefetch the
  *   rule keeps the layout for is shared by the pages of one locale
- *   (`x-rsc-prefetch-scope: params`, rango-t242).
+ *   (`x-rsc-prefetch-scope: params`).
  */
 import React from "react";
 import {

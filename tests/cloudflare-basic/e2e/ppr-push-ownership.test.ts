@@ -61,7 +61,7 @@ function describePprPushOwnership(mode: "dev" | "build") {
       await expectReplayDeliversDeferredPush(page, fixture());
     });
 
-    test("dc-t89: an entry without loader pins serves documents as a MISS that hydrates clean with the run's push next to the run's data, and navigations replay it", async ({
+    test("an entry without loader pins serves documents as a MISS that hydrates clean with the run's push next to the run's data, and navigations replay it", async ({
       page,
     }) => {
       await expectPinlessEntryServesDocumentMiss(page, fixture());

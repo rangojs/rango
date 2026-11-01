@@ -9,7 +9,7 @@ import { useFixture } from "./fixture";
  *
  * prefetchCacheTTL sets the client's in-memory prefetch cache: no live
  * response carries Cache-Control for it, a prefetch included (#1170); a
- * prefetch answered from storage does (prefetch-stored.test.ts, rango-t82). The
+ * prefetch answered from storage does (prefetch-stored.test.ts). The
  * browser HTTP cache would keep a prefetch whose render failed after its 200
  * went out. Vary still names the custom headers the responses depend on.
  */

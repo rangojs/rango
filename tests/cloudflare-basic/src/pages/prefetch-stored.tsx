@@ -8,7 +8,7 @@ import {
 } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 
-// rango-t82: a prefetch answer with nothing live in it (every sent segment
+// A prefetch answer with nothing live in it (every sent segment
 // stored, no loader) carries the router's prefetch Cache-Control. Each page
 // renders a stamp, so a test tells a stored answer from a fresh render. ?k
 // keys the records and documents to one test. router.tsx runs the document

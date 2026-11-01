@@ -3,7 +3,7 @@ import { expectConsole } from "./console-guard.js";
 
 /**
  * useAction() keeps a settled call's result and error until the action's
- * next call (rango-t223, owner decision rango-t219-q3): well past the settle,
+ * next call (owner decision): well past the settle,
  * through a navigation and a Back, and in a reader that mounts after it. The
  * next call reads loading with no result.
  *

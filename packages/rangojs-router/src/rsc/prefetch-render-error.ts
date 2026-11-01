@@ -15,7 +15,7 @@
  * prefetch with a live part, the only kind whose render can report an error
  * here, so the browser HTTP cache keeps none of it unless the route sets one;
  * a prefetch with nothing live in it carries `private, max-age`
- * (request-stages.ts applyStoredPrefetchCacheControl, rango-t82); a prefetch
+ * (request-stages.ts applyStoredPrefetchCacheControl); a prefetch
  * scoped to its source page or carrying deferred units is sent
  * `private, no-cache` (rsc-rendering.ts NOT_REUSED).
  *

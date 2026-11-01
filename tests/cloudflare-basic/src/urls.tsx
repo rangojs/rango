@@ -754,7 +754,7 @@ export const urlpatterns = urls(
   }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
-    // An ssr: false loader that throws with no errorBoundary() (dc-t92).
+    // An ssr: false loader that throws with no errorBoundary().
     include("/", holeyThrowsPatterns, { name: "" }),
 
     // onError's `background`: only the shell capture after the MISS throws.
@@ -1239,15 +1239,14 @@ export const urlpatterns = urls(
           name: "keptLayoutSourceBaked",
         }),
         // The locale rule above paginated pages: one prefetch per locale
-        // (rango-t242).
         include("/kept-layout-source/i18n", keptLayoutSourceLocalePatterns, {
           name: "keptLayoutSourceI18n",
         }),
         // A kept hero above a PLP the document cache stores: its partial is
-        // the source page's only (e2e/doc-cache-source.test.ts, rango-t238).
+        // the source page's only (e2e/doc-cache-source.test.ts).
         include("/doc-cache-source", docCacheSourcePatterns),
         // Prefetch answers served from storage: cache() records, a Prerender
-        // entry, the document cache (e2e/prefetch-stored.test.ts, rango-t82).
+        // entry, the document cache (e2e/prefetch-stored.test.ts).
         include("/prefetch-stored", prefetchStoredPatterns, {
           name: "prefetchStored",
         }),
@@ -1608,7 +1607,7 @@ export const urlpatterns = urls(
         ),
         // The same loader over maxSnapshotBytes: the capture stores the
         // navigation half only, so documents MISS and a navigation replays the
-        // handler layer with the loader run fresh (dc-t89).
+        // handler layer with the loader run fresh.
         path(
           "/ppr-push/capped",
           PprPushPinnedPage,
@@ -3311,7 +3310,7 @@ export const urlpatterns = urls(
           name: "interceptWhenShape",
         }),
         // A server action from an open intercept re-renders that intercept
-        // (rango-t200; mirrors the router e2e app's /cache-intercept-when
+        // (mirrors the router e2e app's /cache-intercept-when
         // drawer action, intercept-action-select.test.ts).
         include("/intercept-action-select", interceptActionSelectPatterns, {
           name: "interceptActionSelect",

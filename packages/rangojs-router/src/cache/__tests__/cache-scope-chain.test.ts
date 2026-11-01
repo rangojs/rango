@@ -335,7 +335,7 @@ describe("cache() key() results are namespaced (#975)", () => {
   });
 });
 
-describe("a store keyGenerator result keeps the request kind (rango-t204)", () => {
+describe("a store keyGenerator result keeps the request kind", () => {
   type KeyGenerator = NonNullable<SegmentCacheStore["keyGenerator"]>;
 
   /** The request each kind sends for /pricing, and its intercept. */

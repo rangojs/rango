@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { waitForShellHydration } from "./shell-request.js";
 
 /**
- * rango-t238: the document cache keys a partial by its URL and the ids the
+ * The document cache keys a partial by its URL and the ids the
  * client holds, not by the page it was sent from. A category layout renders
  * the category's hero, and its revalidate() re-renders it only when the
  * source page's category differs. From /c/audio the click to

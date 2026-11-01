@@ -313,7 +313,7 @@ export interface MatchResult {
    * sends is one that lookup decoded, and no loader ran. A stored segment
    * cannot fail after the headers left, since every writer refuses a failed
    * render; a live segment or a loader can. The RSC handler marks the request
-   * `_servedFromStorage` from it (rango-t82).
+   * `_servedFromStorage` from it.
    */
   fromStorage?: true;
   /**

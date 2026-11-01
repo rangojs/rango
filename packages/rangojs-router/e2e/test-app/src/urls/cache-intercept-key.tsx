@@ -1,7 +1,7 @@
 import { urls } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 
-// e2e/cache.test.ts "cache-intercept-routes" (rango-t201). A cache() with its
+// e2e/cache.test.ts "cache-intercept-routes". A cache() with its
 // own key() covers the layout, and an intercept targets the item route from
 // the index. The key() names the path alone, so a document request, a plain
 // navigation (from /plain, where the intercept's when() fails) and the

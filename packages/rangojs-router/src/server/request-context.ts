@@ -670,7 +670,7 @@ export interface RequestContext<
    * `x-rsc-prefetch-scope` (router/source-reads.ts prefetchScopeOf): its diff
    * is right for its source page, or a group of them, only. The document
    * cache keys a partial without its source, so it does not store that
-   * response, whatever Cache-Control it ends up with (rango-t238).
+   * response, whatever Cache-Control it ends up with.
    */
   _payloadSourceScoped?: boolean;
 
@@ -679,7 +679,7 @@ export interface RequestContext<
    * fail after the 200's headers left: the document cache middleware on a
    * fresh HIT, and the RSC handler when the partial match came from storage
    * (MatchResult.fromStorage). finalizeRequestResponse (rsc/request-stages.ts)
-   * sends such a prefetch the router's prefetch Cache-Control (rango-t82).
+   * sends such a prefetch the router's prefetch Cache-Control.
    */
   _servedFromStorage?: boolean;
 

@@ -119,7 +119,7 @@ export function shouldCacheResponse(
     return null;
   }
 
-  // A partial scoped to its source page (rango-t238): this cache keys it by
+  // A partial scoped to its source page: this cache keys it by
   // URL and the ids the client holds, so it would answer another page with
   // the same ids. rsc-rendering.ts sends it NOT_REUSED; a middleware can
   // replace that after next().
@@ -135,7 +135,7 @@ export function shouldCacheResponse(
  * Whether a response carries one client's state, which a stored copy would
  * replay to that client's later requests: a per-client signal header (a state
  * cookie rotation, `x-rango-keep-cache`) or location state. The stored
- * prefetch Cache-Control (rsc/request-stages.ts, rango-t82) is not sent on
+ * prefetch Cache-Control (rsc/request-stages.ts) is not sent on
  * one.
  */
 export function carriesClientState(

@@ -36,7 +36,7 @@ function ActionBoundaryLayout() {
 }
 
 // Keeps the error response's Flight stream open after its first rows, so the
-// action is still "streaming" when its response is processed (rango-t125).
+// action is still "streaming" when its response is processed.
 async function ActionBoundaryTail() {
   await new Promise((resolve) => setTimeout(resolve, 1500));
   return <span data-testid="ab-boundary-tail">done</span>;

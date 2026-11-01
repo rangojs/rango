@@ -19,7 +19,7 @@ export const test = base.extend<{}, DevServerFixture>({
       });
       // detached makes the child a process-group leader, so the guard's kill
       // reaches vite, the grandchild pnpm spawns. A plain child.kill() stops
-      // only pnpm and leaves vite running (rango-t245).
+      // only pnpm and leaves vite running.
       const child = x("pnpm", ["dev"], {
         nodeOptions: { cwd: process.cwd(), detached: true },
       }).process!;

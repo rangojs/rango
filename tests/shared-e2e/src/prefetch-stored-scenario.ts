@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { waitForShellHydration } from "./shell-request.js";
 
 /**
- * rango-t82: a prefetch answer with nothing live in it carries the router's
+ * A prefetch answer with nothing live in it carries the router's
  * prefetch Cache-Control (`private, max-age=<prefetchCacheTTL>`), so the
  * browser HTTP cache can answer a later prefetch or the click with it: a
  * route cache() HIT whose every sent segment is stored and runs no loader, a

@@ -4,7 +4,7 @@ import { useFixture } from "./fixture";
 
 /**
  * Back onto a page a server action made stale: its stale revalidation and
- * the layout loader it holds (rango-t128). Body:
+ * the layout loader it holds. Body:
  * tests/shared-e2e/src/stale-defaults-scenario.ts.
  */
 test.describe("stale revalidation defaults", () => {

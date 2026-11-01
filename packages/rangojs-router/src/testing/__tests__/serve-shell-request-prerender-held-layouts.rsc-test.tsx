@@ -12,7 +12,7 @@
  * segment, so a list -> detail navigation re-sent the held layout and its
  * crumbs from the bake, under an intercept and without one. A cache() HIT
  * kept the layout but replayed its record's handle values, the held
- * layout's included (rango-t195).
+ * layout's included.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";

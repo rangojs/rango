@@ -360,7 +360,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           // Nothing in it runs: its loaders' output is replayed, and no
           // failed render is ever stored (throwIfRenderErrored). A prefetch
           // answered with it leaves with the router's prefetch Cache-Control
-          // (rsc/request-stages.ts, rango-t82).
+          // (rsc/request-stages.ts).
           requestCtx._servedFromStorage = true;
           return drainOnResponseCallbacks(
             addCacheStatusHeader(cached.response, "HIT"),

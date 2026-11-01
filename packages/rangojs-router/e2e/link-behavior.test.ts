@@ -141,7 +141,7 @@ test.describe("link-behavior", () => {
     // What answers a new document's prefetch (it has no in-memory copy) is the
     // server for a live answer and the HTTP cache for a stored one, and
     // /blog's is either by its cache() record. prefetch-stored.test.ts pins
-    // each case on a route whose answer is known (rango-t82, #1170).
+    // each case on a route whose answer is known (#1170).
 
     await cdp.detach();
   });
@@ -373,7 +373,7 @@ test.describe("link-behavior (production)", () => {
     // What answers a new document's prefetch (it has no in-memory copy) is the
     // server for a live answer and the HTTP cache for a stored one, and
     // /blog's is either by its cache() record. prefetch-stored.test.ts pins
-    // each case on a route whose answer is known (rango-t82, #1170).
+    // each case on a route whose answer is known (#1170).
 
     await cdp.detach();
   });

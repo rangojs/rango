@@ -482,7 +482,7 @@ describe("match-result", () => {
     });
   });
 
-  describe("buildMatchResult() - fromStorage (rango-t82)", () => {
+  describe("buildMatchResult() - fromStorage", () => {
     /** A HIT whose stored segments are `stored`, as cache-lookup sets it. */
     function hitState(stored: ResolvedSegment[]): MatchPipelineState {
       const state = createPipelineState();
