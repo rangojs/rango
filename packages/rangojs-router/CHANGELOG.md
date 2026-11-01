@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Fixed: `rango generate` reads the exported `createRouter` chain, not a helper router earlier in the file (rango-t246)
+### Fixed: `rango generate` reads the exported `createRouter` chain, not a helper router earlier in the file
 
 **Before.** A router file with several `createRouter` chains took routes and
 basename from the first chain with a readable mount, exported or not. With
@@ -19,7 +19,7 @@ unresolvable, as it does for a single-chain file, instead of falling back to
 the helper. Among several exported chains the first one with a readable mount
 still wins, and a file whose chains are all non-exported is read as before.
 
-### Changed: a hover prefetch runs `prefetch: false` work, so the click sends no follow-up request (rango-t243)
+### Changed: a hover prefetch runs `prefetch: false` work, so the click sends no follow-up request
 
 **Before.** Every prefetch deferred `loader(Def, { prefetch: false })` and the
 work behind `loading(fallback, { prefetch: false })`, the hover's included. A
@@ -56,7 +56,7 @@ url, { partial: { prefetch: true } })` still gets a speculative one; add
 `X-Rango-Prefetch === "1"` to recognise a prefetch should check that the
 header is present.
 
-### Fixed: the document cache no longer serves one page's navigation to another page with the same layouts (rango-t238)
+### Fixed: the document cache no longer serves one page's navigation to another page with the same layouts
 
 **Before.** `createDocumentCacheMiddleware()` keyed a client navigation by its
 URL and the segments the client held, not by the page it came from. Under a
@@ -120,7 +120,7 @@ tests' `*.rsc-test.*` included, are no longer read as router roots by
 `named-routes.gen.ts` beside them; the default `discovery.exclude` lists
 `*.rsc-test.*` too.
 
-### Changed: a prefetch a `revalidate()` kept from the page being left is shared by the pages with equal values of what it read (rango-t242)
+### Changed: a prefetch a `revalidate()` kept from the page being left is shared by the pages with equal values of what it read
 
 **Before.** Since 0.32.0, a `revalidate()` that read the page being left
 (`currentParams`, `currentUrl`, `fromRouteName`) and kept its segment made

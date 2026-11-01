@@ -349,7 +349,7 @@ describe("buildShellLoaderSeed", () => {
     expect([...(seed?.keys() ?? [])]).toEqual(["x#Good"]);
   });
 
-  it("skips a record that fails to decode and reports it (serveShellHit retires the entry, dc-t89)", async () => {
+  it("skips a record that fails to decode and reports it (serveShellHit retires the entry)", async () => {
     const snapshot: ShellSnapshotRecord[] = [
       {
         family: "loader",

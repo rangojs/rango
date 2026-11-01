@@ -285,7 +285,7 @@ Concretely:
   The tree and the `basename` come from the exported `createRouter` chain
   (`export const`, `export default`, or a name in `export { ... }`), never from
   a helper chain that is not exported: an unreadable exported mount is
-  reported even when a helper above it mounts a readable tree (rango-t246).
+  reported even when a helper above it mounts a readable tree.
   A chain counts as exported only when it is the value that is exported (the
   initializer of an exported top-level variable, or the `export default`
   expression); a chain inside an exported function or class, or passed to

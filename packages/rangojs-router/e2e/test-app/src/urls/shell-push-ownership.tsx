@@ -117,7 +117,7 @@ export const shellPushOwnershipPatterns = urls(
     ),
     // The same loader over maxSnapshotBytes: the capture stores the
     // navigation half only, so documents MISS and a navigation replays the
-    // handler layer with the loader run fresh (dc-t89).
+    // handler layer with the loader run fresh.
     path(
       "/shell-push/capped",
       ShellPushPinnedPage,

@@ -1,5 +1,5 @@
 /**
- * dc-t93: an error that reaches React's server-render shell (no <Suspense>
+ * An error that reaches React's server-render shell (no <Suspense>
  * above it) makes renderToReadableStream reject. In production renderHTML
  * answers it instead of rethrowing to the host: a recovery document carrying
  * the same Flight payload (the browser renders it with createRoot), a real

@@ -1413,7 +1413,7 @@ describe("HandleStore.pushReplayed inside a replayed loader's body (navigation r
   });
 });
 
-// rango-t189: a cache() HIT restores its record before the segment's loaders
+// A cache() HIT restores its record before the segment's loaders
 // start; the MISS ran the handler after they started.
 describe("HandleStore.holdRecordedValues (a cache() HIT's record before its loaders start)", () => {
   it("puts a push in front of the record's values, in push order, until the segment is released", () => {

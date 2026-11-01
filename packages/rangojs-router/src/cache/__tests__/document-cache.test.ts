@@ -1257,7 +1257,7 @@ describe("createDocumentCacheMiddleware", () => {
             prefetch?: boolean;
             /** The render marks its payload as carrying deferred units. */
             deferring?: boolean;
-            /** The render scopes its payload to its source page (rango-t238). */
+            /** The render scopes its payload to its source page. */
             sourceScoped?: boolean;
             cacheControl?: string;
             at?: string;

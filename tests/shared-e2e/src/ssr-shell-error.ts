@@ -2,13 +2,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { expectConsole } from "./console-guard.js";
 
-// dc-t93: an error that reaches React's server-render shell (thrown with no
+// An error that reaches React's server-render shell (thrown with no
 // <Suspense> above it) made the host answer its raw 500: the Vite overlay in
 // dev, a stack with server paths in production. Production now answers a
 // recovery document carrying the same Flight payload, and the browser entry
 // renders it with createRoot, so the document ends where a client navigation
 // to the URL ends. A loader notFound() answers 404, a loader redirect() with
-// no state a real 3xx. Dev keeps the overlay for an error (dc-q62); a
+// no state a real 3xx. Dev keeps the overlay for an error; a
 // notFound()/redirect() is control flow and is answered as in production.
 //
 // Fixture (both apps): the /holey-throws/shell-* routes in holey-throws.tsx,

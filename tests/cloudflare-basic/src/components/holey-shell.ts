@@ -1,6 +1,6 @@
 import { createHandle, createLocationState } from "@rangojs/router";
 
-// dc-t93 fixtures shared by the holey-throws server routes and their client
+// Fixtures shared by the holey-throws server routes and their client
 // readers. Not a "use client" module: the server needs the definitions
 // themselves, not client references.
 

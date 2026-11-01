@@ -21,8 +21,7 @@
  * handler context, the same object in both runs here, but in production its
  * `request` carries `X-RSC-Router-Client-Path` and the raw URL with
  * `_rsc_segments`, and a predicate (or a middleware var it reads) can read
- * the source through it. Whether that is in contract is the owner's call
- * (rango-t241-q1).
+ * the source through it. Whether that is in contract is the owner's call.
  *
  * The type side is FIELDS: a field added to or removed from
  * ShouldRevalidateFn's argument fails typecheck until it is listed here.

@@ -595,7 +595,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
   // with another structure (the route failed), so its tree goes over
   // urgently and ends the hold. Each reader shows the values that tree's
   // release brings, though the click's anchor set the same ones and React
-  // never commits that set apart from the fill's tree (rango-t219).
+  // never commits that set apart from the fill's tree.
   it("a fill that ends the hold urgently shows with idle in every useNavigation() reader", async () => {
     const screens: string[] = [];
     function Readers(): ReactNode {
@@ -649,7 +649,7 @@ describe("a click that adopts a prefetch, and its fill", () => {
 
   // The same click, to the page's own route with a new search: the click's
   // anchor set the new URL in every URL hook reader, and the fill's tree
-  // ends the hold before React commits that set (rango-t221).
+  // ends the hold before React commits that set.
   it("a fill that ends the hold urgently shows with its URL in every URL hook reader", async () => {
     const screens: string[] = [];
     function Readers(): ReactNode {

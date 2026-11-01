@@ -1778,7 +1778,7 @@ export const router = createRouter({}).routes(u(({ path }) => []));`;
 // ---------------------------------------------------------------------------
 
 // A non-literal createRouter({ basename }) used to be dropped silently, so
-// every static gen-file pattern lost its prefix (rango-t230, GitHub #1322).
+// every static gen-file pattern lost its prefix (GitHub #1322).
 // An explicit basename the parser cannot read is a `rango generate` diagnostic.
 describe("buildCombinedRouteMapForRouterFile basename", () => {
   let dir: string;
@@ -2135,7 +2135,7 @@ describe("isInSkippedScanDir", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Several createRouter chains in one file (rango-t246): the exported chain
+// Several createRouter chains in one file: the exported chain
 // supplies the routes and the basename; a non-exported helper chain never wins
 // over it, and an unreadable exported mount is reported rather than hidden
 // behind the helper's readable one.

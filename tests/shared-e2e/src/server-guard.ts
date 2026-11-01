@@ -6,7 +6,7 @@
  * Why it exists: the fixtures used to assign their `cleanup` only after the
  * server answered. A `beforeAll` that missed its timeout (common under load)
  * never reached that line, so `afterAll` had nothing to stop and the detached
- * server kept its port and RAM after the run (rango-t206). Playwright also does
+ * server kept its port and RAM after the run. Playwright also does
  * not cancel a timed-out hook: its body keeps running while `afterAll` runs, so
  * a build that finishes after teardown went on to start a preview server nobody
  * would stop. The guard closes both holes: a server is tracked the moment it is

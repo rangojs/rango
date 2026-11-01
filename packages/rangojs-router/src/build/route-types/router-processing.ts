@@ -286,7 +286,7 @@ function collectExportedLocalNames(sourceFile: ts.SourceFile): Set<string> {
 // export names), or the `export default` / `export =` expression itself,
 // through `as`, `satisfies` and parentheses. A chain inside a function or class
 // body, an argument of another call or a property of an object literal is not
-// exported even when the enclosing declaration is (rango-t246).
+// exported even when the enclosing declaration is.
 function isExportedChain(
   chainEnd: ts.CallExpression,
   exportedNames: ReadonlySet<string>,
@@ -327,14 +327,13 @@ function isExportedChain(
 // The createRouter chain whose urls the route types and basename come from,
 // with its extractions in runtime order. A file may hold several chains (a
 // helper router beside the app's): an exported chain always wins over one that
-// is not exported, so a helper never supplies the app's routes or basename
-// (rango-t246). Only when no chain is exported (a lone router in a test file)
+// is not exported, so a helper never supplies the app's routes or basename. Only when no chain is exported (a lone router in a test file)
 // does a non-exported one count. Among the candidates, the first (in source
 // order) that mounts a readable urls wins.
 // `unreadable` holds the source of each mount the static parser cannot follow
 // (`.routes(buildUrls())`, `urls: mod.tree`): its routes are missing from the
 // extractions, so detectUnresolvableIncludes reports it rather than letting
-// the gen file silently lose them (rango-t42). A chain with only unreadable
+// the gen file silently lose them. A chain with only unreadable
 // mounts is returned only when no candidate has a readable one. An exported
 // chain that mounts nothing still hides the non-exported ones.
 function findRouterUrls(sourceFile: ts.SourceFile): {

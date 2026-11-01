@@ -7,7 +7,7 @@ import { runCli, stopServer } from "../e2e/server.js";
 /**
  * The consumer fixture starts `pnpm dev` / `pnpm preview`, which spawn vite as
  * a grandchild. Stopping only the direct child leaves vite running after the
- * suite (rango-t245), so these tests spawn a parent with a grandchild and
+ * suite, so these tests spawn a parent with a grandchild and
  * check that stopServer reaches both. Process groups are POSIX-only; on Windows
  * the harness ends the tree with `taskkill /t`.
  */

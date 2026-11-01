@@ -35,7 +35,7 @@ function shell(base: string) {
 /**
  * Cloudflare-basic mirror of the router e2e app's /action-persists* fixture
  * (urls/action-persists.tsx). useAction() keeps a settled call until the
- * action's next call (rango-t223; scenario in
+ * action's next call (scenario in
  * tests/shared-e2e/src/action-persists-scenario.ts). Pages a and b under a
  * layout whose chrome reads the action; each page mounts a reader of its
  * own. Every request waits ACTION_PERSISTS_DELAY. /action-persists/:id has

@@ -1,6 +1,6 @@
 /**
  * A client navigation to an intercepted URL that holds no segments
- * (`_rsc_segments=` empty) keeps the page under the intercept (rango-t126).
+ * (`_rsc_segments=` empty) keeps the page under the intercept.
  *
  * Under an intercept the server never renders the route under it
  * (segment-resolution/revalidation.ts resolveAllSegments):

@@ -805,7 +805,7 @@ describe("useNavigation: a notification that moves neither state nor location st
     await notified();
     await commit(handle, "/items/1?tag=b", { id: "1" }, hold.promise, true);
     // The stream ends while React holds the page: isStreaming settles with
-    // the page, as the full state's does (rango-t219).
+    // the page, as the full state's does.
     stream.end();
     await notified();
     expect(quiet()).toBe("none true");

@@ -255,7 +255,7 @@ function NotedPage(ctx: HandlerContext): React.ReactNode {
 
 /**
  * A promise-carrying `ssr: false` loader that throws once the capture is
- * done: its pin has a hole, so it runs on every HIT (dc-t89).
+ * done: its pin has a hole, so it runs on every HIT.
  */
 const HoleyThrowsLater = createLoader(async () => {
   if (source.generation > 1) {
@@ -668,7 +668,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     expect(await final(nav, /eb-after@g\d/g)).toEqual(["eb-after@g2"]);
   });
 
-  // dc-t89: an entry over maxSnapshotBytes holds the navigation half only.
+  // An entry over maxSnapshotBytes holds the navigation half only.
   it("an entry whose pins are over maxSnapshotBytes: a document MISSes, and it and a navigation replay keep the fresh run's data and push", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const { serve } = setup();
@@ -702,7 +702,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
     const hit = await serve("/dep-capped");
     const nav = await serve("/dep-capped", { partial: { from: "/about" } });
 
-    // dc-t89: over maxSnapshotBytes a document is a MISS.
+    // Over maxSnapshotBytes a document is a MISS.
     expect(hit.shellStatus).toBe("MISS");
     expect(nav.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     expect({
@@ -1063,8 +1063,7 @@ describe("PENDING #1036: a dependency the record does not attribute to the loade
     },
   );
 
-  // A navigation replay: over maxSnapshotBytes the entry serves no document
-  // (dc-t89).
+  // A navigation replay: over maxSnapshotBytes the entry serves no document.
   red(
     "a dependency whose push the awaiting loader's cache() entry did not record: the record's copy does not outlive the entry's run",
     async () => {
@@ -1273,7 +1272,7 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
       });
     });
 
-    // dc-t89: an entry that could not keep its loader pins
+    // An entry that could not keep its loader pins
     // (maxSnapshotBytes) serves no document HIT, so nothing hydrates over a
     // shell rendered from another run: the MISS hydrates with its own run.
     for (const [path, hydration] of [
@@ -1451,7 +1450,7 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
   });
 });
 
-// dc-t89. A document HIT's HTML is the capture's prelude, so the payload React
+// A document HIT's HTML is the capture's prelude, so the payload React
 // hydrates it with must carry the loader data that prelude was rendered
 // from. A loader served from its pin does; a loader the HIT runs sends that
 // run's value, and the browser reports a hydration mismatch ("Hydration
@@ -1462,7 +1461,7 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
 // the navigation half only: documents MISS, navigations replay it. A pin that
 // fails to decode on a HIT costs that one response a mismatch, and the entry
 // is retired and recaptured.
-describe("dc-t89: a document HIT hydrates with the loader data its shell was rendered from", () => {
+describe("a document HIT hydrates with the loader data its shell was rendered from", () => {
   /** The loader values matching `pattern` in the shell a HIT served and in the payload it hydrates with. */
   function loaderValues(
     hit: ServeShellRequestResult,
@@ -1659,10 +1658,10 @@ describe("dc-t89: a document HIT hydrates with the loader data its shell was ren
     ]);
   });
 
-  // The documented residual (F2, dc-q54): the run of a hole-carrying pin
+  // The documented residual (F2): the run of a hole-carrying pin
   // rejects on the HIT, and the payload carries its error where the prelude
   // has the baked value. F1, serving the record with failed holes, is
-  // dc-t91.
+  // tracked separately.
   red(
     "a hole-carrying pin whose HIT run rejects hydrates with the data its shell was rendered from",
     async () => {

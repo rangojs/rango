@@ -709,11 +709,11 @@ describe("createShellCaptureHandler: the ssr: false progressiveChunkSize auto-ra
   });
 });
 
-// dc-t93: renderHTML answers a shell error with a recovery document in
+// RenderHTML answers a shell error with a recovery document in
 // production. The PPR capture (runtime and build-time) never does: a shell
 // error still rejects it, and its callers store nothing (shell-capture.ts
 // captureAndStoreShell rethrows; the build capture fails the URL).
-describe("createShellCaptureHandler: a shell error in production (dc-t93)", () => {
+describe("createShellCaptureHandler: a shell error in production", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.mocked(console.error).mockRestore?.();

@@ -10,7 +10,7 @@ import { waitForShellHydration } from "./shell-request.js";
  * route's own copy: an action or a same-route navigation, which hold the
  * route's loader, re-ran the copy alone. The layout gained a loader entry
  * (StreamedLoaderErrorBoundary, segment-system.tsx) and remounted, and Back
- * remounted it again (rango-t156).
+ * remounted it again.
  *
  * Fixture, in each app: /parallel-loader-inherit-held-loader (no loading())
  * and /parallel-loader-inherit-held-loader-off (loading(false)). The route

@@ -5,7 +5,7 @@ import { renderRoute } from "../render-route.js";
 
 // The router's unit suite fails a test the suspense audit reports a
 // violation in (src/__tests__/kit/suspense-audit-lock.ts). Printed on
-// console.error alone, 368 reports went unread (rango-t226).
+// console.error alone, 368 reports went unread.
 
 const routes = [{ path: "/", Component: () => <p data-testid="page">home</p> }];
 

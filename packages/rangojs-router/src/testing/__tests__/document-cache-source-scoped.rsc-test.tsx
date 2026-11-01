@@ -1,5 +1,5 @@
 /**
- * rango-t238: the document cache keys a partial by its URL and the ids the
+ * The document cache keys a partial by its URL and the ids the
  * client holds, not by the page it is sent from. A partial whose diff
  * depends on the source page (one the browser's prefetch cache scopes with
  * `x-rsc-prefetch-scope`: a revalidate() rule that read the source and kept

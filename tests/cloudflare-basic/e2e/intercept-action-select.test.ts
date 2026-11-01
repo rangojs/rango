@@ -4,7 +4,7 @@ import { expectNoPageError, testId, waitForHydration } from "./helper";
 
 /**
  * A server action from an open intercept re-renders that intercept, not the
- * first one declared for the route (rango-t200; cloudflare-basic counterpart
+ * first one declared for the route (cloudflare-basic counterpart
  * of the router e2e app's cache.test.ts drawer action). Fixture:
  * src/pages/intercept-action-select.tsx. The drawer, declared second, opens
  * from /other while a parallel() default fills the @modal slot of the modal

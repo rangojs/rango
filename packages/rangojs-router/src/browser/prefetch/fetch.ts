@@ -205,7 +205,7 @@ export interface PrefetchSlot {
  * forced it or the response says `X-RSC-Prefetch-Scope: source`; under the
  * label's key when it says `params; <label>`, for the pages with equal values
  * of what a revalidate() rule read; else under the key every source page
- * shares (#1331, rango-t242).
+ * shares (#1331).
  */
 export function prefetchStorageSlot(
   forceSourceScope: boolean,

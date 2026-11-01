@@ -13,7 +13,7 @@ import { waitForHydration, testId, expectNoPageError } from "./helper";
  *   2. With loading()    — loaderData is inside a LoaderBoundary element
  *   3. loading(false)    — no boundary: the layout's inherited copy of the
  *      loader is redundant and never sent, on the document, an action or a
- *      same-route navigation (rango-t156)
+ *      same-route navigation
  *
  * The copy the layout holds must be the same on every request of a route, or
  * the layout gains or loses a loader entry and remounts. Variants 3 to 7

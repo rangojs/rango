@@ -141,7 +141,7 @@ export function ClockWidget() {
   );
 }
 
-// dc-t93: reads ShellErrorLoader with no Suspense above it.
+// Reads ShellErrorLoader with no Suspense above it.
 export function ShellErrorReader() {
   const { data } = useLoader(ShellErrorLoader);
   return <span data-testid="mini-shell-data">{data}</span>;

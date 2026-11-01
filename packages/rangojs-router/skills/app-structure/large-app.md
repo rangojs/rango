@@ -806,7 +806,7 @@ reverse(".issues", { projectId: "api" }); // /acme/api/issues
 
 - A link into another module (the project nav's "Account settings") is built
   on the server and passed as a prop or loader data. `useReverse(accountRoutes)`
-  in a project component gives a wrong URL with no error (dc-t57).
+  in a project component gives a wrong URL with no error.
 - A server layout stays held when `:projectId` changes (partial rendering by
   design), so links it rendered keep the old project. Render the project
   switcher and nav in a client component with `useReverse(routes)`, or give

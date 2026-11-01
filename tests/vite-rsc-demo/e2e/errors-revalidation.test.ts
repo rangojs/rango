@@ -4,7 +4,7 @@ import { expectNoPageError, prodDescribe, waitForHydration } from "./helper";
 
 /**
  * /errors/revalidation: a Save action succeeds, and the stock loader its
- * revalidation reruns throws while the toggle is on (dc-t28). The action
+ * revalidation reruns throws while the toggle is on. The action
  * resolves, the loader throws at its useLoader read, the nearest boundary
  * catches it (a local React ErrorBoundary, or the route's errorBoundary()),
  * useAction(saveNote).revalidationError reports it, the controls outside the

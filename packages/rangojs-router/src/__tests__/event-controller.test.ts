@@ -737,7 +737,7 @@ describe("createEventController", () => {
       });
 
       // The later call's settle window ends while the earlier one runs: its
-      // result stays until the action's next call (rango-t223).
+      // result stays until the action's next call.
       vi.advanceTimersByTime(100);
       expect(ctrl.getActionState("addToCart")).toMatchObject({
         state: "idle",
@@ -1023,7 +1023,7 @@ describe("createEventController", () => {
     });
   });
 
-  // rango-t223: an action's last settled call stays until its next call.
+  // An action's last settled call stays until its next call.
   describe("getActionState keeps an action's last settled call", () => {
     it("a result, an error and a revalidation error stay past the settle window; the next call reads loading with nothing", () => {
       const ctrl = createController();

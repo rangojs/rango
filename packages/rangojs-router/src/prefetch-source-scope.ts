@@ -1,6 +1,6 @@
 /**
  * The source group of a prefetch answer a revalidate() rule kept from the
- * page being left (#1331, rango-t242). Shared by the server, which reports
+ * page being left (#1331). Shared by the server, which reports
  * the group in `x-rsc-prefetch-scope: params; <label>` (rsc/rsc-rendering.ts),
  * and the browser, which stores the answer under that label and rebuilds it
  * from the page on screen to look it up (browser/prefetch/cache.ts).

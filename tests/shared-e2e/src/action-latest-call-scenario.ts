@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Hook lock row A3 (rango-t84): "If the same action fires several times, the hook
+ * Hook lock row A3: "If the same action fires several times, the hook
  * reports the latest call" (skills/hooks/handle-and-actions.md). The same
  * action is called twice and the later call returns first.
  *
@@ -73,7 +73,7 @@ export function runActionLatestCallTests(
         () => (window as unknown as ProbeWindow).__actionLatestLog ?? [],
       );
       // Through the full state: the later call's result, which stays until
-      // the action's next call (rango-t223). "Adding…" never comes back and
+      // the action's next call. "Adding…" never comes back and
       // the earlier call's result never shows.
       expect(distinct(log.map((entry) => entry.shown))).toEqual([
         "Adding…",
