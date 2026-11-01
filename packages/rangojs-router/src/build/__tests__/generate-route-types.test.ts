@@ -2054,9 +2054,9 @@ export const router = make();`,
     expect(result.basenameDiagnostic).toBeUndefined();
   });
 
-  it("takes routes and basename from the same call when two mount urls", () => {
+  it("takes routes and basename from the same call when two exported chains mount urls", () => {
     const result = buildWith(
-      `const r1 = createRouter({ basename: "/first" }).routes(({ path }) => [
+      `export const r1 = createRouter({ basename: "/first" }).routes(({ path }) => [
   path("/one", () => null, { name: "one" }),
 ]);`,
       `createRouter({ basename: getB() })`,
@@ -2117,5 +2117,131 @@ describe("isInSkippedScanDir", () => {
         join(root, ".claude", "worktrees", "x", "urls.tsx"),
       ),
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Several createRouter chains in one file (rango-t246): the exported chain
+// supplies the routes and the basename; a non-exported helper chain never wins
+// over it, and an unreadable exported mount is reported rather than hidden
+// behind the helper's readable one.
+// ---------------------------------------------------------------------------
+
+describe("several createRouter chains in one router file", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "rango-multi-chain-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const HELPER = `const helper = createRouter({ basename: "/x" }).routes(
+  urls(({ path }) => [path("/h", () => null, { name: "helper" })]),
+);`;
+  const APP_TREE = `urls(({ path }) => [path("/a", () => null, { name: "app" })])`;
+
+  function analyze(body: string) {
+    const routerPath = join(dir, "router.tsx");
+    writeFileSync(
+      routerPath,
+      `import { createRouter, urls } from "@rangojs/router";
+import { buildUrls } from "./build.js";
+${body}
+`,
+    );
+    return {
+      routes: buildCombinedRouteMapForRouterFile(routerPath).routes,
+      unreadable: detectUnresolvableIncludes(routerPath).filter(
+        (d) => d.reason === "unresolvable-routes",
+      ),
+    };
+  }
+
+  it("reports an unreadable exported mount instead of reading the helper before it", () => {
+    const { routes, unreadable } = analyze(
+      `${HELPER}\nexport const router = createRouter({}).routes(buildUrls());`,
+    );
+    expect(routes).toEqual({});
+    expect(unreadable.map((d) => d.detail)).toEqual([
+      expect.stringContaining("`.routes(buildUrls())`"),
+    ]);
+  });
+
+  it.each([
+    [
+      "export const",
+      `export const router = createRouter({}).routes(${APP_TREE});`,
+    ],
+    ["export default", `export default createRouter({}).routes(${APP_TREE});`],
+    [
+      "export const through satisfies",
+      `export const router = (createRouter({}).routes(${APP_TREE}) satisfies unknown);`,
+    ],
+    [
+      "export list",
+      `const router = createRouter({}).routes(${APP_TREE});\nexport { router };`,
+    ],
+    [
+      "renamed export list",
+      `const app = createRouter({}).routes(${APP_TREE});\nexport { app as router };`,
+    ],
+    [
+      "default export of a name",
+      `const router = createRouter({}).routes(${APP_TREE});\nexport default router;`,
+    ],
+  ])(
+    "reads the exported chain (%s) and not the helper before it",
+    (_label, exported) => {
+      const { routes, unreadable } = analyze(`${HELPER}\n${exported}`);
+      expect(routes).toEqual({ app: "/a" });
+      expect(unreadable).toEqual([]);
+    },
+  );
+
+  it("takes the basename from the exported chain", () => {
+    const { routes } = analyze(
+      `${HELPER}\nexport const router = createRouter({ basename: "/y" }).routes(${APP_TREE});`,
+    );
+    expect(routes).toEqual({ app: "/y/a" });
+  });
+
+  it("reads the exported chain when the helper comes after it", () => {
+    const { routes } = analyze(
+      `export const router = createRouter({}).routes(${APP_TREE});\n${HELPER}`,
+    );
+    expect(routes).toEqual({ app: "/a" });
+  });
+
+  it("does not fall back to a helper when the exported chain mounts nothing", () => {
+    const { routes, unreadable } = analyze(
+      `${HELPER}\nexport const router = createRouter({});`,
+    );
+    expect(routes).toEqual({});
+    expect(unreadable).toEqual([]);
+  });
+
+  it("still prefers a readable exported chain over an unreadable exported one", () => {
+    const { routes, unreadable } = analyze(
+      `export const first = createRouter({}).routes(buildUrls());\nexport const second = createRouter({}).routes(${APP_TREE});`,
+    );
+    expect(routes).toEqual({ app: "/a" });
+    expect(unreadable).toEqual([]);
+  });
+
+  it("reads a lone chain that is not exported, as before", () => {
+    const { routes } = analyze(
+      `const router = createRouter({ basename: "/x" }).routes(${APP_TREE});`,
+    );
+    expect(routes).toEqual({ app: "/x/a" });
+  });
+
+  it("reads the first non-exported chain when none is exported, as before", () => {
+    const { routes } = analyze(
+      `${HELPER}\nconst other = createRouter({}).routes(${APP_TREE});`,
+    );
+    expect(routes).toEqual({ helper: "/x/h" });
   });
 });

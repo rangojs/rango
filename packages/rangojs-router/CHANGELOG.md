@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed: `rango generate` reads the exported `createRouter` chain, not a helper router earlier in the file (rango-t246)
+
+**Before.** A router file with several `createRouter` chains took routes and
+basename from the first chain with a readable mount, exported or not. With
+`const helper = createRouter({ basename: "/x" }).routes(urls(...))` above
+`export const router = createRouter({}).routes(buildUrls())`, the command
+exited 0 and wrote the helper's routes under `/x`, so the app got the wrong
+routes and basename without a message.
+
+**Now.** The exported chain (`export const`, `export default`, or a name in
+`export { ... }`) always wins over one that is not exported, in routes and
+basename alike. When its mount cannot be read, `rango generate` reports it as
+unresolvable, as it does for a single-chain file, instead of falling back to
+the helper. Among several exported chains the first one with a readable mount
+still wins, and a file whose chains are all non-exported is read as before.
+
 ### Changed: a hover prefetch runs `prefetch: false` work, so the click sends no follow-up request (rango-t243)
 
 **Before.** Every prefetch deferred `loader(Def, { prefetch: false })` and the
