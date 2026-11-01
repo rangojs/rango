@@ -420,6 +420,7 @@ import {
   keptLayoutSourceOneShapePatterns,
   keptLayoutSourceTwoShapePatterns,
 } from "./pages/kept-layout-source.js";
+import { docCacheSourcePatterns } from "./pages/doc-cache-source.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
 import clientUrlsLoaderElementPatterns from "./client-urls-loader-element/urls.js";
@@ -1241,6 +1242,9 @@ export const urlpatterns = urls(
         include("/kept-layout-source/i18n", keptLayoutSourceLocalePatterns, {
           name: "keptLayoutSourceI18n",
         }),
+        // A kept hero above a PLP the document cache stores: its partial is
+        // the source page's only (e2e/doc-cache-source.test.ts, rango-t238).
+        include("/doc-cache-source", docCacheSourcePatterns),
         // Group behind a 5s middleware: pins optimistic presentation vs the
         // gated canonical request (e2e/client-urls-slow.test.ts). The landing
         // route sits OUTSIDE the middleware so the loader redirect is not

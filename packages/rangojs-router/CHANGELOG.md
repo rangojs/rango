@@ -39,6 +39,26 @@ url, { partial: { prefetch: true } })` still gets a speculative one; add
 `X-Rango-Prefetch === "1"` to recognise a prefetch should check that the
 header is present.
 
+### Fixed: the document cache no longer serves one page's navigation to another page with the same layouts (rango-t238)
+
+**Before.** `createDocumentCacheMiddleware()` keyed a client navigation by its
+URL and the segments the client held, not by the page it came from. Under a
+layout whose `revalidate()` re-renders a category hero only when the category
+changes, `/c/audio -> /c/audio?sort=x` kept the hero and was stored. `/c/tv`
+holds the same segments, so its click to `/c/audio?sort=x` got that answer and
+kept the tv hero above the audio list, for every visitor until the entry
+expired. An intercept whose `when` reads the page being left had the same gap.
+
+**After.** A navigation whose answer depends on the page it came from (a
+`revalidate()` that read `currentParams`, `currentUrl` or `fromRouteName` kept
+a segment, or an intercept targets the route) is sent `cache-control: private,
+no-cache` over the route's own header and is not stored, even when a
+middleware sets `Cache-Control` after `next()`. These are the answers the
+browser's prefetch cache already scopes with `x-rsc-prefetch-scope`. A
+navigation whose rule re-rendered the segment is right from every page and is
+stored and served as before, and documents are unchanged. Nothing changes in
+your code.
+
 ### Fixed: `@rangojs/router/testing/e2e` stops the whole dev or preview server, not only `pnpm` ([#1352](https://github.com/rangojs/rango/pull/1352))
 
 **Before.** `useFixture` started `pnpm dev` or `pnpm preview` without making it a

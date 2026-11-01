@@ -376,7 +376,15 @@ The public DOM seam is
   [router/match-middleware/cache-lookup.ts](../../src/router/match-middleware/cache-lookup.ts)
   (`storedEntrySends`) when, on equal params, it keeps a held segment whose
   `revalidate()` it skipped, or the route's own segments on a search-only
-  change. Two tests lock the class:
+  change. A scoped partial is marked `_payloadSourceScoped`
+  ([server/request-context.ts](../../src/server/request-context.ts)) and sent
+  `NOT_REUSED` by `rsc/rsc-rendering.ts`, and
+  [cache/document-cache-policy.ts](../../src/cache/document-cache-policy.ts)
+  (`shouldCacheResponse`) never stores it: the document cache keys a partial
+  without its source (rango-t238,
+  [document-cache-source-scoped.rsc-test.tsx](../../src/testing/__tests__/document-cache-source-scoped.rsc-test.tsx),
+  [e2e/doc-cache-source.test.ts](../../e2e/doc-cache-source.test.ts)). Two
+  tests lock the class:
   [source-independence.rsc-test.tsx](../../src/testing/__tests__/source-independence.rsc-test.tsx)
   adopts every shared prefetch of its fixture
   ([fixtures/source-independence-router.tsx](../../src/testing/__tests__/fixtures/source-independence-router.tsx),

@@ -1257,6 +1257,8 @@ describe("createDocumentCacheMiddleware", () => {
             prefetch?: boolean;
             /** The render marks its payload as carrying deferred units. */
             deferring?: boolean;
+            /** The render scopes its payload to its source page (rango-t238). */
+            sourceScoped?: boolean;
             cacheControl?: string;
             at?: string;
           } = {},
@@ -1271,6 +1273,7 @@ describe("createDocumentCacheMiddleware", () => {
           const requestCtx = mockRequestCtx as any;
           const next = vi.fn(async () => {
             if (options.deferring) requestCtx._payloadDeferred = true;
+            if (options.sourceScoped) requestCtx._payloadSourceScoped = true;
             return new Response(body, {
               headers: {
                 "Cache-Control":
@@ -1357,6 +1360,24 @@ describe("createDocumentCacheMiddleware", () => {
           writes: 1,
         });
         expect((await serve("unused")).body).toBe("complete");
+      });
+
+      it("a response scoped to its source page is not written, whatever its Cache-Control", async () => {
+        const { serve, keys } = await slot();
+        // The Cache-Control (a middleware's, after next()) still opts in.
+        expect(await serve("from audio", { sourceScoped: true })).toEqual({
+          status: null,
+          body: "from audio",
+          reads: 1,
+          writes: 0,
+        });
+        expect(keys()).toEqual([]);
+        // Another source with the same ids renders its own body.
+        expect(await serve("from tv")).toMatchObject({
+          status: "MISS",
+          body: "from tv",
+          writes: 1,
+        });
       });
 
       // rsc-rendering.ts answers such a response with `private, no-cache`,

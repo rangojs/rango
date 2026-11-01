@@ -1134,15 +1134,21 @@ function renderPreparedRscResponse<TEnv>(
   // (instead of the default source-agnostic wildcard). See prefetchScopeOf.
   if (prefetchScope !== undefined) {
     rscHeaders["x-rsc-prefetch-scope"] = prefetchScope;
+    // A shared cache keys a partial by URL and the ids the client holds, not
+    // by its source page (document-cache.ts): stored, a scoped answer would
+    // serve its diff to another page that holds the same ids (rango-t238).
+    reqCtx._payloadSourceScoped = true;
   }
-  // prefetch: false (docs/design/prefetch-false.md, R7). A response that
-  // carries deferred units answers one page's prefetch, and a fill is the
-  // second half of one adoption: neither is reused by a shared cache or the
-  // document cache (which also refuses a payload marked `_payloadDeferred`),
-  // whatever Cache-Control the route set; so is a stale partial render, which
-  // a shared cache keyed by URL must not store or serve. A route with no flag
-  // keeps its headers.
+  // Not reused by a shared cache or the document cache (which also refuses a
+  // payload marked `_payloadDeferred` or `_payloadSourceScoped`), whatever
+  // Cache-Control the route set: a partial scoped to its source page (above);
+  // a response that carries deferred units, which answers one page's prefetch,
+  // and a fill, the second half of one adoption (prefetch: false,
+  // docs/design/prefetch-false.md, R7); and a stale partial render, which a
+  // shared cache keyed by URL must not store or serve. Any other route keeps
+  // its headers.
   if (
+    reqCtx._payloadSourceScoped ||
     reqCtx._payloadDeferred ||
     (isPartial &&
       (reqCtx._requestKind === "fill" ||

@@ -248,6 +248,26 @@ write and the cache cannot tell. Each renders at the origin, is never stored,
 and answers `private, no-cache`. An app that wants the shared entry refreshed
 after a write tags it and calls `updateTag()`.
 
+Nor does it store a partial whose diff depends on the source page
+(rango-t238). A partial's key is its URL plus a hash of the segment ids the
+client holds (`_rsc_segments`), not the page it came from. That is enough
+when what the server sends depends only on those ids, and not when a
+`revalidate()` rule read the source (`currentParams`, `currentUrl`,
+`fromRouteName`) and kept a segment, or an intercept targets the route. Take
+a category layout whose rule re-renders the hero only when the category
+changes: `/c/audio -> /c/audio?sort=x` keeps the hero, and `/c/tv` holds the
+same ids. Stored, the audio answer served the tv page, which kept its tv
+hero above the audio list, for every visitor until the entry expired. Such a
+response is exactly one the browser's prefetch cache scopes
+(`x-rsc-prefetch-scope`, `prefetchScopeOf` in `router/source-reads.ts`), so
+the RSC handler marks it `_payloadSourceScoped` and sends it
+`private, no-cache` over the route's own header, and `shouldCacheResponse`
+refuses the mark, which covers a `Cache-Control` a middleware writes after
+`next()`. A partial whose rule re-rendered the segment carries no scope: it
+is right from every page, so it is stored and served as before. Keying the
+entry by the source path instead would split every route's partials by page
+to fix the few whose rules read the source.
+
 A stale entry's refresh re-runs the whole downstream pipeline (`next()`) in a
 `waitUntil` task while the visitor's request is still finishing. It used to
 run on the visitor's request context, so a cookie written in the re-run, or a

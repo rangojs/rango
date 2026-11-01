@@ -71,6 +71,7 @@ export function shouldCacheResponse(
     RequestContext,
     | "_payloadVisitorTheme"
     | "_payloadDeferred"
+    | "_payloadSourceScoped"
     | "_payloadVisitorLocation"
     | "_documentLocationState"
   >,
@@ -115,6 +116,14 @@ export function shouldCacheResponse(
   // middleware can replace that after next(), and a navigation answered
   // with this body would show a fallback no fill ever replaces.
   if (requestCtx?._payloadDeferred) {
+    return null;
+  }
+
+  // A partial scoped to its source page (rango-t238): this cache keys it by
+  // URL and the ids the client holds, so it would answer another page with
+  // the same ids. rsc-rendering.ts sends it NOT_REUSED; a middleware can
+  // replace that after next().
+  if (requestCtx?._payloadSourceScoped) {
     return null;
   }
 

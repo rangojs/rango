@@ -666,6 +666,15 @@ export interface RequestContext<
   _payloadDeferred?: boolean;
 
   /**
+   * @internal Set by the RSC handler when a partial response carries an
+   * `x-rsc-prefetch-scope` (router/source-reads.ts prefetchScopeOf): its diff
+   * is right for its source page, or a group of them, only. The document
+   * cache keys a partial without its source, so it does not store that
+   * response, whatever Cache-Control it ends up with (rango-t238).
+   */
+  _payloadSourceScoped?: boolean;
+
+  /**
    * @internal What the request says it is: a speculative `<Link>` prefetch,
    * an intent prefetch (hover, `prefetch()`) or a fill (`prefetch: false`),
    * read once at creation (segment-resolution/prefetch-deferral.ts
@@ -1040,6 +1049,7 @@ export type PublicRequestContext<
   | "_documentCacheRender"
   | "_payloadVisitorTheme"
   | "_payloadDeferred"
+  | "_payloadSourceScoped"
   | "_requestKind"
   | "_payloadVisitorLocation"
   | "_locationState"
