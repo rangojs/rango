@@ -83,6 +83,31 @@ Nothing changes in app code. A test that reads the state cookie after an
 action sees a third part; compare its first two parts to tell a rotation from
 a write.
 
+### Fixed: a link to a page in the tab's history shows it fresh after another tab's write
+
+**Before.** A tab that hears no broadcast of another tab's server action or
+`invalidateClientCache()` (its page shares no segment with the other tab's,
+or the app sets `crossTabSync: false`) learns of the write when it next reads
+the state cookie. A link or `router.push()` to a page in its history cache
+looked up that page's entry before reading the cookie, so the request named
+the entry's segments as held. The server kept the route and every layout
+loader with no `revalidate()`, and the tab showed the page as it was before
+the write. Back read the cookie first and was not affected.
+
+**Now.** A navigation reads the state cookie before it looks up the target's
+history entry, as Back does. The entry is marked stale first, the request
+names none of its segments as held, and the page renders fresh.
+
+```text
+tab B: /shop/basket (cart:0), then /account; no broadcast reaches it
+tab A: "Add to cart"
+tab B: link to /shop/basket
+  before: cart:0, held from the history entry
+  now:    cart:1
+```
+
+Nothing changes in app code.
+
 ### Breaking: a server action marks prefetches stale instead of flushing them, and stops rotating the state cookie ([#1329](https://github.com/rangojs/rango/issues/1329))
 
 **Before.** Every action without `keepClientCache()` flushed the prefetch
