@@ -80,13 +80,13 @@ function getCacheLogs(stdout: string): {
 /**
  * The crumbs the /cache-intercept-crumbs layout shows with the intercept open
  * over its index, in order: inside the slot, the loader's crumb (pushed
- * before its first await) is ahead of the handler's (rango-t189).
+ * before its first await) is ahead of the handler's.
  */
 const CACHE_INTERCEPT_CRUMBS = ["layout", "shared-loader", "modal-a", "index"];
 
 /**
  * /cache-intercept-when: two intercepts target the item route under cache(),
- * the modal selected from the index and the drawer from /other (rango-t194).
+ * the modal selected from the index and the drawer from /other.
  * Open the item from `source` and expect its own intercept, never the other's,
  * in one request: an answer that carries another intercept's slot misses the
  * selected one, and the browser refetches the whole page.
@@ -124,7 +124,7 @@ async function openWhenIntercept(
  * /other and call its server action. The answer keeps the drawer, with its
  * loader re-run, and opens nothing else: the action re-rendered the first
  * intercept declared, the modal, next to the drawer, and the drawer kept its
- * loader data (rango-t200).
+ * loader data.
  */
 async function actFromWhenDrawer(page: Page): Promise<void> {
   await page.getByTestId("ciw-other-item").click();
@@ -195,7 +195,7 @@ async function clickToKeyedItem(page: Page, link: string): Promise<void> {
 }
 
 /**
- * /cache-intercept-key: a cache({ key }) route with an intercept (rango-t201).
+ * /cache-intercept-key: a cache({ key }) route with an intercept.
  * Its key() names the path alone, and the key() result replaced the whole
  * default key, request kind included, so every kind read and wrote one
  * record: after the intercept stored its record (no item page), a document
@@ -263,7 +263,7 @@ async function openCrumbsIntercept(page: Page): Promise<void> {
  * The navigation holds the layout, so it stays as the index page left it, as
  * on a live render: neither its render stamp nor its crumb (the stamp, pushed
  * by its handler) change, not even for a frame. The HIT used to re-send the
- * crumb the record's render pushed (rango-t195).
+ * crumb the record's render pushed.
  */
 async function expectHeldLayoutStampKept(page: Page): Promise<void> {
   await openCrumbsIntercept(page);
@@ -888,9 +888,9 @@ test.describe("cache-intercept-routes", () => {
     );
   });
 
-  // rango-t184: the detail route and its intercept both declare the loader
+  // The detail route and its intercept both declare the loader
   // that pushes "shared-loader". The HIT ran it as the route's, so its crumb
-  // was filed under a segment the response does not match. rango-t189: the
+  // was filed under a segment the response does not match. The
   // HIT listed it after the intercept handler's crumb, the MISS before it.
   test("a HIT of the intercept shows the crumbs of the MISS, a loader the route and the intercept both declare included", async ({
     page,
@@ -930,7 +930,7 @@ test.describe("cache-intercept-routes", () => {
     );
   });
 
-  // rango-t194: the record key named only the URL, so opening the item from
+  // The record key named only the URL, so opening the item from
   // /other HIT the record the index's modal wrote and showed the modal.
   test("two intercepts selected by when() each get their own record: each source opens its own intercept, MISS and HIT", async ({
     page,
@@ -963,7 +963,7 @@ test.describe("cache-intercept-routes", () => {
     );
   });
 
-  // rango-t201: see expectKeyedKindsKeepTheirOwnRecord.
+  // See expectKeyedKindsKeepTheirOwnRecord.
   test("under a cache({ key }), a document, a plain navigation and the intercept each keep their own record", async ({
     page,
   }) => {
@@ -971,7 +971,7 @@ test.describe("cache-intercept-routes", () => {
     await expectKeyedKindsKeepTheirOwnRecord(page, f.url);
   });
 
-  // rango-t200: an action skipped when() and re-rendered the first intercept
+  // An action skipped when() and re-rendered the first intercept
   // declared for the route, whichever was open.
   test("an action from the second intercept declared keeps that intercept, its loader re-run, and opens no other", async ({
     page,
@@ -1033,7 +1033,7 @@ test.describe("cache-intercept-routes (production)", () => {
     await expect(page.getByTestId("cache-intercept-detail")).toBeVisible();
   });
 
-  // rango-t184: see the dev describe's case.
+  // See the dev describe's case.
   test("a HIT of the intercept shows the crumbs of the MISS, a loader the route and the intercept both declare included", async ({
     page,
   }) => {
@@ -1049,7 +1049,7 @@ test.describe("cache-intercept-routes (production)", () => {
     await openCrumbsIntercept(page);
   });
 
-  // rango-t195: see the dev describe's case.
+  // See the dev describe's case.
   test("a HIT of the intercept keeps the held layout's crumb on screen", async ({
     page,
   }) => {
@@ -1061,7 +1061,7 @@ test.describe("cache-intercept-routes (production)", () => {
     await expectHeldLayoutStampKept(page);
   });
 
-  // rango-t194: see the dev describe's case.
+  // See the dev describe's case.
   test("two intercepts selected by when() each get their own record: each source opens its own intercept, MISS and HIT", async ({
     page,
   }) => {
@@ -1079,7 +1079,7 @@ test.describe("cache-intercept-routes (production)", () => {
     await openWhenIntercept(page, "other");
   });
 
-  // rango-t201: see expectKeyedKindsKeepTheirOwnRecord.
+  // See expectKeyedKindsKeepTheirOwnRecord.
   test("under a cache({ key }), a document, a plain navigation and the intercept each keep their own record", async ({
     page,
   }) => {
@@ -1087,7 +1087,7 @@ test.describe("cache-intercept-routes (production)", () => {
     await expectKeyedKindsKeepTheirOwnRecord(page, f.url);
   });
 
-  // rango-t200: see the dev describe's case.
+  // See the dev describe's case.
   test("an action from the second intercept declared keeps that intercept, its loader re-run, and opens no other", async ({
     page,
   }) => {

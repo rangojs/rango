@@ -124,7 +124,7 @@ export interface LinkProps extends Omit<
    * and kept the segment, or a prerendered target that keeps segments on
    * equal params (`storedEntrySends`), shares the answer between the pages
    * with equal values of what was read (`x-rsc-prefetch-scope: params`,
-   * #1331, rango-t242). Every other response stays shared. Use the key
+   * #1331). Every other response stays shared. Use the key
    * for what the server does not track: `context` in a `revalidate()`, or
    * a `Referer` read.
    *

@@ -105,7 +105,7 @@ export function runKeptLayoutSourceTests(
       await expect(page.getByTestId("kls-hero")).toHaveCount(0);
     });
 
-    test(`${shape}-shape template: /cart prefetched on one product page serves another product page with one request, and a category page prefetches its own (rango-t242)`, async ({
+    test(`${shape}-shape template: /cart prefetched on one product page serves another product page with one request, and a category page prefetches its own`, async ({
       page,
     }) => {
       const cartRequests = countRequests(page, `${base}/cart`);
@@ -139,7 +139,7 @@ export function runKeptLayoutSourceTests(
   // The locale rule above paginated pages ("/kept-layout-source/i18n").
   const i18n = "/kept-layout-source/i18n";
 
-  test("locale rule: the home link prefetched on page 1 serves page 2 of the same locale with one request (rango-t242)", async ({
+  test("locale rule: the home link prefetched on page 1 serves page 2 of the same locale with one request", async ({
     page,
   }) => {
     const homeRequests = countRequests(page, `${i18n}/en`);
@@ -159,7 +159,7 @@ export function runKeptLayoutSourceTests(
     expect(homeRequests()).toBe(1);
   });
 
-  test("locale rule: the /en home prefetched on an /en page is not adopted by a /fr page, which keeps no /fr layout above /en (rango-t242)", async ({
+  test("locale rule: the /en home prefetched on an /en page is not adopted by a /fr page, which keeps no /fr layout above /en", async ({
     page,
   }) => {
     const homeRequests = countRequests(page, `${i18n}/en`);

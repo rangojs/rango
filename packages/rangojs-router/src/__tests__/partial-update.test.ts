@@ -1133,7 +1133,7 @@ describe("partial-update", () => {
   });
 
   /**
-   * rango-t126: an intercept answer to a request that held no segments lists
+   * An intercept answer to a request that held no segments lists
    * the layouts and the slot only; the server never renders the page under
    * the intercept. The browser keeps the page the answer lands over, as the
    * server lists it for a request that holds it (intercept-utils.ts
@@ -3178,7 +3178,7 @@ describe("an action refetch whose loader throws on its rerun", () => {
 
   // The background refresh after Back onto a stale entry keeps the page on
   // screen: it rejects before it commits anything, and navigation-bridge
-  // logs "Background revalidation failed" (dc-t65).
+  // logs "Background revalidation failed".
   it("a stale revalidation whose loader throws rejects with the error and commits nothing", async () => {
     let caught: unknown;
     const store = makeNavigationStore({ initialSegments: [seg("R0")] });
@@ -3218,7 +3218,7 @@ describe("an action refetch whose loader throws on its rerun", () => {
   });
 
   // A full payload (isPartial: false) answers the refresh when the server
-  // could not match it partially: the same rule keeps the page (dc-t68).
+  // could not match it partially: the same rule keeps the page.
   it("a stale revalidation answered with a full payload whose loader throws rejects and commits nothing", async () => {
     let caught: unknown;
     const onUpdate = vi.fn();

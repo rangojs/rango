@@ -286,7 +286,7 @@ describe.each(
  * newer navigation takes over, neither page's value shows over the page being
  * left, the newer page ends on its own value, and the held page's late
  * response is ignored; one frame of the held page's value over the newer page
- * is tracked as rango-t218 and not asserted here. When the held page fails
+ * is a known gap and not asserted here. When the held page fails
  * into an error boundary, its value shows only with the boundary.
  */
 class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {

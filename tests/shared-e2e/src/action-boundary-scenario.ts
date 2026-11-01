@@ -7,12 +7,12 @@ import { waitForShellHydration } from "./shell-request.js";
  * An action that writes, then throws, on a route with its own errorBoundary()
  * under a layout whose loader reads the write (a cart count). The user stays
  * on the page. The error-boundary response is the action's revalidation cut
- * at the boundary (rango-t124): above it, what a successful action would
+ * at the boundary: above it, what a successful action would
  * re-run (the layout's loader); at it, the boundary. So the page shows the
  * boundary and the write together, and a link under the same layout keeps
  * the fresh count. Other tabs refresh and a fresh load read the write too.
  * An earlier action's follow-up, owed to the page while it shows the
- * boundary, holds the boundary and re-renders what is above it (rango-t154).
+ * boundary, holds the boundary and re-renders what is above it.
  * Fixture: action-boundary.tsx in each app, mounted at /action-boundary; both
  * apps call this from a dev and a (production) describe.
  */
@@ -82,7 +82,7 @@ export function runActionBoundaryTests(
     await show(fresh);
     await expect(fresh.getByTestId("ab-cart")).toHaveText("cart:1");
 
-    // rango-t124: the boundary's response re-ran the layout's loader.
+    // The boundary's response re-ran the layout's loader.
     await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
   });
 
@@ -145,7 +145,7 @@ export function runActionBoundaryTests(
     await expect(page.getByTestId("ab-nav-state")).toHaveText("idle");
     await page.waitForTimeout(500);
 
-    // rango-t213: Back restores the boundary the user left; its
+    // Back restores the boundary the user left; its
     // revalidation holds it and refreshes what is above it.
     await expectSameBoundary(page);
     await expect(page.getByTestId("ab-cart")).toHaveText("cart:2");
@@ -190,7 +190,7 @@ export function runActionBoundaryTests(
     await page.waitForTimeout(500);
     expect(revalidations).toBe(0);
 
-    // rango-t213: the restored page holds only what is above the boundary.
+    // The restored page holds only what is above the boundary.
     await page.getByTestId("ab-to-page").click();
     await expect(page.getByTestId("ab-page")).toBeVisible();
     await expect(page.getByTestId("ab-boundary")).toHaveCount(0);
@@ -217,7 +217,7 @@ export function runActionBoundaryTests(
     await expect(page.getByTestId("ab-nav-state")).toHaveText("idle");
     await page.waitForTimeout(500);
 
-    // rango-t209: the cross-tab refresh holds the boundary, as the
+    // The cross-tab refresh holds the boundary, as the
     // follow-up does, and refreshes what is above it.
     await expectSameBoundary(page);
     const url = new URL(response.url());
@@ -252,7 +252,7 @@ export function runActionBoundaryTests(
     await page.getByTestId("ab-slow").click();
     await expect(page.getByTestId("ab-slow-state")).not.toHaveText("idle");
 
-    // rango-t125: X's boundary is dropped and aborts nothing: Y's
+    // X's boundary is dropped and aborts nothing: Y's
     // useAction() reaches its result and its call resolves with it.
     await expect(page.getByTestId("ab-slow-result")).toHaveText("y-done", {
       timeout: 10_000,
@@ -281,7 +281,7 @@ export function runActionBoundaryTests(
     );
     await expect(page.getByTestId("ab-boundary")).toBeVisible();
 
-    // rango-t125: the boundary's response still streams (its Suspense tail)
+    // The boundary's response still streams (its Suspense tail)
     // when it aborts the other actions; the action's own entry keeps its
     // error for the layout's reader, and counts as in flight until the
     // stream ends, as a successful action does.
@@ -413,7 +413,7 @@ export function runActionBoundaryTests(
       await expect(page.getByTestId("ab-page")).toBeVisible();
     });
 
-    // rango-t154: the follow-up held W's boundary and re-rendered above it.
+    // The follow-up held W's boundary and re-rendered above it.
     await expectBoundaryKept(page, followUp);
     await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
   });

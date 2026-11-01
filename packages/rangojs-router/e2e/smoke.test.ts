@@ -34,7 +34,7 @@ const E2E_BASIC_ROOT = "./e2e/e2e-basic";
  * fullyParallel with retries, so several workers (and every retry's fresh
  * worker) reach it. Unguarded, each ran `vite build` in this directory, whose
  * emptyOutDir wiped dist/ under another worker's `vite preview`: a preview
- * starting mid-build exited with code 1 (dc-t81), and a running one lost its
+ * starting mid-build exited with code 1, and a running one lost its
  * assets (waitForHydration timeout). One build per Playwright run: workers
  * share the runner as parent, so process.ppid keys the lock and marker.
  */

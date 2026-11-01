@@ -9,9 +9,7 @@ import {
 
 // An item opened as an intercept over a list, with a form whose action
 // throws, under a layout with a cart count. The layout's errorBoundary() is
-// the one that handles the intercept (it has none of its own); no test reads
-// it yet, because an action that throws inside an intercept shows no boundary
-// (rango-t151), whose tests will. Mounted at /intercept-boundary. Body:
+// the one that handles the intercept (it has none of its own). Mounted at /intercept-boundary. Body:
 // tests/shared-e2e/src/intercept-boundary-scenario.ts.
 function InterceptBoundaryLayout() {
   return (

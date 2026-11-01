@@ -17,7 +17,7 @@ import type { LoaderDefinition } from "../../types.js";
 import { renderRoute } from "../render-route.js";
 import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 
-// Documented behaviour (rango-t96, owner decision C; #1046): a component that
+// Documented behaviour (owner decision, #1046): a component that
 // FIRST MOUNTS while React holds a transition() page (a menu opened on the
 // page being left, a lazy component or a <Suspense> there resolving during
 // the hold) seeds every router hook from the router's live state, so it reads

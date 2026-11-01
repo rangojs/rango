@@ -745,7 +745,7 @@ describe("captureAndStoreShell", () => {
     expect(loaderRecords).toHaveLength(0);
   });
 
-  // dc-t89 (G): a settled container the codec cannot pin would leave its
+  // A settled container the codec cannot pin would leave its
   // loader to run on every HIT, over a prelude rendered from the capture's
   // value. The capture fails instead, as an encode error does (#927).
   for (const [label, fail] of [
@@ -778,7 +778,7 @@ describe("captureAndStoreShell", () => {
     });
   }
 
-  // Snapshot size cap (issue #651, reversed for documents by dc-t89): a
+  // Snapshot size cap (issue #651, reversed for documents): a
   // document HIT without its loaders' pins hydrates over a prelude rendered
   // from other data. Over the cap the entry keeps the navigation half only
   // (the doc record, no prelude, no pins), the attempt refuses so the key
@@ -1359,7 +1359,7 @@ describe("captureAndStoreShell: snapshot pruning", () => {
     expect(entry.prunedRecords).toBe("segment:1");
   });
 
-  // dc-t89: no document shell without every pin; navigations replay the doc record.
+  // No document shell without every pin; navigations replay the doc record.
   it("over the cap stores the doc record in a navigation-only entry, without the pins", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -1523,7 +1523,7 @@ describe("captureAndStoreShell: a prerender-served capture's handles record", ()
     });
   });
 
-  // dc-t89: over the cap there is no document shell, and a prerender-served
+  // Over the cap there is no document shell, and a prerender-served
   // capture has no navigation half (no doc record). It stores the tombstone,
   // which the document gate reads as a MISS ahead of a build shell
   // (rsc-rendering-shell-ppr.test.ts "a runtime tombstone over a build shell").

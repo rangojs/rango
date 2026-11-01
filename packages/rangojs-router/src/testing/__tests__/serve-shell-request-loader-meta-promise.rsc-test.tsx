@@ -152,7 +152,7 @@ const router = createRouter({}).routes(
       ]),
       include("/section", sectionUrls, { name: "section" }),
       include("/cu", group, { name: "cu" }),
-      // The target design's cases (dc-t87).
+      // The target design's cases.
       path("/t/reject/:id", Page, { name: "tReject", ppr: true }, () => [
         loader(RejectingTitleLoader, { ssr: false }),
       ]),
@@ -181,7 +181,7 @@ const router = createRouter({}).routes(
       path("/t/dep/:id", Page, { name: "tDep", ppr: true }, () => [
         loader(DependentGridLoader, { ssr: false }),
       ]),
-      // N-tests (dc-d141).
+      // N-tests.
       path("/t/null/:id", Page, { name: "tNull", ppr: true }, () => [
         loader(NullTitleLoader, { ssr: false }),
       ]),
@@ -569,7 +569,7 @@ describe("#1182: the shell keeps the resolved values of an ssr: false loader's p
     }
   });
 
-  // dc-t89: an entry that could not keep its loader pins serves no document
+  // An entry that could not keep its loader pins serves no document
   // HIT, so its title and data come from the MISS's own run.
   it("N4: an entry without loader pins (maxSnapshotBytes) is a document MISS: it hydrates with its run's title", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});

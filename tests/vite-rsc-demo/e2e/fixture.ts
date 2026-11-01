@@ -9,7 +9,7 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
   const [name, ...args] = options.command.split(" ");
   // detached makes the child a process-group leader (pgid === pid), so kill()
   // can signal the whole tree. pnpm spawns vite as a grandchild; a plain
-  // child.kill() stops only pnpm and leaves vite running (rango-t245).
+  // child.kill() stops only pnpm and leaves vite running.
   const child = x(name!, args, {
     nodeOptions: { ...options, detached: true },
   }).process!;

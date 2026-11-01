@@ -9,7 +9,7 @@
  * request. The browser stores a prefetch under one key for every source page
  * unless the response says `x-rsc-prefetch-scope: source` (that page only)
  * or `params; <label>` (the pages with equal values of what the kept rules
- * read of the source, rango-t242), and a page that adopts it renders ITS
+ * read of the source), and a page that adopts it renders ITS
  * copy of every kept id. A keep decided for page A and
  * applied on page B shows B's copy where B's own request would have sent a
  * new one: the category hero above the product page and /cart.
@@ -282,7 +282,7 @@ describe("a shared prefetch renders the same on every source page", () => {
           } else if (label !== undefined) {
             // A params-scoped answer is keyed by what the kept rules read of
             // A: every page with equal values adopts it, and the property
-            // must then hold for it as for a shared one (rango-t242).
+            // must then hold for it as for a shared one.
             const adoptable = pageMatchesParamsLabel(label, screenB.page!);
             expect(adopted === null, `${triple} [${label}]`).toBe(!adoptable);
             if (!adopted) {

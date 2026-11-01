@@ -271,7 +271,7 @@ export function createServerActionBridge(
    * - Never over an intercept: a request holding no segments drops the page
    *   under it (match-result.ts buildMatchResult). Checked when it would run,
    *   against the page then on screen; the debt is dropped there.
-   * - Never supersedes a navigation the user started (dc-t114): it waits for
+   * - Never supersedes a navigation the user started: it waits for
    *   NavigationEntry.settled, then looks again. A navigation that failed
    *   keeps its error on screen, and the debt is dropped.
    * - Runs again when it is left before its commit (a navigation, or an action
@@ -322,7 +322,7 @@ export function createServerActionBridge(
    * R6: an action that starts while the follow-up has not committed leaves
    * it, and the batch's end owes it again. Its request may predate that
    * action's write, and its commit could land after the action's own,
-   * moving data on screen backwards (dc-t110). Through the controller, so
+   * moving data on screen backwards. Through the controller, so
    * the navigation it started stops being current.
    */
   function leaveFollowUp(): void {
@@ -339,7 +339,7 @@ export function createServerActionBridge(
    * repairs. Resolves with whether it started and the error of a loader
    * that threw on it. Never starts while a navigation the user started may
    * be superseded (unsettledUserNavigation): its startNavigation would
-   * abort it (dc-t114). A repair that cannot start is owed at the batch's
+   * abort it. A repair that cannot start is owed at the batch's
    * end instead (finalizeAction). `run` (the follow-up's) is handed the
    * refetch's navigation, and told once whether it ended left before its
    * commit.

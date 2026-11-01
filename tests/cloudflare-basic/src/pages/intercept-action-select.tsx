@@ -3,7 +3,7 @@ import { Link, Outlet } from "@rangojs/router/client";
 import { IasDrawerAction } from "./intercept-action-select.client.js";
 import { IasDrawerLoader } from "./intercept-action-select.defs.js";
 
-// e2e/intercept-action-select.test.ts (rango-t200), the cloudflare-basic
+// e2e/intercept-action-select.test.ts, the cloudflare-basic
 // counterpart of the router e2e app's /cache-intercept-when drawer action.
 // Two intercepts target the item route, each selected by its own when(): the
 // modal from /list, declared first, and the drawer from /other, declared

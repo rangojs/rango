@@ -151,7 +151,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // the reveal barrier (NavigationProvider.tsx) +11B. Together ~49468B.
 //
 // Raised 48.375KB -> 48.5KB on 2026-10-13 for `Component.use` in
-// clientUrls() (dc-t45), measured on main d588d049 49388B -> 49497B (+109B
+// clientUrls(), measured on main d588d049 49388B -> 49497B (+109B
 // gzip; +98B without the fixture group, whose imports of the helpers add
 // export entries). A deliberate call the user approved with the feature: a
 // group's path(), layout() and intercept() read the mounted component's
@@ -163,9 +163,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // main sat 148B under the old limit, and #1137 took ~124B. Measured on top of
 // #1137 (2abd2527a) with the review fixes: 49601B.
 //
-// Raised 48.5KB -> 48.875KB on 2026-10-13 for dc-t28 (#1129), measured on
+// Raised 48.5KB -> 48.875KB on 2026-10-13 for #1129, measured on
 // main ae761c590 49602B -> 50037B (+435B gzip), in two parts, as the user
-// decided for #1129 (dc-c155): split them, and keep useAction in both apps'
+// decided for #1129: split them, and keep useAction in both apps'
 // action-failure fixtures. Router code +154B: a loader that throws on an
 // action's revalidation throws at its read (segment-system.tsx
 // buildLoaderStreams inPlace on the action lane, a loader redirect() kept in
@@ -179,7 +179,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // revalidationError in both apps. useAction's getActionId guidance became
 // dev-only in the same change (about 225B less for every app calling it).
 //
-// Raised 48.875KB -> 49KB on 2026-10-13 for dc-t56 (#1151), measured on main
+// Raised 48.875KB -> 49KB on 2026-10-13 for #1151, measured on main
 // be7ef4e82 50037B -> 50135B (+98B gzip): useHref() and relative
 // useRouter().push/replace/prefetch fill a parameterized include() mount from
 // the route params (substitutePatternParams, already in the chunk for
@@ -193,7 +193,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Raised 49KB -> 49.375KB on 2026-10-14 for the #1164/#1165 stack, measured on
 // cloudflare-basic from main 5c9d4ddf0 50164B -> 50437B (+273B gzip; the same
 // change measured +261B on e9d3fcd75, the rest is gzip interplay with #1173).
-// Three 128B steps, the owner's call (dc-q41, then one more step) after
+// Three 128B steps, the owner's call (then one more step) after
 // trimming. Handle values and
 // useSegments() commit with the page (useCommitAnchoredState in
 // browser/react/use-handle.ts; its "use no memo" opt-out saved 107B), a
@@ -204,7 +204,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // restores in that commit. None of it can load lazily: it runs in every
 // navigation's commit and every popstate.
 //
-// Raised 49.375KB -> 49.5KB on 2026-10-22 for rango-t126, measured on
+// Raised 49.375KB -> 49.5KB on 2026-10-22 for the whole-intercept answer fix, measured on
 // cloudflare-basic from main d824ba672 50517B -> 50634B (+117B gzip): an
 // intercept answer to a request that held no segments keeps the page under
 // the slot (browser/intercept-utils.ts wholeInterceptMatched, applied where
@@ -212,7 +212,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // runs on every navigation and action response. One 128B step, the owner's
 // call.
 //
-// Raised 49.5KB -> 50KB on 2026-10-22 for rango-t108, measured on
+// Raised 49.5KB -> 50KB on 2026-10-22 for the action follow-up revalidation, measured on
 // cloudflare-basic with main d824ba672's browser source 50516B -> 50782B
 // (+266B gzip): an action that did not land on the page on screen owes it one
 // follow-up revalidation, which the batch's last exit runs after the
@@ -221,17 +221,17 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // once and never over a newer action's commit; and a prefetch is served
 // during an action's flight. None of it can load lazily: it runs at every
 // action's exit, and the action bridge is not split (AGENTS.md Bundle
-// hygiene). Rounded up to 50KB, the owner's call (rango-t108 D4, then the
+// hygiene). Rounded up to 50KB, the owner's call (then the
 // review fixes).
 //
-// Within 50KB for rango-t127, measured on cloudflare-basic from main
+// Within 50KB for the Back/Forward onto a dropped intercept entry, measured on cloudflare-basic from main
 // d824ba672 50517B -> 50581B (+64B gzip): a Back/Forward onto an intercept
 // entry the client no longer holds loads it as a document (navigation-bridge.ts
 // handlePopstate), and a document load drops the entry's intercept marks
 // (history-state.ts clearLocationStateOnDocumentLoad). Both run on every
 // popstate and every boot, so neither can load lazily.
 //
-// Raised 50KB -> 50.25KB on 2026-10-25 for rango-t154, measured on
+// Raised 50KB -> 50.25KB on 2026-10-25 for the action error boundary hold, measured on
 // cloudflare-basic from main f514d4e41 51182B -> 51389B (+207B gzip): an
 // earlier action's follow-up revalidation keeps the error boundary a later
 // action shows. The bridge records action boundaries at their commit, a
@@ -242,12 +242,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // list that holds an error segment (navigation-bridge.ts).
 // None of it can load lazily: it runs at every action's exit, on every
 // action response and on every link, and the action bridge is not split
-// (AGENTS.md Bundle hygiene). Smaller forms that weaken it were not taken
-// (rango-t154-c5, rango-t154-c7). Two 128B steps, the owner's call: main
+// (AGENTS.md Bundle hygiene). Smaller forms that weaken it were not taken. Two 128B steps, the owner's call: main
 // sat 18B under the old limit.
 //
-// Raised 50.25KB -> 51.125KB on 2026-10-26 for the hooks review stack
-// (rango-t84), measured on cloudflare-basic from main 8c0a12573 51451B ->
+// Raised 50.25KB -> 51.125KB on 2026-10-26 for the hooks review stack, measured on cloudflare-basic from main 8c0a12573 51451B ->
 // 52011B (+560B gzip), in two parts. Router code +186B (+175B in an app that
 // already calls useLinkStatus): useNavigation's idle waits for a page React
 // holds and its location stays the page on screen during a newer click
@@ -259,11 +257,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // commit. The other +374B is not router code: cloudflare-basic's
 // optimistic-settle fixture calls useLinkStatus for the first time (the chunk
 // drops it in an app that never calls it; main with one call measures
-// 51836B), to pin the link's pending in both apps. The owner's rule
-// (rango-t84-q2): the measured size plus 256B, rounded up to the next 128B
+// 51836B), to pin the link's pending in both apps. The owner's rule: the measured size plus 256B, rounded up to the next 128B
 // step.
 //
-// Raised 51.125KB -> 51.875KB on 2026-10-31 for rango-t242, measured on
+// Raised 51.125KB -> 51.875KB on 2026-10-31 for the params-scoped prefetch reuse, measured on
 // cloudflare-basic from main 67e43bd 52143B -> 52789B (+646B gzip, +1641B
 // raw). A prefetch a revalidate() kept from the page being left is shared
 // by the pages with equal values of what the rule read: the browser stores

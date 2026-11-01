@@ -2,7 +2,7 @@ import { test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import { defineFlaggedLoaderDefaultBoundaryTests } from "@shared/e2e";
 
-// dc-t92: an ssr: false loader that throws on a document load with no
+// An ssr: false loader that throws on a document load with no
 // errorBoundary() ends on the router's default error boundary. Fixture:
 // test-app/src/urls/holey-throws.tsx. Own isolatedServer, like the other
 // shell suites.

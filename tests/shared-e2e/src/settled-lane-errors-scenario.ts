@@ -4,7 +4,7 @@ import { expectConsole } from "./console-guard.js";
 
 /**
  * A loader whose result is an error or a redirect(), committed by a lane that
- * settles loader data before its commit (dc-t65): a fully-prefetched click
+ * settles loader data before its commit: a fully-prefetched click
  * (its prefetch drained before the click) and Back onto an entry restored
  * from the history cache. Fixture: settled-lane-errors* in each app, a layout
  * holding the links, `/fail` and `/fail-loading` (a loader that always
@@ -199,7 +199,7 @@ export function runSettledLaneErrorTests(
 
   // A refresh that reaches the server without the page it was sent from (a
   // proxy that drops X-RSC-Router-Client-Path and Referer) cannot be matched
-  // partially, so the server answers it with the full page (dc-t68).
+  // partially, so the server answers it with the full page.
   test("Back onto a stale entry whose background refresh is answered with a full page keeps the page on screen when its loader throws", async ({
     page,
   }) => {

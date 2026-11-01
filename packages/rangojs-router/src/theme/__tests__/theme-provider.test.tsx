@@ -186,7 +186,7 @@ describe("post-mount cookie re-sync (PPR shell HIT theme fidelity)", () => {
   });
 });
 
-// dc-t93: a server-render shell error answers a recovery document the browser
+// A server-render shell error answers a recovery document the browser
 // renders with createRoot. React mounts <html> fresh and drops the class the
 // head's theme script set, so the provider applies its theme again, in a
 // layout effect, before the first paint. Here the stored theme equals

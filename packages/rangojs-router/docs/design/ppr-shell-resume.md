@@ -1977,11 +1977,10 @@ bake-lane loader is served from its pin and does not run; one that runs
 but its pinned container paths and its recorded pushes stand (a pushed
 promise among them, resolved, #1182), so it drifts only in a push whose
 settled value holds a promise, which the record could not keep. An entry
-that cannot hold every pin its prelude baked serves no document (dc-t89:
-over `maxSnapshotBytes` the capture stores the navigation half only); a pin
+that cannot hold every pin its prelude baked serves no document (over `maxSnapshotBytes` the capture stores the navigation half only); a pin
 that fails to decode on a HIT costs that one response a mismatch, and the
 HIT retires the entry; and a hole-carrying pin whose HIT run rejects sends
-the error where the prelude has the baked value (the residual, dc-t91). The payload is
+the error where the prelude has the baked value (the residual). The payload is
 hydration's source of truth, so React repairs such a mismatch at hydration
 (console warning + client re-render of the subtree) — degraded, not corrupt,
 and bounded by TTL/SWR. Consumer guidance: put per-request data in live
@@ -2176,7 +2175,7 @@ was invisible: `kv.put` rejects deep inside `waitUntil`.
 records. The doc record is exempt,
 because without it a HIT could not serve at all. A document HIT is served
 only from an entry that holds a pin for every `ssr: false` loader its
-prelude baked (dc-t89): without one, the loader's run hydrates over HTML
+prelude baked: without one, the loader's run hydrates over HTML
 rendered from the capture's value and React renders the document again on
 the client. So over the cap `captureAndStoreShell` stores the navigation
 half only (a navigation-only entry with the doc record, no prelude, no

@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { expectConsole } from "./console-guard.js";
 
-// dc-t92: an ssr: false loader that throws on a document load, with no
+// An ssr: false loader that throws on a document load, with no
 // errorBoundary() on its chain, ends on the router's default error boundary:
 // on a plain document, a ppr MISS, and a ppr shell HIT whose loader run
 // throws. Before the fix the HIT went blank (the browser's tree build rejected
@@ -11,8 +11,7 @@ import { expectConsole } from "./console-guard.js";
 // Fixture (both apps): the holey-throws routes. The loader throws once the
 // probe's generation is bumped; the routes sit in a layout marked
 // `holey-layout`. `/holey-throws/bounded` declares an errorBoundary(): the
-// comparator that keeps the route's own boundary. It answers 500 too
-// (dc-q61): one status rule wherever the status has not gone out yet.
+// comparator that keeps the route's own boundary. It answers 500 too: one status rule wherever the status has not gone out yet.
 
 export interface FlaggedLoaderDefaultBoundaryFixture {
   url: (path: string) => string;
@@ -99,7 +98,7 @@ export function defineFlaggedLoaderDefaultBoundaryTests(
     page,
   }) => {
     // The prelude holds the baked value; the run's error replaces it at
-    // hydration, as a route errorBoundary() does (dc-t91 case 3a).
+    // hydration, as a route errorBoundary() does.
     expectConsole(page, { allow: [/Hydration failed/] });
     const probe = `hit-${randomUUID().slice(0, 8)}`;
     const url = fixture().url(`/holey-throws/plain?probe=${probe}`);

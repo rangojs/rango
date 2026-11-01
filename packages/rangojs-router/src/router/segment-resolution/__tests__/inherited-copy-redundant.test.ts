@@ -2,7 +2,7 @@
  * inheritedCopyRedundant (revalidation.ts): whether a route's loader copies
  * inherited into a child layout with parallel slots are redundant. It reads
  * the route entry as the DSL left it, so it answers the same on a document
- * and on partials (rango-t156). The end-to-end decision, through the DSL and
+ * and on partials. The end-to-end decision, through the DSL and
  * buildMatchResult on every request kind, is pinned by
  * src/testing/__tests__/inherited-loader-copy.rsc-test.tsx.
  */

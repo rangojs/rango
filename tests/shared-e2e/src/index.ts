@@ -2343,7 +2343,7 @@ export async function expectBackLeavesScrollToBrowser(
  * - `pinnedUrl`: returns a nested promise (it runs on every replay of its
  *   shell), value `pinned@g<n>`, one settled push `pinned-note@g<n>`.
  * - `cappedUrl`: the same loader under `ppr.maxSnapshotBytes: 1`, so the
- *   capture stores the navigation half only: documents MISS (dc-t89).
+ *   capture stores the navigation half only: documents MISS.
  * - `deferredUrl`: promise-free, bound with its own `cache()`, value
  *   `deferred@g<n>`, a settled push `settled-note@g<n>` and a deferred one
  *   `deferred-note@g<n>`.
@@ -2846,7 +2846,7 @@ async function warmShellToReplay(
 }
 
 /**
- * dc-t89: a capture whose `ssr: false` loader pins exceed
+ * A capture whose `ssr: false` loader pins exceed
  * `ppr.maxSnapshotBytes` stores the navigation half of the entry only. A
  * document is a MISS: its HTML and hydration data come from one run, so it
  * hydrates clean and shows the run's data next to the run's push. A client

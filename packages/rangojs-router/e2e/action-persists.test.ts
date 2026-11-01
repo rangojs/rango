@@ -5,7 +5,7 @@ import { expectNoPageError, expectNoReload, waitForHydration } from "./helper";
 
 /**
  * useAction() keeps a settled call's result and error until the action's
- * next call (rango-t223). Body:
+ * next call. Body:
  * tests/shared-e2e/src/action-persists-scenario.ts. Fixture:
  * test-app/src/components/ActionPersists.tsx,
  * test-app/src/actions/action-persists.ts and

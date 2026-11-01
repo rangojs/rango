@@ -5,8 +5,7 @@ import { cleanup } from "@testing-library/react";
 import { usePathname } from "../../client.js";
 import { renderRoute } from "../dom.entry.js";
 
-// Userland contract for a document whose server render fails its shell
-// (dc-t93): an error thrown with no <Suspense> above it. Production answers a
+// Userland contract for a document whose server render fails its shell: an error thrown with no <Suspense> above it. Production answers a
 // recovery document and the browser renders the tree with createRoot, so the
 // router's client error boundaries run, as on a client navigation to the URL.
 // renderRoute's hydrate mode mirrors that and hands back the error.

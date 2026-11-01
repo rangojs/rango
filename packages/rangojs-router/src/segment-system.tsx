@@ -318,7 +318,7 @@ function wrapDefaultOutletContent(
  * is settled like a flagged one, so the commit shows no fallback. A loader
  * error is left to its read site there, its errorBoundary() fallback riding
  * the throw, as on a navigation: the nearest boundary to the read catches it
- * (#1129, dc-t65). notFound()/redirect() keep their build-time node.
+ * (#1129). notFound()/redirect() keep their build-time node.
  */
 async function buildLoaderStreams(
   loaders: ResolvedSegment[],

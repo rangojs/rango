@@ -515,7 +515,7 @@ records nothing else to drop, so its tail prints `records=` alone (it printed
 records. The doc record is exempt,
 because without it a HIT cannot serve at all. Over the cap the entry keeps
 the navigation half only, the doc record without the pins, and serves no
-document (dc-t89): a document HIT without a loader's pin would hydrate that
+document: a document HIT without a loader's pin would hydrate that
 loader's run over HTML rendered from the capture's value. Documents MISS,
 navigations replay the doc record, the key backs off, and the capture warns
 once per key.

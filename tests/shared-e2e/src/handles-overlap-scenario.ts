@@ -18,7 +18,7 @@ import { expect, test, type Page } from "@playwright/test";
  * shows (early), and the destination never shows another pathname (multi
  * reader) or a value of no page in the test. Counted, not asserted: frames of
  * the destination with the first click's title or crumb, a page that never
- * shows (rango-t218 class), as a `frames` annotation with the late count.
+ * shows, as a `frames` annotation with the late count.
  *
  * useSegments: the multi reader also reads it. Segment ids and location
  * cannot suspend, so it commits with its page, unlike a handle value.

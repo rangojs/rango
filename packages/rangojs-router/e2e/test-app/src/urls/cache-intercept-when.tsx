@@ -3,12 +3,12 @@ import { Link, Outlet } from "@rangojs/router/client";
 import { CiwDrawerAction } from "./cache-intercept-when.client.js";
 import { CiwDrawerLoader } from "./cache-intercept-when.defs.js";
 
-// e2e/cache.test.ts "cache-intercept-routes" (rango-t194). cache() covers the
+// e2e/cache.test.ts "cache-intercept-routes". cache() covers the
 // layout, and two intercepts target the item route, each selected by its own
 // when(): the modal from the index, the drawer from /other. Each keeps its own
 // intercept: record, so opening the item from one source never serves the
 // other source's intercept. The drawer, declared second, has a loader and a
-// server action: an action from it re-renders the drawer alone (rango-t200).
+// server action: an action from it re-renders the drawer alone.
 const INDEX = "/cache-intercept-when";
 const OTHER = "/cache-intercept-when/other";
 

@@ -5,7 +5,7 @@ import { waitForShellHydration } from "./shell-request.js";
 
 /**
  * An item opened as an intercept over a list, under a layout with a cart
- * count (rango-t215). An intercept is a page in the middle of a navigation:
+ * count. An intercept is a page in the middle of a navigation:
  * a refresh reloads its URL, so router.refresh() and the refresh another
  * tab's action triggers render the item's full page, as a document load
  * does. Back onto the intercept's entry after an action inside it threw

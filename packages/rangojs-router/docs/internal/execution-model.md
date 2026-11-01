@@ -134,7 +134,7 @@ send no intercept source and hold nothing, so the server renders the URL's
 full page and the commit replaces the entry with it. An intercept is a page
 in the middle of a navigation: reloading its URL, by a document load or a
 refresh, renders the main page. Pinned by the `intercept-boundary` e2e (both
-apps, dev and production; rango-t215).
+apps, dev and production).
 
 ### 5) Prefetch, then fill (`prefetch: false`)
 
@@ -423,8 +423,7 @@ See "Rewrite" below for what moves and what stays.
   handler's, one made after it behind. A `prefetch: false` fill holds
   nothing, so its HIT orders as its MISS does. Source: `holdRecordedValues`
   and `releaseRecordedValues` in `handle-store.ts`, held by
-  `serveStoredSegments`; pinned by `cached-handle-push-order.rsc-test.tsx`
-  (rango-t189).
+  `serveStoredSegments`; pinned by `cached-handle-push-order.rsc-test.tsx`.
 
 - Under PPR shell capture, of the DSL `loader()` registrations only
   `loader(Def, { ssr: false })` executes and bakes; every other registration
@@ -537,7 +536,7 @@ See "Rewrite" below for what moves and what stays.
     a HIT retires the entry once that response is closed (backoff, then a
     tombstone; no reload). A prerender-served capture over the cap stores the
     tombstone, which also shadows a build shell. The one residual: a
-    hole-carrying pin whose HIT run rejects (dc-t91). Pinned by the "dc-t89"
+    hole-carrying pin whose HIT run rejects. Pinned by the "a document HIT hydrates with the loader data its shell was rendered from"
     group of `serve-shell-request-push-ownership.rsc-test.tsx`,
     `shell-capture.test.ts` and `expectPinlessEntryServesDocumentMiss` in
     both apps.
@@ -1045,7 +1044,7 @@ router's boundaries run in the browser. Outside every `<Suspense>` it fails
 Fizz's shell: Fizz runs no error boundaries, so `renderToReadableStream`
 rejects. That is a loader read of a failed result (`decodeLoaderEntry`), its
 `notFound()`/`redirect()` marker, or any client component that throws only on
-the server. A route `errorBoundary()` changes nothing there; before dc-t93 the
+the server. A route `errorBoundary()` changes nothing there; before the recovery document the
 host answered its raw 500 (a stack with server paths in production).
 
 `renderHTML` (`ssr/index.tsx`) now answers it (`ssr/shell-error-document.tsx`
@@ -1054,7 +1053,7 @@ host answered its raw 500 (a stack with server paths in production).
 1. A loader `redirect()` with no state: a real 3xx with `Location`, empty body
    (the marker carries the redirect's own `status`, `loader-resolution.ts`).
    With `state` it falls through: the state rides the history entry the
-   client replace writes, which a 3xx cannot carry (dc-q60).
+   client replace writes, which a 3xx cannot carry.
 2. The payload decoded and the tree built: a recovery document,
    `<html data-rango-ssr-error>`, a `<noscript>` heading (a JavaScript visitor
    sees the client render's boundary, not a flash of the heading), the theme
@@ -1077,8 +1076,8 @@ The status and `Location` reach the response through the html stage's
 response is built.
 
 Dev: an error reaches the host as the original error object, so Vite's
-overlay shows its message and source-mapped stack (dc-q62). The overlay page
-does not reload when the file is fixed (measured on dc-t93); the recovery path
+overlay shows its message and source-mapped stack. The overlay page
+does not reload when the file is fixed; the recovery path
 updates in place. `shellErrorReachesHost` in `ssr/index.tsx` is the one gate.
 `notFound()` and `redirect()` take the production path in dev too.
 
@@ -1105,7 +1104,7 @@ Rules that are easy to break:
   `captureShellHTML`, which still rejects on a shell error; they never call
   `renderHTML`.
 - An `ssr: false` loader's error answers 500 whichever boundary renders it
-  (dc-q61, `useDefaultErrorBoundary` in `wrapLoaderWithErrorHandling`). It
+  (`useDefaultErrorBoundary` in `wrapLoaderWithErrorHandling`). It
   settles before the first flush, so the write lands; on a shell HIT the
   status went out with the shell and the write is inert.
 
@@ -1873,7 +1872,7 @@ Here is how each hook gets there:
   `useCommitAnchoredState`: on a gated-off commit to the URL React held, the
   page's first screen showed `usePathname()`, `useParams()`,
   `useSearchParams()` and a `useSegments()` selector reading the page being
-  left, while `useNavigation().location` read the page's (rango-t221). They
+  left, while `useNavigation().location` read the page's. They
   now share the setter above, and `useCommitAnchoredState` sets its value
   again when a release finds it not committed. `useHandle` never showed that
   frame, since from the anchor it sets nothing in the page's lane
@@ -1911,7 +1910,7 @@ Here is how each hook gets there:
   A progress bar reading `isStreaming` through a selector had nothing held
   at the anchor, so it dropped when the response stream ended, while a
   status line reading the full state kept `isStreaming: true` over the same
-  page until it committed (rango-t219, the `hook-fields` e2e).
+  page until it committed (the `hook-fields` e2e).
 
   `idle` waiting is the case that found the rule. The idle that arrives
   between anchor and release comes from an action that settles, or a newer
@@ -1972,11 +1971,11 @@ Here is how each hook gets there:
   value that arrives after the anchor waits. Segment ids are such a value:
   they come with the payload's handle data, after the flush, so a reader
   whose value did not move at the anchor gets them right after the page's
-  commit (recorded as rango-t225). `useHandle` passes
+  commit. `useHandle` passes
   `waitForRelease`: from the anchor every handle value waits, the anchor's
   own included. In the page's lane, a crumb whose `content` suspends in an
   already-revealed `<Suspense>` would hold the whole page, and on a second
-  click over a held page it did (HD4, rango-t224). Location cannot suspend,
+  click over a held page it did (HD4). Location cannot suspend,
   so `useSegments` keeps it with the page; when it waited too, a layout's
   effect read the new pathname with the clicked-through page's path. `NavigationProvider`'s layout effect, in the commit that
   brings the payload, calls `releaseRouteState()`, and the readers apply
@@ -1987,7 +1986,7 @@ Here is how each hook gets there:
   resolves: the transition captures the new page with the page being left's
   crumb and title (never the clicked-through page's), and the value applied
   at `ready` is the latest the controller holds: the destination's once its
-  handles have arrived (rango-t218). A transition entangled with the page's
+  handles have arrived. A transition entangled with the page's
   would put a waiting value in its commit, but one set after React rendered
   the page and before its view transition's mutation misses that commit and
   starts a view transition of its own. A reader whose value did not move
@@ -2034,7 +2033,7 @@ Here is how each hook gets there:
   in `server-action-bridge.ts`); neither runs inside a
   transition. So every state commits urgently, also while React holds a page,
   and the hook starts no transition of its own.
-- A settled call stays until its action's next call starts (rango-t223).
+- A settled call stays until its action's next call starts.
   `doSettle`'s 100 ms cleanup takes it out of `inflightActions`, which the
   concurrent-action bookkeeping reads (#675), unless a later call of the same
   action already started, and keeps a trimmed snapshot in `settledActions`,
@@ -2052,7 +2051,7 @@ Here is how each hook gets there:
   lane at the response's start, so the spinner ended before the page
   showed.
 
-One case is outside this rule on purpose (rango-t96, #1046): a component
+One case is outside this rule on purpose (#1046): a component
 that first mounts while a transition page is held (a dropdown opened on the
 old page, a lazy component or a `<Suspense>` resolving during the hold) reads
 the destination's values from every hook, because each hook seeds its first
@@ -2149,9 +2148,8 @@ is simple: the action's own response. But users rarely wait. They click "Add to
 cart" and then a link, so the action lands on a page it was not sent from. That
 action's revalidation used to be dropped. The page the user navigated to kept
 its pre-write data in every loader the navigation held, such as a layout's cart
-count, until something else re-ran it (rango-t108). Each repair refetch also
-superseded the click the user had in flight, which then never committed
-(dc-t114).
+count, until something else re-ran it. Each repair refetch also
+superseded the click the user had in flight, which then never committed.
 
 Seven rules now decide every case. A case that seems to need an eighth rule is
 a design defect, not a branch to add. Changing one of them is a contract
@@ -2181,7 +2179,7 @@ change (see Contract Change Process).
   the follow-up (R3). One the user leaves while its error tree renders has
   already aborted the other actions (the abort runs before the render) and is
   dropped the same way. Only a boundary dropped at the early check aborts
-  nothing, so a live `useAction()` result survives it (rango-t125).
+  nothing, so a live `useAction()` result survives it.
 - **R3. A follow-up is owed.** At its exit, an action that R1 applies to, and
   that did not redirect, owes the follow-up in two cases: the page on screen
   is not the page it was sent from, or a navigation the user started has not
@@ -2267,10 +2265,10 @@ the action's write; `segments: []` is the only shape that re-runs all of them.
 It is the same request `refresh()` sends. Whole above an action's error
 boundary, which it holds: refetched whole, the route re-rendered over the
 boundary a later action had just shown, and the user saw the error vanish one
-round trip after it appeared (rango-t154). A user who stayed gets no second
+round trip after it appeared. A user who stayed gets no second
 request: the action's response already re-ran every loader on that page.
 
-What an action that throws gets back (R2), case by case. Before rango-t124
+What an action that throws gets back (R2), case by case. Previously
 the error-boundary response carried the error segment alone, so a layout
 loader above the boundary kept its pre-write value on the page the user
 stayed on, and on the next page under that layout.
@@ -2286,7 +2284,7 @@ stayed on, and on the next page under that layout.
 | The arguments do not decode, under a boundary (`actionStatus` 400)                | the same as a throw: the loaders above re-run though nothing wrote, and `isAction(ref)` compares the raw request id, since no action loaded. The HTTP status is 500: `matchError`'s status wins over the continuation's (`createResponseWithMergedHeaders` in `rsc/helpers.ts`), as before             | the continuation: `rsc/__tests__/server-action.test.ts`; the response has no pin                                      |
 | A `revalidate()` above the boundary throws `redirect()`                           | the redirect, as from a success's revalidation (`X-RSC-Redirect`, 204); no boundary. Before, the boundary showed                                                                                                                                                                                       | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
 | A loader above the boundary throws on its rerun                                   | that loader's error at its `useLoader` read, reported with phase `loader`; the action's error reported once with phase `action`                                                                                                                                                                        | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
-| Sent from an intercept (`X-RSC-Router-Intercept-Source`)                          | the error segment alone, as before (rango-t151)                                                                                                                                                                                                                                                        | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
+| Sent from an intercept (`X-RSC-Router-Intercept-Source`)                          | the error segment alone, as before                                                                                                                                                                                                                                                                     | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
 | `matchPartial` returns null, throws anything but a redirect, or misses the outlet | the error segment alone, as before, and no handle values: the abandoned walk's pushes are dropped. A throw or a miss warns in development                                                                                                                                                              | null and a thrown non-redirect `Response`: `action-boundary-revalidation.rsc-test.tsx`; the miss (a guard) has no pin |
 | A form post without JavaScript                                                    | unchanged (`rsc/progressive-enhancement.ts`)                                                                                                                                                                                                                                                           | `[A3]`                                                                                                                |
 | An earlier action's follow-up runs while the boundary shows (R4)                  | the follow-up holds the boundary: every segment above it renders, as in a request that holds nothing (no `revalidate()` runs, so a loader whose rule skipped the throwing action re-runs); nothing at or below it. The boundary stays mounted, the same node, and its stream continues                 | `action-boundary-revalidation.rsc-test.tsx`, `server-action-bridge.test.ts`, the `action-boundary` e2e (both apps)    |
@@ -2305,10 +2303,10 @@ response re-ran above it stay held, so the next link keeps their fresh data
 and a `revalidate(() => false)` still holds them. The boundary, its loaders
 and everything under it ran nothing after the write, so the next link
 re-renders them; under the router's default boundary at the root, the page
-holds nothing and the next link re-renders all of it. Before rango-t154 the
+holds nothing and the next link re-renders all of it. Previously the
 page kept holding them, and a link served a layout and its loader under the
 boundary from before the write. Back or Forward onto the entry restores it
-holding the same ids: before rango-t213 it held the boundary and every id
+holding the same ids: previously it held the boundary and every id
 under it, so after a restore with no revalidation the page's own link left
 the error on screen. Pinned by
 `segment-reconciler.test.ts`, `server-action-bridge.test.ts`
@@ -2516,7 +2514,7 @@ Not changed: an awaited handler (a layout, an orphan layout, a route or slot
 without `loading()`, an action's route) has no scope and reads the shared
 pin, which is its own while the walker waits on it. An orphan layout pins its
 own segment for that wait and puts the previous pin back after it
-(`resolveOrphanLayout`, rango-t198). A push function bound before the await
+(`resolveOrphanLayout`). A push function bound before the await
 (`const push = ctx.use(Handle)`) was always filed right.
 
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
@@ -2788,15 +2786,14 @@ should not be treated as equivalent.
   works, so a loader it re-ran that threw makes `partial-update.ts` reject
   after the build and before the commit, so nothing on screen changes, and
   the entry is not re-cached. That holds for a partial answer and for a full
-  one (`isPartial: false`, a refresh the server could not match partially;
-  dc-t68), and
+  one (`isPartial: false`, a refresh the server could not match partially), and
   `navigation-bridge.ts` logs `[Browser] Background revalidation failed` (the
-  owner's call for dc-t65). A loader `redirect()` replaces only the route's
+  owner's call). A loader `redirect()` replaces only the route's
   content and navigates; `notFound()` renders its
   not-found UI in the segment. Only the document lane (SSR and its
   hydration) decodes a settled entry in the build, for a `{ ssr: false }`
   loader, and replaces the whole page for its `redirect()`, because Fizz has
-  no boundary to catch a throw at the read (dc-t65). Before, these lanes
+  no boundary to catch a throw at the read. Before, these lanes
   decoded the set in the build: an error with no `errorBoundary()` rejected
   `renderSegments`, so a fully prefetched click put the whole page under the
   root boundary and back/forward refetched the entry (in the e2e fixture,
@@ -2813,9 +2810,8 @@ should not be treated as equivalent.
   `defaultErrorBoundary`) gets the router's default error boundary on the
   server (`useDefaultErrorBoundary` in
   `router/loader-resolution.ts` `wrapLoaderWithErrorHandling`, passed by
-  `resolveOwnerLoaders` in `segment-resolution/revalidation.ts` for `awaitBeforeFlush` loaders, dc-t92), and
-  every flagged loader error answers 500, declared boundary included
-  (dc-q61), pinned by `e2e/flagged-loader-default-boundary.test.ts` (both
+  `resolveOwnerLoaders` in `segment-resolution/revalidation.ts` for `awaitBeforeFlush` loaders), and
+  every flagged loader error answers 500, declared boundary included, pinned by `e2e/flagged-loader-default-boundary.test.ts` (both
   apps, dev + production).
 
 - **A fill request (`prefetch: false`) is the same rule with no way out.**
