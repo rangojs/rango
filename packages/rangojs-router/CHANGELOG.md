@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: no "MISSING SEGMENT" error for an action whose page left while it was in flight
+
+An action sent from one page whose response landed after a navigation to
+another (a `clientUrls()` destination's mount effect runs at the click, before
+the navigation commits) logged `[Browser] MISSING SEGMENT: <id> not in cache!`
+for the previous page's held segments, a `revalidate(false)` loader for one.
+The response commits nothing, as before, and is no longer reconciled against
+the new page, so nothing is logged. Such an action still runs in the previous
+page's request context: pass what it needs as arguments.
+
 ## 0.33.0 (2026-11-01)
 
 ### Changed: `prefetch: false` on an `ssr: false` loader of a `ppr` route keeps it out of a prefetch that has no document shell ([#1364](https://github.com/rangojs/rango/pull/1364))

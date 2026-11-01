@@ -107,6 +107,7 @@ export type { PprSsrFalseInlineScenarioOptions } from "./ppr-ssr-false-inline-sc
 export {
   expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
   expectLayoutLoaderHeldAcrossNavigations,
+  expectMountActionFromOptimisticFrameReportsNoMissingSegment,
   expectReturnToCommittedRouteFromOptimisticFrameShowsTheDestination,
 } from "./client-urls-layout-loader-scenario.js";
 export type { ClientUrlsLayoutLoaderOptions } from "./client-urls-layout-loader-scenario.js";

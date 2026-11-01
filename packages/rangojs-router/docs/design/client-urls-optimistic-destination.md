@@ -280,6 +280,18 @@ one the group was built to deliver.
 - `loading()` semantics: still the route-level early UI, now as a Suspense
   fallback around the destination component. Existing `loading()` declarations
   keep working with no edit.
+- A server action the destination calls during the window (its mount effect
+  runs at the click) is sent from the committed page: the bridge builds the
+  request from `window.location` and the store's segment state
+  (`browser/server-action-bridge.ts`), which move only at the canonical
+  commit. The server runs it in that page's request context and re-renders
+  that page. A response that lands after the commit is the navigated-away
+  case: it commits nothing, is not reconciled against the destination's cache,
+  and a write leaves the follow-up refetch of the destination. One that lands
+  before the commit commits the committed page's tree, under the presented
+  intent (`client-root.tsx` keeps rendering the destination). The bridge cannot
+  send as the destination: it cannot tell whether the caller sits in the
+  destination or in chrome that still shows the committed page.
 - Hook placement guidance in `docs/design/client-urls-hooks-review.md` (status
   readers unmount at click when inside optimistically-swapped content) extends
   to the component itself.

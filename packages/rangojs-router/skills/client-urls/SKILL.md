@@ -745,6 +745,17 @@ a hard load of the target URL renders the full route.
   throwers in the client `ErrorBoundary`; `useFetchLoader` works unchanged
   (route-independent lane; `revalidate()` deliberately not consulted).
   Pinned in the router repo's client-urls hook-probe e2e.
+- **An action called on the optimistic frame runs against the committed
+  page.** The destination mounts at the click, before the navigation
+  commits, so an action its mount effect calls is sent from the page the URL
+  bar still shows: the server runs it with that page's request context
+  (`ctx.url`, `ctx.params`, its middleware) and re-renders that page, not
+  the destination. Nothing of that render reaches the destination, and a
+  write still refreshes the destination once it commits (unless the action
+  called `keepClientCache()`). Pass what the action needs as arguments
+  instead of reading the request's URL or params. A link prefetched before
+  the click (the production default, `viewport`) usually commits before the
+  effect runs.
 - **Location state follows the same split as the route hooks.** Inside the
   optimistic branch (the destination and the group's client layouts)
   `useLocationState` reads the state the navigation carries (`<Link state>`,

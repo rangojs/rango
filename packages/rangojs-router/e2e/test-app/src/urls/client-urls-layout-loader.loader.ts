@@ -28,3 +28,6 @@ export const ClientLayoutRunsLoader = createLoader(async (ctx) => {
   await new Promise((resolve) => setTimeout(resolve, 300));
   return `runs:${runs}`;
 });
+
+/** The mount-action source page's loader, held on actions (revalidate(false)). */
+export const ClientLayoutMountSourceLoader = createLoader(async () => "source");

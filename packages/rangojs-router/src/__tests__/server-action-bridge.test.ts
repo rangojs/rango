@@ -2665,3 +2665,97 @@ describe("server-action-bridge follow-up", () => {
     });
   });
 });
+
+// An action sent from the page on screen whose navigation commits while the
+// request is out (a clientUrls() destination's mount effect runs before the
+// commit, so its action is sent from the committed page). The response
+// re-rendered the page that left: it commits nothing, and the cache it would
+// be reconciled against is the new page's.
+describe("server-action-bridge response for a page that left during the flight", () => {
+  afterEach(() => __resetActionFence());
+
+  it("resolves without reconciling against the new page's cache", async () => {
+    stubWindow();
+    Object.assign(window.location, {
+      href: "http://localhost/products/1",
+      pathname: "/products/1",
+    });
+    const layout = { id: "L0", type: "layout", component: "div" };
+    const product = { id: "L0R1", type: "route", component: "div" };
+    const productLoader = {
+      id: "L0R1D0.product#ProductLoader",
+      type: "loader",
+      component: null,
+    };
+    const cart = { id: "L0R2", type: "route", component: "div" };
+    const caches: Record<string, unknown[]> = {
+      "/products/1": [layout, product, productLoader],
+      "/cart": [layout, cart],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        Object.assign(window.location, {
+          href: "http://localhost/cart",
+          pathname: "/cart",
+        });
+        window.history.state.key = "k2";
+        return new Response(null, { status: 200 });
+      }),
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const onUpdate = vi.fn();
+    const setServerCallback = vi.fn();
+    createServerActionBridge({
+      store: {
+        ...createMockStore(),
+        getSegmentState: vi.fn(() => ({
+          path: "/products/1",
+          currentUrl: "http://localhost/products/1",
+          currentSegmentIds: [layout.id, product.id, productLoader.id],
+        })),
+        loaders: new LoaderStore(),
+        getHistoryKey: vi.fn(() => window.location.pathname),
+        getCachedSegments: vi.fn((key: string) => ({
+          segments: caches[key],
+          stale: false,
+        })),
+        setSegmentIds: vi.fn(),
+        cacheSegmentsForHistory: vi.fn(),
+        rememberDisplayedEntry: vi.fn(),
+        getRouterId: vi.fn(() => undefined),
+      } as any,
+      client: { fetchPartial: vi.fn(() => new Promise(() => {})) } as any,
+      eventController: createEventController(),
+      deps: {
+        createTemporaryReferenceSet: vi.fn(() => ({})),
+        encodeReply: vi.fn(async () => ""),
+        createFromFetch: vi.fn(async (response: Promise<Response>) => {
+          await response;
+          return {
+            metadata: {
+              pathname: "/products/1",
+              segments: [],
+              matched: [layout.id, product.id, productLoader.id],
+              diff: [],
+              isPartial: true,
+            },
+            returnValue: { ok: true, data: "options" },
+          };
+        }),
+        setServerCallback,
+      } as any,
+      onUpdate,
+      renderSegments: vi.fn(async () => "tree"),
+    }).register();
+    const call = setServerCallback.mock.calls[0]![0] as (
+      id: string,
+      args: unknown[],
+    ) => Promise<unknown>;
+
+    await expect(call("hash#loadOptions", [])).resolves.toBe("options");
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+});
