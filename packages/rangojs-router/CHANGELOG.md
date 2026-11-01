@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.33.1 (2026-11-01)
 
-### Fixed: no "MISSING SEGMENT" error for an action whose page left while it was in flight
+### Fixed: no "MISSING SEGMENT" error for an action whose page left while it was in flight ([#1366](https://github.com/rangojs/rango/pull/1366))
 
 An action sent from one page whose response landed after a navigation to
 another (a `clientUrls()` destination's mount effect runs at the click, before
@@ -11,6 +11,14 @@ for the previous page's held segments, a `revalidate(false)` loader for one.
 The response commits nothing, as before, and is no longer reconciled against
 the new page, so nothing is logged. Such an action still runs in the previous
 page's request context: pass what it needs as arguments.
+
+### Docs: moving a layout's `<Outlet />` between branches remounts its children ([#1367](https://github.com/rangojs/rango/pull/1367))
+
+A layout that returns a bare `<Outlet />` on one branch and a wrapped one on
+another remounts every page below it when the branch flips: state resets and
+mount effects run again. The `/layout` skill now states the rule (keep one
+shape, or a stable `key` on the outlet when the only difference is a
+top-level fragment), and `/app-structure` lists it among its rules.
 
 ## 0.33.0 (2026-11-01)
 
