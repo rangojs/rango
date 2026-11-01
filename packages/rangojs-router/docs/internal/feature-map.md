@@ -540,7 +540,11 @@ server projection.
   `loaderOwner`, on `InternalHandlerContext._deferredLoaders`, where a
   `skipLoaders` pass registers its loaders too), wire markers in `prefetch-markers.ts`,
   `segment-resolution/revalidation.ts`; stored routes (`cache()`, `ppr`,
-  `Prerender`) defer loaders only. An `intercept()`'s loaders are loader
+  `Prerender`) defer loaders only. On a `ppr` route an `ssr: false` loader
+  is deferred unless this request serves it from a pin of a
+  document-captured shell (`servesLoaderPin` in `loader-cache.ts`, passed to
+  `defersLoader`); a deferred one drops the copies of its handle pushes a
+  restored shell record holds (`HandleStore.settleLoaderRun`). An `intercept()`'s loaders are loader
   segments of its slot, resolved by the same funnel
   (`resolveOwnerLoaders` with a `LoaderOwner`); a prefetch that resolves an
   intercept defers its flagged loaders only

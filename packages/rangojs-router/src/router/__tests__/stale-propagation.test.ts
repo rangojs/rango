@@ -27,6 +27,7 @@ vi.mock("../loader-resolution.js", () => ({
 // Mock loader-cache (imported by revalidation.ts from ./loader-cache.js)
 vi.mock("../segment-resolution/loader-cache.js", () => ({
   resolveLoaderData: vi.fn(() => Promise.resolve({ data: "test" })),
+  servesLoaderPin: () => false,
 }));
 
 // Mock helpers (imported by revalidation.ts from ./helpers.js)

@@ -662,8 +662,9 @@ rest of the destination; otherwise it is held. A same-route click
 - On an `intercept()` loader the flag works as in `urls()`: an in-group
   viewport or render prefetch of the intercept's target defers it, and the
   click opens the modal at once with one fill for it; a hover's runs it.
-- With `ssr: false` on a `ppr` group route the flag is ignored (the bake
-  lane), as on a server route.
+- With `ssr: false` on a `ppr` group route the flag works as on a server
+  route: deferred unless the prefetch serves the loader from a pin of a
+  document-captured shell (`/ppr` → "`prefetch: false` on a `ppr` route").
 - Test it with `serveShellRequest` in the Flight project: mount the module
   itself, and `rangoUseClientTransform()` installs the group's projection
   (`/testing` → `serve-shell-request.md`, "`clientUrls()` routes"). It also

@@ -302,6 +302,8 @@ export interface HandleStore {
    * so a loader that throws or skips its push shows none rather than the
    * record's. A hole's replays go with them. Any other loader's replays stay
    * (a dependency another entry's HIT replayed), and so do restored copies.
+   * A prefetch that defers the loader calls it too (revalidation.ts
+   * resolveOwnerLoaders): no run is made, so none of its placeholders stand.
    */
   settleLoaderRun(loaderId: string): void;
 

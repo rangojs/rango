@@ -1393,9 +1393,12 @@ The limits:
   `revalidate()`, so an action from the modal re-runs only those that say so
   (see `/intercept`).
 - **`ppr` and `ssr: false`.** On a `ppr` route an `ssr: false` loader is the
-  bake lane and is served from the shell, so `prefetch: false` is ignored for
-  it and development logs a warning. Under `cache()` and `Prerender` the flag
-  works as above (see `/caching`, `/prerender`, `/ppr`).
+  bake lane. A prefetch that replays a shell a document request captured
+  serves it from its pin: it is not deferred, does not run, and the click
+  sends nothing. Every other prefetch (a navigation-only shell, a cold page,
+  an explicit `cache()` hit) defers it as above, and the click sends one
+  fill. Under `cache()` and `Prerender` the flag works as above (see
+  `/caching`, `/prerender`, `/ppr` → "`prefetch: false` on a `ppr` route").
 
 To skip a handler along with its loaders, flag the `loading()` instead (see
 `/route` → "`loading()` options"). `loader(Def, { prefetch: false })` accepts

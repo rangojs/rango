@@ -64,6 +64,9 @@ const flagged = { loading: "fallback", loadingPrefetch: false as const };
 const ids = (scope: { loaderIds: ReadonlySet<string> }) =>
   [...scope.loaderIds].sort();
 
+/** servesPin for a request that serves no loader from a shell pin. */
+const NO_PIN = (): boolean => false;
+
 function ctxWith(plan: PrefetchDeferral | undefined) {
   return { _prefetchDeferral: plan } as any;
 }
@@ -252,7 +255,7 @@ describe("resolveDeferralScope", () => {
     expect(scope.units.size).toBe(2);
   });
 
-  it("never defers a bake-lane loader on a ppr route, and says so once", () => {
+  it("on a ppr route a bake-lane loader is deferrable as anywhere else, with no warning", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const bake = loaderEntry("bake", { prefetch: false, bake: true });
     const behind = loaderEntry("behind", { bake: true });
@@ -264,14 +267,10 @@ describe("resolveDeferralScope", () => {
     });
     const scope = resolveDeferralScope([route]);
 
-    expect(ids(scope)).toEqual(["live"]);
-    // Only the explicit combination is the author's mistake.
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain('"bake"');
-    expect(warn.mock.calls[0][0]).toContain("prefetch: false is ignored");
-
-    resolveDeferralScope([entry("route", { ppr: true, loader: [bake] })]);
-    expect(warn).toHaveBeenCalledTimes(1);
+    expect(ids(scope)).toEqual(["bake", "behind", "live"]);
+    expect(scope.loaders.get(bake)).toBe(true);
+    expect(scope.loaders.get(behind)).toEqual([route.shortCode]);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("defers an ssr: false loader outside ppr", () => {
@@ -381,8 +380,12 @@ describe("resolveInterceptDeferralScope", () => {
         scope,
       );
     const id = "L0.@modalD0.flagged";
-    expect(defersLoader(ctxWith(plan([])), flaggedLoader, id)).toBe(true);
-    expect(defersLoader(ctxWith(plan([id])), flaggedLoader, id)).toBe(false);
+    expect(defersLoader(ctxWith(plan([])), flaggedLoader, id, NO_PIN)).toBe(
+      true,
+    );
+    expect(defersLoader(ctxWith(plan([id])), flaggedLoader, id, NO_PIN)).toBe(
+      false,
+    );
   });
 });
 
@@ -544,6 +547,7 @@ describe("the decisions", () => {
         ctxWith(mode === "no plan" ? undefined : plan(mode, build)),
         loader,
         "R0D0.x",
+        NO_PIN,
       );
 
     expect(defers("prefetch", reviews)).toBe(true);
@@ -551,6 +555,39 @@ describe("the decisions", () => {
     expect(defers("fill", reviews)).toBe(false);
     expect(defers(undefined, reviews)).toBe(false);
     expect(defers("no plan", reviews)).toBe(false);
+  });
+
+  // A pin of a document-captured shell is served without running the loader:
+  // nothing to defer. servesPin is asked last, only of a loader the rest of
+  // the rule defers.
+  it("defer a loader in a prefetch unless the request serves its pin", () => {
+    const bake = loaderEntry("bake", { prefetch: false, bake: true });
+    const route = entry("route", { ppr: true, loader: [bake] });
+    const build = () => ({ chain: [route] });
+    const asked: string[] = [];
+    const pinned = (served: boolean) => (l: LoaderEntry) => {
+      asked.push(l.loader.$$id);
+      return served;
+    };
+    const prefetch = ctxWith(plan("prefetch", build));
+
+    expect(defersLoader(prefetch, bake, "R.D0", pinned(false))).toBe(true);
+    expect(defersLoader(prefetch, bake, "R.D0", pinned(true))).toBe(false);
+    expect(asked).toEqual(["bake", "bake"]);
+
+    asked.length = 0;
+    expect(
+      defersLoader(ctxWith(plan("fill", build)), bake, "R.D0", pinned(false)),
+    ).toBe(false);
+    expect(
+      defersLoader(
+        ctxWith(plan("prefetch", build, holding("R.D0"))),
+        bake,
+        "R.D0",
+        pinned(false),
+      ),
+    ).toBe(false);
+    expect(asked).toEqual([]);
   });
 
   // The flag applies only to a segment the client does not have yet.
@@ -562,6 +599,7 @@ describe("the decisions", () => {
         ctxWith(plan("prefetch", build, held)),
         reviews,
         "R0D0.reviews",
+        NO_PIN,
       );
     expect(defers(NONE)).toBe(true);
     expect(defers(holding("R0D0.reviews"))).toBe(false);
@@ -580,13 +618,13 @@ describe("the decisions", () => {
 
     // The section is new: everything its fallback covers is deferred.
     const fresh = ctxWith(plan("prefetch", build));
-    expect(defersLoader(fresh, pageLoader, pageId)).toBe(true);
-    expect(defersLoader(fresh, sectionLoader, "S.D0")).toBe(true);
+    expect(defersLoader(fresh, pageLoader, pageId, NO_PIN)).toBe(true);
+    expect(defersLoader(fresh, sectionLoader, "S.D0", NO_PIN)).toBe(true);
     // The client holds the section: a new route's loaders run.
     const inside = ctxWith(plan("prefetch", build, holding(section.shortCode)));
-    expect(defersLoader(inside, pageLoader, pageId)).toBe(false);
+    expect(defersLoader(inside, pageLoader, pageId, NO_PIN)).toBe(false);
     // A loader with its own flag does not need the section.
-    expect(defersLoader(inside, flaggedPageLoader, "R.D1")).toBe(true);
+    expect(defersLoader(inside, flaggedPageLoader, "R.D1", NO_PIN)).toBe(true);
   });
 
   it("defer a loader behind a flagged slot while one of its slots is new", () => {
@@ -599,6 +637,7 @@ describe("the decisions", () => {
         ctxWith(plan("prefetch", () => ({ chain: [route] }), held)),
         slotLoader,
         "R.D0",
+        NO_PIN,
       );
 
     expect(defers(NONE)).toBe(true);
@@ -615,6 +654,7 @@ describe("the decisions", () => {
         ctxWith(plan("prefetch", () => ({ chain: [route] }), held)),
         orphanLoader,
         "O.D0",
+        NO_PIN,
       );
 
     expect(defers(NONE)).toBe(true);

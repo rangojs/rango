@@ -84,6 +84,7 @@ const RatingsLoader = createLoader(async () => {
 });
 const PprLiveLoader = counted("ppr-live");
 const PprBakeLoader = counted("ppr-bake");
+const PprCachedBakeLoader = counted("ppr-cached-bake");
 const PreLoader = counted("pre-loader");
 const SsrFalseLoader = counted("ssr-false");
 const AwaitedLoader = counted("awaited");
@@ -149,6 +150,20 @@ const FlaggedRenderedLoader = createLoader(async (ctx) => {
 /** Deferrable by the loading() above it, and reads the barrier (R12). */
 const BehindRenderedLoader = createLoader(async (ctx) => {
   ran("behind-rendered");
+  await ctx.rendered();
+  return { notes: ctx.get(Notes) };
+});
+
+/** ssr: false and prefetch: false on a ppr route, and pushes a handle (R6). */
+const PprNotedBakeLoader = createLoader(async (ctx) => {
+  ran("ppr-noted-bake");
+  ctx.use(Notes)("ppr-bake-note");
+  return { value: "ppr-noted" };
+});
+
+/** ssr: false and prefetch: false on a ppr route, and reads the barrier (R12). */
+const PprBakeRenderedLoader = createLoader(async (ctx) => {
+  ran("ppr-bake-rendered");
   await ctx.rendered();
   return { notes: ctx.get(Notes) };
 });
@@ -382,6 +397,32 @@ function makeRouter() {
               loader(PprLiveLoader, { prefetch: false }),
               loader(PprBakeLoader, { ssr: false, prefetch: false }),
               loading(<p>ppr-loading</p>),
+            ]),
+            path(
+              "/ppr-rendered",
+              page("ppr-rendered-page"),
+              { name: "pprRendered", ppr: true },
+              () => [
+                loader(PprBakeRenderedLoader, { ssr: false, prefetch: false }),
+              ],
+            ),
+            path(
+              "/ppr-noted",
+              page("ppr-noted-page"),
+              { name: "pprNoted", ppr: true },
+              () => [
+                loader(PprNotedBakeLoader, { ssr: false, prefetch: false }),
+              ],
+            ),
+            cache({ ttl: 60 }, () => [
+              path(
+                "/ppr-cached",
+                page("ppr-cached"),
+                { name: "pprCached", ppr: true },
+                () => [
+                  loader(PprCachedBakeLoader, { ssr: false, prefetch: false }),
+                ],
+              ),
             ]),
             path("/pre", Prerender(page("pre")), { name: "pre" }, () => [
               loader(PreLoader),
@@ -930,16 +971,22 @@ describe("R2: a flagged loading() entry in a prefetch", () => {
     expect(count("above-cache")).toBe(1);
   });
 
-  it("on a ppr route the handler layer replays as before and the live loader is deferred", async () => {
+  it("on a ppr route the handler layer replays as before and the flagged loaders are deferred", async () => {
     const { prefetch } = setup();
     const first = await prefetch("/ppr");
     const second = await prefetch("/ppr", "/elsewhere");
     expect(second.replayStatus?.outcome).toBe("HIT");
     for (const result of [first, second]) {
       const payload = payloadOf(result);
-      const live = payload.find(PprLiveLoader.$$id)!;
-      expect(payload.deferred).toEqual([live.id]);
-      expect(present(payload.find(PprBakeLoader.$$id)!.loaderData)).toBe(true);
+      const route = payload.segments.find((s) => s.type === "route")!;
+      expect(route.deferred).toBeUndefined();
+      expect(present(route.component)).toBe(true);
+      expect([...payload.deferred].sort()).toEqual(
+        [
+          payload.find(PprLiveLoader.$$id)!.id,
+          payload.find(PprBakeLoader.$$id)!.id,
+        ].sort(),
+      );
     }
     expect(count("ppr-live")).toBe(0);
   });
@@ -990,12 +1037,164 @@ describe("R3: ssr: false with prefetch: false", () => {
     expect(payload.find(SsrFalseLoader.$$id)).toMatchObject({ deferred: true });
   });
 
-  it("on a ppr route the flag is ignored for the bake lane", async () => {
-    const { prefetch } = setup();
-    const payload = payloadOf(await prefetch("/ppr"));
-    const bake = payload.find(PprBakeLoader.$$id)!;
-    expect(bake.deferred).toBeUndefined();
-    expect(present(bake.loaderData)).toBe(true);
+  // On a ppr route the loader is deferred unless this request serves it from
+  // a pin of a shell a document request captured: only then does its body
+  // not run. Runs are counted with the background capture a request
+  // schedules, which serveShellRequest settles before it returns.
+  describe("on a ppr route", () => {
+    const bakeOf = (result: ServeShellRequestResult) =>
+      payloadOf(result).find(PprBakeLoader.$$id)!;
+
+    it("a cold prefetch defers it; the capture it schedules runs it once and still stores the shell", async () => {
+      const { prefetch } = setup();
+      const cold = await prefetch("/ppr");
+      expect(cold.replayStatus).toEqual({
+        outcome: "BYPASS",
+        reason: "no-entry",
+      });
+      expect(bakeOf(cold)).toMatchObject({ deferred: true });
+      expect(count("ppr-bake")).toBe(1);
+
+      // The capture stored the navigation snapshot: the next prefetch replays.
+      const warm = await prefetch("/ppr", "/elsewhere");
+      expect(warm.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
+    });
+
+    it("a HIT of a navigation-captured snapshot defers it: no pin, so nothing runs", async () => {
+      const { prefetch } = setup();
+      await prefetch("/ppr");
+      const runs = count("ppr-bake");
+      const hit = await prefetch("/ppr", "/elsewhere");
+      expect(hit.replayStatus?.outcome).toBe("HIT");
+      expect(bakeOf(hit)).toMatchObject({ deferred: true });
+      expect(count("ppr-bake")).toBe(runs);
+    });
+
+    it("a HIT of a document-captured shell serves the pin: not deferred, and the loader does not run", async () => {
+      const { serve, prefetch } = setup();
+      expect((await serve("/ppr")).shellStatus).toBe("MISS");
+      const document = await serve("/ppr");
+      expect(document.shellStatus).toBe("HIT");
+      const runs = count("ppr-bake");
+
+      const hit = await prefetch("/ppr", "/elsewhere");
+      expect(hit.replayStatus?.outcome).toBe("HIT");
+      const bake = bakeOf(hit);
+      expect(bake.deferred).toBeUndefined();
+      expect(present(bake.loaderData)).toBe(true);
+      expect(hit.flight).toContain("ppr-bake-run-");
+      expect(count("ppr-bake")).toBe(runs);
+      // The live loader is deferred as before.
+      expect(payloadOf(hit).deferred).toEqual([
+        payloadOf(hit).find(PprLiveLoader.$$id)!.id,
+      ]);
+    });
+
+    it("the fill runs it once when no document shell serves it", async () => {
+      const { prefetch, fill } = setup();
+      const prefetched = payloadOf(await prefetch("/ppr", "/elsewhere"));
+      const runs = count("ppr-bake");
+      const filled = payloadOf(await fill("/ppr", prefetched));
+      expect(filled.ids.sort()).toEqual([...prefetched.deferred].sort());
+      expect(filled.deferred).toEqual([]);
+      expect(present(filled.find(PprBakeLoader.$$id)!.loaderData)).toBe(true);
+      expect(count("ppr-bake")).toBe(runs + 1);
+    });
+
+    it("the fill serves the pin when a document captured the shell after the prefetch", async () => {
+      const { serve, prefetch, fill } = setup();
+      const prefetched = payloadOf(await prefetch("/ppr", "/elsewhere"));
+      await serve("/ppr");
+      const runs = count("ppr-bake");
+      const filled = await fill("/ppr", prefetched);
+      expect(filled.replayStatus?.outcome).toBe("HIT");
+      const bake = payloadOf(filled).find(PprBakeLoader.$$id)!;
+      expect(bake.deferred).toBeUndefined();
+      expect(present(bake.loaderData)).toBe(true);
+      expect(count("ppr-bake")).toBe(runs);
+    });
+
+    it("a HIT of the route's own cache() record defers it", async () => {
+      const { prefetch } = setup();
+      await prefetch("/ppr-cached");
+      const runs = count("ppr-cached-bake");
+      const hit = await prefetch("/ppr-cached", "/elsewhere");
+      expect(hit.replayStatus).toEqual({
+        outcome: "BYPASS",
+        reason: "explicit-cache-hit",
+      });
+      expect(payloadOf(hit).find(PprCachedBakeLoader.$$id)).toMatchObject({
+        deferred: true,
+      });
+      expect(count("ppr-cached-bake")).toBe(runs);
+    });
+
+    it("its handle push arrives once, with the fill", async () => {
+      const { prefetch, fill } = setup();
+      await prefetch("/ppr-noted");
+      const runs = count("ppr-noted-bake");
+      const hit = await prefetch("/ppr-noted", "/elsewhere");
+      expect(hit.replayStatus?.outcome).toBe("HIT");
+      const prefetched = payloadOf(hit);
+      expect(prefetched.find(PprNotedBakeLoader.$$id)).toMatchObject({
+        deferred: true,
+      });
+      const notes = async (result: ServeShellRequestResult) =>
+        JSON.stringify((await result.readHandles()) ?? {}).split(
+          "ppr-bake-note",
+        ).length - 1;
+      expect(await notes(hit)).toBe(0);
+
+      const filled = await fill("/ppr-noted", prefetched);
+      expect(await notes(filled)).toBe(1);
+      expect(count("ppr-noted-bake")).toBe(runs + 1);
+    });
+
+    it("a prefetch that defers it is for its source page; one served from the pin answers as before", async () => {
+      const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
+      const headersOf = (r: ServeShellRequestResult) => ({
+        vary: r.response.headers.get("vary"),
+        cacheControl: r.response.headers.get("cache-control"),
+        scope: r.response.headers.get("x-rsc-prefetch-scope"),
+      });
+      const { serve, prefetch } = setup();
+      const cold = await prefetch("/ppr-noted");
+      expect(payloadOf(cold).deferred.length).toBe(1);
+      expect(headersOf(cold)).toEqual({
+        vary: `${VARY}, X-Rango-Prefetch`,
+        cacheControl: "private, no-cache",
+        scope: "source",
+      });
+
+      await serve("/ppr-noted");
+      const pinned = await prefetch("/ppr-noted", "/elsewhere");
+      expect(pinned.replayStatus?.outcome).toBe("HIT");
+      expect(payloadOf(pinned).deferred).toEqual([]);
+      expect(headersOf(pinned)).toEqual({
+        vary: VARY,
+        cacheControl: null,
+        scope: null,
+      });
+    });
+
+    it("an intent prefetch defers nothing", async () => {
+      const { intent } = setup();
+      const bake = bakeOf(await intent("/ppr"));
+      expect(bake.deferred).toBeUndefined();
+      expect(present(bake.loaderData)).toBe(true);
+    });
+
+    it("prints no warning: the flag is honoured", async () => {
+      const warn = vi.spyOn(console, "warn");
+      const { prefetch } = setup();
+      await prefetch("/ppr");
+      expect(
+        warn.mock.calls.some((call) =>
+          String(call[0]).includes("prefetch: false is ignored"),
+        ),
+      ).toBe(false);
+      warn.mockRestore();
+    });
   });
 });
 
@@ -1722,6 +1921,18 @@ describe("R12: a deferrable loader cannot call ctx.rendered()", () => {
     expect(errors.some((m) => m.includes(FlaggedRenderedLoader.$$id))).toBe(
       true,
     );
+  });
+
+  it("throws on a navigation for an ssr: false loader on a ppr route", async () => {
+    const { serve } = setup();
+    await serve("/ppr-rendered", { partial: { from: "/" } });
+    expect(
+      errors.some(
+        (m) =>
+          m.includes(PprBakeRenderedLoader.$$id) &&
+          m.includes("it is deferred in prefetches"),
+      ),
+    ).toBe(true);
   });
 });
 

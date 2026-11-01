@@ -109,6 +109,12 @@ import {
 // (`<c>.modal`); loaded as a document, each target is a full page
 // (pf-<c>-page) reading the same loaders.
 //
+// `ppr-bake` is a ppr route whose one loader is `ssr: false` and
+// `prefetch: false`, read in a <Suspense> (pf-ppr-bake-fallback);
+// `ppr-bake-bare` reads the same with no boundary. A prefetch defers the
+// loader unless the shell a document request captured serves it from its
+// pin. The background capture a cold prefetch schedules runs it, and counts.
+//
 // pf-nav mirrors useNavigation() as data-state / data-streaming / data-path
 // (its location's pathname), and pf-outlet is the box the page renders in.
 //
@@ -169,6 +175,12 @@ export const PfPrerenderedLoader = createLoader((ctx) =>
   work(ctx, "prerendered.data", 100),
 );
 export const PfPprLoader = createLoader((ctx) => work(ctx, "ppr.data", 100));
+export const PfPprBakeLoader = createLoader((ctx) =>
+  work(ctx, "ppr-bake.data", 100),
+);
+export const PfPprBakeBareLoader = createLoader((ctx) =>
+  work(ctx, "ppr-bake-bare.data", 100),
+);
 export const PfSsrFalseLoader = createLoader((ctx) =>
   work(ctx, "ssr-false.data", 100),
 );
@@ -309,6 +321,8 @@ const CASES = [
   ["cached", "cache() route: handler is stored, only the loader waits"],
   ["prerendered", "Prerender route: only the loader waits"],
   ["ppr", "ppr route: shell replays, the live loader waits"],
+  ["ppr-bake", "ppr route, ssr: false loader: waits unless a document shell"],
+  ["ppr-bake-bare", "the same, read with no boundary"],
   ["ssr-false", "ssr: false with prefetch: false"],
   ["control", "no flag: the prefetch runs everything"],
   ["item/a", "same route, flagged loader: held segments are never deferred"],
@@ -854,6 +868,30 @@ function PprPage() {
   );
 }
 
+function PprBakePage() {
+  return (
+    <div data-testid="pf-ppr-bake-page">
+      <Suspense fallback={fallback("ppr-bake")}>
+        <PrefetchFalseValue
+          loader={PfPprBakeLoader}
+          testId="pf-ppr-bake-value"
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+function PprBakeBarePage() {
+  return (
+    <div data-testid="pf-ppr-bake-bare-page">
+      <PrefetchFalseValue
+        loader={PfPprBakeBareLoader}
+        testId="pf-ppr-bake-bare-value"
+      />
+    </div>
+  );
+}
+
 function SsrFalsePage() {
   return (
     <div data-testid="pf-ssr-false-page">
@@ -1132,6 +1170,18 @@ export const prefetchFalsePatterns = urls(
         loader(PfPprLoader, { prefetch: false }),
         loading(fallback("ppr")),
       ]),
+
+      // ppr and an ssr: false loader with prefetch: false: a prefetch skips
+      // the loader unless the shell a document captured serves it.
+      path("/ppr-bake", PprBakePage, { name: "pprBake", ppr: true }, () => [
+        loader(PfPprBakeLoader, { ssr: false, prefetch: false }),
+      ]),
+      path(
+        "/ppr-bake-bare",
+        PprBakeBarePage,
+        { name: "pprBakeBare", ppr: true },
+        () => [loader(PfPprBakeBareLoader, { ssr: false, prefetch: false })],
+      ),
 
       // Both options: the document awaits the loader, a prefetch skips it.
       path("/ssr-false", SsrFalsePage, { name: "ssrFalse" }, () => [

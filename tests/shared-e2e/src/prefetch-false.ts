@@ -14,6 +14,7 @@ import {
   readSuspenseAudit,
   resetSuspenseAudit,
 } from "./console-guard.js";
+import { warmShellRequestToHit } from "./shell-request.js";
 
 /**
  * `prefetch: false` on `loader()` and `loading()`, as a browser sees it
@@ -638,6 +639,106 @@ export async function expectDocumentAwaitsLoaderThatPrefetchSkips(
     { name: "ssr-false" },
     run,
   );
+}
+
+/**
+ * An `ssr: false` loader with `prefetch: false` on a `ppr` route, before any
+ * document request captured the page's shell: nothing serves the loader from
+ * a pin, so the prefetch defers it, as on a route without `ppr`, and the
+ * click that adopts the prefetch sends one fill. The prefetch still schedules
+ * the background capture that stores the page for the next visit: that
+ * capture runs the loader once, the fill once, the prefetch never.
+ *
+ * - `ppr-bake`: the read is inside a `<Suspense>`, whose fallback shows with
+ *   the click.
+ * - `ppr-bake-bare`: no boundary, so React holds the page being left until
+ *   the fill returns.
+ */
+export async function expectPprBakeLoaderIsDeferredWithoutADocumentShell(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  name: "ppr-bake" | "ppr-bake-bare",
+): Promise<void> {
+  const counter = `${name}.data`;
+  const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname(name));
+  const prefetched = await prefetchCase(page, hub, name);
+  expect(
+    prefetched.headers()["x-rsc-prefetch-scope"],
+    "the prefetch deferred the loader: it is kept for its source page only",
+  ).toBe("source");
+  await expect
+    .poll(async () => (await hub.counts())[counter] ?? 0, {
+      message: "the capture the prefetch scheduled ran the loader once",
+    })
+    .toBe(1);
+
+  const fills = await holdFills(page);
+  await byId(page, `pf-link-${name}`).click();
+  await expect(page).toHaveURL(hub.pageUrl(name));
+  await expect
+    .poll(() => requests.filter((r) => isFill(r.url())).length)
+    .toBe(1);
+  if (name === "ppr-bake-bare") {
+    await expect(byId(page, "pf-hub")).toBeVisible();
+    await expect(byId(page, `pf-${name}-page`)).toHaveCount(0);
+  } else {
+    await expect(byId(page, `pf-${name}-page`)).toBeVisible();
+    await expect(byId(page, `pf-${name}-fallback`)).toBeVisible();
+    await expect(byId(page, `pf-${name}-value`)).toHaveCount(0);
+  }
+
+  await fills.release();
+  await expect(byId(page, `pf-${name}-value`)).toHaveText(`${counter}:2`);
+  await complete(page);
+  expect((await hub.counts())[counter]).toBe(2);
+  expect(
+    kindsOf(requests),
+    "one prefetch, then one fill, and no navigation",
+  ).toEqual(["prefetch", "fill"]);
+}
+
+/**
+ * The same route once a document request has captured its shell: the
+ * prefetch replays that shell and serves the loader from its pin. Nothing is
+ * deferred and the loader does not run. The click commits with no request
+ * and shows the pinned value, as it does without the flag.
+ */
+export async function expectPprBakeLoaderServedFromTheDocumentShellIsKept(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const name = "ppr-bake";
+  const counter = `${name}.data`;
+  const hub = await openHub(page, fixture);
+  await warmShellRequestToHit(page.request, hub.pageUrl(name));
+  const hit = await page.request.get(hub.pageUrl(name), {
+    headers: { Accept: "text/html" },
+  });
+  expect(hit.headers()["x-rango-shell"]).toBe("HIT");
+  const pinned = (await hit.text()).match(/ppr-bake\.data:\d+/)?.[0];
+  expect(pinned, "the document HIT shows the pinned value").toBeDefined();
+  const runs = (await hub.counts())[counter];
+
+  const requests = recordPartials(page, hub.pathname(name));
+  const prefetched = await prefetchCase(page, hub, name);
+  expect(prefetched.headers()["x-rango-ppr-replay"]).toMatch(/^HIT/);
+  expect(
+    prefetched.headers()["x-rsc-prefetch-scope"],
+    "the prefetch deferred nothing",
+  ).toBeUndefined();
+
+  await byId(page, `pf-link-${name}`).click();
+  await expect(byId(page, `pf-${name}-value`)).toHaveText(pinned!);
+  await expect(page).toHaveURL(hub.pageUrl(name));
+  await complete(page);
+  expect(kindsOf(requests), "the click reused the prefetch").toEqual([
+    "prefetch",
+  ]);
+  expect(
+    (await hub.counts())[counter],
+    "neither the prefetch nor the click ran the loader",
+  ).toBe(runs);
 }
 
 /**
@@ -2312,6 +2413,13 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
    */
   commitsWithFill?: boolean;
   /**
+   * A ppr route whose flagged `ssr: false` loader the shell capture runs: the
+   * prefetch schedules that capture in the background. The adopted click is
+   * measured once the capture has run, so its run is not counted as the
+   * click's work.
+   */
+  captures?: boolean;
+  /**
    * Every RSC request of the click waits this many ms in the browser before
    * it is sent, on top of `server`, so a response's first chunk and
    * everything streamed behind it arrive that much later. The prefetch is
@@ -2524,6 +2632,8 @@ const PARITY_CLICKS: PrefetchFalseParityCase[] = [
   { name: "cached" },
   { name: "prerendered" },
   { name: "ppr" },
+  { name: "ppr-bake", ownFallback: "pf-ppr-bake-fallback", captures: true },
+  { name: "ppr-bake-bare", ...HELD, captures: true },
   { name: "ssr-false" },
   { name: "vt" },
   { name: "vt-unit", commitsWithFill: true },
@@ -3419,6 +3529,13 @@ export async function recordPlainAndAdoptedClick(
       await complete(page);
     }
     if (prefetched && !early) await prefetchDestination(page, hub, spec.name);
+    if (prefetched && spec.captures) {
+      await expect
+        .poll(async () => (await hub.counts())[`${spec.name}.data`] ?? 0, {
+          message: "the capture the prefetch scheduled has run",
+        })
+        .toBe(1);
+    }
     const before = await hub.counts();
     const requests = recordPartials(page, hub.pathname(spec.name));
     const near = spec.latency ? await farAway(page, spec.latency) : undefined;
@@ -4736,6 +4853,23 @@ export function definePrefetchFalseTests(
 
   it("ssr: false with prefetch: false: the document awaits the loader and a prefetch skips it", (page, fixture) =>
     expectDocumentAwaitsLoaderThatPrefetchSkips(page, fixture));
+
+  it("a ppr route skips its flagged ssr: false loader when no document shell serves it: one fill, read in a Suspense", (page, fixture) =>
+    expectPprBakeLoaderIsDeferredWithoutADocumentShell(
+      page,
+      fixture,
+      "ppr-bake",
+    ));
+
+  it("a ppr route skips its flagged ssr: false loader when no document shell serves it: one fill, read with no boundary", (page, fixture) =>
+    expectPprBakeLoaderIsDeferredWithoutADocumentShell(
+      page,
+      fixture,
+      "ppr-bake-bare",
+    ));
+
+  it("a ppr route keeps its flagged ssr: false loader when the document shell serves its pin: the click sends nothing", (page, fixture) =>
+    expectPprBakeLoaderServedFromTheDocumentShellIsKept(page, fixture));
 
   it("back and forward after a fill restore the filled page", (page, fixture) =>
     expectBackAndForwardKeepTheFilledPage(page, fixture));

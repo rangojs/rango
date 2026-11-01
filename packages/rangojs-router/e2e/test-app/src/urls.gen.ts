@@ -507,6 +507,8 @@ export const routes = {
   "prefetchFalse.outer": "/prefetch-false/outer",
   "prefetchFalse.own": "/prefetch-false/own",
   "prefetchFalse.ppr": "/prefetch-false/ppr",
+  "prefetchFalse.pprBake": "/prefetch-false/ppr-bake",
+  "prefetchFalse.pprBakeBare": "/prefetch-false/ppr-bake-bare",
   "prefetchFalse.prerendered": "/prefetch-false/prerendered",
   "prefetchFalse.readCached": "/prefetch-false/read-cached",
   "prefetchFalse.redirects": "/prefetch-false/redirects",

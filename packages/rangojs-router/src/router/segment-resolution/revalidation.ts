@@ -40,7 +40,7 @@ import {
   pushRevalidationTraceEntry,
   isTraceActive,
 } from "../logging.js";
-import { resolveLoaderData } from "./loader-cache.js";
+import { resolveLoaderData, servesLoaderPin } from "./loader-cache.js";
 import {
   entryLoadingMasksLoaders,
   isShellCaptureActive,
@@ -550,10 +550,14 @@ export async function resolveOwnerLoaders<TEnv>(
     // Only a loader on a segment the client lacks (defersLoader). It
     // would have run. Registered, not started: it runs, and reads its
     // cache(), only if a reader starts it (startDeferredLoader).
-    if (defersLoader(ctx, loaderEntry, segmentId)) {
+    if (defersLoader(ctx, loaderEntry, segmentId, servesLoaderPin)) {
       registerDeferredLoader(ctx, loader.$$id, shortCode, () =>
         kickoff(loaderEntry, segmentId),
       );
+      // A ppr shell record this request restored keeps an ssr: false
+      // loader's pushes as copies that wait for its run (loaderPins "hole").
+      // No run is made here: drop them, the fill sends the run's pushes.
+      _getRequestContext()?._handleStore?.settleLoaderRun(loader.$$id);
       const deferred: ResolvedSegment = {
         id: segmentId,
         namespace: owner.namespace,

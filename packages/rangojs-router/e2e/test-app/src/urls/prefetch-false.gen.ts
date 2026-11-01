@@ -26,6 +26,8 @@ export const routes = {
   outer: "/outer",
   own: "/own",
   ppr: "/ppr",
+  pprBake: "/ppr-bake",
+  pprBakeBare: "/ppr-bake-bare",
   prerendered: "/prerendered",
   readCached: "/read-cached",
   redirects: "/redirects",
