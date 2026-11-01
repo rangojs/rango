@@ -583,9 +583,11 @@ the bounded cache uses a configurable TTL. `Save-Data`,
 `prefers-reduced-data`, or `prefetchCacheTTL: false` disable speculation.
 
 Correctness is part of the prefetch contract. Keys include Rango state, destination
-URL, and the mounted segment set used to compute the diff. Server actions rotate
-state and abort stale speculative work; a generation check prevents a late result
-from repopulating an invalidated cache. Routes an intercept targets are automatically
+URL, and the mounted segment set used to compute the diff. Server actions mark
+every prefetch stale without aborting it: a click on a stale one shows it at once,
+then revalidates the page in the background. `invalidateClientCache()` rotates
+state and aborts speculative work; a generation check prevents a late result from
+repopulating a flushed cache. Routes an intercept targets are automatically
 source-scoped, matched or not,
 and malformed, cross-origin, foreign-router, redirect, and reload responses are
 dropped rather than warmed. `useLinkStatus()` exposes `{ pending }` for the owning
@@ -595,7 +597,7 @@ link.
 session-cookie value shaped as `{documentVersion}:{invalidationTimestamp}`. Navigation
 and prefetch requests send it as `X-Rango-State`, and RSC responses vary on that
 header, so the browser HTTP cache and Rango's decoded prefetch map share one cache
-identity. A deployment that changes the router's code or client assets changes the version; a mutation rotates the timestamp. Old
+identity. A deployment that changes the router's code or client assets changes the version; `invalidateClientCache()` rotates the timestamp. Old
 responses become unreachable under the retired identity instead of requiring every
 cache layer to delete the same entries successfully.
 
@@ -609,10 +611,13 @@ cookie. Across those two seats, it covers mutations initiated outside the action
 bridge: REST calls, client-observed WebSocket events, authentication changes, or
 middleware/loader decisions.
 
-Server Actions invalidate automatically after a response reaches the browser. If
-an action knows it changed nothing that any route renders, `keepClientCache()` is
-the explicit per-response escape hatch: it suppresses that automatic state
-rotation, prefetch flush, broadcast, and revalidation fetch. Together,
+Server Actions mark the history and prefetch caches stale automatically after a
+response reaches the browser, without rotating the state: the response bumps
+only its write part, so the browser HTTP cache misses on responses from before
+the write while the in-memory caches go stale. If an action knows it
+changed nothing that any route renders, `keepClientCache()` is the explicit
+per-response escape hatch: it suppresses that stale-marking, the broadcast, and
+the revalidation fetch. Together,
 `invalidateClientCache()` and `keepClientCache()` give application code control in
 both directions — force a miss for mutations the router cannot observe, or preserve
 the current state for a known no-op.

@@ -28,12 +28,15 @@ import {
   removePrefetch,
   clearPrefetchInflight,
   currentGeneration,
+  currentPrefetchEpoch,
   isFragmentPassthroughEnabled,
+  isPrefetchStale,
   type DecodedPrefetch,
   type PrefetchScope,
 } from "./cache.js";
 import { paramsScopeLabel } from "../../prefetch-source-scope.js";
 import { getRangoState } from "../rango-state.js";
+import { stateEpoch } from "../cookie-name.js";
 import { isActionFenceActive } from "../action-fence.js";
 import { enqueuePrefetch } from "./queue.js";
 import { shouldPrefetch } from "./policy.js";
@@ -96,6 +99,7 @@ function makeRespawn(
   storageKey: string,
   reserve: ReadableStream<Uint8Array>,
   slot: PrefetchSlot,
+  epoch: number,
 ): () => DecodedPrefetch {
   return () => {
     const [body, nextReserve] = reserve.tee();
@@ -108,6 +112,7 @@ function makeRespawn(
       streamComplete: Promise.resolve(),
       scope: slot.scope,
       paramsLabel: slot.paramsLabel,
+      epoch,
       complete: true,
       dispose: () => {
         // Rejects (caught) instead of throwing if the branch is already
@@ -116,7 +121,7 @@ function makeRespawn(
         nextReserve.cancel().catch(() => {});
       },
     };
-    entry.respawn = makeRespawn(storageKey, nextReserve, slot);
+    entry.respawn = makeRespawn(storageKey, nextReserve, slot, epoch);
     // Parity with the original path: a rejected decode must not stay
     // consumable. Clean bytes should never fail to decode, but if they do,
     // evict (identity-guarded) so navigation refetches instead.
@@ -205,14 +210,15 @@ export interface PrefetchSlot {
  * forced it or the response says `X-RSC-Prefetch-Scope: source`; under the
  * label's key when it says `params; <label>`, for the pages with equal values
  * of what a revalidate() rule read; else under the key every source page
- * shares (#1331).
+ * shares (#1331). `stateKey` is the state's epoch the other keys were built
+ * with (cookie-name.ts stateEpoch).
  */
 export function prefetchStorageSlot(
   forceSourceScope: boolean,
   scopeHeader: string | null,
   sourceKey: string,
   wildcardKey: string,
-  rangoState: string,
+  stateKey: string,
   targetUrl: URL,
 ): PrefetchSlot {
   if (forceSourceScope || scopeHeader === "source") {
@@ -222,7 +228,7 @@ export function prefetchStorageSlot(
   if (label === undefined) return { scope: "wildcard", key: wildcardKey };
   return {
     scope: "params",
-    key: buildParamsKey(rangoState, label, targetUrl),
+    key: buildParamsKey(stateKey, label, targetUrl),
     paramsLabel: label,
   };
 }
@@ -266,7 +272,10 @@ function executePrefetchFetch(
   sourceHref: string,
   targetUrl: URL,
   forceSourceScope: boolean,
-  /** Rango state captured once by the caller (keys + header share one read). */
+  /**
+   * Rango state captured once by the caller (keys + header share one read).
+   * The header sends it whole; the keys hold its epoch.
+   */
   rangoState: string,
   /**
    * An intent prefetch (prefetchDirect: hover, `prefetch()`): sent as
@@ -279,6 +288,9 @@ function executePrefetchFetch(
   signal?: AbortSignal,
 ): Promise<DecodedPrefetch | null> {
   const gen = currentGeneration();
+  // An action that lands while this fetch is out marks it stale without
+  // aborting it: it finishes and is stored stale (cache.ts isPrefetchStale).
+  const epoch = currentPrefetchEpoch();
   const inflightKeys = forceSourceScope
     ? [sourceKey]
     : [wildcardKey, sourceKey];
@@ -369,7 +381,7 @@ function executePrefetchFetch(
         response.headers.get("x-rsc-prefetch-scope"),
         sourceKey,
         wildcardKey,
-        rangoState,
+        stateEpoch(rangoState),
         targetUrl,
       );
       const storageKey = slot.key;
@@ -421,6 +433,7 @@ function executePrefetchFetch(
         streamComplete,
         scope: slot.scope,
         paramsLabel: slot.paramsLabel,
+        epoch,
         complete: false,
         stallTimer: timeoutId,
         ...(reserve && {
@@ -458,7 +471,7 @@ function executePrefetchFetch(
         if (decode.status === "fulfilled" && endedCleanly) {
           entry.complete = true;
           if (reserve) {
-            entry.respawn = makeRespawn(storageKey, reserve, slot);
+            entry.respawn = makeRespawn(storageKey, reserve, slot, epoch);
             // Refill after an early adoption. A click that lands before this
             // point adopts the entry with respawn unarmed and leaves the slot
             // empty — via either path: pre-headers inflight adoption makes
@@ -469,7 +482,11 @@ function executePrefetchFetch(
             // live again (our own un-adopted entry, a fresh entry, or a new
             // in-flight prefetch), and storePrefetch's generation check drops
             // the sibling if the cache was invalidated since the fetch began.
-            if (!hasPrefetch(storageKey)) {
+            // A stale entry is served at most once (cache.ts consumePrefetch),
+            // so an adopted stale one is not refilled: the next click fetches
+            // fresh. The isPrefetchStale check also keeps hasPrefetch from
+            // dropping (and disposing) our own un-adopted entry once stale.
+            if (!isPrefetchStale(entry) && !hasPrefetch(storageKey)) {
               storePrefetch(storageKey, entry.respawn(), gen);
             }
           }
@@ -504,14 +521,14 @@ function hasPrefetchHit(
   forceSourceScope: boolean,
   wildcardKey: string,
   sourceKey: string,
-  rangoState: string,
+  stateKey: string,
   targetUrl: URL,
 ): boolean {
   if (forceSourceScope) return hasPrefetch(sourceKey);
   return (
     hasPrefetch(wildcardKey) ||
     hasPrefetch(sourceKey) ||
-    paramsCandidateKeys(rangoState, targetUrl, getCommittedPage()).some(
+    paramsCandidateKeys(stateKey, targetUrl, getCommittedPage()).some(
       hasPrefetch,
     )
   );
@@ -557,14 +574,15 @@ export function prefetchDirect(
     return;
   }
   const rangoState = getRangoState();
-  const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
-  const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
+  const stateKey = stateEpoch(rangoState);
+  const wildcardKey = buildPrefetchKey(stateKey, targetUrl);
+  const sourceKey = buildSourceKey(stateKey, sourceHref, targetUrl);
   if (
     hasPrefetchHit(
       forceSourceScope,
       wildcardKey,
       sourceKey,
-      rangoState,
+      stateKey,
       targetUrl,
     )
   ) {
@@ -622,15 +640,16 @@ export function prefetchQueued(
     return "";
   }
   const rangoState = getRangoState();
-  const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
-  const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
+  const stateKey = stateEpoch(rangoState);
+  const wildcardKey = buildPrefetchKey(stateKey, targetUrl);
+  const sourceKey = buildSourceKey(stateKey, sourceHref, targetUrl);
   const queueKey = forceSourceScope ? sourceKey : wildcardKey;
   if (
     hasPrefetchHit(
       forceSourceScope,
       wildcardKey,
       sourceKey,
-      rangoState,
+      stateKey,
       targetUrl,
     )
   ) {
@@ -645,6 +664,14 @@ export function prefetchQueued(
     return queueKey;
   }
   enqueuePrefetch(queueKey, (signal) => {
+    // The header sends the state as it is now: a server action that landed
+    // while this sat in the queue bumped the write part, and the value read
+    // when it was queued would be answered by the browser HTTP cache with
+    // pre-write bytes. A rotation since then made the keys obsolete. Read
+    // before the re-check below: a read that sees another tab's write marks
+    // the entries from before it stale, so they no longer count as a hit.
+    const liveState = getRangoState();
+    if (stateEpoch(liveState) !== stateKey) return Promise.resolve();
     // Re-check at execution time: a hover-triggered prefetchDirect may
     // have started or completed this key while the item sat in the queue.
     if (
@@ -652,7 +679,7 @@ export function prefetchQueued(
         forceSourceScope,
         wildcardKey,
         sourceKey,
-        rangoState,
+        stateKey,
         targetUrl,
       )
     ) {
@@ -674,7 +701,7 @@ export function prefetchQueued(
       sourceHref,
       targetUrl,
       forceSourceScope,
-      rangoState,
+      liveState,
       false,
       routerId,
       signal,

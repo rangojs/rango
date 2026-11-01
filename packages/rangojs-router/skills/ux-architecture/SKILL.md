@@ -286,10 +286,12 @@ A prefetch is a navigation sent early: the server renders the destination's
 handlers and loaders for it, from the page you are on (`/links`, "What a
 prefetch renders"). A click that adopts a complete prefetch commits with no
 request. Entries live 300 s by default (`prefetchCacheTTL`) in the router's
-memory, and an action drops them unless it calls `keepClientCache()`. The
-browser HTTP cache keeps a prefetch for as long only when nothing in it is
-live: a document cache HIT, or an answer whose every sent segment came from a
-`cache()` record or a Prerender entry and that runs no loader
+memory. An action marks them stale unless it calls `keepClientCache()`: a
+click on one shows it at once, then revalidates the page in the background
+(`/server-actions`, "Client Cache After an Action"). The browser HTTP cache
+keeps a prefetch for as long only when nothing in it is live: a document cache
+HIT, or an answer whose every sent segment came from a `cache()` record or a
+Prerender entry and that runs no loader
 (`Cache-Control: private, max-age=<prefetchCacheTTL>`). Any other prefetch
 carries no `Cache-Control` of the router's. A prefetch whose page failed
 is never used: a 500 or 404, and a 200 whose render reported an error (a
@@ -412,16 +414,16 @@ The rule: **prefetch broadly, and flag what is expensive.**
   the error to the nearest error boundary, which replaces the page and its
   form (`/client-urls`, "A loader that fails on its rerun").
 - `keepClientCache()` in an action that changed nothing keeps the prefetches
-  and the history cache.
+  and the history cache fresh: no revalidation after a click or on Back.
 - `useOptimistic` gives feedback before the action answers.
 
 ### 2.10 Updates you did not make: three channels
 
-| The change                                         | The tool                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Your own mutation                                  | A server action plus `revalidate()` rules (`isAction(ref)`, `actionResult`). The server re-runs what the action touched in the same response; nothing else to call.                                                                                                                                                                                                                                                                                                                           |
-| Out of band: a push, polling, a REST call, a login | `useLoader(L).load()` (also `refetch`): a plain `load()` of a route-registered loader updates every reader of it. `refreshGroup` on reads plus `useRefreshLoaders()` refreshes several loaders at once. Both need a fetchable loader, `createLoader(fn, true)`; a plain one answers 403. `router.refresh()` re-renders the current route's server data and keeps client state. `invalidateClientCache()` marks the history cache stale and drops prefetches when the change makes them wrong. |
-| Shared server caches (other users' data)           | Tags: `cache({ tags })` or `cacheTag()`, then `updateTag()` in the action (awaitable, the action's response reads fresh) or `revalidateTag()` from a webhook. `revalidate()` is not cache invalidation (`/cache-guide`).                                                                                                                                                                                                                                                                      |
+| The change                                         | The tool                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Your own mutation                                  | A server action plus `revalidate()` rules (`isAction(ref)`, `actionResult`). The server re-runs what the action touched in the same response; nothing else to call.                                                                                                                                                                                                                                                                                                                                              |
+| Out of band: a push, polling, a REST call, a login | `useLoader(L).load()` (also `refetch`): a plain `load()` of a route-registered loader updates every reader of it. `refreshGroup` on reads plus `useRefreshLoaders()` refreshes several loaders at once. Both need a fetchable loader, `createLoader(fn, true)`; a plain one answers 403. `router.refresh()` re-renders the current route's server data and keeps client state. `invalidateClientCache()` marks the history cache stale, drops prefetches and rotates the state when the change makes them wrong. |
+| Shared server caches (other users' data)           | Tags: `cache({ tags })` or `cacheTag()`, then `updateTag()` in the action (awaitable, the action's response reads fresh) or `revalidateTag()` from a webhook. `revalidate()` is not cache invalidation (`/cache-guide`).                                                                                                                                                                                                                                                                                         |
 
 ### 2.11 Handles: titles and breadcrumbs
 

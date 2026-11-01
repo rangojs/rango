@@ -1523,6 +1523,18 @@ it when the browser set `_rsc*` params and the server stripped them
 (`?q=a%2Cb`), while the address bar keeps `?q=a,b`: compared as sent, every
 navigation from such a page counted as a search change, rewritten or not.
 
+The same goes for the `#fragment`. The browser sends its whole address,
+anchor included (`/t/42#questions`), but never a fragment in a request URL, so
+`nextUrl` has none. `resolveNavigation` drops it (`withoutHash`) from the
+header, `_rsc_rt` and the intercept source, so `currentUrl` and `nextUrl` of
+one address compare equal: a `revalidate()` rule written as "same address,
+decide as usual" no longer held a stale segment because the page on screen
+had an anchor. The fragment names no route, param or query, and nothing on
+the server read it. Pinned by `testing/__tests__/client-path-fragment.rsc-test.tsx`,
+`router/__tests__/navigation-snapshot.test.ts` and the action stale navigation
+scenario (`tests/shared-e2e/src/action-stale-navigation-scenario.ts`, in the
+test-app and cloudflare-basic).
+
 Can two visitor URLs share one target? Yes: `/promo/a` and `/promo/b` can
 both rewrite to `/landing`, and the target frame alone would hold the route
 between them, though its render may read `ctx.rewrittenFrom`. So when the
@@ -2156,11 +2168,24 @@ a design defect, not a branch to add. Changing one of them is a contract
 change (see Contract Change Process).
 
 - **R1. Invalidation.** An action whose response arrived, and that did not
-  call `keepClientCache()`, marks every history-cache entry stale and tells
-  other tabs (`finalizeAction` in `browser/server-action-bridge.ts`).
-  `keepClientCache()` turns R1 and R3 off for that action. An action with no
-  response (a network failure, or an abort before the response) invalidates
-  nothing.
+  call `keepClientCache()`, marks every history-cache entry and every
+  prefetch stale, and tells other tabs, which do the same and refresh the
+  page they show (`finalizeAction` in `browser/server-action-bridge.ts`,
+  `markCacheAsStaleAndBroadcast()` in `browser/navigation-store.ts`). It
+  flushes nothing and rotates nothing (#1329). Its response bumps only the
+  write part of the state cookie (`runActionBody` in
+  `server/cookie-store.ts`), which the in-memory caches do not key on, so
+  the landing stays soft; every later request sends the bumped value, so the
+  browser HTTP cache misses on responses from before the write (semantic
+  matrix row PS2). `invalidateClientCache()` in
+  the action still rotates the state: the landing sees its `Set-Cookie`,
+  flushes the prefetch map, rotates once more and sends the full broadcast,
+  as every action did before, so other tabs adopt the newer state and flush
+  theirs (a tab that already read the server's value would refuse an equal
+  one and rotate on its own). `keepClientCache()` turns R1 (the write bump
+  included) and R3 off for that action. An
+  action with no response (a network failure, or an abort before the
+  response) invalidates nothing.
 - **R2. The action's own response is its revalidation.** The server re-renders
   the page the action was sent from (`rsc/server-action.ts`). The client
   commits that render while the user is still on that page, meaning the same
@@ -2256,7 +2281,26 @@ change (see Contract Change Process).
   store where the route has a live handler, and bypasses the PPR navigation
   replay (`BYPASS; reason=stale`, `rsc/rsc-rendering.ts`). An action's render
   is never stored, so a record can predate the copy the client holds after
-  it: a hit would put the pre-write page back on screen.
+  it: a hit would put the pre-write page back on screen. After the response,
+  a prefetch stored before it is stale (R1; a prefetch in flight then is not
+  aborted and lands stale). A click on it shows it at once, then revalidates
+  the page once the click settled, as Back onto a stale entry does: its ids
+  held, an action error boundary on screen held, `useNavigation()` idle
+  (`scheduleStalePrefetchRevalidation` in `browser/navigation-bridge.ts`,
+  through the lane `handlePopstate` uses). Only a click takes a stale
+  prefetch (`acceptStalePrefetch`, set for a navigate mode that carries
+  `onStalePrefetch`): Back/Forward on a history-cache miss and leaving an
+  intercept never revalidate after their commit, so for them a stale stored
+  entry is a miss and a stale in-flight one is dropped and fetched again. A
+  stale entry is served once: its slot is not re-armed, so a second click on
+  the same link fetches fresh, and a fill's fresh start-over after a stale
+  adoption leaves nothing to revalidate. An action in flight does not hold it back, as
+  it does not hold Back's: that action's follow-up, when it owes one (R3),
+  starts a navigation that supersedes it. An action that starts while it is
+  in flight does not leave it, as it does not leave Back's. The pre-write
+  values show for one round trip, a layout loader that re-runs on
+  navigation included (3, then 2, then 3): accepted. Pinned by
+  semantic-matrix rows PS1-PS3 and `e2e/action-stale-prefetch.test.ts`.
 
 Why only one follow-up, and why whole? One per batch, because three actions
 used to mean three refetches, each superseding the user's click. Whole,
@@ -2666,8 +2710,9 @@ should not be treated as equivalent.
   background revalidation after Back/Forward onto a history entry marked
   stale, by an action in this tab or another, by `invalidateClientCache()`
   or by a rotated state cookie (`handlePopstate` in
-  `browser/navigation-bridge.ts`), and the same revalidation during an
-  action's flight. Why the action's defaults: the entry was cached before the
+  `browser/navigation-bridge.ts`), the same revalidation during an
+  action's flight, and the one after a click that adopted a prefetch an
+  action marked stale (`scheduleStalePrefetchRevalidation`, R7). Why the action's defaults: the entry was cached before the
   write, and a navigation's defaults would keep a layout's loader and the
   route on their pre-write values, so Back showed the page as it was before
   the action (a layout's cart count, or the page under an intercept after an

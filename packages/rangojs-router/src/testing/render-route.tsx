@@ -35,6 +35,16 @@
  *     not modeled). navigate(url, { streamUntil }) gives the navigation a
  *     response stream that stays open past the commit (isStreaming).
  *     useAction().state stays idle: no action runs.
+ *   - prefetch(url) keeps a page as a prefetch made now carries it, and
+ *     action() lands a server action's response: the page on screen
+ *     re-renders with its post-write loader data, and, without
+ *     `keepClientCache`, production's store marks every history entry and
+ *     prefetch stale (browser/navigation-store.ts). A navigate(url) to a
+ *     prefetched page commits the prefetch's data; when an action made it
+ *     stale, the page then revalidates once the navigation settled, in the
+ *     lane production's Back uses (useNavigation() idle), with the loader
+ *     data current then. The prefetch request, its decode and the HTTP cache
+ *     are e2e territory.
  *   - A spec's transition({ when }) decides every commit with production's
  *     browser decision: navigate() and useRouter().push model kind "push",
  *     useRouter().replace kind "replace", refresh() kind "revalidate", and a
@@ -49,8 +59,8 @@
  *     written there, and another page is on screen, its page is restored
  *     from the history cache, with the handle values it had, as production's
  *     restore is; otherwise the tree keeps its location. A stale entry's
- *     revalidation, a restore that fetches, a server action's state, a
- *     redirect's and an intercept's are e2e territory.
+ *     revalidation on Back, a restore that fetches, a server action's
+ *     location state, a redirect's and an intercept's are e2e territory.
  * What it DOES cover: client hooks that read NavigationProvider /
  * OutletContext — useParams, useReverse, useHref, useMount, useNavigation,
  * useRouter, usePathname, useSearchParams, Outlet/useOutlet nesting and seeded
@@ -126,10 +136,17 @@ import type { Handle } from "../handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
 import { isUnderTestRunner } from "../runtime-env.js";
-import { setupNavigationBridgeDelegatedPrefetch } from "../browser/navigation-bridge.js";
+import {
+  scheduleStalePrefetchRevalidation,
+  setupNavigationBridgeDelegatedPrefetch,
+} from "../browser/navigation-bridge.js";
 import { resetPrefetchObserverForTesting } from "../browser/prefetch/observer.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
 import { auditTreeCause, forgetSuspenseAudit } from "../suspense-audit.js";
+import {
+  currentPrefetchEpoch,
+  isPrefetchStale,
+} from "../browser/prefetch/cache.js";
 
 const TEST_ORIGIN = "http://localhost";
 let activePrefetchRegistrations = 0;
@@ -517,6 +534,59 @@ export interface TestRouterHandle {
    * transition({ when }) decides it with kind "revalidate" (`to` is `from`).
    */
   refresh(): Promise<void>;
+  /**
+   * Prefetch `url`, as a `<Link>` hover or viewport trigger does: the page is
+   * kept with the loader data its response would carry now (the render-time
+   * seeds, `options.loaders` merged over). A later `navigate(url)` without
+   * `loaders` commits that data, whatever the seeds are by then.
+   *
+   * The prefetch is stamped with production's stale epoch
+   * (browser/prefetch/cache.ts): an `action()` without `keepClientCache`
+   * makes it stale. A click on a stale prefetch commits it at once, then the
+   * page revalidates once the navigation settled (its `streamUntil` ended),
+   * in Back's stale-revalidation lane: `useNavigation().state` stays "idle"
+   * and `isNavigating` reads true while its request is open, `useLinkStatus`
+   * shows no pending state, and the commit runs through commitInTransition
+   * with kind "revalidate", reading the loader data current then. A newer
+   * navigation aborts it.
+   *
+   * @example
+   * router.prefetch("/cart"); // carries count 2
+   * await router.action({ loaders: [[BasketLoader, { count: 3 }]] });
+   * await router.navigate("/cart"); // count 2, at once
+   * await waitFor(() => expect(count()).toBe("3")); // revalidated
+   */
+  prefetch(url: string, options?: Pick<RenderRouteOptions, "loaders">): void;
+  /**
+   * Land a server action's response on the page on screen. `loaders` are the
+   * loader values after the action's write: they become the data every
+   * later response carries, and the page on screen re-renders with them in
+   * the action lane (commitInTransition, kind "action", unless
+   * transition({ when }) gates it off). Without `keepClientCache`,
+   * production's store then marks every history entry and every prefetch
+   * stale (`markCacheAsStaleAndBroadcast()`), as the action bridge does:
+   * nothing is flushed and the state cookie is not rotated.
+   * `keepClientCache: true` is the `keepClientCache()` directive: caches stay
+   * fresh. The action's own lifecycle (`useAction()`), its follow-up and its
+   * redirect are e2e territory.
+   */
+  action(
+    options?: Pick<RenderRouteOptions, "loaders"> & {
+      keepClientCache?: boolean;
+    },
+  ): Promise<void>;
+  /**
+   * The background revalidations a click on a stale prefetch started, in
+   * order: the page's pathname and search, and the segment ids the request
+   * holds, as production's bridge plans them
+   * (navigation-bridge.ts scheduleStalePrefetchRevalidation). A click on a
+   * fresh prefetch, or after a `keepClientCache` action, starts none.
+   *
+   * @example
+   * await router.navigate("/cart"); // a stale prefetch
+   * await waitFor(() => expect(router.revalidations()).toHaveLength(1));
+   */
+  revalidations(): ReadonlyArray<{ url: string; segmentIds: string[] }>;
   /** The current committed pathname. */
   pathname(): string;
   /** The current committed params. */
@@ -891,6 +961,8 @@ export async function renderRoute(
   }
 
   type NavigateCall = Pick<RenderRouteOptions, "loaders" | "handles"> & {
+    /** The loader data the response carries: a prefetch's (prefetch()). */
+    seeds?: Record<string, unknown>;
     history?: Pick<NavigateOptionsInternal, "state" | "replace" | "transition">;
     kind?: TransitionWhenKind;
     transition?: boolean;
@@ -931,6 +1003,30 @@ export async function renderRoute(
     const written = entries.get(entryIndex());
     if (written) written.state = window.history.state;
   });
+  /**
+   * The history-cache reads production's stale-prefetch guards make
+   * (navigation-bridge.ts scheduleStalePrefetchRevalidation), over this
+   * harness's history: the store's own history key never moves here, so the
+   * key on screen is its location's, and the one cached page is the entry on
+   * screen. Marking it stale writes nothing: a stale entry's revalidation on
+   * Back is not modeled.
+   */
+  const historyView: Pick<
+    NavigationStore,
+    "getCachedSegments" | "getHistoryKey" | "updateCacheHandleData"
+  > = {
+    getHistoryKey: () => generateHistoryKey(eventController.getLocation().href),
+    getCachedSegments: (key) => {
+      const page = entries.get(entryOnScreen);
+      if (!page || generateHistoryKey(page.url.href) !== key) return undefined;
+      return {
+        segments: page.segments,
+        stale: false,
+        handleData: page.handleData,
+      };
+    },
+    updateCacheHandleData: () => {},
+  };
   /** The page being left keeps its pushes for a back/forward onto it. */
   const leaveEntry = (): void => {
     const left = entries.get(entryOnScreen);
@@ -945,9 +1041,38 @@ export async function renderRoute(
     target: string,
     navOptions?: NavigateCall,
   ): Promise<void> => {
+    // A click on a prefetched page commits the prefetch's data (prefetch());
+    // refresh() and a navigation that seeds its own loaders fetch.
+    const prefetchedPage =
+      navOptions?.kind === undefined && navOptions?.loaders === undefined
+        ? prefetchedPages.get(prefetchKeyOf(target))
+        : undefined;
+    if (prefetchedPage) {
+      navOptions = { ...navOptions, seeds: prefetchedPage.loaderData };
+      // A stale entry is served once (cache.ts consumePrefetch): the next
+      // click on the link fetches fresh.
+      if (isPrefetchStale(prefetchedPage)) {
+        prefetchedPages.delete(prefetchKeyOf(target));
+      }
+    }
     const handle = eventController.startNavigation(
       new URL(target, TEST_ORIGIN).href,
     );
+    // An action made the prefetch stale: once this navigation settled (its
+    // commit and its stream), the page revalidates. Production's own guards
+    // and plan decide it (navigation-bridge.ts
+    // scheduleStalePrefetchRevalidation), over the history this harness
+    // keeps (historyView).
+    const entry = eventController.getUnsettledNavigation();
+    if (prefetchedPage && isPrefetchStale(prefetchedPage) && entry) {
+      scheduleStalePrefetchRevalidation(
+        historyView,
+        eventController,
+        entry,
+        generateHistoryKey(new URL(target, TEST_ORIGIN).href),
+        ({ segmentIds }) => void revalidateStalePrefetch(target, segmentIds),
+      );
+    }
     // Runs in the caller's task, so a <Link> click's own act() takes it.
     // Awaited: React retries a held page with this update, and an unawaited
     // act() drops that suspended retry for good.
@@ -1009,7 +1134,7 @@ export async function renderRoute(
     const segments = buildSegments(
       routes,
       match.params,
-      seedLoaders(loaderData, navOptions?.loaders),
+      seedLoaders(navOptions?.seeds ?? loaderData, navOptions?.loaders),
       mount,
     );
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
@@ -1107,6 +1232,143 @@ export async function renderRoute(
   const refresh = (): Promise<void> => {
     const current = new URL(eventController.getLocation().href);
     return navigate(current.pathname + current.search, { kind: "revalidate" });
+  };
+
+  // prefetch(): the pages prefetched so far, by pathname and search, each with
+  // the loader data its response carried and the stale epoch it began under.
+  interface PrefetchedPage {
+    loaderData: Record<string, unknown>;
+    epoch: number;
+  }
+  const prefetchedPages = new Map<string, PrefetchedPage>();
+  const prefetchKeyOf = (target: string): string => {
+    const parsed = new URL(target, TEST_ORIGIN);
+    return parsed.pathname + parsed.search;
+  };
+  const prefetch = (
+    target: string,
+    prefetchOptions?: Pick<RenderRouteOptions, "loaders">,
+  ): void => {
+    prefetchedPages.set(prefetchKeyOf(target), {
+      loaderData: seedLoaders(loaderData, prefetchOptions?.loaders),
+      epoch: currentPrefetchEpoch(),
+    });
+  };
+
+  /**
+   * Re-render the page at `url` with the loader data current now, decided by
+   * transition({ when }) as `kind`. `commit()` hands it over as production's
+   * action and stale-revalidation commits do (browser/partial-update.ts):
+   * through commitInTransition unless gated off.
+   */
+  const renderPageAgain = async (
+    url: URL,
+    kind: "action" | "revalidate",
+    renderOptions: { forceAwait?: boolean; isAction?: boolean },
+  ): Promise<{ commit(): Promise<void> }> => {
+    const match = resolve(url.pathname);
+    const segments = buildSegments(routes, match.params, loaderData, mount);
+    const metadata = makeMetadata(url.pathname, segments, match.params);
+    const gatedOff = decideTransitionGatedOff(segments, () => ({
+      kind,
+      from: {
+        url: eventController.getLocation().href,
+        params: eventController.getParams(),
+        routeName: leaf.name,
+        state: window.history.state,
+      },
+      to: {
+        url,
+        params: match.params,
+        routeName: leaf.name,
+        state: window.history.state,
+      },
+    }));
+    const root = await renderSegments(segments, {
+      ...renderOptions,
+      outletPending: options.outletPending,
+      transitionGatedOff: gatedOff,
+    });
+    return {
+      commit: async () => {
+        store.setSegmentIds(segments.map((s) => s.id));
+        const shown = entries.get(entryOnScreen);
+        if (shown) shown.segments = segments;
+        const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
+        await act(async () => {
+          auditTreeCause(kind === "action" ? "action" : "stale-revalidation");
+          if (gatedOff) emit({ root, metadata });
+          else {
+            commitInTransition(
+              store.loaders,
+              emit,
+              segments,
+              { root, metadata },
+              kind,
+              shouldStartViewTransition(segments, gatedOff) ? ["action"] : [],
+            );
+          }
+        });
+      },
+    };
+  };
+
+  /**
+   * Back's stale-revalidation lane (navigation-bridge.ts revalidateInBackground),
+   * after a click on a stale prefetch: a background navigation
+   * (skipLoadingState) whose response arrives a task later, rendered with
+   * the loader data current then, kind "revalidate". `segmentIds` are the
+   * ids production's plan holds; the request is recorded (revalidations()).
+   */
+  const revalidations: Array<{ url: string; segmentIds: string[] }> = [];
+  const revalidateStalePrefetch = async (
+    target: string,
+    segmentIds: string[],
+  ): Promise<void> => {
+    const nextUrl = new URL(target, TEST_ORIGIN);
+    revalidations.push({
+      url: nextUrl.pathname + nextUrl.search,
+      segmentIds,
+    });
+    const handle = eventController.startNavigation(nextUrl.href, {
+      skipLoadingState: true,
+    });
+    try {
+      await act(() => eventController.flushRouteState());
+      // Outside act(): a navigate() the test starts meanwhile runs its own.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (handle.signal.aborted) return;
+      const page = await renderPageAgain(nextUrl, "revalidate", {
+        forceAwait: true,
+      });
+      if (handle.signal.aborted) return;
+      handle.complete(nextUrl);
+      await page.commit();
+    } finally {
+      await act(() => {
+        handle[Symbol.dispose]();
+        eventController.flushRouteState();
+      });
+    }
+  };
+
+  // action(): the response of a server action, landing on the page on screen.
+  const action = async (
+    actionOptions?: Pick<RenderRouteOptions, "loaders"> & {
+      keepClientCache?: boolean;
+    },
+  ): Promise<void> => {
+    for (const [loader, data] of actionOptions?.loaders ?? []) {
+      loaderData[ensureSyntheticId(loader)] = data;
+    }
+    const page = await renderPageAgain(
+      new URL(eventController.getLocation().href),
+      "action",
+      { isAction: true },
+    );
+    // The action bridge's landing (server-action-bridge.ts finalizeAction).
+    if (!actionOptions?.keepClientCache) store.markCacheAsStaleAndBroadcast();
+    await page.commit();
   };
 
   // A back/forward onto the mounted entry or one a navigation wrote, whose
@@ -1323,6 +1585,9 @@ export async function renderRoute(
             : undefined,
       }),
     refresh,
+    prefetch,
+    action,
+    revalidations: () => [...revalidations],
     pathname: () => new URL(eventController.getLocation().href).pathname,
     params: () => eventController.getParams(),
     store,

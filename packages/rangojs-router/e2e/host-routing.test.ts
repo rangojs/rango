@@ -1,5 +1,12 @@
 import { test, expect, type Request } from "@playwright/test";
-import { checkoutPortOffset } from "@shared/e2e";
+import {
+  checkoutPortOffset,
+  readState,
+  readTexts,
+  recordTexts,
+  sameElement,
+  stateEpochOf,
+} from "@shared/e2e";
 import { isPrefetchRequest, waitForHydration } from "./helper";
 
 // Proves a node/vercel host-router app renders AND hydrates through rango's
@@ -26,6 +33,17 @@ function isInvalidationTarget(request: Request): boolean {
     isPrefetchRequest(request) &&
     url.pathname === "/" &&
     url.searchParams.get("delegated-prefetch") === "1"
+  );
+}
+
+/** A navigation request (not a prefetch) for the invalidation target. */
+function isInvalidationTargetNavigation(request: Request): boolean {
+  const url = new URL(request.url());
+  return (
+    !isPrefetchRequest(request) &&
+    url.pathname === "/" &&
+    url.searchParams.get("delegated-prefetch") === "1" &&
+    url.searchParams.has("_rsc_partial")
   );
 }
 
@@ -185,7 +203,69 @@ function hostRoutingTests(port: number) {
     expect(await anchor!.evaluate((element) => element.isConnected)).toBe(true);
   });
 
-  test("server-action invalidation re-warms after the action fence", async ({
+  test("a server action keeps a persistent anchor's prefetch stale: the click shows it at once, one revalidation sends the write, in place", async ({
+    page,
+  }) => {
+    const targetRequests: Request[] = [];
+    const navigations: Request[] = [];
+    page.on("request", (request) => {
+      if (isInvalidationTarget(request)) targetRequests.push(request);
+      else if (isInvalidationTargetNavigation(request)) {
+        navigations.push(request);
+      }
+    });
+
+    await visit(page, "a.localhost");
+    await waitForHydration(page);
+    await expect.poll(() => targetRequests.length).toBeGreaterThan(0);
+    const initialState = targetRequests[0]!.headers()["x-rango-state"];
+    expect(initialState).toBeTruthy();
+    const prefetchCount = targetRequests.length;
+
+    // The action (no directive) marks the prefetch stale instead of flushing
+    // it (#1329): the anchor is not prefetched again and the state's
+    // timestamp is kept. Its response bumps only the write part.
+    await page.getByTestId("prefetch-action-plain-button").click();
+    const output = page.getByTestId("prefetch-action-plain-written");
+    await expect(output).not.toBeEmpty();
+    const written = Number(await output.textContent());
+    expect(written).toBeGreaterThan(0);
+    await page.waitForTimeout(1000);
+    expect(targetRequests).toHaveLength(prefetchCount);
+    const writtenState = await readState(page);
+    expect(writtenState).not.toBe(initialState);
+    expect(stateEpochOf(writtenState)).toBe(stateEpochOf(initialState));
+    expect(navigations).toHaveLength(0);
+
+    // A click with no pointer move over the anchor (a hover would replace the
+    // stale prefetch). 1) It shows the prefetch made before the write at once,
+    // with no request of its own. 2) One stale revalidation follows, for the
+    // segments on screen. 3) The page then shows the write, in place.
+    await recordTexts(page, "target-count");
+    await page
+      .getByTestId("prefetch-invalidation-target")
+      .dispatchEvent("click");
+    await expect(page).toHaveURL(/\/\?delegated-prefetch=1$/);
+    await expect(page.getByTestId("target-count")).toHaveText(String(written));
+    expect(
+      await readTexts(page),
+      "the prefetched page, then the write",
+    ).toEqual([String(written - 1), String(written)]);
+    expect(await sameElement(page), "updated in place").toBe(true);
+    await page.waitForTimeout(500);
+    expect(navigations, "exactly one request, the revalidation").toHaveLength(
+      1,
+    );
+    const revalidation = new URL(navigations[0]!.url());
+    expect(revalidation.searchParams.get("_rsc_stale")).toBe("true");
+    expect(revalidation.searchParams.get("_rsc_segments")).toBeTruthy();
+    // It sends the bumped state: the browser HTTP cache misses.
+    expect(navigations[0]!.headers()["x-rango-state"]).toBe(writtenState);
+    expect(targetRequests).toHaveLength(prefetchCount);
+    expect(await readState(page)).toBe(writtenState);
+  });
+
+  test("invalidateClientCache() in a server action re-warms a persistent plain anchor with a new state", async ({
     page,
   }) => {
     const targetRequests: Request[] = [];
@@ -197,6 +277,7 @@ function hostRoutingTests(port: number) {
     await waitForHydration(page);
     await expect.poll(() => targetRequests.length).toBeGreaterThan(0);
     const initialState = targetRequests[0]!.headers()["x-rango-state"];
+    expect(initialState).toBeTruthy();
     const anchor = await page
       .getByTestId("prefetch-invalidation-target")
       .elementHandle();
@@ -211,6 +292,7 @@ function hostRoutingTests(port: number) {
 
     expect(request.headers()["x-rango-state"]).toBeTruthy();
     expect(request.headers()["x-rango-state"]).not.toBe(initialState);
+    expect(await readState(page)).toBe(request.headers()["x-rango-state"]);
     expect(await anchor!.evaluate((element) => element.isConnected)).toBe(true);
   });
 }

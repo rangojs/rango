@@ -56,6 +56,17 @@ export { runRedispatchedDomContentLoadedTests } from "./redispatched-dom-content
 export type { RedispatchedDomContentLoadedScenarioOptions } from "./redispatched-dom-content-loaded-scenario.js";
 export { runActionStaleNavigationTests } from "./action-stale-navigation-scenario.js";
 export type { ActionStaleNavigationScenarioOptions } from "./action-stale-navigation-scenario.js";
+export {
+  readState,
+  readTexts,
+  recordTexts,
+  sameElement,
+  stateEpochOf,
+} from "./action-stale-fixture.js";
+export { runActionStalePrefetchTests } from "./action-stale-prefetch-scenario.js";
+export type { ActionStalePrefetchScenarioOptions } from "./action-stale-prefetch-scenario.js";
+export { runActionStaleHttpCacheTests } from "./action-stale-http-cache-scenario.js";
+export type { ActionStaleHttpCacheScenarioOptions } from "./action-stale-http-cache-scenario.js";
 export { runActionHeldSegmentsTests } from "./action-held-segments-scenario.js";
 export type { ActionHeldSegmentsScenarioOptions } from "./action-held-segments-scenario.js";
 export { runParallelLoaderInheritHeldTests } from "./parallel-loader-inherit-held-scenario.js";

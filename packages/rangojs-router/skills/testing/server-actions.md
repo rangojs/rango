@@ -53,6 +53,14 @@
 | `stateCookieName` | `string`                  | The resolved rango state cookie name this run seeded (default `rango-state_router_0`). Assert an `invalidateClientCache()` rotation against it without recomputing.                               |
 | `locationState`   | `Record<string, unknown>` | The flash set via `ctx.setLocationState()` / `redirect({ state })`, as the flat `{ key: value }` the client reads.                                                                                |
 
+`runInRequestContext` runs your function, not the router's action handling,
+so its `response` carries no write bump: the router sets that around every
+action it runs (the state cookie's `{version}:{timestamp}:{write}`, write part
+bumped unless the action called `keepClientCache()`). To assert it, send the
+action through the router with `serveShellRequest(router, url, { action })`
+(or `{ form }` with `createActionForm` for a post before hydration) and read
+the state `Set-Cookie` on `result.response`.
+
 Low-level building blocks (all from `@rangojs/router/testing`):
 
 - `createTestRequestContext(opts)` builds the context WITHOUT entering it and returns `{ ctx, request, url, variables, stateCookieName }`. Its `ctx.reverse` accepts any name from your `routeMap`.

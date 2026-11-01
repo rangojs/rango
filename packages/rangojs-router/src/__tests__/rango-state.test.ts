@@ -276,5 +276,121 @@ describe("rango-state (cookie)", () => {
 
       expect(observer).not.toHaveBeenCalled();
     });
+
+    // A server action's Set-Cookie (this tab's or a sibling's) bumps only the
+    // write part: the next read sends it (the HTTP cache misses), but the
+    // in-memory caches only go stale, so nothing is reported as a rotation.
+    it("does not report a write-only bump as a rotation, and still fires on a later rotation", async () => {
+      const j = makeJar({ [NAME]: "v1:100" });
+      vi.stubGlobal("document", j.jar);
+
+      const { initRangoState, getRangoState, setRangoStateObserver } =
+        await import("../browser/rango-state");
+      initRangoState("v1", NAME);
+
+      const observer = vi.fn();
+      setRangoStateObserver(observer);
+
+      j.set(NAME, "v1:100:5000");
+      expect(getRangoState()).toBe("v1:100:5000");
+      j.set(NAME, "v1:100:5001");
+      expect(getRangoState()).toBe("v1:100:5001");
+      expect(observer).not.toHaveBeenCalled();
+
+      // invalidateClientCache() on the server seat: a new timestamp.
+      j.set(NAME, "v1:200");
+      expect(getRangoState()).toBe("v1:200");
+      expect(observer).toHaveBeenCalledTimes(1);
+      expect(observer).toHaveBeenCalledWith("v1:200");
+    });
+
+    it("tells the write observer once per write-only change, never on a rotation", async () => {
+      const j = makeJar({ [NAME]: "v1:100" });
+      vi.stubGlobal("document", j.jar);
+
+      const {
+        initRangoState,
+        getRangoState,
+        invalidateRangoState,
+        setRangoStateWriteObserver,
+      } = await import("../browser/rango-state");
+      initRangoState("v1", NAME);
+
+      const observer = vi.fn();
+      setRangoStateWriteObserver(observer);
+
+      // Reading the boot value changes nothing.
+      getRangoState();
+      expect(observer).not.toHaveBeenCalled();
+
+      j.set(NAME, "v1:100:5000");
+      getRangoState();
+      getRangoState();
+      expect(observer).toHaveBeenCalledTimes(1);
+
+      j.set(NAME, "v1:100:5001");
+      getRangoState();
+      expect(observer).toHaveBeenCalledTimes(2);
+
+      // A rotation, external or this tab's own, is not a write.
+      j.set(NAME, "v1:200");
+      getRangoState();
+      invalidateRangoState();
+      getRangoState();
+      expect(observer).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps a matching-version cookie with a write part on reload", async () => {
+      const j = makeJar({ [NAME]: "v1:100:5000" });
+      vi.stubGlobal("document", j.jar);
+
+      const { initRangoState, getRangoState } =
+        await import("../browser/rango-state");
+      initRangoState("v1", NAME);
+
+      expect(j.store[NAME]).toBe("v1:100:5000");
+      expect(getRangoState()).toBe("v1:100:5000");
+    });
+
+    it("a self-rotation from a value with a write part mints a newer timestamp", async () => {
+      const j = makeJar({ [NAME]: "v1:100:5000" });
+      vi.stubGlobal("document", j.jar);
+      vi.spyOn(Date, "now").mockReturnValue(50);
+
+      const { initRangoState, getRangoState, invalidateRangoState } =
+        await import("../browser/rango-state");
+      initRangoState("v1", NAME);
+      invalidateRangoState();
+
+      expect(getRangoState()).toBe("v1:101");
+    });
+  });
+
+  describe("cross-tab adopt", () => {
+    // A soft broadcast carries the sender's state with its newer write part;
+    // only a newer timestamp (a rotation) is adopted.
+    it("adopts a newer timestamp, never a write-only difference", async () => {
+      const throwingDoc = {
+        get cookie(): string {
+          throw new Error("blocked");
+        },
+        set cookie(_v: string) {
+          throw new Error("blocked");
+        },
+      };
+      vi.stubGlobal("document", throwingDoc);
+      vi.spyOn(Date, "now").mockReturnValue(700);
+
+      const { adoptRangoState, getRangoState, initRangoState } =
+        await import("../browser/rango-state");
+      initRangoState("v1", NAME);
+
+      expect(adoptRangoState("v1:700:9000")).toBe(false);
+      expect(getRangoState()).toBe("v1:700");
+      expect(adoptRangoState("v1:900:9000")).toBe(true);
+      expect(getRangoState()).toBe("v1:900:9000");
+      expect(adoptRangoState("v1:900:9500")).toBe(false);
+      expect(getRangoState()).toBe("v1:900:9000");
+    });
   });
 });

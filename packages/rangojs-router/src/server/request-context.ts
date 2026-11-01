@@ -17,6 +17,7 @@ import type { CacheErrorCategory } from "../cache/cache-error.js";
 import type { CookieOptions } from "../router/middleware.js";
 import {
   KEEP_CACHE_HEADER,
+  bumpStateWrite,
   getRawCookieValue,
   freshReadsCookieName,
   mintStateValue,
@@ -206,8 +207,12 @@ export interface RequestContext<
   setStatus(status: number): void;
   /** @internal Set status bypassing cache-exec guard (for framework error handling) */
   _setStatus(status: number): void;
-  /** @internal Rotate the rango state cookie (server seat of invalidateClientCache). */
-  _rotateStateCookie(): void;
+  /**
+   * @internal Rotate the rango state cookie: its timestamp (the server seat of
+   * invalidateClientCache), or with `"write"` only its write part (a server
+   * action without a directive, cookie-store.ts runActionBody).
+   */
+  _rotateStateCookie(part?: "write"): void;
   /** @internal Set the keepClientCache() directive header on the response. */
   _setKeepCacheDirective(): void;
   /**
@@ -1417,7 +1422,12 @@ export function createRequestContext<TEnv>(
   // of this request's headers goes through requestHeaders().
   guardRequestHeaders(request);
   const cookieHeader = requestHeaders(request).get("Cookie");
-  let rangoStateRotated = false;
+  // What this response's state Set-Cookie changed: nothing yet, the write
+  // part only, or the timestamp (which covers a write).
+  let rangoStateRotated: "write" | "timestamp" | null = null;
+  // The state Set-Cookie line written, replaced when a timestamp rotation
+  // follows a write bump in the same request.
+  let stateCookieLine: string | null = null;
   const freshCookie = stateCookieName
     ? freshReadsCookieName(stateCookieName)
     : undefined;
@@ -1496,6 +1506,17 @@ export function createRequestContext<TEnv>(
     stubResponse = new Response(null, { status, headers: rawStubHeaders });
     rawStubHeaders = stubResponse.headers;
     shadowStubHeaders(stubResponse);
+  };
+  // Remove one Set-Cookie line an internal writer appended earlier in this
+  // request (Headers has no per-value delete): the state cookie when a later
+  // write replaces or withdraws it, the fresh-reads cookie when a longer
+  // Max-Age replaces it.
+  const dropSetCookieLine = (line: string): void => {
+    const kept = rawStubHeaders
+      .getSetCookie()
+      .filter((cookie) => cookie !== line);
+    rawStubHeaders.delete("Set-Cookie");
+    for (const cookie of kept) rawStubHeaders.append("Set-Cookie", cookie);
   };
 
   const handleStore = createHandleStore();
@@ -1672,16 +1693,29 @@ export function createRequestContext<TEnv>(
       stubResponse.headers.set(name, value);
     },
 
-    // Rotate the rango state cookie for the responding client (the server seat
-    // of invalidateClientCache). Writes ONE Set-Cookie per request with the
-    // value {version}:{timestamp}; the `:` stays raw (the cookie-name.ts
+    // Rotate the rango state cookie for the responding client. Writes ONE
+    // Set-Cookie per request; the `:` stays raw (the cookie-name.ts
     // serializer), not the URL-encoded form serializeCookieValue would produce.
-    // The timestamp is strictly greater than the client's current one (inbound
-    // X-Rango-State), so a same-millisecond server rotation still differs from
-    // the client value and the divergence observer fires.
-    _rotateStateCookie(): void {
-      if (rangoStateRotated) return;
-      rangoStateRotated = true;
+    // - No part (the server seat of invalidateClientCache): a new timestamp,
+    //   {version}:{timestamp}. It is strictly greater than the client's current
+    //   one (inbound X-Rango-State), so a same-millisecond server rotation
+    //   still differs from the client value and the divergence observer fires.
+    // - "write" (a server action without a directive, after its body ran): the
+    //   client's version and timestamp kept and the write part bumped,
+    //   {version}:{timestamp}:{write}, so the browser HTTP cache misses on
+    //   every response it holds from before the write while the client's
+    //   in-memory caches (keyed by {version}:{timestamp}) only go stale.
+    //   Skipped after keepClientCache() (and withdrawn by a later one, below),
+    //   and when the request carries no state.
+    // A timestamp rotation covers a write bump: the later one of the two
+    // replaces the bump's line, and a bump after a rotation adds nothing.
+    _rotateStateCookie(part?: "write"): void {
+      const kind = part === "write" ? "write" : "timestamp";
+      if (rangoStateRotated === "timestamp" || rangoStateRotated === kind) {
+        return;
+      }
+      if (kind === "write" && rawStubHeaders.has(KEEP_CACHE_HEADER)) return;
+      rangoStateRotated = kind;
       if (!stateCookieName) return;
       // The client's current value, for the monotonic guard: prefer the
       // X-Rango-State header (router navigation/prefetch fetches send it), but
@@ -1696,22 +1730,38 @@ export function createRequestContext<TEnv>(
       const prevRaw =
         (requestHeaders(request).get("x-rango-state") || null) ??
         getRawCookieValue(cookieHeader, stateCookieName);
-      const value = mintStateValue(versions?.document ?? "0", prevRaw);
+      const value =
+        kind === "write"
+          ? bumpStateWrite(prevRaw)
+          : mintStateValue(versions?.document ?? "0", prevRaw);
+      // No state on the request: nothing is cached under one to miss.
+      if (value === null) return;
       // rawStubHeaders: guard-exempt internal writer — invalidateClientCache()
       // is documented callable from loaders and during shell capture.
-      rawStubHeaders.append(
-        "Set-Cookie",
-        serializeStateCookie(stateCookieName, value, url.protocol === "https:"),
+      if (stateCookieLine !== null) dropSetCookieLine(stateCookieLine);
+      stateCookieLine = serializeStateCookie(
+        stateCookieName,
+        value,
+        url.protocol === "https:",
       );
+      rawStubHeaders.append("Set-Cookie", stateCookieLine);
       invalidateResponseCookieCache();
     },
 
     // Set the keepClientCache() directive header. The action bridge reads it on
     // the response and suppresses its automatic invalidation. `.set` makes this
     // idempotent (one header regardless of call count). rawStubHeaders:
-    // guard-exempt internal writer.
+    // guard-exempt internal writer. A write bump already written (the action
+    // body ended, then global middleware after next() or a loader of the
+    // revalidation called it) is withdrawn: keepClientCache() bumps nothing.
     _setKeepCacheDirective(): void {
       rawStubHeaders.set(KEEP_CACHE_HEADER, "1");
+      if (rangoStateRotated === "write" && stateCookieLine !== null) {
+        dropSetCookieLine(stateCookieLine);
+        stateCookieLine = null;
+        rangoStateRotated = null;
+        invalidateResponseCookieCache();
+      }
     },
 
     // The fresh-reads cookie (browser/cookie-name.ts): one Set-Cookie per
@@ -1744,12 +1794,7 @@ export function createRequestContext<TEnv>(
         `${freshCookie}=1; Max-Age=${age}; Path=/; HttpOnly; SameSite=Lax` +
         (url.protocol === "https:" ? "; Secure" : "");
       if (freshCookieMaxAge > 0) {
-        const prior = serialized(freshCookieMaxAge);
-        const kept = rawStubHeaders
-          .getSetCookie()
-          .filter((cookie) => cookie !== prior);
-        rawStubHeaders.delete("Set-Cookie");
-        for (const cookie of kept) rawStubHeaders.append("Set-Cookie", cookie);
+        dropSetCookieLine(serialized(freshCookieMaxAge));
       }
       freshCookieMaxAge = maxAge;
       rawStubHeaders.append("Set-Cookie", serialized(maxAge));

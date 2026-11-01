@@ -330,7 +330,8 @@ export function invalidateClientCache(): void {
  *
  * Sets an internal response header the bridge reads. Idempotent within a
  * request. Inert (a dev warning) outside a request context — there is no
- * automatic invalidation to suppress.
+ * automatic invalidation to suppress. It also keeps the state's write part
+ * (runActionBody).
  */
 export function keepClientCache(): void {
   const ctx = _getRequestContext();
@@ -345,6 +346,26 @@ export function keepClientCache(): void {
   assertNotInsidePrerenderProducer(ctx, "keepClientCache()");
   refuseInCacheScope("keepClientCache()", COOKIES_READ);
   ctx._setKeepCacheDirective();
+}
+
+/**
+ * Run a server action's body (the JS call or a no-JS form post), then bump the
+ * rango state's write part for the client that called it: the response's
+ * state `Set-Cookie` keeps the client's timestamp and carries a new write part
+ * (browser/cookie-name.ts). Every later request of every tab and reload sends
+ * the new `X-Rango-State`, so a prefetch or navigation the browser HTTP cache
+ * holds from before the write (a response's own `Cache-Control: max-age`)
+ * misses, while the client's in-memory caches only go stale, as the action
+ * bridge marks them. Bumped however the body ends (returned, threw, or
+ * redirected), since the write may have committed either way, and not after
+ * keepClientCache() or invalidateClientCache() (whose rotation covers it).
+ */
+export async function runActionBody<T>(body: () => T | Promise<T>): Promise<T> {
+  try {
+    return await body();
+  } finally {
+    _getRequestContext()?._rotateStateCookie("write");
+  }
 }
 
 /**

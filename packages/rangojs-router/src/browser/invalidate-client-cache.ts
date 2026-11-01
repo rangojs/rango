@@ -1,12 +1,14 @@
 /**
  * Client seat of `invalidateClientCache()` (the `default` export condition).
  *
- * Makes the current client behave as if a server action had just completed:
- * the history cache is marked stale (SWR), the prefetch map is flushed, the
- * state rotates, and sibling tabs are broadcast to — the same
- * `markCacheAsStaleAndBroadcast()` path the server-action bridge uses. This is
- * the gentler mark-stale (not hard-clear) behavior, so Back renders the cached
- * entry instantly and revalidates.
+ * The full client invalidation, more than a server action without a
+ * directive does: the history cache is marked stale (SWR), the prefetch map
+ * is flushed (in-flight prefetches aborted, visible links prefetch again), the
+ * state rotates, and sibling tabs are broadcast to, which adopt the new state
+ * and flush too (`invalidateCacheAndBroadcast()`). A directive-free action
+ * only marks history and prefetches stale and rotates nothing
+ * (`markCacheAsStaleAndBroadcast()`). History is marked stale, not cleared, so
+ * Back renders the cached entry instantly and revalidates.
  */
 
 import { getRegisteredStore } from "./navigation-store-handle.js";
@@ -27,7 +29,7 @@ export function invalidateClientCache(): void {
 
   const store = getRegisteredStore();
   if (store) {
-    store.markCacheAsStaleAndBroadcast();
+    store.invalidateCacheAndBroadcast();
     return;
   }
 

@@ -5,20 +5,23 @@ import { waitForHydration, isPrefetchRequest, blockPrefetch } from "./helper";
 /**
  * Rango-state invalidation lifecycle tests.
  *
- * Verifies the full cycle:
+ * Verifies the cycle:
  *   1. App initializes the rango state session cookie
- *   2. Server action triggers invalidateRangoState() (timestamp rotation)
- *   3. Subsequent navigation sends the rotated X-Rango-State header
- *
- * This ensures that after a mutation, previously cached prefetch responses
- * (keyed by the old X-Rango-State via Vary) will miss, forcing fresh data.
+ *   2. A server action without a directive rotates nothing: it marks history
+ *      and prefetches stale (#1329). Its response bumps only the write part
+ *      (`{version}:{timestamp}:{write}`), and the next navigation sends the
+ *      bumped X-Rango-State, so responses the browser HTTP cache holds from
+ *      before the write miss
+ *   3. invalidateClientCache() (either seat) rotates the timestamp, and the
+ *      next navigation sends the rotated value, so responses cached under the
+ *      old X-Rango-State (via Vary) miss
  */
 
 // rango state lives in a session cookie named `{prefix}_{routerId}` (default
 // prefix `rango-state`, or the bare default when metadata lacks the name) so
 // sibling apps on the same origin don't collide. The helper locates whichever
-// `rango-state...` cookie the app wrote and returns its `{version}:{timestamp}`
-// value.
+// `rango-state...` cookie the app wrote and returns its
+// `{version}:{timestamp}[:{write}]` value.
 async function readRangoState(page: Page): Promise<string | null> {
   return await page.evaluate(() => {
     for (const part of document.cookie.split(";")) {
@@ -32,14 +35,13 @@ async function readRangoState(page: Page): Promise<string | null> {
   });
 }
 
-async function testRangoStateRotatesAfterAction(
+async function testActionBumpsWriteAndNavigationUsesIt(
   page: Page,
   url: (path: string) => string,
 ) {
-  // A post-action viewport prefetch (default-on, re-keyed under the rotated
-  // state) of the bare nav-home Link would be adopted by the click below —
-  // zero navigation requests and the header waiter would starve. Keep the
-  // navigation fetch live.
+  // A viewport prefetch of the bare nav-home Link would be adopted by the
+  // click below — zero navigation requests and the header waiter would
+  // starve. Keep the navigation fetch live.
   await blockPrefetch(page);
 
   // Load a page with a server action button
@@ -54,8 +56,9 @@ async function testRangoStateRotatesAfterAction(
   expect(initialTimestamp).toBeTruthy();
 
   // Click the server action button — this triggers:
-  //   actionSetSessionCookie() → server action bridge → markCacheAsStaleAndBroadcast()
-  //   → clearPrefetchCache() → invalidateRangoState() → cookie rotation
+  //   actionSetSessionCookie() → its response's Set-Cookie bumps the write part
+  //   → server action bridge → markCacheAsStaleAndBroadcast()
+  //   → history and prefetches marked stale, a soft broadcast, no rotation
   await page.click('[data-testid="action-set-cookie-btn"]');
 
   // Wait for the action to complete (button text changes back from "Setting...")
@@ -63,15 +66,12 @@ async function testRangoStateRotatesAfterAction(
     '[data-testid="action-set-cookie-btn"]:not([disabled])',
   );
 
-  // Read the rotated rango-state
-  const rotatedState = await readRangoState(page);
-  expect(rotatedState).toBeTruthy();
-  const [rotatedVersion, rotatedTimestamp] = rotatedState!.split(":");
-
-  // Version prefix must be preserved (same build), timestamp must differ
-  expect(rotatedVersion).toBe(initialVersion);
-  expect(rotatedTimestamp).not.toBe(initialTimestamp);
-  expect(Number(rotatedTimestamp)).toBeGreaterThan(Number(initialTimestamp));
+  // The version and timestamp are unchanged; a write part follows them
+  const afterState = await readRangoState(page);
+  const [afterVersion, afterTimestamp, afterWrite] = afterState!.split(":");
+  expect(afterVersion).toBe(initialVersion);
+  expect(afterTimestamp).toBe(initialTimestamp);
+  expect(afterWrite).toMatch(/^\d+$/);
 
   // Set up request listener to capture the X-Rango-State header on next navigation
   const headerPromise = new Promise<string | null>((resolve) => {
@@ -87,10 +87,9 @@ async function testRangoStateRotatesAfterAction(
   // Trigger a client-side SPA navigation (Home link in root layout)
   await page.click('[data-testid="nav-home"]');
 
-  // Verify the navigation request sent the rotated state, not the initial one
+  // The navigation request sends the bumped state
   const sentHeader = await headerPromise;
-  expect(sentHeader).toBe(rotatedState);
-  expect(sentHeader).not.toBe(initialState);
+  expect(sentHeader).toBe(afterState);
 }
 
 async function testRangoStateSurvivesRefresh(
@@ -116,7 +115,7 @@ async function testInvalidatedStateSurvivesRefresh(
   page: Page,
   url: (path: string) => string,
 ) {
-  // Same rationale as testRangoStateRotatesAfterAction: keep the post-refresh
+  // Same rationale as testActionBumpsWriteAndNavigationUsesIt: keep the post-refresh
   // click's navigation fetch live so the header waiter sees it.
   await blockPrefetch(page);
 
@@ -125,14 +124,13 @@ async function testInvalidatedStateSurvivesRefresh(
 
   const initialState = await readRangoState(page);
 
-  // Trigger action to rotate the state
-  await page.click('[data-testid="action-set-cookie-btn"]');
-  await page.waitForSelector(
-    '[data-testid="action-set-cookie-btn"]:not([disabled])',
-  );
+  // invalidateClientCache() (client seat) rotates the state
+  await page.click('[data-testid="invalidate-client-btn"]');
+  await expect
+    .poll(async () => await readRangoState(page))
+    .not.toBe(initialState);
 
   const rotatedState = await readRangoState(page);
-  expect(rotatedState).not.toBe(initialState);
 
   // Refresh the page — rotated state should survive (same version prefix)
   await page.reload();
@@ -167,8 +165,18 @@ async function testKeepCacheLeavesStateUnchanged(
   const initialState = await readRangoState(page);
   expect(initialState).toBeTruthy();
 
+  // An entry in the history cache to come back to.
+  await page.click('[data-testid="nav-home"]');
+  await expect(page).toHaveURL(url("/"));
+  await page.goBack();
+  await expect(
+    page.locator('[data-testid="action-keep-cache-btn"]'),
+  ).toBeVisible();
+
   // An action that calls keepClientCache() suppresses the bridge's automatic
-  // invalidation, so the rango state value must NOT rotate.
+  // invalidation: the rango state value does not rotate (no action rotates
+  // it now, #1329) and its write part is not bumped, and the history cache
+  // stays fresh.
   await page.click('[data-testid="action-keep-cache-btn"]');
   await page.waitForSelector(
     '[data-testid="action-keep-cache-btn"]:not([disabled])',
@@ -176,6 +184,24 @@ async function testKeepCacheLeavesStateUnchanged(
 
   const afterState = await readRangoState(page);
   expect(afterState).toBe(initialState);
+
+  // A default action marks the entry stale, and Forward onto it revalidates
+  // it (`_rsc_stale`). After keepClientCache() nothing revalidates.
+  const staleRequests: string[] = [];
+  page.on("request", (req) => {
+    const requested = new URL(req.url());
+    if (
+      requested.searchParams.has("_rsc_partial") &&
+      requested.searchParams.get("_rsc_stale") === "true" &&
+      !isPrefetchRequest(req)
+    ) {
+      staleRequests.push(req.url());
+    }
+  });
+  await page.goForward();
+  await expect(page).toHaveURL(url("/"));
+  await page.waitForTimeout(1000);
+  expect(staleRequests, "no revalidation request after Forward").toEqual([]);
 }
 
 async function testKeepThenInvalidateStillRotates(
@@ -216,7 +242,7 @@ async function testClientSeatRotatesState(
   const [initialVersion, initialTimestamp] = initialState!.split(":");
 
   // invalidateClientCache() from browser code (client seat) rotates the state
-  // via markCacheAsStaleAndBroadcast -> clearPrefetchCache -> invalidateRangoState.
+  // via invalidateCacheAndBroadcast -> clearPrefetchCache -> invalidateRangoState.
   await page.click('[data-testid="invalidate-client-btn"]');
 
   await expect
@@ -297,10 +323,10 @@ test.describe("rango-state invalidation lifecycle (dev)", () => {
     mode: "dev",
   });
 
-  test("server action rotates rango-state and navigation uses rotated value", async ({
+  test("server action keeps the rango-state timestamp, bumps its write part, and navigation sends it", async ({
     page,
   }) => {
-    await testRangoStateRotatesAfterAction(page, f.url);
+    await testActionBumpsWriteAndNavigationUsesIt(page, f.url);
   });
 
   test("rango-state survives page refresh", async ({ page }) => {
@@ -346,10 +372,10 @@ test.describe("rango-state invalidation lifecycle (production)", () => {
     mode: "build",
   });
 
-  test("server action rotates rango-state and navigation uses rotated value", async ({
+  test("server action keeps the rango-state timestamp, bumps its write part, and navigation sends it", async ({
     page,
   }) => {
-    await testRangoStateRotatesAfterAction(page, f.url);
+    await testActionBumpsWriteAndNavigationUsesIt(page, f.url);
   });
 
   test("rango-state survives page refresh", async ({ page }) => {

@@ -240,6 +240,19 @@ describe("navigation-store", () => {
       expect(store.getCachedSegments("/p2")!.stale).toBe(true);
     });
 
+    it("markCachesStaleAfterWrite marks every entry and every prefetch stale", async () => {
+      const { currentPrefetchEpoch } =
+        await import("../browser/prefetch/cache");
+      const store = createTestStore();
+      store.cacheSegmentsForHistory("/p1", []);
+      const epoch = currentPrefetchEpoch();
+
+      store.markCachesStaleAfterWrite();
+
+      expect(store.getCachedSegments("/p1")!.stale).toBe(true);
+      expect(currentPrefetchEpoch()).toBe(epoch + 1);
+    });
+
     it("re-caching a stale entry makes it fresh", () => {
       const store = createTestStore();
       store.cacheSegmentsForHistory("/page", []);

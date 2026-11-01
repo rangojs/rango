@@ -32,7 +32,110 @@ a zero `max-age` (`max-age=0`, with or without `must-revalidate`);
 the document cache still stores the answer by the route's `s-maxage`. A
 redirect a middleware returns after the render, and a response carrying a
 per-client header (a state cookie rotation, `x-rango-keep-cache`) or location
-state, get none. Nothing to change in your code.
+state, get none. A server action bumps the state's write part (below), so a
+prefetch after it misses the copy from before the write. Nothing to change in
+your code.
+
+### Fixed: after a server action, a prefetch is no longer answered from the browser's HTTP cache with the value from before the write
+
+**Before.** Since the action stopped rotating the state cookie (#1329, below),
+the value every prefetch and navigation sends as `X-Rango-State` stayed the
+same across a write. Responses vary on it, so a partial response that carries
+its own `Cache-Control: max-age` (a route's own header) was answered from the
+browser's HTTP cache after the write: a new hover and the click showed the
+pre-write value with no revalidation, in the tab that ran the action, after a
+reload, and in a tab opened later.
+
+**Now.** The state value has a third part: `{build}:{invalidation}:{write}`.
+The response of a server action without a directive bumps the write part in
+its `Set-Cookie` (server side, so a form posted before hydration bumps it
+too), and every later request of every tab sends the new value, so the
+pre-write entries miss. The client's in-memory caches compare only
+`{build}:{invalidation}`, so the action still marks prefetches stale and
+flushes nothing. `invalidateClientCache()` still rotates the invalidation part;
+`keepClientCache()` bumps nothing. A two-part value, from a tab open across
+the deploy, still parses.
+
+A tab that hears no broadcast of the action (its page shares no segment with
+the acting page, or the app sets `crossTabSync: false`) no longer serves a
+prefetch it made before another tab's write as fresh: its next prefetch or
+navigation reads the bumped state, marks its history and prefetches stale,
+and a click on the prefetched link shows the page, then revalidates it.
+
+```text
+/basket prefetched on hover (Cache-Control: private, max-age=60), cart:0
+click "Add to cart"; hover /basket again; click it
+  before: the hover is answered from the HTTP cache: /basket shows cart:0
+  now:    the hover reaches the server: /basket shows cart:1
+```
+
+Nothing changes in app code. A test that reads the state cookie after an
+action sees a third part; compare its first two parts to tell a rotation from
+a write.
+
+### Breaking: a server action marks prefetches stale instead of flushing them, and stops rotating the state cookie ([#1329](https://github.com/rangojs/rango/issues/1329))
+
+**Before.** Every action without `keepClientCache()` flushed the prefetch
+cache and rotated the `rango-state` cookie. Every visible link prefetched
+again after each action, and other tabs flushed theirs.
+
+**Now.** A prefetch made before the action stays. A click on it shows the
+page at once, then revalidates it in the background, as Back does on a page
+an action made stale; `useNavigation()` stays idle and nothing remounts. The
+pre-write values show for one round trip, a layout loader that re-runs on
+navigation included. Visible links do not prefetch again; a new hover
+replaces a stale prefetch with a fresh one. A stale prefetch answers only a
+click, once: a second click on the same link fetches the page, and so do
+Back/Forward onto a page the history cache no longer holds and leaving an
+intercept. Other tabs that share a segment
+with the page mark their history and prefetches stale and refresh. The
+cookie's invalidation part is not rotated; only its write part is bumped
+(above), so a partial response a route caches with its own `Cache-Control`
+misses in the browser's HTTP cache after the write. Tabs
+that share no segment with the page, and apps with `crossTabSync: false`,
+get no message and do not refresh; they mark their caches stale when they
+next read the bumped state (above). For the old full flush, call `invalidateClientCache()` in
+the action: other tabs then adopt the rotated state, flush and refresh.
+`keepClientCache()` is unchanged.
+
+```text
+/product/1: /cart prefetched (cart:2), click "Add to cart"
+  before: the prefetch is dropped; the click on /cart requests it (cart:3)
+  now:    the click on /cart shows the prefetch at once (cart:2),
+          then one background revalidation (cart:3)
+```
+
+```ts
+// The old behavior, for an action whose write makes every prefetch wrong.
+"use server";
+import { invalidateClientCache } from "@rangojs/router";
+
+export async function switchCurrency(currency: string) {
+  await prefs.set({ currency });
+  invalidateClientCache();
+}
+```
+
+`@rangojs/router/testing`: `renderRoute`'s router handle gains `prefetch(url)`
+and `action({ loaders, keepClientCache })`, so a test can run an action and
+then a click on a stale prefetch, and `revalidations()` to read the
+revalidation requests it made.
+
+### Fixed: `revalidate()` sees `currentUrl` without the page's `#fragment`
+
+**Before.** On a partial request, `currentUrl` kept the `#fragment` of the page
+on screen, while `nextUrl` never has one. A rule comparing the two addresses
+(`currentUrl.href === nextUrl.href`) saw `/t/42#questions` and `/t/42` as two
+addresses, so on a page with an anchor in its address, a rule of the form
+"same address: decide as usual, otherwise hold" held its segment, even after
+an action had made it stale. The page showed what it held before the write.
+
+**Now.** The server drops the fragment from the client path, the rewrite
+target and the intercept source when it builds the navigation snapshot
+(`router/navigation-snapshot.ts`), for every request lane (navigation,
+prefetch, action, fill). `currentUrl` and `nextUrl` of one address are equal;
+route matching, params, query and `fromRouteName` are unchanged, and no
+client code changes.
 
 ### Fixed: `rango generate` reads the exported `createRouter` chain, not a helper router earlier in the file
 

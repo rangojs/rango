@@ -7,12 +7,21 @@
  * receive it by argument: the jar-divergence observer (below) and the client
  * seat of `invalidateClientCache()` (added later).
  *
- * Dependency-light on purpose: it imports only `setRangoStateObserver` and the
- * store type, so pulling it into the default root entry does not drag the
- * navigation store into bundles that previously lacked it.
+ * Dependency-light on purpose: it imports only the action fence, the
+ * rango-state observers and the store type, so pulling it into the default
+ * root entry does not drag the navigation store into bundles that previously
+ * lacked it.
  */
 
-import { setRangoStateObserver } from "./rango-state.js";
+import {
+  noteStateRotation,
+  noteStateWrite,
+  setUnlandedWriteHandler,
+} from "./action-fence.js";
+import {
+  setRangoStateObserver,
+  setRangoStateWriteObserver,
+} from "./rango-state.js";
 import type { NavigationStore } from "./types.js";
 import type { SourcePage } from "../prefetch-source-scope.js";
 
@@ -24,13 +33,30 @@ let registeredStore: NavigationStore | null = null;
  * sibling tab, a server `Set-Cookie`, or a cookie clear), mark this tab's
  * history cache stale. The history cache is not state-keyed, so the value
  * rotation alone does not reach it. No broadcast, no prefetch clear, no
- * re-rotation — the value already changed externally.
+ * re-rotation — the value already changed externally. A rotation seen while
+ * an action is in flight is recorded on the fence: the action's landing then
+ * sends the full broadcast (navigation-store.ts markCacheAsStaleAndBroadcast).
+ *
+ * A read that sees only the write part change (a server action's response,
+ * in this tab or another) marks this tab's history entries and prefetches
+ * stale, as a soft broadcast's receiver does: a tab the broadcast does not
+ * reach would otherwise serve a prefetch made before the write as fresh.
+ * While an action is in flight the write is recorded on the fence instead:
+ * the action's landing marks every cache stale once (navigation-store.ts
+ * markStaleSoftAndBroadcast), and when no landing does, the fence's drop
+ * marks them.
  */
 export function registerNavigationStore(store: NavigationStore): void {
   registeredStore = store;
   setRangoStateObserver(() => {
+    noteStateRotation();
     registeredStore?.markHistoryCacheStale();
   });
+  const markCachesStale = () => registeredStore?.markCachesStaleAfterWrite();
+  setRangoStateWriteObserver(() => {
+    if (!noteStateWrite()) markCachesStale();
+  });
+  setUnlandedWriteHandler(markCachesStale);
 }
 
 /** The active navigation store, or null before boot has registered it. */

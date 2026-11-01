@@ -2,8 +2,12 @@ import { Suspense } from "react";
 import { createRouter, urls } from "@rangojs/router";
 import { Document } from "./document.js";
 import type { AppBindings } from "./env.js";
+import { getCounter } from "./actions/counter.js";
 import { Counter } from "./components/Counter.js";
-import { PrefetchInvalidationButton } from "./components/PrefetchInvalidationButton.js";
+import {
+  PrefetchActionInvalidationButton,
+  PrefetchInvalidationButton,
+} from "./components/PrefetchInvalidationButton.js";
 
 /**
  * A server component that never settles: the stream-idle e2e fixture. The
@@ -34,6 +38,7 @@ const urlpatterns = urls(({ path }) => [
           </a>
         </p>
         <PrefetchInvalidationButton />
+        <PrefetchActionInvalidationButton />
         <Counter initialCount={0} />
         <p>
           <a
@@ -115,9 +120,20 @@ const urlpatterns = urls(({ path }) => [
     ),
     { name: "prefetchScopeHome" },
   ),
-  path("/target", () => <h1>Prefetch target</h1>, {
-    name: "prefetchScopeTarget",
-  }),
+  // Shows the counter the page's +1 action writes: the e2e for a click on a
+  // prefetch an action marked stale reads it before and after the write.
+  path(
+    "/target",
+    async () => (
+      <main>
+        <h1>Prefetch target</h1>
+        <p data-testid="target-count">{await getCounter()}</p>
+      </main>
+    ),
+    {
+      name: "prefetchScopeTarget",
+    },
+  ),
   path("/target.js", () => <h1>Static-looking prefetch target</h1>, {
     name: "prefetchScopeResourceRoute",
   }),

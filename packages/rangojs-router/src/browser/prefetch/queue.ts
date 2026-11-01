@@ -188,8 +188,9 @@ export function cancelAllPrefetches(keepUrl?: string | null): void {
 
 /**
  * Hard-cancel everything including in-flight prefetches.
- * Used by clearPrefetchCache (server action invalidation) where
- * in-flight responses would be stale.
+ * Used by clearPrefetchCache (invalidateClientCache(), a deploy) where
+ * in-flight responses would be stale. A server action never calls it: it
+ * marks prefetches stale and lets in-flight ones finish (cache.ts).
  */
 export function abortAllPrefetches(): void {
   for (const ac of abortControllers.values()) {

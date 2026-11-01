@@ -9,7 +9,11 @@ import {
   type RequestContext,
 } from "../request-context.js";
 import { makeRequestContext } from "../../__tests__/kit/request-context.js";
-import { invalidateClientCache } from "../cookie-store.js";
+import {
+  invalidateClientCache,
+  keepClientCache,
+  runActionBody,
+} from "../cookie-store.js";
 import { runWithCacheExecScope } from "../../cache/cache-exec-scope.js";
 import { uniformVersions } from "../../router-versions.js";
 
@@ -167,5 +171,124 @@ describe("invalidateClientCache() (server seat)", () => {
         expect(() => invalidateClientCache()).toThrow(/use cache/);
       }),
     );
+  });
+});
+
+/**
+ * A server action's body run through runActionBody: the response's state
+ * Set-Cookie keeps the client's timestamp and bumps the write part, so the
+ * browser HTTP cache misses on what it holds from before the write.
+ */
+describe("runActionBody: the write bump", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const actionContext = (state: string | null) =>
+    makeRequestContext({
+      url: EXAMPLE_URL,
+      stateCookieName: "rango-state_router_0",
+      versions: uniformVersions("v1"),
+      init: state
+        ? { headers: { Cookie: `rango-state_router_0=${state}` } }
+        : undefined,
+    });
+
+  it("bumps the write part and keeps the timestamp, however the body ends", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(5);
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const ctx = actionContext("v1:1000");
+    await runWithRequestContext(ctx, () => runActionBody(() => "done"));
+    expect(setCookies(ctx)).toEqual([
+      "rango-state_router_0=v1:1000:5500; Path=/; SameSite=Lax; Secure",
+    ]);
+
+    const thrown = actionContext("v1:1000:7000");
+    await runWithRequestContext(thrown, () =>
+      runActionBody(() => {
+        throw new Error("boom");
+      }).catch(() => {}),
+    );
+    expect(setCookies(thrown)).toEqual([
+      "rango-state_router_0=v1:1000:7001; Path=/; SameSite=Lax; Secure",
+    ]);
+  });
+
+  it("keeps the request's version: a client on another build gets a write, not a rotation", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(5);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const ctx = actionContext("old:1000");
+    await runWithRequestContext(ctx, () => runActionBody(() => {}));
+    expect(setCookies(ctx)).toEqual([
+      "rango-state_router_0=old:1000:5000; Path=/; SameSite=Lax; Secure",
+    ]);
+  });
+
+  it("two actions from the same value in the same millisecond set different values", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(5);
+    const random = vi.spyOn(Math, "random");
+    const values: string[] = [];
+    for (const draw of [0.1, 0.2]) {
+      random.mockReturnValue(draw);
+      const ctx = actionContext("v1:1000");
+      await runWithRequestContext(ctx, () => runActionBody(() => {}));
+      values.push(setCookies(ctx)[0]!);
+    }
+    expect(values[0]).not.toBe(values[1]);
+  });
+
+  it("a keepClientCache() after the body (global middleware, a revalidation loader) withdraws the bump", async () => {
+    const ctx = actionContext("v1:1000");
+    await runWithRequestContext(ctx, async () => {
+      ctx.setCookie("other", "1");
+      await runActionBody(() => {});
+      expect(setCookies(ctx)).toHaveLength(2);
+      keepClientCache();
+    });
+    expect(setCookies(ctx)).toEqual(["other=1"]);
+  });
+
+  it("returns what the body returns", async () => {
+    const ctx = actionContext("v1:1000");
+    await expect(
+      runWithRequestContext(ctx, () => runActionBody(async () => 42)),
+    ).resolves.toBe(42);
+  });
+
+  it("bumps nothing after keepClientCache()", async () => {
+    const ctx = actionContext("v1:1000");
+    await runWithRequestContext(ctx, () =>
+      runActionBody(() => keepClientCache()),
+    );
+    expect(setCookies(ctx)).toEqual([]);
+  });
+
+  it("invalidateClientCache() in the body rotates the timestamp, and no bump follows", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(5000);
+    const ctx = actionContext("v1:1000:4000");
+    await runWithRequestContext(ctx, () =>
+      runActionBody(() => invalidateClientCache()),
+    );
+    expect(setCookies(ctx)).toEqual([
+      "rango-state_router_0=v1:5000; Path=/; SameSite=Lax; Secure",
+    ]);
+  });
+
+  it("a rotation after the bump (a loader of the revalidation) replaces its line", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(5000);
+    const ctx = actionContext("v1:1000");
+    await runWithRequestContext(ctx, async () => {
+      ctx.setCookie("other", "1");
+      await runActionBody(() => {});
+      invalidateClientCache();
+    });
+    expect(setCookies(ctx)).toEqual([
+      "other=1",
+      "rango-state_router_0=v1:5000; Path=/; SameSite=Lax; Secure",
+    ]);
+  });
+
+  it("writes nothing when the request carries no state", async () => {
+    const ctx = actionContext(null);
+    await runWithRequestContext(ctx, () => runActionBody(() => {}));
+    expect(setCookies(ctx)).toEqual([]);
   });
 });
