@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.33.0 (2026-11-01)
 
-### Changed: `prefetch: false` on an `ssr: false` loader of a `ppr` route keeps it out of a prefetch that has no document shell
+### Changed: `prefetch: false` on an `ssr: false` loader of a `ppr` route keeps it out of a prefetch that has no document shell ([#1364](https://github.com/rangojs/rango/pull/1364))
 
 **Before.** On a `ppr` route, `loader(Def, { ssr: false, prefetch: false })`
 ignored `prefetch: false`, and development warned that the loader "is
@@ -29,7 +29,7 @@ Such a loader is now deferrable, so `await ctx.rendered()` in it throws, on
 every request, as in any loader that can be deferred: drop the `ctx.rendered()`
 call or the `prefetch: false` flag.
 
-### Changed: a prefetch answered from storage carries `Cache-Control` again, so the browser can reuse it
+### Changed: a prefetch answered from storage carries `Cache-Control` again, so the browser can reuse it ([#1356](https://github.com/rangojs/rango/pull/1356))
 
 **Before.** Since 0.25.0 no prefetch response carried `Cache-Control` (#1170).
 A prefetch of a page served whole from a `cache()` record, a Prerender entry
@@ -73,7 +73,7 @@ calling browser's state. For an invalidation from another user, a webhook or
 a cron job, lower `prefetchCacheTTL` or send `Cache-Control: no-cache` from
 the route.
 
-### Fixed: after a server action, a prefetch is no longer answered from the browser's HTTP cache with the value from before the write
+### Fixed: after a server action, a prefetch is no longer answered from the browser's HTTP cache with the value from before the write ([#1360](https://github.com/rangojs/rango/pull/1360))
 
 **Before.** Since the action stopped rotating the state cookie (#1329, below),
 the value every prefetch and navigation sends as `X-Rango-State` stayed the
@@ -110,7 +110,7 @@ Nothing changes in app code. A test that reads the state cookie after an
 action sees a third part; compare its first two parts to tell a rotation from
 a write.
 
-### Fixed: a link to a page in the tab's history shows it fresh after another tab's write
+### Fixed: a link to a page in the tab's history shows it fresh after another tab's write ([#1362](https://github.com/rangojs/rango/pull/1362))
 
 **Before.** A tab that hears no broadcast of another tab's server action or
 `invalidateClientCache()` (its page shares no segment with the other tab's,
@@ -135,7 +135,7 @@ tab B: link to /shop/basket
 
 Nothing changes in app code.
 
-### Breaking: a server action marks prefetches stale instead of flushing them, and stops rotating the state cookie ([#1329](https://github.com/rangojs/rango/issues/1329))
+### Breaking: a server action marks prefetches stale instead of flushing them, and stops rotating the state cookie ([#1329](https://github.com/rangojs/rango/issues/1329), [#1343](https://github.com/rangojs/rango/pull/1343))
 
 **Before.** Every action without `keepClientCache()` flushed the prefetch
 cache and rotated the `rango-state` cookie. Every visible link prefetched
@@ -183,7 +183,7 @@ and `action({ loaders, keepClientCache })`, so a test can run an action and
 then a click on a stale prefetch, and `revalidations()` to read the
 revalidation requests it made.
 
-### Fixed: `revalidate()` sees `currentUrl` without the page's `#fragment`
+### Fixed: `revalidate()` sees `currentUrl` without the page's `#fragment` ([#1359](https://github.com/rangojs/rango/pull/1359))
 
 **Before.** On a partial request, `currentUrl` kept the `#fragment` of the page
 on screen, while `nextUrl` never has one. A rule comparing the two addresses
@@ -199,7 +199,7 @@ prefetch, action, fill). `currentUrl` and `nextUrl` of one address are equal;
 route matching, params, query and `fromRouteName` are unchanged, and no
 client code changes.
 
-### Fixed: `rango generate` reads the exported `createRouter` chain, not a helper router earlier in the file
+### Fixed: `rango generate` reads the exported `createRouter` chain, not a helper router earlier in the file ([#1354](https://github.com/rangojs/rango/pull/1354))
 
 **Before.** A router file with several `createRouter` chains took routes and
 basename from the first chain with a readable mount, exported or not. With
@@ -216,7 +216,7 @@ unresolvable, as it does for a single-chain file, instead of falling back to
 the helper. Among several exported chains the first one with a readable mount
 still wins, and a file whose chains are all non-exported is read as before.
 
-### Changed: a hover prefetch runs `prefetch: false` work, so the click sends no follow-up request
+### Changed: a hover prefetch runs `prefetch: false` work, so the click sends no follow-up request ([#1353](https://github.com/rangojs/rango/pull/1353))
 
 **Before.** Every prefetch deferred `loader(Def, { prefetch: false })` and the
 work behind `loading(fallback, { prefetch: false })`, the hover's included. A
@@ -253,7 +253,7 @@ url, { partial: { prefetch: true } })` still gets a speculative one; add
 `X-Rango-Prefetch === "1"` to recognise a prefetch should check that the
 header is present.
 
-### Fixed: the document cache no longer serves one page's navigation to another page with the same layouts
+### Fixed: the document cache no longer serves one page's navigation to another page with the same layouts ([#1355](https://github.com/rangojs/rango/pull/1355))
 
 **Before.** `createDocumentCacheMiddleware()` keyed a client navigation by its
 URL and the segments the client held, not by the page it came from. Under a
@@ -317,7 +317,7 @@ tests' `*.rsc-test.*` included, are no longer read as router roots by
 `named-routes.gen.ts` beside them; the default `discovery.exclude` lists
 `*.rsc-test.*` too.
 
-### Changed: a prefetch a `revalidate()` kept from the page being left is shared by the pages with equal values of what it read
+### Changed: a prefetch a `revalidate()` kept from the page being left is shared by the pages with equal values of what it read ([#1344](https://github.com/rangojs/rango/pull/1344))
 
 **Before.** Since 0.32.0, a `revalidate()` that read the page being left
 (`currentParams`, `currentUrl`, `fromRouteName`) and kept its segment made
