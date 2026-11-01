@@ -1285,6 +1285,26 @@ export const router = createRouter({}).routes(u(({ path }) => [
     expect(existsSync(genPath)).toBe(false);
   });
 
+  it("default mode hard-fails on an exported root tree it cannot read, not reading a helper router before it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rango-cli-helper-chain-"));
+    commandTempDirs.push(dir);
+    const routerFile = join(dir, "router.tsx");
+    writeFileSync(
+      routerFile,
+      `import { createRouter, urls } from "@rangojs/router";
+import { buildUrls } from "./build.js";
+const helper = createRouter({ basename: "/x" }).routes(
+  urls(({ path }) => [path("/h", () => null, { name: "helper" })]),
+);
+export const router = createRouter({}).routes(buildUrls());
+`,
+    );
+    const result = await runRango(`generate ${routerFile}`);
+    expect(result.status).toBe(1);
+    expect(result.combined).toContain("`.routes(buildUrls())`");
+    expect(existsSync(join(dir, "router.named-routes.gen.ts"))).toBe(false);
+  });
+
   it("--static warns on each root tree it cannot read", async () => {
     const { routerFile } = writeInlineUrlsRouter(
       () => "createRouter({ urls: mod.tree }).routes(buildUrls())",

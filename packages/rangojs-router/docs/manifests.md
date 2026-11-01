@@ -282,9 +282,18 @@ Concretely:
   (`import { urls as u }`); a `urls` imported from any other module under
   another name is not read. Any other `x` (`.routes(buildUrls())`,
   `urls: mod.tree`) is reported as `"unresolvable-routes"`, naming the mount.
-  The tree comes from the first `createRouter` chain with a readable mount; a
-  chain whose mounts are all unreadable is reported only when the file has no
-  other. A variable whose value is not a `urls()` call
+  The tree and the `basename` come from the exported `createRouter` chain
+  (`export const`, `export default`, or a name in `export { ... }`), never from
+  a helper chain that is not exported: an unreadable exported mount is
+  reported even when a helper above it mounts a readable tree (rango-t246).
+  A chain counts as exported only when it is the value that is exported (the
+  initializer of an exported top-level variable, or the `export default`
+  expression); a chain inside an exported function or class, or passed to
+  another call, does not.
+  Among several exported chains the first with a readable mount wins; a chain
+  whose mounts are all unreadable is reported only when no other exported chain
+  has a readable one. A file with no exported chain falls back to its
+  non-exported ones in the same order. A variable whose value is not a `urls()` call
   (`const tree = buildUrls()`) is still not reported. Before #1349 an inline
   `urls(...)` call was neither read nor reported: the CLI exited 0 and wrote no
   `router.named-routes.gen.ts`, so `href()` and `reverse()` lost the route
