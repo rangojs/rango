@@ -138,9 +138,10 @@ describe("navigation-client", () => {
     );
     // Linked to `signal` until the response arrives (next tests).
     expect(init.signal).toBeInstanceOf(AbortSignal);
+    // Absolute, as a prefetch sends it: the store may hold a path.
     expect(
       (init.headers as Record<string, string>)["X-RSC-Router-Client-Path"],
-    ).toBe("/current");
+    ).toBe("http://localhost/current");
     expect((init.headers as Record<string, string>)["X-Rango-State"]).toBe(
       "v1:abc",
     );

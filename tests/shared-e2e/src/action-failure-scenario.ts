@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { expectConsole } from "./console-guard.js";
 
 /**
- * A loader that fails on its rerun after a server action (#1106, dc-t28). The
+ * A loader that fails on its rerun after a server action (#1106). The
  * action itself succeeds; the page's loader then throws once (`/throw`, and
  * under a `loading()` at `/throw-loading`) or returns the failure as data
  * (`/data`). Fixture: action-failure* in each app, a clientUrls() group, its

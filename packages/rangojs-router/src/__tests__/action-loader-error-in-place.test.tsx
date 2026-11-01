@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
-// A loader that throws while it re-runs in a server action's revalidation
-// (dc-t28), or whose settled entry a fully-prefetched click, a back/forward
-// restore or a cached re-render commits (forceAwait, dc-t65), throws in place
+// A loader that throws while it re-runs in a server action's revalidation, or whose settled entry a fully-prefetched click, a back/forward
+// restore or a cached re-render commits (forceAwait), throws in place
 // at its useLoader read, as on a navigation: the nearest boundary to the read
 // catches it, state outside that boundary survives, and a later rerun that
 // succeeds brings the reader back. Real React over renderSegments' settled
@@ -391,11 +390,11 @@ describe.each(LANES)("%s lane: layouts and ancestor loaders", (_, options) => {
 
   for (const loading of [false, true]) {
     it(`a loader redirect() replaces only the route's content; the layout keeps its instance (${loading ? "with" : "without"} loading())`, async () => {
-      // Router defect (rango-t29): a settle lane plants a settled redirect()
+      // Router defect: a settle lane plants a settled redirect()
       // in place of the route's StreamedLoaderErrorBoundary
       // (segment-system.tsx), so the route's wrapper chain drifts (I5).
       allowSuspenseAuditViolations(
-        "I5 drift: a settled redirect() drops StreamedLoaderErrorBoundary (rango-t29)",
+        "I5 drift: a settled redirect() drops StreamedLoaderErrorBoundary",
       );
       vi.spyOn(console, "error").mockImplementation(() => {});
       const route = createElement(OwnReader);

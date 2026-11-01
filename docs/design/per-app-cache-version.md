@@ -334,7 +334,7 @@ before hashing (`digestBundle`), each for a measured reason:
   only the region form was known, a build on vite 8.3.5 hashed the absolute
   path in plugin-rsc's CSS module id and the whole server-reference map, so
   the fixture's app A got other versions in every checkout directory and
-  every app's version moved when one app added an action (rango-t228). A
+  every app's version moved when one app added an action. A
   `//#region` line is always a marker. A `// ` line can also be a kept
   comment or a line of a multi-line string, so it counts as a marker only
   when it names a module of its chunk: the module's id with `\0` printed as

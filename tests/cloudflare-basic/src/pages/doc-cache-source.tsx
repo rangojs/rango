@@ -6,7 +6,7 @@ import {
 } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 
-// rango-t238: a category layout renders the category's hero and re-renders
+// A category layout renders the category's hero and re-renders
 // only when the source page's category differs, above a PLP the document
 // cache stores (router.tsx runs it on every request).
 // From /c/audio, /c/audio?sort=x keeps the hero; from /c/tv, which holds the

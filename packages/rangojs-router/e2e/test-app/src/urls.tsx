@@ -1133,12 +1133,11 @@ export const urlpatterns = urls(
         name: "keptLayoutSourceBaked",
       }),
       // The locale rule above paginated pages: one prefetch per locale
-      // (rango-t242).
       include("/kept-layout-source/i18n", keptLayoutSourceLocalePatterns, {
         name: "keptLayoutSourceI18n",
       }),
       // A kept hero above a PLP the document cache stores: its partial is
-      // the source page's only (e2e/doc-cache-source.test.ts, rango-t238).
+      // the source page's only (e2e/doc-cache-source.test.ts).
       include("/doc-cache-source", docCacheSourcePatterns),
       // Action revalidation over a clientUrls group: the group's projected
       // loaders re-run on the action follow-up (route-owned default true);
@@ -1234,15 +1233,15 @@ export const urlpatterns = urls(
       include("/intercept-held", interceptHeldPatterns, {
         name: "interceptHeld",
       }),
-      // A cache() intercept HIT shows the MISS's crumbs (rango-t184).
+      // A cache() intercept HIT shows the MISS's crumbs.
       include("/cache-intercept-crumbs", cacheInterceptCrumbsPatterns, {
         name: "cacheInterceptCrumbs",
       }),
-      // Two intercepts selected by when() keep a cache() record each (rango-t194).
+      // Two intercepts selected by when() keep a cache() record each.
       include("/cache-intercept-when", cacheInterceptWhenPatterns, {
         name: "cacheInterceptWhen",
       }),
-      // A cache({ key }) keeps a record per request kind (rango-t201).
+      // A cache({ key }) keeps a record per request kind.
       include("/cache-intercept-key", cacheInterceptKeyPatterns, {
         name: "cacheInterceptKey",
       }),
@@ -1334,7 +1333,7 @@ export const urlpatterns = urls(
 
       // PPR push-ownership fixtures — /shell-push (issues #1001, #1003).
       include("/", shellPushOwnershipPatterns, { name: "" }),
-      // An ssr: false loader that throws with no errorBoundary() (dc-t92).
+      // An ssr: false loader that throws with no errorBoundary().
       include("/", holeyThrowsPatterns, { name: "" }),
 
       // A ppr page under a store layout with an ssr: false loader, declared

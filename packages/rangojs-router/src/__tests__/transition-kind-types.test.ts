@@ -148,7 +148,6 @@ describe("partial-update commits carry their kind", () => {
       false,
       undefined,
       {
-        currentUrl: "http://localhost/",
         startStreaming: () => ({ end: vi.fn() }),
         commit: () => ({ scroll: { enabled: undefined } }),
         ...options.tx,

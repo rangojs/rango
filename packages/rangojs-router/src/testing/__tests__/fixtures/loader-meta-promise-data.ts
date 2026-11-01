@@ -106,7 +106,7 @@ export const RecipeTitleLoader: LoaderDefinition<null> = createLoader(
 );
 
 // ---------------------------------------------------------------------------
-// The target design's cases (dc-t87): each loader below pushes its title to
+// The target design's cases: each loader below pushes its title to
 // Meta as a promise in one more shape.
 // ---------------------------------------------------------------------------
 

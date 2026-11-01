@@ -11,7 +11,7 @@ import {
 } from "../components/HoleyThrowsView.js";
 import { HoleyShellNotes, HoleyShellState } from "../components/holey-shell.js";
 
-// dc-t92 fixture: an ssr: false loader whose value holds a promise (a pin with
+// Fixture: an ssr: false loader whose value holds a promise (a pin with
 // a hole, so the loader runs on every shell HIT). Once the probe's generation
 // is bumped the loader throws. No errorBoundary() on the chain, except the
 // bounded comparator's: the failure must end on the router's default error
@@ -47,7 +47,7 @@ export function HoleyBoundary({ error }: { error: Error }) {
   );
 }
 
-// dc-t93 fixtures: each read has no <Suspense> above it, so the failure
+// Fixtures: each read has no <Suspense> above it, so the failure
 // reaches React's server-render shell on a document load. Body:
 // tests/shared-e2e/src/ssr-shell-error.ts.
 export const HoleyShellLoader = createLoader(async (): Promise<string> => {

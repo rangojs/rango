@@ -407,7 +407,7 @@ const PIN_KEY_PREFIX = /^[^D.]*D\d+\./;
  * Deserializations run in parallel; a record that fails to decode is skipped
  * and reported to `onUndecodable`: its loader runs instead, which a document
  * HIT has already committed a prelude against, so serveShellHit retires the
- * entry (dc-t89). Returns undefined when the snapshot carries no loader
+ * entry. Returns undefined when the snapshot carries no loader
  * records, without touching the Flight codec (kept lazy for cold paths and
  * non-RSC configs).
  */

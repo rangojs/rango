@@ -50,7 +50,7 @@ describe("StreamedLoaderErrorBoundary", () => {
   });
 
   // A rerun hands the segment new loader data: an error fallback caught for
-  // the earlier delivery clears (dc-t28), in the same instance.
+  // the earlier delivery clears, in the same instance.
   it("clears a caught marker when its loader data changes", () => {
     const first = Promise.resolve("failed");
     const result = render(

@@ -1,5 +1,5 @@
 /**
- * Audit (dc-t80 point 3): a render whose error the router recovers from must
+ * Audit: a render whose error the router recovers from must
  * not be stored by any server cache writer and replayed to later visitors.
  * Each writer is driven through serveShellRequest with a first request that
  * fails (recovered by errorBoundary(), a streamed loading() boundary, a loader
@@ -423,7 +423,7 @@ describe.each(KINDS)(
   },
 );
 
-// rango-t177: the visitor's render is healthy, so its 200 schedules the
+// The visitor's render is healthy, so its 200 schedules the
 // capture, and only the capture's own handler run fails (a flaky upstream
 // during the background capture). The boundary it renders must not become the
 // shell every later HIT serves.

@@ -727,7 +727,7 @@ describe("server-action-bridge action on a page with a prefetch: false hole", ()
   // one loader is a hole (browser/partial-update.ts armHoles). An action that
   // revalidates a sibling loader, which throws, commits without waiting for
   // the hole: the action lane leaves a placeholder for its read site
-  // (dc-d141: no router wait), and the report skips it.
+  // (no router wait), and the report skips it.
   it("commits and resolves while the hole is still pending", async () => {
     stubWindow();
     vi.stubGlobal(
@@ -1132,8 +1132,8 @@ describe("server-action-bridge navigation committed during the action's render",
 });
 
 // An action's refetch of the page on screen never supersedes a navigation the
-// user started (dc-t114): it waits for that navigation to settle, then
-// refetches what is on screen, whole and stale (dc-q78). A refetch a click
+// user started: it waits for that navigation to settle, then
+// refetches what is on screen, whole and stale. A refetch a click
 // supersedes runs again for the page that click commits, and a land with a
 // navigation in flight schedules the same refetch.
 describe("server-action-bridge refetch follows the screen", () => {
@@ -2576,7 +2576,7 @@ describe("server-action-bridge follow-up", () => {
       // Back revalidates the restored entry (R7, a background navigation).
       // The follow-up supersedes it while it is in flight (R6). Had that
       // revalidation committed first, its stale render would have replaced
-      // the boundary with the route (rango-d207 case B1).
+      // the boundary with the route.
       const x = t.act("hash#x");
       t.back("/a");
       const revalidation = t.navigate("/a", {

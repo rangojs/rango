@@ -22,7 +22,7 @@ import type { LoaderDefinition } from "../../types.js";
 import { renderRoute } from "../dom.entry.js";
 import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 
-// Consumer contract (rango-t223, owner decision rango-t219-q3): useAction()'s
+// Consumer contract (owner decision): useAction()'s
 // result, error and revalidationError stay after the call settles, until the
 // same action is called again. The next call reads loading with nothing; an
 // aborted latest call reads idle with nothing. Every reader agrees, one that

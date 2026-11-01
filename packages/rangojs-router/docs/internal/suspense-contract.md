@@ -104,7 +104,7 @@ action lane, and the `forceAwait` lanes: back/forward, a cached or fully prefetc
 click, stale revalidation, leaving an intercept) hands a route's or layout's loaders as
 per-loader streams of their settled entries (`buildLoaderStreams` with `settle`),
 not the decoded aggregate, so each read decodes its entry synchronously and a loader
-error throws there, at its read, inside the segment's own boundaries (#1129, dc-t65).
+error throws there, at its read, inside the segment's own boundaries (#1129).
 Only the document lane decodes in the build, for a `{ ssr: false }` loader's entry. A
 stale revalidation whose loader threw hands React nothing: it keeps the page on screen.
 The value path still calls `use()`: `Suspender` and
@@ -412,8 +412,7 @@ boundaries).
 one module per file, not per test. So a root one test unmounted used to stay in the
 audit's records, and the next test's first mount of the same outlet read as an I4
 remount. Nobody saw it: the default reporter drops console output, and at router 0.30.0
-the router's suite printed 368 reports (316 I4, 20 I5, 32 I6) that no test failed on
-(rango-t226). Two resets and a check close that:
+the router's suite printed 368 reports (316 I4, 20 I5, 32 I6) that no test failed on. Two resets and a check close that:
 
 - `renderRoute` calls `forgetSuspenseAudit()` before it builds its first tree
   (`src/testing/render-route.tsx`), so each root starts clean, also several in one test

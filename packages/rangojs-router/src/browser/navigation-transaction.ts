@@ -114,7 +114,6 @@ export interface CommitResult {
  * Bound transaction with pre-configured commit options (without segmentIds/segments)
  */
 export interface BoundTransaction {
-  readonly currentUrl: string;
   /** Bound `replace` option (history replace instead of push). */
   readonly replace?: boolean;
   /** Bound `traversal` option: a back/forward navigation. */
@@ -156,8 +155,6 @@ export function createNavigationTransaction(
   url: string,
   options?: NavigateOptionsInternal & { skipLoadingState?: boolean },
 ): NavigationTransaction {
-  const currentUrl = window.location.href;
-
   const handle = eventController.startNavigation(url, options);
 
   /**
@@ -260,9 +257,6 @@ export function createNavigationTransaction(
       opts: Omit<CommitOptions, "segmentIds" | "segments">,
     ): BoundTransaction {
       return {
-        get currentUrl() {
-          return currentUrl;
-        },
         replace: opts.replace,
         traversal: opts.traversal,
         state: opts.state,

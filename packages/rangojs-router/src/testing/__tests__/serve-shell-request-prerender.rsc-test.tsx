@@ -178,7 +178,7 @@ describe("a Prerender + ppr shell HIT hydrates with the loader pushes its shell 
     expect(values.afterHydration).toBeUndefined();
   });
 
-  // dc-t89: a capture whose pins are over maxSnapshotBytes stores no
+  // A capture whose pins are over maxSnapshotBytes stores no
   // document shell. A prerender-served one has no navigation half, so it
   // stores the tombstone, which also shadows a build shell.
   it("loader pins over maxSnapshotBytes store a tombstone: the document is a MISS that hydrates with its run's push", async () => {

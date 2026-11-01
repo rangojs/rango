@@ -552,7 +552,7 @@ const SNAPSHOT_BYTE_ENCODER = new TextEncoder();
 
 /**
  * Warn once per key that the capture's loader pins exceeded the route's
- * `maxSnapshotBytes` cap, so no document shell was stored (dc-t89). Once per
+ * `maxSnapshotBytes` cap, so no document shell was stored. Once per
  * key: the route recaptures every backoff window.
  */
 function warnSnapshotOverCapOnce(
@@ -2603,8 +2603,7 @@ async function captureAndStoreShell(
             throw new Error(`[rango] no shell pin for "${segmentKey}"`);
           }
         } catch (error) {
-          // Unpinned, the loader would run on every HIT over this prelude
-          // (dc-t89): refuse like an encode error.
+          // Unpinned, the loader would run on every HIT over this prelude: refuse like an encode error.
           reqCtx._renderErrors?.push(error);
         }
       }
@@ -2650,7 +2649,7 @@ async function captureAndStoreShell(
     }
 
     // Snapshot size guard: `maxSnapshotBytes` bounds the loader pins, and a
-    // document HIT needs every pin its prelude baked (dc-t89). Over the cap
+    // document HIT needs every pin its prelude baked. Over the cap
     // the entry keeps the navigation half only (the doc record, or nothing:
     // a tombstone that also shadows a build shell) and the attempt refuses.
     // The whole entry is bounded separately below, by the store's limit.
@@ -2897,7 +2896,7 @@ export {
 
 // Exported for unit tests that pin the refused-capture backoff policy directly
 // (dev cap vs production exponential growth, stored-clears, cold-start re-probe),
-// and markCaptureBackoff for serveShellHit (a pin that failed to decode, dc-t89).
+// and markCaptureBackoff for serveShellHit (a pin that failed to decode).
 // These are the same module-level functions the schedule path uses; a test that
 // drove them through a real capture round-trip could not assert the exact window
 // arithmetic without a full cold render.

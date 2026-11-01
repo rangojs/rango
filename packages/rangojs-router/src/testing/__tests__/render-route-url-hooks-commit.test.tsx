@@ -18,7 +18,7 @@ import type { HistoryState } from "../../browser/types.js";
 import { renderRoute } from "../render-route.js";
 import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 
-// Consumer contract (rango-t221): the URL hooks show the page on screen, in
+// Consumer contract: the URL hooks show the page on screen, in
 // every reader shape, on every screen. A nav menu's active link
 // (usePathname), a tab bar (useSearchParams), a detail header (useParams, a
 // selector or the whole map), a breadcrumb (useSegments) and a component that
@@ -332,7 +332,7 @@ describe.each([
       ]);
     });
 
-    // The defect of rango-t221: the held page's set of /items/2 is not on
+    // The defect: the held page's set of /items/2 is not on
     // screen, and the urgent page brings the same values.
     it("a gated-off commit to the held URL ends the hold: the page shows with its URL in every reader", async () => {
       const mounted = await holdPage2(vt);

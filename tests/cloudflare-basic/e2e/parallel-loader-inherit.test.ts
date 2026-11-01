@@ -4,8 +4,7 @@ import { useFixture } from "./fixture";
 
 /**
  * A held route loader read from a child layout's parallel slot: the layout
- * keeps its state across an action, a same-route navigation and Back
- * (rango-t156). Body: tests/shared-e2e/src/parallel-loader-inherit-held-scenario.ts.
+ * keeps its state across an action, a same-route navigation and Back. Body: tests/shared-e2e/src/parallel-loader-inherit-held-scenario.ts.
  */
 function describeParallelLoaderInherit(mode: "dev" | "build") {
   const label = mode === "build" ? "production" : "dev";

@@ -239,7 +239,7 @@ describe("intercept-utils", () => {
     });
   });
 
-  describe("wholeInterceptMatched (rango-t126)", () => {
+  describe("wholeInterceptMatched", () => {
     const slot = seg("L0.@modal", {
       type: "parallel",
       namespace: "intercept:item",

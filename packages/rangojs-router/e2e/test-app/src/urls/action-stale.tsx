@@ -120,7 +120,7 @@ const ActionStaleSlow: Handler = async () => {
 
 // Reads the cart as it starts and answers 1800 ms later: its read comes
 // before the write an action makes at 800 ms, its commit after that action
-// lands (dc-q78).
+// lands.
 const ActionStaleRead: Handler = async () => {
   const { cart } = actionStaleState();
   await wait(1800);

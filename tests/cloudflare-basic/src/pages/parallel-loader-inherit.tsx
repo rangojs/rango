@@ -17,7 +17,7 @@ import {
  * parallel slot of a child layout. With no loading() fallback the layout's
  * inherited copy of the loader is redundant and never sent, so the layout
  * holds the same loader entries on the document, an action and a same-route
- * navigation, and keeps its local state (rango-t156). The fixture of
+ * navigation, and keeps its local state. The fixture of
  * tests/shared-e2e/src/parallel-loader-inherit-held-scenario.ts, which the
  * router's test-app runs too.
  */

@@ -1,7 +1,7 @@
 /**
  * Recording what revalidate() rules read of the source page, so a prefetch
  * answer a rule kept is shared between the pages with equal values of what
- * was read (prefetch-source-scope.ts, rango-t242).
+ * was read (prefetch-source-scope.ts).
  */
 
 import {

@@ -4,7 +4,7 @@ import { useFixture } from "./fixture";
 
 /**
  * A loader error or redirect() committed by a fully-prefetched click or a
- * back/forward restore (dc-t65). Body:
+ * back/forward restore. Body:
  * tests/shared-e2e/src/settled-lane-errors-scenario.ts.
  */
 const PATH = "/settled-lane-errors";

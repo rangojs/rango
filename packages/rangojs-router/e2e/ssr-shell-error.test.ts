@@ -2,7 +2,7 @@ import { test } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 import { defineSsrShellErrorTests } from "@shared/e2e";
 
-// dc-t93: a server-render shell error answers a recovery document in
+// A server-render shell error answers a recovery document in
 // production and keeps the host's overlay in dev. Fixture:
 // test-app/src/urls/holey-throws.tsx. Own server, so the onError log and the
 // server's output belong to this suite.

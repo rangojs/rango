@@ -852,7 +852,7 @@ describe("CLI command-level tests", () => {
     expect(content).toContain("api.health");
   }, 30_000);
 
-  // Regression (rango-t211): the CLI bundle folded the runtime-discovery code
+  // Regression: the CLI bundle folded the runtime-discovery code
   // in, so its top-level `import ... from "vite"` failed every command.
   it("built binary runs --help without vite installed", () => {
     const { bin, env } = cloneBinWithoutVite();
@@ -939,7 +939,7 @@ export default clientUrls(({ path }) => [
   }, 30_000);
 
   it("--runtime injects $$id for exported createLoader/createHandle outside a test runner", () => {
-    // Regression (rango-t231): the --runtime server lacked expose-internal-ids,
+    // Regression: the --runtime server lacked expose-internal-ids,
     // so createLoader/createHandle threw "missing $$id". VITEST is cleared
     // because under a test runner they fall back to a synthetic id.
     const fixtureDir = cloneFixtureDir("app-with-loader-handle");
@@ -976,7 +976,7 @@ export default clientUrls(({ path }) => [
   }, 30_000);
 
   it("--runtime forwards a resolver that initializes in configResolved, and no apply: build plugin", () => {
-    // Regression (rango-t233): resolver plugins were forwarded from the
+    // Regression: resolver plugins were forwarded from the
     // unresolved config, so their configResolved never ran (vite-tsconfig-paths
     // matched nothing) and apply: "build" plugins ran in the serve discovery.
     const fixtureDir = cloneFixtureDir("app-with-config-resolver");
@@ -1185,7 +1185,7 @@ export const router = createRouter({ basename: ${basename} }).routes(({ path }) 
     },
   );
 
-  // rango-t42: a root tree passed as an inline urls() call wrote no gen file
+  // A root tree passed as an inline urls() call wrote no gen file
   // and printed nothing, so href()/reverse() silently lost their route names.
   function writeInlineUrlsRouter(mount: (tree: string) => string): {
     routerFile: string;

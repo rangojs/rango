@@ -25,7 +25,7 @@ export async function rejectActionBoundaryForm(): Promise<never> {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Adds an item to the cart, then throws after a delay (rango-t125). */
+/** Adds an item to the cart, then throws after a delay. */
 export async function failLateActionBoundaryCart(): Promise<never> {
   await sleep(1000);
   bumpActionBoundaryCart();

@@ -853,7 +853,7 @@ export const shellCachePatterns = urls(
     // bounds ssr: false loader pins only and the doc record is exempt; this
     // route has no ssr: false loader, so it stores and serves its shell, and
     // the HIT hydrates cleanly. (A route whose pins exceed the cap stores the
-    // navigation half only and serves documents as MISS: dc-t89.)
+    // navigation half only and serves documents as MISS.)
     layout(ShellCapLayout, () => [
       path(
         "/shell-cache/snapshot-cap",

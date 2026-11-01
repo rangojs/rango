@@ -60,7 +60,7 @@ describe("createSSRHandler", () => {
     });
 
   describe("onError callback", () => {
-    // dc-t93: a failed shell is rethrown to the host in dev only; production
+    // A failed shell is rethrown to the host in dev only; production
     // answers a document (shell-error-document.test.tsx has the documents).
     it("dev: calls onError once and rethrows the same error instance when rendering fails", async () => {
       const onError = vi.fn();

@@ -22,7 +22,7 @@ function Live({ promise }: { promise: Promise<string> }) {
   return <span data-testid="holey-live">{use(promise)}</span>;
 }
 
-// dc-t92 fixture: the layout marks whether the layouts survive a failure.
+// Fixture: the layout marks whether the layouts survive a failure.
 export function HoleyThrowsLayout(): ReactNode {
   return (
     <div data-testid="holey-layout">
@@ -50,7 +50,7 @@ export function HoleyThrowsView({
   );
 }
 
-// dc-t93 fixtures: reads with no <Suspense> above them, so a failure on a
+// Fixtures: reads with no <Suspense> above them, so a failure on a
 // document load fails React's server-render shell.
 export function HoleyShellReader({
   loader,

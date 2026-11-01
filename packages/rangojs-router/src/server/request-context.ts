@@ -670,7 +670,7 @@ export interface RequestContext<
    * `x-rsc-prefetch-scope` (router/source-reads.ts prefetchScopeOf): its diff
    * is right for its source page, or a group of them, only. The document
    * cache keys a partial without its source, so it does not store that
-   * response, whatever Cache-Control it ends up with (rango-t238).
+   * response, whatever Cache-Control it ends up with.
    */
   _payloadSourceScoped?: boolean;
 

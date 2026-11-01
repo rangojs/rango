@@ -230,7 +230,7 @@ export function runActionStaleNavigationTests(
     await expect(page.getByTestId("as-cart-runs")).toHaveText(String(runs));
   });
 
-  // dc-t114: the action's refetch of the page on screen never supersedes a
+  // The action's refetch of the page on screen never supersedes a
   // newer navigation still in flight; it refetches the page that one commits.
   test("a second navigation still in flight when the action answers commits with the write", async ({
     page,
@@ -312,7 +312,7 @@ export function runActionStaleNavigationTests(
     await expect(page.getByTestId("as-slow")).toHaveCount(0);
   });
 
-  // dc-q78: a navigation whose server read came before the write commits
+  // A navigation whose server read came before the write commits
   // after the action landed; the action refetches the page it put on screen.
   test("a navigation read before a late write and committed after the action landed shows the write", async ({
     page,

@@ -4,7 +4,7 @@ import { useFixture } from "./fixture";
 
 /**
  * An action that throws on a route with its own errorBoundary(), under a
- * layout whose loader reads its write (rango-t124). Body:
+ * layout whose loader reads its write. Body:
  * tests/shared-e2e/src/action-boundary-scenario.ts.
  */
 test.describe("action under a route's errorBoundary()", () => {
