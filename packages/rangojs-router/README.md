@@ -445,8 +445,9 @@ that per link with `prefetch`: `"hover"`, `"viewport"`, `"render"`,
 When a navigation has been fully prefetched, the page appears finished, with
 no skeleton or loading flash. If you click while a prefetch is still loading,
 the navigation reuses that request instead of starting a new one. Every
-action clears the prefetch caches by default, so a prefetched page can't
-show data from before a mutation.
+action marks prefetches stale by default: a click on a prefetch made before
+the action shows the prefetched page at once, then revalidates it. Call
+`invalidateClientCache()` for a full flush.
 
 You can do the same caching work at other times:
 
