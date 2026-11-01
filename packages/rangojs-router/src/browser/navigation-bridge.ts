@@ -510,6 +510,17 @@ export function createNavigationBridge(
         store.updateCacheHandleData(sourceHistoryKey, currentHandleData);
       }
 
+      // Read the rango state BEFORE the target entry's stale bit, as
+      // handlePopstate does. Another tab's write reaches this tab only through
+      // a read (rango-state.ts write observer) when its broadcast does not:
+      // the pages share no segment, or crossTabSync is off. The first read
+      // otherwise comes from the navigation client, after the held ids below
+      // are chosen, and the server keeps what the client says it holds when
+      // the default allows (router/revalidation.ts: a route whose params and
+      // search are the entry's, a layout loader with no revalidate()), so the
+      // entry's pre-write copy would commit as fresh.
+      getRangoState();
+
       // Check if we have cached segments for target URL
       const historyKey = generateHistoryKey(url);
       const cached = store.getCachedSegments(historyKey);

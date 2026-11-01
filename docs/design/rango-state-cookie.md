@@ -874,8 +874,11 @@ The resulting matrix — every row at least as strong as today:
 | Cookies cleared mid-session                    | no effect — localStorage state survives, stale-keyed entries still hit                                                                               | each tab's next read finds no cookie, mints fresh, marks history stale; every previously cached response unreachable                                                                                                                                                                                                                                                                                                                          |
 
 Two boundaries to keep the claims precise: the observer is pull-based (it
-fires at a tab's next jar read — a navigation/prefetch fetch or a popstate
-restore, which reads `getRangoState()` before the stale check — not instantly,
+fires at a tab's next jar read — a prefetch fetch, a navigation, or a popstate
+restore; a navigation and a popstate restore both read `getRangoState()`
+before the target history entry's stale check, so a link to a page in the
+history cache after another tab's write revalidates it rather than naming its
+ids as held (`navigate()` in `src/browser/navigation-bridge.ts`) — not instantly,
 same as the value sync it replaces), and it marks stale without refreshing the
 current view; the
 immediate-auto-refresh behavior remains exclusive to the `BroadcastChannel`

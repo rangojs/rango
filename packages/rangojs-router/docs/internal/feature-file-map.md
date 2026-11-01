@@ -112,6 +112,10 @@ wrap the action body in, writing through `_rotateStateCookie("write")` in
 read of another write (the write observer in `browser/rango-state.ts`) marks
 its caches stale through `markCachesStaleAfterWrite()`, wired by
 [`browser/navigation-store-handle.ts`](../../src/browser/navigation-store-handle.ts);
+a link and Back read the state before the target history entry's stale bit
+(`navigate()` and `handlePopstate` in
+[`browser/navigation-bridge.ts`](../../src/browser/navigation-bridge.ts)), so
+that read marks the entry first;
 while an action is in flight the write waits on
 [`browser/action-fence.ts`](../../src/browser/action-fence.ts) for the
 landing or the fence's drop.
