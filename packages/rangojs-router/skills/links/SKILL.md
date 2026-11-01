@@ -696,6 +696,11 @@ The answer is shared between a group of pages
   params: the stored answer keeps a layout that has `revalidate()` rules
   without running them, which is right for the pages with the same params.
 
+A scoped answer, page-only or grouped, is sent `cache-control: private,
+no-cache` over the route's own header, and the document cache does not store
+it: a shared cache keys a navigation by its URL, not by the page that sent it
+(`/document-cache` → "What's NOT Cached").
+
 Page-only entries are keyed by the page's full URL, query string and hash
 included, so each page prefetches those targets again: `?page=2` and `?page=3`
 each make their own. Grouped entries are shared by `?page=2` and `?page=3`

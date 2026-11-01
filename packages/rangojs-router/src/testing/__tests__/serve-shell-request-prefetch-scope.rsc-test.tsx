@@ -4,8 +4,10 @@
  * `x-rsc-prefetch-scope: source` whether or not the intercept applied from
  * this source, so the browser never stores the full page a non-matching
  * source got in the slot every source reuses. A route no intercept targets
- * carries no scope header (the shared slot). No prefetch carries
- * `cache-control` (#1170).
+ * carries no scope header (the shared slot). No prefetch carries a
+ * `cache-control` that lets a cache keep it (#1170): a scoped one is sent
+ * `private, no-cache`, since a shared cache keyed by URL would serve it to
+ * another source (rango-t238).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -77,7 +79,7 @@ describe("x-rsc-prefetch-scope on a client navigation", () => {
     expect(await prefetch("/item/1", "/")).toEqual({
       modal: true,
       scope: "source",
-      cacheControl: null,
+      cacheControl: "private, no-cache",
     });
   });
 
@@ -85,7 +87,7 @@ describe("x-rsc-prefetch-scope on a client navigation", () => {
     expect(await prefetch("/item/1", "/elsewhere")).toEqual({
       modal: false,
       scope: "source",
-      cacheControl: null,
+      cacheControl: "private, no-cache",
     });
   });
 
@@ -93,12 +95,12 @@ describe("x-rsc-prefetch-scope on a client navigation", () => {
     expect(await prefetch("/shop/item/1", "/shop")).toEqual({
       modal: true,
       scope: "source",
-      cacheControl: null,
+      cacheControl: "private, no-cache",
     });
     expect(await prefetch("/shop/item/1", "/elsewhere")).toEqual({
       modal: false,
       scope: "source",
-      cacheControl: null,
+      cacheControl: "private, no-cache",
     });
   });
 
