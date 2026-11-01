@@ -212,7 +212,10 @@ export type InterceptSegmentsState = {
  * @internal This type is an implementation detail and may change without notice.
  */
 export type InterceptSelectorContext<TEnv = any> = {
-  /** Where the navigation comes from: the intercept source while one is open. */
+  /**
+   * Where the navigation comes from: the intercept source while one is open.
+   * Its `url` never carries a #fragment.
+   */
   from: ServerRouteLocation;
   /** The navigation target. */
   to: ServerRouteLocation;

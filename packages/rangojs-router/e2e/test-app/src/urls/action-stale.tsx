@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { urls, type Handler, type Middleware } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import {
+  ActionStaleAddressLoader,
   ActionStaleCartDefaultLoader,
   ActionStaleCartLoader,
   ActionStaleCountLoader,
@@ -10,6 +11,7 @@ import {
   ActionStalePlainLoader,
 } from "./action-stale.defs.js";
 import {
+  ActionStaleAddressValue,
   ActionStaleBar,
   ActionStaleBareAdd,
   ActionStaleCount,
@@ -52,6 +54,7 @@ const ActionStalePdp: Handler = (ctx) => {
   const fillDelay = ctx.searchParams.get("fillDelay");
   return (
     <div data-testid="as-pdp">
+      <ActionStaleAddressValue />
       <Link to="/action-stale/other" prefetch="none" data-testid="as-to-other">
         Other
       </Link>
@@ -351,7 +354,13 @@ export const actionStalePatterns = urls(
       ]),
       loader(ActionStalePlainLoader),
       loader(ActionStaleCartDefaultLoader),
-      path("/action-stale/pdp", ActionStalePdp),
+      path("/action-stale/pdp", ActionStalePdp, () => [
+        loader(ActionStaleAddressLoader, () => [
+          revalidate(({ currentUrl, nextUrl }) =>
+            currentUrl.href === nextUrl.href ? undefined : false,
+          ),
+        ]),
+      ]),
       path("/action-stale/other", ActionStaleOther),
       path("/action-stale/slow", ActionStaleSlow),
       path("/action-stale/read", ActionStaleRead),

@@ -555,6 +555,58 @@ describe("resolveNavigation", () => {
   });
 });
 
+describe("resolveNavigation: a #fragment on the page left", () => {
+  const deps = { findMatch: () => null };
+
+  it("drops the fragment from the client path and keeps path and query", async () => {
+    const { request, url } = makeRequest("http://localhost/t/42", {
+      "X-RSC-Router-Client-Path": "http://localhost/t/42?tab=a#questions",
+    });
+
+    const result = await resolveNavigation(request, url, "ticket", deps);
+
+    expect(result!.prevUrl.href).toBe("http://localhost/t/42?tab=a");
+    expect(result!.effectiveFromUrl.href).toBe("http://localhost/t/42?tab=a");
+  });
+
+  it("matches the route by the path alone", async () => {
+    const { request, url } = makeRequest("http://localhost/t/42", {
+      "X-RSC-Router-Client-Path": "/t/42#questions",
+    });
+    const findMatch = vi.fn(() => null);
+
+    await resolveNavigation(request, url, "ticket", { findMatch });
+
+    expect(findMatch).toHaveBeenCalledWith("/t/42");
+  });
+
+  it("drops the fragment from the visitor's URL when a rewrite target names the page", async () => {
+    const { request, url } = makeRequest(
+      "http://localhost/t/42?_rsc_rt=%2Ft%2F7",
+      {
+        "X-RSC-Router-Client-Path": "/promo#top",
+      },
+    );
+
+    const result = await resolveNavigation(request, url, "ticket", deps);
+
+    expect(result!.prevVisitorUrl!.href).toBe("http://localhost/promo");
+    expect(result!.prevUrl.href).toBe("http://localhost/t/7");
+  });
+
+  it("drops the fragment from an intercept source", async () => {
+    const { request, url } = makeRequest("http://localhost/photo/1", {
+      "X-RSC-Router-Client-Path": "/gallery#grid",
+      "X-RSC-Router-Intercept-Source": "/gallery#grid",
+    });
+
+    const result = await resolveNavigation(request, url, "photo", deps);
+
+    expect(result!.interceptContextUrl.href).toBe("http://localhost/gallery");
+    expect(result!.effectiveFromUrl.href).toBe("http://localhost/gallery");
+  });
+});
+
 describe("createNavigationSnapshot", () => {
   it("creates snapshot with default values", async () => {
     const snapshot = createNavigationSnapshot();
