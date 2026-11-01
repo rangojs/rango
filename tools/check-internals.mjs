@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Internals ratchet.
 //
-// The router internals are being consolidated in place (plan rango-d195): each
+// The router internals are being consolidated in place: each
 // duplicated concept gets one owner module. A cleanup lasts only if new work
 // does not add to the duplication, so this check counts four kinds of coupling
 // per file and compares them with tools/internals-baseline.json. A count may go
@@ -114,7 +114,7 @@ const SERVER_DIRS = ["server/", "rsc/", "router/", "cache/"].map(
 const BROWSER_DIR = `${SRC}browser/`;
 /**
  * Pure helpers that live in browser/ and are shared by both graphs (layer L0
- * of the target architecture, rango-d194 section 2). They stay where they are
+ * of the target architecture). They stay where they are
  * and are listed by path, extension stripped.
  */
 const BROWSER_L0 = new Set([

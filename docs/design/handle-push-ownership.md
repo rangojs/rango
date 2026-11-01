@@ -15,7 +15,7 @@ after it, "An `ssr: false` loader's pushed promise bakes into the shell",
 covers #1182, which changed what a shell holds: a promise an `ssr: false`
 loader pushes is now awaited at capture and recorded, where #1054 had kept
 it live. "A document HIT holds a pin for every loader its HTML baked"
-covers dc-t89, which carries #1182's rule from handle data to loader data:
+covers the loader-pin rule, which carries #1182's rule from handle data to loader data:
 an entry that cannot hold its pins serves navigations only. The last one,
 "What the browser keeps on a partial response", covers #1103: the browser's
 side of the rule, when a response re-runs only part of a route.
@@ -106,7 +106,7 @@ Four facts, each checkable against the tables above.
    "this loader's value comes from the pin". They are not the same fact. A
    navigation replay serves pins without being a document tail (#1003,
    #1001). A document tail whose pins `maxSnapshotBytes` dropped was a
-   document tail without pins (since dc-t89 such an entry serves no
+   document tail without pins (since the loader-pin rule such an entry serves no
    document). PR #1018 keyed the restore on the implicit doc
    scope instead, a third stand-in, and broke the entry that has that scope
    and no pins.
@@ -115,8 +115,8 @@ Four facts, each checkable against the tables above.
    pins and pushes in separate records, and three things drop the pins and
    keep the pushes: `pruneShellSnapshot` for a navigation-only entry
    (`shell-snapshot.ts:248-262`), the `maxSnapshotBytes` guard (which since
-   dc-t89 stores a navigation-only entry), and a pin that fails to decode
-   (`buildShellLoaderSeed`; since dc-t89 the HIT that finds it retires the
+   the loader-pin rule stores a navigation-only entry), and a pin that fails to decode
+   (`buildShellLoaderSeed`; since the loader-pin rule the HIT that finds it retires the
    entry). A route `cache()` record holds a loader's
    pushes and never its value. Another entry can hold them as a dependency
    group. Every such copy is a candidate for being shown next to a value from
@@ -196,21 +196,21 @@ stale-entry one is pinned by a test: in the evidence file, in
 
 A promise-carrying `ssr: false` loader (it runs on every replay):
 
-| Path                                                              | `origin/main`                 | Now (change 1) | After change 2 (not planned) |
-| ----------------------------------------------------------------- | ----------------------------- | -------------- | ---------------------------- |
-| Document MISS (render and capture)                                | run / run                     | same           | same                         |
-| Document HIT, pins present                                        | pin / pin                     | same           | same                         |
-| Navigation replay, pins present                                   | **pin / run** (#1003)         | pin / pin      | same                         |
-| Prefetch replay (`X-Rango-Prefetch`), pins present                | **pin / run**                 | pin / pin      | same                         |
-| Navigation, explicit route `cache()` misses, seeded record serves | **pin / run**                 | pin / pin      | same                         |
-| Navigation, explicit route `cache()` hits                         | run / run                     | same           | same                         |
-| Navigation replay, navigation-only entry (no pins)                | run / run (PR #1018 broke it) | same           | same                         |
-| Navigation replay, an entry over `maxSnapshotBytes`               | run / run (PR #1018 broke it) | same           | same                         |
-| Document, over `maxSnapshotBytes` (a MISS since dc-t89)           | **run / record**              | run / run      | same                         |
-| Any replay without pins, the run makes no push                    | **run / record**              | run / none     | same                         |
-| Pinned, the capture's run pushed nothing and the replay's pushes  | **pin / run**                 | pin / none     | same                         |
-| The same with a pin stored before the `runs` bit (v0.17)          | pin / run, by design          | same           | same                         |
-| Pinned, the navigation does not revalidate the loader             | no value sent / pin           | same           | same                         |
+| Path                                                                 | `origin/main`                 | Now (change 1) | After change 2 (not planned) |
+| -------------------------------------------------------------------- | ----------------------------- | -------------- | ---------------------------- |
+| Document MISS (render and capture)                                   | run / run                     | same           | same                         |
+| Document HIT, pins present                                           | pin / pin                     | same           | same                         |
+| Navigation replay, pins present                                      | **pin / run** (#1003)         | pin / pin      | same                         |
+| Prefetch replay (`X-Rango-Prefetch`), pins present                   | **pin / run**                 | pin / pin      | same                         |
+| Navigation, explicit route `cache()` misses, seeded record serves    | **pin / run**                 | pin / pin      | same                         |
+| Navigation, explicit route `cache()` hits                            | run / run                     | same           | same                         |
+| Navigation replay, navigation-only entry (no pins)                   | run / run (PR #1018 broke it) | same           | same                         |
+| Navigation replay, an entry over `maxSnapshotBytes`                  | run / run (PR #1018 broke it) | same           | same                         |
+| Document, over `maxSnapshotBytes` (a MISS since the loader-pin rule) | **run / record**              | run / run      | same                         |
+| Any replay without pins, the run makes no push                       | **run / record**              | run / none     | same                         |
+| Pinned, the capture's run pushed nothing and the replay's pushes     | **pin / run**                 | pin / none     | same                         |
+| The same with a pin stored before the `runs` bit (v0.17)             | pin / run, by design          | same           | same                         |
+| Pinned, the navigation does not revalidate the loader                | no value sent / pin           | same           | same                         |
 
 The last row is the one place where the value side skips the pin without the
 push side following: `resolveOwnerLoaders` drops a loader the
@@ -225,24 +225,24 @@ follow it without a second pass.
 
 Other loaders on a shell replay:
 
-| Path                                                                                     | `origin/main`                                                  | Now (change 1)                             | After change 2 (not planned)            |
-| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------ | --------------------------------------- |
-| Promise-free `ssr: false` loader with `cache()` and a deferred push, document HIT        | pin / pin, deferred from the entry                             | same                                       | same                                    |
-| The same, navigation replay                                                              | pin / pin, deferred push **missing** (#1001)                   | pin / pin, deferred from the entry         | same                                    |
-| `ssr: false` loader with `cache()`, no pins, its entry newer than the shell              | **entry / record**, its dependency's push too                  | entry / entry, each once                   | same                                    |
-| The same, its entry stored without its pushes (a reader-first MISS, an encode timeout)   | **entry / record**                                             | entry / none: the entry as it is           | not planned: the entry is a miss: a run |
-| Dependency a pinned loader awaited (registered on neither lane)                          | pin / pin                                                      | same                                       | same                                    |
-| The same dependency, any replay without pins                                             | **run / record**                                               | run / run                                  | same                                    |
-| The same dependency, one other `ssr: false` loader lost its pin, document HIT            | pin / pin                                                      | **pin / run** (pending)                    | not designed                            |
-| The same, navigation replay                                                              | **pin / run**                                                  | **pin / run** (pending)                    | not designed                            |
-| A dependency the awaiting loader's `cache()` entry did not record, navigation replay     | **entry / record**                                             | **entry / record** (pending)               | not designed                            |
-| A `"use cache"` entry's copy of a dependency's push, replay without pins                 | entry / record, once                                           | entry / entry, once                        | same                                    |
-| Live-lane loader (a hole), with or without its own `cache()`                             | its run's or its entry's, both                                 | same                                       | same                                    |
-| Live-lane loader on a route with no `ssr: false` loader, a record without loader copies  | a hole, when the record holds any handle push                  | a hole, with or without a handles blob     | same                                    |
-| Dependency a pinned loader and a live loader share (`/shared-dep`)                       | captured push next to the live reader's fresh data, documented | same                                       | same (decided: leave)                   |
-| Order: a loader pushes, awaits a dependency that pushes, pushes again; its entry replays | `[own, dependency, own]`                                       | same                                       | same                                    |
-| The same loader's run, a document without pins (a HIT before dc-t89, a MISS since)       | the record's order, with the **record's** values               | `[own, dependency, own]`, the run's values | same                                    |
-| The same, navigation replay without pins                                                 | `[own, own, dependency]`                                       | `[own, dependency, own]`                   | same                                    |
+| Path                                                                                            | `origin/main`                                                  | Now (change 1)                             | After change 2 (not planned)            |
+| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------ | --------------------------------------- |
+| Promise-free `ssr: false` loader with `cache()` and a deferred push, document HIT               | pin / pin, deferred from the entry                             | same                                       | same                                    |
+| The same, navigation replay                                                                     | pin / pin, deferred push **missing** (#1001)                   | pin / pin, deferred from the entry         | same                                    |
+| `ssr: false` loader with `cache()`, no pins, its entry newer than the shell                     | **entry / record**, its dependency's push too                  | entry / entry, each once                   | same                                    |
+| The same, its entry stored without its pushes (a reader-first MISS, an encode timeout)          | **entry / record**                                             | entry / none: the entry as it is           | not planned: the entry is a miss: a run |
+| Dependency a pinned loader awaited (registered on neither lane)                                 | pin / pin                                                      | same                                       | same                                    |
+| The same dependency, any replay without pins                                                    | **run / record**                                               | run / run                                  | same                                    |
+| The same dependency, one other `ssr: false` loader lost its pin, document HIT                   | pin / pin                                                      | **pin / run** (pending)                    | not designed                            |
+| The same, navigation replay                                                                     | **pin / run**                                                  | **pin / run** (pending)                    | not designed                            |
+| A dependency the awaiting loader's `cache()` entry did not record, navigation replay            | **entry / record**                                             | **entry / record** (pending)               | not designed                            |
+| A `"use cache"` entry's copy of a dependency's push, replay without pins                        | entry / record, once                                           | entry / entry, once                        | same                                    |
+| Live-lane loader (a hole), with or without its own `cache()`                                    | its run's or its entry's, both                                 | same                                       | same                                    |
+| Live-lane loader on a route with no `ssr: false` loader, a record without loader copies         | a hole, when the record holds any handle push                  | a hole, with or without a handles blob     | same                                    |
+| Dependency a pinned loader and a live loader share (`/shared-dep`)                              | captured push next to the live reader's fresh data, documented | same                                       | same (decided: leave)                   |
+| Order: a loader pushes, awaits a dependency that pushes, pushes again; its entry replays        | `[own, dependency, own]`                                       | same                                       | same                                    |
+| The same loader's run, a document without pins (a HIT before the loader-pin rule, a MISS since) | the record's order, with the **record's** values               | `[own, dependency, own]`, the run's values | same                                    |
+| The same, navigation replay without pins                                                        | `[own, own, dependency]`                                       | `[own, dependency, own]`                   | same                                    |
 
 A route `cache()` record that holds a loader's push (a ppr route under
 `cache()`; the capture wrote the record):
@@ -689,21 +689,21 @@ from its record"); rows marked B were also run in a browser, dev and
 production. The same reader on a document MISS, with the push made after an
 await, failed on `origin/main` too and is clean now (rule 4).
 
-| Path                                                                                             | `origin/main` (`ede1367f`)                                                                                                                         | Now                                                                                       |
-| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Document MISS (B)                                                                                | HTML and hydration: every push made before the handler barrier, a deferred one resolved. After: pushes made later (a live loader after an await)   | same                                                                                      |
-| HIT, the loaders push settled values only (`/eb`)                                                | HTML, hydration: record. After: nothing                                                                                                            | same                                                                                      |
-| HIT, a deferred push, the loader's `cache()` entry warm at capture (B, #1035)                    | HTML: record **plus an empty element**. Hydration: record, **plus the value if the replay won the race**. After: the value. Fails either way       | HTML, hydration: record, the value included (#1182). After: nothing                       |
-| HIT, a deferred push, the body ran at capture (no `cache()`, or its entry missed)                | HTML: record **plus the capture's value, baked**. Hydration: record plus this run's value (`@g2` next to `@g1`), or not                            | HTML, hydration: record, the capture's value included (#1182). After: nothing             |
-| HIT, a push that holds a promise                                                                 | HTML: the capture's value with the promise masked. Hydration: this run's value, or not                                                             | HTML, hydration: record (no element). After: this run's value                             |
-| An entry without loader pins (`ppr.maxSnapshotBytes`), the run pushes                            | HTML: the capture's push. Hydration: **the run's push** (the run is awaited). Text mismatch                                                        | A document MISS since dc-t89: its HTML and hydration come from its own run, push included |
-| The same, the run makes no push                                                                  | HTML: the capture's push. Hydration: **none**                                                                                                      | A document MISS since dc-t89: no push                                                     |
-| HIT, a live-lane loader pushes, the reader is in the static part (B)                             | HTML: no element. Hydration: **the push when made before the loader's first await** (element mismatch, #418), else after                           | HTML, hydration: record. After: the push                                                  |
-| HIT, a live-lane loader pushes, the reader is inside that loader's boundary (a hole) (B, e2e)    | Push before the first await: in the hole's HTML and in the hydration data, clean. Push after an await: after hydration, **fails in that boundary** | Both after hydration, clean: the reader hydrates with the document's data (rule 4)        |
-| Client navigation that replays the shell                                                         | one stream, the final state                                                                                                                        | same                                                                                      |
-| Document of a route without `ppr`                                                                | as a MISS                                                                                                                                          | same                                                                                      |
-| HIT of a `Prerender` + `ppr` route, a promise-free `ssr: false` loader's settled push (B, #1057) | HTML: the push. Hydration: **the prerender store's handles only**, so React removes the element (#418). After: nothing                             | HTML, hydration: the shell's `handles` record. After: nothing                             |
-| The same route, the loader also pushes a promise (B, #1057)                                      | HTML: the settled push. Hydration: **without it**. After: the HIT run's settled and promise pushes                                                 | HTML, hydration: the record, the promise's value included (#1182). After: nothing         |
+| Path                                                                                             | `origin/main` (`ede1367f`)                                                                                                                         | Now                                                                                                    |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Document MISS (B)                                                                                | HTML and hydration: every push made before the handler barrier, a deferred one resolved. After: pushes made later (a live loader after an await)   | same                                                                                                   |
+| HIT, the loaders push settled values only (`/eb`)                                                | HTML, hydration: record. After: nothing                                                                                                            | same                                                                                                   |
+| HIT, a deferred push, the loader's `cache()` entry warm at capture (B, #1035)                    | HTML: record **plus an empty element**. Hydration: record, **plus the value if the replay won the race**. After: the value. Fails either way       | HTML, hydration: record, the value included (#1182). After: nothing                                    |
+| HIT, a deferred push, the body ran at capture (no `cache()`, or its entry missed)                | HTML: record **plus the capture's value, baked**. Hydration: record plus this run's value (`@g2` next to `@g1`), or not                            | HTML, hydration: record, the capture's value included (#1182). After: nothing                          |
+| HIT, a push that holds a promise                                                                 | HTML: the capture's value with the promise masked. Hydration: this run's value, or not                                                             | HTML, hydration: record (no element). After: this run's value                                          |
+| An entry without loader pins (`ppr.maxSnapshotBytes`), the run pushes                            | HTML: the capture's push. Hydration: **the run's push** (the run is awaited). Text mismatch                                                        | A document MISS since the loader-pin rule: its HTML and hydration come from its own run, push included |
+| The same, the run makes no push                                                                  | HTML: the capture's push. Hydration: **none**                                                                                                      | A document MISS since the loader-pin rule: no push                                                     |
+| HIT, a live-lane loader pushes, the reader is in the static part (B)                             | HTML: no element. Hydration: **the push when made before the loader's first await** (element mismatch, #418), else after                           | HTML, hydration: record. After: the push                                                               |
+| HIT, a live-lane loader pushes, the reader is inside that loader's boundary (a hole) (B, e2e)    | Push before the first await: in the hole's HTML and in the hydration data, clean. Push after an await: after hydration, **fails in that boundary** | Both after hydration, clean: the reader hydrates with the document's data (rule 4)                     |
+| Client navigation that replays the shell                                                         | one stream, the final state                                                                                                                        | same                                                                                                   |
+| Document of a route without `ppr`                                                                | as a MISS                                                                                                                                          | same                                                                                                   |
+| HIT of a `Prerender` + `ppr` route, a promise-free `ssr: false` loader's settled push (B, #1057) | HTML: the push. Hydration: **the prerender store's handles only**, so React removes the element (#418). After: nothing                             | HTML, hydration: the shell's `handles` record. After: nothing                                          |
+| The same route, the loader also pushes a promise (B, #1057)                                      | HTML: the settled push. Hydration: **without it**. After: the HIT run's settled and promise pushes                                                 | HTML, hydration: the record, the promise's value included (#1182). After: nothing                      |
 
 A HIT of a `Prerender` route with `ppr` freezes at the same point: its tail
 replays the prerender store's handles in `decodeStoredEntry`, then resolves the
@@ -949,7 +949,7 @@ because the server rendered HTML didn't match the client" in dev, React
 error #418 (`args[]=HTML`) in production.
 
 `expectPinlessHitKeepsRunPushWithRunData` (a shell without loader pins;
-since dc-t89 the route is a document MISS and the test is
+since the loader-pin rule the route is a document MISS and the test is
 `expectPinlessEntryServesDocumentMiss`) recorded the handle rows over
 time. That page does report a hydration error,
 and it is the loader DATA, not the handle rows: dev names the element,
@@ -981,7 +981,7 @@ value.
 
 Status: built. The owner set the direction on 2026-10-15 ("the handles
 aren't resolved"), which reopened the 2026-10-04 decision against option A
-above. The whole-case design is in devcorner (dc-d142, dc-d141); this
+above. The whole-case design is settled; this
 section is what shipped.
 
 ### Why it changed
@@ -1078,7 +1078,7 @@ promise that never settles are follow-ups, not part of #1182.
 | `.defer()` resolved by the loader's own code              | live                                                             | baked                                                                                                                 |
 | `.defer()` resolved by a component the capture renders    | live                                                             | its `else` bakes (the handle wait runs before the record's encode renders components), as a handler's `.defer()` does |
 | A pin with a hole, or a page another loader set `runs` on | the run's promise push added after hydration                     | judged: dropped, the record's copy stands                                                                             |
-| An entry without loader pins (`ppr.maxSnapshotBytes`)     | the run's push only                                              | dc-t89: a document MISS, the run's value in the HTML and the hydration data                                           |
+| An entry without loader pins (`ppr.maxSnapshotBytes`)     | the run's push only                                              | the loader-pin rule: a document MISS, the run's value in the HTML and the hydration data                              |
 | `Prerender` + `ppr` (#1057 `handles` record)              | the HIT run's value after hydration                              | the capture's value in the record                                                                                     |
 | An action or revalidation after a HIT                     | the loader re-runs; its push replaces the loader's               | same: it replaces the baked value                                                                                     |
 
@@ -1130,15 +1130,14 @@ path("/product/:id", ProductPage, { name: "product", ppr: true }, () => [
 ]);
 ```
 
-## A document HIT holds a pin for every loader its HTML baked (dc-t89)
+## A document HIT holds a pin for every loader its HTML baked
 
 Status: built. #1182 made a shell store and serve exactly what its capture
-rendered, for handle data. dc-t89 carries that to loader data: a document
+rendered, for handle data. The loader-pin rule carries that to loader data: a document
 HIT is served only from an entry that holds a pin for every `ssr: false`
 loader its prelude baked, and an entry that cannot hold them serves
 navigations only. #1035's handle rules and the #1054 invariants stay as they
-are. The design and its case table are devcorner doc dc-d146; the owner's
-decisions are dc-q54.
+are. The case table below is the design; the owner decided its open cases.
 
 ### Why it changed
 
@@ -1173,7 +1172,7 @@ Such an entry came from three places:
 | The same, a prerender-served capture (no doc record)              | refused, and the tombstone stored (a `navigationOnly` entry with no snapshot), which the document gate reads as a MISS ahead of a build shell (`rsc-rendering.ts` shellServePlan). The build-time capture skips (`SHELL SKIP ... capture refused`)                                                                                                                                                                                                                                                                                                                                          |
 | A settled container the codec cannot encode                       | the capture fails like an encode error (#927): reported, backed off, nothing stored                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | A pin that fails to decode on a HIT                               | that response is served as before (one mismatch). Once it is closed, the key backs off and the entry is retired in the background: reported, replaced by a tombstone, the memo dropped, as `degradeUnreplayableShell` does for a doc record, without the reload. The capture after the backoff window stores it again, so a pin that keeps failing costs one mismatch per window                                                                                                                                                                                                            |
-| A hole-carrying pin (`holes: 1`) whose HIT run rejects            | unchanged, the documented residual (F2): the payload carries the error envelope where the prelude has the baked value. F1, serving the record with failed holes, is dc-t91                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| A hole-carrying pin (`holes: 1`) whose HIT run rejects            | unchanged, the documented residual (F2): the payload carries the error envelope where the prelude has the baked value. F1, serving the record with failed holes, is tracked separately                                                                                                                                                                                                                                                                                                                                                                                                      |
 | A fresh-only key a hole-carrying run returns, read outside a hole | unchanged, the documented residual (`loader-cache.ts`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 What a consumer sees: an over-cap `ppr` route serves documents as MISS (full
@@ -1193,7 +1192,7 @@ handler layer.
   (`onUndecodable`); `rsc-rendering.ts` `serveShellHit` closes the response,
   marks the key's backoff and retires the entry through `waitUntil`.
 
-Pinned by the "dc-t89" group of
+Pinned by the "a document HIT hydrates with the loader data its shell was rendered from" group of
 `serve-shell-request-push-ownership.rsc-test.tsx`, by `shell-capture.test.ts`,
 and in a browser by `expectPinlessEntryServesDocumentMiss` in the
 push-ownership suites of both apps, dev and production.
@@ -1599,7 +1598,7 @@ Still expected failures (`it.fails`), with the assertion each fails on:
 | (unfiled) a dependency of a pinned loader, while another ssr: false loader lost its pin | data `holey-dep@g1`, push `dep-note@g2`, expected `dep-note@g1`. Passes on `origin/main`                                         |
 | (unfiled) a dependency whose push the awaiting loader's cache() entry did not record    | data `owned-dep-once@g2`, push `dep-once-note@g1` and `owned-once-note@g2`, expected the second only. Fails on `origin/main` too |
 
-Since dc-t89 the second unfiled test runs as a navigation replay: its route is
+Since the loader-pin rule the second unfiled test runs as a navigation replay: its route is
 over `maxSnapshotBytes`, so a document is a MISS. It fails with the same
 values.
 
@@ -1630,7 +1629,7 @@ tail without pins through `router.match`).
 
 In a browser, `expectReplayKeepsCapturedPushWithPinnedData` (#1003),
 `expectReplayDeliversDeferredPush` (#1001),
-`expectPinlessHitKeepsRunPushWithRunData` (since dc-t89
+`expectPinlessHitKeepsRunPushWithRunData` (since the loader-pin rule
 `expectPinlessEntryServesDocumentMiss`) and, for #1035,
 `expectShellHitHydratesFromRecord` in `tests/shared-e2e/src/index.ts`
 run in a dev and a `(production)` describe in both apps

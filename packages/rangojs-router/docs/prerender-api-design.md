@@ -158,7 +158,7 @@ above the route stays held, as a live walk keeps it, unless its
 `revalidate()` asks for it when the params changed. On equal params its
 rules are not asked, so a prefetch that keeps it is scoped to the pages
 with the same params (`x-rsc-prefetch-scope: params`, every param read,
-#1331, rango-t242). So is one that keeps the route's own segments on equal
+#1331). So is one that keeps the route's own segments on equal
 params after a search-only change: from a source with other params they are
 sent. When such an answer sends no segment at all, it stays page-only
 (`source`): a page that adopted it would keep its whole tree. Each decoded segment

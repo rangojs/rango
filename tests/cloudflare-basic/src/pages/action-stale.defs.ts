@@ -28,7 +28,7 @@ export const ActionStaleCartDefaultLoader = createLoader(
 );
 
 /**
- * The counted layout's cart read (rango-d170): its revalidate() re-runs it on
+ * The counted layout's cart read: its revalidate() re-runs it on
  * every navigation, so every prefetch under the layout carries it.
  */
 export const ActionStaleCountLoader = createLoader(async () => {

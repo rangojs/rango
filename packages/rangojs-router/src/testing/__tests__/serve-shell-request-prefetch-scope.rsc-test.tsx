@@ -7,7 +7,7 @@
  * carries no scope header (the shared slot). No prefetch carries a
  * `cache-control` that lets a cache keep it (#1170): a scoped one is sent
  * `private, no-cache`, since a shared cache keyed by URL would serve it to
- * another source (rango-t238).
+ * another source.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";

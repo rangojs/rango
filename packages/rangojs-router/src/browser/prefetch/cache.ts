@@ -210,8 +210,8 @@ let generation = 0;
  * started under an older one is stale (`isPrefetchStale`). Separate from
  * `generation`: a stale mark keeps every entry and every in-flight fetch,
  * where a generation bump drops them. So a Flight response that has already
- * arrived is never aborted by an action (rango-d171): an in-flight prefetch
- * finishes and lands stale.
+ * arrived is never aborted by an action (aborting it mid-stream errors
+ * the stream): an in-flight prefetch finishes and lands stale.
  */
 let staleEpoch = 0;
 

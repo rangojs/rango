@@ -3,8 +3,7 @@
 Status: built. Written on 2026-10-07 against main `844ccda5`, from the behaviour
 contract agreed with the maintainer the same day. The rules below (R1 to R15)
 are that contract; the mechanics are what the code does. R16, a hover's
-prefetch defers nothing, is the maintainer's decision of 2026-10-30
-(rango-t235, built as rango-t243).
+prefetch defers nothing, is the maintainer's decision of 2026-10-30.
 
 Read [caching.md](./caching.md) first if you have not, and
 `packages/rangojs-router/docs/internal/execution-model.md` for the revalidation

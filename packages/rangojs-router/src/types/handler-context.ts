@@ -521,7 +521,7 @@ export type InternalHandlerContext<
    * @internal A revalidate() predicate that read the source page
    * (`currentParams`, `currentUrl`, `fromRouteName`) kept a held segment, so
    * this match's diff is right only for pages with equal values of what the
-   * kept decisions read (#1331, rango-t242). Set by evaluateRevalidation
+   * kept decisions read (#1331). Set by evaluateRevalidation
    * (router/revalidation.ts) and the stored-entry keep
    * (match-middleware/cache-lookup.ts); match-result.ts turns it into
    * `sourceHeld`, which scopes a prefetch of the response to that group.

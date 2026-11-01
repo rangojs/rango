@@ -193,7 +193,7 @@ export const keptLayoutSourceBakedPatterns = urls(
   ],
 );
 
-// rango-t242: the documented locale rule (guides/i18n.mdx) above paginated
+// The documented locale rule (guides/i18n.mdx) above paginated
 // pages. The rule reads the source's locale and keeps the layout on a
 // same-locale navigation, so a prefetch is shared by the pages of one locale:
 // page 2 adopts the prefetch of the home link page 1 made.

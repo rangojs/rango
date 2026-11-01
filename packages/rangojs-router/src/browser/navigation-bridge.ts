@@ -156,8 +156,8 @@ export interface StalePrefetchRevalidation {
  * (prefetch/cache.ts isPrefetchStale) committed the pre-write payload, as any
  * prefetched click commits. Once that navigation settled
  * (NavigationEntry.settled: its commit, any `prefetch: false` fill and its
- * stream, so this never supersedes the click (dc-t114) nor cuts a response
- * that arrived short (rango-d171)), `revalidate` runs the page's request in
+ * stream, so this never supersedes the click nor cuts a response
+ * that arrived short), `revalidate` runs the page's request in
  * Back's lane (the bridge's revalidateInBackground), with the ids on screen
  * and the action error boundary it shows held, as Back onto a stale entry
  * does.

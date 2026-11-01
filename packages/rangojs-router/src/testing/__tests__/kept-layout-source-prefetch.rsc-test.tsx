@@ -14,7 +14,7 @@
  * from a category page, the cart rendered under that page's hero.
  *
  * The answer is scoped to the pages with equal values of what the kept rule
- * read (`x-rsc-prefetch-scope: params; <label>`, rango-t242): the product
+ * read (`x-rsc-prefetch-scope: params; <label>`): the product
  * pages share it, a category page is not in the group.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -337,7 +337,7 @@ describe("a prefetch of a prerendered target served from its stored entry", () =
   });
 });
 
-describe("a prefetch the locale rule kept the layout for (rango-t242)", () => {
+describe("a prefetch the locale rule kept the layout for", () => {
   /** The locale layout: the one right above the route. */
   const localeLayoutOf = (page: Metadata): ResolvedSegment =>
     page.segments.filter((s) => s.type === "layout").at(-1)!;

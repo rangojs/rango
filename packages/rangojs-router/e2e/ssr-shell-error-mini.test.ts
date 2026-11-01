@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 
-// dc-t93, dc-d150 row 3: a loader read outside Suspense that throws, in the
+// A loader read outside Suspense that throws, in the
 // mini app, whose only boundary is createRouter({ defaultErrorBoundary }).
 // Production answers the recovery document and the browser renders the
 // default boundary inside the app root, as a client navigation does; dev keeps

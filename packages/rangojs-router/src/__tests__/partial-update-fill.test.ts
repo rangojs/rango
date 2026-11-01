@@ -118,7 +118,6 @@ function createTx(store: ReturnType<typeof createStore>, key = "/product") {
   return {
     end,
     tx: {
-      currentUrl: "http://localhost/",
       startStreaming: vi.fn(() => ({ end })),
       commit: vi.fn((ids: string[], segments: ResolvedSegment[]) => {
         store.setHistoryKey(key);

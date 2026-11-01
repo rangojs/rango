@@ -513,7 +513,7 @@ for (const mode of ["document", "navigation"] as const) {
     });
 
     // An orphan layout's handler is awaited: resolveOrphanLayout pins the
-    // orphan's own segment while it runs (rango-t198). The case guards that
+    // orphan's own segment while it runs. The case guards that
     // the fix leaves it there.
     it("control: an orphan layout's push stays in its own bucket", async () => {
       expect(await serve(orphanLayout(), "/o", mode)).toEqual({

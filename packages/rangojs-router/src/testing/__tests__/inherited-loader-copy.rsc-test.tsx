@@ -14,7 +14,7 @@
  *
  * - no `loading()`, or `loading(false)`: no copy, on any request. The
  *   walkers emit `loading(false)` as `loading: null`, which used to read as a
- *   declared fallback and sent the copy on every request (rango-t156). With
+ *   declared fallback and sent the copy on every request. With
  *   the route's own loader held (its revalidate() declines), a copy resolved
  *   and dropped only beside the route's own reached an action or a
  *   same-route navigation alone.

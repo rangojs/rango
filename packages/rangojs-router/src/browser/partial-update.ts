@@ -614,16 +614,18 @@ export function createPartialUpdater(
       segments = segmentIds ?? segmentState.currentSegmentIds;
     }
 
-    // The page the client is on, which the server diffs the target against.
-    // tx.currentUrl is window.location when the transaction was created: on
-    // a back/forward the popstate event had already moved it to the target,
-    // and a server told the target is also the source revalidates nothing on
-    // the same route, so the page being left stayed on screen (#1030). The
-    // store's URL is the committed entry's until tx.commit().
+    // The page the client is on, which the server diffs the target against:
+    // the committed entry (the store's URL until tx.commit()), whose segment
+    // ids are sent above, or the intercept's source. Never window.location:
+    // a popstate has already moved it to the popped entry before that
+    // entry's fetch commits. Sent from there, a back/forward was told the
+    // target is also the source and kept the page being left (#1030), and a
+    // click during a back/forward that missed the history cache was judged
+    // against the popped entry while holding the page on screen's copies, so
+    // a layout kept for one page showed the other's.
     const previousUrl =
-      mode.type === "leave-intercept" || (tx.traversal && !interceptSourceUrl)
-        ? segmentState.currentUrl || tx.currentUrl
-        : interceptSourceUrl || tx.currentUrl || segmentState.currentUrl;
+      (mode.type !== "leave-intercept" && interceptSourceUrl) ||
+      segmentState.currentUrl;
 
     if (IS_BROWSER_DEBUG) {
       debugLog(`\n[Browser] >>> NAVIGATION`);
@@ -638,8 +640,7 @@ export function createPartialUpdater(
     // transition({ when }). Every decision below runs before tx.commit()
     // moves the store, so `from` is still the location being left:
     // segmentState.currentUrl is the committed URL even on a popstate cache
-    // miss, where tx.currentUrl and window.location already point at the
-    // target.
+    // miss, where window.location already points at the target.
     const whenKind: TransitionWhenKind =
       mode.type === "action"
         ? "action"
@@ -1111,7 +1112,7 @@ export function createPartialUpdater(
 
       // A background refresh keeps the stale page on screen when a loader it
       // re-ran threw (its entries settled in the build): nothing is committed,
-      // and navigation-bridge logs the rejection (dc-t65). Every other lane
+      // and navigation-bridge logs the rejection. Every other lane
       // throws it at the read. Before the abort check: the await yields.
       if (mode.type === "stale-revalidation") {
         const failed = await revalidationErrorOf(serverSegments);

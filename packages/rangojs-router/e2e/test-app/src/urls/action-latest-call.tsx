@@ -8,7 +8,7 @@ const ActionLatestPage: Handler = () => (
 );
 
 /**
- * Hook lock row A3 (rango-t84): useAction() reports the latest call of an action
+ * Hook lock row A3: useAction() reports the latest call of an action
  * called twice, the later call returning first. One page, twice: /action-latest
  * without transition(), /action-latest-vt with it, so the action's
  * revalidation commits in a transition.

@@ -1,5 +1,5 @@
 /**
- * dc-t93: a document whose server render failed its shell is answered with a
+ * A document whose server render failed its shell is answered with a
  * recovery document (500/404) or a real redirect, and none of them is stored by
  * the document cache: not on a MISS, not on a stale refresh. The render runs
  * the real pipeline (renderRscResponse, createSsrHtmlStage) over the real

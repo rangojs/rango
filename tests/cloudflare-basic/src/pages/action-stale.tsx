@@ -161,7 +161,7 @@ const ActionStaleSlow: Handler = async () => {
 
 // Reads the cart as it starts and answers 1800 ms later: its read comes
 // before the write an action makes at 800 ms, its commit after that action
-// lands (dc-q78).
+// lands.
 const ActionStaleRead: Handler = async () => {
   const { cart } = actionStaleState();
   await wait(1800);
@@ -285,7 +285,7 @@ const ActionStaleBasketTransition: Handler = async () => {
 
 // A layout whose loader reads the cart and re-runs on every navigation
 // (revalidate(() => true)), so every prefetch under it carries the count it
-// read then (rango-d170): after an action the click on such a prefetch shows
+// read then: after an action the click on such a prefetch shows
 // the count from before the write, then its revalidation the new one.
 function ActionStaleCountedLayout() {
   return (

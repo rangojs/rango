@@ -130,17 +130,36 @@ function makeRespawn(
 }
 
 /**
- * Check if a URL resolves to the current page (same pathname + search).
+ * The page a prefetch is sent from: the URL the router store committed, the
+ * page whose segment ids every caller sends. Not window.location: a popstate
+ * moves it to the popped entry before that entry's fetch commits, and a
+ * prefetch sent from there with the page on screen's ids was judged against
+ * the wrong page, so a layout kept for one page showed the other's copy.
+ * Absolute, as navigation-client.ts makes the URL navigation sends
+ * (partial-update.ts previousUrl), so the source keys agree.
+ */
+function committedHref(): string {
+  const committed = getRegisteredStore()?.getSegmentState().currentUrl;
+  return committed
+    ? new URL(committed, window.location.origin).href
+    : window.location.href;
+}
+
+function withoutHash(href: string): string {
+  const hash = href.indexOf("#");
+  return hash === -1 ? href : href.slice(0, hash);
+}
+
+/**
+ * Check if a URL resolves to the committed page (same pathname + search).
  * Used to prevent same-page prefetching, which produces a trivial diff
  * that would corrupt the (default wildcard) prefetch cache entry.
  */
-function isSamePage(url: string): boolean {
+function isSamePage(url: string, sourceHref: string): boolean {
   try {
     const target = new URL(url, window.location.origin);
-    return (
-      target.pathname + target.search ===
-      window.location.pathname + window.location.search
-    );
+    const source = new URL(sourceHref, window.location.origin);
+    return target.pathname + target.search === source.pathname + source.search;
   } catch {
     return false;
   }
@@ -190,7 +209,7 @@ export interface PrefetchSlot {
  * forced it or the response says `X-RSC-Prefetch-Scope: source`; under the
  * label's key when it says `params; <label>`, for the pages with equal values
  * of what a revalidate() rule read; else under the key every source page
- * shares (#1331, rango-t242).
+ * shares (#1331).
  */
 export function prefetchStorageSlot(
   forceSourceScope: boolean,
@@ -247,6 +266,8 @@ export function prefetchStorageSlot(
 function executePrefetchFetch(
   wildcardKey: string,
   sourceKey: string,
+  /** The committed page sent as the source, the one `sourceKey` names. */
+  sourceHref: string,
   targetUrl: URL,
   forceSourceScope: boolean,
   /** Rango state captured once by the caller (keys + header share one read). */
@@ -323,7 +344,7 @@ function executePrefetchFetch(
     signal: effectiveSignal,
     headers: {
       "X-Rango-State": rangoState,
-      "X-RSC-Router-Client-Path": window.location.href,
+      "X-RSC-Router-Client-Path": sourceHref,
       [PREFETCH_HEADER]: intent ? PREFETCH_INTENT : "1",
       ...(isFragmentPassthroughEnabled() && {
         [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
@@ -539,14 +560,14 @@ export function prefetchDirect(
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return;
   const forceSourceScope = prefetchKey === ":source";
+  const sourceHref = committedHref();
   // Skip same-page prefetch — a same-page diff is trivial and would corrupt
   // the wildcard cache entry used for cross-page navigation.
   // When `:source` is forced the entry is source-scoped (single-aliased to
   // itself), so it cannot poison any shared slot — allow it.
-  if (!forceSourceScope && isSamePage(url)) {
+  if (!forceSourceScope && isSamePage(url, sourceHref)) {
     return;
   }
-  const sourceHref = window.location.href;
   const rangoState = getRangoState();
   const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
   const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
@@ -581,6 +602,7 @@ export function prefetchDirect(
   executePrefetchFetch(
     wildcardKey,
     sourceKey,
+    sourceHref,
     targetUrl,
     forceSourceScope,
     rangoState,
@@ -607,10 +629,10 @@ export function prefetchQueued(
   const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
   if (!targetUrl) return "";
   const forceSourceScope = prefetchKey === ":source";
-  if (!forceSourceScope && isSamePage(url)) {
+  const sourceHref = committedHref();
+  if (!forceSourceScope && isSamePage(url, sourceHref)) {
     return "";
   }
-  const sourceHref = window.location.href;
   const rangoState = getRangoState();
   const wildcardKey = buildPrefetchKey(rangoState, targetUrl);
   const sourceKey = buildSourceKey(rangoState, sourceHref, targetUrl);
@@ -648,12 +670,20 @@ export function prefetchQueued(
     ) {
       return Promise.resolve();
     }
-    if (!forceSourceScope && isSamePage(url)) {
+    // The segment ids and the source were read when it was queued: once the
+    // committed page has moved, they name a page no longer on screen.
+    // A hash-only change commits the same page, so the hash is not compared.
+    const committed = committedHref();
+    if (
+      withoutHash(committed) !== withoutHash(sourceHref) ||
+      (!forceSourceScope && isSamePage(url, committed))
+    ) {
       return Promise.resolve();
     }
     return executePrefetchFetch(
       wildcardKey,
       sourceKey,
+      sourceHref,
       targetUrl,
       forceSourceScope,
       rangoState,

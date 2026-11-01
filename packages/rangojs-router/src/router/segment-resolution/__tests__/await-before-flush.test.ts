@@ -289,7 +289,7 @@ describe("resolveLoaders awaitBeforeFlush", () => {
 /**
  * A flagged loader's result is decoded while the document's tree is built
  * (segment-system buildLoaderStreams); an error there with no fallback to
- * plant rejects the whole tree (dc-t92: a blank shell HIT, a raw 500 MISS).
+ * plant rejects the whole tree (a blank shell HIT, a raw 500 MISS).
  */
 describe("resolveLoaders: a flagged loader that throws with no errorBoundary()", () => {
   const failing = (id: string) =>

@@ -248,8 +248,8 @@ write and the cache cannot tell. Each renders at the origin, is never stored,
 and answers `private, no-cache`. An app that wants the shared entry refreshed
 after a write tags it and calls `updateTag()`.
 
-Nor does it store a partial whose diff depends on the source page
-(rango-t238). A partial's key is its URL plus a hash of the segment ids the
+Nor does it store a partial whose diff depends on the source page.
+A partial's key is its URL plus a hash of the segment ids the
 client holds (`_rsc_segments`), not the page it came from. That is enough
 when what the server sends depends only on those ids, and not when a
 `revalidate()` rule read the source (`currentParams`, `currentUrl`,
@@ -510,8 +510,8 @@ Cache keys combine request type prefix, the serving router's id, host, pathname,
 ```
 
 - **Prefix**: `doc` (full page), `partial` (navigation), or `intercept:{intercept}` (an intercept navigation). `{intercept}` names the intercept the match selected (`interceptRecordKey`, `src/router/intercept-resolution.ts`): its slot id, `~`, and its position among the intercepts its entry declares for the same slot and target route. See [Intercept Route Cache Namespace](#4-intercept-route-cache-namespace).
-- **Under a `key()`**: a scope with its own `key()` replaces what follows the prefix, never the prefix itself. Its record key is the composed `key()` parts, then the prefix as the last part (`key:tier%3Agold|doc`, `key:tier%3Agold|partial`, `key:tier%3Agold|intercept%3AM0L0.%40modal~0`). See [A key() keeps the request kind](#a-key-keeps-the-request-kind-rango-t201).
-- **Under a store `keyGenerator`**: its result is the record key when it starts with the prefix (`${defaultKey}|en` does); otherwise the prefix follows it as a part of its own (`items|doc`, `items|partial`). See [A keyGenerator result keeps the request kind](#a-keygenerator-result-keeps-the-request-kind-rango-t204).
+- **Under a `key()`**: a scope with its own `key()` replaces what follows the prefix, never the prefix itself. Its record key is the composed `key()` parts, then the prefix as the last part (`key:tier%3Agold|doc`, `key:tier%3Agold|partial`, `key:tier%3Agold|intercept%3AM0L0.%40modal~0`). See [A key() keeps the request kind](#a-key-keeps-the-request-kind).
+- **Under a store `keyGenerator`**: its result is the record key when it starts with the prefix (`${defaultKey}|en` does); otherwise the prefix follows it as a part of its own (`items|doc`, `items|partial`). See [A keyGenerator result keeps the request kind](#a-keygenerator-result-keeps-the-request-kind).
 - **Router and host**: `{routerId}@{host}` says whose output the entry is. See [The router part](#the-router-part-whose-output-an-entry-is) below.
 - **Search params**: User-facing params are included (sorted, URL-encoded). Router-internal params are excluded: `_rsc*` by prefix, plus an exact allowlist of `__`-prefixed params (`__no_cache`, `__rsc`, `__html`) — deliberately not a blanket `__*` filter, so consumer params like `__variant` still key the cache (see `src/cache/cache-key-utils.ts`).
 - **Partial response capability**: document-cache entries append a fragment-capable variant when `X-Rango-Fragment-Passthrough: 1` is present. The middleware can return before route matching, so its key must mirror the RSC response's `Vary` contract and never serve fragment envelopes to a legacy or context-less client. `X-Rango-Fragment-Recovery: 1` skips that variant's read so the failed fragment retry reaches segment decode and eviction, then the ordinary write path replaces the corrupt response bytes with the valid fallback.
@@ -975,9 +975,9 @@ handler's values (`restoreHandles`' `sent`). It used to restore every
 bucket, so a `/list` to `/item/1` navigation, an intercept's included,
 re-sent the held layout's crumbs from the record, and the browser's merge
 replaced the values on screen with them; a loader's `ctx.get(handle)` after
-`rendered()` read them too, which a live render does not (rango-t195). A
+`rendered()` read them too, which a live render does not. A
 document request restores everything in the lookup, as before. A
-`Prerender()` bake does the same in `decodeStoredEntry` (rango-t193).
+`Prerender()` bake does the same in `decodeStoredEntry`.
 
 **Loader pushes are not recorded.** A DSL loader body can push handles too, and
 its pushes land in the owning route/layout segment's bucket. A HIT runs
@@ -1010,7 +1010,7 @@ record a background re-render wrote, which runs no loader, orders the same
 way. A `prefetch: false` fill holds nothing: it does not run the held
 segment's handler, so the browser's merge (`mergePartialHandleData`)
 appends what the fill delivers on a MISS, and a HIT must give the same
-order (rango-t189).
+order.
 
 **An owned value follows its loader's value.** A copy of a loader's push in a
 record is only right next to the loader data of the same run, so
@@ -1039,7 +1039,7 @@ The first row is a document HIT, a navigation replay, a prefetch replay and
 the seeded fallback after an explicit route `cache()` miss, all alike. The
 second is every live-lane loader, and every loader of a record without
 pins: a navigation-only shell entry (one a navigation captured, or one a
-capture over `ppr.maxSnapshotBytes` stored: dc-t89 serves documents no shell
+capture over `ppr.maxSnapshotBytes` stored: a document HIT serves no shell
 without every pin its HTML baked, so such an entry serves navigations only),
 a route `cache()` record a capture wrote, and any record restored during a
 capture. Only a ppr route gets a delivery at all
@@ -1923,7 +1923,7 @@ invariant):
   parts first; a lone default part stays raw, so a chain without `key()`
   keeps its default key or keyGenerator result byte for byte (a
   keyGenerator result that starts with its request kind; one that does not
-  is composed with the kind, rango-t204 below).
+  is composed with the kind, see below).
 
 Why nothing collides: the router's default keys (`doc:`, `partial:`,
 `intercept:`, `response:<type>:`) never start with `key:` and always hold a
@@ -1952,7 +1952,7 @@ cold after a restart. Only `VercelCacheStore` without a version saw a one-time
 miss for existing keyed entries. (Stores now key by per-router code versions,
 and a rango upgrade changes those too: see "Versions" above.)
 
-#### A key() keeps the request kind (rango-t201)
+#### A key() keeps the request kind
 
 You might read "`key()` replaces the default key" as harmless: the app said
 what identifies its page, so the router should store the page under that and
@@ -2004,7 +2004,7 @@ What does not change:
   response route answers every request alike, so it passes no kind.
 - A store's `keyGenerator` here. It receives the default key, prefix
   included, and a result built on it keeps the kind. One that ignored
-  `defaultKey` still gave every kind one record until rango-t204 (next
+  `defaultKey` still gave every kind one record before a keyGenerator result kept the kind (next
   section).
 
 The cost is one change of stored key strings for every route under a keyed
@@ -2019,7 +2019,7 @@ misses the first time, and the shell's seeded doc record answers it (a replay
 and in the browser by `e2e/cache.test.ts` "cache-intercept-routes", dev and
 production.
 
-#### A keyGenerator result keeps the request kind (rango-t204)
+#### A keyGenerator result keeps the request kind
 
 The previous section left one way to lose the kind: a store's
 `keyGenerator`. It receives the default key, prefix included, and its result
@@ -2425,7 +2425,7 @@ Concurrent partial requests with null components could both trigger proactive ca
 
 #### 4. Intercept Route Cache Namespace
 
-An intercept navigation's record is keyed `intercept:{intercept}:` + `cacheKeyBase`, a namespace of its own, apart from `doc:` and `partial:`. `{intercept}` is `interceptRecordKey(ctx.interceptResult)` (`src/router/intercept-resolution.ts`), which every reader and writer passes to `CacheScope` (`readSegmentCacheSource` in `cache-lookup.ts`, `withCacheStore`, `rerenderAndCacheRoute`): the selected intercept's slot id, then `~` and its position among the intercepts its entry declares for the same slot and target route. A scope with its own `key()` keeps the namespace: its record key is the `key()` parts, then `intercept:{intercept}` as the last part (see [A key() keeps the request kind](#a-key-keeps-the-request-kind-rango-t201)).
+An intercept navigation's record is keyed `intercept:{intercept}:` + `cacheKeyBase`, a namespace of its own, apart from `doc:` and `partial:`. `{intercept}` is `interceptRecordKey(ctx.interceptResult)` (`src/router/intercept-resolution.ts`), which every reader and writer passes to `CacheScope` (`readSegmentCacheSource` in `cache-lookup.ts`, `withCacheStore`, `rerenderAndCacheRoute`): the selected intercept's slot id, then `~` and its position among the intercepts its entry declares for the same slot and target route. A scope with its own `key()` keeps the namespace: its record key is the `key()` parts, then `intercept:{intercept}` as the last part (see [A key() keeps the request kind](#a-key-keeps-the-request-kind)).
 
 Why the key names the intercept: several intercepts can target one route, each with its own `when()`, and the match selects one per navigation (`findInterceptForRoute`). Keyed by the URL alone, the record written under one intercept answered a navigation that selected another. With `@modal` (from /list) and `@drawer` (from /other) on one layout, opening `/item/1` from /other after /list served the `@modal` slot and its body, while `metadata.slots` named `@drawer` (`handleCacheHitIntercept` files the stored slot under the selected slot's name). The slot id alone is not enough: two intercepts on one entry that fill the same slot share it, so the position tells them apart. The position counts only intercepts for the same slot and target route, so declaring an intercept for another slot or route does not renumber the rest; it is still positional, like every segment id, so a store that ignores the router version (`getCacheVersions()`) can serve an older build's record after an edit that reorders same-slot intercepts, as it can for any segment. The separator is `~`, not `#`: `~` is unreserved in a URL, so a custom store that maps keys onto URLs without encoding them keeps the whole key, where a `#` would start a fragment and drop the rest. Tags are unaffected: each record carries its own tags, and `updateTag()` / `revalidateTag()` evict every intercept's record. Pinned through `serveShellRequest` by `packages/rangojs-router/src/testing/__tests__/cached-intercept-selection.rsc-test.tsx`.
 

@@ -14,8 +14,8 @@ import { createNavigationClient } from "../browser/navigation-client";
 import type { FetchPartialResult, RscPayload } from "../browser/types";
 
 /**
- * A server action without a directive marks every prefetch stale (#1329,
- * rango-d221). Real prefetch fetch, cache and navigation client; fetch is
+ * A server action without a directive marks every prefetch stale (#1329).
+ * Real prefetch fetch, cache and navigation client; fetch is
  * stubbed with a body the test streams, and the decoder exposes the body's
  * text as the payload's `rest`, so a test reads the bytes a navigation was
  * answered with.

@@ -5,7 +5,7 @@ import { useLayoutEffect, type ReactNode } from "react";
 import { useAction } from "../../browser/react/use-action.js";
 import { renderRoute } from "../render-route.js";
 
-// Hook lock row A3 (rango-t84): "If the same action fires several times, the
+// Hook lock row A3: "If the same action fires several times, the
 // hook reports the latest call" (skills/hooks/handle-and-actions.md). Two
 // calls of one action, the later one settling first: the AddToCart reader
 // shows the later call's result when it returns, and the earlier call
@@ -89,7 +89,7 @@ describe("renderRoute: useAction() reports the latest call", () => {
     await settleWindow();
 
     // The later call's result stays: an action's last settled call stays
-    // until its next call (rango-t223).
+    // until its next call.
     expect(distinct(frames.map((f) => f.shown))).toEqual(["Adding…", "second"]);
     expect(distinct(frames.map((f) => f.pending))).toEqual([true, false]);
     expect(frames.every((f) => f.error === null)).toBe(true);

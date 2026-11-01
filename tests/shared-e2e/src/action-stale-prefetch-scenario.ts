@@ -27,7 +27,7 @@ import { waitForShellHydration } from "./shell-request.js";
  * prefetch again. keepClientCache() keeps the prefetch fresh;
  * invalidateClientCache() in the action still flushes and rotates. Other
  * tabs that share a segment mark theirs stale (or adopt the rotated state)
- * and refresh. Only a click takes a stale prefetch, once (rango-d239): Back
+ * and refresh. Only a click takes a stale prefetch, once: Back
  * onto an entry the history cache evicted fetches the page.
  *
  * Every case where a stale value shows asserts (a) the stale value at once,
@@ -356,7 +356,7 @@ export function runActionStalePrefetchTests(
     ).toEqual([]);
   });
 
-  // rango-d170: a layout loader that re-runs on every navigation is in every
+  // A layout loader that re-runs on every navigation is in every
   // prefetch under it. The click shows the count from before the write, then
   // its revalidation the new one: the accepted flash, recorded.
   test("a layout loader every prefetch carries: the count goes back, then forward, in place", async ({

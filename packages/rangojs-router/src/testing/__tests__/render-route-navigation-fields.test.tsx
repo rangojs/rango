@@ -20,7 +20,7 @@ import type {
 import { renderRoute } from "../render-route.js";
 import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 
-// Consumer contract (rango-t219): every reader shape of useNavigation() reads
+// Consumer contract: every reader shape of useNavigation() reads
 // a field the same way, on every screen. While React holds a transition()
 // page, work that starts shows at once and what settles (idle, isStreaming
 // false, pendingUrl null) commits with the page; a page that ends the hold
@@ -500,7 +500,7 @@ describe.each([
 
 // The held flag is each reader's own: the page's anchor sets it, its release
 // clears it. A reader that first mounts during the hold never saw the anchor
-// and reads the router's live values, the destination's (rango-t96, W1,
+// and reads the router's live values, the destination's (W1,
 // navigation.md).
 describe("renderRoute: a reader that mounts while a transition() page is held", () => {
   function useRoute(): string {

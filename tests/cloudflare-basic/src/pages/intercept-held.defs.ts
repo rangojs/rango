@@ -33,7 +33,7 @@ export const InterceptHeldPushLoader = createLoader(async (ctx) => {
   return { id: ctx.params.id };
 });
 
-// Writes of the index page's redirecting action (rango-t126). The index
+// Writes of the index page's redirecting action. The index
 // renders the count: the page under the intercept the redirect opens shows
 // whether it was rendered again after the action.
 let redirectWrites = 0;

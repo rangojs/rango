@@ -2,7 +2,7 @@
  * evaluateRevalidation marks the match's handler context `_sourceHeld` when a
  * predicate that read the source page (currentParams, currentUrl,
  * fromRouteName) kept the segment (#1331), with what it read: the answer is
- * right for every page with equal values of those reads (rango-t242).
+ * right for every page with equal values of those reads.
  * match-result.ts turns the mark into `sourceHeld`, and rsc-rendering.ts
  * into the response's `x-rsc-prefetch-scope`.
  */
@@ -268,7 +268,7 @@ const headerOf = (context: Held): string | undefined =>
 
 const EN = { locale: "en", page: "1" };
 
-describe("x-rsc-prefetch-scope of a decision, by what the rule read (rango-t242)", () => {
+describe("x-rsc-prefetch-scope of a decision, by what the rule read", () => {
   it("a rule that reads nothing from the source: no header", async () => {
     const { context } = await evaluate(() => false, { source: EN });
     expect(headerOf(context)).toBeUndefined();
