@@ -117,7 +117,9 @@ function getShownRouteUrl(url: URL): URL | null {
   if (!shown) return null;
   try {
     const parsed = new URL(shown, url.origin);
-    return parsed.origin === url.origin ? formSearch(parsed) : null;
+    return parsed.origin === url.origin
+      ? withoutHash(formSearch(parsed))
+      : null;
   } catch {
     return null;
   }
@@ -131,6 +133,19 @@ function getShownRouteUrl(url: URL): URL | null {
  */
 function formSearch(url: URL): URL {
   url.search = String(url.searchParams);
+  return url;
+}
+
+/**
+ * `url` without its `#fragment`. The browser sends its whole address as the
+ * client path, anchor included, but never a fragment in a request URL, so the
+ * server's `nextUrl` has none. Left on the page-left URLs, `currentUrl` and
+ * `nextUrl` of one address differ (`/t/42#questions` vs `/t/42`) and a
+ * `revalidate()` rule comparing them reads two addresses. A fragment is never
+ * server state: it names no route, param or query.
+ */
+function withoutHash(url: URL): URL {
+  url.hash = "";
   return url;
 }
 
@@ -155,7 +170,7 @@ export async function resolveNavigation(
 
   let visitor: URL;
   try {
-    visitor = formSearch(new URL(previousUrl, url.origin));
+    visitor = withoutHash(formSearch(new URL(previousUrl, url.origin)));
   } catch {
     return null;
   }
@@ -166,7 +181,7 @@ export async function resolveNavigation(
   let interceptContextUrl: URL;
   try {
     interceptContextUrl = interceptSourceUrl
-      ? new URL(interceptSourceUrl, url.origin)
+      ? withoutHash(new URL(interceptSourceUrl, url.origin))
       : prevUrl;
   } catch {
     interceptContextUrl = prevUrl;
