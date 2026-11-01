@@ -28,6 +28,10 @@ function DashboardLayout() {
 `ParallelOutlet` requires the name and reads clearer at the call site. See
 `/layout` and `/parallel` for the server side.
 
+An outlet that moves between a layout's branches (bare in one, wrapped in
+another) remounts its children; see `/layout`, "Moving the Outlet remounts its
+children".
+
 ### useOutlet()
 
 Access outlet content and its client-route presentation state programmatically:
