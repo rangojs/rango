@@ -245,13 +245,98 @@ function collectCreateRouterCallChain(
   }
 }
 
-// The first createRouter chain (in source order) that mounts urls, with its
-// extractions in runtime order. Route types and basename both come from it.
+// Local names a file exports other than by an `export` modifier on their own
+// declaration: `export { a, b as c }`, `export default a`, `export = a` and
+// `export const x = a` (a one-hop alias).
+function collectExportedLocalNames(sourceFile: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const addIdentifier = (expr: ts.Expression | undefined) => {
+    const node = expr && unwrapTypeOperators(expr);
+    if (node && ts.isIdentifier(node)) names.add(node.text);
+  };
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportAssignment(statement)) {
+      addIdentifier(statement.expression);
+    } else if (
+      ts.isExportDeclaration(statement) &&
+      !statement.moduleSpecifier &&
+      !statement.isTypeOnly &&
+      statement.exportClause &&
+      ts.isNamedExports(statement.exportClause)
+    ) {
+      for (const element of statement.exportClause.elements) {
+        if (!element.isTypeOnly) {
+          names.add((element.propertyName ?? element.name).text);
+        }
+      }
+    } else if (
+      ts.isVariableStatement(statement) &&
+      hasModifier(statement, ts.SyntaxKind.ExportKeyword)
+    ) {
+      for (const decl of statement.declarationList.declarations) {
+        addIdentifier(decl.initializer);
+      }
+    }
+  }
+  return names;
+}
+
+// Whether a createRouter chain is the value a module exports: the initializer
+// of an exported top-level variable (or of one an export list or default
+// export names), or the `export default` / `export =` expression itself,
+// through `as`, `satisfies` and parentheses. A chain inside a function or class
+// body, an argument of another call or a property of an object literal is not
+// exported even when the enclosing declaration is (rango-t246).
+function isExportedChain(
+  chainEnd: ts.CallExpression,
+  exportedNames: ReadonlySet<string>,
+): boolean {
+  let current: ts.Node = chainEnd;
+  while (
+    current.parent &&
+    (ts.isAsExpression(current.parent) ||
+      ts.isSatisfiesExpression(current.parent) ||
+      ts.isParenthesizedExpression(current.parent))
+  ) {
+    current = current.parent;
+  }
+  const parent = current.parent;
+  if (!parent) return false;
+  if (ts.isExportAssignment(parent))
+    return parent.parent === current.getSourceFile();
+  if (
+    !ts.isVariableDeclaration(parent) ||
+    parent.initializer !== current ||
+    !ts.isIdentifier(parent.name)
+  ) {
+    return false;
+  }
+  const statement = parent.parent.parent;
+  if (
+    !ts.isVariableStatement(statement) ||
+    !ts.isSourceFile(statement.parent)
+  ) {
+    return false;
+  }
+  return (
+    hasModifier(statement, ts.SyntaxKind.ExportKeyword) ||
+    exportedNames.has(parent.name.text)
+  );
+}
+
+// The createRouter chain whose urls the route types and basename come from,
+// with its extractions in runtime order. A file may hold several chains (a
+// helper router beside the app's): an exported chain always wins over one that
+// is not exported, so a helper never supplies the app's routes or basename
+// (rango-t246). Only when no chain is exported (a lone router in a test file)
+// does a non-exported one count. Among the candidates, the first (in source
+// order) that mounts a readable urls wins.
 // `unreadable` holds the source of each mount the static parser cannot follow
 // (`.routes(buildUrls())`, `urls: mod.tree`): its routes are missing from the
 // extractions, so detectUnresolvableIncludes reports it rather than letting
 // the gen file silently lose them (rango-t42). A chain with only unreadable
-// mounts is returned only when no chain in the file has a readable one.
+// mounts is returned only when no candidate has a readable one. An exported
+// chain that mounts nothing still hides the non-exported ones.
 function findRouterUrls(sourceFile: ts.SourceFile): {
   createRouterCall: ts.CallExpression;
   extractions: UrlsExtractionResult[];
@@ -262,18 +347,21 @@ function findRouterUrls(sourceFile: ts.SourceFile): {
     extractions: UrlsExtractionResult[];
     unreadable: string[];
   };
-  let result: RouterUrls | null = null;
-  let unreadableOnly: RouterUrls | null = null;
+  const exported: RouterUrls[] = [];
+  const local: RouterUrls[] = [];
+  let anyExported = false;
+  const seen = new Set<ts.CallExpression>();
   const urlsAliases = collectUrlsImportAliases(sourceFile);
+  const exportedNames = collectExportedLocalNames(sourceFile);
 
   function visit(node: ts.Node) {
-    if (result) return;
     if (ts.isCallExpression(node)) {
       const chain = collectCreateRouterCallChain(node);
-      if (chain) {
+      if (chain && !seen.has(chain[0])) {
         const extracted: UrlsExtractionResult[] = [];
         const unreadable: string[] = [];
         const createRouterCall = chain[0];
+        seen.add(createRouterCall);
         // `mount` wraps the argument's source for the diagnostic; the text is
         // only built for an argument the parser cannot read.
         const addMount = (
@@ -314,12 +402,14 @@ function findRouterUrls(sourceFile: ts.SourceFile): {
           addMount(call.arguments[0], (text) => `.routes(${text})`);
         }
 
-        if (extracted.length > 0) {
-          result = { createRouterCall, extractions: extracted, unreadable };
-          return;
-        }
-        if (unreadable.length > 0) {
-          unreadableOnly ??= { createRouterCall, extractions: [], unreadable };
+        const isExported = isExportedChain(node, exportedNames);
+        if (isExported) anyExported = true;
+        if (extracted.length > 0 || unreadable.length > 0) {
+          (isExported ? exported : local).push({
+            createRouterCall,
+            extractions: extracted,
+            unreadable,
+          });
         }
       }
     }
@@ -327,7 +417,10 @@ function findRouterUrls(sourceFile: ts.SourceFile): {
   }
 
   visit(sourceFile);
-  return result ?? unreadableOnly;
+  const candidates = anyExported ? exported : local;
+  return (
+    candidates.find((c) => c.extractions.length > 0) ?? candidates[0] ?? null
+  );
 }
 
 function parseRouterSource(code: string): ts.SourceFile {
