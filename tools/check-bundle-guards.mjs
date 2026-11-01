@@ -290,7 +290,16 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // 256B, rounded up to the next 128B step. Re-measured at 53290B after the
 // review fixes and a merge of main fdc564c0, and at 53305B after a merge of
 // main 49b9139 (#1353, intent prefetches): the same step, the cap stays.
-const ROUTER_CHUNK_GZIP_MAX = 52.375 * 1024;
+//
+// Raised 52.375KB -> 52.75KB on 2026-11-01 for a link to a page in the
+// history cache after another tab's write, measured on cloudflare-basic from
+// main 94a586b 53632B -> 53633B (+1B gzip; main sat exactly at the old
+// limit). navigate() (browser/navigation-bridge.ts) reads the rango state
+// before the target entry's stale bit, as handlePopstate does, so the write
+// observer marks the entry first and the link does not name its ids as held.
+// It cannot load lazily: it runs on every link. By the owner's rule above:
+// 53633B + 256B, rounded up to the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 52.75 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

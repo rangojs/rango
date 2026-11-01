@@ -23,6 +23,13 @@ vi.mock("../browser/navigation-transaction.js", () => ({
 import { createNavigationBridge } from "../browser/navigation-bridge";
 import { actionBoundaries } from "../browser/segment-reconciler";
 import { __resetActionFence, enterActionFence } from "../browser/action-fence";
+import {
+  initRangoState,
+  setRangoStateObserver,
+  setRangoStateWriteObserver,
+} from "../browser/rango-state";
+import { registerNavigationStore } from "../browser/navigation-store-handle";
+import { makeJar, type CookieJarMock } from "./cookie-jar-mock.js";
 
 function createStore() {
   return {
@@ -780,6 +787,92 @@ describe("navigation-bridge link to an entry whose cached list holds an error bo
     ]);
     expect(segmentIds).toEqual(["L0", "L0R0"]);
     expect(mode).toMatchObject({ type: "navigate" });
+    expect(mode.targetCacheSegments).toHaveLength(2);
+  });
+});
+
+describe("navigation-bridge link to a history entry after another tab's write", () => {
+  const NAME = "rango-state_router_0";
+  let jar: CookieJarMock;
+  let stale: boolean;
+
+  beforeEach(() => {
+    __resetActionFence();
+    stale = false;
+    jar = makeJar({ [NAME]: "v1:100" });
+    vi.stubGlobal("document", jar.jar);
+    vi.stubGlobal("location", { protocol: "http:" });
+    vi.stubGlobal("window", {
+      location: { href: "http://localhost/other", origin: "http://localhost" },
+      history: { state: {}, pushState: vi.fn(), replaceState: vi.fn() },
+    });
+    initRangoState("v1", NAME);
+    // The write observer marks the entry stale, as the navigation store's
+    // markCachesStaleAfterWrite does.
+    registerNavigationStore({
+      markHistoryCacheStale: vi.fn(),
+      markCachesStaleAfterWrite: () => {
+        stale = true;
+      },
+    } as never);
+  });
+
+  afterEach(() => {
+    setRangoStateObserver(null);
+    setRangoStateWriteObserver(null);
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  /** A link to /page, whose entry caches a layout and its route. */
+  async function linkToCachedPage() {
+    const store = createStore();
+    store.getCachedSegments.mockImplementation((key: string) =>
+      key === "http://localhost/current"
+        ? undefined
+        : {
+            segments: [
+              { id: "L0", type: "layout" },
+              { id: "L0R0", type: "route" },
+            ],
+            stale,
+            handleData: {},
+          },
+    );
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: new AbortController().signal },
+      commit: vi.fn(),
+      with: vi.fn(() => ({})),
+      [Symbol.dispose]: vi.fn(),
+    });
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+    await createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    }).navigate("/page");
+    const [, segmentIds, , , , mode] = fetchPartialUpdateMock.mock.calls[0]!;
+    return { segmentIds, mode };
+  }
+
+  it("reads the state before the entry's stale bit: the write marks it, so the link does not hold its ids", async () => {
+    // Another tab's action bumped the write part in the shared jar, and no
+    // broadcast reached this tab: the read is the only way it learns.
+    jar.set(NAME, "v1:100:5000");
+    const { segmentIds, mode } = await linkToCachedPage();
+    expect(segmentIds).toBeUndefined();
+    expect(mode).not.toHaveProperty("targetCacheSegments");
+    expect(stale, "the write observer ran").toBe(true);
+  });
+
+  it("control: with no write since the last read, the fresh entry is held", async () => {
+    const { segmentIds, mode } = await linkToCachedPage();
+    expect(stale).toBe(false);
+    expect(segmentIds).toEqual(["L0", "L0R0"]);
     expect(mode.targetCacheSegments).toHaveLength(2);
   });
 });

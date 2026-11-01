@@ -24,13 +24,17 @@ import { waitForShellHydration } from "./shell-request.js";
  * The timestamp stays, so the in-memory prefetches only go stale, as before
  * (action-stale-prefetch-scenario.ts). A tab open across the write that hears
  * no broadcast of it marks its own when it next reads the bumped state, so a
- * prefetch it made before the write is not shown as fresh.
+ * prefetch it made before the write is not shown as fresh, and a link to a
+ * page in its history cache revalidates that page rather than holding its
+ * layout's loaders from the entry.
  *
  * Fixture: action-stale.tsx in each app. /action-stale/bare/max-age reads the
  * cart and answers with `Cache-Control: private, max-age=60`; the bare basket
  * links to it with ?prefetch=max-age, prefetched on hover. The bare layout's
- * add writes the cart and answers at once. Both apps call this from a dev and
- * a (production) describe.
+ * add writes the cart and answers at once. /action-stale/basket, under the
+ * layout whose `as-cart-default` loader reads the cart with no revalidate(),
+ * and the bare basket link to each other, unprefetched. Both apps call this
+ * from a dev and a (production) describe.
  */
 
 const SOURCE = "/action-stale/bare/basket?prefetch=max-age";
@@ -226,6 +230,47 @@ export function runActionStaleHttpCacheTests(
     await page.getByTestId("as-to-max-age-prefetched").click();
     await expect(page.getByTestId("as-max-age")).toHaveText("max-age:1");
     expect(sent, "no prefetch after the write").toHaveLength(1);
+    const after = await readState(page);
+    expect(after, "the other tab's action bumped the state").not.toBe(before);
+    expect(stateEpochOf(after), "only its write part").toBe(
+      stateEpochOf(before),
+    );
+  });
+
+  test("a tab that hears no broadcast revalidates a page in its history on a link to it after another tab's write", async ({
+    page,
+    context,
+  }) => {
+    test.setTimeout(60000);
+    // No cross-tab message, as above. A link to a page in the history cache
+    // names the entry's ids, and the server holds each one the default
+    // allows: the basket's route (its params and search are the entry's)
+    // and its layout's cart loader with no revalidate(). Only once the tab
+    // has read the bumped state is the entry stale, so the link names none.
+    await page.addInitScript(() => {
+      Reflect.deleteProperty(window, "BroadcastChannel");
+    });
+    await page.goto(options.url("/action-stale/basket"));
+    await waitForShellHydration(page);
+    await expect(page.getByTestId("as-cart-default")).toHaveText("default:0");
+    await page.getByTestId("as-to-bare-basket").click();
+    await expect(page.getByTestId("as-bare-basket")).toHaveText("basket:0");
+    await expect(page.getByTestId("as-layout")).toHaveCount(0);
+    const before = await readState(page);
+
+    const other = await context.newPage();
+    try {
+      await openSource(other, options);
+      await write(other);
+    } finally {
+      await other.close();
+    }
+
+    // A link, not Back: the basket's entry is in this tab's history cache,
+    // fresh as far as the tab knows until it reads the bumped state.
+    await page.getByTestId("as-bare-to-basket").click();
+    await expect(page.getByTestId("as-basket")).toHaveText("basket:1");
+    await expect(page.getByTestId("as-cart-default")).toHaveText("default:1");
     const after = await readState(page);
     expect(after, "the other tab's action bumped the state").not.toBe(before);
     expect(stateEpochOf(after), "only its write part").toBe(
