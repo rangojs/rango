@@ -236,11 +236,11 @@ export function runKeptLayoutSourceTests(
     });
   }
 
-  // A click while a Back/Forward that missed the history cache still loads
-  // (rango-t250): window.location is the popped entry, the router still
-  // shows the page being left. The request must name that page as its
-  // source, with the segments it holds, or the server keeps the template
-  // for product 1 -> product 2 and the category page's copy stays.
+  // A click while a Back/Forward that missed the history cache still loads:
+  // window.location is the popped entry, the router still shows the page
+  // being left. The request must name that page as its source, with the
+  // segments it holds, or the server keeps the template for product 1 ->
+  // product 2 and the category page's copy stays.
   const two = "/kept-layout-source/two";
 
   test("a product clicked (prefetched on hover) while a slow Back loads shows no hero there or on /cart", async ({

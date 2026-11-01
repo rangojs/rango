@@ -720,7 +720,7 @@ describe('prefetchKey=":source" opt-out', () => {
     expect(consumePrefetch(sourceKeyOther)).not.toBeNull();
   });
 
-  // rango-t250: a hover while a back/forward that missed the history cache
+  // A hover while a back/forward that missed the history cache
   // still loads. window.location is already the popped entry; the segments
   // sent are the committed page's, so the committed page is the source the
   // server judges against and the key the answer is stored under.

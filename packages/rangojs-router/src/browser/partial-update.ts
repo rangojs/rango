@@ -609,7 +609,7 @@ export function createPartialUpdater(
     // target is also the source and kept the page being left (#1030), and a
     // click during a back/forward that missed the history cache was judged
     // against the popped entry while holding the page on screen's copies, so
-    // a layout kept for one page showed the other's (rango-t250).
+    // a layout kept for one page showed the other's.
     const previousUrl =
       (mode.type !== "leave-intercept" && interceptSourceUrl) ||
       segmentState.currentUrl;

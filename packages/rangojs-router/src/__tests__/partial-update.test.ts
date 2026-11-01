@@ -577,10 +577,10 @@ describe("partial-update", () => {
         vi.stubGlobal("window", {
           location: { origin: "http://localhost", href: opts.addressBar },
         });
-        // The transaction as it was before rango-t250: it carried
-        // window.location.href as currentUrl, and the updater read it. Kept
-        // so these cases are red against that code and pin that the address
-        // bar is never the source.
+        // The transaction as it was before the source became the committed
+        // page: it carried window.location.href as currentUrl, and the
+        // updater read it. Kept so these cases are red against that code and
+        // pin that the address bar is never the source.
         const tx = {
           ...createMockTx(),
           traversal: opts.traversal,
@@ -664,7 +664,7 @@ describe("partial-update", () => {
         ).toBe("http://localhost/list?page=6");
       });
 
-      // rango-t250: a click while a back/forward that missed the history
+      // A click while a back/forward that missed the history
       // cache still loads. The segments sent are the entry on screen's, so
       // that entry is the source the server judges a held layout against;
       // judged against the popped entry, the server kept a layout whose

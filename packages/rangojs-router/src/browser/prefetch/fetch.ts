@@ -130,9 +130,9 @@ function makeRespawn(
  * page whose segment ids every caller sends. Not window.location: a popstate
  * moves it to the popped entry before that entry's fetch commits, and a
  * prefetch sent from there with the page on screen's ids was judged against
- * the wrong page, so a layout kept for one page showed the other's copy
- * (rango-t250). Absolute, as navigation-client.ts makes the URL navigation
- * sends (partial-update.ts previousUrl), so the source keys agree.
+ * the wrong page, so a layout kept for one page showed the other's copy.
+ * Absolute, as navigation-client.ts makes the URL navigation sends
+ * (partial-update.ts previousUrl), so the source keys agree.
  */
 function committedHref(): string {
   const committed = getRegisteredStore()?.getSegmentState().currentUrl;
