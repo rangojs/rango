@@ -2,13 +2,18 @@ import { Suspense } from "react";
 import { urls, type Handler, type Middleware } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import {
+  ActionStaleAddressLoader,
   ActionStaleCartDefaultLoader,
   ActionStaleCartLoader,
   ActionStaleFillLoader,
   ActionStaleItemLoader,
   ActionStalePlainLoader,
 } from "./action-stale.defs.js";
-import { ActionStaleBar, ActionStaleFillValue } from "./action-stale.client.js";
+import {
+  ActionStaleAddressValue,
+  ActionStaleBar,
+  ActionStaleFillValue,
+} from "./action-stale.client.js";
 import { actionStaleState, wait } from "./action-stale.store.js";
 
 // The action follow-up fixture: a layout with a cart count whose loader opts
@@ -39,6 +44,7 @@ const ActionStalePdp: Handler = (ctx) => {
   const fillDelay = ctx.searchParams.get("fillDelay");
   return (
     <div data-testid="as-pdp">
+      <ActionStaleAddressValue />
       <Link to="/action-stale/other" prefetch="none" data-testid="as-to-other">
         Other
       </Link>
@@ -181,7 +187,13 @@ export const actionStalePatterns = urls(
       ]),
       loader(ActionStalePlainLoader),
       loader(ActionStaleCartDefaultLoader),
-      path("/action-stale/pdp", ActionStalePdp),
+      path("/action-stale/pdp", ActionStalePdp, () => [
+        loader(ActionStaleAddressLoader, () => [
+          revalidate(({ currentUrl, nextUrl }) =>
+            currentUrl.href === nextUrl.href ? undefined : false,
+          ),
+        ]),
+      ]),
       path("/action-stale/other", ActionStaleOther),
       path("/action-stale/slow", ActionStaleSlow),
       path("/action-stale/read", ActionStaleRead),

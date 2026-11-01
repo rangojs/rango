@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed: `revalidate()` sees `currentUrl` without the page's `#fragment`
+
+**Before.** On a partial request, `currentUrl` kept the `#fragment` of the page
+on screen, while `nextUrl` never has one. A rule comparing the two addresses
+(`currentUrl.href === nextUrl.href`) saw `/t/42#questions` and `/t/42` as two
+addresses, so on a page with an anchor in its address, a rule of the form
+"same address: decide as usual, otherwise hold" held its segment, even after
+an action had made it stale. The page showed what it held before the write.
+
+**Now.** The server drops the fragment from the client path, the rewrite
+target and the intercept source when it builds the navigation snapshot
+(`router/navigation-snapshot.ts`), for every request lane (navigation,
+prefetch, action, fill). `currentUrl` and `nextUrl` of one address are equal;
+route matching, params, query and `fromRouteName` are unchanged, and no
+client code changes.
+
 ### Fixed: `rango generate` reads the exported `createRouter` chain, not a helper router earlier in the file (rango-t246)
 
 **Before.** A router file with several `createRouter` chains took routes and

@@ -172,6 +172,39 @@ export function runActionStaleNavigationTests(
     await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
   });
 
+  // The browser's address carries the #fragment; the request URL never does.
+  // A same-address rule (currentUrl.href === nextUrl.href) on the action's
+  // revalidation must see one address, so its loader reads the write.
+  test("an action on a page whose address has a #fragment revalidates a same-address rule", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+    await openProductPage(page, options, "#questions");
+    await expect(page.getByTestId("as-cart-address")).toHaveText("address:0");
+
+    await page.getByTestId("as-add-fast").click();
+    await waitForSettled(page);
+
+    await expect(page.getByTestId("as-cart-address")).toHaveText("address:1");
+    await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
+    expect(new URL(page.url()).hash, "the address keeps its anchor").toBe(
+      "#questions",
+    );
+  });
+
+  test("an action on a page whose address has a query and a #fragment revalidates a same-address rule", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+    await openProductPage(page, options, "?tab=a#questions");
+    await expect(page.getByTestId("as-cart-address")).toHaveText("address:0");
+
+    await page.getByTestId("as-add-fast").click();
+    await waitForSettled(page);
+
+    await expect(page.getByTestId("as-cart-address")).toHaveText("address:1");
+  });
+
   test("a navigation after the action landed is not stale", async ({
     page,
   }) => {

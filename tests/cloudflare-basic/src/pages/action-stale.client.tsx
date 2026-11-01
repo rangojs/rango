@@ -2,6 +2,7 @@
 
 import { useAction, useLoader, useNavigation } from "@rangojs/router/client";
 import {
+  ActionStaleAddressLoader,
   ActionStaleCartDefaultLoader,
   ActionStaleCartLoader,
   ActionStaleFillLoader,
@@ -78,6 +79,13 @@ export function ActionStaleBar() {
       </button>
     </div>
   );
+}
+
+// The product page's same-address loader (its rule reads the page left, so
+// the layout, which the document-cached pages share, stays free of it).
+export function ActionStaleAddressValue() {
+  const { data } = useLoader(ActionStaleAddressLoader);
+  return <p data-testid="as-cart-address">{`address:${data}`}</p>;
 }
 
 export function ActionStaleFillValue() {

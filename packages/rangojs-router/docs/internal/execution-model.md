@@ -1524,6 +1524,18 @@ it when the browser set `_rsc*` params and the server stripped them
 (`?q=a%2Cb`), while the address bar keeps `?q=a,b`: compared as sent, every
 navigation from such a page counted as a search change, rewritten or not.
 
+The same goes for the `#fragment`. The browser sends its whole address,
+anchor included (`/t/42#questions`), but never a fragment in a request URL, so
+`nextUrl` has none. `resolveNavigation` drops it (`withoutHash`) from the
+header, `_rsc_rt` and the intercept source, so `currentUrl` and `nextUrl` of
+one address compare equal: a `revalidate()` rule written as "same address,
+decide as usual" no longer held a stale segment because the page on screen
+had an anchor. The fragment names no route, param or query, and nothing on
+the server read it. Pinned by `testing/__tests__/client-path-fragment.rsc-test.tsx`,
+`router/__tests__/navigation-snapshot.test.ts` and the action stale navigation
+scenario (`tests/shared-e2e/src/action-stale-navigation-scenario.ts`, in the
+test-app and cloudflare-basic).
+
 Can two visitor URLs share one target? Yes: `/promo/a` and `/promo/b` can
 both rewrite to `/landing`, and the target frame alone would hold the route
 between them, though its render may read `ctx.rewrittenFrom`. So when the
