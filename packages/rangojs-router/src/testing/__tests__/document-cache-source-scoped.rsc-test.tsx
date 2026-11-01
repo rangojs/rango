@@ -241,6 +241,23 @@ describe("the document cache and a partial that depends on its source page", () 
     }
   });
 
+  it("a click that opens the modal is never served the page stored for a click that does not", async () => {
+    const { navigate, held } = app();
+    const list = await held("/list");
+
+    // /list -> /item/1: the intercept's `when` is false, so the item page
+    // renders. Both clicks hold the same ids and ask for the same URL.
+    const plain = await navigate("/list", list, "/item/1");
+    expect(plain.result.flight).toContain("item:1");
+    expect(plain.result.flight).not.toContain("modal");
+
+    // /list?modal=1 -> /item/1: `when` is true, so the modal must render. A
+    // HIT of the entry above would show the item page with no modal.
+    const modal = await navigate("/list?modal=1", list, "/item/1");
+    expect(modal.status).not.toBe("HIT");
+    expect(modal.result.flight).toContain("modal");
+  });
+
   it("a document request is stored and served as before", async () => {
     const { serve } = app();
     expect(await serve("/c/audio?sort=x")).toMatchObject({

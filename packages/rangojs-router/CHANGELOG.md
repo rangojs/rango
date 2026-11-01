@@ -59,6 +59,13 @@ navigation whose rule re-rendered the segment is right from every page and is
 stored and served as before, and documents are unchanged. Nothing changes in
 your code.
 
+**What it costs.** A client navigation to a route an intercept targets, from
+any page, and any navigation that kept a segment from its source, is no longer
+stored by `documentCache` or by a CDN, and the browser no longer reuses it
+under the route's `max-age`: each one is rendered again. Only these
+navigations lose the route's `Cache-Control`; every other partial and every
+document keeps its own.
+
 ### Fixed: `@rangojs/router/testing/e2e` stops the whole dev or preview server, not only `pnpm` ([#1352](https://github.com/rangojs/rango/pull/1352))
 
 **Before.** `useFixture` started `pnpm dev` or `pnpm preview` without making it a

@@ -11,8 +11,10 @@
  * So the body ends cleanly with one more row, PREFETCH_FAILED_ROW, which the
  * Flight decoder skips and teeWithCompletion (browser/response-adapter.ts)
  * reads as a stream that did not end cleanly: the client evicts the prefetch
- * and never respawns it. Prefetch responses carry no Cache-Control, so the
- * browser HTTP cache keeps none of it either.
+ * and never respawns it. The router puts no Cache-Control of its own on a
+ * prefetch response, so the browser HTTP cache keeps none of it unless the
+ * route sets one; a prefetch scoped to its source page or carrying deferred
+ * units is sent `private, no-cache` (rsc-rendering.ts NOT_REUSED).
  *
  * The errors are the render's `_renderErrors`: a Flight error row, a streamed
  * handler recovered into its boundary, a loader that threw (redirect() and
