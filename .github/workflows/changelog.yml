@@ -1,0 +1,69 @@
+name: Changelog
+
+# Fails a PR that changes router source with no new entry under "## Unreleased"
+# in packages/rangojs-router/CHANGELOG.md, unless the PR body has a line
+# "No CHANGELOG entry: <reason>". Draft PRs and chore(release) PRs pass; marking
+# a draft ready re-runs the check.
+#
+# pull_request_target runs the BASE branch's workflow and script. This job
+# never executes PR code: it reads the changed-file list, the PR text and the
+# two CHANGELOG versions through the API. PR text reaches the script through
+# env vars and a JSON file, never through shell interpolation.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changelog:
+    name: changelog
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Default ref for pull_request_target is the base branch: trusted code.
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Check the CHANGELOG entry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          CHANGELOG=packages/rangojs-router/CHANGELOG.md
+          gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' | sort -u > files.txt
+          # The files API lists at most 3000 files; fail closed beyond that.
+          if [ "$(wc -l < files.txt)" -ge 3000 ]; then
+            echo "changelog: PR lists 3000+ files; cannot verify." >&2
+            exit 1
+          fi
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$REPO/contents/$CHANGELOG?ref=$BASE_SHA" > base.md
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$HEAD_REPO/contents/$CHANGELOG?ref=$HEAD_SHA" > head.md
+          jq -n --rawfile files files.txt --rawfile base base.md --rawfile head head.md \
+            --arg body "$PR_BODY" --arg title "$PR_TITLE" --arg draft "$PR_DRAFT" \
+            '{changedFiles: ($files | split("\n") | map(select(. != ""))),
+              body: $body, title: $title, draft: ($draft == "true"),
+              baseChangelog: $base, headChangelog: $head}' > input.json
+          node tools/check-changelog.mjs input.json
