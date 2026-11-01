@@ -83,7 +83,7 @@ test.describe("link-behavior", () => {
     expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("intent");
   });
 
-  test("prefetch hover then navigate serves the click from the in-memory prefetch; a new document's prefetch reaches the server unless the prefetch carried Cache-Control", async ({
+  test("prefetch hover then navigate serves the click from the in-memory prefetch", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -118,20 +118,17 @@ test.describe("link-behavior", () => {
       }
     });
 
-    /** Hovers the link; resolves with the prefetch's Cache-Control. */
-    async function hoverPrefetch(): Promise<string | undefined> {
+    async function hoverPrefetch(): Promise<void> {
       await page.goto(f.url("/link-behavior"));
       await waitForHydration(page);
       const prefetchDone = page.waitForResponse((res) =>
         isBlogIndexPartial(res.url()),
       );
       await page.locator('[data-testid="link-prefetch-hover"]').hover();
-      const response = await prefetchDone;
-      await response.finished();
-      return response.headers()["cache-control"];
+      await (await prefetchDone).finished();
     }
 
-    const cacheControl = await hoverPrefetch();
+    await hoverPrefetch();
     // Clear tracked responses so we only see the navigation request
     blogResponses.length = 0;
 
@@ -141,18 +138,10 @@ test.describe("link-behavior", () => {
     await page.waitForTimeout(500);
     expect(blogResponses).toEqual([]);
 
-    // A new document has no in-memory prefetch. A prefetch with a live part
-    // carries no Cache-Control (#1170), so the server answers it. /blog is a
-    // cache() route with no loader: once its record is stored, its prefetch
-    // carries `private, max-age` (rango-t82) and the HTTP cache answers.
-    blogResponses.length = 0;
-    await hoverPrefetch();
-    expect(blogResponses.length).toBeGreaterThan(0);
-    for (const resp of blogResponses) {
-      expect(resp.fromCache).toBe(
-        cacheControl?.startsWith("private, max-age=") === true,
-      );
-    }
+    // What answers a new document's prefetch (it has no in-memory copy) is the
+    // server for a live answer and the HTTP cache for a stored one, and
+    // /blog's is either by its cache() record. prefetch-stored.test.ts pins
+    // each case on a route whose answer is known (rango-t82, #1170).
 
     await cdp.detach();
   });
@@ -326,7 +315,7 @@ test.describe("link-behavior (production)", () => {
     expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("intent");
   });
 
-  test("prefetch hover then navigate serves the click from the in-memory prefetch; a new document's prefetch reaches the server unless the prefetch carried Cache-Control", async ({
+  test("prefetch hover then navigate serves the click from the in-memory prefetch", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -361,20 +350,17 @@ test.describe("link-behavior (production)", () => {
       }
     });
 
-    /** Hovers the link; resolves with the prefetch's Cache-Control. */
-    async function hoverPrefetch(): Promise<string | undefined> {
+    async function hoverPrefetch(): Promise<void> {
       await page.goto(f.url("/link-behavior"));
       await waitForHydration(page);
       const prefetchDone = page.waitForResponse((res) =>
         isBlogIndexPartial(res.url()),
       );
       await page.locator('[data-testid="link-prefetch-hover"]').hover();
-      const response = await prefetchDone;
-      await response.finished();
-      return response.headers()["cache-control"];
+      await (await prefetchDone).finished();
     }
 
-    const cacheControl = await hoverPrefetch();
+    await hoverPrefetch();
     // Clear tracked responses so we only see the navigation request
     blogResponses.length = 0;
 
@@ -384,18 +370,10 @@ test.describe("link-behavior (production)", () => {
     await page.waitForTimeout(500);
     expect(blogResponses).toEqual([]);
 
-    // A new document has no in-memory prefetch. A prefetch with a live part
-    // carries no Cache-Control (#1170), so the server answers it. /blog is a
-    // cache() route with no loader: once its record is stored, its prefetch
-    // carries `private, max-age` (rango-t82) and the HTTP cache answers.
-    blogResponses.length = 0;
-    await hoverPrefetch();
-    expect(blogResponses.length).toBeGreaterThan(0);
-    for (const resp of blogResponses) {
-      expect(resp.fromCache).toBe(
-        cacheControl?.startsWith("private, max-age=") === true,
-      );
-    }
+    // What answers a new document's prefetch (it has no in-memory copy) is the
+    // server for a live answer and the HTTP cache for a stored one, and
+    // /blog's is either by its cache() record. prefetch-stored.test.ts pins
+    // each case on a route whose answer is known (rango-t82, #1170).
 
     await cdp.detach();
   });

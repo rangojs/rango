@@ -62,6 +62,30 @@ async function hoverPrefetch(
   };
 }
 
+/**
+ * Watches which of the page's responses the browser HTTP cache answered, as
+ * Chrome reports them (CDP `fromDiskCache`/`fromPrefetchCache`), keyed by
+ * pathname. Playwright's own response events do not say.
+ */
+async function watchHttpCache(page: Page): Promise<{
+  answers: Array<{ pathname: string; fromCache: boolean }>;
+  stop: () => Promise<void>;
+}> {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Network.enable");
+  const answers: Array<{ pathname: string; fromCache: boolean }> = [];
+  cdp.on("Network.responseReceived", (params: Record<string, any>) => {
+    const response = params.response as Record<string, any>;
+    const url = new URL(response.url as string);
+    if (!url.searchParams.has("_rsc_partial")) return;
+    answers.push({
+      pathname: url.pathname,
+      fromCache: !!(response.fromDiskCache || response.fromPrefetchCache),
+    });
+  });
+  return { answers, stop: () => cdp.detach() };
+}
+
 const key = () => `k${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
 
 export function runPrefetchStoredTests(
@@ -81,7 +105,7 @@ export function runPrefetchStoredTests(
     name: string,
     pathname: string,
     expectHit: (hit: Prefetched) => void,
-  ): Promise<Prefetched> {
+  ): Promise<Prefetched & { fromUrl: string }> {
     const fromUrl = options.url(`${BASE}${from}?k=${key()}`);
     await open(page, fromUrl);
     const miss = await hoverPrefetch(page, name, pathname);
@@ -95,7 +119,7 @@ export function runPrefetchStoredTests(
       expect(repeated, "the answer came from storage").toBe(true);
       expectHit(hit);
     }).toPass({ timeout: 20_000 });
-    return miss;
+    return { ...miss, fromUrl };
   }
 
   test("a prefetch a cache() record answers carries the prefetch Cache-Control; the MISS that rendered it carries none", async ({
@@ -150,5 +174,53 @@ export function runPrefetchStoredTests(
     });
     expect(miss.documentCache).toBe("MISS");
     expect(miss.cacheControl).toBe("s-maxage=60");
+  });
+
+  // The browser HTTP cache is what the header is for. A new document has no
+  // in-memory prefetch, so what answers its hover is the server or the HTTP
+  // cache, by what the stored answer carried. Both cases are pinned: neither
+  // may pass for the other.
+  test("a stored prefetch's Cache-Control lets the HTTP cache answer a new document's prefetch of it", async ({
+    page,
+  }) => {
+    const { fromUrl } = await missThenHit(
+      page,
+      "/home",
+      "cached",
+      "/cached",
+      (hit) => expect(hit.cacheControl).toBe(STORED),
+    );
+    const http = await watchHttpCache(page);
+    await open(page, fromUrl);
+    const again = await hoverPrefetch(page, "cached", "/cached");
+    await http.stop();
+    expect(again.cacheControl).toBe(STORED);
+    const answered = http.answers.filter(
+      (a) => a.pathname === `${BASE}/cached`,
+    );
+    expect(answered.length).toBeGreaterThan(0);
+    for (const answer of answered) expect(answer.fromCache).toBe(true);
+  });
+
+  test("a live prefetch of a route with a loader reaches the server from a new document", async ({
+    page,
+  }) => {
+    const { fromUrl } = await missThenHit(
+      page,
+      "/home",
+      "cached-loader",
+      "/cached-loader",
+      (hit) => expect(hit.cacheControl).toBeUndefined(),
+    );
+    const http = await watchHttpCache(page);
+    await open(page, fromUrl);
+    const again = await hoverPrefetch(page, "cached-loader", "/cached-loader");
+    await http.stop();
+    expect(again.cacheControl).toBeUndefined();
+    const answered = http.answers.filter(
+      (a) => a.pathname === `${BASE}/cached-loader`,
+    );
+    expect(answered.length).toBeGreaterThan(0);
+    for (const answer of answered) expect(answer.fromCache).toBe(false);
   });
 }
