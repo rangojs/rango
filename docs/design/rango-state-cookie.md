@@ -100,15 +100,19 @@ tissue that still applies):
   entry whose fetch began under an older epoch is stale. It is still served:
   the click commits it, then revalidates the page (#1329);
 - the **browser's private HTTP cache**, via the `Vary` mechanism above. The
-  router itself puts nothing in it any more: prefetch responses carried
-  `Cache-Control: private, max-age={prefetchCacheTTL}` until #1170, and the
-  browser kept a prefetch whose render failed after its 200 went out (a
-  loader that threw, a `loading()` handler recovered into its boundary),
-  answering a later document's prefetch with it for the TTL. No router
-  response carries `Cache-Control` now, so `prefetchCacheTTL` bounds only the
-  in-memory map. A response a route sends with its own `Cache-Control` can
-  still land here, and the `Vary` key keeps it per state value, write part
-  included, so it misses after every server action;
+  router puts a prefetch in it only when nothing in the answer is live:
+  since #1356 such a prefetch (a stored `cache()` record, a Prerender entry
+  or a fresh document-cache HIT) carries
+  `Cache-Control: private, max-age={prefetchCacheTTL}`, so the browser keeps
+  it across reloads and new tabs. A live render carries none of the router's,
+  because the browser kept a prefetch whose render failed after its 200 went
+  out (a loader that threw, a `loading()` handler recovered into its
+  boundary) and answered a later document's prefetch with it for the TTL
+  (#1170). A response a route sends with its own `Cache-Control` can also
+  land here. The `Vary` key keeps each per state value, write part included,
+  so it misses after every server action of this client. A tag invalidation
+  from elsewhere does not change the state value, so the copy lives until
+  `prefetchCacheTTL` ends unless the app calls `invalidateClientCache()`;
 - the **history segment cache** (`historyCache` in
   `src/browser/navigation-store.ts`), which holds back/forward payloads.
   This one is **not** state-keyed — rotating the state value does nothing to
