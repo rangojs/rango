@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import {
   clientUrls,
   Link,
@@ -12,10 +12,12 @@ import {
   ClientLayoutCartLoader,
   ClientLayoutCrumbs,
   ClientLayoutItemLoader,
+  ClientLayoutMountSourceLoader,
   ClientLayoutRunsLoader,
 } from "./client-urls-layout-loader.loader.js";
 import {
   bumpClientLayoutCart,
+  loadClientLayoutMountOptions,
   rerunClientLayoutRuns,
 } from "./client-urls-layout-loader.actions.js";
 
@@ -83,6 +85,37 @@ function ShopIndex() {
   );
 }
 
+function ShopMountSource() {
+  const { data } = useLoader(ClientLayoutMountSourceLoader);
+  return (
+    <div data-testid="cll-mount-source">
+      <p data-testid="cll-mount-source-data">{data}</p>
+      <Link
+        to="/client-urls-layout-loader/mount-action"
+        prefetch="none"
+        data-testid="cll-to-mount-action"
+      >
+        Mount action
+      </Link>
+    </div>
+  );
+}
+
+// Calls an action from its mount effect. Presented at the click, before the
+// navigation commits, so the action is sent from the committed page, whose
+// loader this route does not have.
+function ShopMountAction() {
+  const [options, setOptions] = useState("pending");
+  useEffect(() => {
+    void loadClientLayoutMountOptions().then(setOptions);
+  }, []);
+  return (
+    <div data-testid="cll-mount-action">
+      <p data-testid="cll-mount-action-result">{options}</p>
+    </div>
+  );
+}
+
 function ShopItem() {
   const { data } = useLoader(ClientLayoutItemLoader);
   return (
@@ -113,11 +146,15 @@ function ShopItem() {
   );
 }
 
-export default clientUrls(({ layout, path, loader, loading }) => [
+export default clientUrls(({ layout, path, loader, loading, revalidate }) => [
   layout(ShopLayout, () => [
     loader(ClientLayoutCartLoader),
     loader(ClientLayoutRunsLoader),
     path("/", ShopIndex, { name: "index" }),
+    path("/mount-source", ShopMountSource, { name: "mountSource" }, () => [
+      loader(ClientLayoutMountSourceLoader, () => [revalidate(false)]),
+    ]),
+    path("/mount-action", ShopMountAction, { name: "mountAction" }),
     path("/items/:id", ShopItem, { name: "item" }, () => [
       loader(ClientLayoutItemLoader),
       loading(<p data-testid="cll-item-loading">loading item</p>),

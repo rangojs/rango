@@ -376,6 +376,13 @@ of them mean. The working set below is pinned dev+prod by the hook probe
   `load()` is an explicit freshness request.
 - **`useAction`** tracks a group action's lifecycle exactly as outside
   groups: idle → loading while the action POST is in flight → idle.
+- **An action called during the optimistic window** (a destination's mount
+  effect runs at the click) is sent from the committed page, the one the URL
+  bar still shows: the server runs it with that page's `ctx.url`,
+  `ctx.params` and middleware, and re-renders that page, not the
+  destination. Nothing of that render reaches the destination; a write still
+  refreshes the destination once it commits, unless the action called
+  `keepClientCache()`. Pass what the action needs as arguments.
 - **Errors**: wrap throw-capable components in the client `ErrorBoundary`
   (or any React boundary) — the group chrome stays intact. There is no
   `errorBoundary()` DSL item by design; the server-tree boundary around the

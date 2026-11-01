@@ -153,6 +153,8 @@ export const routes = {
   "clientIntercept.item": "/client-urls-intercept/items/:itemId",
   "clientLayoutLoader.index": "/client-urls-layout-loader",
   "clientLayoutLoader.item": "/client-urls-layout-loader/items/:id",
+  "clientLayoutLoader.mountAction": "/client-urls-layout-loader/mount-action",
+  "clientLayoutLoader.mountSource": "/client-urls-layout-loader/mount-source",
   "clientLoaderElement.index": "/client-urls-loader-element",
   "clientLocale.index": "/client-urls-locale/:locale",
   "clientLocale.item": "/client-urls-locale/:locale/items/:itemId",

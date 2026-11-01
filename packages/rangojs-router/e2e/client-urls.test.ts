@@ -15,6 +15,7 @@ import {
   expectConsole,
   expectKeptLayoutReadingItsLoaderKeepsTheOptimisticFrame,
   expectLayoutLoaderHeldAcrossNavigations,
+  expectMountActionFromOptimisticFrameReportsNoMissingSegment,
   expectParamMountClickRendersAtTheClick,
   expectParamMountInterceptOpens,
   expectParamMountLocaleSwitchNavigates,
@@ -963,6 +964,16 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
   }) => {
     using _ = expectNoPageError(page);
     await expectLayoutLoaderHeldAcrossNavigations(page, {
+      url: (pathname) => f.url(pathname),
+      path: "/client-urls-layout-loader",
+    });
+  });
+
+  test("an action a destination calls from its mount effect, sent before the navigation commits, resolves with no missing-segment report", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectMountActionFromOptimisticFrameReportsNoMissingSegment(page, {
       url: (pathname) => f.url(pathname),
       path: "/client-urls-layout-loader",
     });

@@ -326,3 +326,51 @@ export async function expectLayoutLoaderHeldAcrossNavigations(
   expect(probe.flash, "the cart badge never showed its fallback").toBe(false);
   expect(probe.detached, "the layout never left the DOM").toBe(false);
 }
+
+/**
+ * A destination that calls an action from its mount effect. The group
+ * presents it at the click, so the effect runs before the navigation commits
+ * and the action is sent from the committed page: its request names the
+ * source. The action answers after the navigation committed. It resolves on
+ * the destination, and the client reports no missing segment for the
+ * source's revalidate(false) loader, which the response names without
+ * sending and the destination does not have.
+ */
+export async function expectMountActionFromOptimisticFrameReportsNoMissingSegment(
+  page: Page,
+  options: ClientUrlsLayoutLoaderOptions,
+): Promise<void> {
+  const missing: string[] = [];
+  page.on("console", (message) => {
+    if (/missing segment/i.test(message.text())) missing.push(message.text());
+  });
+  const sentFrom: string[] = [];
+  page.on("request", (request) => {
+    const headers = request.headers();
+    if (request.method() === "POST" && headers["rsc-action"]) {
+      sentFrom.push(headers["x-rsc-router-client-path"] ?? "");
+    }
+  });
+
+  const source = `${options.path}/mount-source`;
+  await page.goto(options.url(source));
+  await expect(page.getByTestId("cll-mount-source-data")).toHaveText("source");
+  await page.waitForFunction(() =>
+    document.documentElement.hasAttribute("data-hydrated"),
+  );
+
+  await page.getByTestId("cll-to-mount-action").click();
+  await expect(page.getByTestId("cll-mount-action")).toBeVisible();
+  await expect(page).toHaveURL(options.url(`${options.path}/mount-action`));
+  await expect(page.getByTestId("cll-mount-action-result")).toHaveText(
+    "options",
+  );
+  // The action's follow-up refetch of the destination, before teardown.
+  await page.waitForLoadState("networkidle");
+
+  expect(sentFrom.length).toBeGreaterThan(0);
+  for (const from of sentFrom) {
+    expect(new URL(from, "http://localhost").pathname).toBe(source);
+  }
+  expect(missing).toEqual([]);
+}

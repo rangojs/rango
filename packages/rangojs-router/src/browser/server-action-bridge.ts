@@ -885,14 +885,19 @@ export function createServerActionBridge(
         throw new Error("No matched segments in response");
       }
 
-      // Reconcile server segments with cached segments (single source of truth)
-      const reconciled = reconcileSegments({
-        actor: "action",
-        matched,
-        diff: diff || [],
-        serverSegments: segments || [],
-        cachedSegments,
-      });
+      // Reconcile server segments with cached segments (single source of
+      // truth). A page that left commits nothing (navigated-away), and the
+      // cache on screen is another page's: reconciling would report missing
+      // segments.
+      const reconciled = navigatedSince()
+        ? { segments: [], mainSegments: [], interceptSegments: [] }
+        : reconcileSegments({
+            actor: "action",
+            matched,
+            diff: diff || [],
+            serverSegments: segments || [],
+            cachedSegments,
+          });
       const fullSegments = reconciled.segments;
 
       const returnData = returnValue?.data;

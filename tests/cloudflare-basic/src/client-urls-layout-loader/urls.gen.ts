@@ -2,5 +2,7 @@
 export const routes = {
   index: "/",
   item: "/items/:id",
+  mountAction: "/mount-action",
+  mountSource: "/mount-source",
 } as const;
 export type routes = typeof routes;
