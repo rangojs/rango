@@ -62,6 +62,95 @@ async function open(page: Page, url: string): Promise<void> {
   await waitForShellHydration(page);
 }
 
+/**
+ * Click a plain anchor to `href` that the router's link interceptor handles
+ * and that is never prefetched, then remove it.
+ */
+async function plainClick(page: Page, href: string): Promise<void> {
+  await page.evaluate((to) => {
+    const anchor = document.createElement("a");
+    anchor.href = to;
+    anchor.dataset.prefetch = "none";
+    anchor.dataset.testid = "kls-plain";
+    anchor.textContent = to;
+    document.body.append(anchor);
+  }, href);
+  await page.getByTestId("kls-plain").click();
+  // No wait: the navigation it started may already have replaced it.
+  await page.evaluate(() =>
+    document.querySelector('[data-testid="kls-plain"]')?.remove(),
+  );
+}
+
+/**
+ * The RSC requests the page sends for `path` from now on: whether each is a
+ * prefetch, and the pathname of the source page it names.
+ */
+function recordSources(
+  page: Page,
+  path: string,
+): { prefetch: boolean; from: string }[] {
+  const sources: { prefetch: boolean; from: string }[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname !== path || !url.searchParams.has("_rsc_partial")) return;
+    const headers = request.headers();
+    const from = headers["x-rsc-router-client-path"];
+    sources.push({
+      prefetch: headers["x-rango-prefetch"] !== undefined,
+      from: from ? new URL(from, url.origin).pathname : "?",
+    });
+  });
+  return sources;
+}
+
+/**
+ * Hold every RSC request for `path` for `ms` before it goes out. `started`
+ * resolves once the first such request is sent.
+ */
+async function delayPartials(
+  page: Page,
+  path: string,
+  ms: number,
+): Promise<{ started: Promise<unknown> }> {
+  const isPartial = (url: URL) =>
+    url.pathname === path && url.searchParams.has("_rsc_partial");
+  await page.route(isPartial, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    // A newer navigation aborts the request while it waits.
+    await route.continue().catch(() => {});
+  });
+  return {
+    started: page.waitForRequest((request) =>
+      isPartial(new URL(request.url())),
+    ),
+  };
+}
+
+/**
+ * Open product 1, push it out of the router's 20-entry history cache, go to
+ * the category page (hero shown), then Back to product 1 with its RSC
+ * request held: window.location is product 1 while the router still shows
+ * the category page. Resolves once that request has started.
+ */
+async function startSlowBackToProduct(page: Page, url: string, base: string) {
+  await open(page, url);
+  for (let i = 0; i < 20; i++) {
+    await plainClick(page, `${base}/p/f${i}`);
+    await expect(page.getByTestId("kls-page")).toHaveText(`product:f${i}`);
+  }
+  await page.getByTestId("kls-to-c").click();
+  await expect(page.getByTestId("kls-page")).toHaveText("plp:audio");
+  await expect(page.getByTestId("kls-hero")).toHaveText("hero:audio");
+
+  const back = await delayPartials(page, `${base}/p/1`, 2000);
+  await page.evaluate(() => history.go(-21));
+  await back.started;
+  await expect(page).toHaveURL(new RegExp(`${base}/p/1$`));
+  // The Back has not committed: the category page is still on screen.
+  await expect(page.getByTestId("kls-page")).toHaveText("plp:audio");
+}
+
 export function runKeptLayoutSourceTests(
   options: KeptLayoutSourceScenarioOptions,
 ): void {
@@ -135,6 +224,49 @@ export function runKeptLayoutSourceTests(
       await expect(page.getByTestId("kls-hero")).toHaveCount(0);
     });
   }
+
+  // A click while a Back/Forward that missed the history cache still loads
+  // (rango-t250): window.location is the popped entry, the router still
+  // shows the page being left. The request must name that page as its
+  // source, with the segments it holds, or the server keeps the template
+  // for product 1 -> product 2 and the category page's copy stays.
+  const two = "/kept-layout-source/two";
+
+  test("a product clicked (prefetched on hover) while a slow Back loads shows no hero there or on /cart", async ({
+    page,
+  }) => {
+    await startSlowBackToProduct(page, options.url(`${two}/p/1`), two);
+    const p2 = recordSources(page, `${two}/p/2`);
+
+    await page.getByTestId("kls-to-p2").click();
+    await expect(page).toHaveURL(new RegExp(`${two}/p/2$`));
+    await expect(page.getByTestId("kls-page")).toHaveText("product:2");
+    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+    // The hover's prefetch served the click, sent from the page on screen.
+    expect(p2[0]).toEqual({ prefetch: true, from: `${two}/c/audio` });
+
+    await page.getByTestId("kls-to-cart").click();
+    await expect(page.getByTestId("kls-page")).toHaveText("cart");
+    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+  });
+
+  test("a product clicked (not prefetched) while a slow Back loads shows no hero there or on /cart", async ({
+    page,
+  }) => {
+    await startSlowBackToProduct(page, options.url(`${two}/p/1`), two);
+    const p2 = recordSources(page, `${two}/p/2`);
+
+    await plainClick(page, `${two}/p/2`);
+    await expect(page).toHaveURL(new RegExp(`${two}/p/2$`));
+    await expect(page.getByTestId("kls-page")).toHaveText("product:2");
+    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+    // One navigation request, sent from the page on screen.
+    expect(p2).toEqual([{ prefetch: false, from: `${two}/c/audio` }]);
+
+    await page.getByTestId("kls-to-cart").click();
+    await expect(page.getByTestId("kls-page")).toHaveText("cart");
+    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+  });
 
   // The locale rule above paginated pages ("/kept-layout-source/i18n").
   const i18n = "/kept-layout-source/i18n";

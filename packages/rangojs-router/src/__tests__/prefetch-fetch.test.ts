@@ -7,12 +7,21 @@ vi.mock("../browser/rango-state", () => ({
 
 // The page on screen's rewrite target, as the registered store remembers it.
 let shownRewriteTarget: string | undefined;
+// The URL the registered store committed, when a test sets one apart from
+// window.location (a back/forward still loading); else the store follows
+// window.location, as it does once a navigation commits.
+let committedUrl: string | undefined;
 vi.mock("../browser/navigation-store-handle", () => ({
   getRegisteredStore: () => ({
     getHistoryEntryMemory: () =>
       shownRewriteTarget === undefined
         ? undefined
         : { routeName: "item", rewriteTarget: shownRewriteTarget, state: null },
+    getSegmentState: () => ({
+      path: "",
+      currentUrl: committedUrl ?? window.location.href,
+      currentSegmentIds: [],
+    }),
   }),
   getCommittedPage: () => committedPage,
 }));
@@ -709,6 +718,122 @@ describe('prefetchKey=":source" opt-out', () => {
     const sourceKeyOther =
       "v1:abc\0http://localhost:4173/other\0/dashboard?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
     expect(consumePrefetch(sourceKeyOther)).not.toBeNull();
+  });
+
+  // rango-t250: a hover while a back/forward that missed the history cache
+  // still loads. window.location is already the popped entry; the segments
+  // sent are the committed page's, so the committed page is the source the
+  // server judges against and the key the answer is stored under.
+  describe("while a back/forward is still loading", () => {
+    afterEach(() => {
+      committedUrl = undefined;
+    });
+
+    const loadingBack = () => {
+      setupBrowser();
+      window.location.href = "http://localhost:4173/p/1";
+      (window.location as any).pathname = "/p/1";
+      committedUrl = "http://localhost:4173/c/audio";
+    };
+
+    it("a direct prefetch names the committed page, not the popped one, and keys its answer by it", async () => {
+      loadingBack();
+      const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+        Promise.resolve(
+          new Response("payload", { status: 200, headers: { "X-Test": "1" } }),
+        ),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      prefetchDirect("/p/2", ["A0"], "v1", undefined, ":source");
+
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      const headers = fetchMock.mock.calls[0]![1]!.headers as Record<
+        string,
+        string
+      >;
+      expect(headers["X-RSC-Router-Client-Path"]).toBe(
+        "http://localhost:4173/c/audio",
+      );
+      const { consumePrefetch } = await import("../browser/prefetch/cache");
+      await vi.waitFor(() =>
+        expect(
+          consumePrefetch(
+            "v1:abc\0http://localhost:4173/c/audio\0/p/2?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1",
+          ),
+        ).not.toBeNull(),
+      );
+    });
+
+    it("a queued prefetch names the committed page", async () => {
+      loadingBack();
+      const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+        Promise.resolve({ ok: false, body: null } as unknown as Response),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      prefetchQueued("/p/2", ["A0"], "v1");
+
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      const headers = fetchMock.mock.calls[0]![1]!.headers as Record<
+        string,
+        string
+      >;
+      expect(headers["X-RSC-Router-Client-Path"]).toBe(
+        "http://localhost:4173/c/audio",
+      );
+    });
+
+    it("a queued prefetch is dropped when the committed page moves before it runs", async () => {
+      loadingBack();
+      const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+        Promise.resolve({ ok: false, body: null } as unknown as Response),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      prefetchQueued("/p/2", ["A0"], "v1");
+      // The Back commits before the queue drains: the ids queued are the
+      // category page's.
+      committedUrl = "http://localhost:4173/p/1";
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("names a committed path as an absolute URL, as navigation sends it", async () => {
+      loadingBack();
+      // The store keeps a URL as navigate() was given it, often a path.
+      committedUrl = "/c/audio";
+      const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+        Promise.resolve({ ok: false, body: null } as unknown as Response),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      prefetchDirect("/p/2", ["A0"], "v1");
+
+      const headers = fetchMock.mock.calls[0]![1]!.headers as Record<
+        string,
+        string
+      >;
+      expect(headers["X-RSC-Router-Client-Path"]).toBe(
+        "http://localhost:4173/c/audio",
+      );
+    });
+
+    it("the popped entry is not the same page: a link to it is prefetched", () => {
+      loadingBack();
+      const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+        Promise.resolve({ ok: false, body: null } as unknown as Response),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+      prefetchDirect("/p/1", ["A0"], "v1");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // The committed page is: no trivial same-page diff is fetched.
+      prefetchDirect("/c/audio", ["A0"], "v1");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("allows same-page prefetch (source-scoped cannot poison wildcard)", () => {

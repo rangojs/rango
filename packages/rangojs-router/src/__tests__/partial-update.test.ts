@@ -78,9 +78,8 @@ function createMockClient(
   };
 }
 
-function createMockTx(currentUrl = "http://localhost/") {
+function createMockTx() {
   return {
-    currentUrl,
     startStreaming: vi.fn(() => ({ end: vi.fn() })),
     commit: vi.fn(() => ({ scroll: { enabled: undefined } })),
   };
@@ -551,59 +550,15 @@ describe("partial-update", () => {
       expect(onUpdate).toHaveBeenCalled();
     });
 
-    it("uses segmentState.currentUrl as previousUrl for leave-intercept (popstate safety)", async () => {
-      // Popstate updates window.location.href before our handler runs, so
-      // tx.currentUrl captures the destination URL. segmentState.currentUrl
-      // still holds the intercept URL the segments render. The server needs
-      // the intercept URL as the "from" to compute the right diff.
-      const cached = seg("L0", { type: "layout" });
-      const modal = seg("L0.@modal", {
-        type: "parallel",
-        namespace: "intercept:modal",
-      });
-      const store = makeNavigationStore({
-        initialSegments: [cached, modal],
-        url: "http://localhost/shop/product/42", // pre-popstate intercept URL
-      });
-
-      const { client } = createMockClient({
-        metadata: {
-          isPartial: true,
-          segments: [],
-          matched: ["L0"],
-          diff: [],
-        },
-      });
-
-      const tx = createMockTx("http://localhost/shop?page=5"); // popstate destination
-      const updater = createPartialUpdater({
-        getVersion: () => undefined,
-        store,
-        client: client as any,
-        onUpdate: vi.fn(),
-        renderSegments: vi.fn(async () => "tree"),
-      });
-
-      await updater(
-        "http://localhost/shop?page=5",
-        undefined,
-        false,
-        undefined,
-        tx,
-        { type: "leave-intercept" },
-      );
-
-      const fetchCall = (client.fetchPartial as any).mock.calls[0][0];
-      expect(fetchCall.previousUrl).toBe("http://localhost/shop/product/42");
-    });
-
-    // #1030: back/forward to an entry the history cache no longer holds. The
-    // popstate event moved window.location to the target before the
-    // transaction was created, so tx.currentUrl names the target. Sent as the
-    // page the client is on, the server compares the target with itself:
-    // on the same route nothing revalidates, the diff is empty, and the
-    // commit below keeps the page being left on screen under the target's URL.
+    // The page the server is told the client is on (previousUrl) is the
+    // committed entry, whose segments are sent, or an intercept's source.
+    // Never window.location: a popstate moves it to the popped entry before
+    // that entry's fetch commits.
     describe("the page the server is told the client is on", () => {
+      afterEach(() => {
+        vi.unstubAllGlobals();
+      });
+
       const route = seg("R0");
       const noChanges = {
         metadata: {
@@ -613,10 +568,15 @@ describe("partial-update", () => {
           diff: [],
         },
       };
-      const sentFrom = async (
-        tx: ReturnType<typeof createMockTx> & { traversal?: boolean },
-        mode?: Parameters<ReturnType<typeof createPartialUpdater>>[5],
-      ): Promise<string> => {
+      const sentFrom = async (opts: {
+        /** window.location.href when the navigation starts. */
+        addressBar: string;
+        traversal?: boolean;
+        mode?: Parameters<ReturnType<typeof createPartialUpdater>>[5];
+      }): Promise<string> => {
+        vi.stubGlobal("window", {
+          location: { origin: "http://localhost", href: opts.addressBar },
+        });
         const store = makeNavigationStore({
           initialSegments: [route],
           // The entry on screen: the one being left.
@@ -635,16 +595,20 @@ describe("partial-update", () => {
           undefined,
           false,
           undefined,
-          tx,
-          mode,
+          { ...createMockTx(), traversal: opts.traversal },
+          opts.mode,
         );
         return (client.fetchPartial as any).mock.calls[0][0].previousUrl;
       };
 
+      // #1030: back/forward to an entry the history cache no longer holds.
+      // Sent as the page the client is on, the popped entry made the server
+      // compare the target with itself: on the same route nothing
+      // revalidated, and the page being left stayed on screen.
       it("a back/forward fetch names the entry on screen, not the target the URL bar already shows", async () => {
         expect(
           await sentFrom({
-            ...createMockTx("http://localhost/list?page=3"),
+            addressBar: "http://localhost/list?page=3",
             traversal: true,
           }),
         ).toBe("http://localhost/list?page=6");
@@ -652,21 +616,54 @@ describe("partial-update", () => {
 
       it("a back/forward onto an intercept entry still names the intercept's source", async () => {
         expect(
-          await sentFrom(
-            {
-              ...createMockTx("http://localhost/list?page=3"),
-              traversal: true,
+          await sentFrom({
+            addressBar: "http://localhost/list?page=3",
+            traversal: true,
+            mode: {
+              type: "navigate",
+              interceptSourceUrl: "http://localhost/shop",
             },
-            { type: "navigate", interceptSourceUrl: "http://localhost/shop" },
-          ),
+          }),
         ).toBe("http://localhost/shop");
       });
 
-      it("a push or replace names the URL it started from", async () => {
-        // window.location has not moved: the transaction's URL is the page.
+      it("a back/forward leaving an intercept names the intercept entry on screen", async () => {
         expect(
-          await sentFrom(createMockTx("http://localhost/list?page=6#top")),
-        ).toBe("http://localhost/list?page=6#top");
+          await sentFrom({
+            addressBar: "http://localhost/list?page=3",
+            traversal: true,
+            mode: { type: "leave-intercept" },
+          }),
+        ).toBe("http://localhost/list?page=6");
+      });
+
+      it("leaving an intercept by a push names the intercept entry on screen, not its source", async () => {
+        expect(
+          await sentFrom({
+            addressBar: "http://localhost/list?page=6",
+            mode: {
+              type: "leave-intercept",
+              interceptSourceUrl: "http://localhost/shop",
+            },
+          }),
+        ).toBe("http://localhost/list?page=6");
+      });
+
+      it("a push or replace names the entry on screen", async () => {
+        expect(
+          await sentFrom({ addressBar: "http://localhost/list?page=6" }),
+        ).toBe("http://localhost/list?page=6");
+      });
+
+      // rango-t250: a click while a back/forward that missed the history
+      // cache still loads. The segments sent are the entry on screen's, so
+      // that entry is the source the server judges a held layout against;
+      // judged against the popped entry, the server kept a layout whose
+      // copy on screen was rendered for another page.
+      it("a push while a back/forward is still loading names the entry on screen, not the popped one", async () => {
+        expect(
+          await sentFrom({ addressBar: "http://localhost/list?page=3" }),
+        ).toBe("http://localhost/list?page=6");
       });
     });
 
@@ -705,7 +702,7 @@ describe("partial-update", () => {
           undefined,
           false,
           undefined,
-          createMockTx("http://localhost/public-1?sort=a"),
+          createMockTx(),
           mode,
         );
         return (client.fetchPartial as any).mock.calls[0][0].rewriteTarget;
@@ -1179,7 +1176,7 @@ describe("partial-update", () => {
       });
       const renderSegments = vi.fn(async () => "tree");
       const onUpdate = vi.fn();
-      const tx = createMockTx("http://localhost/list");
+      const tx = createMockTx();
       const updater = createPartialUpdater({
         getVersion: () => undefined,
         store,
@@ -2678,7 +2675,7 @@ describe("partial-update transition({ when })", () => {
       commitLanes.push(transitionState.inTransition);
     });
     const renderSegments = vi.fn(async (..._args: any[]) => "tree");
-    const tx = { ...createMockTx("http://localhost/items/1"), ...opts.tx };
+    const tx = { ...createMockTx(), ...opts.tx };
     const updater = createPartialUpdater({
       getVersion: () => undefined,
       store,
