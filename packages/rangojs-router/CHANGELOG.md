@@ -40,9 +40,11 @@ this client's own server actions or a state rotation make it miss. A tag
 invalidation that does not pass through this client's action (another user's
 action, a webhook, a cron job, or this user's `fetch()` to a route handler
 that calls `updateTag()`) does not, so a reload can show the page from before
-it. Call `invalidateClientCache()` in the action or handler that invalidates
-the tag, lower `prefetchCacheTTL`, or send `Cache-Control: no-cache` from the
-route.
+it. When this browser invalidates the tag itself (its `fetch()` to a route
+handler), call `invalidateClientCache()` in that handler: it rotates only the
+calling browser's state. For an invalidation from another user, a webhook or
+a cron job, lower `prefetchCacheTTL` or send `Cache-Control: no-cache` from
+the route.
 
 ### Fixed: after a server action, a prefetch is no longer answered from the browser's HTTP cache with the value from before the write
 

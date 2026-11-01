@@ -112,7 +112,8 @@ tissue that still applies):
   land here. The `Vary` key keeps each per state value, write part included,
   so it misses after every server action of this client. A tag invalidation
   from elsewhere does not change the state value, so the copy lives until
-  `prefetchCacheTTL` ends unless the app calls `invalidateClientCache()`;
+  `prefetchCacheTTL` ends (`invalidateClientCache()` rotates only the calling
+  browser's state);
 - the **history segment cache** (`historyCache` in
   `src/browser/navigation-store.ts`), which holds back/forward payloads.
   This one is **not** state-keyed — rotating the state value does nothing to
