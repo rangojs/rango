@@ -188,6 +188,7 @@ import {
   keptLayoutSourceOneShapePatterns,
   keptLayoutSourceTwoShapePatterns,
 } from "./urls/kept-layout-source.js";
+import { docCacheSourcePatterns } from "./urls/doc-cache-source.js";
 import { CompeteServerPage } from "./urls/client-urls-compete.server.js";
 import { settledLaneErrorsPatterns } from "./urls/settled-lane-errors.js";
 import { prefetchRenderErrorsPatterns } from "./urls/prefetch-render-errors.js";
@@ -1136,6 +1137,9 @@ export const urlpatterns = urls(
       include("/kept-layout-source/i18n", keptLayoutSourceLocalePatterns, {
         name: "keptLayoutSourceI18n",
       }),
+      // A kept hero above a PLP the document cache stores: its partial is
+      // the source page's only (e2e/doc-cache-source.test.ts, rango-t238).
+      include("/doc-cache-source", docCacheSourcePatterns),
       // Action revalidation over a clientUrls group: the group's projected
       // loaders re-run on the action follow-up (route-owned default true);
       // this parent-chain layout reads the SAME counter and keeps the locked

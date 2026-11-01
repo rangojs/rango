@@ -217,6 +217,14 @@ suffixes are still appended.
   request that holds no segments (`router.refresh()`, a cross-tab refresh).
   Each renders at the origin and is not stored, because its data may predate
   a write and the cache cannot tell.
+- A client navigation whose answer depends on the page it came from: a
+  `revalidate()` rule that read `currentParams`, `currentUrl` or
+  `fromRouteName` kept a segment, or an intercept targets the route. The key
+  names the segments the client holds, not its page, so `/c/tv` would get the
+  answer `/c/audio` got for `/c/audio?sort=x` and keep its own hero. It is sent
+  `private, no-cache` over the route's `Cache-Control` and is not stored. One
+  whose rule re-rendered the segment is right from every page and is stored as
+  usual.
 - Non-GET requests
 - Responses without an `s-maxage` `Cache-Control` directive
 - Responses whose `Cache-Control` also contains `private`, `no-store`, or an
