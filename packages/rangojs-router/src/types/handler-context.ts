@@ -681,7 +681,7 @@ export type IsActionFn = (...actions: ActionRef[]) => boolean;
 export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   /** Route params from the page being navigated away from. */
   currentParams: TParams;
-  /** Full URL of the page being navigated away from. */
+  /** Full URL of the page being navigated away from, without its #fragment. */
   currentUrl: URL;
   /** Route params for the navigation target. */
   nextParams: TParams;
