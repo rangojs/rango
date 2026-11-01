@@ -48,6 +48,43 @@ and `action({ loaders, keepClientCache })`, so a test can run an action and
 then a click on a stale prefetch, and `revalidations()` to read the
 revalidation requests it made.
 
+### Changed: a hover prefetch runs `prefetch: false` work, so the click sends no follow-up request (rango-t243)
+
+**Before.** Every prefetch deferred `loader(Def, { prefetch: false })` and the
+work behind `loading(fallback, { prefetch: false })`, the hover's included. A
+visitor who hovered a link and clicked it still waited for a second request
+after the click: the page committed with its fallback and the fill brought
+the deferred part.
+
+**Now.** A hover is intent to click, and so is `useRouter().prefetch()`.
+Their prefetch sends `X-Rango-Prefetch: intent` and asks for exactly what the
+navigation would, only earlier: the flagged loaders and `loading()` work run
+in it, and the click that adopts it commits the whole page with no fill. This
+holds for a hover on a `"hover"`, `"viewport"` or `"adaptive"` link and on a
+delegated plain anchor.
+
+| Prefetch                                      | Header                     | `prefetch: false` work |
+| --------------------------------------------- | -------------------------- | ---------------------- |
+| Hover, `useRouter().prefetch()`               | `X-Rango-Prefetch: intent` | runs in the prefetch   |
+| Viewport, render                              | `X-Rango-Prefetch: 1`      | deferred, as before    |
+| Hover over a link already cached or in flight | none sent                  | as the cached entry    |
+
+- A hover sends its prefetch only when the link has none cached or in flight.
+  A link a viewport prefetch already answered is used as it is, with what it
+  deferred, and its click sends the fill as before. There is no upgrade and
+  no second render.
+- There is no hover delay: every cursor pass over a `"hover"` link with
+  nothing cached runs the flagged work. Touch devices have no hover.
+- A hover prefetch that defers nothing is answered like a navigation: no
+  `private, no-cache`, no `Vary: X-Rango-Prefetch`, no source scope (an
+  intercept target stays source-scoped).
+
+No API change. A test that serves a prefetch with `serveShellRequest(router,
+url, { partial: { prefetch: true } })` still gets a speculative one; add
+`headers: { "X-Rango-Prefetch": "intent" }` for a hover's. Code that checks
+`X-Rango-Prefetch === "1"` to recognise a prefetch should check that the
+header is present.
+
 ### Fixed: `@rangojs/router/testing/e2e` stops the whole dev or preview server, not only `pnpm` ([#1352](https://github.com/rangojs/rango/pull/1352))
 
 **Before.** `useFixture` started `pnpm dev` or `pnpm preview` without making it a

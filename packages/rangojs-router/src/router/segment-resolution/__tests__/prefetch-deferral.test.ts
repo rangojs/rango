@@ -14,6 +14,7 @@ import {
   getPrefetchDeferral,
   interceptFillSkips,
   isFillRequest,
+  isPrefetchKind,
   loaderOwner,
   markUnitDeferred,
   partialDeferralMode,
@@ -301,10 +302,32 @@ describe("requestKind", () => {
     expect(kindOf(PARTIAL)).toBe(undefined);
   });
 
+  it("is an intent prefetch by the header's intent value (R16)", () => {
+    expect(kindOf(PARTIAL, { "X-Rango-Prefetch": "intent" })).toBe("intent");
+  });
+
+  // Only the exact intent value asks for the whole answer: anything else
+  // keeps the deferral a speculative prefetch has always had.
+  it("reads any other value of the header as a speculative prefetch", () => {
+    expect(kindOf(PARTIAL, { "X-Rango-Prefetch": "" })).toBe("prefetch");
+    expect(kindOf(PARTIAL, { "X-Rango-Prefetch": "Intent" })).toBe("prefetch");
+    expect(kindOf(PARTIAL, { "X-Rango-Prefetch": "true" })).toBe("prefetch");
+  });
+
   it("is a fill when a request carries both", () => {
     expect(kindOf(`${PARTIAL}&_rsc_fill=1`, { "X-Rango-Prefetch": "1" })).toBe(
       "fill",
     );
+    expect(
+      kindOf(`${PARTIAL}&_rsc_fill=1`, { "X-Rango-Prefetch": "intent" }),
+    ).toBe("fill");
+  });
+
+  it("counts both prefetch kinds as a prefetch, and nothing else", () => {
+    expect(isPrefetchKind("prefetch")).toBe(true);
+    expect(isPrefetchKind("intent")).toBe(true);
+    expect(isPrefetchKind("fill")).toBe(false);
+    expect(isPrefetchKind(undefined)).toBe(false);
   });
 
   // The match passes the request context's URL: the request's own may have

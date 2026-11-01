@@ -83,7 +83,10 @@ import {
   readGuardedTheme,
 } from "./cookie-store.js";
 import { requestHeaders } from "./request-headers.js";
-import { requestKind } from "../router/segment-resolution/prefetch-deferral.js";
+import {
+  requestKind,
+  type RequestKind,
+} from "../router/segment-resolution/prefetch-deferral.js";
 import {
   createReverseFunction,
   stripInternalParams,
@@ -663,11 +666,12 @@ export interface RequestContext<
   _payloadDeferred?: boolean;
 
   /**
-   * @internal What the request says it is: a `<Link>` prefetch or a fill
-   * (`prefetch: false`), read once at creation
-   * (segment-resolution/prefetch-deferral.ts requestKind).
+   * @internal What the request says it is: a speculative `<Link>` prefetch,
+   * an intent prefetch (hover, `prefetch()`) or a fill (`prefetch: false`),
+   * read once at creation (segment-resolution/prefetch-deferral.ts
+   * requestKind).
    */
-  _requestKind?: "prefetch" | "fill";
+  _requestKind?: RequestKind;
 
   /**
    * @internal Set when a render shows the visitor's URL of a rewritten

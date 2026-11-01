@@ -99,9 +99,12 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * (default none), advertising fragment passthrough. The replay decision is
    * `result.replayStatus`.
    *
-   * `prefetch: true` sends it as a `<Link>` prefetch does (the
-   * `X-Rango-Prefetch` header), so `prefetch: false` loaders and `loading()`
-   * entries are deferred: `result.readDeferred()` lists them. `fill: true`
+   * `prefetch: true` sends the speculative kind a viewport or render
+   * `<Link>` prefetch sends (`X-Rango-Prefetch: 1`), so `prefetch: false`
+   * loaders and `loading()` entries are deferred: `result.readDeferred()`
+   * lists them. A hover's or `prefetch()`'s intent prefetch defers nothing;
+   * serve it with `prefetch: true` and `headers: { "X-Rango-Prefetch":
+   * "intent" }`, which `prefetch: true` leaves as given. `fill: true`
    * sends the request the browser follows an adopted prefetch with
    * (`_rsc_fill`): pass the ids the prefetch delivered, without the deferred
    * ones, as `segments`, and the same URL as `from`. `interceptSource` sends

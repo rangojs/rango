@@ -242,10 +242,10 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 
 `loading(fallback, options?)` takes two options:
 
-| Option            | Effect                                                                                                                      |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `ssr: false`      | Skip the fallback on document requests; it shows on client navigations only.                                                |
-| `prefetch: false` | Keep everything behind this fallback out of `<Link>` prefetches; the click shows the fallback and fetches that part itself. |
+| Option            | Effect                                                                                                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ssr: false`      | Skip the fallback on document requests; it shows on client navigations only.                                                                                      |
+| `prefetch: false` | Keep everything behind this fallback out of viewport and render prefetches (a hover prefetch runs it); the click shows the fallback and fetches that part itself. |
 
 ```tsx
 path("/orders", OrdersPage, { name: "orders" }, () => [
@@ -255,8 +255,8 @@ path("/orders", OrdersPage, { name: "orders" }, () => [
 ```
 
 **What `prefetch: false` defers.** The flag applies when the entry is new to
-the browser: the page the prefetch is sent from does not show it. A prefetch
-then skips the entry's handler, its loaders, its orphan layouts and its
+the browser: the page the prefetch is sent from does not show it. A viewport
+or render prefetch then skips the entry's handler, its loaders, its orphan layouts and its
 parallel slots. On a `layout()` the fallback covers the whole outlet, so every
 deeper entry is skipped with it. A parallel slot with its own flagged
 `loading()` is a separate unit: the route beside it still renders in the

@@ -198,7 +198,7 @@ describe("prefetch fetch reduced-data behavior", () => {
     expect(headers["X-RSC-Router-Client-Path"]).toBe(
       "http://localhost:4173/current",
     );
-    expect(headers["X-Rango-Prefetch"]).toBe("1");
+    expect(headers["X-Rango-Prefetch"]).toBe("intent");
     expect(headers["X-Rango-Fragment-Passthrough"]).toBe("1");
     expect(fetchedUrl).not.toContain("_rsc_rt");
   });
@@ -943,6 +943,112 @@ describe("prefetch fetch options (credentials + action fence)", () => {
  * timeout now aborts the stalled fetch so it settles, the `.finally()` clears
  * the inflight flag, and the URL can be prefetched again.
  */
+/**
+ * docs/design/prefetch-false.md, R16: the header names the trigger. A hover
+ * or an explicit prefetch() is an intent prefetch (`intent`), which the
+ * server answers whole; a viewport or render prefetch is speculative (`1`).
+ * An intent prefetch is sent only on a miss: what is cached or in flight is
+ * used as it is, even a speculative answer that deferred work.
+ */
+describe("the prefetch header names the trigger (R16)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    clearPrefetchCache();
+    abortAllPrefetches();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  function stubFetch(
+    answer: () => Promise<Response> = () =>
+      Promise.resolve(new Response("rsc", { status: 200 })),
+  ) {
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      answer(),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    return fetchMock;
+  }
+
+  function prefetchHeaderOf(
+    fetchMock: ReturnType<typeof stubFetch>,
+    call: number,
+  ): string | undefined {
+    const headers = fetchMock.mock.calls[call]![1]!.headers as Record<
+      string,
+      string
+    >;
+    return headers["X-Rango-Prefetch"];
+  }
+
+  it("a direct prefetch (hover, prefetch()) is sent as an intent prefetch", () => {
+    setupBrowser();
+    const fetchMock = stubFetch();
+
+    prefetchDirect("/blog", ["A0"], "v1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(prefetchHeaderOf(fetchMock, 0)).toBe("intent");
+  });
+
+  it("a queued prefetch (viewport, render) is sent as a speculative prefetch", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+    const fetchMock = stubFetch();
+
+    prefetchQueued("/blog", ["A0"], "v1");
+    // The queue's idle and image waits.
+    await vi.advanceTimersByTimeAsync(2_100);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(prefetchHeaderOf(fetchMock, 0)).toBe("1");
+  });
+
+  it("a hover after a speculative prefetch was received sends nothing: the cached answer is used as it is", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+    const fetchMock = stubFetch();
+
+    prefetchQueued("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(decodeMock).toHaveBeenCalledTimes(1));
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a hover while a speculative prefetch is in flight sends nothing", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+    const fetchMock = stubFetch(() => new Promise<Response>(() => {}));
+
+    prefetchQueued("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(prefetchHeaderOf(fetchMock, 0)).toBe("1");
+  });
+
+  it("a hover while a speculative prefetch still waits in the queue sends the intent prefetch, and the queued one is skipped", async () => {
+    vi.useFakeTimers();
+    setupBrowser();
+    const fetchMock = stubFetch();
+
+    prefetchQueued("/blog", ["A0"], "v1");
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(prefetchHeaderOf(fetchMock, 0)).toBe("intent");
+
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("hover prefetch stalled-fetch timeout (F4)", () => {
   afterEach(() => {
     vi.useRealTimers();

@@ -23,14 +23,15 @@ import { actionStaleState, wait } from "./action-stale.store.js";
 // answer at set delays; and two pages the document cache stores
 // (/action-stale/cached/*). The product page renders a prefetching link only
 // with ?prefetch=render (or =fill: the fill page's, on hover, passing on
-// ?fillDelay; =transition: the transition() basket's; =inflight: on hover, a
-// basket that answers after 1500 ms, which an action's start does not
-// cancel as it cancels queued ones), so no other case has a prefetch to
-// consume.
+// ?fillDelay; =fill-render: the same link prefetched on render, a
+// speculative prefetch that defers the page's `prefetch: false` loader;
+// =transition: the transition() basket's; =inflight: on hover, a basket that
+// answers after 1500 ms, which an action's start does not cancel as it
+// cancels queued ones), so no other case has a prefetch to consume.
 // /action-stale/bare/* sit under a layout with no revalidate(): a basket and
-// a chain of pages whose first prefetches it. /action-stale/counted is a layout whose loader
-// re-runs on every navigation, with a prefetching link to its other page.
-// Bodies:
+// a chain of pages whose first prefetches it. /action-stale/counted is a
+// layout whose loader re-runs on every navigation, with a prefetching link to
+// its other page. Bodies:
 // tests/shared-e2e/src/action-stale-navigation-scenario.ts,
 // action-held-segments-scenario.ts, action-follow-up-scenario.ts and
 // action-stale-prefetch-scenario.ts.
@@ -117,17 +118,19 @@ const ActionStalePdp: Handler = (ctx) => {
           Basket in a transition, prefetched
         </Link>
       )}
-      {prefetch === "fill" && (
+      {(prefetch === "fill" || prefetch === "fill-render") && (
         <Link
           to={
             fillDelay
               ? `/action-stale/fill?fillDelay=${fillDelay}`
               : "/action-stale/fill"
           }
-          prefetch="hover"
+          prefetch={prefetch === "fill" ? "hover" : "render"}
           data-testid="as-to-fill-prefetched"
         >
-          Fill, prefetched on hover
+          {prefetch === "fill"
+            ? "Fill, prefetched on hover"
+            : "Fill, prefetched on render"}
         </Link>
       )}
     </div>
@@ -173,8 +176,8 @@ const ActionStaleTransition: Handler = async () => {
 };
 
 // Answers after 1500 ms, so a hover prefetch is still in flight at the click
-// right after it; its `prefetch: false` loader is filled after the click
-// commits.
+// right after it. Its `prefetch: false` loader runs in a hover's prefetch,
+// and is filled after the click commits from a render link's.
 const ActionStaleFill: Handler = async () => {
   await wait(1500);
   return (

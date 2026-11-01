@@ -172,7 +172,7 @@ test.describe("useRouter", () => {
     expect(prefetchReq.url()).toContain("_rsc_partial=true");
     const headers = await prefetchReq.allHeaders();
     expect(headers["x-rango-state"]).toBeTruthy();
-    expect(headers["x-rango-prefetch"]).toBe("1");
+    expect(headers["x-rango-prefetch"]).toBe("intent");
   });
 
   test("back() should go back in browser history", async ({ page }) => {
@@ -504,7 +504,7 @@ test.describe("useRouter (production)", () => {
     expect(prefetchReq.url()).toContain("_rsc_partial=true");
     const headers = await prefetchReq.allHeaders();
     expect(headers["x-rango-state"]).toBeTruthy();
-    expect(headers["x-rango-prefetch"]).toBe("1");
+    expect(headers["x-rango-prefetch"]).toBe("intent");
   });
 
   test("back() and forward() should work with browser history", async ({

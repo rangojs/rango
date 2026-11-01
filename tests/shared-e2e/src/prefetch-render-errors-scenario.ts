@@ -47,7 +47,7 @@ function isRscRequestFor(url: string, pathname: string): boolean {
 }
 
 function isPrefetch(request: Request): boolean {
-  return request.headers()["x-rango-prefetch"] === "1";
+  return request.headers()["x-rango-prefetch"] !== undefined;
 }
 
 /** PREFETCH_FAILED_ROW (packages/rangojs-router/src/prefetch-markers.ts). */

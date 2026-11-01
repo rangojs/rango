@@ -50,7 +50,7 @@ export function recordPartials(page: Page): PartialRequest[] {
       path: url.pathname.slice(url.pathname.indexOf("/action-stale/")),
       stale: url.searchParams.get("_rsc_stale") === "true",
       whole: !url.searchParams.get("_rsc_segments"),
-      prefetch: request.headers()["x-rango-prefetch"] === "1",
+      prefetch: request.headers()["x-rango-prefetch"] !== undefined,
       fill: url.searchParams.has("_rsc_fill"),
       at: Date.now(),
       finished: false,

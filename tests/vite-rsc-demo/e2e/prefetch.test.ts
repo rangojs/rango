@@ -301,7 +301,7 @@ test.describe("prefetch-on-hover (router mode)", () => {
     // and navigation use matching X-Rango-State and X-RSC-Router-Client-Path.
     const prefetchState = rscRequests[0]!.headers["x-rango-state"];
     expect(prefetchState).toBeDefined();
-    expect(rscRequests[0]!.headers["x-rango-prefetch"]).toBe("1");
+    expect(rscRequests[0]!.headers["x-rango-prefetch"]).toBe("intent");
     const prefetchClientPath =
       rscRequests[0]!.headers["x-rsc-router-client-path"];
     expect(prefetchClientPath).toBeDefined();
@@ -672,7 +672,7 @@ base.describe("prefetch-on-hover (router mode) (production)", () => {
       // Both requests should share the same X-Rango-State value
       const prefetchState = rscRequests[0]!.headers["x-rango-state"];
       baseExpect(prefetchState).toBeDefined();
-      baseExpect(rscRequests[0]!.headers["x-rango-prefetch"]).toBe("1");
+      baseExpect(rscRequests[0]!.headers["x-rango-prefetch"]).toBe("intent");
 
       // Navigation should use the in-memory cache (1 request = cache hit).
       // If the response wasn't fully buffered in time, navigation falls

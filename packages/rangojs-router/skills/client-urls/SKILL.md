@@ -623,21 +623,23 @@ shell, such as a `useActionState` form (React suspends it once to encode its
 action), is in the first flush too: the router gives React up to three more
 turns before it, and none when the document is already complete.
 
-## `prefetch: false` — keep a loader out of prefetches
+## `prefetch: false` — keep a loader out of speculative prefetches
 
 A `<Link>` prefetch of a group route runs its loaders. Flag the expensive one
-and the prefetch skips it:
+and a viewport or render prefetch skips it. A hover prefetch, and
+`useRouter().prefetch()`, is intent to click: it runs the loader, and the
+click sends no fill (`/loader` → "`prefetch: false`").
 
 ```tsx
 path("/product/:slug", ProductPage, { name: "product" }, () => [
   loader(PriceLoader),
-  loader(ReviewsLoader, { prefetch: false }), // kept out of prefetches
+  loader(ReviewsLoader, { prefetch: false }), // kept out of viewport prefetches
   loading(<ProductSkeleton />),
 ]),
 ```
 
-A click inside the group still shows the destination at once. With the
-prefetch received, the URL and the other loaders' data move with the click
+A click inside the group still shows the destination at once. With a
+viewport or render prefetch received, the URL and the other loaders' data move with the click
 too, `useOutlet().pending` ends with that commit, and one follow-up request
 (the fill) runs only the flagged loaders. Read the flagged loader inside its
 own `<Suspense>` to show the page and that fallback at once; with no boundary
@@ -658,8 +660,8 @@ rest of the destination; otherwise it is held. A same-route click
 - `loading()` in `clientUrls()` takes no options, and a flagged `loading()`
   on a server layout above the group defers nothing for the group's routes.
 - On an `intercept()` loader the flag works as in `urls()`: an in-group
-  prefetch of the intercept's target defers it, and the click opens the modal
-  at once with one fill for it.
+  viewport or render prefetch of the intercept's target defers it, and the
+  click opens the modal at once with one fill for it; a hover's runs it.
 - With `ssr: false` on a `ppr` group route the flag is ignored (the bake
   lane), as on a server route.
 - Test it with `serveShellRequest` in the Flight project: mount the module

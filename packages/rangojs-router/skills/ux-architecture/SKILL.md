@@ -310,11 +310,16 @@ The rule: **prefetch broadly, and flag what is expensive.**
   already on screen whose `revalidate()` re-runs it for the destination is
   prefetched with it, so the click does not wait on a fill for data the page
   is already showing.
-- The trade-off, measured on a `clientUrls()` tab in a consumer app (dev, a
-  loaded machine): with the tab's loader flagged, a hover then a click 150 ms
+- `prefetch: false` applies to speculative prefetches: viewport and render.
+  A hover, or `useRouter().prefetch()`, is intent to click and runs the
+  loader, so its click needs no fill. A hover over a link a viewport prefetch
+  already answered sends nothing, and that click still fills.
+- The trade-off of a deferring prefetch, measured on a `clientUrls()` tab in
+  a consumer app (dev, a loaded machine), before a hover's prefetch ran
+  flagged loaders: with the tab's loader flagged, a hover then a click 150 ms
   later showed the content in 843 to 918 ms; with the tab prefetched whole, in
   77 to 157 ms. The flagged click pays the fill request and then React's
-  300 ms on the tab's fallback.
+  300 ms on the tab's fallback. A viewport-prefetched link still pays it.
 - A click that adopts a prefetch with a flagged loader shows the page at once
   and sends one fill request for the flagged loaders. Read a flagged loader
   under its own `<Suspense>`: with no boundary, React keeps the page being

@@ -47,7 +47,7 @@ function isFollowUpOf(path: string): (request: Request) => boolean {
       url.pathname.endsWith(path) &&
       url.searchParams.get("_rsc_stale") === "true" &&
       !url.searchParams.get("_rsc_segments") &&
-      request.headers()["x-rango-prefetch"] !== "1"
+      request.headers()["x-rango-prefetch"] === undefined
     );
   };
 }
@@ -282,7 +282,7 @@ export function runActionFollowUpTests(
     );
   });
 
-  test("a prefetch: false click while an action lands keeps its fill, then shows the write", async ({
+  test("a prefetch: false click while an action lands, adopting a hover's prefetch, sends no fill, then shows the write", async ({
     page,
   }) => {
     test.setTimeout(60000);
@@ -290,9 +290,10 @@ export function runActionFollowUpTests(
 
     // The action writes at once and lands about 800 ms in. The fill page's
     // prefetch leaves on hover, after the action started (its start cancels
-    // the prefetches in flight); the click right after waits for it (its
-    // handler answers in 1500 ms), commits from it and fills the
-    // `prefetch: false` loader.
+    // the prefetches in flight). A hover's prefetch defers nothing, so it
+    // runs the `prefetch: false` loader with the page, after the write; the
+    // click right after waits for it (its handler answers in 1500 ms) and
+    // commits from it with no fill.
     await page.getByTestId("as-add-first").click();
     await page.getByTestId("as-to-fill-prefetched").hover();
     await expect
@@ -311,16 +312,11 @@ export function runActionFollowUpTests(
 
     await expect(page.getByTestId("as-fill")).toHaveText("fill:1");
     await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
-    const fill = sent.find(
-      (entry) => entry.fill && entry.path === "/action-stale/fill",
-    );
-    expect(fill?.failed, "the fill answered, not cancelled").toBe(false);
-    const [followUp] = followUps(sent).filter(
-      (entry) => entry.path === "/action-stale/fill",
-    );
-    expect(followUp?.at, "the follow-up starts after the fill").toBeGreaterThan(
-      fill!.at,
-    );
+    await waitForSettled(page);
+    expect(
+      sent.filter((entry) => entry.fill && entry.path === "/action-stale/fill"),
+      "the adopted prefetch was whole: no fill",
+    ).toEqual([]);
   });
 
   test("a prefetch: false click that commits before an action lands keeps its fill, then shows the write", async ({
@@ -330,14 +326,14 @@ export function runActionFollowUpTests(
     const sent = await openProductPage(
       page,
       options,
-      "?prefetch=fill&fillDelay=2000",
+      "?prefetch=fill-render&fillDelay=2000",
     );
 
-    // The fill page's prefetch answers before the action starts (its start
-    // cancels the prefetches in flight). The click right after the action
-    // commits from it at once; its fill answers 2000 ms later, after the
-    // action lands (about 800 ms in), and the follow-up waits for it.
-    await page.getByTestId("as-to-fill-prefetched").hover();
+    // The fill page's prefetch, a render link's, defers its `prefetch: false`
+    // loader and answers before the action starts (its start cancels the
+    // prefetches in flight). The click right after the action commits from
+    // it at once; its fill answers 2000 ms later, after the action lands
+    // (about 800 ms in), and the follow-up waits for it.
     await prefetched(sent, "/action-stale/fill");
     await page.getByTestId("as-add-first").click();
     await page.getByTestId("as-to-fill-prefetched").click();

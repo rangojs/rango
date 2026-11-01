@@ -207,10 +207,13 @@ export type LoaderFn<
 export type LoaderOptions = {
   ssr?: boolean;
   /**
-   * `prefetch: false` keeps this loader out of prefetches. A `<Link>`
-   * prefetch (a partial request with `X-Rango-Prefetch`) does not execute it;
-   * the payload marks it deferred. A document request and a navigation with
-   * no prefetch to adopt run it as usual.
+   * `prefetch: false` keeps this loader out of speculative prefetches. A
+   * viewport or render `<Link>` prefetch (a partial request with
+   * `X-Rango-Prefetch: 1`) does not execute it; the payload marks it
+   * deferred. A hover prefetch and `useRouter().prefetch()`
+   * (`X-Rango-Prefetch: intent`) count as intent to click and run it, so a
+   * click after a hover needs no follow-up request. A document request and a
+   * navigation with no prefetch to adopt run it as usual.
    *
    * A deferred loader never blocks the navigation that adopts the prefetch:
    * it behaves like a loader that is still streaming. Its own `<Suspense>`

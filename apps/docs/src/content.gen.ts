@@ -518,6 +518,11 @@ export const pageMeta: PageMeta[] = [
         "text": "Prefetch strategies"
       },
       {
+        "depth": 3,
+        "id": "a-hover-prefetch-is-the-navigation-started-early",
+        "text": "A hover prefetch is the navigation, started early"
+      },
+      {
         "depth": 2,
         "id": "one-prefetch-serves-every-page",
         "text": "One prefetch serves every page"

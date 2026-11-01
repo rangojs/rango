@@ -21,7 +21,11 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import { createLoader, createRouter, redirect, urls } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
-import { PREFETCH_FAILED_ROW } from "../../prefetch-markers.js";
+import {
+  PREFETCH_FAILED_ROW,
+  PREFETCH_HEADER,
+  PREFETCH_INTENT,
+} from "../../prefetch-markers.js";
 
 let failing = true;
 
@@ -80,10 +84,16 @@ const router = createRouter({
   ]),
 );
 
-function serve(url: string, partial?: { prefetch: boolean }) {
+/** `intent`: a hover's prefetch, sent with the header's intent value. */
+function serve(url: string, partial?: { prefetch: boolean; intent?: true }) {
   return serveShellRequest(router, url, {
     cacheStore: new MemorySegmentCacheStore(),
-    ...(partial && { partial: { from: "/", ...partial } }),
+    ...(partial?.intent && {
+      headers: { [PREFETCH_HEADER]: PREFETCH_INTENT },
+    }),
+    ...(partial && {
+      partial: { from: "/", prefetch: partial.prefetch },
+    }),
   });
 }
 
@@ -109,6 +119,20 @@ describe("a prefetch whose render reported an error", () => {
       expect(body.indexOf(PREFETCH_FAILED_ROW)).toBe(
         body.length - PREFETCH_FAILED_ROW.length,
       );
+    },
+  );
+
+  // A hover's prefetch is a prefetch too: kept as a whole answer, so a failed
+  // render must not be kept either.
+  it.each(FAILING)(
+    "%s, in an intent prefetch: ends with the failure row",
+    async (_, url) => {
+      const { response, body } = await serve(url, {
+        prefetch: true,
+        intent: true,
+      });
+      expect(response.status).toBe(200);
+      expect(body.endsWith(PREFETCH_FAILED_ROW)).toBe(true);
     },
   );
 

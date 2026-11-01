@@ -22,7 +22,11 @@ import {
  * the same behaviour.
  *
  * The fixture is a hub page at `/prefetch-false?run=<id>` with one link per
- * case, each `prefetch="hover"` so the body decides when the prefetch happens.
+ * case, each `prefetch="none"` so the body decides when the prefetch happens
+ * and which kind it is. `pf-arm-<c>` mounts a render link to the case: the
+ * speculative prefetch a viewport link sends (`X-Rango-Prefetch: 1`), which
+ * defers the flagged work. Hovering `pf-hover-<c>` sends an intent prefetch
+ * (`intent`), which defers nothing (R16).
  * Every unit of server work counts its runs under the `run` of the request;
  * `/prefetch-false/__counts?run=<id>` returns the counters as JSON. A run id
  * is unique per call, so parallel tests and retries never share a counter.
@@ -38,7 +42,9 @@ import {
  *
  * | Test id           | What it is                                         |
  * | ----------------- | -------------------------------------------------- |
- * | `pf-link-<c>`     | the hub link                                       |
+ * | `pf-link-<c>`     | the hub link, never prefetched                     |
+ * | `pf-arm-<c>`      | mounts (then unmounts) a render link to the case   |
+ * | `pf-hover-<c>`    | a hover link to the case                           |
  * | `pf-<c>-page`     | the handler's content                              |
  * | `pf-<c>-fallback` | what shows while the deferred part is missing      |
  * | `pf-<c>-value`    | the deferred loader's value: `<c>.data:<run count>` |
@@ -97,9 +103,14 @@ function isFill(url: string | URL): boolean {
   return new URL(url).searchParams.has("_rsc_fill");
 }
 
-/** A `<Link>` prefetch, by the header it is sent with. */
+/** A speculative `<Link>` prefetch (viewport, render), by its header. */
 function isPrefetch(request: Request): boolean {
   return request.headers()["x-rango-prefetch"] === "1";
+}
+
+/** An intent prefetch (a hover, `prefetch()`), by its header (R16). */
+function isIntent(request: Request): boolean {
+  return request.headers()["x-rango-prefetch"] === "intent";
 }
 
 function sleep(ms: number): Promise<void> {
@@ -190,10 +201,30 @@ function recordPartials(page: Page, pathname: string): Request[] {
 }
 
 /**
- * Hover the hub link and wait until its prefetch has been fully received.
- * The pointer ends off the links: the list moves when the page changes, and
- * a link that slides under a resting pointer is prefetched too.
+ * Start a speculative prefetch of the case, the one a viewport link sends:
+ * mount its render link, wait for `left`, then unmount the link, which would
+ * prefetch again from every page it is still on. DOM clicks, with the
+ * pointer off the links first: a hover link under a resting pointer, or one
+ * entered on the way to the button, is prefetched with intent.
  */
+async function armCase(
+  page: Page,
+  name: string,
+  left: () => Promise<unknown>,
+): Promise<void> {
+  const arm = byId(page, `pf-arm-${name}`);
+  const toggle = () =>
+    arm.evaluate((button) => (button as HTMLElement).click());
+  await page.mouse.move(0, 0);
+  await expect(arm).toHaveAttribute("data-armed", "false");
+  await toggle();
+  await expect(arm).toHaveAttribute("data-armed", "true");
+  await left();
+  await toggle();
+  await expect(arm).toHaveAttribute("data-armed", "false");
+}
+
+/** Arm the case and wait until its prefetch has been fully received. */
 async function prefetchCase(
   page: Page,
   hub: Hub,
@@ -205,9 +236,32 @@ async function prefetchCase(
       isPrefetch(response.request()),
     { timeout: 20_000 },
   );
-  // Off the link first: a pointer that is already on it enters nothing.
+  let response!: Response;
+  await armCase(page, name, async () => {
+    response = await prefetched;
+  });
+  await response.finished();
+  return response;
+}
+
+/**
+ * Hover the case's hover link and wait until its intent prefetch has been
+ * fully received. Off the link first: a pointer already on it enters
+ * nothing.
+ */
+async function hoverCase(
+  page: Page,
+  hub: Hub,
+  name: string,
+): Promise<Response> {
+  const prefetched = page.waitForResponse(
+    (response) =>
+      isPartialFor(response.url(), hub.pathname(name)) &&
+      isIntent(response.request()),
+    { timeout: 20_000 },
+  );
   await page.mouse.move(0, 0);
-  await byId(page, `pf-link-${name}`).hover();
+  await byId(page, `pf-hover-${name}`).hover();
   const response = await prefetched;
   await response.finished();
   await page.mouse.move(0, 0);
@@ -237,7 +291,12 @@ async function holdFills(
   };
 }
 
-export type PrefetchFalseRequestKind = "prefetch" | "fill" | "navigation";
+/** `prefetch` is a speculative prefetch, `intent` a hover's (R16). */
+export type PrefetchFalseRequestKind =
+  | "prefetch"
+  | "intent"
+  | "fill"
+  | "navigation";
 
 function kindsOf(requests: Request[]): PrefetchFalseRequestKind[] {
   return requests.map((request) =>
@@ -245,7 +304,9 @@ function kindsOf(requests: Request[]): PrefetchFalseRequestKind[] {
       ? "fill"
       : isPrefetch(request)
         ? "prefetch"
-        : "navigation",
+        : isIntent(request)
+          ? "intent"
+          : "navigation",
   );
 }
 
@@ -1035,6 +1096,16 @@ async function recordInFlightPair(
     const before = await hub.counts();
     const requests = recordPartials(page, hub.pathname(name));
     const near = await farAway(page, IN_FLIGHT_LATENCY_MS);
+    // A speculative prefetch: a hover's would defer nothing. Armed before
+    // the watch and the click listener below, which the arm's own clicks
+    // would set.
+    let leftAt = 0;
+    if (inFlight) {
+      await armCase(page, name, async () => {
+        await expect.poll(() => requests.length, "the prefetch left").toBe(1);
+        leftAt = Date.now();
+      });
+    }
     const watch = await watchPage(page, ["pf-layout"]);
     await page.evaluate(() =>
       document.addEventListener(
@@ -1047,10 +1118,9 @@ async function recordInFlightPair(
       ),
     );
     if (inFlight) {
-      await page.mouse.move(0, 0);
-      await byId(page, `pf-link-${name}`).hover();
-      await expect.poll(() => requests.length, "the prefetch left").toBe(1);
-      await page.waitForTimeout(IN_FLIGHT_CLICK_AFTER_MS);
+      await page.waitForTimeout(
+        Math.max(0, IN_FLIGHT_CLICK_AFTER_MS - (Date.now() - leftAt)),
+      );
     }
     await clickWithoutHover(page, name);
     await expect(page).toHaveURL(hub.pageUrl(name));
@@ -1283,7 +1353,7 @@ async function watchHttpCache(
 /**
  * How long the document reloaded below keeps streaming: its loader takes
  * this much longer. The browser prefers its own copies until that document
- * has loaded, so the hover and the click have this long to happen.
+ * has loaded, so the prefetch and the click have this long to happen.
  */
 const RELOAD_STREAMS_MS = 5000;
 
@@ -1293,7 +1363,7 @@ const RELOAD_STREAMS_MS = 5000;
  * the same, and while it reloads a document for back/forward it answers
  * from what it has without asking the server.
  *
- * - `"prefetch"`: the same prefetch, hovered during that reload, is answered
+ * - `"prefetch"`: the same prefetch, armed during that reload, is answered
  *   from the browser's copy. The click completes it as it completes one the
  *   server answered: one fill, the flagged work once.
  * - `"click"`: a click with no prefetch is a navigation. `Vary` names the
@@ -1821,7 +1891,7 @@ export interface PrefetchFalseElsewhereCase extends PrefetchFalseFlags {
   heldWork: string[];
   /**
    * The hub's prefetch has not answered when the click happens: the reader
-   * went back to the hub, hovered the link and went forward again.
+   * went back to the hub, armed the link and went forward again.
    */
   inFlight?: boolean;
 }
@@ -1878,11 +1948,11 @@ export async function expectPrefetchThatDeferredStaysWithItsPage(
         await route.continue().catch(() => {});
       },
     );
-    await byId(page, `pf-link-${name}`).hover();
-    await expect
-      .poll(() => requests.length, "the hub's prefetch is in flight")
-      .toBe(1);
-    await page.mouse.move(0, 0);
+    await armCase(page, name, () =>
+      expect
+        .poll(() => requests.length, "the hub's prefetch is in flight")
+        .toBe(1),
+    );
     await page.goForward();
     await expect(byId(page, `pf-${from}-value`)).toBeVisible();
     await expect(page).toHaveURL(hub.pageUrl(from));
@@ -2213,6 +2283,11 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
   deferredFallbacks?: string[];
   /** How many view transitions the plain click starts, where a case pins it. */
   viewTransitions?: number;
+  /**
+   * The destination is prefetched by a hover: an intent prefetch, which
+   * defers nothing (R16), so the adopted click sends no fill.
+   */
+  hover?: boolean;
   /**
    * A clientUrls() click inside its group. Both clicks present the
    * destination at the click (client-urls/navigation.ts), so the plain click
@@ -2566,6 +2641,16 @@ const OUTSIDE_SECTION: Array<
   { afterBack: true },
 ];
 
+/**
+ * The clicks from the hub that are also made after a hover: a flagged
+ * loader, a flagged loading() and a read with no boundary. None is below the
+ * section layout, whose skeleton (layoutSkeleton) only a deferring prefetch
+ * shows. Nor is a unit under transition(): there the hovered click commits
+ * the whole page in one view transition where the plain click animates its
+ * fallback first, and the parity rule wants as many animated changes.
+ */
+const HOVER_CLICKS = ["loader", "unit", "bare"];
+
 /** The clicks from the hub that are also made with the server `FAR_SERVER_MS` away. */
 const LATENCY_CLICKS = [
   "loader",
@@ -2684,6 +2769,15 @@ export const PREFETCH_FALSE_PARITY_CASES: PrefetchFalseParityCase[] = [
     },
   ]),
   ...HEAD_HELD_CLICKS,
+  // A hover's prefetch runs the flagged work (R16): the click it serves
+  // sends nothing and commits from it, with no fill to wait for, and is
+  // never worse than a plain click either.
+  ...PARITY_CLICKS.filter(
+    (spec) => !spec.from && HOVER_CLICKS.includes(spec.name),
+  ).flatMap(({ commitsWithFill: _, ...spec }) => [
+    { ...spec, hover: true },
+    { ...spec, hover: true, slow: true },
+  ]),
 ].map((spec: PrefetchFalseParityCase) => {
   const skeleton = layoutSkeleton(spec);
   return { server: SERVER_MS, ...spec, ...(skeleton && { skeleton }) };
@@ -2695,6 +2789,7 @@ export function prefetchFalseParityTitle(
 ): string {
   return [
     `${spec.from ?? "hub"}${spec.afterBack ? " after back" : ""} to ${spec.name}`,
+    spec.hover && "hovered",
     spec.prefetchedOn && "prefetched on the hub",
     spec.delay && `loaders ${spec.delay} ms slower`,
     spec.slow && "slow loaders",
@@ -2924,6 +3019,11 @@ export async function expectAdoptedClickIsNeverWorseThanAPlainClick(
     "work",
     !spec.prefetchedOn || adopted.requests.join() === plain.requests.join(),
     "a prefetch made on another page was adopted",
+  );
+  check(
+    "work",
+    !spec.hover || adopted.requests.length === 0,
+    `a hover's prefetch was adopted with more requests: ${adopted.requests.join(", ")}`,
   );
   const away = (spec.server ?? 0) + (spec.latency ?? 0);
   // A server delay that reached neither click would pass every comparison.
@@ -3304,9 +3404,10 @@ export async function recordPlainAndAdoptedClick(
       await complete(page);
     }
     const early = prefetched && spec.prefetchedOn === "hub";
-    if (early) await prefetchCase(page, hub, spec.name);
+    const prefetchDestination = spec.hover ? hoverCase : prefetchCase;
+    if (early) await prefetchDestination(page, hub, spec.name);
     if (spec.from) {
-      // Its own link, already prefetched: a second hover sends nothing.
+      // Its own link, already prefetched: a second arm sends nothing.
       if (!(early && ownLink)) await prefetchCase(page, hub, spec.from);
       await clickWithoutHover(page, spec.from);
       await expect(
@@ -3317,7 +3418,7 @@ export async function recordPlainAndAdoptedClick(
       await expect(page).toHaveURL(hub.pageUrl(spec.from));
       await complete(page);
     }
-    if (prefetched && !early) await prefetchCase(page, hub, spec.name);
+    if (prefetched && !early) await prefetchDestination(page, hub, spec.name);
     const before = await hub.counts();
     const requests = recordPartials(page, hub.pathname(spec.name));
     const near = spec.latency ? await farAway(page, spec.latency) : undefined;
@@ -4255,6 +4356,147 @@ const IX_PARITY_CLICKS: PrefetchFalseParityCase[] = [
   },
 ];
 
+/**
+ * R16: a hover is intent to click. Its prefetch is the full request the
+ * navigation would send, only earlier: the flagged work runs in it, the
+ * response is answered like a navigation (no source scope, no
+ * `private, no-cache`), and the click that adopts it commits the whole page
+ * with no fill.
+ */
+export async function expectHoverPrefetchRunsFlaggedWorkAndClickSendsNoFill(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  spec: PrefetchFalseCase,
+): Promise<void> {
+  const { name } = spec;
+  const work = [
+    ...(spec.deferred ?? [`${name}.data`]),
+    ...(spec.prefetched ?? []),
+  ];
+  const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname(name));
+
+  const response = await hoverCase(page, hub, name);
+  expect(
+    response.headers()["x-rsc-prefetch-scope"] ?? null,
+    "a whole answer is for every source page",
+  ).toBe(null);
+  expect(
+    response.headers()["cache-control"] ?? null,
+    "and is not marked as one nothing may reuse",
+  ).toBe(null);
+  const afterPrefetch = await hub.counts();
+  expect(pick(afterPrefetch, work), "the hover's prefetch ran it all").toEqual(
+    Object.fromEntries(work.map((counter) => [counter, 1])),
+  );
+
+  const watch = await watchPage(page, ["pf-layout"]);
+  await clickWithoutHover(page, name);
+  await expect(page).toHaveURL(hub.pageUrl(name));
+  await expect(byId(page, `pf-${name}-value`)).toHaveText(`${name}.data:1`);
+  await complete(page);
+  const seen = await watch.stop();
+  expect(seen.fallbacks, "no fallback showed").toEqual([]);
+  expect(kindsOf(requests), "one intent prefetch, and nothing else").toEqual([
+    "intent",
+  ]);
+  expect(pick(await hub.counts(), work), "the click ran nothing again").toEqual(
+    pick(afterPrefetch, work),
+  );
+}
+
+/**
+ * A hover over a link whose speculative prefetch is cached, or still in
+ * flight, sends nothing: that prefetch is used as it is, holes included, and
+ * the click fills them as before. No second render, no upgrade.
+ */
+export async function expectHoverOverASpeculativePrefetchUsesIt(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+  inFlight: boolean,
+): Promise<void> {
+  const name = "loader";
+  const hub = await openHub(page, fixture);
+  const requests = recordPartials(page, hub.pathname(name));
+  const held = latch();
+  if (inFlight) {
+    await page.route(
+      (url) => isPartialFor(url.href, hub.pathname(name)),
+      async (route) => {
+        if (isPrefetch(route.request())) await held.opened;
+        await route.continue().catch(() => {});
+      },
+    );
+    await armCase(page, name, () =>
+      expect.poll(() => requests.length, "the prefetch left").toBe(1),
+    );
+  } else {
+    await prefetchCase(page, hub, name);
+  }
+
+  await page.mouse.move(0, 0);
+  await byId(page, `pf-hover-${name}`).hover();
+  await page.waitForTimeout(300);
+  await page.mouse.move(0, 0);
+  expect(kindsOf(requests), "the hover sent nothing").toEqual(["prefetch"]);
+  if (inFlight) {
+    const prefetched = page.waitForResponse(
+      (response) =>
+        isPartialFor(response.url(), hub.pathname(name)) &&
+        isPrefetch(response.request()),
+    );
+    held.open();
+    await (await prefetched).finished();
+  }
+  expect((await hub.counts())["loader.data"] ?? 0).toBe(0);
+
+  await clickWithoutHover(page, name);
+  await expect(byId(page, "pf-loader-value")).toHaveText("loader.data:1");
+  await complete(page);
+  expect(kindsOf(requests), "the click filled the holes").toEqual([
+    "prefetch",
+    "fill",
+  ]);
+  expect((await hub.counts())["loader.data"]).toBe(1);
+}
+
+/**
+ * A hover from an intercept's source page: its prefetch resolves the
+ * intercept and runs the modal's flagged loader, and the click that opens
+ * the modal sends no fill.
+ */
+export async function expectInterceptHoverRunsTheFlaggedLoader(
+  page: Page,
+  fixture: PrefetchFalseFixture,
+): Promise<void> {
+  const hub = await openSource(page, fixture);
+  const requests = recordPartials(page, hub.pathname("ix/item/1"));
+  const response = await hoverCase(page, hub, "ix/item/1");
+  expect(
+    response.headers()["x-rsc-prefetch-scope"],
+    "an intercept's answer is for its source page",
+  ).toBe("source");
+  expect(
+    pick(await hub.counts(), IX_ITEM_WORK),
+    "the hover's prefetch ran the modal and both loaders",
+  ).toEqual({ "ix-item.a": 1, "ix-item.data": 1, "ix-item.modal": 1 });
+
+  await clickWithoutHover(page, "ix/item/1");
+  await expect(page).toHaveURL(hub.pageUrl("ix/item/1"));
+  await expect(byId(page, "pf-ix-item-value")).toHaveText("ix-item.data:1");
+  await complete(page);
+  await expect(
+    byId(page, "pf-ix-page"),
+    "the source stays under the modal",
+  ).toBeVisible();
+  expect(kindsOf(requests)).toEqual(["intent"]);
+  expect(pick(await hub.counts(), IX_ITEM_WORK)).toEqual({
+    "ix-item.a": 1,
+    "ix-item.data": 1,
+    "ix-item.modal": 1,
+  });
+}
+
 export function definePrefetchFalseTests(
   test: typeof base,
   suite: PrefetchFalseSuite,
@@ -4580,6 +4822,31 @@ export function definePrefetchFalseTests(
   it("control: a route with no flag is prefetched whole and the click sends nothing", (page, fixture) =>
     expectUnflaggedRouteIsPrefetchedWhole(page, fixture));
 
+  // R16: a hover is intent to click, and its prefetch defers nothing.
+  const hovered: PrefetchFalseCase[] = [
+    { name: "loader", prefetched: ["loader.price", "loader.handler"] },
+    { name: "unit", deferred: ["unit.data", "unit.handler"] },
+    {
+      name: "section",
+      deferred: ["section.data", "section.handler", "section.layout"],
+    },
+    { name: "bare" },
+  ];
+  for (const spec of hovered) {
+    it(`a hover prefetch runs the flagged work and the click sends no fill: ${spec.name}`, (page, fixture) =>
+      expectHoverPrefetchRunsFlaggedWorkAndClickSendsNoFill(
+        page,
+        fixture,
+        spec,
+      ));
+  }
+
+  it("a hover over a link whose speculative prefetch is cached sends nothing, and the click fills it", (page, fixture) =>
+    expectHoverOverASpeculativePrefetchUsesIt(page, fixture, false));
+
+  it("a hover over a link whose speculative prefetch is in flight sends nothing, and the click fills it", (page, fixture) =>
+    expectHoverOverASpeculativePrefetchUsesIt(page, fixture, true));
+
   it("a deferring prefetch the browser kept answers the same prefetch during a back/forward reload, and the click completes it", (page, fixture) =>
     expectDeferringPrefetchTheBrowserKeptIsHarmless(page, fixture, "prefetch"));
 
@@ -4589,6 +4856,9 @@ export function definePrefetchFalseTests(
   // intercept(): loaders of a modal opened from its source page.
   it("intercept(): a prefetch from the source skips the flagged loader and the click fills it", (page, fixture) =>
     expectInterceptPrefetchSkipsFlaggedLoaderAndClickFillsIt(page, fixture));
+
+  it("intercept(): a hover from the source runs the flagged loader and the click sends no fill", (page, fixture) =>
+    expectInterceptHoverRunsTheFlaggedLoader(page, fixture));
 
   for (const name of ["ix/item/1", "ix/bare/1", "ix/plain/1"] as const) {
     for (const prefetched of [true, false]) {

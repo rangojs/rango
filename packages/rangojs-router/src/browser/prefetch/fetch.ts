@@ -42,7 +42,7 @@ import { shouldPrefetch } from "./policy.js";
 import { debugLog, IS_BROWSER_DEBUG } from "../logging.js";
 import { teeWithCompletion, isForeignRouterId } from "../response-adapter.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../../segment-fragments.js";
-import { PREFETCH_HEADER } from "../../prefetch-markers.js";
+import { PREFETCH_HEADER, PREFETCH_INTENT } from "../../prefetch-markers.js";
 import type { RscPayload } from "../types.js";
 import {
   getCommittedPage,
@@ -251,6 +251,13 @@ function executePrefetchFetch(
   forceSourceScope: boolean,
   /** Rango state captured once by the caller (keys + header share one read). */
   rangoState: string,
+  /**
+   * An intent prefetch (prefetchDirect: hover, `prefetch()`): sent as
+   * PREFETCH_INTENT so the server defers nothing, as in the navigation it
+   * starts early. A speculative one (prefetchQueued) sends `1` and lets the
+   * server defer `prefetch: false` work (docs/design/prefetch-false.md, R16).
+   */
+  intent: boolean,
   expectedRouterId?: string,
   signal?: AbortSignal,
 ): Promise<DecodedPrefetch | null> {
@@ -317,7 +324,7 @@ function executePrefetchFetch(
     headers: {
       "X-Rango-State": rangoState,
       "X-RSC-Router-Client-Path": window.location.href,
-      [PREFETCH_HEADER]: "1",
+      [PREFETCH_HEADER]: intent ? PREFETCH_INTENT : "1",
       ...(isFragmentPassthroughEnabled() && {
         [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
       }),
@@ -503,7 +510,14 @@ function hasPrefetchHit(
 
 /**
  * Prefetch (direct): fetch with low priority and store in in-memory cache.
- * Used by hover strategy -- fires immediately without queueing.
+ * Used by hover (on hover and viewport links, and delegated anchors) and
+ * useRouter().prefetch() -- fires immediately without queueing.
+ *
+ * An intent prefetch: the visitor is about to click, so it asks for the full
+ * response the navigation would get, `prefetch: false` loaders and flagged
+ * `loading()` work included. It runs only on a miss: a cached prefetch or one
+ * in flight, even a speculative one that deferred work, is used as it is,
+ * and its click sends the fill as before (docs/design/prefetch-false.md, R16).
  *
  * By default the wildcard key (Rango-state-keyed) is used for inflight
  * dedup and for responses that are not source-sensitive; source-scoped
@@ -570,13 +584,15 @@ export function prefetchDirect(
     targetUrl,
     forceSourceScope,
     rangoState,
+    true,
     routerId,
   );
 }
 
 /**
  * Prefetch (queued): goes through the concurrency-limited queue.
- * Used by viewport/render strategies to avoid flooding the server.
+ * Used by viewport/render strategies to avoid flooding the server. A
+ * speculative prefetch: the server defers `prefetch: false` work in it.
  * Returns the inflight key (wildcard by default, source-scoped when
  * `prefetchKey=":source"` is passed).
  */
@@ -641,6 +657,7 @@ export function prefetchQueued(
       targetUrl,
       forceSourceScope,
       rangoState,
+      false,
       routerId,
       signal,
     ).then(() => {});

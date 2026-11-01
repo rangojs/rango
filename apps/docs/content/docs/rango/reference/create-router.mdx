@@ -294,7 +294,7 @@ Plain anchors follow these rules:
 
 To disable speculative work for a whole DOM subtree, set `data-prefetch-scope="false"` or `data-prefetch-scope="none"` on its container. It is a hard boundary for both `<Link>` and plain anchors: descendant `prefetch` props, `data-prefetch="true"`, and custom delegated eligibility callbacks cannot override it, while clicks still navigate normally. Scope changes re-evaluate only descendant plain anchors and mounted viewport/render Links, through one shared document-level observer. Adding a scope stops future triggers and pending observer or idle work but cannot recall work already queued or in flight; removing it re-arms both Links and plain anchors.
 
-Speculative requests carry the `X-Rango-Prefetch: 1` header, so middleware and loaders with side effects (cookies, counters, audit logs) can detect and skip them.
+Every prefetch request carries the `X-Rango-Prefetch` header, so middleware and loaders with side effects (cookies, counters, audit logs) can detect and skip them. Its value says which kind: `1` for a speculative prefetch (viewport, render), `intent` for a hover or `router.prefetch()`. Test for the header's presence, not for `=== "1"`: an `intent` prefetch is the navigation sent early and runs everything, `prefetch: false` loaders included, so a check on `"1"` alone runs side effects on every hover.
 
 ### prefetchCacheTTL, prefetchCacheSize, prefetchConcurrency
 

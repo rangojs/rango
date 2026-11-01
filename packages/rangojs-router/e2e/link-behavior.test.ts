@@ -71,7 +71,7 @@ test.describe("link-behavior", () => {
       (req) =>
         req.url().includes("/blog") &&
         req.url().includes("_rsc_partial") &&
-        req.headers()["x-rango-prefetch"] === "1",
+        req.headers()["x-rango-prefetch"] === "intent",
       { timeout: 5000 },
     );
 
@@ -80,7 +80,7 @@ test.describe("link-behavior", () => {
 
     const prefetchReq = await prefetchPromise;
     expect(prefetchReq.url()).toContain("_rsc_partial");
-    expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("1");
+    expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("intent");
   });
 
   test("prefetch hover then navigate serves the click from the in-memory prefetch; a new document's prefetch reaches the server", async ({
@@ -238,7 +238,7 @@ test.describe("link-behavior", () => {
       (req) =>
         req.url().includes("/blog/post-4") &&
         req.url().includes("_rsc_partial") &&
-        req.headers()["x-rango-prefetch"] === "1",
+        req.headers()["x-rango-prefetch"] === "intent",
       { timeout: 5000 },
     );
 
@@ -246,7 +246,7 @@ test.describe("link-behavior", () => {
 
     const prefetchReq = await prefetchPromise;
     expect(prefetchReq.url()).toContain("_rsc_partial");
-    expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("1");
+    expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("intent");
   });
 });
 
@@ -308,7 +308,7 @@ test.describe("link-behavior (production)", () => {
       (req) =>
         req.url().includes("/blog") &&
         req.url().includes("_rsc_partial") &&
-        req.headers()["x-rango-prefetch"] === "1",
+        req.headers()["x-rango-prefetch"] === "intent",
       { timeout: 5000 },
     );
 
@@ -316,7 +316,7 @@ test.describe("link-behavior (production)", () => {
 
     const prefetchReq = await prefetchPromise;
     expect(prefetchReq.url()).toContain("_rsc_partial");
-    expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("1");
+    expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("intent");
   });
 
   test("prefetch hover then navigate serves the click from the in-memory prefetch; a new document's prefetch reaches the server", async ({
@@ -466,7 +466,7 @@ test.describe("link-behavior (production)", () => {
       (req) =>
         req.url().includes("/blog/post-4") &&
         req.url().includes("_rsc_partial") &&
-        req.headers()["x-rango-prefetch"] === "1",
+        req.headers()["x-rango-prefetch"] === "intent",
       { timeout: 5000 },
     );
 
@@ -474,6 +474,6 @@ test.describe("link-behavior (production)", () => {
 
     const prefetchReq = await prefetchPromise;
     expect(prefetchReq.url()).toContain("_rsc_partial");
-    expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("1");
+    expect(prefetchReq.headers()["x-rango-prefetch"]).toBe("intent");
   });
 });
