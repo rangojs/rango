@@ -344,15 +344,11 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(testId(page, "cui-index")).toBeVisible();
   });
 
-  test("clientUrls(): an in-group prefetch of an intercept target defers the flagged intercept loader", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-    await page.goto(f.url("/__client-urls-intercept"));
-    await waitForHydration(page);
-    await using __ = await expectNoReload(page);
-
-    const target = "/__client-urls-intercept/note/b";
+  /** The target's partial requests, by kind, and the fill's intercept source. */
+  function recordInterceptRequests(
+    page: Page,
+    target: string,
+  ): { kinds: string[]; fillSource: () => string | null } {
     const kinds: string[] = [];
     let fillSource: string | null = null;
     page.on("request", (request) => {
@@ -363,18 +359,72 @@ function runClientUrlsSpec(f: Fixture): void {
       if (url.searchParams.has("_rsc_fill")) {
         kinds.push("fill");
         fillSource = request.headers()["x-rsc-router-intercept-source"] ?? "";
-      } else {
-        kinds.push(
-          request.headers()["x-rango-prefetch"] === "1"
-            ? "prefetch"
-            : "navigation",
-        );
+        return;
       }
+      const prefetch = request.headers()["x-rango-prefetch"];
+      kinds.push(
+        prefetch === "1"
+          ? "prefetch"
+          : prefetch === "intent"
+            ? "intent"
+            : "navigation",
+      );
     });
+    return { kinds, fillSource: () => fillSource };
+  }
+
+  test("clientUrls(): an in-group speculative prefetch of an intercept target defers the flagged intercept loader", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/__client-urls-intercept"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const target = "/__client-urls-intercept/note/b";
+    const { kinds, fillSource } = recordInterceptRequests(page, target);
     const prefetched = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === target &&
         response.request().headers()["x-rango-prefetch"] === "1",
+    );
+    // A render link's prefetch, as a viewport link sends it: a hover's would
+    // defer nothing. Unmounted once received.
+    await testId(page, "cui-note-arm").click();
+    await (await prefetched).finished();
+    await testId(page, "cui-note-arm").click();
+    await expect(testId(page, "cui-note-arm")).toHaveAttribute(
+      "data-armed",
+      "false",
+    );
+
+    await testId(page, "cui-note-prefetch-link").click();
+    await expect(testId(page, "cui-modal")).toBeVisible();
+    await expect(testId(page, "cui-modal-note-runs")).toBeVisible();
+    await expect(testId(page, "cui-index")).toBeVisible();
+    // The prefetch deferred the flagged loader; the click's one fill, from
+    // the intercept's source, ran it.
+    expect(kinds).toEqual(["prefetch", "fill"]);
+    const source = fillSource();
+    expect(source && new URL(source, f.url("/")).href).toBe(
+      f.url("/__client-urls-intercept"),
+    );
+  });
+
+  test("clientUrls(): an in-group hover prefetch of an intercept target runs the flagged intercept loader, and the click sends no fill", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/__client-urls-intercept"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const target = "/__client-urls-intercept/note/b";
+    const { kinds } = recordInterceptRequests(page, target);
+    const prefetched = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === target &&
+        response.request().headers()["x-rango-prefetch"] === "intent",
     );
     await testId(page, "cui-note-prefetch-link").hover();
     await (await prefetched).finished();
@@ -384,12 +434,9 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(testId(page, "cui-modal")).toBeVisible();
     await expect(testId(page, "cui-modal-note-runs")).toBeVisible();
     await expect(testId(page, "cui-index")).toBeVisible();
-    // The prefetch deferred the flagged loader; the click's one fill, from
-    // the intercept's source, ran it.
-    expect(kinds).toEqual(["prefetch", "fill"]);
-    expect(fillSource && new URL(fillSource, f.url("/")).href).toBe(
-      f.url("/__client-urls-intercept"),
-    );
+    // A hover is intent to click: its prefetch ran the flagged loader with
+    // the modal, and the click adopted it whole.
+    expect(kinds).toEqual(["intent"]);
   });
 
   test("revalidate(true) re-runs a group loader where the default holds; revalidate(false) holds where the default re-runs", async ({

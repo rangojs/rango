@@ -492,6 +492,7 @@ export async function createMatchContextForPartial<TEnv>(
     snapshot.entries,
     partialDeferralMode({
       fill: kind === "fill",
+      // Speculative only: an intent prefetch defers nothing.
       prefetch: kind === "prefetch",
       method: request.method,
       isAction,

@@ -370,9 +370,11 @@ export const Link: ForwardRefExoticComponent<
         (!isHashOnlyNavigation(element) && !isPrefetchScopeDisabled(element)))
     ) {
       // For "hover", this is the primary prefetch trigger.
-      // For "viewport", this upgrades/prioritizes a potentially queued
-      // prefetch — prefetchDirect bypasses the queue, and hasPrefetch
-      // deduplicates if the viewport prefetch already completed.
+      // For "viewport", this prioritizes a potentially queued prefetch:
+      // prefetchDirect bypasses the queue, and its dedupe skips it when the
+      // viewport prefetch is cached or in flight. Either way it is an intent
+      // prefetch, which defers no `prefetch: false` work
+      // (docs/design/prefetch-false.md, R16).
       const segmentState = ctx.store.getSegmentState();
       prefetchDirect(
         resolvedTo,

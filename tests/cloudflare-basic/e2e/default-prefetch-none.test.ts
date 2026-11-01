@@ -20,7 +20,7 @@ function isPrefetchRuntimeRequest(url: string): boolean {
  *      prefetches because the resolved router default is "none".
  *   2. A per-Link strategy still opts in; manual mode only changes the fallback.
  *
- * Every speculative prefetch carries the X-Rango-Prefetch header
+ * Every prefetch, speculative or intent, carries the X-Rango-Prefetch header
  * (browser/prefetch/fetch.ts), which is what both tests key on.
  */
 

@@ -51,7 +51,7 @@ function isRscRequestFor(url: string, pathname: string): boolean {
 function isClickRequestFor(request: Request, pathname: string): boolean {
   return (
     isRscRequestFor(request.url(), pathname) &&
-    request.headers()["x-rango-prefetch"] !== "1"
+    request.headers()["x-rango-prefetch"] === undefined
   );
 }
 

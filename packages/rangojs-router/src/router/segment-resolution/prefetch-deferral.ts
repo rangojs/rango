@@ -37,23 +37,36 @@ import {
 import { requestHeaders } from "../../server/request-headers.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
-import { PREFETCH_HEADER } from "../../prefetch-markers.js";
+import { PREFETCH_HEADER, PREFETCH_INTENT } from "../../prefetch-markers.js";
 import { WIRE } from "../../wire-params.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
 
 /**
  * What a request says it is, read once when its context is created
  * (RequestContext._requestKind). A fill is marked on the raw URL and wins
- * over the prefetch header. Whether a prefetch defers anything is decided per
- * match, by partialDeferralMode: a shell capture inherits the context of the
- * request that scheduled it and is never a prefetch.
+ * over the prefetch header. `"prefetch"` is a speculative prefetch (viewport,
+ * render) and `"intent"` a hover or an explicit `prefetch()` call
+ * (PREFETCH_INTENT): both are prefetches, and only the first defers. Whether
+ * a prefetch defers anything is decided per match, by partialDeferralMode: a
+ * shell capture inherits the context of the request that scheduled it and is
+ * never a prefetch.
  */
 export function requestKind(
   request: Request,
   rawUrl: URL,
-): "prefetch" | "fill" | undefined {
+): RequestKind | undefined {
   if (rawUrl.searchParams.has(WIRE.fill)) return "fill";
-  return requestHeaders(request).has(PREFETCH_HEADER) ? "prefetch" : undefined;
+  const prefetch = requestHeaders(request).get(PREFETCH_HEADER);
+  if (prefetch === null) return undefined;
+  return prefetch === PREFETCH_INTENT ? "intent" : "prefetch";
+}
+
+/** requestKind's answer for a marked request. */
+export type RequestKind = "prefetch" | "intent" | "fill";
+
+/** A prefetch of either kind: speculative or intent. */
+export function isPrefetchKind(kind: RequestKind | undefined): boolean {
+  return kind === "prefetch" || kind === "intent";
 }
 
 /** Static, per matched chain. */
@@ -304,7 +317,9 @@ export function resolveInterceptDeferralScope(
 
 /**
  * Which half of the feature a partial request is, if either (`fill` and
- * `prefetch` are requestKind's answer). Both halves are GETs: a request of
+ * `prefetch` are requestKind's answer). `prefetch` is a speculative prefetch
+ * only: an intent prefetch defers nothing, like the navigation it starts
+ * early (R16). Both halves are GETs: a request of
  * another method that carries either marker is a normal request. A prefetch
  * defers only on a plain GET navigation: an action re-renders what it
  * changed, and a shell capture is never a prefetch whatever the request that

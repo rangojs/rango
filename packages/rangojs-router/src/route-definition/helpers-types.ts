@@ -333,9 +333,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * loader(RecommendationsLoader),  // still streams behind loading()
    * ```
    *
-   * Pass `{ prefetch: false }` to keep the loader out of prefetches: a
-   * prefetch skips it and the click that adopts the prefetch fetches it in
-   * one follow-up request (see {@link LoaderOptions}). Only on a segment the
+   * Pass `{ prefetch: false }` to keep the loader out of speculative
+   * prefetches (viewport, render): such a prefetch skips it and the click
+   * that adopts it fetches it in one follow-up request; a hover prefetch runs
+   * it (see {@link LoaderOptions}). Only on a segment the
    * client does not have yet: a loader the client already holds runs in the
    * prefetch when it revalidates.
    *
@@ -361,14 +362,16 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * // Skip loading on SSR, only show on client navigation
    * loading(<Skeleton />, { ssr: false })
    *
-   * // Keep everything behind this fallback out of prefetches
+   * // Keep everything behind this fallback out of viewport and render
+   * // prefetches (a hover prefetch runs it)
    * loading(<Skeleton />, { prefetch: false })
    * ```
    * @param component - The loading UI to show during navigation
    * @param options - Configuration options
    * @param options.ssr - If false, skip showing loading on document requests (SSR)
    * @param options.prefetch - If false, the flag applies when this entry's
-   *   segment is new to the client. A prefetch then skips the whole unit: the
+   *   segment is new to the client. A viewport or render prefetch then skips
+   *   the whole unit (a hover prefetch runs it): the
    *   handler, its loaders, its orphan layouts and parallel slots and, for a
    *   layout, every deeper entry; the click that adopts the prefetch shows
    *   this fallback and fetches them in one follow-up request, which reads

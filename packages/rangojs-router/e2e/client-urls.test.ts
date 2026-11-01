@@ -421,15 +421,11 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "ci-index")).toBeVisible();
   });
 
-  test("clientUrls(): an in-group prefetch of an intercept target defers the flagged intercept loader", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-    await page.goto(f.url("/client-urls-intercept"));
-    await waitForHydration(page);
-    await using __ = await expectNoReload(page);
-
-    const target = "/client-urls-intercept/detail/delta";
+  /** The target's partial requests, by kind, and the fill's intercept source. */
+  function recordInterceptRequests(
+    page: Page,
+    target: string,
+  ): { kinds: string[]; fillSource: () => string | null } {
     const kinds: string[] = [];
     let fillSource: string | null = null;
     page.on("request", (request) => {
@@ -440,18 +436,72 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
       if (url.searchParams.has("_rsc_fill")) {
         kinds.push("fill");
         fillSource = request.headers()["x-rsc-router-intercept-source"] ?? "";
-      } else {
-        kinds.push(
-          request.headers()["x-rango-prefetch"] === "1"
-            ? "prefetch"
-            : "navigation",
-        );
+        return;
       }
+      const prefetch = request.headers()["x-rango-prefetch"];
+      kinds.push(
+        prefetch === "1"
+          ? "prefetch"
+          : prefetch === "intent"
+            ? "intent"
+            : "navigation",
+      );
     });
+    return { kinds, fillSource: () => fillSource };
+  }
+
+  test("clientUrls(): an in-group speculative prefetch of an intercept target defers the flagged intercept loader", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/client-urls-intercept"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const target = "/client-urls-intercept/detail/delta";
+    const { kinds, fillSource } = recordInterceptRequests(page, target);
     const prefetched = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === target &&
         response.request().headers()["x-rango-prefetch"] === "1",
+    );
+    // A render link's prefetch, as a viewport link sends it: a hover's would
+    // defer nothing. Unmounted once received.
+    await testId(page, "ci-detail-arm").click();
+    await (await prefetched).finished();
+    await testId(page, "ci-detail-arm").click();
+    await expect(testId(page, "ci-detail-arm")).toHaveAttribute(
+      "data-armed",
+      "false",
+    );
+
+    await testId(page, "ci-detail-prefetch-link").click();
+    await expect(testId(page, "ci-client-modal")).toBeVisible();
+    await expect(testId(page, "ci-modal-note-runs")).toBeVisible();
+    await expect(testId(page, "ci-index")).toBeVisible();
+    // The prefetch deferred the flagged loader; the click's one fill, from
+    // the intercept's source, ran it.
+    expect(kinds).toEqual(["prefetch", "fill"]);
+    const source = fillSource();
+    expect(source && new URL(source, f.url("/")).href).toBe(
+      f.url("/client-urls-intercept"),
+    );
+  });
+
+  test("clientUrls(): an in-group hover prefetch of an intercept target runs the flagged intercept loader, and the click sends no fill", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/client-urls-intercept"));
+    await waitForHydration(page);
+    await using __ = await expectNoReload(page);
+
+    const target = "/client-urls-intercept/detail/delta";
+    const { kinds } = recordInterceptRequests(page, target);
+    const prefetched = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === target &&
+        response.request().headers()["x-rango-prefetch"] === "intent",
     );
     await testId(page, "ci-detail-prefetch-link").hover();
     await (await prefetched).finished();
@@ -461,12 +511,9 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "ci-client-modal")).toBeVisible();
     await expect(testId(page, "ci-modal-note-runs")).toBeVisible();
     await expect(testId(page, "ci-index")).toBeVisible();
-    // The prefetch deferred the flagged loader; the click's one fill, from
-    // the intercept's source, ran it.
-    expect(kinds).toEqual(["prefetch", "fill"]);
-    expect(fillSource && new URL(fillSource, f.url("/")).href).toBe(
-      f.url("/client-urls-intercept"),
-    );
+    // A hover is intent to click: its prefetch ran the flagged loader with
+    // the modal, and the click adopted it whole.
+    expect(kinds).toEqual(["intent"]);
   });
 
   test("action revalidates the clientUrls group's loaders; parent RSC layout keeps the locked skip", async ({

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { clientUrls, Link, useLoader, useOutlet } from "@rangojs/router/client";
 import { clientUrlsResultAction } from "./actions.js";
 import {
@@ -40,7 +40,37 @@ function InterceptIndex(): ReactNode {
       >
         Open note (prefetched)
       </Link>
+      <InterceptArm to="/__client-urls-intercept/note/b" />
     </div>
+  );
+}
+
+/**
+ * cui-note-arm: a click mounts a hidden render link to the note, a
+ * speculative prefetch (`X-Rango-Prefetch: 1`) that defers the modal's
+ * flagged loader; the next click unmounts it. A hover over the link above
+ * sends an intent prefetch instead, which defers nothing.
+ */
+function InterceptArm({ to }: { to: string }): ReactNode {
+  const [armed, setArmed] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="cui-note-arm"
+        data-armed={String(armed)}
+        onClick={() => setArmed((on) => !on)}
+      >
+        Prefetch as a viewport link would
+      </button>
+      {armed && (
+        <span hidden>
+          <Link to={to} prefetch="render">
+            armed
+          </Link>
+        </span>
+      )}
+    </>
   );
 }
 

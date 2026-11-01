@@ -13,6 +13,7 @@ import {
 } from "../components/PrefetchFalseCounts.js";
 import { PrefetchFalseNotes } from "../components/PrefetchFalseNotes.js";
 import {
+  PrefetchFalseArm,
   PrefetchFalseInstance,
   PrefetchFalseInvalidate,
   PrefetchFalseNav,
@@ -29,14 +30,20 @@ import {
 } from "../prefetch-false-counts.js";
 
 // `prefetch: false` (docs/design/prefetch-false.md): one page per case, all
-// behind one hub layout whose links prefetch on hover only, so a suite decides
-// when the prefetch happens. Every unit of work counts its runs under the
+// behind one hub layout whose links never prefetch, so a suite decides when
+// the prefetch happens and which kind it is: pf-arm-<c> starts a speculative
+// one (a render link, `X-Rango-Prefetch: 1`), which defers the flagged work,
+// and hovering pf-hover-<c> an intent one (`intent`, R16), which defers
+// nothing. Every unit of work counts its runs under the
 // `?run=` of the request (prefetch-false-counts.ts); /__counts reads them
 // back. A loader's value is `<counter>:<run number>`.
 //
 // The contract a suite (and any other app that mirrors this fixture) relies
 // on, for each case `<c>`:
-//   pf-link-<c>      hub link, prefetch="hover", to /prefetch-false/<c>?run=
+//   pf-link-<c>      hub link, prefetch="none", to /prefetch-false/<c>?run=
+//   pf-arm-<c>       a click mounts a render link to the same URL, the next
+//                    unmounts it (PrefetchFalseArm)
+//   pf-hover-<c>     a prefetch="hover" link to the same URL
 //   pf-<c>-page      the handler's content
 //   pf-<c>-fallback  what shows while the deferred part is missing
 //   pf-<c>-value     the deferred loader's value, counter `<c>.data`
@@ -370,14 +377,15 @@ function PrefetchFalseLayout(ctx: any) {
       )}
       {boundary ? <ViewTransition>{heading}</ViewTransition> : heading}
       <p style={{ margin: "0 0 12px", opacity: 0.75 }}>
-        Hover a link to prefetch it, then click it. The panel on the right shows
-        what the server ran.
+        Arm a case to prefetch it as a viewport link would, or hover its
+        &quot;hover&quot; link to prefetch it with intent; then click it. The
+        panel on the right shows what the server ran.
       </p>
       {tall && (
         <div style={{ ...box, height: 700, opacity: 0.6 }}>
           Scroll test: this block makes the page tall. Scroll down to the links,
-          then hover and click one. A navigation should end at the top of the
-          page.
+          then arm or hover one and click it. A navigation should end at the top
+          of the page.
         </div>
       )}
       <div
@@ -413,14 +421,29 @@ function PrefetchFalseLayout(ctx: any) {
             {CASES.map(([name, note]) => (
               <li
                 key={name}
-                style={{ display: "grid", gridTemplateColumns: "110px 1fr" }}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "110px 44px 50px 1fr",
+                }}
               >
                 <Link
                   to={`/prefetch-false/${name}?${query}`}
                   data-testid={`pf-link-${name}`}
-                  prefetch="hover"
+                  prefetch="none"
                 >
                   {name}
+                </Link>
+                <PrefetchFalseArm
+                  name={name}
+                  to={`/prefetch-false/${name}?${query}`}
+                />
+                <Link
+                  to={`/prefetch-false/${name}?${query}`}
+                  data-testid={`pf-hover-${name}`}
+                  prefetch="hover"
+                  style={{ fontSize: 11 }}
+                >
+                  hover
                 </Link>
                 <span style={{ opacity: 0.75 }}>{note}</span>
               </li>

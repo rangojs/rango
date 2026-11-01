@@ -45,6 +45,7 @@ import {
   SEGMENT_FRAGMENT_CAPABILITY_HEADER,
   SEGMENT_FRAGMENT_RECOVERY_HEADER,
 } from "../../segment-fragments.js";
+import { PREFETCH_HEADER, PREFETCH_INTENT } from "../../prefetch-markers.js";
 import {
   ratingsFor,
   runs as cachedRuns,
@@ -612,6 +613,12 @@ function setup(cacheStore = new MemorySegmentCacheStore()) {
   /** A prefetch of `url` from `from`, holding `segments`. */
   const prefetch = (url: string, from = "/", segments: string[] = []) =>
     serve(url, { partial: { from, segments, prefetch: true } });
+  /** The same prefetch sent by a hover or prefetch(): an intent prefetch. */
+  const intent = (url: string, from = "/", segments: string[] = []) =>
+    serve(url, {
+      headers: { [PREFETCH_HEADER]: PREFETCH_INTENT },
+      partial: { from, segments, prefetch: true },
+    });
   /** The fill the browser sends after adopting `prefetched`. */
   const fill = (url: string, prefetched: ReturnType<typeof payloadOf>) =>
     serve(url, {
@@ -623,7 +630,7 @@ function setup(cacheStore = new MemorySegmentCacheStore()) {
         fill: true,
       },
     });
-  return { router, cacheStore, serve, prefetch, fill };
+  return { router, cacheStore, serve, prefetch, intent, fill };
 }
 
 beforeEach(async () => {
@@ -1707,6 +1714,87 @@ describe("R12: a deferrable loader cannot call ctx.rendered()", () => {
     expect(errors.some((m) => m.includes(FlaggedRenderedLoader.$$id))).toBe(
       true,
     );
+  });
+
+  it("throws on an intent prefetch too, which defers nothing", async () => {
+    const { intent } = setup();
+    await intent("/flagged-rendered");
+    expect(errors.some((m) => m.includes(FlaggedRenderedLoader.$$id))).toBe(
+      true,
+    );
+  });
+});
+
+// A hover or an explicit prefetch() sends `X-Rango-Prefetch: intent`
+// (browser/prefetch/fetch.ts prefetchDirect): the visitor is about to click,
+// so the server answers it as the navigation it starts early.
+describe("R16: an intent prefetch defers nothing", () => {
+  const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
+  const headersOf = (r: ServeShellRequestResult) => ({
+    vary: r.response.headers.get("vary"),
+    cacheControl: r.response.headers.get("cache-control"),
+    scope: r.response.headers.get("x-rsc-prefetch-scope"),
+  });
+
+  it("runs a flagged loader with its siblings and marks nothing deferred", async () => {
+    const { intent } = setup();
+    const result = await intent("/product/1");
+    const payload = payloadOf(result);
+
+    expect({
+      reviews: count("reviews"),
+      price: count("price"),
+      product: count("product"),
+    }).toEqual({ reviews: 1, price: 1, product: 1 });
+    expect(payload.deferred).toEqual([]);
+    expect(present(payload.find(ReviewsLoader.$$id)!.loaderData)).toBe(true);
+    expect(await result.readDeferred()).toEqual([]);
+  });
+
+  it("runs the handler and loaders behind a flagged loading()", async () => {
+    const { intent } = setup();
+    const payload = payloadOf(await intent("/orders"));
+
+    expect({
+      orders: count("orders"),
+      loader: count("orders-loader"),
+      shell: count("shell"),
+    }).toEqual({ orders: 1, loader: 1, shell: 1 });
+    expect(payload.deferred).toEqual([]);
+  });
+
+  it("delivers the segments a navigation delivers, with its headers: no source scope, no Cache-Control, no Vary on the prefetch header", async () => {
+    const { intent, serve } = setup();
+    for (const url of ["/product/1", "/orders"]) {
+      const hovered = await intent(url);
+      const navigation = await serve(url, { partial: { from: "/" } });
+      expect(payloadOf(hovered).ids).toEqual(payloadOf(navigation).ids);
+      expect(headersOf(hovered)).toEqual(headersOf(navigation));
+      expect(headersOf(hovered)).toEqual({
+        vary: VARY,
+        cacheControl: null,
+        scope: null,
+      });
+    }
+  });
+
+  it("a speculative prefetch of the same route still defers", async () => {
+    const { intent, prefetch } = setup();
+    await intent("/product/1");
+    expect(count("reviews")).toBe(1);
+    const payload = payloadOf(await prefetch("/product/1"));
+    expect(count("reviews")).toBe(1);
+    expect(payload.deferred).toEqual([payload.find(ReviewsLoader.$$id)!.id]);
+  });
+
+  it("an intent prefetch that resolves an intercept runs its flagged loader, from its source page", async () => {
+    const { intent } = setup();
+    const result = await intent("/item/1", "/");
+    const payload = payloadOf(result);
+    expect(count("modal-loader")).toBe(1);
+    expect(payload.deferred).toEqual([]);
+    expect(present(payload.find(ModalLoader.$$id)!.loaderData)).toBe(true);
+    expect(headersOf(result).scope).toBe("source");
   });
 });
 
