@@ -80,14 +80,17 @@ async function expectStaleClickSequence(
     ) {
       return;
     }
-    if (request.headers()["x-rango-prefetch"] === "1") {
+    // A hover's prefetch sends `intent`, a viewport one `1`.
+    if (request.headers()["x-rango-prefetch"] !== undefined) {
       prefetchStates.push(request.headers()["x-rango-state"] ?? "");
     } else {
       navigations.push(request);
     }
   });
   page.on("requestfinished", (request) => {
-    if (request.headers()["x-rango-prefetch"] === "1") prefetchFinished = true;
+    if (request.headers()["x-rango-prefetch"] !== undefined) {
+      prefetchFinished = true;
+    }
   });
 
   // Hover the link to trigger its prefetch
