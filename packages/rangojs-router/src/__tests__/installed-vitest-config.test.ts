@@ -60,6 +60,7 @@ describe("installed vitest config (real node_modules realpath)", () => {
           "src/index.rsc.ts",
           "src/testing/vitest-stubs/version.ts",
           "src/testing/vitest-stubs/plugin-rsc.ts",
+          "src/testing/vitest-stubs/plugin-rsc-browser.ts",
           "src/testing/vitest-stubs/cloudflare-workers.ts",
           "src/testing/vitest-stubs/cloudflare-email.ts",
         ]) {
@@ -74,7 +75,8 @@ describe("installed vitest config (real node_modules realpath)", () => {
           `import { rangoTestConfig } from "@rangojs/router/testing/vitest";
 import { existsSync } from "node:fs";
 const cfg = rangoTestConfig({ preset: "cloudflare" });
-if (cfg.alias.length !== 5) throw new Error("expected 5 aliases, got " + cfg.alias.length);
+if (!cfg.alias.some((a) => a.find instanceof RegExp && a.find.test("@vitejs/plugin-rsc/browser")))
+  throw new Error("missing the @vitejs/plugin-rsc/browser alias");
 if (!cfg.server.deps.inline.length) throw new Error("missing server.deps.inline");
 if (!cfg.alias.every((a) => existsSync(a.replacement)))
   throw new Error("alias targets do not resolve to shipped src files");

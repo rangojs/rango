@@ -58,7 +58,17 @@ export interface LoaderEntry<T = unknown> {
   readonly isLoading: boolean;
   /** Identifies the request that produced this snapshot. 0 means "no request". */
   readonly requestId: number;
+  /**
+   * Route data (a route reader's `contextData`, by identity) of the readers on
+   * screen when `value` was requested. A route reader shows `value` only while
+   * its own route data is in this set.
+   */
+  readonly valueFor: ReadonlySet<unknown>;
+  /** The same for the latest request: `isLoading` and `error`. */
+  readonly requestFor: ReadonlySet<unknown>;
 }
+
+const NO_ROUTE_DATA: ReadonlySet<unknown> = new Set();
 
 const EMPTY_SNAPSHOT: LoaderEntry = Object.freeze({
   value: undefined,
@@ -66,6 +76,8 @@ const EMPTY_SNAPSHOT: LoaderEntry = Object.freeze({
   error: null,
   isLoading: false,
   requestId: 0,
+  valueFor: NO_ROUTE_DATA,
+  requestFor: NO_ROUTE_DATA,
 });
 
 /**
@@ -106,6 +118,8 @@ export interface SubscribeOptions {
    * its own lifecycle.
    */
   onStreamPending?: () => void;
+  /** The subscriber's committed route data. Route-context readers only. */
+  routeData?: () => unknown;
 }
 
 interface InternalEntry {
@@ -139,6 +153,7 @@ interface InternalEntry {
   refetch: (() => Promise<void>) | undefined;
   /** Subscribers' `onStreamPending` callbacks (see SubscribeOptions). */
   streamPendingListeners: Set<() => void>;
+  routeDataSources: Set<() => unknown>;
 }
 
 /**
@@ -188,6 +203,7 @@ export class LoaderStore {
         groups: new Map(),
         refetch: undefined,
         streamPendingListeners: new Set(),
+        routeDataSources: new Set(),
       };
       this.entries.set(bucketKey, e);
     }
@@ -234,9 +250,12 @@ export class LoaderStore {
     e.listeners.add(cb);
     const onStreamPending = options?.onStreamPending;
     if (onStreamPending) e.streamPendingListeners.add(onStreamPending);
+    const routeData = options?.routeData;
+    if (routeData) e.routeDataSources.add(routeData);
     return () => {
       e.listeners.delete(cb);
       if (onStreamPending) e.streamPendingListeners.delete(onStreamPending);
+      if (routeData) e.routeDataSources.delete(routeData);
       // Group membership is refcounted per subscriber so refreshGroups() never
       // fetches for an unmounted reader, and a bucket shared by subscribers in
       // different groups stays in each group until ALL of that group's
@@ -414,16 +433,30 @@ export class LoaderStore {
    * error during the new request. Gated on `requestId === latestRequestId`
    * for symmetry with the other mutators.
    */
-  beginRequest(bucketKey: string, requestId: number): void {
+  beginRequest(
+    bucketKey: string,
+    requestId: number,
+    initiatorRouteData?: () => unknown,
+  ): void {
     const e = this.entries.get(bucketKey);
     if (!e || requestId !== e.latestRequestId) return;
-    if (e.snapshot.isLoading && e.snapshot.error === null) return;
+    const requestFor = new Set<unknown>();
+    if (initiatorRouteData) requestFor.add(initiatorRouteData());
+    for (const read of e.routeDataSources) requestFor.add(read());
+    const prev = e.snapshot;
+    if (
+      prev.isLoading &&
+      prev.error === null &&
+      [...requestFor].every((d) => prev.requestFor.has(d))
+    ) {
+      return;
+    }
     e.snapshot = Object.freeze({
-      value: e.snapshot.value,
-      hasValue: e.snapshot.hasValue,
+      ...prev,
       error: null,
       isLoading: true,
       requestId,
+      requestFor,
     });
     this.notify(e);
   }
@@ -442,6 +475,8 @@ export class LoaderStore {
       error: null,
       isLoading: false,
       requestId,
+      valueFor: e.snapshot.requestFor,
+      requestFor: e.snapshot.requestFor,
     });
     this.notify(e);
     this.dropIfSettled(bucketKey, e);
@@ -461,6 +496,8 @@ export class LoaderStore {
       error,
       isLoading: false,
       requestId,
+      valueFor: e.snapshot.valueFor,
+      requestFor: e.snapshot.requestFor,
     });
     this.notify(e);
     this.dropIfSettled(bucketKey, e);

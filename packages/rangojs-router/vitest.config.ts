@@ -27,6 +27,11 @@ export default defineConfig({
     alias: {
       // Mock the virtual module for tests
       "@rangojs/router:version": resolve(__dirname, "src/__mocks__/version.ts"),
+      // The testing kit's stub (rangoTestAliases): renderRoute answers load().
+      "@vitejs/plugin-rsc/browser": resolve(
+        __dirname,
+        "src/testing/vitest-stubs/plugin-rsc-browser.ts",
+      ),
     },
   },
 });

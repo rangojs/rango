@@ -45,6 +45,13 @@
  *     lane production's Back uses (useNavigation() idle), with the loader
  *     data current then. The prefetch request, its decode and the HTTP cache
  *     are e2e territory.
+ *   - useLoader().load() and a refreshGroup refresh reach the loader endpoint:
+ *     renderRoute answers a GET for `_rsc_loader=<id>` with the last value the
+ *     test gave that loader (the render seeds or respondToLoads()),
+ *     unencoded; a pending Promise holds the answer until it settles, and a
+ *     rejection is the loader's error. Needs the testing kit's
+ *     `@vitejs/plugin-rsc/browser` alias (rangoTestAliases). A load() with params
+ *     is answered with a loaderError; a body and non-GET loads are not answered.
  *   - A spec's transition({ when }) decides every commit with production's
  *     browser decision: navigate() and useRouter().push model kind "push",
  *     useRouter().replace kind "replace", refresh() kind "revalidate", and a
@@ -136,6 +143,8 @@ import type { Handle } from "../handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
 import { isUnderTestRunner } from "../runtime-env.js";
+import { loaderAnswerResponse } from "./vitest-stubs/plugin-rsc-browser.js";
+import { WIRE } from "../wire-params.js";
 import {
   scheduleStalePrefetchRevalidation,
   setupNavigationBridgeDelegatedPrefetch,
@@ -532,8 +541,10 @@ export interface TestRouterHandle {
   /**
    * Re-render the current location, as router.refresh() does: a spec's
    * transition({ when }) decides it with kind "revalidate" (`to` is `from`).
+   * `options.loaders` is the loader data the response carries, merged over
+   * the render-time seeds as in navigate().
    */
-  refresh(): Promise<void>;
+  refresh(options?: Pick<RenderRouteOptions, "loaders">): Promise<void>;
   /**
    * Prefetch `url`, as a `<Link>` hover or viewport trigger does: the page is
    * kept with the loader data its response would carry now (the render-time
@@ -575,6 +586,17 @@ export interface TestRouterHandle {
       keepClientCache?: boolean;
     },
   ): Promise<void>;
+  /**
+   * Set what the loader endpoint answers from now on: a later
+   * `useLoader().load()` or refreshGroup refresh of each loader resolves to
+   * its value (a pending Promise holds the answer, a rejection is the
+   * loader's error). Renders nothing; the page on screen keeps its data.
+   *
+   * @example
+   * router.respondToLoads({ loaders: [[CartLoader, { count: 3 }]] });
+   * fireEvent.click(getByText("Refresh")); // load(): count 3
+   */
+  respondToLoads(options: Pick<RenderRouteOptions, "loaders">): void;
   /**
    * The background revalidations a click on a stale prefetch started, in
    * order: the page's pathname and search, and the segment ids the request
@@ -686,6 +708,38 @@ function LinkInterceptionRegistration({
   bridge: NavigationBridge;
 }): null {
   useEffect(() => bridge.registerLinkInterception(), [bridge]);
+  return null;
+}
+
+/**
+ * The loader endpoint `useLoader().load()` fetches (`_rsc_loader=<id>`):
+ * installed on `fetch` while the tree is mounted, every other request passed
+ * through. A test that stubs `fetch` after the mount replaces it.
+ */
+function LoaderEndpoint({
+  answer,
+}: {
+  answer: (loaderId: string, hasParams: boolean) => Promise<Response>;
+}): null {
+  useEffect(() => {
+    const passThrough = globalThis.fetch;
+    // useLoader fetches with a URL string and an init.
+    const endpoint: typeof fetch = (input, init) => {
+      const url = new URL(String(input), TEST_ORIGIN);
+      const loaderId = url.searchParams.get(WIRE.loader);
+      if (
+        loaderId !== null &&
+        (init?.method ?? "GET").toUpperCase() === "GET"
+      ) {
+        return answer(loaderId, url.searchParams.has(WIRE.loaderParams));
+      }
+      return passThrough(input, init);
+    };
+    globalThis.fetch = endpoint;
+    return () => {
+      if (globalThis.fetch === endpoint) globalThis.fetch = passThrough;
+    };
+  }, [answer]);
   return null;
 }
 
@@ -841,6 +895,43 @@ export async function renderRoute(
     return out;
   };
   const loaderData = seedLoaders(options.loaderData ?? {}, options.loaders);
+  // What the loader endpoint answers (LoaderEndpoint): the render seeds, then
+  // what respondToLoads() gave each loader.
+  const loadAnswers: Record<string, unknown> = { ...loaderData };
+  // The payload has rsc/loader-fetch.ts's shape; the value is taken when the
+  // request is made, as a server reads its data then.
+  const answerLoad = async (
+    loaderId: string,
+    hasParams: boolean,
+  ): Promise<Response> => {
+    type Answer = Parameters<typeof loaderAnswerResponse>[0];
+    const failure = (name: string, message: string): Answer => ({
+      loaderResult: null,
+      loaderError: { name, message },
+    });
+    let payload: Answer;
+    if (hasParams) {
+      payload = failure(
+        "Error",
+        `renderRoute does not answer parameterized load() calls (loader "${loaderId}"). Call load() without params, or stub fetch.`,
+      );
+    } else if (!(loaderId in loadAnswers)) {
+      payload = failure(
+        "Error",
+        `renderRoute: no value for loader "${loaderId}". Seed it with \`loaders\` or router.respondToLoads().`,
+      );
+    } else {
+      try {
+        payload = { loaderResult: await loadAnswers[loaderId] };
+      } catch (error) {
+        payload = failure(
+          error instanceof Error ? error.name : "Error",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+    return loaderAnswerResponse(payload);
+  };
 
   if (typeof window !== "undefined") {
     // The tree has no app version (its bridge reports none), so a seed needs
@@ -1229,9 +1320,14 @@ export async function renderRoute(
     });
   };
 
-  const refresh = (): Promise<void> => {
+  const refresh = (
+    refreshOptions?: Pick<RenderRouteOptions, "loaders">,
+  ): Promise<void> => {
     const current = new URL(eventController.getLocation().href);
-    return navigate(current.pathname + current.search, { kind: "revalidate" });
+    return navigate(current.pathname + current.search, {
+      kind: "revalidate",
+      loaders: refreshOptions?.loaders,
+    });
   };
 
   // prefetch(): the pages prefetched so far, by pathname and search, each with
@@ -1358,9 +1454,7 @@ export async function renderRoute(
       keepClientCache?: boolean;
     },
   ): Promise<void> => {
-    for (const [loader, data] of actionOptions?.loaders ?? []) {
-      loaderData[ensureSyntheticId(loader)] = data;
-    }
+    Object.assign(loaderData, seedLoaders({}, actionOptions?.loaders));
     const page = await renderPageAgain(
       new URL(eventController.getLocation().href),
       "action",
@@ -1508,6 +1602,7 @@ export async function renderRoute(
       />
       <DelegatedPrefetchRegistration bridge={bridge} />
       <LinkInterceptionRegistration bridge={bridge} />
+      <LoaderEndpoint answer={answerLoad} />
       {options.hydrate && <HydratedMarker />}
       {applyLateHandles && <AfterTree run={applyLateHandles} />}
       {resolveDocumentRevealed && <AfterTree run={resolveDocumentRevealed} />}
@@ -1587,6 +1682,9 @@ export async function renderRoute(
     refresh,
     prefetch,
     action,
+    respondToLoads: (respondOptions) => {
+      Object.assign(loadAnswers, seedLoaders({}, respondOptions.loaders));
+    },
     revalidations: () => [...revalidations],
     pathname: () => new URL(eventController.getLocation().href).pathname,
     params: () => eventController.getParams(),

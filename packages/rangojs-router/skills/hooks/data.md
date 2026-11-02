@@ -200,6 +200,11 @@ shared value lives as long as at least one component using that key is mounted.
 A persistent component (e.g. a header) keeps the value across navigations; a
 route-scoped component's value is reclaimed when it unmounts. Registered-loader
 reads (keyed or not) reset on navigation from fresh route data, as before.
+A refreshed value belongs to the route data of the readers on screen when
+`load()` was called: a reader that mounts on another page or on a new visit,
+or that a navigation brings new route data, shows that route data from its
+first frame, and a `load()` still in flight when you leave lands on no other
+page; Back onto the refreshed page shows the refresh again.
 
 **Refreshing multiple loaders together (`refreshGroup` + `useRefreshLoaders`)**:
 

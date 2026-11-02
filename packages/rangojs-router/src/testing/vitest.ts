@@ -229,6 +229,11 @@ export function rangoTestAliases(
       find: /^@vitejs\/plugin-rsc\/rsc(\/(server|client))?$/,
       replacement: here("src/testing/vitest-stubs/plugin-rsc.ts"),
     },
+    // useLoader().load() decodes renderRoute's loader answers through it.
+    {
+      find: /^@vitejs\/plugin-rsc\/browser$/,
+      replacement: here("src/testing/vitest-stubs/plugin-rsc-browser.ts"),
+    },
   ];
   if (rsdServerEdgePath) {
     aliases.push({

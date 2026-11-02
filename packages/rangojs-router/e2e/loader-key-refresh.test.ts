@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { runLoaderRemountRefreshTests } from "@shared/e2e";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
 
@@ -23,6 +24,9 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  *   - multi-tag groups      -> a read tagged into several groups; a fine tag
  *                              refreshes a subset, the coarse tag or a union
  *                              argument refreshes the whole set
+ *   - remount / navigation  -> a refreshed registered reader's value stays with
+ *                              the route data it was requested for
+ *                              (tests/shared-e2e/src/loader-remount-refresh-scenario.ts)
  */
 
 function describeKeyRefresh(label: string, mode: "dev" | "build") {
@@ -394,6 +398,15 @@ function describeKeyRefresh(label: string, mode: "dev" | "build") {
       await testId(page, "key-refresh-group-btn-priv").click();
       await expect(testId(page, "key-refresh-G-value")).not.toHaveText("—");
       await expect(testId(page, "key-refresh-U-value")).toHaveText("—");
+    });
+
+    test.describe("a refreshed registered reader across navigations", () => {
+      runLoaderRemountRefreshTests({
+        url: (pathname) => f.url(pathname),
+        waitForHydration,
+        expectNoPageError,
+        base: "/key-refresh-remount",
+      });
     });
   });
 }

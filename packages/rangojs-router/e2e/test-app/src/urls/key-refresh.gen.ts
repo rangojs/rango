@@ -13,6 +13,10 @@ export const routes = {
   keyRefreshNokey: "/key-refresh-nokey",
   keyRefreshParams: "/key-refresh-params",
   keyRefreshRegistered: "/key-refresh-registered",
+  keyRefreshRemountA: "/key-refresh-remount/a",
+  keyRefreshRemountB: "/key-refresh-remount/b",
+  keyRefreshRemountNone: "/key-refresh-remount/none",
+  keyRefreshRemountVt: "/key-refresh-remount/vt",
   keyRefreshShared: "/key-refresh-shared",
 } as const;
 export type routes = typeof routes;

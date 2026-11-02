@@ -33,23 +33,23 @@
 
 ### Context — client hooks it makes resolve (what your code receives)
 
-| Hook                           | Meaning                                                                                       |
-| ------------------------------ | --------------------------------------------------------------------------------------------- |
-| `useParams`                    | Params from the matched leaf pattern, with `options.params` merged over.                      |
-| `useReverse`                   | Reverse a name->pattern map to a URL; merges `useParams()` and the `mount`/`basename` prefix. |
-| `useHref`                      | Resolve an href against the mount/basename.                                                   |
-| `useMount`                     | The `include()` mount prefix (`options.mount`), else `"/"`.                                   |
-| `useNavigation`                | Navigation controller state: `loading` from a `navigate()` call to its commit, else `idle`.   |
-| `useRouter`                    | The router handle, including `.basename`.                                                     |
-| `usePathname`                  | Current committed pathname.                                                                   |
-| `useSearchParams`              | Search params from the `request` URL.                                                         |
-| `useNonce`                     | SEEDED CSP nonce (`options.nonce`), else `undefined` (the browser default).                   |
-| `useLoader` / `useFetchLoader` | SEEDED loader data (read path, not run path). Held-navigation `isLoading` is modeled (below). |
-| `useLocationState`             | SEEDED `history.state` value, or the `state` a navigation or a `popstate` brought (below).    |
-| `useHandle`                    | SEEDED handle output (globally accumulated).                                                  |
-| `Outlet`                       | Renders the next segment in the chain (layout nesting).                                       |
-| `useOutlet`                    | Next-segment `content` plus SEEDED `options.outletPending`.                                   |
-| `useTheme`                     | Theme; throws without `options.theme` (see caveat).                                           |
+| Hook                           | Meaning                                                                                                                                                                       |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useParams`                    | Params from the matched leaf pattern, with `options.params` merged over.                                                                                                      |
+| `useReverse`                   | Reverse a name->pattern map to a URL; merges `useParams()` and the `mount`/`basename` prefix.                                                                                 |
+| `useHref`                      | Resolve an href against the mount/basename.                                                                                                                                   |
+| `useMount`                     | The `include()` mount prefix (`options.mount`), else `"/"`.                                                                                                                   |
+| `useNavigation`                | Navigation controller state: `loading` from a `navigate()` call to its commit, else `idle`.                                                                                   |
+| `useRouter`                    | The router handle, including `.basename`.                                                                                                                                     |
+| `usePathname`                  | Current committed pathname.                                                                                                                                                   |
+| `useSearchParams`              | Search params from the `request` URL.                                                                                                                                         |
+| `useNonce`                     | SEEDED CSP nonce (`options.nonce`), else `undefined` (the browser default).                                                                                                   |
+| `useLoader` / `useFetchLoader` | SEEDED loader data (read path, not run path). Held-navigation `isLoading` is modeled (below), and `load()` is answered from the seeds ([`load()`](#load-and-refresh-groups)). |
+| `useLocationState`             | SEEDED `history.state` value, or the `state` a navigation or a `popstate` brought (below).                                                                                    |
+| `useHandle`                    | SEEDED handle output (globally accumulated).                                                                                                                                  |
+| `Outlet`                       | Renders the next segment in the chain (layout nesting).                                                                                                                       |
+| `useOutlet`                    | Next-segment `content` plus SEEDED `options.outletPending`.                                                                                                                   |
+| `useTheme`                     | Theme; throws without `options.theme` (see caveat).                                                                                                                           |
 
 ### Returns — `RenderRouteResult`
 
@@ -77,8 +77,11 @@ type RenderRouteResult = RenderResult & {
       },
     ): Promise<void>;
     // re-render the current location, as router.refresh() does:
-    // a spec's when gets kind "revalidate" (`to` is `from`)
-    refresh(): Promise<void>;
+    // a spec's when gets kind "revalidate" (`to` is `from`); `loaders` is the
+    // data the response carries
+    refresh(options?: {
+      loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
+    }): Promise<void>;
     // keep `url` as a prefetch made now carries it (the seeds then, `loaders`
     // over them); a later navigate(url) without `loaders` commits that data
     prefetch(
@@ -94,6 +97,11 @@ type RenderRouteResult = RenderResult & {
       loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
       keepClientCache?: boolean;
     }): Promise<void>;
+    // what a later useLoader().load() (or refreshGroup refresh) of each
+    // loader resolves to; renders nothing
+    respondToLoads(options: {
+      loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
+    }): void;
     pathname(): string;
     params(): Record<string, string>;
     store: NavigationStore; // advanced
@@ -453,6 +461,46 @@ it("dims the held price while the next product streams", async () => {
 - Per-navigation seeds merge over the render-time `loaders`/`loaderData` for THAT navigation only; a later `navigate()` without `loaders` falls back to the render-time data.
 - Pass settled data as a plain value, not `Promise.resolve(value)`: React has not observed a plain promise yet, so it counts as pending and renders one `stale` frame. (A Flight chunk that has already settled carries its status and is skipped, which a plain value mirrors.)
 - `loading()` is not a spec field: a `<Suspense>` in your layout component stands in for it.
+
+## `load()` and refresh groups
+
+`useLoader().load()`, `useFetchLoader().load()` and a `useRefreshLoaders()` refresh reach renderRoute's loader endpoint, so a refresh button, a polling component, or a value one reader refreshes and another shows is unit-testable without a server or a `fetch` stub. The endpoint answers a GET for a loader with the last value the test gave it: the render-time `loaders`/`loaderData`, or `router.respondToLoads({ loaders })`, which only sets the answer (a `navigate()`, `prefetch()`, `action()` or `refresh()` seeds the page it commits, not the answer). A `load({ params })` is answered with a `loaderError`. The value is read when `load()` sends its request. A pending Promise holds the answer until it settles (`isLoading` stays `true`), and a rejected one arrives as the loader's error. The value reaches the component as given, never serialized.
+
+The answer decodes through `@vitejs/plugin-rsc/browser`, which `rangoTestAliases()` (and `rangoTestConfig()`) alias to the testing kit's stub; remove any `vi.mock("@vitejs/plugin-rsc/browser")` you wrote for it.
+
+```tsx
+import { fireEvent, waitFor } from "@testing-library/react";
+import { renderRoute } from "@rangojs/router/testing/dom";
+import { useLoader } from "@rangojs/router/client";
+import { CartLoader } from "../src/loaders"; // createLoader(fn, true)
+
+function CartBadge() {
+  const { data, load, isLoading } = useLoader(CartLoader);
+  return (
+    <button data-testid="cart" onClick={() => load()}>
+      {isLoading ? "..." : data.count}
+    </button>
+  );
+}
+
+it("refreshes the count from the server", async () => {
+  const { getByTestId, router } = await renderRoute(
+    [{ path: "/cart", Component: CartBadge }],
+    { request: "/cart", loaders: [[CartLoader, { count: 1 }]] },
+  );
+  router.respondToLoads({ loaders: [[CartLoader, { count: 3 }]] });
+  fireEvent.click(getByTestId("cart"));
+  // load() loads its decoder lazily: wait for the answer, not one act()
+  await waitFor(() => expect(getByTestId("cart").textContent).toBe("3"));
+});
+```
+
+| `load()` call                                                 | Under `renderRoute`                                                                                                                                                                                                    |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `load()` with no options, a `key`, or a `refreshGroup`        | Answered. Readers of a registered loader converge on the value; a reader that mounts later, or that a navigation brings new route data, shows that route data instead, as in production.                               |
+| `load({ params })`, `load({ method: "POST", body })`          | NOT answered: the request goes to the `fetch` your test environment has. Test the loader body with `runLoader`, and the round trip at e2e.                                                                             |
+| A loader the test never gave a value                          | Answered with an error naming the loader (`error` set; `throwOnError` throws it).                                                                                                                                      |
+| Any other request (a navigation's or action's Flight payload) | Passed through to the `fetch` installed before the mount. renderRoute never decodes one: a `navigate()` or `action()` seeds its data directly. A `fetch` stub the test installs after the mount replaces the endpoint. |
 
 ## Caveats
 

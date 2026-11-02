@@ -1,5 +1,16 @@
-import { urls, loader } from "@rangojs/router";
-import { KeyRefreshRegisteredLoader } from "../loaders.js";
+import {
+  urls,
+  loader,
+  revalidate,
+  transition,
+  type HandlerContext,
+} from "@rangojs/router";
+import { Outlet } from "@rangojs/router/client";
+import { KeyRefreshRegisteredLoader, LoaderRemountLoader } from "../loaders.js";
+import {
+  LoaderRemountNav,
+  LoaderRemountReader,
+} from "../components/LoaderRemount.js";
 import {
   KeyRefreshWidget,
   KeyRefreshGroupButton,
@@ -36,7 +47,35 @@ import {
  * /key-refresh-multitag    — multi-tag: each read is tagged into several groups;
  *                            a fine tag refreshes a subset, the coarse tag or a
  *                            union argument refreshes the whole set.
+ * /key-refresh-remount/*   — a refreshed registered reader across navigations:
+ *                            pages a and b register the loader, none does not,
+ *                            vt registers it under transition(); each page
+ *                            and its loader revalidate on every navigation,
+ *                            so a new visit brings new route data and the
+ *                            marker re-renders with the loader
+ *                            (tests/shared-e2e/src/loader-remount-refresh-scenario.ts).
  */
+
+/** The loader's value rendered by the server, beside the client reader. */
+async function LoaderRemountPage(ctx: HandlerContext) {
+  const data = await ctx.use(LoaderRemountLoader);
+  return (
+    <section data-testid="lr-page">
+      <span data-testid="lr-marker">{`${data.page}:${data.run}`}</span>
+      <LoaderRemountReader />
+    </section>
+  );
+}
+
+function LoaderRemountLayout() {
+  return (
+    <div data-testid="lr-layout">
+      <LoaderRemountNav base="/key-refresh-remount" />
+      <Outlet />
+    </div>
+  );
+}
+
 export const keyRefreshPatterns = urls(({ path, layout }) => [
   path(
     "/key-refresh-shared",
@@ -178,6 +217,39 @@ export const keyRefreshPatterns = urls(({ path, layout }) => [
     ),
     { name: "keyRefreshMutation" },
   ),
+  layout(LoaderRemountLayout, () => [
+    path(
+      "/key-refresh-remount/a",
+      LoaderRemountPage,
+      { name: "keyRefreshRemountA" },
+      () => [
+        loader(LoaderRemountLoader, () => [revalidate(() => true)]),
+        revalidate(() => true),
+      ],
+    ),
+    path(
+      "/key-refresh-remount/b",
+      LoaderRemountPage,
+      { name: "keyRefreshRemountB" },
+      () => [
+        loader(LoaderRemountLoader, () => [revalidate(() => true)]),
+        revalidate(() => true),
+      ],
+    ),
+    path("/key-refresh-remount/none", () => <p data-testid="lr-none">none</p>, {
+      name: "keyRefreshRemountNone",
+    }),
+    path(
+      "/key-refresh-remount/vt",
+      LoaderRemountPage,
+      { name: "keyRefreshRemountVt" },
+      () => [
+        loader(LoaderRemountLoader, () => [revalidate(() => true)]),
+        revalidate(() => true),
+        transition(),
+      ],
+    ),
+  ]),
   // Leak guard: a grouped reader with NO key must not leak a group refresh into
   // an unrelated unkeyed reader of the same loader (private bucket).
   path(

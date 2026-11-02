@@ -818,4 +818,133 @@ describe("LoaderStore", () => {
       expect(store.isStreamPending("product")).toBe(true);
     });
   });
+
+  // A refreshed value belongs to the route data (by identity) of the readers
+  // on screen when it was requested; use-loader.tsx shows it to a route
+  // reader only while that reader's own route data is in the set.
+  describe("route data a refresh belongs to", () => {
+    const sub = (bucket: string, routeData: () => unknown) =>
+      store.subscribe(bucket, () => {}, { loaderId: "L", routeData });
+
+    it("the empty snapshot belongs to no route data", () => {
+      expect(EMPTY_LOADER_SNAPSHOT.valueFor.size).toBe(0);
+      expect(EMPTY_LOADER_SNAPSHOT.requestFor.size).toBe(0);
+    });
+
+    it("beginRequest gathers the initiator and every subscriber, read then", () => {
+      const a = { page: "a" };
+      const layout = { page: "layout" };
+      let current: unknown = { page: "stale" };
+      sub("L::k", () => current);
+      sub("L::k", () => layout);
+      current = a;
+      const r = store.reserveRequestId("L::k");
+      const initiator = { page: "initiator" };
+      store.beginRequest("L::k", r, () => initiator);
+      const snap = store.getSnapshot("L::k");
+      expect([...snap.requestFor]).toEqual(
+        expect.arrayContaining([a, layout, initiator]),
+      );
+      expect(snap.requestFor.size).toBe(3);
+      // The value has not changed hands yet.
+      expect(snap.valueFor.size).toBe(0);
+    });
+
+    it("finishData hands the value to the request's route data", () => {
+      const a = { page: "a" };
+      sub("L::k", () => a);
+      const r = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r);
+      store.finishData("L::k", r, "fresh");
+      const snap = store.getSnapshot("L::k");
+      expect(snap.value).toBe("fresh");
+      expect(snap.valueFor.has(a)).toBe(true);
+      expect(snap.requestFor.has(a)).toBe(true);
+    });
+
+    it("finishError keeps the value's route data and records the request's", () => {
+      const a = { page: "a" };
+      const b = { page: "b" };
+      let current: unknown = a;
+      sub("L::k", () => current);
+      const r1 = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r1);
+      store.finishData("L::k", r1, "from a");
+      current = b;
+      const r2 = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r2);
+      store.finishError("L::k", r2, new Error("boom"));
+      const snap = store.getSnapshot("L::k");
+      expect(snap.value).toBe("from a");
+      expect([...snap.valueFor]).toEqual([a]);
+      expect([...snap.requestFor]).toEqual([b]);
+    });
+
+    it("a request begun for other route data keeps the old value with its old owners", () => {
+      const a = { page: "a" };
+      const b = { page: "b" };
+      let current: unknown = a;
+      sub("L::k", () => current);
+      const r1 = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r1);
+      store.finishData("L::k", r1, "from a");
+      current = b;
+      const r2 = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r2);
+      const snap = store.getSnapshot("L::k");
+      expect(snap.isLoading).toBe(true);
+      expect(snap.value).toBe("from a");
+      expect([...snap.valueFor]).toEqual([a]);
+      expect([...snap.requestFor]).toEqual([b]);
+    });
+
+    it("a request already loading for the same readers is a no-op; a new reader joins it", () => {
+      const a = { page: "a" };
+      sub("L::k", () => a);
+      const r1 = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r1);
+      const loading = store.getSnapshot("L::k");
+      const r2 = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r2, () => a);
+      expect(store.getSnapshot("L::k")).toBe(loading);
+
+      const b = { page: "b" };
+      const r3 = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r3, () => b);
+      const joined = store.getSnapshot("L::k");
+      expect(joined).not.toBe(loading);
+      expect(joined.requestId).toBe(r3);
+      expect([...joined.requestFor]).toEqual(expect.arrayContaining([a, b]));
+    });
+
+    it("an unsubscribed reader's route data is not gathered", () => {
+      const a = { page: "a" };
+      const unsubscribe = sub("L::k", () => a);
+      unsubscribe();
+      const r = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r);
+      store.finishData("L::k", r, "v");
+      expect(store.getSnapshot("L::k").valueFor.size).toBe(0);
+    });
+
+    it("clear drops the owners with the value", () => {
+      const a = { page: "a" };
+      sub("L::k", () => a);
+      const r = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r);
+      store.finishData("L::k", r, "v");
+      store.clearFamily("L");
+      expect(store.getSnapshot("L::k")).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+
+    it("route data compares by identity: equal primitives count as the same owner", () => {
+      // A loader whose route data is a primitive (or undefined) on two pages
+      // cannot tell the pages apart.
+      sub("L::k", () => 5);
+      const r = store.reserveRequestId("L::k");
+      store.beginRequest("L::k", r);
+      store.finishData("L::k", r, "v");
+      expect(store.getSnapshot("L::k").valueFor.has(5)).toBe(true);
+    });
+  });
 });
