@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.33.2 (2026-11-02)
 
-### Fixed: `router.refresh()` keeps the page's location state
+### Fixed: `router.refresh()` keeps the page's location state ([#1369](https://github.com/rangojs/rango/pull/1369))
 
 **Before.** `useRouter().refresh()`, and the refresh another tab's server
 action triggers, replaced the history entry with one that held only the
@@ -19,7 +19,7 @@ back to the entry, so Back/Forward and a reload do not show it again. A
 refresh of an open intercept still renders the full page, now with the
 entry's location state.
 
-### Fixed: a remounted `useLoader` shows its own route's data, not an earlier page's refresh
+### Fixed: a remounted `useLoader` shows its own route's data, not an earlier page's refresh ([#1370](https://github.com/rangojs/rango/pull/1370))
 
 **Before.** After a `load()` (or a `useRefreshLoaders()` refresh) of a loader
 registered on the route, the refreshed value stayed in the client's shared
