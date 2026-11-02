@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.34.0 (2026-11-02)
 
-### Changed: a hover prefetch skips `prefetch: false` work again; mark a loader or `loading()` `prefetch: "intent"` to run it on hover
+### Changed: a hover prefetch skips `prefetch: false` work again; mark a loader or `loading()` `prefetch: "intent"` to run it on hover ([#1373](https://github.com/rangojs/rango/pull/1373))
 
 **Before (0.33.0 to 0.33.2).** A hover prefetch, and `useRouter().prefetch()`,
 ran every `loader(Def, { prefetch: false })` and the work behind every
@@ -47,7 +47,7 @@ loading(<OrdersSkeleton />, { prefetch: "intent" }),
 - In tests, `serveShellRequest(router, url, { partial: { prefetch: true },
 headers: { "X-Rango-Prefetch": "intent" } })` serves a hover's prefetch.
 
-### Fixed: a link inside an open intercept to another item of its route opens it in the intercept
+### Fixed: a link inside an open intercept to another item of its route opens it in the intercept ([#1372](https://github.com/rangojs/rango/pull/1372))
 
 **Before.** From an open intercept (`/item/2` over `/list`), a link,
 `router.push` or `router.replace` to another item of the same intercepted
