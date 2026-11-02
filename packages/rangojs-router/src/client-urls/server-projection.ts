@@ -113,6 +113,11 @@ export interface ClientUrlProjectionRoute {
    *  loader(), so a prefetch of the route defers them. Absent (= none) in
    *  projections serialized before the option existed. */
   readonly deferrableLoaderIndices?: readonly number[];
+  /** Indices into loaderIds of loaders declared loader(Def, { prefetch:
+   *  "intent" }); materialization passes the option through, so a
+   *  speculative prefetch defers them and an intent prefetch runs them.
+   *  Absent (= none) in projections serialized before the option existed. */
+  readonly intentLoaderIndices?: readonly number[];
   /** Per loader (aligned with loaderIds), its revalidate() arguments in
    *  declaration order: a hoisted predicate's key, whose registration
    *  materialization attaches (revalidate-registry.ts), or a boolean
@@ -140,6 +145,8 @@ export interface ClientUrlProjectionIntercept {
   readonly hasLoading: boolean;
   /** As on a route (ClientUrlProjectionRoute.deferrableLoaderIndices). */
   readonly deferrableLoaderIndices?: readonly number[];
+  /** As on a route (ClientUrlProjectionRoute.intentLoaderIndices). */
+  readonly intentLoaderIndices?: readonly number[];
   /** As on a route (ClientUrlProjectionRoute.loaderRevalidate). */
   readonly loaderRevalidate?: readonly (readonly (string | boolean)[])[];
 }
@@ -381,7 +388,7 @@ function serializeLoaderOptions(
   options: SerializeClientUrlPatternsOptions,
 ): Pick<
   ClientUrlProjectionRoute,
-  "deferrableLoaderIndices" | "loaderRevalidate"
+  "deferrableLoaderIndices" | "intentLoaderIndices" | "loaderRevalidate"
 > {
   const loaderRevalidate = loaders.map(({ loader, revalidate }) =>
     revalidate.flatMap((entry): (string | boolean)[] => {
@@ -403,9 +410,16 @@ function serializeLoaderOptions(
     loaders,
     ({ prefetch }) => prefetch === false,
   );
+  const intentLoaderIndices = indicesWhere(
+    loaders,
+    ({ prefetch }) => prefetch === "intent",
+  );
   return {
     ...(deferrableLoaderIndices.length > 0
       ? { deferrableLoaderIndices: Object.freeze(deferrableLoaderIndices) }
+      : {}),
+    ...(intentLoaderIndices.length > 0
+      ? { intentLoaderIndices: Object.freeze(intentLoaderIndices) }
       : {}),
     ...(loaderRevalidate.some((keys) => keys.length > 0)
       ? {
@@ -582,6 +596,7 @@ interface ProjectedLoaders {
     | "loaderRevalidate"
     | "awaitedLoaderIndices"
     | "deferrableLoaderIndices"
+    | "intentLoaderIndices"
   >;
   /** Names the owner in an error: `route "/a"`, `intercept ".b"`. */
   readonly label: string;
@@ -817,8 +832,8 @@ function materializeRouteItems(
   };
 
   // The loader() items of a route's or an intercept's projected loaders: each
-  // stub with its `ssr: false` and `prefetch: false` flags and its
-  // revalidate() predicates.
+  // stub with its `ssr: false` and `prefetch` flags and its revalidate()
+  // predicates.
   const materializeLoaders = (owner: ProjectedLoaders) =>
     owner.projected.loaderIds.map((id, loaderIndex) => {
       const revalidators = loaderRevalidators(reference, owner, loaderIndex);
@@ -831,6 +846,9 @@ function materializeRouteItems(
           ...(owner.projected.deferrableLoaderIndices?.includes(
             loaderIndex,
           ) && { prefetch: false }),
+          ...(owner.projected.intentLoaderIndices?.includes(loaderIndex) && {
+            prefetch: "intent" as const,
+          }),
         },
         () => revalidators.map((fn) => revalidate(fn)),
       );

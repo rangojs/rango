@@ -384,7 +384,7 @@ function runClientUrlsSpec(f: Fixture): void {
     return { kinds, fillSource: () => fillSource };
   }
 
-  test("clientUrls(): an in-group speculative prefetch of an intercept target defers the flagged intercept loader", async ({
+  test('clientUrls(): an in-group speculative prefetch of an intercept target defers its prefetch: "intent" loader', async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -400,7 +400,7 @@ function runClientUrlsSpec(f: Fixture): void {
         response.request().headers()["x-rango-prefetch"] === "1",
     );
     // A render link's prefetch, as a viewport link sends it: a hover's would
-    // defer nothing. Unmounted once received.
+    // run the loader. Unmounted once received.
     await testId(page, "cui-note-arm").click();
     await (await prefetched).finished();
     await testId(page, "cui-note-arm").click();
@@ -413,7 +413,7 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(testId(page, "cui-modal")).toBeVisible();
     await expect(testId(page, "cui-modal-note-runs")).toBeVisible();
     await expect(testId(page, "cui-index")).toBeVisible();
-    // The prefetch deferred the flagged loader; the click's one fill, from
+    // The prefetch deferred the "intent" loader; the click's one fill, from
     // the intercept's source, ran it.
     expect(kinds).toEqual(["prefetch", "fill"]);
     const source = fillSource();
@@ -422,7 +422,7 @@ function runClientUrlsSpec(f: Fixture): void {
     );
   });
 
-  test("clientUrls(): an in-group hover prefetch of an intercept target runs the flagged intercept loader, and the click sends no fill", async ({
+  test('clientUrls(): an in-group hover prefetch of an intercept target runs its prefetch: "intent" loader, and the click sends no fill', async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -445,7 +445,7 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(testId(page, "cui-modal")).toBeVisible();
     await expect(testId(page, "cui-modal-note-runs")).toBeVisible();
     await expect(testId(page, "cui-index")).toBeVisible();
-    // A hover is intent to click: its prefetch ran the flagged loader with
+    // A hover is intent to click: its prefetch ran the "intent" loader with
     // the modal, and the click adopted it whole.
     expect(kinds).toEqual(["intent"]);
   });

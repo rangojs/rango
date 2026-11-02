@@ -488,16 +488,20 @@ server projection.
   settled-value delivery also apply to
   `loading(false)` entries and parallel-owned loaders — both already paid
   the pre-flush await and must not re-suspend at the read site.
-- `prefetch: false` — `loader(Def, { prefetch: false })` (`LoaderOptions.prefetch`)
-  and `loading(fallback, { prefetch: false })` (the `prefetch` option of
-  `loading()`, recorded as `EntryData.loadingPrefetch`) keep work out of
-  speculative prefetches. A viewport or render prefetch (`prefetchQueued`,
-  partial request with `X-Rango-Prefetch: 1`) skips the flagged loaders; an
-  intent prefetch (`prefetchDirect`: hover, `useRouter().prefetch()`,
-  `X-Rango-Prefetch: intent`, `PREFETCH_INTENT` in `prefetch-markers.ts`)
-  is `requestKind` `"intent"` and defers nothing, and is sent only when
-  nothing is cached or in flight for the link (R16). A speculative prefetch
-  skips the flagged loaders, and for a flagged `loading()` the entry's handler, loaders,
+- `prefetch: false` and `prefetch: "intent"` — `loader(Def, { prefetch })`
+  (`LoaderOptions.prefetch`) and `loading(fallback, { prefetch })` (the
+  `prefetch` option of `loading()`, recorded as `EntryData.loadingPrefetch`,
+  type `PrefetchFlag` in `prefetch-markers.ts`; `assertPrefetchOption` in
+  `errors.ts` rejects any other value) keep work out of prefetches. A
+  viewport or render prefetch (`prefetchQueued`, partial request with
+  `X-Rango-Prefetch: 1`) skips both flags; an intent prefetch
+  (`prefetchDirect`: hover, `useRouter().prefetch()`,
+  `X-Rango-Prefetch: intent`, `PREFETCH_INTENT`) is `requestKind` `"intent"`,
+  runs the `"intent"` work and skips the `false` work (the scope's `intent`
+  set, `PrefetchDeferral.defers`), and is sent only when nothing is cached or
+  in flight for the link (R16). A `clientUrls()` loader carries `"intent"`
+  through the build projection (`intentLoaderIndices`). A prefetch skips the
+  loaders it defers, and for a flagged `loading()` the entry's handler, loaders,
   orphan layouts and slots (for a layout, every deeper entry), and marks each
   skipped piece `ResolvedSegment.deferred`. Only on a segment the client does
   not have yet (`defersLoader`, `defersUnit`): one it holds is never deferred,

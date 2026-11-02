@@ -70,8 +70,8 @@ function InterceptClientIndex() {
 /**
  * ci-detail-arm: a click mounts a hidden render link to the target, a
  * speculative prefetch (`X-Rango-Prefetch: 1`) that defers the modal's
- * flagged loader; the next click unmounts it. A hover over the link above
- * sends an intent prefetch instead, which defers nothing.
+ * `prefetch: "intent"` loader; the next click unmounts it. A hover over the
+ * link above sends an intent prefetch instead, which runs it.
  */
 function InterceptClientArm({ to }: { to: string }) {
   const [armed, setArmed] = useState(false);
@@ -166,7 +166,7 @@ export default clientUrls(
       // Module-local intercept: no `when`, dot-local named target, loader()/
       // loading() only — every field projects as JSON to the server tree. Its
       // loaders take the route options: a revalidate() the build moves to the
-      // server, and prefetch: false.
+      // server, and prefetch: "intent".
       intercept("@modal", ".detail", InterceptClientDetailModal, () => [
         loader(ClientUrlsItemLoader),
         loader(ClientUrlsCounterLoader),
@@ -177,7 +177,7 @@ export default clientUrls(
               : undefined,
           ),
         ]),
-        loader(ClientUrlsModalNoteLoader, { prefetch: false }),
+        loader(ClientUrlsModalNoteLoader, { prefetch: "intent" }),
       ]),
     ]),
   ],

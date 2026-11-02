@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### Changed: a hover prefetch skips `prefetch: false` work again; mark a loader or `loading()` `prefetch: "intent"` to run it on hover
+
+**Before (0.33.0 to 0.33.2).** A hover prefetch, and `useRouter().prefetch()`,
+ran every `loader(Def, { prefetch: false })` and the work behind every
+`loading(fallback, { prefetch: false })`. A pointer passing over a list of
+links ran the expensive loader once per link, and an app could not keep a
+loader out of hovers while still prefetching the rest of the page.
+
+**Now.** `prefetch: false` keeps the work out of every prefetch, hovers
+included: the click that adopts a hover's prefetch shows the fallback and
+sends one follow-up request for it, as after a viewport prefetch. The new
+value `prefetch: "intent"` keeps the work out of viewport and render
+prefetches only; a hover or `useRouter().prefetch()` runs it.
+
+```tsx
+// Before: a hover ran ReviewsLoader.
+loader(ReviewsLoader, { prefetch: false }),
+
+// Now: a hover skips it; to run it on hover, mark it "intent".
+loader(ReviewsLoader, { prefetch: "intent" }),
+loading(<OrdersSkeleton />, { prefetch: "intent" }),
+```
+
+| Request                                                      | unflagged | `prefetch: false`        | `prefetch: "intent"`     |
+| ------------------------------------------------------------ | --------- | ------------------------ | ------------------------ |
+| Document, navigation                                         | runs      | runs                     | runs                     |
+| Viewport, render (`X-Rango-Prefetch: 1`)                     | runs      | skipped, filled at click | skipped, filled at click |
+| Hover, `useRouter().prefetch()` (`X-Rango-Prefetch: intent`) | runs      | skipped, filled at click | runs, no fill            |
+| A hover over a link already cached or in flight              | as cached | as cached                | as cached                |
+
+- A route whose flags are all `"intent"` answers a hover's prefetch like a
+  navigation: no `private, no-cache`, no `Vary: X-Rango-Prefetch`, no source
+  scope, and its click sends nothing. Any `false` flag keeps the response
+  deferring and page-only.
+- `"intent"` works wherever `false` does: `loader()` and `loading()` in
+  `urls()`, `loader()` in `clientUrls()` and inside `intercept()`. A loader
+  marked `"intent"` cannot call `ctx.rendered()`, as with `false`.
+- `loader()` and `loading()` now reject any other value with
+  `prefetch must be a boolean or "intent"`.
+- Middleware that skips side effects in prefetches should test for the
+  presence of `X-Rango-Prefetch`, not for `=== "1"`: a hover's prefetch sends
+  `intent` and runs every loader not marked `false`.
+- In tests, `serveShellRequest(router, url, { partial: { prefetch: true },
+headers: { "X-Rango-Prefetch": "intent" } })` serves a hover's prefetch.
+
 ### Fixed: a link inside an open intercept to another item of its route opens it in the intercept
 
 **Before.** From an open intercept (`/item/2` over `/list`), a link,

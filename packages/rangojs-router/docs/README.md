@@ -97,8 +97,9 @@ Read these before changing the corresponding subsystem.
   invalidation end to end: `updateTag()`/`revalidateTag()`, tag markers, and
   the read-latency budgets
 - [`prefetch: false`](../../../docs/design/prefetch-false.md) - keeping
-  expensive work out of prefetches: the deferral rules R1 to R13, the path
-  table, the fill request, and the limits
+  expensive work out of prefetches: the deferral rules R1 to R16 (R16: what a
+  hover's prefetch runs, `prefetch: "intent"`), the path table, the fill
+  request, and the limits
 - [Shell fast path](../../../docs/design/shell-fast-path.md) - the PPR shell
   entry as a `cache()` of the handler layer, and the fragment splice
 - [Shell entry layout](../../../docs/design/shell-entry-layout.md) - what a

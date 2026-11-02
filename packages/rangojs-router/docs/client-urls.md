@@ -1118,7 +1118,10 @@ skeletons still lead the first flush. Pinned dev+prod in
 ([prefetch-false.md](../../../docs/design/prefetch-false.md), "`clientUrls()`
 routes"). The flag is projected with the loader's index
 (`deferrableLoaderIndices`) and materialized onto the server stub, so a
-prefetch of the route defers it while its segment is new to the client. An
+prefetch of the route defers it while its segment is new to the client.
+`{ prefetch: "intent" }` is projected the same way, also into
+`intentLoaderIndices`, so a hover's prefetch runs that loader and a viewport
+or render prefetch defers it. An
 in-group click still presents the destination at the click; with the
 prefetch adopted it then commits the prefetched tree at once (the URL, the
 history entry and the unflagged loaders' data), `useOutlet().pending` ends

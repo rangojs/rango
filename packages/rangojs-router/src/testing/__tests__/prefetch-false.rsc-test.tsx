@@ -2,7 +2,7 @@
  * `loader(Def, { prefetch: false })` and `loading(fallback, { prefetch: false })`
  * through a public primitive: what a prefetch request skips, what the fill
  * request that follows it runs, and what stays as it was
- * (docs/design/prefetch-false.md, rules R1 to R13).
+ * (docs/design/prefetch-false.md, rules R1 to R13 and R16).
  *
  * Every route counts the runs of its handlers and loaders in `runs`. A
  * prefetch is `partial: { prefetch: true }`; the fill is
@@ -99,6 +99,14 @@ const DeepPageLoader = counted("deep-page-loader");
 const DeepSideLoader = counted("deep-side-loader");
 const DeepOrphanLoader = counted("deep-orphan-loader");
 const WideLoader = counted("wide-loader");
+// prefetch: "intent" (R16): run by an intent prefetch, deferred by a
+// speculative one, beside `false` work an intent prefetch still defers.
+const HoverLoader = counted("hover-loader");
+const OffLoader = counted("off-loader");
+const IntentOnlyLoader = counted("intent-only-loader");
+const IntentUnitLoader = counted("intent-unit-loader");
+const HoverModalLoader = counted("hover-modal-loader");
+const OffModalLoader = counted("off-modal-loader");
 
 const tick = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, 5));
@@ -143,6 +151,13 @@ const Notes = createHandle<string>();
 /** Deferrable by its own flag, and reads the barrier: refused (R12). */
 const FlaggedRenderedLoader = createLoader(async (ctx) => {
   ran("flagged-rendered");
+  await ctx.rendered();
+  return { notes: ctx.get(Notes) };
+});
+
+/** Flagged `prefetch: "intent"`, and reads the barrier: refused (R12). */
+const IntentRenderedLoader = createLoader(async (ctx) => {
+  ran("intent-rendered");
   await ctx.rendered();
   return { notes: ctx.get(Notes) };
 });
@@ -526,6 +541,34 @@ function makeRouter() {
             path("/flagged-rendered", page("flagged-rendered-page"), () => [
               loader(FlaggedRenderedLoader, { prefetch: false }),
               loading(<p>flagged-rendered-loading</p>),
+            ]),
+            path("/intent-rendered", page("intent-rendered-page"), () => [
+              loader(IntentRenderedLoader, { prefetch: "intent" }),
+              loading(<p>intent-rendered-loading</p>),
+            ]),
+            path("/mixed", page("mixed"), { name: "mixed" }, () => [
+              loader(PriceLoader),
+              loader(HoverLoader, { prefetch: "intent" }),
+              loader(OffLoader, { prefetch: false }),
+              loading(<p>mixed-loading</p>),
+            ]),
+            path("/intent-only", page("intent-only"), () => [
+              loader(IntentOnlyLoader, { prefetch: "intent" }),
+              loading(<p>intent-only-loading</p>),
+            ]),
+            path("/intent-unit", page("intent-unit"), () => [
+              loader(IntentUnitLoader),
+              loading(<p>intent-unit-loading</p>, { prefetch: "intent" }),
+            ]),
+            path(
+              "/hover-item/:id",
+              page("hover-item"),
+              { name: "hoverItem" },
+              () => [loader(PriceLoader)],
+            ),
+            intercept("@modal", ".hoverItem", page("hover-modal"), () => [
+              loader(HoverModalLoader, { prefetch: "intent" }),
+              loader(OffModalLoader, { prefetch: false }),
             ]),
             path("/behind-rendered", page("behind-rendered-page"), () => [
               loader(BehindRenderedLoader),
@@ -1177,9 +1220,15 @@ describe("R3: ssr: false with prefetch: false", () => {
       });
     });
 
-    it("an intent prefetch defers nothing", async () => {
-      const { intent } = setup();
-      const bake = bakeOf(await intent("/ppr"));
+    it("an intent prefetch defers it as a speculative one does, unless it serves the pin", async () => {
+      const { intent, serve } = setup();
+      expect(bakeOf(await intent("/ppr"))).toMatchObject({ deferred: true });
+
+      await serve("/ppr");
+      expect((await serve("/ppr")).shellStatus).toBe("HIT");
+      const hit = await intent("/ppr", "/elsewhere");
+      expect(hit.replayStatus?.outcome).toBe("HIT");
+      const bake = bakeOf(hit);
       expect(bake.deferred).toBeUndefined();
       expect(present(bake.loaderData)).toBe(true);
     });
@@ -1915,10 +1964,18 @@ describe("R12: a deferrable loader cannot call ctx.rendered()", () => {
     );
   });
 
-  it("throws on an intent prefetch too, which defers nothing", async () => {
-    const { intent } = setup();
-    await intent("/flagged-rendered");
-    expect(errors.some((m) => m.includes(FlaggedRenderedLoader.$$id))).toBe(
+  // An intent prefetch runs it, and a speculative prefetch's fill runs it
+  // where its handler does not: refused on every request, as for `false`.
+  it('throws for a prefetch: "intent" loader, on a document and on the intent prefetch that runs it', async () => {
+    const { serve, intent } = setup();
+    await serve("/intent-rendered");
+    const message = errors.find((m) => m.includes(IntentRenderedLoader.$$id));
+    expect(message).toContain("ctx.rendered()");
+    expect(message).toContain('prefetch: "intent"');
+    errors.length = 0;
+    await intent("/intent-rendered");
+    expect(count("intent-rendered")).toBe(2);
+    expect(errors.some((m) => m.includes(IntentRenderedLoader.$$id))).toBe(
       true,
     );
   });
@@ -1937,17 +1994,23 @@ describe("R12: a deferrable loader cannot call ctx.rendered()", () => {
 });
 
 // A hover or an explicit prefetch() sends `X-Rango-Prefetch: intent`
-// (browser/prefetch/fetch.ts prefetchDirect): the visitor is about to click,
-// so the server answers it as the navigation it starts early.
-describe("R16: an intent prefetch defers nothing", () => {
+// (browser/prefetch/fetch.ts prefetchDirect). It runs the work flagged
+// `prefetch: "intent"` and defers `prefetch: false` work as a speculative
+// prefetch (`X-Rango-Prefetch: 1`) does; a speculative prefetch defers both.
+describe('R16: an intent prefetch runs only the work marked prefetch: "intent"', () => {
   const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Intercept-Source, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
   const headersOf = (r: ServeShellRequestResult) => ({
     vary: r.response.headers.get("vary"),
     cacheControl: r.response.headers.get("cache-control"),
     scope: r.response.headers.get("x-rsc-prefetch-scope"),
   });
+  const DEFERRING = {
+    vary: `${VARY}, X-Rango-Prefetch`,
+    cacheControl: "private, no-cache",
+    scope: "source",
+  };
 
-  it("runs a flagged loader with its siblings and marks nothing deferred", async () => {
+  it("defers a prefetch: false loader, as a speculative prefetch does", async () => {
     const { intent } = setup();
     const result = await intent("/product/1");
     const payload = payloadOf(result);
@@ -1956,28 +2019,69 @@ describe("R16: an intent prefetch defers nothing", () => {
       reviews: count("reviews"),
       price: count("price"),
       product: count("product"),
-    }).toEqual({ reviews: 1, price: 1, product: 1 });
-    expect(payload.deferred).toEqual([]);
-    expect(present(payload.find(ReviewsLoader.$$id)!.loaderData)).toBe(true);
-    expect(await result.readDeferred()).toEqual([]);
+    }).toEqual({ reviews: 0, price: 1, product: 1 });
+    const reviews = payload.find(ReviewsLoader.$$id)!;
+    expect(payload.deferred).toEqual([reviews.id]);
+    expect(await result.readDeferred()).toEqual([reviews.id]);
+    expect(headersOf(result)).toEqual(DEFERRING);
   });
 
-  it("runs the handler and loaders behind a flagged loading()", async () => {
+  it("skips the handler and loaders behind a prefetch: false loading()", async () => {
     const { intent } = setup();
     const payload = payloadOf(await intent("/orders"));
 
     expect({
       orders: count("orders"),
       loader: count("orders-loader"),
-      shell: count("shell"),
-    }).toEqual({ orders: 1, loader: 1, shell: 1 });
-    expect(payload.deferred).toEqual([]);
+    }).toEqual({ orders: 0, loader: 0 });
+    expect(payload.deferred.length).toBeGreaterThan(0);
   });
 
-  it("delivers the segments a navigation delivers, with its headers: no source scope, no Cache-Control, no Vary on the prefetch header", async () => {
+  it("runs an intent loader and defers a false one beside it; the fill runs only the false one", async () => {
+    const { intent, fill } = setup();
+    const result = await intent("/mixed");
+    const payload = payloadOf(result);
+
+    expect({
+      hover: count("hover-loader"),
+      off: count("off-loader"),
+      price: count("price"),
+    }).toEqual({ hover: 1, off: 0, price: 1 });
+    const off = payload.find(OffLoader.$$id)!;
+    expect(payload.deferred).toEqual([off.id]);
+    expect(present(payload.find(HoverLoader.$$id)!.loaderData)).toBe(true);
+    expect(headersOf(result)).toEqual(DEFERRING);
+
+    const filled = payloadOf(await fill("/mixed", payload));
+    expect(filled.ids).toEqual([off.id]);
+    expect({
+      hover: count("hover-loader"),
+      off: count("off-loader"),
+      price: count("price"),
+    }).toEqual({ hover: 1, off: 1, price: 1 });
+  });
+
+  it("a speculative prefetch defers both", async () => {
+    const { prefetch } = setup();
+    const payload = payloadOf(await prefetch("/mixed"));
+    expect({
+      hover: count("hover-loader"),
+      off: count("off-loader"),
+    }).toEqual({ hover: 0, off: 0 });
+    expect([...payload.deferred].sort()).toEqual(
+      [
+        payload.find(HoverLoader.$$id)!.id,
+        payload.find(OffLoader.$$id)!.id,
+      ].sort(),
+    );
+  });
+
+  it("a route whose every flag is intent answers in full: a navigation's segments and headers", async () => {
     const { intent, serve } = setup();
-    for (const url of ["/product/1", "/orders"]) {
+    for (const url of ["/intent-only", "/intent-unit"]) {
       const hovered = await intent(url);
+      expect(payloadOf(hovered).deferred).toEqual([]);
+      expect(await hovered.readDeferred()).toEqual([]);
       const navigation = await serve(url, { partial: { from: "/" } });
       expect(payloadOf(hovered).ids).toEqual(payloadOf(navigation).ids);
       expect(headersOf(hovered)).toEqual(headersOf(navigation));
@@ -1987,25 +2091,41 @@ describe("R16: an intent prefetch defers nothing", () => {
         scope: null,
       });
     }
+    expect({
+      only: count("intent-only-loader"),
+      unit: count("intent-unit"),
+      unitLoader: count("intent-unit-loader"),
+    }).toEqual({ only: 2, unit: 2, unitLoader: 2 });
   });
 
-  it("a speculative prefetch of the same route still defers", async () => {
+  it("a speculative prefetch of that route defers the intent work", async () => {
+    const { prefetch } = setup();
+    const only = payloadOf(await prefetch("/intent-only"));
+    expect(only.deferred).toEqual([only.find(IntentOnlyLoader.$$id)!.id]);
+    const unit = payloadOf(await prefetch("/intent-unit"));
+    expect(unit.deferred.length).toBeGreaterThan(0);
+    expect({
+      only: count("intent-only-loader"),
+      unit: count("intent-unit"),
+      unitLoader: count("intent-unit-loader"),
+    }).toEqual({ only: 0, unit: 0, unitLoader: 0 });
+  });
+
+  it("an intent prefetch that resolves an intercept runs its intent loader and defers its false one, from its source page", async () => {
     const { intent, prefetch } = setup();
-    await intent("/product/1");
-    expect(count("reviews")).toBe(1);
-    const payload = payloadOf(await prefetch("/product/1"));
-    expect(count("reviews")).toBe(1);
-    expect(payload.deferred).toEqual([payload.find(ReviewsLoader.$$id)!.id]);
-  });
-
-  it("an intent prefetch that resolves an intercept runs its flagged loader, from its source page", async () => {
-    const { intent } = setup();
-    const result = await intent("/item/1", "/");
+    const result = await intent("/hover-item/1", "/");
     const payload = payloadOf(result);
-    expect(count("modal-loader")).toBe(1);
-    expect(payload.deferred).toEqual([]);
-    expect(present(payload.find(ModalLoader.$$id)!.loaderData)).toBe(true);
+    expect({
+      hover: count("hover-modal-loader"),
+      off: count("off-modal-loader"),
+    }).toEqual({ hover: 1, off: 0 });
+    expect(payload.deferred).toEqual([payload.find(OffModalLoader.$$id)!.id]);
+    expect(present(payload.find(HoverModalLoader.$$id)!.loaderData)).toBe(true);
     expect(headersOf(result).scope).toBe("source");
+
+    const speculative = payloadOf(await prefetch("/hover-item/2", "/"));
+    expect(speculative.deferred.length).toBe(2);
+    expect(count("hover-modal-loader")).toBe(1);
   });
 });
 

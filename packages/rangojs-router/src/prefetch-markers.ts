@@ -12,12 +12,26 @@ export const PREFETCH_HEADER = "X-Rango-Prefetch";
 /**
  * PREFETCH_HEADER's value on an intent prefetch: a hover or an explicit
  * `prefetch()` call (browser/prefetch/fetch.ts prefetchDirect). The server
- * defers nothing in it: `prefetch: false` loaders and the work behind a
- * flagged `loading()` run, as in the navigation it starts early. A
- * speculative prefetch (viewport, render) sends `1`, and any value other than
- * this one reads as speculative.
+ * runs the work flagged `prefetch: "intent"` in it and defers the work
+ * flagged `prefetch: false`. A speculative prefetch (viewport, render) sends
+ * `1` and defers both; any value other than this one reads as speculative.
  */
 export const PREFETCH_INTENT = "intent";
+
+/**
+ * A recorded `prefetch` flag of loader() or loading(): `false` defers the
+ * work in every prefetch, `"intent"` in a speculative one only
+ * (router/segment-resolution/prefetch-deferral.ts).
+ */
+export type PrefetchFlag = false | typeof PREFETCH_INTENT;
+
+/** A `prefetch` DSL option as written: a boolean, or `"intent"`. */
+export type PrefetchOption = boolean | PrefetchFlag;
+
+/** The option asks for deferral: `prefetch: false` or `prefetch: "intent"`. */
+export function isPrefetchFlag(value: unknown): value is PrefetchFlag {
+  return value === false || value === PREFETCH_INTENT;
+}
 
 /**
  * The last row of a prefetch whose render reported an error

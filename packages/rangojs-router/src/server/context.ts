@@ -14,6 +14,7 @@ import type {
 import { invariant, DslContextError } from "../errors";
 import type { DefaultRouteName } from "../types/global-namespace.js";
 import type { ContextVar } from "../context-var.js";
+import type { PrefetchFlag } from "../prefetch-markers.js";
 import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
 import type { ShellCaptureState } from "../rsc/shell-capture.js";
 import {
@@ -125,13 +126,13 @@ export type EntryPropDatas = {
 export type EntryPropRender = {
   loading?: ReactNode | false;
   /**
-   * loading(fallback, { prefetch: false }) with a renderable fallback: a
-   * speculative prefetch defers what the fallback covers while the entry's
+   * loading(fallback, { prefetch: false | "intent" }) with a renderable
+   * fallback: a prefetch defers what the fallback covers while the entry's
    * segment is new to the client
    * (router/segment-resolution/prefetch-deferral.ts). Set on both DSL
    * evaluations, whatever `ssr` did to `loading`.
    */
-  loadingPrefetch?: false;
+  loadingPrefetch?: PrefetchFlag;
   /**
    * loading(fallback, { ssr: false }), on both DSL evaluations; a document
    * then sets `loading` to false (applyDocumentModeLoading).
@@ -172,11 +173,11 @@ export type LoaderEntry = {
    */
   bake?: true;
   /**
-   * loader(Def, { prefetch: false }): a speculative prefetch defers this
+   * loader(Def, { prefetch: false | "intent" }): a prefetch defers this
    * registration while its segment is new to the client
    * (router/segment-resolution/prefetch-deferral.ts).
    */
-  prefetch?: false;
+  prefetch?: PrefetchFlag;
   /**
    * The declaring layout's / parallel's / cache()'s include scope, for the
    * loader body's `ctx.reverse(".name")` (its DSL kickoff carries it,

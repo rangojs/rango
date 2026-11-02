@@ -503,6 +503,8 @@ export const NamedRoutes = {
   "prefetchFalse.handle": "/prefetch-false/handle",
   "prefetchFalse.index": "/prefetch-false",
   "prefetchFalse.inner": "/prefetch-false/inner",
+  "prefetchFalse.intent": "/prefetch-false/intent",
+  "prefetchFalse.intentUnit": "/prefetch-false/intent-unit",
   "prefetchFalse.item": "/prefetch-false/item/:id",
   "prefetchFalse.itemTwin": "/prefetch-false/item-twin/:id",
   "prefetchFalse.ix": "/prefetch-false/ix",

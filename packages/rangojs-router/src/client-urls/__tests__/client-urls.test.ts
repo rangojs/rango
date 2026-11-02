@@ -357,6 +357,30 @@ describe("clientUrls", () => {
     });
   });
 
+  it("records prefetch: \"intent\" on a route's and an intercept's loaders", () => {
+    const ShellLoader = loader("loaders#shell");
+    const DetailLoader = loader("loaders#detail");
+    const patterns = clientUrls(
+      ({ path, layout, intercept, loader: useLoader }) => [
+        layout(AccountLayout, () => [
+          useLoader(ShellLoader, { prefetch: "intent" }),
+          path("/items/:id", AccountPage, { name: "detail" }),
+        ]),
+        intercept("@modal", ".detail", AccountLayout, () => [
+          useLoader(DetailLoader, { prefetch: "intent" }),
+        ]),
+      ],
+    );
+    expect(patterns.routes[0].loaders[0]).toEqual({
+      loader: ShellLoader,
+      revalidate: [],
+      prefetch: "intent",
+    });
+    expect(patterns.intercepts[0].loaders).toEqual([
+      { loader: DetailLoader, revalidate: [], prefetch: "intent" },
+    ]);
+  });
+
   it("rejects a prefetch value that is not a boolean", () => {
     const AccountLoader = loader("loaders#account");
     expect(() =>
@@ -365,7 +389,9 @@ describe("clientUrls", () => {
           useLoader(AccountLoader, { prefetch: "never" } as never),
         ]),
       ]),
-    ).toThrow(/clientUrls\(\) loader\(\) prefetch must be a boolean/);
+    ).toThrow(
+      /clientUrls\(\) loader\(\) prefetch must be a boolean or "intent"/,
+    );
   });
 
   // A urls() intercept() takes loader(Def, { prefetch: false }) and ignores

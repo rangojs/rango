@@ -314,16 +314,20 @@ The rule: **prefetch broadly, and flag what is expensive.**
   already on screen whose `revalidate()` re-runs it for the destination is
   prefetched with it, so the click does not wait on a fill for data the page
   is already showing.
-- `prefetch: false` applies to speculative prefetches: viewport and render.
-  A hover, or `useRouter().prefetch()`, is intent to click and runs the
-  loader, so its click needs no fill. A hover over a link a viewport prefetch
-  already answered sends nothing, and that click still fills.
+- `prefetch: false` applies to every prefetch, hovers included.
+  `prefetch: "intent"` applies to speculative prefetches only (viewport and
+  render): a hover, or `useRouter().prefetch()`, is intent to click and runs
+  the loader, so on a route whose flags are all `"intent"` its click needs no
+  fill. Pick `"intent"` for a loader worth starting on hover, `false` for one
+  too expensive to run on every cursor pass. A hover over a link a viewport
+  prefetch already answered sends nothing, and that click still fills.
 - The trade-off of a deferring prefetch, measured on a `clientUrls()` tab in
-  a consumer app (dev, a loaded machine), before a hover's prefetch ran
-  flagged loaders: with the tab's loader flagged, a hover then a click 150 ms
-  later showed the content in 843 to 918 ms; with the tab prefetched whole, in
-  77 to 157 ms. The flagged click pays the fill request and then React's
-  300 ms on the tab's fallback. A viewport-prefetched link still pays it.
+  a consumer app (dev, a loaded machine): with the tab's loader skipped by
+  the hover's prefetch, a hover then a click 150 ms later showed the content
+  in 843 to 918 ms; with the tab prefetched whole, in 77 to 157 ms. The
+  deferred click pays the fill request and then React's 300 ms on the tab's
+  fallback. `prefetch: "intent"` buys the second number on hover; a
+  viewport-prefetched link still pays the first.
 - A click that adopts a prefetch with a flagged loader shows the page at once
   and sends one fill request for the flagged loaders. Read a flagged loader
   under its own `<Suspense>`: with no boundary, React keeps the page being
@@ -335,7 +339,7 @@ The rule: **prefetch broadly, and flag what is expensive.**
   or a grid does not prefetch each link again after every navigation. The server
   makes an answer page-only (`x-rsc-prefetch-scope: source`) when sharing it
   would be wrong: an intercept targets the route or the page sending it, the
-  answer defers a `prefetch: false` unit the page does not show yet, a
+  answer defers a flagged unit the page does not show yet, a
   `revalidate()` on the target read `currentUrl` and kept its segment, a rule
   on the route (or inside its `path()`) read the page being left and kept the
   segment through the route's default, or a kept answer sends no segment at
@@ -388,7 +392,8 @@ The rule: **prefetch broadly, and flag what is expensive.**
   and the list stays mounted under it; a document load of the URL renders the
   full page; Back closes the modal. Recipe 3.5.
 - An intercept's loaders each take their own `revalidate()`, and a flagged
-  `prefetch: false` loader opens the modal at once with its `loading()`. Its
+  (`prefetch: false` or `"intent"`) loader opens the modal at once with its
+  `loading()`. Its
   errors render the declaring layout's `errorBoundary()`.
 - Inside a group, `intercept()` takes a dot-local named target in the same
   definition and `loader()`/`loading()` only, and only navigations from inside

@@ -99,20 +99,23 @@ with deferred work, or the fill that follows it, is a request where that is
 not true of the page.
 
 **A deferrable loader cannot call `rendered()` at all.** Deferrable means the
-loader is registered with `loader(Def, { prefetch: false })`, or it sits
-behind a `loading(fallback, { prefetch: false })`: on that entry, in its
+loader is registered with `loader(Def, { prefetch: false })` or
+`{ prefetch: "intent" }`, or it sits behind a `loading()` with either flag:
+on that entry, in its
 slots and orphan layouts, or under it in the chain when the entry is a
 layout. Such a loader runs in the fill request, where its own entry is held
 by the client and the entry's handler does not run. There is no render to
 wait for and the handle data it wants is not there.
 
 It throws on every request kind (document, navigation, prefetch, fill), not
-only in the fill. That is deliberate: automatic prefetch is off in
+only in the fill, and for an `"intent"` flag on an intent prefetch too, which
+runs the loader: the guard reads the strict scope, not what the request
+defers. That is deliberate: automatic prefetch is off in
 development by default, so an error that only fired in a fill would first be
 seen in production. Throwing on the document load shows it on the first page
-view. The message names the loader and gives both fixes: remove
-`{ prefetch: false }` from the loader or from the `loading()` above it, or
-stop calling `ctx.rendered()`.
+view. The message names the loader and gives both fixes: remove the
+`prefetch` flag from the loader or from the `loading()` above it, or stop
+calling `ctx.rendered()`.
 
 The consequence to know: a deferrable loader cannot read handle data, since
 `ctx.get(handle)` needs the barrier first. Pushing a handle from one is still

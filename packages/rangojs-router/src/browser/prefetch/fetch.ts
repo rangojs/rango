@@ -279,9 +279,9 @@ function executePrefetchFetch(
   rangoState: string,
   /**
    * An intent prefetch (prefetchDirect: hover, `prefetch()`): sent as
-   * PREFETCH_INTENT so the server defers nothing, as in the navigation it
-   * starts early. A speculative one (prefetchQueued) sends `1` and lets the
-   * server defer `prefetch: false` work (docs/design/prefetch-false.md, R16).
+   * PREFETCH_INTENT so the server runs `prefetch: "intent"` work and defers
+   * only `prefetch: false` work. A speculative one (prefetchQueued) sends `1`
+   * and lets the server defer both (docs/design/prefetch-false.md, R16).
    */
   intent: boolean,
   expectedRouterId?: string,

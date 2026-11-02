@@ -519,8 +519,8 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 3,
-        "id": "a-hover-prefetch-is-the-navigation-started-early",
-        "text": "A hover prefetch is the navigation, started early"
+        "id": "a-hover-prefetch-runs-only-what-you-mark",
+        "text": "A hover prefetch runs only what you mark"
       },
       {
         "depth": 2,

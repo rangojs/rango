@@ -1176,7 +1176,7 @@ document request captured:
 | Replays a shell a document request captured (`HIT`)    | Served from its pin, not deferred, never run; the click sends nothing |
 | Replays a navigation-only shell, or misses (cold page) | Deferred: the click sends one fill that runs it                       |
 | Serves an explicit `cache()` hit                       | Deferred: the click sends one fill that runs it                       |
-| Hover prefetch (`X-Rango-Prefetch: intent`)            | Never deferred                                                        |
+| Hover prefetch (`X-Rango-Prefetch: intent`)            | As the rows above; a loader marked `prefetch: "intent"` runs instead  |
 
 A cold prefetch still schedules the background capture that stores the
 page's navigation shell, and that capture runs the loader once. Once a
