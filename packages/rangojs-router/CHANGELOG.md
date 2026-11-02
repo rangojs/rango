@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `router.refresh()` keeps the page's location state
+
+**Before.** `useRouter().refresh()`, and the refresh another tab's server
+action triggers, replaced the history entry with one that held only the
+state the server set on the refreshed response. Every `useLocationState`
+reader lost its value in the commit that showed the refreshed page (a
+"load more" list dropped the pages it carried), and Back then Forward onto
+the entry restored nothing.
+
+**Now.** A refresh keeps the entry's location state, typed slots and plain
+`state`, on the entry and in every reader, with the same value identity.
+State the server sets on the refreshed response merges over it. A flash value
+already shown stays on screen until the next navigation and is not written
+back to the entry, so Back/Forward and a reload do not show it again. A
+refresh of an open intercept still renders the full page, now with the
+entry's location state.
+
 ## 0.33.1 (2026-11-01)
 
 ### Fixed: no "MISSING SEGMENT" error for an action whose page left while it was in flight ([#1366](https://github.com/rangojs/rango/pull/1366))

@@ -10,7 +10,9 @@
     "packages/rangojs-router/src/browser/partial-update.ts",
     "packages/rangojs-router/src/browser/navigation-bridge.ts",
     "packages/rangojs-router/src/browser/server-action-bridge.ts",
-    "packages/rangojs-router/src/browser/network-error-handler.ts"
+    "packages/rangojs-router/src/browser/network-error-handler.ts",
+    "packages/rangojs-router/src/browser/navigation-transaction.ts",
+    "packages/rangojs-router/src/browser/history-state.ts"
   ],
   "lockTests": [
     "packages/rangojs-router/src/__tests__/use-navigation-commit-lane.test.tsx",

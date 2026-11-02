@@ -278,12 +278,19 @@ describe("createNavigationTransaction", () => {
       state?: unknown;
       serverState?: Record<string, unknown>;
       treeless?: boolean;
+      sameEntry?: boolean;
     };
     const SOURCE = { __rsc_ls_product: { name: "Widget" }, key: "abc" };
-    function commitOf(flags: CommitFlags, previous: unknown = SOURCE) {
+    function commitOf(
+      flags: CommitFlags,
+      previous: unknown = SOURCE,
+      /** history.state when the commit lands, if it moved after `previous`. */
+      entryAtCommit: unknown = previous,
+    ) {
       const { store, eventController } = createTestContext();
       historyState = previous;
       eventController.commitLocationState(previous);
+      historyState = entryAtCommit;
       const before = eventController.getLocationState();
       const heard = vi.fn();
       eventController.subscribe(heard);
@@ -373,6 +380,7 @@ describe("createNavigationTransaction", () => {
     it.each([
       { label: "push", options: {} },
       { label: "back/forward", options: { traversal: true } },
+      { label: "same-entry", options: { sameEntry: true, replace: true } },
     ])(
       "a treeless $label commit hands the state over with its notification",
       ({ options }) => {
@@ -392,6 +400,119 @@ describe("createNavigationTransaction", () => {
       expect(before).toEqual({ __rsc_ls_product: { name: "Widget" } });
       expect(eventController.getLocationState()).toBeUndefined();
       tx[Symbol.dispose]();
+    });
+
+    describe("a same-entry commit (router.refresh())", () => {
+      const ENTRY = {
+        __rsc_ls_product: { name: "Widget" },
+        state: { from: "list" },
+        key: "abc",
+        idx: 3,
+      };
+      const written = () => replaceStateSpy.mock.calls.at(-1)![0];
+
+      it("keeps the entry's state and idx, drops its scroll key for a new one, and keeps the readers' snapshot", async () => {
+        const { ensureHistoryKey } =
+          await import("../browser/scroll-restoration");
+        const { tx, eventController, before } = commitOf(
+          { replace: true, sameEntry: true },
+          ENTRY,
+        );
+        expect(pushStateSpy).not.toHaveBeenCalled();
+        expect(written()).toEqual({
+          __rsc_ls_product: { name: "Widget" },
+          state: { from: "list" },
+          idx: 3,
+        });
+        expect(ensureHistoryKey).toHaveBeenCalled();
+        expect(eventController.getLocationState()).toBe(before);
+        tx[Symbol.dispose]();
+      });
+
+      it("merges server-set state into the entry and into what readers show", () => {
+        const { tx, eventController, before } = commitOf(
+          {
+            replace: true,
+            sameEntry: true,
+            serverState: { __rsc_ls_stamp: { page: 2 } },
+          },
+          ENTRY,
+        );
+        expect(written()).toEqual({
+          __rsc_ls_product: { name: "Widget" },
+          state: { from: "list" },
+          __rsc_ls_stamp: { page: 2 },
+          idx: 3,
+        });
+        const shown = eventController.getLocationState()!;
+        expect(shown).toEqual({
+          __rsc_ls_product: { name: "Widget" },
+          state: { from: "list" },
+          __rsc_ls_stamp: { page: 2 },
+        });
+        expect(shown.__rsc_ls_product).toBe(before!.__rsc_ls_product);
+        tx[Symbol.dispose]();
+      });
+
+      it("takes its intercept marks from the commit, not from the entry", () => {
+        const intercepted = {
+          ...ENTRY,
+          intercept: true,
+          sourceUrl: "http://localhost/list",
+        };
+        const full = commitOf({ replace: true, sameEntry: true }, intercepted);
+        expect(written()).not.toHaveProperty("intercept");
+        expect(written()).not.toHaveProperty("sourceUrl");
+        expect(written()).toMatchObject({ state: { from: "list" } });
+        full.tx[Symbol.dispose]();
+
+        const still = commitOf(
+          {
+            replace: true,
+            sameEntry: true,
+            intercept: true,
+            interceptSourceUrl: "http://localhost/other-list",
+          },
+          intercepted,
+        );
+        expect(written()).toMatchObject({
+          intercept: true,
+          sourceUrl: "http://localhost/other-list",
+          state: { from: "list" },
+        });
+        still.tx[Symbol.dispose]();
+      });
+
+      it("does not write a flash value readers show back to the entry", () => {
+        const withFlash = { ...ENTRY, __rsc_ls_flash: { text: "saved" } };
+        // The flash reader cleared the slot from history after paint.
+        const { __rsc_ls_flash: _cleared, ...cleared } = withFlash;
+        const { tx, eventController } = commitOf(
+          { replace: true, sameEntry: true },
+          withFlash,
+          cleared,
+        );
+        expect(written()).not.toHaveProperty("__rsc_ls_flash");
+        expect(eventController.getLocationState()).toMatchObject({
+          __rsc_ls_flash: { text: "saved" },
+        });
+        tx[Symbol.dispose]();
+      });
+
+      it("reads the entry when it commits: state merged into it meanwhile is kept", () => {
+        // An action settled during the refetch and merged its slot.
+        const merged = { ...ENTRY, __rsc_ls_note: { text: "from-action" } };
+        const { tx } = commitOf(
+          { replace: true, sameEntry: true },
+          ENTRY,
+          merged,
+        );
+        expect(written()).toMatchObject({
+          __rsc_ls_product: { name: "Widget" },
+          __rsc_ls_note: { text: "from-action" },
+        });
+        tx[Symbol.dispose]();
+      });
     });
 
     it.each([

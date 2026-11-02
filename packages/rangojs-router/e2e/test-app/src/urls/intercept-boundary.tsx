@@ -43,6 +43,7 @@ export const interceptBoundaryPatterns = urls(
           <div data-testid="ib-list">
             <Link
               to="/intercept-boundary/item"
+              state={{ from: "list" }}
               prefetch="none"
               data-testid="ib-to-item"
             >

@@ -12,6 +12,7 @@ import {
   expectOtherVersionLocationStateDroppedOnTraversal,
   expectReaderMountedDuringHeldNavigationReadsEntryOnScreen,
   returnToEvictedEntry,
+  runRefreshLocationStateTests,
 } from "@shared/e2e";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
@@ -397,6 +398,10 @@ function describeCommit(mode: "dev" | "build") {
         page,
         f.url("/location-state-load-more"),
       );
+    });
+
+    runRefreshLocationStateTests({
+      url: () => f.url("/location-state-load-more"),
     });
   });
 }

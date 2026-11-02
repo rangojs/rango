@@ -32,9 +32,14 @@ export const locationStateOptionsPatterns = urls(({ path, loader, layout }) => [
       "/load-more",
       (ctx) => {
         const page = Number(ctx.searchParams.get("page") ?? "1");
-        // The e2e skips it on a document load to see a stale stamp kept.
-        if (ctx.request.headers.get("x-lm-stamp") !== "off") {
-          ctx.setLocationState(ServerPageStamp({ page }));
+        // The e2e skips it on a document load to see a stale stamp kept,
+        // and marks a request with a number to see which response set it.
+        const stamp = ctx.request.headers.get("x-lm-stamp");
+        if (stamp !== "off") {
+          const mark = Number(stamp);
+          ctx.setLocationState(
+            ServerPageStamp(mark > 0 ? { page, mark } : { page }),
+          );
         }
         return <LoadMoreList basePath="/location-state/load-more" />;
       },

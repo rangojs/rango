@@ -769,7 +769,12 @@ export function createNavigationBridge(
           [],
           false,
           tx.handle.signal,
-          tx.with({ url: window.location.href, replace: true, scroll: false }),
+          tx.with({
+            url: window.location.href,
+            replace: true,
+            scroll: false,
+            sameEntry: true,
+          }),
           { type: "navigate", refresh: true, boundary: shown[at]?.id },
         );
       } catch (error) {

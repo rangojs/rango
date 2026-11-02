@@ -13,6 +13,7 @@ import {
   expectReaderMountedDuringHeldNavigationReadsEntryOnScreen,
   returnToEvictedEntry,
   expectConsole,
+  runRefreshLocationStateTests,
 } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import {
@@ -1251,6 +1252,10 @@ function commitSuite(f: Fixture) {
       page,
       f.url("/location-state/load-more"),
     );
+  });
+
+  runRefreshLocationStateTests({
+    url: () => f.url("/location-state/load-more"),
   });
 }
 
