@@ -14,8 +14,11 @@ import {
   CarriedItems,
   GridState,
   ListSort,
+  LoadMoreFlash,
+  LoadMoreNote,
   ServerPageStamp,
 } from "../location-states.js";
+import { noteLoadMore } from "../urls/location-state-options.actions.js";
 import { LoadMoreLoader } from "../urls/location-state.loader.js";
 
 /**
@@ -62,11 +65,16 @@ function shownUrlOf(url: string | URL): string {
  * `lm-url` is the URL the list reads from usePathname and useSearchParams,
  * `lm-late-url` the one the late reader reads (#1031): each has to name the
  * page it is shown in.
+ *
+ * `lm-refresh`, `lm-action`, `lm-more-flash` and `lm-server-mark` drive the
+ * router.refresh() cases.
  */
 export function LoadMoreList({ basePath }: { basePath: string }) {
   const carried = useLocationState(CarriedItems) ?? [];
   const sort = useLocationState(ListSort);
   const serverStamp = useLocationState(ServerPageStamp);
+  const note = useLocationState(LoadMoreNote);
+  const flash = useLocationState(LoadMoreFlash);
   const { data } = useLoader(LoadMoreLoader);
   const [search] = useSearchParams();
   const hold = search.get("hold");
@@ -89,7 +97,10 @@ export function LoadMoreList({ basePath }: { basePath: string }) {
         <span data-testid="lm-carried-count">{carried.length}</span>, sort{" "}
         <span data-testid="lm-sort">{sort?.order ?? "none"}</span>, server stamp{" "}
         <span data-testid="lm-server-page">{serverStamp?.page ?? "none"}</span>,
-        url <span data-testid="lm-url">{url}</span>
+        url <span data-testid="lm-url">{url}</span>, mark{" "}
+        <span data-testid="lm-server-mark">{serverStamp?.mark ?? "none"}</span>,
+        note <span data-testid="lm-note">{note?.text ?? "none"}</span>, flash{" "}
+        <span data-testid="lm-flash">{flash?.text ?? "none"}</span>
       </p>
       <button
         type="button"
@@ -133,8 +144,45 @@ export function LoadMoreList({ basePath }: { basePath: string }) {
       >
         Load more, router.push
       </button>
+      <Link
+        to={`${basePath}?page=${data.page + 1}`}
+        state={[
+          CarriedItems(shown),
+          ListSort({ order: "asc" }),
+          LoadMoreFlash({ text: "loaded" }),
+        ]}
+        scroll={false}
+        data-testid="lm-more-flash"
+      >
+        Load more, with a flash
+      </Link>{" "}
+      <button
+        type="button"
+        data-testid="lm-refresh"
+        onClick={() => void router.refresh()}
+      >
+        Refresh
+      </button>{" "}
+      <button
+        type="button"
+        data-testid="lm-action"
+        onClick={() => void runAction(() => noteLoadMore("from-action"))}
+      >
+        Run the action
+      </button>
     </section>
   );
+}
+
+/** `<html data-lm-action>` holds what the last action call settled with. */
+async function runAction(call: () => Promise<string>): Promise<void> {
+  const html = document.documentElement;
+  html.removeAttribute("data-lm-action");
+  try {
+    html.setAttribute("data-lm-action", await call());
+  } catch {
+    html.setAttribute("data-lm-action", "error");
+  }
 }
 
 /**

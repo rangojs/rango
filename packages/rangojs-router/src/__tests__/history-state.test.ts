@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createLocationState } from "../browser/react/location-state-shared.js";
+import {
+  createLocationState,
+  setLocationStateVersion,
+} from "../browser/react/location-state-shared.js";
 import { withLocationStateKey } from "../testing/location-state-key.js";
 
 let historyState: any = null;
@@ -44,6 +47,7 @@ let resolveNavigationState: typeof import("../browser/history-state").resolveNav
 let pushHistoryWithIdx: typeof import("../browser/history-state").pushHistoryWithIdx;
 let stripShellMissMarker: typeof import("../browser/history-state").stripShellMissMarker;
 let clearLocationStateOnDocumentLoad: typeof import("../browser/history-state").clearLocationStateOnDocumentLoad;
+let keptEntryState: typeof import("../browser/history-state").keptEntryState;
 
 beforeEach(async () => {
   const mod = await import("../browser/history-state");
@@ -53,6 +57,7 @@ beforeEach(async () => {
   pushHistoryWithIdx = mod.pushHistoryWithIdx;
   stripShellMissMarker = mod.stripShellMissMarker;
   clearLocationStateOnDocumentLoad = mod.clearLocationStateOnDocumentLoad;
+  keptEntryState = mod.keptEntryState;
 });
 
 describe("buildHistoryState", () => {
@@ -103,6 +108,70 @@ describe("buildHistoryState", () => {
     expect(buildHistoryState(undefined, undefined, { token: "abc" })).toEqual({
       token: "abc",
     });
+  });
+});
+
+describe("keptEntryState", () => {
+  afterEach(() => setLocationStateVersion(undefined));
+
+  const entry = {
+    "__rsc_ls_a#Carried~r": ["p1-1"],
+    __rsc_ls_sort: { order: "asc" },
+    state: { from: "list" },
+    __rsc_lsv: "build-1",
+    key: "abc",
+    idx: 4,
+    intercept: true,
+    sourceUrl: "http://localhost/list",
+  };
+
+  it("keeps the entry's location state and its version record, and drops the scroll key, idx and intercept marks", () => {
+    setLocationStateVersion("build-1");
+    expect(keptEntryState(entry)).toEqual({
+      "__rsc_ls_a#Carried~r": ["p1-1"],
+      __rsc_ls_sort: { order: "asc" },
+      state: { from: "list" },
+      __rsc_lsv: "build-1",
+    });
+  });
+
+  it("takes the intercept marks it is given", () => {
+    expect(
+      keptEntryState(entry, {
+        intercept: true,
+        sourceUrl: "http://localhost/other",
+      }),
+    ).toMatchObject({ intercept: true, sourceUrl: "http://localhost/other" });
+  });
+
+  it("merges server-set state over the entry's", () => {
+    setLocationStateVersion("build-1");
+    expect(
+      keptEntryState(entry, undefined, {
+        __rsc_ls_sort: { order: "desc" },
+        __rsc_ls_stamp: { page: 2 },
+      }),
+    ).toEqual({
+      "__rsc_ls_a#Carried~r": ["p1-1"],
+      __rsc_ls_sort: { order: "desc" },
+      __rsc_ls_stamp: { page: 2 },
+      state: { from: "list" },
+      __rsc_lsv: "build-1",
+    });
+  });
+
+  it("keeps another version's state when the server adds none, and drops it when the server does", () => {
+    setLocationStateVersion("build-2");
+    expect(keptEntryState(entry)).toMatchObject({ __rsc_lsv: "build-1" });
+    expect(
+      keptEntryState(entry, undefined, { __rsc_ls_stamp: { page: 2 } }),
+    ).toEqual({ __rsc_ls_stamp: { page: 2 }, __rsc_lsv: "build-2" });
+  });
+
+  it("reads a missing or primitive entry as none", () => {
+    expect(keptEntryState(null)).toBeNull();
+    expect(keptEntryState("legacy")).toBeNull();
+    expect(keptEntryState({ key: "abc", idx: 1 })).toBeNull();
   });
 });
 

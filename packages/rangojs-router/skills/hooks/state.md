@@ -96,16 +96,17 @@ reads the entry on screen, not the one `history.state` already holds.
 Back/forward and state the server sets on a navigation
 (`ctx.setLocationState()`, `redirect(url, { state })`) follow the same rule.
 
-| What changes the state                                       | A reader gets it                                                 |
-| ------------------------------------------------------------ | ---------------------------------------------------------------- |
-| `<Link state>`, `router.push()` / `router.replace()`         | in the commit that shows the destination                         |
-| back/forward                                                 | in the commit that restores the entry (cached or refetched)      |
-| the server, on a navigation (`setLocationState`, a redirect) | in the commit that shows the destination                         |
-| the server, on a document load (a page load, a no-JS post)   | once the page has hydrated, as stored state                      |
-| a navigation the server answers with nothing to re-render    | with the new location: the page on screen is the entry's         |
-| `router.push(url, { revalidate: false })` (no server fetch)  | with the new location: the page does not change                  |
-| a server action's `setLocationState` (no navigation)         | when the action's response arrives, added to what readers show   |
-| `Def.write()` / `Def.delete()`                               | when the entry is next restored: back/forward to it, or a reload |
+| What changes the state                                          | A reader gets it                                                                         |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `<Link state>`, `router.push()` / `router.replace()`            | in the commit that shows the destination                                                 |
+| back/forward                                                    | in the commit that restores the entry (cached or refetched)                              |
+| the server, on a navigation (`setLocationState`, a redirect)    | in the commit that shows the destination                                                 |
+| the server, on a document load (a page load, a no-JS post)      | once the page has hydrated, as stored state                                              |
+| a navigation the server answers with nothing to re-render       | with the new location: the page on screen is the entry's                                 |
+| `router.push(url, { revalidate: false })` (no server fetch)     | with the new location: the page does not change                                          |
+| a server action's `setLocationState` (no navigation)            | when the action's response arrives, added to what readers show                           |
+| `router.refresh()`, or another tab's action refreshing this one | in the commit that shows the refreshed page: what readers show, plus what the server set |
+| `Def.write()` / `Def.delete()`                                  | when the entry is next restored: back/forward to it, or a reload                         |
 
 Three consequences:
 
@@ -260,7 +261,8 @@ and hydrating, so SSR and hydration agree), then clears it from `history.state` 
 `replaceState` in a `useEffect`. Every component reading the same flash
 definition sees the value, whenever it mounts, until the next navigation or
 back/forward commits its entry's state: an entry that carries no flash shows
-none. A server action's state does not end it. Pressing back/forward will not
+none. A server action's state does not end it, nor a refresh, which keeps it
+on screen without writing it back to the entry. Pressing back/forward will not
 re-show the flash since it was cleared.
 
 Set flash state from the server via `redirect()` with state (from a handler,

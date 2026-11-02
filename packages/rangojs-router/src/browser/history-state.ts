@@ -8,6 +8,7 @@ import {
   replaceCurrentHistoryState,
   resolveLocationStateEntries,
   stampLocationState,
+  type LocationStateSnapshot,
 } from "./react/location-state-shared.js";
 import { WIRE } from "../wire-params.js";
 
@@ -108,6 +109,53 @@ export function buildHistoryState(
   if (hasLocationState(result)) stampLocationState(result);
 
   return Object.keys(result).length > 0 ? result : null;
+}
+
+/**
+ * The entry a commit onto the entry on screen writes (router.refresh(), the
+ * cross-tab refresh): `entryState`, read when the commit lands, keeps its
+ * location state. Its scroll key and idx go (pushHistoryWithIdx and
+ * ensureHistoryKey write them again), and its intercept marks are this
+ * commit's: a refresh renders the URL's full page. Server-set state merges
+ * over the kept state. A flash a reader already cleared from the entry stays
+ * cleared: the entry is copied, never rebuilt from what readers show.
+ */
+export function keptEntryState(
+  entryState: unknown,
+  routerState?: { intercept?: boolean; sourceUrl?: string },
+  serverState?: Record<string, unknown>,
+): Record<string, unknown> | null {
+  let result: Record<string, unknown> =
+    entryState !== null && typeof entryState === "object"
+      ? { ...entryState }
+      : {};
+  delete result.key;
+  delete result.idx;
+  delete result.intercept;
+  delete result.sourceUrl;
+  if (routerState?.intercept) {
+    result.intercept = true;
+    if (routerState.sourceUrl) result.sourceUrl = routerState.sourceUrl;
+  }
+  if (serverState && Object.keys(serverState).length > 0) {
+    result = addLocationState(result, serverState);
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+/**
+ * What readers get from a commit onto the entry on screen: the state they
+ * show, plus the server's, recorded under the client's version. Not re-read
+ * from the entry, so a flash value on screen stays until the next navigation
+ * or back/forward.
+ */
+export function shownLocationState(
+  shown: LocationStateSnapshot,
+  serverState?: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...shown, ...serverState };
+  stampLocationState(result);
+  return result;
 }
 
 /** Check if a history state object contains location state keys. */

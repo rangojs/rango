@@ -131,7 +131,10 @@ Back/Forward onto an intercept entry after it takes the same path.
 A refresh reloads the intercept's URL the same way. `router.refresh()`, and
 the refresh another tab's action triggers (`navigation-bridge.ts` `refresh`),
 send no intercept source and hold nothing, so the server renders the URL's
-full page and the commit replaces the entry with it. An intercept is a page
+full page and the commit replaces the entry with it, keeping the entry's
+location state and dropping its intercept marks
+(`navigation-transaction.ts` `sameEntry`, `history-state.ts`
+`keptEntryState`). An intercept is a page
 in the middle of a navigation: reloading its URL, by a document load or a
 refresh, renders the main page. Pinned by the `intercept-boundary` e2e (both
 apps, dev and production).

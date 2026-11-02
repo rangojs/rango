@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type BrowserContext,
+  type Page,
+  type Response,
+} from "@playwright/test";
 import { expectConsole } from "./console-guard.js";
 import { waitForShellHydration } from "./shell-request.js";
 
@@ -20,6 +26,14 @@ export interface InterceptBoundaryScenarioOptions {
 
 const LIST = "/intercept-boundary/list";
 const ITEM = "/intercept-boundary/item";
+
+/** The partial fetch a refresh makes for the item's URL. */
+function waitForItemRefresh(page: Page): Promise<Response> {
+  return page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname.endsWith(ITEM) && url.searchParams.has("_rsc_partial");
+  });
+}
 
 export function runInterceptBoundaryTests(
   options: InterceptBoundaryScenarioOptions,
@@ -85,15 +99,32 @@ export function runInterceptBoundaryTests(
     await open(context, page);
     await openItem(page);
 
-    const refreshed = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return (
-        url.pathname.endsWith(ITEM) && url.searchParams.has("_rsc_partial")
-      );
-    });
+    const refreshed = waitForItemRefresh(page);
     await page.getByTestId("ib-refresh").click();
     await (await refreshed).finished();
     await expectFullPage(page);
+  });
+
+  test("router.refresh() of an open intercept keeps the entry's location state on the full page, without the intercept marks", async ({
+    page,
+    context,
+  }) => {
+    await open(context, page);
+    await openItem(page);
+    await expect(page.getByTestId("ib-from")).toHaveText("from:list");
+
+    const refreshed = waitForItemRefresh(page);
+    await page.getByTestId("ib-refresh").click();
+    await (await refreshed).finished();
+    await expectFullPage(page);
+    await expect(page.getByTestId("ib-from")).toHaveText("from:list");
+    const entry = (await page.evaluate(() => window.history.state)) as Record<
+      string,
+      unknown
+    >;
+    expect(entry).not.toHaveProperty("intercept");
+    expect(entry).not.toHaveProperty("sourceUrl");
+    expect(entry.state).toEqual({ from: "list" });
   });
 
   test("Back onto an intercept whose action threw restores it over its page, and shows the write", async ({
