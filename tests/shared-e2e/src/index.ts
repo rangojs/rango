@@ -176,6 +176,8 @@ export {
 export type { PeFormStateScenarioOptions } from "./pe-form-state-scenario.js";
 export type { DocumentLocationStateScenarioOptions } from "./document-location-state-scenario.js";
 export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";
+export { runLoaderRemountRefreshTests } from "./loader-remount-refresh-scenario.js";
+export type { LoaderRemountRefreshScenarioOptions } from "./loader-remount-refresh-scenario.js";
 export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
 export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";

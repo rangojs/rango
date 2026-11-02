@@ -135,6 +135,21 @@ click over a held page goes inside `await act(async () => ...)`: RTL's
 `fireEvent` runs the click in a synchronous `act()`, which drops React's retry
 of the held page, and an urgent commit after it never renders.
 
+`useLoader().load()` and a refresh-group refresh reach a loader endpoint
+renderRoute installs on `fetch` while the tree is mounted (`LoaderEndpoint`
+in `src/testing/render-route.tsx`): a GET for `_rsc_loader=<id>` resolves to
+the last value the test gave that loader (the render seeds or
+`router.respondToLoads({ loaders })`), read when the request is made; a
+pending Promise holds the answer and a rejection is the loader's error. The
+answer is not encoded: it travels with its `Response` to the
+`@vitejs/plugin-rsc/browser` stub the testing kit aliases
+(`src/testing/vitest-stubs/plugin-rsc-browser.ts`), whose `createFromFetch`
+hands it back. So which reader shows a refresh, in which frame, is a unit
+assertion through the public primitive
+(`src/testing/__tests__/render-route-loader-remount.test.tsx`). A load with
+params is answered with a `loaderError`; a body or non-GET load is passed
+through to the test's own `fetch`.
+
 The rango **cache-invalidation directives** are an exception worth calling out,
 because they used to look like a trap and no longer are. A handler/action/loader
 that calls `invalidateClientCache()` or `keepClientCache()` now produces its REAL

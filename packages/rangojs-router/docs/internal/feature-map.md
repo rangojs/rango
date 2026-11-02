@@ -70,6 +70,13 @@ it and then revalidates in Back's lane: production's guards and plan decide it
 history renderRoute keeps), and `router.revalidations()` lists each request
 with the segment ids it holds.
 
+`renderRoute` answers `useLoader().load()` and refresh-group refreshes: its
+`LoaderEndpoint` answers a GET for `_rsc_loader=<id>` with the last value the
+test gave the loader (the render seeds, or `router.respondToLoads({
+loaders })`), unencoded, answering a load() with params with a `loaderError`, through the testing kit's
+`@vitejs/plugin-rsc/browser` alias (`testing/vitest-stubs/plugin-rsc-browser.ts`,
+in `rangoTestAliases`).
+
 `renderRoute`'s `hydrate: true` option is how a hook's hydration render becomes
 reachable through the public DOM primitive (#992: `useLocationState` inside a
 late-hydrating Suspense boundary). It renders the same element to HTML with

@@ -379,6 +379,7 @@ import { vtBackPatterns } from "./pages/vt-back.js";
 import { actionLatestCallPatterns } from "./pages/action-latest-call.js";
 import { actionPersistsPatterns } from "./pages/action-persists.js";
 import { hookFieldsPatterns } from "./pages/hook-fields.js";
+import { loaderRemountRefreshPatterns } from "./pages/loader-remount-refresh.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -3309,6 +3310,9 @@ export const urlpatterns = urls(
         // useNavigation()'s fields in every reader shape while a page is
         // held (mirrors the router e2e app's /hook-fields/:id).
         include("/", hookFieldsPatterns, { name: "" }),
+        // A refreshed registered reader across navigations (mirrors the
+        // router e2e app's /key-refresh-remount/*).
+        include("/", loaderRemountRefreshPatterns, { name: "" }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {

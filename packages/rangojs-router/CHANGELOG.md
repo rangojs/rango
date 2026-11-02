@@ -19,6 +19,32 @@ back to the entry, so Back/Forward and a reload do not show it again. A
 refresh of an open intercept still renders the full page, now with the
 entry's location state.
 
+### Fixed: a remounted `useLoader` shows its own route's data, not an earlier page's refresh
+
+**Before.** After a `load()` (or a `useRefreshLoaders()` refresh) of a loader
+registered on the route, the refreshed value stayed in the client's shared
+store, and a reader that mounted later showed it instead of the data its own
+navigation brought: on
+another page with the same loader, on a new visit to the refreshed page, and
+after passing through a page without the loader. A reader that stayed
+mounted across a navigation drew the refresh for a frame before the new
+route data, and a `load()` still in flight when the user left landed on the
+next page, with its spinner and its error.
+
+**Now.** A refreshed value belongs to the route data of the readers on screen
+when `load()` was called. A reader whose route data is other data (a new
+page, a new visit, a navigation or action that brought new data) shows that
+data from its first frame, and its `isLoading`, `error` and `throwOnError`
+ignore a refresh requested for other data. Readers of the same route data
+still converge on the refresh, and Back onto a refreshed page from the
+history cache shows the refresh again.
+
+`renderRoute` now answers `useLoader().load()` and refresh-group refreshes
+from the loader values the test gives (the render seeds, or
+`router.respondToLoads({ loaders })`), through the testing kit's
+`@vitejs/plugin-rsc/browser` alias: a test no longer mocks that module or
+stubs `fetch` to drive a refresh.
+
 ## 0.33.1 (2026-11-01)
 
 ### Fixed: no "MISSING SEGMENT" error for an action whose page left while it was in flight ([#1366](https://github.com/rangojs/rango/pull/1366))

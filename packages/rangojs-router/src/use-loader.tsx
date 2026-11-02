@@ -270,10 +270,15 @@ function useLoaderInternal<T>(
   const loaders: LoaderStore | undefined = useContext(NavigationStoreContext)
     ?.store?.loaders;
 
+  // Committed route data (updated by the reset effect below), read by the
+  // store when a refresh begins: the snapshot it produces belongs to it.
+  const prevContextDataRef = useRef(contextData);
+  const routeDataOf = useCallback(() => prevContextDataRef.current, []);
+
   const groupRefetch = useCallback(async (): Promise<void> => {
     if (!loaderId || !loaders) return;
     const requestId = loaders.reserveRequestId(bucketKey);
-    loaders.beginRequest(bucketKey, requestId);
+    loaders.beginRequest(bucketKey, requestId, routeDataOf);
     try {
       const url = new URL(window.location.href);
       url.searchParams.set("_rsc_loader", loaderId);
@@ -316,6 +321,15 @@ function useLoaderInternal<T>(
     sharedState.bucketKey === bucketKey
       ? sharedState.snapshot
       : EMPTY_LOADER_SNAPSHOT;
+  // A route reader shows a refresh only when it was requested for this
+  // reader's route data: never another page's, nor one a navigation replaced
+  // (the rule the reset effect below applies when a mounted reader's data
+  // changes, here also for a reader that mounts).
+  const sharedValue =
+    sharedSnapshot.hasValue &&
+    (!hasContextData || sharedSnapshot.valueFor.has(contextData));
+  const sharedRequest =
+    !hasContextData || sharedSnapshot.requestFor.has(contextData);
   useEffect(() => {
     if (!loaders) return;
     const initial = loaders.getSnapshot(bucketKey);
@@ -343,6 +357,7 @@ function useLoaderInternal<T>(
         onStreamPending: hasContextData
           ? () => startTransition(() => setStreamPending(true))
           : undefined,
+        routeData: hasContextData ? routeDataOf : undefined,
       },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional:
@@ -388,7 +403,6 @@ function useLoaderInternal<T>(
   // any pre-navigation load() promise that resolves later fails its gate
   // and is dropped — fixes the race where a stale fetch overwrites the
   // new route's context.
-  const prevContextDataRef = useRef(contextData);
   useEffect(() => {
     if (prevContextDataRef.current !== contextData) {
       setLocalFetchedData({ has: false, value: undefined });
@@ -407,11 +421,14 @@ function useLoaderInternal<T>(
   // `has`/`hasValue` gate each level so a committed falsy value is not skipped.
   const data = localFetchedData.has
     ? localFetchedData.value
-    : sharedSnapshot.hasValue
+    : sharedValue
       ? (sharedSnapshot.value as T | undefined)
       : contextData;
-  const isLoading = localIsLoading || sharedSnapshot.isLoading || streamPending;
-  const error = localError ?? sharedSnapshot.error;
+  const isLoading =
+    localIsLoading ||
+    (sharedRequest && sharedSnapshot.isLoading) ||
+    streamPending;
+  const error = localError ?? (sharedRequest ? sharedSnapshot.error : null);
 
   const throwOnError = options?.throwOnError ?? true;
 
@@ -446,7 +463,11 @@ function useLoaderInternal<T>(
       if (shared) {
         sharedRequestId = loaders.reserveRequestId(bucket);
         lastSharedRequestIdRef.current = sharedRequestId;
-        loaders.beginRequest(bucket, sharedRequestId);
+        loaders.beginRequest(
+          bucket,
+          sharedRequestId,
+          hasContextDataRef.current ? routeDataOf : undefined,
+        );
       } else {
         localRequestId = ++localRequestIdRef.current;
         setLocalIsLoading(true);
@@ -559,12 +580,13 @@ function useLoaderInternal<T>(
         }
       }
     },
-    [throwOnError, loaders],
+    [throwOnError, loaders, routeDataOf],
   );
 
   if (throwOnError) {
     if (localError) throw localError;
     if (
+      sharedRequest &&
       sharedSnapshot.error &&
       lastSharedRequestIdRef.current !== null &&
       sharedSnapshot.requestId === lastSharedRequestIdRef.current

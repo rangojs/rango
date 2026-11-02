@@ -1001,6 +1001,22 @@ export const KeyRefreshRegisteredLoader = createLoader(async () => {
   return { count: keyRefreshRegisteredCount };
 }, true);
 
+// Registered fetchable loader of /key-refresh-remount/{a,b,vt}
+// (components/LoaderRemount.tsx): `<page>:<run>`, 400 ms on the server, or
+// `params.delay` ms for a slow refresh.
+let loaderRemountRun = 0;
+
+export const LoaderRemountLoader = createLoader(async (ctx) => {
+  await new Promise((resolve) =>
+    setTimeout(resolve, Number(ctx.params.delay ?? 400)),
+  );
+  loaderRemountRun++;
+  return {
+    page: ctx.pathname.split("/").pop() ?? "",
+    run: loaderRemountRun,
+  };
+}, true);
+
 // Two distinct unregistered fetchable counters for the cross-loader refresh
 // group test (useRefreshLoaders). Both are tagged with the same refreshGroup so
 // one refreshAccount() call re-runs both. Separate counters prove both members
