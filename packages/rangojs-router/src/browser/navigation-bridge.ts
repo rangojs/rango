@@ -489,6 +489,9 @@ export function createNavigationBridge(
         // Clear intercept source URL to ensure server doesn't treat this as intercept
         store.setInterceptSourceUrl(null);
       }
+      // The page under an open intercept; null once leaving. Navigations
+      // send it so the server resolves the target from there.
+      const interceptSourceUrl = store.getInterceptSourceUrl() ?? undefined;
 
       // Before navigating away, update the source page's cache with the latest
       // handleData. This ensures the cache has correct handleData even if handles
@@ -560,6 +563,8 @@ export function createNavigationBridge(
         !cachedSegments.some((s) => s.type === "error") &&
         !isInterceptOnlyCache(cachedSegments) &&
         !isLeavingIntercept &&
+        // The history entry's segments are not what the client holds here.
+        !interceptSourceUrl &&
         !cached?.stale &&
         !options?._skipCache &&
         // A cached intercept entry for this URL (from any source page) means
@@ -637,6 +642,7 @@ export function createNavigationBridge(
             ? { type: "leave-intercept" as const }
             : {
                 type: "navigate" as const,
+                ...(interceptSourceUrl && { interceptSourceUrl }),
                 ...(hasUsableCache
                   ? {
                       targetCacheSegments: cachedSegments,

@@ -791,6 +791,92 @@ describe("navigation-bridge link to an entry whose cached list holds an error bo
   });
 });
 
+describe("navigation-bridge link inside an open intercept", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  const SOURCE = "http://localhost/list";
+
+  /**
+   * A link to `to` from /item/2, open as an intercept over /list, while the
+   * target's entry caches a fresh full page.
+   */
+  async function linkInside(to: string) {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/item/2",
+        origin: "http://localhost",
+      },
+      history: {
+        state: { intercept: true, sourceUrl: SOURCE },
+        pushState: vi.fn(),
+        replaceState: vi.fn(),
+      },
+    });
+    const store = createStore();
+    let source: string | null = SOURCE;
+    store.getInterceptSourceUrl.mockImplementation(() => source);
+    store.setInterceptSourceUrl.mockImplementation((url: string | null) => {
+      source = url;
+    });
+    store.getCachedSegments.mockImplementation((key: string) =>
+      key === "http://localhost/current"
+        ? undefined
+        : {
+            segments: [
+              { id: "L0", type: "layout" },
+              { id: "L0R1", type: "route" },
+            ],
+            stale: false,
+            handleData: {},
+          },
+    );
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: new AbortController().signal },
+      commit: vi.fn(),
+      with: vi.fn(() => ({})),
+      [Symbol.dispose]: vi.fn(),
+    });
+    fetchPartialUpdateMock.mockResolvedValue(undefined);
+    await createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: createEventController() as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    }).navigate(to);
+    const [, segmentIds, , , , mode] = fetchPartialUpdateMock.mock.calls[0]!;
+    return { segmentIds, mode };
+  }
+
+  it("names the intercept's source and holds the page on screen, not the target's entry", async () => {
+    const { segmentIds, mode } = await linkInside("/item/1");
+    expect(segmentIds).toBeUndefined();
+    expect(mode).toEqual({
+      type: "navigate",
+      interceptSourceUrl: SOURCE,
+      onStalePrefetch: expect.any(Function),
+    });
+  });
+
+  it("a link to a route the source does not intercept names the source too: the server decides", async () => {
+    const { mode } = await linkInside("/away");
+    expect(mode).toMatchObject({
+      type: "navigate",
+      interceptSourceUrl: SOURCE,
+    });
+  });
+
+  it("control: a link to the intercept's own URL leaves it, as before", async () => {
+    const { mode } = await linkInside("/item/2");
+    expect(mode).toEqual({ type: "leave-intercept" });
+  });
+});
+
 describe("navigation-bridge link to a history entry after another tab's write", () => {
   const NAME = "rango-state_router_0";
   let jar: CookieJarMock;

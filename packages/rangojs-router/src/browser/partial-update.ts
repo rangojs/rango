@@ -616,7 +616,10 @@ export function createPartialUpdater(
 
     // The page the client is on, which the server diffs the target against:
     // the committed entry (the store's URL until tx.commit()), whose segment
-    // ids are sent above, or the intercept's source. Never window.location:
+    // ids are sent above. A navigation names an intercept's source in its own
+    // header, so the client path stays the committed URL (the slot's params
+    // compare against it); an action's or a stale revalidation's refetch
+    // still names the source as the client path. Never window.location:
     // a popstate has already moved it to the popped entry before that
     // entry's fetch commits. Sent from there, a back/forward was told the
     // target is also the source and kept the page being left (#1030), and a
@@ -624,7 +627,8 @@ export function createPartialUpdater(
     // against the popped entry while holding the page on screen's copies, so
     // a layout kept for one page showed the other's.
     const previousUrl =
-      (mode.type !== "leave-intercept" && interceptSourceUrl) ||
+      ((mode.type === "action" || mode.type === "stale-revalidation") &&
+        interceptSourceUrl) ||
       segmentState.currentUrl;
 
     if (IS_BROWSER_DEBUG) {
@@ -711,11 +715,15 @@ export function createPartialUpdater(
       targetUrl: url,
       segmentIds: segments,
       previousUrl,
-      // The entry being left (a popstate has not moved it yet), unless
-      // previousUrl names an intercept's source.
+      // The entry being left (a popstate has not moved it yet). Dropped
+      // whenever an intercept source is present: the server diffs from the
+      // source, which `_rsc_rt` does not name, and ignores it beside the
+      // source header (router/navigation-snapshot.ts resolveNavigation).
       rewriteTarget: interceptSourceUrl
         ? undefined
         : store.getHistoryEntryMemory()?.rewriteTarget,
+      interceptSourceUrl:
+        mode.type === "navigate" ? interceptSourceUrl : undefined,
       staleRevalidation:
         mode.type === "stale-revalidation" || segments.length === 0,
       boundary,

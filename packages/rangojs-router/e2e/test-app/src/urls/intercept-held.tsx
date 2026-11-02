@@ -330,6 +330,13 @@ export const interceptHeldPatterns = urls(
               >
                 Search
               </Link>
+              <Link
+                to={`/intercept-held/handler/${Number(ctx.params.id) + 1}`}
+                prefetch="none"
+                data-testid="ih-handler-intercept-next"
+              >
+                Next item
+              </Link>
             </Modal>
           );
         }),

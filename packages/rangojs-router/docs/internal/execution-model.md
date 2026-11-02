@@ -128,6 +128,29 @@ that cancels the reload leaves the store describing the page on screen. In
 dev, an edit that changes the version clears the history cache, so a
 Back/Forward onto an intercept entry after it takes the same path.
 
+A link inside an open intercept is a navigation from its source page too, and
+that is the page the server must resolve it from. Sent with only the
+intercept's own URL as the page left, another item of the intercepted route was
+a same-route navigation (`isSameRouteNavigation`), never intercepted, and the
+item's full page rendered. So the browser keeps the committed URL as
+`X-RSC-Router-Client-Path`, with the ids it holds (the source page's and the
+slot's), and names the source in `X-RSC-Router-Intercept-Source`
+(`navigation-bridge.ts` `navigate`, `partial-update.ts`). The server resolves
+the intercept and `when`'s `from` against the source (`navigation-snapshot.ts`
+`effectiveFromUrl`); the held slot's loaders compare their params with the
+committed URL, the page they were rendered for. Named as the page left, the
+source's params made an item whose params equal the source's (`/s/1` under
+`/t/2`, linking to `/t/1`) keep the item left. Back/Forward onto an intercept
+entry it must fetch sends the same request. Such a click never adopts a
+prefetch (`navigation-client.ts` `canUsePrefetch`) or the history cache.
+
+| Target                                     | What the client sends                  | Result                                                     |
+| ------------------------------------------ | -------------------------------------- | ---------------------------------------------------------- |
+| Another item of the intercepted route      | committed URL, ids held, source header | The item in the intercept, over the source                 |
+| A route no intercept takes from the source | the same                               | The target's full page                                     |
+| The source page itself                     | the same                               | The source again (`match-api.ts` forces the route segment) |
+| The intercept's own URL                    | `leave-intercept`, no source           | Leaves the intercept for the full page                     |
+
 A refresh reloads the intercept's URL the same way. `router.refresh()`, and
 the refresh another tab's action triggers (`navigation-bridge.ts` `refresh`),
 send no intercept source and hold nothing, so the server renders the URL's

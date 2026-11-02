@@ -568,12 +568,15 @@ describe("partial-update", () => {
           diff: [],
         },
       };
-      const sentFrom = async (opts: {
+      const sentRequest = async (opts: {
         /** window.location.href when the navigation starts. */
         addressBar: string;
         traversal?: boolean;
         mode?: Parameters<ReturnType<typeof createPartialUpdater>>[5];
-      }): Promise<string> => {
+      }): Promise<{
+        previousUrl: string;
+        interceptSourceUrl: string | undefined;
+      }> => {
         vi.stubGlobal("window", {
           location: { origin: "http://localhost", href: opts.addressBar },
         });
@@ -607,8 +610,13 @@ describe("partial-update", () => {
           tx,
           opts.mode,
         );
-        return (client.fetchPartial as any).mock.calls[0][0].previousUrl;
+        const { previousUrl, interceptSourceUrl } = (client.fetchPartial as any)
+          .mock.calls[0][0];
+        return { previousUrl, interceptSourceUrl };
       };
+      const sentFrom = async (
+        opts: Parameters<typeof sentRequest>[0],
+      ): Promise<string> => (await sentRequest(opts)).previousUrl;
 
       // #1030: back/forward to an entry the history cache no longer holds.
       // Sent as the page the client is on, the popped entry made the server
@@ -623,17 +631,55 @@ describe("partial-update", () => {
         ).toBe("http://localhost/list?page=6");
       });
 
-      it("a back/forward onto an intercept entry still names the intercept's source", async () => {
+      // The page on screen holds the slot of an open intercept as well as
+      // the page under it: named as the source, the slot's segments were
+      // compared with the source's params, and an item whose params equal
+      // the source's kept the item left. The source goes in its own header.
+      it("a navigation from an open intercept names the entry on screen and sends the intercept's source", async () => {
+        const mode = {
+          type: "navigate" as const,
+          interceptSourceUrl: "http://localhost/shop",
+        };
+        const expected = {
+          previousUrl: "http://localhost/list?page=6",
+          interceptSourceUrl: "http://localhost/shop",
+        };
+        // A link, then a back/forward onto an intercept entry.
         expect(
-          await sentFrom({
+          await sentRequest({
+            addressBar: "http://localhost/list?page=6",
+            mode,
+          }),
+        ).toEqual(expected);
+        expect(
+          await sentRequest({
             addressBar: "http://localhost/list?page=3",
             traversal: true,
+            mode,
+          }),
+        ).toEqual(expected);
+      });
+
+      it("an action's refetch from an open intercept names the source and sends no intercept source", async () => {
+        expect(
+          await sentRequest({
+            addressBar: "http://localhost/list?page=6",
             mode: {
-              type: "navigate",
+              type: "action",
               interceptSourceUrl: "http://localhost/shop",
             },
           }),
-        ).toBe("http://localhost/shop");
+        ).toEqual({
+          previousUrl: "http://localhost/shop",
+          interceptSourceUrl: undefined,
+        });
+      });
+
+      it("a plain push sends no intercept source", async () => {
+        expect(
+          (await sentRequest({ addressBar: "http://localhost/list?page=6" }))
+            .interceptSourceUrl,
+        ).toBeUndefined();
       });
 
       it("a back/forward leaving an intercept names the intercept entry on screen", async () => {

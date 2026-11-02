@@ -1151,7 +1151,7 @@ describe("R3: ssr: false with prefetch: false", () => {
     });
 
     it("a prefetch that defers it is for its source page; one served from the pin answers as before", async () => {
-      const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
+      const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Intercept-Source, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
       const headersOf = (r: ServeShellRequestResult) => ({
         vary: r.response.headers.get("vary"),
         cacheControl: r.response.headers.get("cache-control"),
@@ -1396,7 +1396,7 @@ describe('"use cache" in deferred work', () => {
 describe("R7: deferral is never stored, and modes never answer each other", () => {
   // What a response nothing may reuse answers with (rsc-rendering.ts).
   const NOT_REUSED = "private, no-cache";
-  const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
+  const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Intercept-Source, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
   const headersOf = (r: ServeShellRequestResult) => ({
     vary: r.response.headers.get("vary"),
     cacheControl: r.response.headers.get("cache-control"),
@@ -1940,7 +1940,7 @@ describe("R12: a deferrable loader cannot call ctx.rendered()", () => {
 // (browser/prefetch/fetch.ts prefetchDirect): the visitor is about to click,
 // so the server answers it as the navigation it starts early.
 describe("R16: an intent prefetch defers nothing", () => {
-  const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
+  const VARY = `accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Intercept-Source, ${SEGMENT_FRAGMENT_CAPABILITY_HEADER}, ${SEGMENT_FRAGMENT_RECOVERY_HEADER}`;
   const headersOf = (r: ServeShellRequestResult) => ({
     vary: r.response.headers.get("vary"),
     cacheControl: r.response.headers.get("cache-control"),

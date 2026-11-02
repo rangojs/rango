@@ -12,10 +12,17 @@ import {
  * fetches the intercept when the source page is on screen. From any other
  * page (a reload since, or an evicted entry) the entry loads as a document,
  * from the top, which renders the intercepted URL's full page, and the entry
- * stays a full page for later traversals. Fixture: intercept-held* in each
- * app (the handler intercept and its full page link to /away, a page no
- * intercept targets). Both apps call this from a dev and a (production)
- * describe.
+ * stays a full page for later traversals.
+ *
+ * A link inside an open intercept is resolved from the page under it: a link
+ * to another item of the same intercepted route opens that item in the
+ * intercept, Back steps through the items and then closes it, and a link to
+ * a route no intercept targets from that page renders its full page.
+ *
+ * Fixture: intercept-held* in each app (the handler intercept links to the
+ * next handler item, to the index and to /away, a page no intercept targets;
+ * the mixed modal links to /loader/1). Both apps call this from a dev and a
+ * (production) describe.
  */
 
 export interface InterceptHistoryScenarioOptions {
@@ -33,14 +40,19 @@ const SCROLLED = 600;
 export function runInterceptHistoryTests(
   options: InterceptHistoryScenarioOptions,
 ): void {
-  const interceptedUrl = new RegExp(`${options.basePath}/handler/1$`);
+  const handlerUrl = (id: number) =>
+    new RegExp(`${options.basePath}/handler/${id}$`);
 
-  async function openIntercept(page: Page): Promise<void> {
+  async function openIndex(page: Page): Promise<void> {
     await page.goto(options.url(options.basePath));
     await waitForShellHydration(page);
+  }
+
+  async function openIntercept(page: Page): Promise<void> {
+    await openIndex(page);
     await page.getByTestId("ih-open-handler").click();
     await expect(page.getByTestId("ih-handler-modal")).toBeVisible();
-    await expect(page).toHaveURL(interceptedUrl);
+    await expect(page).toHaveURL(handlerUrl(1));
     await expect(page.getByTestId("ih-index")).toBeVisible();
   }
 
@@ -59,8 +71,8 @@ export function runInterceptHistoryTests(
     await markDocument(page);
   }
 
-  async function expectFullPage(page: Page): Promise<void> {
-    await expect(page).toHaveURL(interceptedUrl);
+  async function expectFullPage(page: Page, id = 1): Promise<void> {
+    await expect(page).toHaveURL(handlerUrl(id));
     await expect(page.getByTestId("ih-handler-page")).toBeVisible();
     await expect(page.getByTestId("ih-handler-modal")).toHaveCount(0);
     await expect(page.getByTestId("ih-index")).toHaveCount(0);
@@ -88,12 +100,23 @@ export function runInterceptHistoryTests(
     expect(await isMarkedDocument(page)).toBe(true);
   }
 
-  async function expectInterceptOverIndex(page: Page): Promise<void> {
-    await expect(page).toHaveURL(interceptedUrl);
+  async function expectInterceptOverIndex(page: Page, id = 1): Promise<void> {
+    await expect(page).toHaveURL(handlerUrl(id));
     await expect(page.getByTestId("ih-handler-modal")).toBeVisible();
+    await expect(page.getByTestId("ih-handler-modal-id")).toHaveText(
+      String(id),
+    );
     await expect(page.getByTestId("ih-index")).toBeVisible();
     await expect(page.getByTestId("ih-handler-page")).toHaveCount(0);
     await expect(page.getByTestId("ih-away")).toHaveCount(0);
+    expect(await isMarkedDocument(page)).toBe(true);
+  }
+
+  async function expectIndexAlone(page: Page): Promise<void> {
+    await expect(page).toHaveURL(new RegExp(`${options.basePath}$`));
+    await expect(page.getByTestId("ih-index")).toBeVisible();
+    await expect(page.getByTestId("ih-handler-modal")).toHaveCount(0);
+    await expect(page.getByTestId("ih-modal")).toHaveCount(0);
     expect(await isMarkedDocument(page)).toBe(true);
   }
 
@@ -170,5 +193,106 @@ export function runInterceptHistoryTests(
     await page.evaluate((steps) => history.go(-steps), AWAY_STEPS);
 
     await expectFullPageEntry(page);
+  });
+
+  test("a link inside the intercept to another item of the same route shows that item in the intercept, over the same page", async ({
+    page,
+  }) => {
+    await openIntercept(page);
+    await markDocument(page);
+
+    await page.getByTestId("ih-handler-intercept-next").click();
+
+    await expectInterceptOverIndex(page, 2);
+    const crumbs = page.getByTestId("ih-crumb");
+    await expect(crumbs.filter({ hasText: /^modal-handler:2$/ })).toHaveCount(
+      1,
+    );
+    await expect(crumbs.filter({ hasText: /^modal-handler:1$/ })).toHaveCount(
+      0,
+    );
+    await expect(crumbs.filter({ hasText: /^index$/ })).toHaveCount(1);
+
+    // Twice in a row: the page under it is still the source.
+    await page.getByTestId("ih-handler-intercept-next").click();
+    await expectInterceptOverIndex(page, 3);
+  });
+
+  test("Back after a same-route link inside the intercept steps back to the earlier item, then closes the intercept", async ({
+    page,
+  }) => {
+    await openIntercept(page);
+    await markDocument(page);
+    await page.getByTestId("ih-handler-intercept-next").click();
+    await expectInterceptOverIndex(page, 2);
+
+    await page.goBack();
+    await expectInterceptOverIndex(page, 1);
+
+    await page.goBack();
+    await expectIndexAlone(page);
+
+    await page.goForward();
+    await expectInterceptOverIndex(page, 1);
+    await page.goForward();
+    await expectInterceptOverIndex(page, 2);
+  });
+
+  test("Back after a link inside an intercept to another intercepted route returns to the first intercept, over the page under it", async ({
+    page,
+  }) => {
+    await openIndex(page);
+    await page.getByTestId("ih-open-mixed").click();
+    await expect(page.getByTestId("ih-modal-rerun-runs")).toBeVisible();
+    await page.getByTestId("ih-modal-to-loader").click();
+    await expect(page).toHaveURL(new RegExp(`${options.basePath}/loader/1$`));
+    await expect(page.getByTestId("ih-modal-rerun-runs")).toHaveCount(0);
+
+    await page.goBack();
+
+    await expect(page).toHaveURL(new RegExp(`${options.basePath}/mixed/1$`));
+    await expect(page.getByTestId("ih-modal-rerun-runs")).toBeVisible();
+    await expect(page.getByTestId("ih-index")).toBeVisible();
+  });
+
+  test("a link inside the intercept to a route no intercept targets renders that route's full page", async ({
+    page,
+  }) => {
+    await openIntercept(page);
+    await markDocument(page);
+
+    await page.getByTestId("ih-handler-intercept-away").click();
+
+    await expect(page.getByTestId("ih-away-n")).toHaveText("1");
+    await expect(page.getByTestId("ih-handler-modal")).toHaveCount(0);
+    await expect(page.getByTestId("ih-index")).toHaveCount(0);
+    expect(await isMarkedDocument(page)).toBe(true);
+  });
+
+  test("a link inside the intercept to its source page closes the intercept", async ({
+    page,
+  }) => {
+    await openIntercept(page);
+    await markDocument(page);
+    await page.getByTestId("ih-handler-intercept-next").click();
+    await expectInterceptOverIndex(page, 2);
+
+    await page.getByTestId("ih-handler-intercept-to-index").click();
+
+    await expectIndexAlone(page);
+  });
+
+  test("a reload after a same-route link inside the intercept renders that item's full page", async ({
+    page,
+  }) => {
+    await openIntercept(page);
+    await markDocument(page);
+    await page.getByTestId("ih-handler-intercept-next").click();
+    await expectInterceptOverIndex(page, 2);
+
+    await page.reload();
+    await waitForShellHydration(page);
+
+    await expectFullPage(page, 2);
   });
 }

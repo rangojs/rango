@@ -318,6 +318,7 @@ describe("navigation-bridge transition({ when })", () => {
       getHistoryEntryMemory: vi.fn(() => ({ routeName: "shop.item" })),
       hasInterceptCache: vi.fn(() => false),
       updateCacheHandleData: vi.fn(),
+      getInterceptSourceUrl: vi.fn(() => null),
       setInterceptSourceUrl: vi.fn(),
     };
     const bridge = createNavigationBridge({
@@ -385,6 +386,7 @@ describe("navigation-bridge transition({ when })", () => {
         currentSegmentIds: [],
       })),
       updateCacheHandleData: vi.fn(),
+      getInterceptSourceUrl: vi.fn(() => null),
       setInterceptSourceUrl: vi.fn(),
     };
     const bridge = createNavigationBridge({
@@ -453,6 +455,7 @@ describe("navigation-bridge transition({ when })", () => {
       getHistoryEntryMemory: vi.fn(() => ({ routeName: "item" })),
       hasInterceptCache: vi.fn(() => false),
       updateCacheHandleData: vi.fn(),
+      getInterceptSourceUrl: vi.fn(() => null),
       setInterceptSourceUrl: vi.fn(),
     };
     const bridge = createNavigationBridge({
@@ -497,6 +500,7 @@ describe("navigation-bridge transition({ when })", () => {
         currentSegmentIds: [],
       })),
       updateCacheHandleData: vi.fn(),
+      getInterceptSourceUrl: vi.fn(() => null),
       setInterceptSourceUrl: vi.fn(),
     };
     const bridge = createNavigationBridge({
