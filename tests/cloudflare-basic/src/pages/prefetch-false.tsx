@@ -33,9 +33,9 @@ import {
 // behind one hub layout whose links never prefetch, so a suite decides when
 // the prefetch happens and which kind it is: pf-arm-<c> starts a speculative
 // one (a render link, `X-Rango-Prefetch: 1`), which defers the flagged work,
-// and hovering pf-hover-<c> an intent one (`intent`, R16), which defers
-// nothing. Every unit of work counts its runs under the
-// `?run=` of the request (prefetch-false-counts.ts); /__counts reads them
+// and hovering pf-hover-<c> an intent one (`intent`, R16), which runs the
+// work marked `prefetch: "intent"` and defers the rest. Every unit of work
+// counts its runs under the `?run=` of the request (prefetch-false-counts.ts); /__counts reads them
 // back. A loader's value is `<counter>:<run number>`.
 //
 // The contract a suite (and any other app that mirrors this fixture) relies
@@ -62,6 +62,13 @@ import {
 // throws and calls notFound(): with no loading() of their own the server
 // awaits them, so the failure replaces the route's segment
 // (pf-<c>-error, pf-<c>-not-found) inside the layout.
+//
+// `intent` is `loader` marked `prefetch: "intent"` (pf-intent-value, counter
+// `intent.data`), beside a `prefetch: false` loader (pf-intent-off-value,
+// counter `intent.off`), each read in a Suspense of its own
+// (pf-intent-fallback, pf-intent-off-fallback): a hover runs the first and
+// defers the second. `intent-unit` is `unit` with
+// `loading(..., { prefetch: "intent" })`: a hover prefetches it whole.
 //
 // `item/:id` is one route with a flagged loader, linked as `item/a` and
 // `item/b`: moving between them is a same-route navigation, whose segments
@@ -163,6 +170,15 @@ export const PfReviewsLoader = createLoader((ctx) =>
   work(ctx, "loader.data", 100),
 );
 export const PfUnitLoader = createLoader((ctx) => work(ctx, "unit.data", 100));
+export const PfIntentLoader = createLoader((ctx) =>
+  work(ctx, "intent.data", 100),
+);
+export const PfIntentOffLoader = createLoader((ctx) =>
+  work(ctx, "intent.off", 100),
+);
+export const PfIntentUnitLoader = createLoader((ctx) =>
+  work(ctx, "intent-unit.data", 100),
+);
 // Flagged, with its own cache() keyed by the run, and read by its route's
 // handler: the prefetch starts it through that cache().
 export const PfReadCachedLoader = createLoader((ctx) =>
@@ -307,6 +323,8 @@ export const PfOuterInnerLoader = createLoader((ctx) =>
 const CASES = [
   ["loader", "one flagged loader beside an unflagged one, own Suspense"],
   ["unit", "flagged loading() on a route: handler and loader wait"],
+  ["intent", "an intent loader beside a false one: a hover runs the first"],
+  ["intent-unit", "an intent loading(): a hover prefetches it whole"],
   ["section", "flagged loading() on a layout: layout and route wait"],
   ["section-plain", "inside that layout, no loading(): waits only with it"],
   ["section-own", "inside that layout, its own flagged loading()"],
@@ -520,6 +538,37 @@ function UnitPage(ctx: any) {
   return (
     <div data-testid="pf-unit-page">
       <PrefetchFalseValue loader={PfUnitLoader} testId="pf-unit-value" />
+    </div>
+  );
+}
+
+// A loader a hover runs (`prefetch: "intent"`) beside one it defers
+// (`prefetch: false`); a speculative prefetch defers both.
+function IntentPage(ctx: any) {
+  countRun(runOf(ctx), "intent.handler");
+  return (
+    <div data-testid="pf-intent-page">
+      <Suspense fallback={fallback("intent")}>
+        <PrefetchFalseValue loader={PfIntentLoader} testId="pf-intent-value" />
+      </Suspense>
+      <Suspense fallback={fallback("intent-off")}>
+        <PrefetchFalseValue
+          loader={PfIntentOffLoader}
+          testId="pf-intent-off-value"
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+function IntentUnitPage(ctx: any) {
+  countRun(runOf(ctx), "intent-unit.handler");
+  return (
+    <div data-testid="pf-intent-unit-page">
+      <PrefetchFalseValue
+        loader={PfIntentUnitLoader}
+        testId="pf-intent-unit-value"
+      />
     </div>
   );
 }
@@ -993,6 +1042,16 @@ export const prefetchFalsePatterns = urls(
       path("/unit", UnitPage, { name: "unit" }, () => [
         loader(PfUnitLoader),
         loading(fallback("unit"), { prefetch: false }),
+      ]),
+
+      // Marked "intent": a speculative prefetch defers it, a hover runs it.
+      path("/intent", IntentPage, { name: "intent" }, () => [
+        loader(PfIntentLoader, { prefetch: "intent" }),
+        loader(PfIntentOffLoader, { prefetch: false }),
+      ]),
+      path("/intent-unit", IntentUnitPage, { name: "intentUnit" }, () => [
+        loader(PfIntentUnitLoader),
+        loading(fallback("intent-unit"), { prefetch: "intent" }),
       ]),
 
       // A flagged loading() on a layout: the layout, the route below it and

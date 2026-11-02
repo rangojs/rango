@@ -14,7 +14,7 @@ import { onResultOk } from "./predicates.js";
  * A clientUrls() group with a module-local intercept: from the group's index,
  * /note/:noteId opens in the @modal slot of the group's layout. The modal's
  * loaders take the route options: a revalidate() the build moves to the
- * server (onResultOk reads the action's result), and prefetch: false.
+ * server (onResultOk reads the action's result), and prefetch: "intent".
  * ClientUrlsIsActionNsLoader re-runs on every action of actions.ts: its new
  * value marks an action's commit.
  */
@@ -48,8 +48,8 @@ function InterceptIndex(): ReactNode {
 /**
  * cui-note-arm: a click mounts a hidden render link to the note, a
  * speculative prefetch (`X-Rango-Prefetch: 1`) that defers the modal's
- * flagged loader; the next click unmounts it. A hover over the link above
- * sends an intent prefetch instead, which defers nothing.
+ * `prefetch: "intent"` loader; the next click unmounts it. A hover over the
+ * link above sends an intent prefetch instead, which runs it.
  */
 function InterceptArm({ to }: { to: string }): ReactNode {
   const [armed, setArmed] = useState(false);
@@ -110,7 +110,7 @@ export default clientUrls(({ layout, path, loader, intercept, revalidate }) => [
     intercept("@modal", ".note", NoteModal, () => [
       loader(ClientUrlsIsActionNsLoader),
       loader(ClientUrlsModalResultLoader, () => [revalidate(onResultOk)]),
-      loader(ClientUrlsModalNoteLoader, { prefetch: false }),
+      loader(ClientUrlsModalNoteLoader, { prefetch: "intent" }),
     ]),
   ]),
 ]);

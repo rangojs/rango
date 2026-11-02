@@ -731,17 +731,17 @@ function createLoaderExecutor<TEnv>(
           );
         }
 
-        // prefetch: false (segment-resolution/prefetch-deferral.ts). A
-        // deferrable loader runs in a fill request, where its entry is held
+        // prefetch: false or "intent" (segment-resolution/prefetch-deferral.ts).
+        // A deferrable loader runs in a fill request, where its entry is held
         // and its handler does not run: there is no render to wait for.
         // Refused on every request kind, so it is seen on a document load.
         const deferral = internal._prefetchDeferral;
         if (deferral?.scope.loaderIds.has(currentLoaderId)) {
           throw new Error(
             `ctx.rendered() is not available to loader "${currentLoaderId}": it is deferred in prefetches ` +
-              `(registered with loader(Def, { prefetch: false }), or behind a loading(fallback, { prefetch: false })), ` +
+              `(registered with loader(Def, { prefetch: false }) or { prefetch: "intent" }, or behind a loading(fallback, { prefetch: false }) or { prefetch: "intent" }), ` +
               `and the fill request that runs it afterwards does not re-run its entry's handler, so there is no render to wait for and no handle data to read. ` +
-              `Remove { prefetch: false } from the loader (or from the loading() above it), or stop calling ctx.rendered() in this loader.`,
+              `Remove { prefetch: false } or { prefetch: "intent" } from the loader (or from the loading() above it), or stop calling ctx.rendered() in this loader.`,
           );
         }
         if (deferral?.mode === "fill") {

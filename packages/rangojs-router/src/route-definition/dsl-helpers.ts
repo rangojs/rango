@@ -25,7 +25,11 @@ import {
   type InterceptConfig,
   type LoaderEntry,
 } from "../server/context";
-import { assertBooleanOption, invariant } from "../errors";
+import {
+  assertBooleanOption,
+  assertPrefetchOption,
+  invariant,
+} from "../errors";
 import { validateUserRouteName } from "../route-name.js";
 import { isCachedFunction } from "../cache/taint.js";
 import { RangoContext } from "../server/context";
@@ -48,6 +52,7 @@ import type {
   UseItems,
 } from "../route-types.js";
 import { isRenderableLoading } from "../types/boundaries.js";
+import { isPrefetchFlag } from "../prefetch-markers.js";
 import type { RouteHelpers } from "./helpers-types.js";
 import {
   resolveHandlerUse,
@@ -922,7 +927,7 @@ const loader: RouteHelpers<any, any>["loader"] = (
     "loader() ssr",
     "stream on every render",
   );
-  assertBooleanOption(
+  assertPrefetchOption(
     optionsGiven?.prefetch,
     "loader() prefetch",
     "run the loader in prefetches",
@@ -938,7 +943,9 @@ const loader: RouteHelpers<any, any>["loader"] = (
     loader: loaderDef,
     revalidate: [] as ShouldRevalidateFn<any, any>[],
     ...(optionsGiven?.ssr === false && { bake: true as const }),
-    ...(optionsGiven?.prefetch === false && { prefetch: false as const }),
+    ...(isPrefetchFlag(optionsGiven?.prefetch) && {
+      prefetch: optionsGiven.prefetch,
+    }),
     // The declaring layout's / parallel's / cache()'s scope. A route's (and
     // an intercept's) loaders have none: they resolve from the route's name,
     // like the handler.
@@ -997,7 +1004,7 @@ const loading: RouteHelpers<any, any>["loading"] = (component, options) => {
     invariant(false, "No parent entry available for loading()");
   }
 
-  assertBooleanOption(
+  assertPrefetchOption(
     options?.prefetch,
     "loading() prefetch",
     "render what the fallback covers in prefetches",
@@ -1018,8 +1025,8 @@ const loading: RouteHelpers<any, any>["loading"] = (component, options) => {
   // `parent.loading`, so the document evaluation (ssr: false) agrees with
   // the navigation one. Last loading() wins, like `loading` itself.
   parent.loadingPrefetch =
-    options?.prefetch === false && isRenderableLoading(resolved)
-      ? false
+    isPrefetchFlag(options?.prefetch) && isRenderableLoading(resolved)
+      ? options.prefetch
       : undefined;
 
   const name = `$${store.getNextIndex("loading")}`;

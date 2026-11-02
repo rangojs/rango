@@ -6,6 +6,8 @@
  * - Cause property for structured debugging data
  */
 
+import { isPrefetchFlag } from "./prefetch-markers.js";
+
 /**
  * Options for error construction
  */
@@ -415,6 +417,21 @@ export function assertBooleanOption(
   invariant(
     value === undefined || typeof value === "boolean",
     `${option} must be a boolean (got ${JSON.stringify(value)}). Omit it (or pass true) to ${effect}.`,
+  );
+}
+
+/**
+ * Rejects a `prefetch` DSL option that is neither a boolean nor `"intent"`
+ * (undefined passes), as an invariant.
+ */
+export function assertPrefetchOption(
+  value: unknown,
+  option: string,
+  effect: string,
+): void {
+  invariant(
+    value === undefined || typeof value === "boolean" || isPrefetchFlag(value),
+    `${option} must be a boolean or "intent" (got ${JSON.stringify(value)}). Omit it (or pass true) to ${effect}.`,
   );
 }
 

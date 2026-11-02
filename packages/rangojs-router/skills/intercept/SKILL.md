@@ -312,13 +312,16 @@ intercepted: it gets the full page.
 ### `prefetch: false` on an intercept's loaders
 
 `loader(Def, { prefetch: false })` inside `intercept()` keeps that loader out
-of a viewport or render prefetch of the target from the source page (a hover
-prefetch runs it, and its click opens the modal complete with no fill):
+of every prefetch of the target from the source page. `{ prefetch: "intent" }`
+keeps it out of viewport and render prefetches only: a hover prefetch runs
+it, and when every flagged loader of the modal is `"intent"` its click opens
+the modal complete with no fill:
 
 ```typescript
 intercept("@modal", "product", <ProductModal />, () => [
   loader(ProductLoader),
-  loader(ReviewsLoader, { prefetch: false }), // skipped in a viewport prefetch
+  loader(PhotosLoader, { prefetch: "intent" }), // skipped in a viewport prefetch, runs on hover
+  loader(ReviewsLoader, { prefetch: false }), // skipped in every prefetch
   loading(<ModalSkeleton />),
 ]);
 ```
@@ -331,7 +334,7 @@ click shows nothing until its response. The modal's loaders resolve together,
 so its `loading()` shows until the last one arrives. A handler that reads the
 flagged loader with `ctx.use()` before its first `await` (or one with no
 `loading()`) gets it run in the prefetch instead: one run, no fill for it.
-`loading(…, { prefetch: false })` inside `intercept()` defers nothing.
+A `prefetch` option on `loading()` inside `intercept()` defers nothing.
 
 A prefetch of a route an intercept targets, or one sent from such a route, is
 stored per source page, whether or not the intercept applies from that page

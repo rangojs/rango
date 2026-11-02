@@ -226,13 +226,28 @@ describe("loader() prefetch option", () => {
     });
   });
 
-  it("throws on a prefetch value that is not a boolean (JS consumers)", () => {
+  it('records prefetch: "intent", which a hover\'s prefetch runs', () => {
+    const parent = parentEntry();
+    withDslStore(parent, false, () => {
+      loader(testLoaderDef(), { prefetch: "intent" });
+      loader(testLoaderDef(), { ssr: false, prefetch: "intent" });
+    });
+    expect(parent.loader.map((entry) => entry.prefetch)).toEqual([
+      "intent",
+      "intent",
+    ]);
+    expect(parent.loader[1]!.bake).toBe(true);
+  });
+
+  it('throws on a prefetch value that is not a boolean or "intent" (JS consumers)', () => {
     const parent = parentEntry();
     expect(() =>
       withDslStore(parent, true, () => {
         loader(testLoaderDef(), { prefetch: "never" } as never);
       }),
-    ).toThrow(/loader\(\) prefetch must be a boolean \(got "never"\)/);
+    ).toThrow(
+      /loader\(\) prefetch must be a boolean or "intent" \(got "never"\)/,
+    );
   });
 });
 
@@ -303,12 +318,24 @@ describe("loading() prefetch option", () => {
     expect(parent.loadingPrefetch).toBeUndefined();
   });
 
-  it("throws on a prefetch value that is not a boolean (JS consumers)", () => {
+  it('records prefetch: "intent" with a fallback to show, and nothing without one', () => {
+    const parent = parentEntry();
+    withDslStore(parent, true, () => {
+      loading(fallback, { ssr: false, prefetch: "intent" });
+    });
+    expect(parent.loadingPrefetch).toBe("intent");
+    withDslStore(parent, false, () => {
+      loading(null as never, { prefetch: "intent" });
+    });
+    expect(parent.loadingPrefetch).toBeUndefined();
+  });
+
+  it('throws on a prefetch value that is not a boolean or "intent" (JS consumers)', () => {
     const parent = parentEntry();
     expect(() =>
       withDslStore(parent, false, () => {
         loading(fallback, { prefetch: 0 } as never);
       }),
-    ).toThrow(/loading\(\) prefetch must be a boolean \(got 0\)/);
+    ).toThrow(/loading\(\) prefetch must be a boolean or "intent" \(got 0\)/);
   });
 });

@@ -242,10 +242,11 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 
 `loading(fallback, options?)` takes two options:
 
-| Option            | Effect                                                                                                                                                            |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ssr: false`      | Skip the fallback on document requests; it shows on client navigations only.                                                                                      |
-| `prefetch: false` | Keep everything behind this fallback out of viewport and render prefetches (a hover prefetch runs it); the click shows the fallback and fetches that part itself. |
+| Option               | Effect                                                                                                                                    |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `ssr: false`         | Skip the fallback on document requests; it shows on client navigations only.                                                              |
+| `prefetch: false`    | Keep everything behind this fallback out of every prefetch, hovers included; the click shows the fallback and fetches that part itself.   |
+| `prefetch: "intent"` | The same for viewport and render prefetches; a hover prefetch or `useRouter().prefetch()` runs it, and its click sends no second request. |
 
 ```tsx
 path("/orders", OrdersPage, { name: "orders" }, () => [
@@ -255,13 +256,17 @@ path("/orders", OrdersPage, { name: "orders" }, () => [
 ```
 
 **What `prefetch: false` defers.** The flag applies when the entry is new to
-the browser: the page the prefetch is sent from does not show it. A viewport
-or render prefetch then skips the entry's handler, its loaders, its orphan layouts and its
+the browser: the page the prefetch is sent from does not show it. A prefetch
+then skips the entry's handler, its loaders, its orphan layouts and its
 parallel slots. On a `layout()` the fallback covers the whole outlet, so every
 deeper entry is skipped with it. A parallel slot with its own flagged
 `loading()` is a separate unit: the route beside it still renders in the
 prefetch. The prefetch payload carries a placeholder for each skipped piece,
-marked deferred, with its fallback: the page's skeleton.
+marked deferred, with its fallback: the page's skeleton. `prefetch: "intent"`
+defers the same pieces in a viewport or render prefetch; a hover's prefetch
+renders them, so a route whose flags are all `"intent"` is prefetched whole
+on hover. Everything below about `false` holds for `"intent"` in the
+prefetches that defer it.
 
 **An entry the browser already holds is never deferred.** Inside a section
 whose `layout()` has a flagged `loading()`, the layout is on screen, so its
@@ -347,7 +352,7 @@ the block's work, its loaders included, out of prefetches. See `/caching`,
   flag does nothing there. The last `loading()` on an entry wins, flag
   included.
 - A loader behind the fallback cannot call `ctx.rendered()`; it throws on every
-  request kind. See `/loader` → "`prefetch: false`" for this and the other
+  request kind, for either flag. See `/loader` → "`prefetch: false`" for this and the other
   loader limits (`ctx.set()` values, late `redirect()`/`notFound()`, a loader a
   handler awaits).
 - A layout the client already holds is not deferred (its fallback would not
@@ -373,7 +378,8 @@ the block's work, its loaders included, out of prefetches. See `/caching`,
 - `clientUrls()` routes and `intercept()` ignore the flag.
 
 To defer a single loader and keep the handler in the prefetch, use
-`loader(Def, { prefetch: false })` instead (see `/loader`).
+`loader(Def, { prefetch: false })` or `{ prefetch: "intent" }` instead (see
+`/loader`).
 
 A `loading()` skeleton that has appeared stays at least about 300 ms before React reveals what replaces it (React's fallback throttle, [#1078](https://github.com/rangojs/rango/issues/1078)); see "Streaming with Suspense" in [loader](../loader/SKILL.md).
 

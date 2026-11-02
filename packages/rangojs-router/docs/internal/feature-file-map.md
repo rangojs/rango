@@ -431,9 +431,10 @@ The public DOM seam is
   [revalidate-args-sources.test.ts](../../src/router/__tests__/revalidate-args-sources.test.ts)
   runs a predicate for one destination from two source pages and fails on
   any field that differs without being a read-noting getter.
-- `prefetch: false` is owned by
+- `prefetch: false` and `prefetch: "intent"` are owned by
   [router/segment-resolution/prefetch-deferral.ts](../../src/router/segment-resolution/prefetch-deferral.ts)
   (the per-route plan: which loaders and handler units a prefetch defers,
+  and the narrower set an intent prefetch defers, `DeferralScope.intent`,
   `deferUnit`, and an intercept's own scope, `resolveInterceptDeferralScope`;
   a fill's keep-or-send rule, `fillSends`; how the request may
   use the route's `cache()` record, `recordUse`, read by

@@ -7,6 +7,7 @@ import type {
 } from "../types.js";
 import type { DefaultEnv } from "../types/global-namespace.js";
 import type { HoistedRevalidateRef } from "./hoisted-revalidate.js";
+import type { PrefetchFlag } from "../prefetch-markers.js";
 import type { TrieMatchResult } from "../router/trie-matching.js";
 import type { PathOptions } from "../urls/pattern-types.js";
 import type { SearchSchema } from "../search-params.js";
@@ -85,13 +86,12 @@ export interface ClientUrlLoaderRecord {
    */
   readonly ssr?: false;
   /**
-   * loader(Def, { prefetch: false }): a viewport or render prefetch of the
-   * route, or of an intercept's target from its source, defers this loader
-   * (a hover prefetch runs it) and the click
-   * that adopts it runs it in its fill request (see {@link LoaderOptions}).
-   * Projected onto the materialized stub.
+   * loader(Def, { prefetch: false | "intent" }): a prefetch of the route, or
+   * of an intercept's target from its source, defers this loader and the
+   * click that adopts it runs it in its fill request (see
+   * {@link LoaderOptions}). Projected onto the materialized stub.
    */
-  readonly prefetch?: false;
+  readonly prefetch?: PrefetchFlag;
 }
 
 /**
@@ -169,14 +169,13 @@ export interface ClientUrlHelpers {
    * settled return freezes into the shell (nested promises stay live
    * holes).
    *
-   * Pass `{ prefetch: false }` to keep this loader out of the route's
-   * viewport and render prefetches; a hover prefetch runs it (see
-   * {@link LoaderOptions}). An in-group click still shows
-   * the destination at once, commits the adopted prefetch with the other
-   * loaders' data, and runs only the flagged loaders in its one fill
-   * request. A `layout()` loader with the flag is flagged on every route
-   * below it. Inside intercept() it defers the loader in a viewport or
-   * render prefetch of the intercept from its source, as in urls().
+   * Pass `{ prefetch: false | "intent" }` to keep this loader out of the
+   * route's prefetches (see {@link LoaderOptions}). An in-group click still
+   * shows the destination at once, commits the adopted prefetch with the
+   * other loaders' data, and runs only the flagged loaders in its one fill
+   * request. A `layout()` loader with the
+   * flag is flagged on every route below it. Inside intercept() it defers
+   * the loader in a prefetch of the intercept from its source, as in urls().
    */
   readonly loader: <TData>(
     definition: LoaderDefinition<TData>,

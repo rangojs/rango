@@ -26,6 +26,7 @@ import {
   resolveInterceptDeferralScope,
   startDeferredLoader,
   type PrefetchDeferral,
+  type RequestKind,
 } from "../prefetch-deferral";
 
 // `prefetch: false`: which work a prefetch defers (the static scope of a
@@ -37,7 +38,7 @@ let nextId = 0;
 
 function loaderEntry(
   id: string,
-  options: { prefetch?: false; bake?: true } = {},
+  options: { prefetch?: false | "intent"; bake?: true } = {},
 ): LoaderEntry {
   return { loader: { $$id: id }, ...options } as unknown as LoaderEntry;
 }
@@ -60,6 +61,10 @@ function entry(
 }
 
 const flagged = { loading: "fallback", loadingPrefetch: false as const };
+const intentFlagged = {
+  loading: "fallback",
+  loadingPrefetch: "intent" as const,
+};
 
 const ids = (scope: { loaderIds: ReadonlySet<string> }) =>
   [...scope.loaderIds].sort();
@@ -392,8 +397,7 @@ describe("resolveInterceptDeferralScope", () => {
 describe("partialDeferralMode", () => {
   // A plain GET navigation that carries the prefetch header.
   const PREFETCH = {
-    fill: false,
-    prefetch: true,
+    kind: "prefetch" as RequestKind | undefined,
     method: "GET",
     isAction: false,
     isShellCapture: false,
@@ -403,7 +407,7 @@ describe("partialDeferralMode", () => {
   // intercept's (resolveInterceptDeferralScope).
   it("is a prefetch for a plain GET navigation with the prefetch header", () => {
     expect(partialDeferralMode(PREFETCH)).toBe("prefetch");
-    expect(partialDeferralMode({ ...PREFETCH, prefetch: false })).toBe(
+    expect(partialDeferralMode({ ...PREFETCH, kind: undefined })).toBe(
       undefined,
     );
   });
@@ -420,11 +424,10 @@ describe("partialDeferralMode", () => {
   });
 
   it("is a fill whenever a GET carries the marker, whatever else it says", () => {
-    expect(partialDeferralMode({ ...PREFETCH, fill: true })).toBe("fill");
+    expect(partialDeferralMode({ ...PREFETCH, kind: "fill" })).toBe("fill");
     expect(
       partialDeferralMode({
-        fill: true,
-        prefetch: false,
+        kind: "fill",
         method: "GET",
         isAction: true,
         isShellCapture: true,
@@ -437,19 +440,158 @@ describe("partialDeferralMode", () => {
   it.each(["POST", "HEAD"])(
     "is not a fill for a %s that carries the marker",
     (method) => {
-      expect(partialDeferralMode({ ...PREFETCH, fill: true, method })).toBe(
+      expect(partialDeferralMode({ ...PREFETCH, kind: "fill", method })).toBe(
         undefined,
       );
       expect(
         partialDeferralMode({
           ...PREFETCH,
-          fill: true,
+          kind: "fill",
           method,
           isAction: true,
         }),
       ).toBe(undefined);
     },
   );
+});
+
+// `prefetch: "intent"`: a speculative prefetch defers it as it defers
+// `false`; an intent prefetch (a hover, prefetch()) runs it and still defers
+// `false`. The ctx.rendered() guard reads the strict set on every request.
+describe("an intent prefetch", () => {
+  const INTENT = {
+    kind: "intent" as RequestKind | undefined,
+    method: "GET",
+    isAction: false,
+    isShellCapture: false,
+  };
+  const plan = (
+    chain: EntryData[],
+    mode: "prefetch" | "intent",
+    held: string[] = [],
+    scope?: ReturnType<typeof resolveDeferralScope>,
+  ) => planPrefetchDeferral(chain, mode, {}, null, new Set(held), scope)!;
+  const defers = (p: PrefetchDeferral, loader: LoaderEntry) =>
+    defersLoader(ctxWith(p), loader, "R0D0.x", NO_PIN);
+
+  it("is its own mode, and only for a GET navigation that defers", () => {
+    expect(partialDeferralMode(INTENT)).toBe("intent");
+    expect(partialDeferralMode({ ...INTENT, kind: "prefetch" })).toBe(
+      "prefetch",
+    );
+    expect(partialDeferralMode({ ...INTENT, kind: undefined })).toBe(undefined);
+    expect(partialDeferralMode({ ...INTENT, isAction: true })).toBe(undefined);
+    expect(partialDeferralMode({ ...INTENT, isShellCapture: true })).toBe(
+      undefined,
+    );
+    expect(partialDeferralMode({ ...INTENT, kind: "fill" })).toBe("fill");
+  });
+
+  it("runs an intent loader and defers a false one; a speculative prefetch defers both", () => {
+    const off = loaderEntry("off", { prefetch: false });
+    const hover = loaderEntry("hover", { prefetch: "intent" });
+    const plain = loaderEntry("plain");
+    const chain = [entry("route", { loader: [plain, off, hover] })];
+
+    const speculative = plan(chain, "prefetch");
+    expect(defers(speculative, off)).toBe(true);
+    expect(defers(speculative, hover)).toBe(true);
+    expect(defers(speculative, plain)).toBe(false);
+
+    const intent = plan(chain, "intent");
+    expect(intent.mode).toBe("prefetch");
+    expect(defers(intent, off)).toBe(true);
+    expect(defers(intent, hover)).toBe(false);
+    expect(defers(intent, plain)).toBe(false);
+    // The guard's set: every flagged loader, on every request.
+    expect(ids(intent.scope)).toEqual(["hover", "off"]);
+    expect(ids(speculative.scope)).toEqual(["hover", "off"]);
+  });
+
+  it("runs an intent loading() unit and what it covers; a speculative prefetch skips it", () => {
+    const covered = loaderEntry("covered");
+    const route = entry("route", { ...intentFlagged, loader: [covered] });
+    const chain = [entry("layout"), route];
+
+    const speculative = plan(chain, "prefetch");
+    expect([...speculative.skipped]).toEqual([route.shortCode]);
+    expect(speculative.record.read).toBe(false);
+    expect(defers(speculative, covered)).toBe(true);
+
+    const intent = plan(chain, "intent");
+    expect([...intent.skipped]).toEqual([]);
+    expect(intent.record).toEqual({ read: true, write: true, refresh: true });
+    expect(defersUnit(ctxWith(intent), route.shortCode)).toBe(false);
+    expect(defers(intent, covered)).toBe(false);
+    expect(ids(intent.scope)).toEqual(["covered"]);
+    // A speculative prefetch of this tree still skips the handler: the dev
+    // warning for a ctx.rendered() beside it applies.
+    expect(firstUnitCandidate(intent)).toBe(route);
+  });
+
+  it("mixed: a false flag inside an intent unit defers; an intent loader inside a false unit is covered", () => {
+    const own = loaderEntry("own", { prefetch: false });
+    const section = entry("layout", { ...intentFlagged, loader: [own] });
+    const covered = loaderEntry("covered", { prefetch: "intent" });
+    const route = entry("route", { ...flagged, loader: [covered] });
+    const chain = [section, route];
+
+    const intent = plan(chain, "intent");
+    expect([...intent.skipped]).toEqual([route.shortCode]);
+    expect(defers(intent, own)).toBe(true);
+    // Behind the route's false fallback while that segment is new.
+    expect(defers(intent, covered)).toBe(true);
+    // Once the client holds the route, its own intent flag runs it.
+    const holding = plan(chain, "intent", [route.shortCode]);
+    expect(defers(holding, covered)).toBe(false);
+    expect([...holding.skipped]).toEqual([]);
+
+    const speculative = plan(chain, "prefetch");
+    expect([...speculative.skipped].sort()).toEqual(
+      [section.shortCode, route.shortCode].sort(),
+    );
+  });
+
+  it("a tree whose every flag is intent defers nothing in it", () => {
+    const hover = loaderEntry("hover", { prefetch: "intent" });
+    const chain = [
+      entry("layout", intentFlagged),
+      entry("route", { ...intentFlagged, loader: [hover] }),
+    ];
+    const intent = plan(chain, "intent");
+    expect(intent.skipped.size).toBe(0);
+    expect(defers(intent, hover)).toBe(false);
+    expect(ids(intent.scope)).toEqual(["hover"]);
+  });
+
+  it("intercept: runs an intent loader and defers a false one", () => {
+    const off = loaderEntry("off", { prefetch: false });
+    const hover = loaderEntry("hover", { prefetch: "intent" });
+    const scope = resolveInterceptDeferralScope({
+      slotName: "@modal",
+      routeName: "item",
+      loader: [off, hover, loaderEntry("plain")],
+    } as any);
+    expect(ids(scope)).toEqual(["hover", "off"]);
+    const chain = [entry("route")];
+    expect(defers(plan(chain, "prefetch", [], scope), hover)).toBe(true);
+    expect(defers(plan(chain, "prefetch", [], scope), off)).toBe(true);
+    expect(defers(plan(chain, "intent", [], scope), hover)).toBe(false);
+    expect(defers(plan(chain, "intent", [], scope), off)).toBe(true);
+  });
+
+  it("on a clientUrls() route, a loader's own intent flag counts and no loading() flag does", () => {
+    const hover = loaderEntry("hover", { prefetch: "intent" });
+    const route = entry("route", {
+      ...intentFlagged,
+      clientGroup: "/cu",
+      loader: [hover, loaderEntry("plain")],
+    });
+    const speculative = plan([route], "prefetch");
+    expect(speculative.skipped.size).toBe(0);
+    expect(defers(speculative, hover)).toBe(true);
+    expect(defers(plan([route], "intent"), hover)).toBe(false);
+  });
 });
 
 describe("planPrefetchDeferral", () => {

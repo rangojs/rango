@@ -706,6 +706,9 @@ Rules of thumb:
   never become clicks: activity feeds, analytics panels, reviews below the
   fold, a list behind a tab.
 - Do not flag what the likely click needs first: the page's main content.
+- Flag a loader worth starting on hover `prefetch: "intent"` instead: viewport
+  and render prefetches skip it, and a hover or `useRouter().prefetch()` runs
+  it, so that click needs no fill for it.
 - Read a flagged loader inside its own `<Suspense>`; with no boundary, React
   keeps the page being left on screen until the fill answers.
 - A same-route click (`/app/projects/1` to `/app/projects/2`) prefetches a

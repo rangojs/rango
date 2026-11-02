@@ -132,7 +132,7 @@ flow into the generated route map, so `href()`, `ctx.reverse()` and
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see `/ppr` → The loader lane rule); no response variants. Use callback may contain `loader()`, `loading()`, `transition()` |
 | `layout()`     | `layout(Component, () => [...])` — children are required and must contain at least one `path()`; may also hold `loader()`, `loading()`, `intercept()`, nested `layout()`                         |
-| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false, prefetch: false }, use?)` — see below                                                                                                          |
+| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false, prefetch: false \| "intent" }, use?)` — see below                                                                                              |
 | `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait                                            |
 | `revalidate()` | Valid **inside a loader() use callback only**; runs on the server (the build hoists it out of the `"use client"` module)                                                                         |
 | `transition()` | Inside a `path()` use callback only (at most one). ViewTransition config plus a browser-run `when` predicate (see `/view-transitions`); same-route navs in a group already hold without it       |
@@ -623,25 +623,27 @@ shell, such as a `useActionState` form (React suspends it once to encode its
 action), is in the first flush too: the router gives React up to three more
 turns before it, and none when the document is already complete.
 
-## `prefetch: false` — keep a loader out of speculative prefetches
+## `prefetch: false` — keep a loader out of prefetches
 
 A `<Link>` prefetch of a group route runs its loaders. Flag the expensive one
-and a viewport or render prefetch skips it. A hover prefetch, and
-`useRouter().prefetch()`, is intent to click: it runs the loader, and the
-click sends no fill (`/loader` → "`prefetch: false`").
+`prefetch: false` and every prefetch skips it. Flag it `prefetch: "intent"`
+and only a viewport or render prefetch skips it: a hover prefetch, and
+`useRouter().prefetch()`, is intent to click, runs it, and the click sends
+no fill for it (`/loader` → "`prefetch: false`").
 
 ```tsx
 path("/product/:slug", ProductPage, { name: "product" }, () => [
   loader(PriceLoader),
-  loader(ReviewsLoader, { prefetch: false }), // kept out of viewport prefetches
+  loader(RelatedLoader, { prefetch: "intent" }), // kept out of viewport prefetches
+  loader(ReviewsLoader, { prefetch: false }), // kept out of every prefetch
   loading(<ProductSkeleton />),
 ]),
 ```
 
 A click inside the group still shows the destination at once. With a
-viewport or render prefetch received, the URL and the other loaders' data move with the click
+prefetch received, the URL and the other loaders' data move with the click
 too, `useOutlet().pending` ends with that commit, and one follow-up request
-(the fill) runs only the flagged loaders. Read the flagged loader inside its
+(the fill) runs only the loaders it skipped. Read the flagged loader inside its
 own `<Suspense>` to show the page and that fallback at once; with no boundary
 React holds the page being left until the fill answers, as it would with no
 prefetch. Same rules as on a server route (`/loader` → "`prefetch: false`"):
@@ -660,8 +662,9 @@ rest of the destination; otherwise it is held. A same-route click
 - `loading()` in `clientUrls()` takes no options, and a flagged `loading()`
   on a server layout above the group defers nothing for the group's routes.
 - On an `intercept()` loader the flag works as in `urls()`: an in-group
-  viewport or render prefetch of the intercept's target defers it, and the
-  click opens the modal at once with one fill for it; a hover's runs it.
+  prefetch of the intercept's target defers it, and the click opens the
+  modal at once with one fill for it; a hover's runs a loader marked
+  `"intent"`.
 - With `ssr: false` on a `ppr` group route the flag works as on a server
   route: deferred unless the prefetch serves the loader from a pin of a
   document-captured shell (`/ppr` → "`prefetch: false` on a `ppr` route").

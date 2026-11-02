@@ -14,6 +14,8 @@ export const routes = {
   handle: "/handle",
   index: "/",
   inner: "/inner",
+  intent: "/intent",
+  intentUnit: "/intent-unit",
   item: "/item/:id",
   itemTwin: "/item-twin/:id",
   ix: "/ix",

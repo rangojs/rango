@@ -5,6 +5,7 @@ import { joinMount } from "../router/substitute-pattern-params.js";
 import { tryTrieMatch } from "../router/trie-matching.js";
 import type { LoaderDefinition } from "../types.js";
 import { isHoistedRevalidateRef } from "./hoisted-revalidate.js";
+import { isPrefetchFlag, type PrefetchFlag } from "../prefetch-markers.js";
 import type {
   ClientPathOptions,
   ClientTransitionConfig,
@@ -141,7 +142,7 @@ interface LoaderItem extends ItemBase {
   readonly definition: LoaderDefinition<any, any>;
   readonly revalidate: ClientUrlLoaderRecord["revalidate"];
   readonly ssr?: false;
-  readonly prefetch?: false;
+  readonly prefetch?: PrefetchFlag;
 }
 
 interface RevalidateItem extends ItemBase {
@@ -360,10 +361,11 @@ export const loader: ClientUrlHelpers["loader"] = (
   if (
     process.env.NODE_ENV !== "production" &&
     options?.prefetch !== undefined &&
-    typeof options.prefetch !== "boolean"
+    typeof options.prefetch !== "boolean" &&
+    options.prefetch !== "intent"
   ) {
     throw new Error(
-      `clientUrls() loader() prefetch must be a boolean (got ${JSON.stringify(options.prefetch)}). Omit it (or pass true) to run the loader in prefetches.`,
+      `clientUrls() loader() prefetch must be a boolean or "intent" (got ${JSON.stringify(options.prefetch)}). Omit it (or pass true) to run the loader in prefetches.`,
     );
   }
   const items = use ? runUse(use, "loader use") : [];
@@ -379,7 +381,9 @@ export const loader: ClientUrlHelpers["loader"] = (
       )
       .map((item) => item.fn),
     ...(options?.ssr === false ? { ssr: false as const } : {}),
-    ...(options?.prefetch === false ? { prefetch: false as const } : {}),
+    ...(isPrefetchFlag(options?.prefetch)
+      ? { prefetch: options.prefetch }
+      : {}),
   });
 };
 
@@ -630,7 +634,7 @@ function applyConfig(
           loader: item.definition,
           revalidate: Object.freeze([...item.revalidate]),
           ...(item.ssr === false ? { ssr: false as const } : {}),
-          ...(item.prefetch === false ? { prefetch: false as const } : {}),
+          ...(item.prefetch !== undefined ? { prefetch: item.prefetch } : {}),
         }),
       );
     } else if (item.type === "loading") {
@@ -754,8 +758,8 @@ function collectIntercepts(
             Object.freeze({
               loader: useItem.definition,
               revalidate: Object.freeze([...useItem.revalidate]),
-              ...(useItem.prefetch === false
-                ? { prefetch: false as const }
+              ...(useItem.prefetch !== undefined
+                ? { prefetch: useItem.prefetch }
                 : {}),
             }),
           );

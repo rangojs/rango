@@ -491,9 +491,7 @@ export async function createMatchContextForPartial<TEnv>(
   const deferral = planPrefetchDeferral(
     snapshot.entries,
     partialDeferralMode({
-      fill: kind === "fill",
-      // Speculative only: an intent prefetch defers nothing.
-      prefetch: kind === "prefetch",
+      kind,
       method: request.method,
       isAction,
       isShellCapture: reqCtx?._shellCaptureState?.run === true,

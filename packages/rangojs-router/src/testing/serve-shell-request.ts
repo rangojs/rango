@@ -100,13 +100,13 @@ export interface ServeShellRequestOptions<TEnv = any> {
    * `result.replayStatus`.
    *
    * `prefetch: true` sends the speculative kind a viewport or render
-   * `<Link>` prefetch sends (`X-Rango-Prefetch: 1`), so `prefetch: false`
-   * loaders and `loading()` entries are deferred: `result.readDeferred()`
-   * lists them. A hover's or `prefetch()`'s intent prefetch defers nothing;
-   * serve it with `prefetch: true` and `headers: { "X-Rango-Prefetch":
-   * "intent" }`, which `prefetch: true` leaves as given. `fill: true`
-   * sends the request the browser follows an adopted prefetch with
-   * (`_rsc_fill`): pass the ids the prefetch delivered, without the deferred
+   * `<Link>` prefetch sends (`X-Rango-Prefetch: 1`), so loaders and
+   * `loading()` entries flagged `prefetch: false` or `"intent"` are deferred:
+   * `result.readDeferred()` lists them. A hover's intent prefetch defers
+   * `false` only; serve it with `prefetch: true` and `headers: {
+   * "X-Rango-Prefetch": "intent" }`, which `prefetch: true` leaves as given.
+   * `fill: true` sends the request the browser follows an adopted prefetch
+   * with (`_rsc_fill`): pass the ids the prefetch delivered, without the deferred
    * ones, as `segments`, and the same URL as `from`. `interceptSource` sends
    * the intercept source (`X-RSC-Router-Intercept-Source`) the browser sends
    * from an open modal and with the fill of an intercept, whose `from` is

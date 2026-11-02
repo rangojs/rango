@@ -1,9 +1,10 @@
-# `prefetch: false`: keeping expensive work out of speculative prefetches
+# `prefetch: false`: keeping expensive work out of prefetches
 
 Status: built. Written on 2026-10-07 against main `844ccda5`, from the behaviour
 contract agreed with the maintainer the same day. The rules below (R1 to R15)
-are that contract; the mechanics are what the code does. R16, a hover's
-prefetch defers nothing, is the maintainer's decision of 2026-10-30.
+are that contract; the mechanics are what the code does. R16, what a hover's
+prefetch runs, is the maintainer's decision of 2026-11-02: it runs only the
+work marked `prefetch: "intent"`.
 
 Read [caching.md](./caching.md) first if you have not, and
 `packages/rangojs-router/docs/internal/execution-model.md` for the revalidation
@@ -32,10 +33,19 @@ loading(<OrdersSkeleton />, { prefetch: false });
 `prefetch: true`, or leaving it out, is the behaviour you had before. Both
 options sit beside the existing `{ ssr?: boolean }` on the same two helpers.
 
-"Prefetches" here means the speculative ones: a viewport or render prefetch,
-sent for links the visitor may never click (`X-Rango-Prefetch: 1`). A hover,
-or an explicit `prefetch()` call, says the visitor is about to click; its
-prefetch (`X-Rango-Prefetch: intent`) defers nothing (R16).
+A third value, `prefetch: "intent"`, keeps the work out of speculative
+prefetches only: a viewport or render prefetch, sent for links the visitor
+may never click (`X-Rango-Prefetch: 1`). A hover, or an explicit
+`prefetch()` call, says the visitor is about to click; its prefetch
+(`X-Rango-Prefetch: intent`) runs `"intent"` work and still defers `false`
+work (R16). Everywhere below, "flagged" means either value, and "a prefetch"
+means either kind, unless R16 says otherwise.
+
+```tsx
+// Kept out of viewport prefetches; a hover runs it.
+loader(RelatedLoader, { prefetch: "intent" });
+loading(<RelatedSkeleton />, { prefetch: "intent" });
+```
 
 ## The model in one paragraph
 
@@ -212,7 +222,8 @@ These are the invariants. If you change this feature, these are what must
 still hold.
 
 **R1. A flagged loader on a segment that is new to the client is not executed
-in a speculative prefetch (`X-Rango-Prefetch: 1`).** Its own `cache()` is not read either, even when it would hit,
+in a prefetch (R16 says which flag an intent prefetch runs).** Its own
+`cache()` is not read either, even when it would hit,
 and no `"use cache"` function it calls is consulted. That is by intent: a
 prefetch that looked would have to run the loader on a miss, which is the
 work the flag keeps out. Its segment is in the payload, marked deferred, with
@@ -398,46 +409,83 @@ where a plain navigation would have streamed. Either breaks the promise in
 of prefetches, flag the `loading()` of the routes inside it: they are new on
 each of those navigations.
 
-**R16. An intent prefetch (`X-Rango-Prefetch: intent`) defers nothing.** A
-hover is intent to click, and so is `useRouter().prefetch()`. Every caller of
+**R16. An intent prefetch (`X-Rango-Prefetch: intent`) runs the work marked
+`prefetch: "intent"` and defers the work marked `prefetch: false`.** A hover is
+intent to click, and so is `useRouter().prefetch()`. Every caller of
 `prefetchDirect` (`src/browser/prefetch/fetch.ts`) sends that value: a
 `<Link>` hover on a `"hover"`, `"viewport"` or `"adaptive"` link, a delegated
 plain anchor's hover, and `useRouter().prefetch()`. `prefetchQueued`
-(viewport, render) keeps sending `1`. The server reads the value once
-(`requestKind` in `router/segment-resolution/prefetch-deferral.ts` answers
-`"intent"`), and the match passes `prefetch: kind === "prefetch"` to
-`partialDeferralMode`, so an intent prefetch is planned like the navigation
-it starts early: the plan keeps the chain's scope, so R12 and R13 hold, and
-defers nothing. Its response carries no deferred unit, so it gets neither
-`private, no-cache` nor `Vary: X-Rango-Prefetch` (R7) nor source scope for
-deferral (R15); an intercept target stays source-scoped as always. It is
-still a prefetch everywhere else: a render error ends it with the failure row
-(`isPrefetchKind`, `rsc/rsc-rendering.ts`), and a shell capture strips the
-header. Any other value of the header reads as speculative.
+(viewport, render) keeps sending `1`. Any other value of the header reads as
+speculative.
+
+| Request                                         | unflagged | `prefetch: false`         | `prefetch: "intent"`      |
+| ----------------------------------------------- | --------- | ------------------------- | ------------------------- |
+| navigation, document                            | runs      | runs                      | runs                      |
+| speculative prefetch (`1`)                      | runs      | deferred, filled at click | deferred, filled at click |
+| intent prefetch (`intent`)                      | runs      | deferred, filled at click | runs, no fill             |
+| a cached or in-flight prefetch when hover lands | as is     | as is                     | as is                     |
+
+The server reads the header once (`requestKind` in
+`router/segment-resolution/prefetch-deferral.ts` answers `"intent"`), and the
+match passes it to `partialDeferralMode`, which answers `"intent"`.
+`resolveDeferralScope` collects two sets from the same walk: the scope (every
+flagged unit and loader, either value) and, when some flag is `"intent"`, the
+`intent` set (only what is marked `false`). `planPrefetchDeferral` keeps the
+scope on the plan, so the R12 and R13 guards (`ctx.rendered()` and its
+loader ids) stay the strict set, and defers what `plan.defers` holds: the
+`intent` set on an intent prefetch, the scope otherwise. So:
+
+- A route whose flags are all `"intent"` answers an intent prefetch in full.
+  Its response carries no deferred unit, so it gets neither
+  `private, no-cache` nor `Vary: X-Rango-Prefetch` (R7) nor source scope for
+  deferral (R15), and is the same body a navigation gets. An intercept target
+  stays source-scoped as always.
+- Any `false` flag keeps the response deferring, and source-scoped, exactly
+  as a speculative prefetch is: the click fills only what the hover left out.
+- A loader marked `"intent"` and read through `ctx.rendered()` throws R12 on
+  every request, as a `false` one does: the guard reads the strict set.
+- The ppr bake lane (R3) and the intercept scope ("Intercepts") read the same
+  plan, so a pinned `ssr: false` loader is served from its pin and an
+  intercept's own loaders follow their own flags under either header.
+- On a `clientUrls()` group chain a `loading()` flag counts for neither set,
+  as before. A group loader marked `"intent"` reaches the server through the
+  build projection (`intentLoaderIndices` in `client-urls/server-projection.ts`).
+
+It is still a prefetch everywhere else: a render error ends it with the
+failure row (`isPrefetchKind`, `rsc/rsc-rendering.ts`), and a shell capture
+strips the header.
 
 - Only on a miss. `prefetchDirect` dedupes as it always did
   (`hasPrefetchHit`): a cached prefetch, or one in flight, is used as it is,
-  even a speculative one that deferred work, and its click sends the fill.
-  There is no upgrade, no second render and no marker of an entry's holes. A
-  queued viewport prefetch that has not started does not count as in flight,
-  so a hover over its link sends the intent prefetch, and the queued item
-  skips itself at execution.
+  even a speculative one that deferred `"intent"` work, and its click sends
+  the fill. There is no upgrade, no second render and no marker of an entry's
+  holes. A queued viewport prefetch that has not started does not count as in
+  flight, so a hover over its link sends the intent prefetch, and the queued
+  item skips itself at execution.
 - No dwell. A delay would defeat starting early, so every cursor pass over a
-  hover link with nothing cached runs the flagged work. That is the cost the
-  maintainer accepted; the skills say it plainly.
+  hover link with nothing cached runs the `"intent"` work. That is the cost
+  the flag opts into; a `false` flag keeps an expensive loader out of hovers
+  too.
 - Touch has no hover: `"adaptive"` resolves to viewport there, and nothing
   else counts as intent.
-- A click while an intent prefetch is in flight adopts it as it adopts any
-  unflagged prefetch mid-stream: no fill, and a slow loader streams behind its
-  boundary as on a plain click, started earlier. So "A click before its
-  prefetch has answered" below applies only to speculative prefetches.
+- A click while an intent prefetch that deferred nothing is in flight adopts
+  it as it adopts any unflagged prefetch mid-stream: no fill, and a slow
+  loader streams behind its boundary as on a plain click, started earlier.
+  One that deferred `false` work behaves as "A click before its prefetch has
+  answered" below describes.
 
-Pinned by `prefetch-false.rsc-test.tsx` ("R16: an intent prefetch defers
-nothing"), `prefetch-render-errors.rsc-test.tsx`, `prefetch-deferral.test.ts`
-(`requestKind`), `prefetch-fetch.test.ts` ("the prefetch header names the
-trigger (R16)"), and in both apps by the shared suite's hover cases and the
-"hovered" parity rows (`tests/shared-e2e/src/prefetch-false.ts`) and the
-`clientUrls()` intercept pair in `client-urls.test.ts`.
+Why not run everything on a hover: a hover is cheap to trigger, every cursor
+pass over a list of links is one, and a `false` loader is flagged because it
+is too expensive to run for a page the visitor may not open. An app opts a
+piece of work into hovers where the earlier start is worth it.
+
+Pinned by `prefetch-false.rsc-test.tsx` ("R16: an intent prefetch runs only
+the work marked prefetch: "intent""), `prefetch-render-errors.rsc-test.tsx`,
+`prefetch-deferral.test.ts` ("an intent prefetch"), `prefetch-fetch.test.ts`
+("the prefetch header names the trigger (R16)"), and in both apps by the
+shared suite's hover and `intent` cases and the "hovered" parity rows
+(`tests/shared-e2e/src/prefetch-false.ts`) and the `clientUrls()` intercept
+pair in `client-urls.test.ts`.
 
 ## Which loaders are deferrable
 
@@ -447,7 +495,8 @@ not to. `resolveDeferralScope()` in
 once per route and memoizes the answer. A loader registration is deferrable
 when any of these holds:
 
-1. It was registered with `loader(Def, { prefetch: false })`.
+1. It was registered with `loader(Def, { prefetch: false })` or
+   `{ prefetch: "intent" }`.
 2. Its entry has a flagged `loading()` (a layout, a route, or a parallel
    entry).
 3. Its entry is an orphan layout or a parallel slot of an entry with a flagged
@@ -509,9 +558,13 @@ context as `_prefetchDeferral` whenever the matched tree declares a flag or
 the request is a fill:
 
 - `scope`: the memoized static answer above (deferrable `LoaderEntry` set,
-  their `$$id`s, unit candidates).
+  their `$$id`s, unit candidates), with either flag value. The R12 and R13
+  guards read it.
+- `defers`: what this request defers. The scope's `intent` set (only what is
+  marked `false`) on an intent prefetch, the scope itself otherwise (R16).
+  `defersLoader()` and the unit walk read it.
 - `mode`: `"prefetch"` for a GET partial request with `X-Rango-Prefetch` that
-  is not an action and not a shell capture; `"fill"`
+  is not an action and not a shell capture, either value; `"fill"`
   when a GET's raw URL carries `_rsc_fill`; otherwise unset. A request of
   another method that carries either marker is a normal request. The header
   and the param are read once, when the request context is created
@@ -821,8 +874,8 @@ It does no harm, for two reasons you can rely on separately:
   complete payload. Without the header in `Vary`, a navigation fetch made
   during a back/forward reload was answered with the stored deferring body
   (measured in Chromium, `fromDiskCache` in the Network domain). A hover's
-  prefetch sends the header with another value (`intent`, R16), so it is not
-  answered with that body either.
+  prefetch sends the header with another value (`intent`, R16), and its
+  deferring body runs other work, so neither answers the other.
 - The client does not care where a payload came from. Any payload that
   carries deferred segments gets its defers and its one fill ("The browser"
   below), and the fill is sent `cache: "no-store"`. A prefetch answered from
@@ -1922,10 +1975,9 @@ click is a plain navigation over the cached copy
 
 ### A click before its prefetch has answered
 
-This applies to a speculative prefetch only: a hover's defers nothing
-(R16), so a click while it is in flight adopts it with no fill. A visitor who
-clicks fast clicks before the link's viewport or render prefetch has
-answered. The navigation client reuses that request instead of sending its own
+This applies to any prefetch that defers: a hover's that deferred nothing
+(R16) is adopted with no fill. A visitor who clicks fast clicks before the
+link's prefetch has answered. The navigation client reuses that request instead of sending its own
 (`consumeInflightPrefetch` in `navigation-client.ts`, a promise that resolves
 with the prefetch's response headers), as it did before the flag. When the
 answer has holes the click adopts it like any prefetch, and its fill leaves
@@ -2126,7 +2178,8 @@ intercept `LoaderOwner`). Deferral, fill skipping, the `ctx.use()` delivery
 come from it as for a route's loaders.
 
 A prefetch that resolves an intercept defers the intercept's flagged loaders
-and nothing else: its plan's scope is the intercept entry's
+(on an intent prefetch, those marked `false`) and nothing else: its plan's
+scope is the intercept entry's
 (`resolveInterceptDeferralScope` in `prefetch-deferral.ts`), so the target
 chain's layouts below the declaring entry, which such a request renders and
 whose ids its `matched` leaves out, are never deferred. The click that adopts
@@ -2577,7 +2630,9 @@ unmount it before you navigate, or it prefetches again from the next page).
 Arm a case, watch the counters, then click its link and watch them again:
 flagged work shows 0 runs after the prefetch and 1 after the click, an
 unflagged case shows 1 after the prefetch. Hover the `hover` link instead and
-flagged work shows 1 run after the hover and no more after the click (R16).
+`false` work still shows 0 runs after the hover and 1 after the click, while
+`"intent"` work (the `intent` and `intent-unit` cases) shows 1 run after the
+hover and no more after the click (R16).
 `run` keys the counters: each value you pick has its own, and
 "Start a new run" picks a fresh one. `&tall=1` adds spacers so the page
 scrolls, for checking that a navigation ends at the top. `&slow=1` makes every

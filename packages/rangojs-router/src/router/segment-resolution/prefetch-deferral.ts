@@ -1,6 +1,9 @@
 /**
- * `prefetch: false`: what a prefetch request defers and what its fill request
- * runs (docs/design/prefetch-false.md).
+ * `prefetch: false` and `prefetch: "intent"`: what a prefetch request defers
+ * and what its fill request runs (docs/design/prefetch-false.md). A
+ * speculative prefetch (viewport, render) defers both flags; an intent
+ * prefetch (a hover, `prefetch()`) defers `false` only and runs `"intent"`
+ * work as if it were unflagged.
  *
  * Two layers. The SCOPE is static per matched chain: which loader
  * registrations are deferrable and which entries can be a handler unit. The
@@ -37,19 +40,19 @@ import {
 import { requestHeaders } from "../../server/request-headers.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
 import type { CacheScope } from "../../cache/cache-scope.js";
-import { PREFETCH_HEADER, PREFETCH_INTENT } from "../../prefetch-markers.js";
+import {
+  PREFETCH_HEADER,
+  PREFETCH_INTENT,
+  isPrefetchFlag,
+  type PrefetchFlag,
+} from "../../prefetch-markers.js";
 import { WIRE } from "../../wire-params.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
 
 /**
  * What a request says it is, read once when its context is created
  * (RequestContext._requestKind). A fill is marked on the raw URL and wins
- * over the prefetch header. `"prefetch"` is a speculative prefetch (viewport,
- * render) and `"intent"` a hover or an explicit `prefetch()` call
- * (PREFETCH_INTENT): both are prefetches, and only the first defers. Whether
- * a prefetch defers anything is decided per match, by partialDeferralMode: a
- * shell capture inherits the context of the request that scheduled it and is
- * never a prefetch.
+ * over the prefetch header; an intent prefetch carries PREFETCH_INTENT.
  */
 export function requestKind(
   request: Request,
@@ -69,8 +72,8 @@ export function isPrefetchKind(kind: RequestKind | undefined): boolean {
   return kind === "prefetch" || kind === "intent";
 }
 
-/** Static, per matched chain. */
-interface DeferralScope {
+/** What one kind of prefetch can defer in a matched chain. */
+interface DeferralSet {
   /**
    * Loader registrations a prefetch can defer, each with what makes it so:
    * `true` for its own flag, else the segment ids of the flagged entries whose
@@ -78,8 +81,6 @@ interface DeferralScope {
    * segments is new to the client.
    */
   readonly loaders: ReadonlyMap<LoaderEntry, true | readonly string[]>;
-  /** `$$id`s of `loaders`: the loaders that cannot call ctx.rendered(). */
-  readonly loaderIds: ReadonlySet<string>;
   /**
    * Entries whose handler a prefetch can skip (a flagged loading() with a
    * fallback to show). `index` is the chain index that owns the entry: its
@@ -90,6 +91,24 @@ interface DeferralScope {
   readonly units: ReadonlyMap<EntryData, DeferralUnit>;
 }
 
+/**
+ * Static, per matched chain: what a speculative prefetch defers (every flag,
+ * `false` or `"intent"`), and in `intent` what an intent prefetch defers.
+ */
+interface DeferralScope extends DeferralSet {
+  /**
+   * `$$id`s of `loaders`: the loaders that cannot call ctx.rendered(). The
+   * speculative set on every request: a loader an intent prefetch runs is
+   * still run by a speculative prefetch's fill, where its handler does not.
+   */
+  readonly loaderIds: ReadonlySet<string>;
+  /**
+   * What an intent prefetch defers: the scope with every `"intent"` flag
+   * read as unflagged. Absent when no flag is `"intent"`: the scope itself.
+   */
+  readonly intent?: DeferralSet;
+}
+
 interface DeferralUnit {
   readonly index: number;
   readonly ids: readonly string[];
@@ -98,6 +117,11 @@ interface DeferralUnit {
 /** Per match: InternalHandlerContext._prefetchDeferral. */
 export interface PrefetchDeferral {
   readonly scope: DeferralScope;
+  /**
+   * What this request defers: `scope`, or `scope.intent` for an intent
+   * prefetch. The ctx.rendered() guards read `scope`.
+   */
+  readonly defers: DeferralSet;
   /**
    * "prefetch": deferral replaces execution. "fill": the request that follows
    * an adopted prefetch; a held segment is skipped outright. Unset on every
@@ -188,10 +212,36 @@ const EMPTY_SCOPE: DeferralScope = {
 
 const scopes = new WeakMap<EntryData, DeferralScope>();
 
+/** A flag an intent prefetch defers: `false` only. */
+const offFlag = (flag: PrefetchFlag | undefined): boolean => flag === false;
+/** A flag only an intent prefetch runs. */
+const intentFlag = (flag: PrefetchFlag | undefined): boolean =>
+  flag === PREFETCH_INTENT;
+
+const isEmptySet = (set: DeferralSet): boolean =>
+  set.loaders.size === 0 && set.units.size === 0;
+
+/**
+ * The scope of a collector, which returns what a prefetch whose flags
+ * `counts` accepts defers. `intent` is set only when an `"intent"` flag
+ * changes what is deferred: the collector under `intentFlag` finds something.
+ */
+function scopeOf(
+  collect: (counts: (flag: PrefetchFlag | undefined) => boolean) => DeferralSet,
+): DeferralScope {
+  const all = collect(isPrefetchFlag);
+  if (isEmptySet(all)) return EMPTY_SCOPE;
+  return {
+    ...all,
+    loaderIds: new Set([...all.loaders.keys()].map((l) => l.loader.$$id)),
+    ...(!isEmptySet(collect(intentFlag)) && { intent: collect(offFlag) }),
+  };
+}
+
 /**
  * The deferral scope of a matched chain, memoized on its leaf entry (entries
  * are per-isSSR manifest objects, replaced on HMR). EMPTY_SCOPE when nothing
- * in the tree declares `prefetch: false`.
+ * in the tree declares `prefetch: false` or `prefetch: "intent"`.
  */
 export function resolveDeferralScope(
   entries: readonly EntryData[],
@@ -200,9 +250,18 @@ export function resolveDeferralScope(
   if (!leaf) return EMPTY_SCOPE;
   const cached = scopes.get(leaf);
   if (cached) return cached;
+  const scope = scopeOf((counts) => collectDeferrable(entries, counts));
+  scopes.set(leaf, scope);
+  return scope;
+}
 
+/** What a prefetch whose flags are those `counts` accepts defers in a chain. */
+function collectDeferrable(
+  entries: readonly EntryData[],
+  counts: (flag: PrefetchFlag | undefined) => boolean,
+): DeferralSet {
+  const leaf = entries[entries.length - 1]!;
   const loaders = new Map<LoaderEntry, true | readonly string[]>();
-  const loaderIds = new Set<string>();
   const units = new Map<EntryData, DeferralUnit>();
   const chain = new Set(entries);
   // A clientUrls() group route renders loading() itself and its handler is
@@ -212,7 +271,7 @@ export function resolveDeferralScope(
   // layout's above it; a flagged loading() defers nothing.
   const clientGroupChain = leaf.clientGroup !== undefined;
   const flagsLoading = (entry: EntryData): boolean =>
-    !clientGroupChain && entry.loadingPrefetch === false;
+    !clientGroupChain && counts(entry.loadingPrefetch);
 
   // `behind`: the segment ids of the flagged entries whose fallback covers
   // `entry`'s loaders.
@@ -222,12 +281,11 @@ export function resolveDeferralScope(
     index: number,
   ): void => {
     for (const loaderEntry of entry.loader ?? []) {
-      const own = loaderEntry.prefetch === false;
+      const own = counts(loaderEntry.prefetch);
       if (!own && behind.length === 0) continue;
       // An ssr: false loader on a ppr route is in scope too: whether this
       // request serves it from a shell pin is per request (defersLoader).
       loaders.set(loaderEntry, own ? true : behind);
-      loaderIds.add(loaderEntry.loader.$$id);
     }
     for (const parallelEntry of getParallelEntries(entry.parallel)) {
       // A slot's segment id, as resolveParallelSegments
@@ -262,13 +320,7 @@ export function resolveDeferralScope(
     // A layout's fallback covers its outlet: every deeper chain entry.
     if (flagged && entry.type !== "route") behind = own;
   });
-
-  const scope: DeferralScope =
-    loaders.size === 0 && units.size === 0
-      ? EMPTY_SCOPE
-      : { loaders, loaderIds, units };
-  scopes.set(leaf, scope);
-  return scope;
+  return { loaders, units };
 }
 
 const interceptScopes = new WeakMap<InterceptEntry, DeferralScope>();
@@ -286,24 +338,21 @@ export function resolveInterceptDeferralScope(
 ): DeferralScope {
   const cached = interceptScopes.get(intercept);
   if (cached) return cached;
-  const flagged = intercept.loader.filter((l) => l.prefetch === false);
-  const scope: DeferralScope =
-    flagged.length === 0
-      ? EMPTY_SCOPE
-      : {
-          loaders: new Map(flagged.map((l) => [l, true as const])),
-          loaderIds: new Set(flagged.map((l) => l.loader.$$id)),
-          units: new Map(),
-        };
+  const scope = scopeOf((counts) => ({
+    loaders: new Map(
+      intercept.loader
+        .filter((l) => counts(l.prefetch))
+        .map((l) => [l, true as const]),
+    ),
+    units: new Map(),
+  }));
   interceptScopes.set(intercept, scope);
   return scope;
 }
 
 /**
- * Which half of the feature a partial request is, if either (`fill` and
- * `prefetch` are requestKind's answer). `prefetch` is a speculative prefetch
- * only: an intent prefetch defers nothing, like the navigation it starts
- * early (R16). Both halves are GETs: a request of
+ * The kind a partial request plans its deferral as, if any (requestKind's
+ * answer, filtered). Both halves of the feature are GETs: a request of
  * another method that carries either marker is a normal request. A prefetch
  * defers only on a plain GET navigation: an action re-renders what it
  * changed, and a shell capture is never a prefetch whatever the request that
@@ -311,17 +360,20 @@ export function resolveInterceptDeferralScope(
  * capture runs the full match): each one states its own reason.
  */
 export function partialDeferralMode(request: {
-  fill: boolean;
-  prefetch: boolean;
+  kind: RequestKind | undefined;
   method: string;
   isAction: boolean;
   isShellCapture: boolean;
-}): PrefetchDeferral["mode"] {
+}): RequestKind | undefined {
   if (request.method !== "GET") return undefined;
-  if (request.fill) return "fill";
-  return request.prefetch && !request.isAction && !request.isShellCapture
-    ? "prefetch"
-    : undefined;
+  if (request.kind === "fill") return "fill";
+  if (
+    isPrefetchKind(request.kind) &&
+    (request.isAction || request.isShellCapture)
+  ) {
+    return undefined;
+  }
+  return request.kind;
 }
 
 export const NOTHING_HELD: ReadonlySet<string> = new Set();
@@ -331,16 +383,22 @@ export const NOTHING_HELD: ReadonlySet<string> = new Set();
  * request is not a fill (the common case: nothing to carry). `held` is the
  * client's segment ids as the request listed them. `scope` is the chain's
  * unless the request resolves an intercept (resolveInterceptDeferralScope).
+ * An intent prefetch plans as a prefetch over `scope.intent`: a tree whose
+ * flags are all `"intent"` defers nothing in it, and its response is the
+ * navigation's (no `_payloadDeferred`, so no source scope).
  */
 export function planPrefetchDeferral(
   entries: readonly EntryData[],
-  mode: PrefetchDeferral["mode"],
+  requested: RequestKind | undefined,
   matched: { pr?: boolean; od?: boolean },
   cacheScope: CacheScope | null | undefined,
   held: ReadonlySet<string> = NOTHING_HELD,
   scope: DeferralScope = resolveDeferralScope(entries),
 ): PrefetchDeferral | undefined {
-  if (scope === EMPTY_SCOPE && mode !== "fill") return undefined;
+  if (scope === EMPTY_SCOPE && requested !== "fill") return undefined;
+  const mode = requested === "intent" ? "prefetch" : requested;
+  const defers: DeferralSet =
+    requested === "intent" ? (scope.intent ?? scope) : scope;
 
   const leaf = entries[entries.length - 1];
   let storedFrom = Infinity;
@@ -368,7 +426,7 @@ export function planPrefetchDeferral(
   const skipped = new Set<string>();
   let skipsChain = false;
   if (mode === "prefetch") {
-    for (const [entry, unit] of scope.units) {
+    for (const [entry, unit] of defers.units) {
       if (!unitEligible(storedFrom, entry, unit)) continue;
       for (const id of unit.ids) {
         if (held.has(id)) continue;
@@ -382,7 +440,7 @@ export function planPrefetchDeferral(
     write: !skipsChain,
     refresh: mode !== "fill",
   };
-  return { scope, mode, storedFrom, held, skipped, record };
+  return { scope, defers, mode, storedFrom, held, skipped, record };
 }
 
 export function getPrefetchDeferral(
@@ -529,7 +587,7 @@ export function defersLoader(
 ): boolean {
   const plan = getPrefetchDeferral(ctx);
   if (plan?.mode !== "prefetch" || plan.held.has(segmentId)) return false;
-  const by = plan.scope.loaders.get(loaderEntry);
+  const by = plan.defers.loaders.get(loaderEntry);
   const deferrable =
     by === true || (by !== undefined && by.some((id) => !plan.held.has(id)));
   return deferrable && !servesPin(loaderEntry);

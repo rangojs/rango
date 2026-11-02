@@ -74,8 +74,9 @@ export function PrefetchFalseInvalidate() {
  * so a suite starts a speculative prefetch (`X-Rango-Prefetch: 1`, the one a
  * viewport link sends) when it decides to; the next click unmounts it
  * (data-armed). Hovering a link sends an intent prefetch instead, which
- * defers nothing. Unmount it once its prefetch has left: a render link
- * prefetches again after every navigation, from the page it lands on.
+ * runs the work marked `prefetch: "intent"`. Unmount it once its prefetch
+ * has left: a render link prefetches again after every navigation, from the
+ * page it lands on.
  */
 export function PrefetchFalseArm({ name, to }: { name: string; to: string }) {
   const [armed, setArmed] = useState(false);

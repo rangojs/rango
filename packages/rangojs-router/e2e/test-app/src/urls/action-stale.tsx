@@ -25,8 +25,8 @@ import { actionStaleState, wait } from "./action-stale.store.js";
 // answer at set delays; and two pages the document cache stores
 // (/action-stale/cached/*). The product page renders a prefetching link only
 // with ?prefetch=render (or =fill: the fill page's, on hover, passing on
-// ?fillDelay; =fill-render: the same link prefetched on render, a
-// speculative prefetch that defers the page's `prefetch: false` loader;
+// ?fillDelay; =fill-render: the same link prefetched on render; both
+// defer the page's `prefetch: false` loader;
 // =transition: the transition() basket's; =inflight: on hover, a basket that
 // answers after 1500 ms, which an action's start does not cancel as it
 // cancels queued ones), so no other case has a prefetch to consume.
@@ -179,8 +179,8 @@ const ActionStaleTransition: Handler = async () => {
 };
 
 // Answers after 1500 ms, so a hover prefetch is still in flight at the click
-// right after it. Its `prefetch: false` loader runs in a hover's prefetch,
-// and is filled after the click commits from a render link's.
+// right after it. Its `prefetch: false` loader is filled after the click
+// commits, from a hover's prefetch or a render link's.
 const ActionStaleFill: Handler = async () => {
   await wait(1500);
   return (

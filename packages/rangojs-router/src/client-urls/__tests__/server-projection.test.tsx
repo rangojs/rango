@@ -238,6 +238,7 @@ describe("client URL server projection", () => {
             ssr: false,
             prefetch: false,
           }),
+          loader(loaderDefinition("loaders#hover"), { prefetch: "intent" }),
         ]),
         path("/plain", AccountPage, { name: "plain" }, () => [
           loader(loaderDefinition("loaders#plain")),
@@ -245,6 +246,7 @@ describe("client URL server projection", () => {
       ]),
       intercept("@modal", ".product", DetailModal, () => [
         loader(loaderDefinition("loaders#modal"), { prefetch: false }),
+        loader(loaderDefinition("loaders#modal-hover"), { prefetch: "intent" }),
       ]),
     ]);
 
@@ -255,13 +257,17 @@ describe("client URL server projection", () => {
       "loaders#price",
       "loaders#reviews",
       "loaders#both",
+      "loaders#hover",
     ]);
     expect(product!.deferrableLoaderIndices).toEqual([0, 2, 3]);
+    expect(product!.intentLoaderIndices).toEqual([4]);
     expect(product!.awaitedLoaderIndices).toEqual([3]);
     // The layout's flagged loader flattens onto every route below it.
     expect(plain!.deferrableLoaderIndices).toEqual([0]);
+    expect("intentLoaderIndices" in plain!).toBe(false);
     // An intercept's flagged loader projects as a route's does.
     expect(projection.intercepts![0]!.deferrableLoaderIndices).toEqual([0]);
+    expect(projection.intercepts![0]!.intentLoaderIndices).toEqual([1]);
     expect(JSON.parse(JSON.stringify(projection))).toEqual(projection);
 
     // A projection serialized before the option existed has no field.
@@ -305,10 +311,14 @@ describe("client URL server projection", () => {
       { id: "loaders#price", prefetch: undefined, bake: undefined },
       { id: "loaders#reviews", prefetch: false, bake: undefined },
       { id: "loaders#both", prefetch: false, bake: true },
+      { id: "loaders#hover", prefetch: "intent", bake: undefined },
     ]);
     const groupLayout = entry.parent!;
     const interceptEntry = groupLayout.intercept[0]!;
-    expect(interceptEntry.loader.map((l) => l.prefetch)).toEqual([false]);
+    expect(interceptEntry.loader.map((l) => l.prefetch)).toEqual([
+      false,
+      "intent",
+    ]);
   });
 
   it("projects ppr (true and JSON config), rejects malformed ppr values", () => {

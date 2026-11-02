@@ -58,6 +58,7 @@ import type {
 } from "./pattern-types.js";
 import type { ExtractRoutes, ExtractResponses } from "./type-extraction.js";
 import type { ClientUrlPatterns } from "../client-urls/types.js";
+import type { PrefetchOption } from "../prefetch-markers.js";
 
 /**
  * Base path function signature for defining routes with URL patterns.
@@ -364,10 +365,10 @@ export type PathHelpers<TEnv> = {
    * freezes into the shell (nested promises stay live holes) — the pre-flush
    * promise applied to the prelude.
    *
-   * Pass `{ prefetch: false }` to keep the loader out of speculative
-   * prefetches (viewport, render): such a prefetch skips it and the click
-   * that adopts it fetches it in one follow-up request; a hover prefetch runs
-   * it (see {@link LoaderOptions}). Only on a segment the
+   * Pass `{ prefetch: false }` to keep the loader out of prefetches: a
+   * prefetch skips it and the click that adopts it fetches it in one
+   * follow-up request. `{ prefetch: "intent" }` defers it in viewport and
+   * render prefetches only (see {@link LoaderOptions}). Only on a segment the
    * client does not have yet: a loader the client already holds runs in the
    * prefetch when it revalidates.
    */
@@ -381,9 +382,9 @@ export type PathHelpers<TEnv> = {
    * Attach a loading component to the current route/layout.
    *
    * `{ ssr: false }` skips the fallback on document requests. `{ prefetch:
-   * false }` keeps what the fallback covers out of viewport and render
-   * prefetches (a hover prefetch runs it), when this entry's segment is new
-   * to the client: the entry's handler, its loaders,
+   * false }` keeps what the fallback covers out of prefetches (`"intent"`:
+   * viewport and render prefetches only, see {@link LoaderOptions}), when this
+   * entry's segment is new to the client: the entry's handler, its loaders,
    * its orphan layouts and parallel slots and, for a layout, every deeper
    * entry. The click that adopts the prefetch shows the fallback and fetches
    * them in one follow-up request, which reads cache() and "use cache" as
@@ -397,7 +398,7 @@ export type PathHelpers<TEnv> = {
    */
   loading: (
     component: ReactNode | (() => ReactNode),
-    options?: { ssr?: boolean; prefetch?: boolean },
+    options?: { ssr?: boolean; prefetch?: PrefetchOption },
   ) => LoadingItem;
 
   /**
