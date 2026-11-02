@@ -17,8 +17,10 @@ import type { EventController, NavigationHandle } from "./event-controller.js";
 import { debugLog } from "./logging.js";
 import {
   buildHistoryState,
+  keptEntryState,
   mergeLocationState,
   pushHistoryWithIdx,
+  shownLocationState,
 } from "./history-state.js";
 
 export { resolveNavigationState } from "./history-state.js";
@@ -67,6 +69,8 @@ interface CommitOptions {
    * screen stays (EventController.commitLocationState).
    */
   treeless?: boolean;
+  /** Commits onto the entry on screen, keeping its location state (see keptEntryState). */
+  sameEntry?: boolean;
 }
 
 /**
@@ -227,16 +231,20 @@ export function createNavigationTransaction(
       return { scroll: { enabled: scroll } };
     }
 
-    const historyState = buildHistoryState(
-      opts.state,
-      { intercept, sourceUrl: interceptSourceUrl },
-      serverState,
-    );
+    const marks = { intercept, sourceUrl: interceptSourceUrl };
+    const historyState = opts.sameEntry
+      ? keptEntryState(window.history.state, marks, serverState)
+      : buildHistoryState(opts.state, marks, serverState);
 
     pushHistoryWithIdx(historyState, url, replace ?? false);
     ensureHistoryKey();
     store.rememberDisplayedEntry(opts.metadata);
-    eventController.commitLocationState(historyState, opts.treeless);
+    eventController.commitLocationState(
+      opts.sameEntry
+        ? shownLocationState(eventController.getLocationState(), serverState)
+        : historyState,
+      opts.treeless,
+    );
 
     handle.complete(parsedUrl);
 

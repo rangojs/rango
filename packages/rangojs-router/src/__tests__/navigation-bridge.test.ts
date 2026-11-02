@@ -1408,6 +1408,119 @@ describe("navigation-bridge an action's error boundary the entry shows", () => {
   });
 });
 
+describe("navigation-bridge refresh commits onto the entry on screen", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    fetchPartialUpdateMock.mockReset();
+    createNavigationTransactionMock.mockReset();
+  });
+
+  const ENTRY = { __rsc_ls_carried: ["p1-1"], key: "entry-key", idx: 2 };
+
+  function setup() {
+    const replaceState = vi.fn();
+    const pushState = vi.fn();
+    vi.stubGlobal("window", {
+      location: { href: "http://localhost/page", origin: "http://localhost" },
+      history: { state: ENTRY, replaceState, pushState },
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    const store = {
+      ...createStore(),
+      getHistoryKey: vi.fn(() => "http://localhost/page"),
+      getCachedSegments: vi.fn(() => ({
+        segments: [{ id: "L0", type: "layout" }],
+        stale: false,
+      })),
+    };
+    const eventController = createEventController();
+    const onUpdate = vi.fn();
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: eventController as any,
+      onUpdate,
+      renderSegments: vi.fn(async () => "tree"),
+    });
+    const signal = new AbortController();
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: signal.signal },
+      with: (bound: Record<string, unknown>) => ({ ...bound }),
+      [Symbol.dispose]: vi.fn(),
+    });
+    return {
+      bridge,
+      eventController,
+      onUpdate,
+      replaceState,
+      pushState,
+      signal,
+    };
+  }
+
+  it.each([
+    { label: "router.refresh()", crossTab: false },
+    { label: "the cross-tab refresh", crossTab: true },
+  ])(
+    "$label commits as a replace of the entry on screen",
+    async ({ crossTab }) => {
+      const { bridge } = setup();
+      fetchPartialUpdateMock.mockResolvedValue(undefined);
+
+      await bridge.refresh(crossTab);
+
+      const [url, segmentIds, , , tx, mode] =
+        fetchPartialUpdateMock.mock.calls[0];
+      expect(url).toBe("http://localhost/page");
+      expect(segmentIds).toEqual([]);
+      expect(mode).toMatchObject({ type: "navigate", refresh: true });
+      expect(tx).toEqual({
+        url: "http://localhost/page",
+        replace: true,
+        scroll: false,
+        sameEntry: true,
+      });
+    },
+  );
+
+  it("a refresh superseded by a navigation writes nothing to the entry", async () => {
+    const {
+      bridge,
+      eventController,
+      onUpdate,
+      replaceState,
+      pushState,
+      signal,
+    } = setup();
+    fetchPartialUpdateMock.mockImplementation(async () => {
+      signal.abort();
+      throw new DOMException("superseded", "AbortError");
+    });
+
+    await bridge.refresh();
+
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(pushState).not.toHaveBeenCalled();
+    expect(eventController.commitLocationState).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it("a refresh that fails leaves the entry's state and readers alone", async () => {
+    const { bridge, eventController, replaceState, pushState } = setup();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchPartialUpdateMock.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await bridge.refresh();
+
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(pushState).not.toHaveBeenCalled();
+    expect(eventController.commitLocationState).not.toHaveBeenCalled();
+    expect(window.history.state).toBe(ENTRY);
+  });
+});
+
 describe("navigation-bridge bfcache pageshow", () => {
   afterEach(() => {
     vi.restoreAllMocks();

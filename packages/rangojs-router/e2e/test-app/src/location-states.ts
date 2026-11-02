@@ -105,8 +105,19 @@ export const ListSort = createLocationState<{ order: string }>();
 // Set by the load-more handler on every request (ctx.setLocationState). A
 // document response carries it too (#1330): start-up writes it after it
 // removed the stale slot, so a reload shows the reloaded page's own stamp.
-export const ServerPageStamp = createLocationState<{ page: number }>({
+// `mark` is the number a request's `x-lm-stamp` header names.
+export const ServerPageStamp = createLocationState<{
+  page: number;
+  mark?: number;
+}>({
   clearOnReload: true,
+});
+
+// Set on the load-more page by its server action (lm-action), and a flash the
+// lm-more-flash Link carries: the refresh e2e checks what a refresh keeps.
+export const LoadMoreNote = createLocationState<{ text: string }>();
+export const LoadMoreFlash = createLocationState<{ text: string }>({
+  flash: true,
 });
 
 export interface GridSnapshot {

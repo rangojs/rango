@@ -135,8 +135,10 @@ import {
   buildHistoryState,
   applyDocumentLocationState,
   clearLocationStateOnDocumentLoad,
+  keptEntryState,
   pushHistoryWithIdx,
   resolveNavigationState,
+  shownLocationState,
 } from "../browser/history-state.js";
 import { withLocationStateKey } from "./location-state-key.js";
 import type { Handle } from "../handle.js";
@@ -1058,6 +1060,8 @@ export async function renderRoute(
     kind?: TransitionWhenKind;
     transition?: boolean;
     streamUntil?: Promise<unknown>;
+    /** refresh(): a commit onto the entry on screen. */
+    sameEntry?: boolean;
   };
 
   // The page each history entry shows, by the entry's `idx` stamp (the
@@ -1211,7 +1215,7 @@ export async function renderRoute(
     // on the event controller, which the provider takes with the payload.
     // The URL stays put: renderRoute tracks location on the event
     // controller, not window.location. router.navigate() without `state` or
-    // `replace: true`, and refresh(), leave history alone.
+    // `replace: true` leaves history alone.
     const history = navOptions?.history;
     const historyState = history
       ? buildHistoryState(
@@ -1290,6 +1294,18 @@ export async function renderRoute(
         history.replace ?? false,
       );
       eventController.commitLocationState(historyState);
+    } else if (navOptions?.sameEntry) {
+      // refresh() commits onto the entry on screen as production's does
+      // (navigation-transaction.ts sameEntry): the entry keeps its location
+      // state, readers keep what they show.
+      pushHistoryWithIdx(
+        keptEntryState(window.history.state),
+        window.location.href,
+        true,
+      );
+      eventController.commitLocationState(
+        shownLocationState(eventController.getLocationState()),
+      );
     }
     entryOnScreen = entryIndex();
     entries.set(entryOnScreen, {
@@ -1327,6 +1343,7 @@ export async function renderRoute(
     return navigate(current.pathname + current.search, {
       kind: "revalidate",
       loaders: refreshOptions?.loaders,
+      sameEntry: true,
     });
   };
 

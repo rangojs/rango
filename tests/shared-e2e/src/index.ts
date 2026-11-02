@@ -29,6 +29,13 @@ export { defineSsrShellErrorTests } from "./ssr-shell-error.js";
 export type { SsrShellErrorFixture } from "./ssr-shell-error.js";
 import { guardHydrationErrors } from "./hydration-guard.js";
 import {
+  byTestId,
+  isLoadMoreUrl,
+  loadMoreItems,
+  locationStateSlots,
+  openLoadMorePageTwo,
+} from "./load-more-fixture.js";
+import {
   isMarkedDocument,
   markDocument,
   waitForShellHydration,
@@ -86,6 +93,8 @@ export { runActionBoundaryTests } from "./action-boundary-scenario.js";
 export type { ActionBoundaryScenarioOptions } from "./action-boundary-scenario.js";
 export { runInterceptBoundaryTests } from "./intercept-boundary-scenario.js";
 export type { InterceptBoundaryScenarioOptions } from "./intercept-boundary-scenario.js";
+export { runRefreshLocationStateTests } from "./refresh-location-state-scenario.js";
+export type { RefreshLocationStateScenarioOptions } from "./refresh-location-state-scenario.js";
 export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
 export {
   expectBackOntoAStalePageShowsTheWrite,
@@ -592,10 +601,6 @@ export async function expectClientLinkNavigation(
   ).toBe(true);
 }
 
-function byTestId(page: Page, id: string): Locator {
-  return page.locator(`[data-testid="${id}"]`);
-}
-
 /**
  * The Fizz bootstrap script — the executing entry tag React stamps with the
  * completed-shell id (`id="_R_"`). Throws (via expect) when absent.
@@ -942,68 +947,6 @@ export async function expectGatedBoundaryHydratesAfterShallowNavigation(
   expect(outsideBeforeOpen).toBe("empty");
   await expect(outside).toHaveText("shallow-value");
 }
-
-/**
- * The entry's typed location-state slots, keyed by `<ExportName><suffix>`: the
- * tail of the injected key (`__rsc_ls_<path or hash>#<ExportName>`) that is
- * the same in dev and in a build, plus the suffix the definition's
- * `clearOnReload` adds. Values are stored raw.
- */
-async function locationStateSlots(
-  page: Page,
-): Promise<Record<string, unknown>> {
-  return page.evaluate(() =>
-    Object.fromEntries(
-      Object.entries((window.history.state ?? {}) as Record<string, unknown>)
-        .filter(([key]) => key.startsWith("__rsc_ls_"))
-        .map(([key, value]) => [key.slice(key.lastIndexOf("#") + 1), value]),
-    ),
-  );
-}
-
-const loadMoreItems = (pageNumber: number): string[] =>
-  [1, 2, 3].map((item) => `p${pageNumber}-${item}`);
-
-/**
- * Opening steps of the #994 "load more" bodies. The fixture (both apps:
- * `<url>?page=N`) renders page N's three items on the server. Its `lm-more`
- * Link goes to page N+1 carrying every item on screen as a `clearOnReload`
- * slot, plus a slot without options (`lm-sort`). The route's handler sets a
- * `clearOnReload` slot of its own on every request (`lm-server-page`),
- * document loads included, unless the request sends `x-lm-stamp: off`
- * (skipLoadMoreServerStamp).
- *
- * Loads page 1, then navigates to page 2 on the client. Leaves the page on an
- * entry holding all three slots.
- */
-async function openLoadMorePageTwo(page: Page, url: string): Promise<void> {
-  const items = byTestId(page, "lm-items").locator("li");
-
-  // The document carries what the handler set for this load (#1330): start-up
-  // writes it after the clearOnReload pass, so this load keeps it.
-  await page.goto(`${url}?page=1`);
-  await waitForShellHydration(page);
-  await expect(items).toHaveText(loadMoreItems(1));
-  await expect(byTestId(page, "lm-server-page")).toHaveText("1");
-  expect(await locationStateSlots(page)).toEqual({
-    "ServerPageStamp~r": { page: 1 },
-  });
-
-  // A client navigation shows the carried items above the new page's, and
-  // delivers the state the handler set for it.
-  await byTestId(page, "lm-more").click();
-  await expect(page).toHaveURL(`${url}?page=2`);
-  await expect(items).toHaveText([...loadMoreItems(1), ...loadMoreItems(2)]);
-  await expect(byTestId(page, "lm-server-page")).toHaveText("2");
-  expect(await locationStateSlots(page)).toEqual({
-    "CarriedItems~r": loadMoreItems(1),
-    "ServerPageStamp~r": { page: 2 },
-    ListSort: { order: "asc" },
-  });
-}
-
-/** The load-more fixture's pages, whatever the app's prefix. */
-const isLoadMoreUrl = (url: URL): boolean => url.pathname.endsWith("load-more");
 
 /**
  * Sends `x-lm-stamp: off` on the load-more document requests while it is on,

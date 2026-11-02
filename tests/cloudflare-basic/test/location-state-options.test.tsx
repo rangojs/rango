@@ -12,6 +12,8 @@ import {
   CarriedItems,
   GridState,
   ListSort,
+  LoadMoreFlash,
+  LoadMoreNote,
   ServerPageStamp,
   type GridSnapshot,
 } from "../src/location-states.js";
@@ -31,6 +33,8 @@ afterEach(() => {
 withLocationStateKey(CarriedItems, "CarriedItems");
 withLocationStateKey(ListSort, "ListSort");
 withLocationStateKey(ServerPageStamp, "ServerPageStamp");
+withLocationStateKey(LoadMoreNote, "LoadMoreNote");
+withLocationStateKey(LoadMoreFlash, "LoadMoreFlash");
 withLocationStateKey(GridState, "GridState");
 
 const carried = ["p1-1", "p1-2", "p1-3"];

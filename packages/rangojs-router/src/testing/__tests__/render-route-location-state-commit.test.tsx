@@ -15,6 +15,8 @@ import {
   useLoader,
   useLocationState,
   useParams,
+  usePathname,
+  useRouter,
   useSearchParams,
 } from "../../client.js";
 import type { LoaderDefinition } from "../../types.js";
@@ -796,4 +798,258 @@ describe("renderRoute: flash state and static writes under #1029", () => {
       expect(getByTestId("item").textContent?.split("|")[0]).toBe(back);
     },
   );
+});
+
+// router.refresh() re-renders the entry on screen: the entry keeps its
+// location state, and readers keep what they show, in the commit that brings
+// the refreshed tree.
+describe("renderRoute: router.refresh() keeps the entry's location state", () => {
+  const ProductsLoader = {
+    __brand: "loader",
+  } as unknown as LoaderDefinition<Page>;
+  const Kept = withLocationStateKey(
+    createLocationState<{ ids: string[] }>(),
+    "RefreshKept",
+  );
+  const Flash = withLocationStateKey(
+    createLocationState<{ text: string }>({ flash: true }),
+    "RefreshFlash",
+  );
+
+  function RefreshButton(): ReactNode {
+    const router = useRouter();
+    return (
+      <button data-testid="refresh" onClick={() => void router.refresh()} />
+    );
+  }
+
+  /** What the entry's state reads as on screen, for one reader shape. */
+  type Shape = {
+    label: string;
+    state: unknown;
+    useValue: () => unknown;
+    entry: () => unknown;
+  };
+  const shapes: Shape[] = [
+    {
+      label: "typed slot",
+      state: [Kept({ ids: ["a", "b"] })],
+      useValue: () => useLocationState(Kept),
+      entry: () =>
+        (window.history.state as Record<string, unknown>)[Kept.__rsc_ls_key],
+    },
+    {
+      label: "plain state",
+      state: { ids: ["a", "b"] },
+      useValue: () => useLocationState<{ ids: string[] }>(),
+      entry: () => (window.history.state as { state?: unknown }).state,
+    },
+  ];
+
+  it.each(shapes)(
+    "useRouter().refresh() keeps the entry's $label: readers keep value and identity, and a reader of several hooks gets the new data with it in one commit",
+    async ({ state, useValue, entry }) => {
+      const seen: unknown[] = [];
+      const pairs: string[] = [];
+      let memoRenders = 0;
+      const ValueReader = memo(function ValueReader(): ReactNode {
+        memoRenders += 1;
+        const value = useValue() as { ids: string[] } | undefined;
+        seen.push(value);
+        return <p data-testid="value">{value?.ids.join("+") ?? "none"}</p>;
+      });
+      function Several(): ReactNode {
+        const value = useValue() as { ids: string[] } | undefined;
+        const { data } = useLoader(ProductsLoader);
+        const pathname = usePathname();
+        const pair = `${pathname}|${data.page}|${value?.ids.join("+") ?? "none"}`;
+        pairs.push(pair);
+        return <p data-testid="pair">{pair}</p>;
+      }
+      function Page(): ReactNode {
+        const [late, setLate] = useState(false);
+        return (
+          <div>
+            <ValueReader />
+            <Several />
+            <RefreshButton />
+            <button data-testid="show-late" onClick={() => setLate(true)} />
+            {late && <Late />}
+          </div>
+        );
+      }
+      function Late(): ReactNode {
+        const value = useValue() as { ids: string[] } | undefined;
+        return <p data-testid="late">{value?.ids.join("+") ?? "none"}</p>;
+      }
+      const result = await renderRoute(
+        [{ path: "/products", Component: Page }],
+        {
+          request: "/products?page=1",
+          loaders: [[ProductsLoader, pageData(1)]],
+        },
+      );
+      const text = (id: string) => result.getByTestId(id).textContent;
+
+      await result.router.navigate("/products?page=2", {
+        state: state as never,
+        loaders: [[ProductsLoader, pageData(2)]],
+      });
+      expect(text("pair")).toBe("/products|2|a+b");
+      const held = seen.at(-1);
+      const { idx } = window.history.state as { idx: number };
+      const rendersBefore = memoRenders;
+      pairs.length = 0;
+
+      // refresh() renders the render-time loader seed, page 1: data that
+      // differs from what is on screen.
+      fireEvent.click(result.getByTestId("refresh"));
+      await waitFor(() => expect(text("pair")).toBe("/products|1|a+b"));
+
+      expect(text("value")).toBe("a+b");
+      expect(seen.at(-1)).toBe(held);
+      expect(memoRenders).toBe(rendersBefore);
+      // One commit: no render paired the new data with lost state.
+      expect(pairs.filter((pair) => pair.endsWith("|none"))).toEqual([]);
+      expect(entry()).toEqual({ ids: ["a", "b"] });
+      expect((window.history.state as { idx: number }).idx).toBe(idx);
+
+      // A reader that mounts after the refresh reads the kept value.
+      fireEvent.click(result.getByTestId("show-late"));
+      expect(text("late")).toBe("a+b");
+    },
+  );
+
+  it("a refresh held by a suspended read keeps the entry's state on screen while held and in the commit that lands", async () => {
+    let gate = deferred<string>();
+    gate.resolve("first");
+    await gate.promise;
+    const pairs: string[] = [];
+    function Page(): ReactNode {
+      const kept = useLocationState(Kept);
+      const value = use(gate.promise);
+      const pair = `${value}|${kept?.ids.join("+") ?? "none"}`;
+      pairs.push(pair);
+      return (
+        <div>
+          <p data-testid="pair">{pair}</p>
+          <RefreshButton />
+        </div>
+      );
+    }
+    const result = await renderRoute(
+      [{ path: "/products", Component: Page, transition: {} }],
+      { request: "/products" },
+    );
+    const pair = () => result.getByTestId("pair").textContent;
+
+    await result.router.navigate("/products?step=2", {
+      state: [Kept({ ids: ["a"] })],
+    });
+    expect(pair()).toBe("first|a");
+    pairs.length = 0;
+
+    gate = deferred<string>();
+    const before = window.history.state;
+    fireEvent.click(result.getByTestId("refresh"));
+    // The entry is committed; React holds the tree on its read.
+    await waitFor(() => expect(window.history.state).not.toBe(before));
+    expect(
+      (window.history.state as Record<string, unknown>)[Kept.__rsc_ls_key],
+    ).toEqual({ ids: ["a"] });
+    expect(pair()).toBe("first|a");
+
+    await act(async () => gate.resolve("second"));
+    expect(pair()).toBe("second|a");
+    expect(pairs.filter((p) => p.endsWith("|none"))).toEqual([]);
+  });
+
+  it("a flash already shown never re-appears: after a refresh it stays on screen and off the entry, a second refresh keeps it off, a return to the entry shows none", async () => {
+    function Page(): ReactNode {
+      const flash = useLocationState(Flash);
+      const kept = useLocationState(Kept);
+      return (
+        <div>
+          <p data-testid="entry">{`${flash?.text ?? "none"}|${kept?.ids.join("+") ?? "none"}`}</p>
+          <RefreshButton />
+        </div>
+      );
+    }
+    const result = await renderRoute([{ path: "/notes", Component: Page }], {
+      request: "/notes",
+    });
+    const shown = () => result.getByTestId("entry").textContent;
+    const flashOnEntry = () =>
+      Flash.__rsc_ls_key in (window.history.state as object);
+    const refreshed = async (): Promise<void> => {
+      const before = window.history.state;
+      fireEvent.click(result.getByTestId("refresh"));
+      await waitFor(() => expect(window.history.state).not.toBe(before));
+    };
+
+    await result.router.navigate("/notes?step=2", {
+      state: [Flash({ text: "saved" }), Kept({ ids: ["a"] })],
+    });
+    expect(shown()).toBe("saved|a");
+    expect(flashOnEntry()).toBe(false);
+
+    await refreshed();
+    expect(shown()).toBe("saved|a");
+    expect(flashOnEntry()).toBe(false);
+    expect(Kept.read()).toEqual({ ids: ["a"] });
+
+    await refreshed();
+    expect(flashOnEntry()).toBe(false);
+    expect(Kept.read()).toEqual({ ids: ["a"] });
+
+    // Back/Forward onto the entry commits it as history holds it.
+    await act(async () => {
+      window.dispatchEvent(new Event("popstate"));
+    });
+    expect(shown()).toBe("none|a");
+  });
+
+  it("an unread flash survives a refresh on the entry and shows exactly once", async () => {
+    function Late(): ReactNode {
+      return (
+        <p data-testid="late">{useLocationState(Flash)?.text ?? "none"}</p>
+      );
+    }
+    function Page(): ReactNode {
+      const kept = useLocationState(Kept);
+      const [late, setLate] = useState(false);
+      return (
+        <div>
+          <p data-testid="kept">{kept?.ids.join("+") ?? "none"}</p>
+          <RefreshButton />
+          <button data-testid="show-late" onClick={() => setLate(true)} />
+          {late && <Late />}
+        </div>
+      );
+    }
+    const result = await renderRoute([{ path: "/notes", Component: Page }], {
+      request: "/notes",
+    });
+
+    await result.router.navigate("/notes?step=2", {
+      state: [Flash({ text: "saved" }), Kept({ ids: ["a"] })],
+    });
+    // Nothing read it: the slot is still on the entry.
+    expect(Flash.read()).toEqual({ text: "saved" });
+
+    const before = window.history.state;
+    fireEvent.click(result.getByTestId("refresh"));
+    await waitFor(() => expect(window.history.state).not.toBe(before));
+    expect(Flash.read()).toEqual({ text: "saved" });
+    expect(result.getByTestId("kept").textContent).toBe("a");
+
+    fireEvent.click(result.getByTestId("show-late"));
+    expect(result.getByTestId("late").textContent).toBe("saved");
+    expect(Flash.read()).toBeUndefined();
+
+    await act(async () => {
+      window.dispatchEvent(new Event("popstate"));
+    });
+    expect(result.getByTestId("late").textContent).toBe("none");
+  });
 });
