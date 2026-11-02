@@ -35,7 +35,7 @@ test.describe("prefetch-cache-control (dev)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBeNull();
     expect(res.headers.get("vary")).toBe(
-      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
+      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Intercept-Source, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
     );
   });
 
@@ -53,7 +53,7 @@ test.describe("prefetch-cache-control (dev)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBeNull();
     expect(res.headers.get("vary")).toBe(
-      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
+      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Intercept-Source, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
     );
   });
 
@@ -153,7 +153,7 @@ test.describe("prefetch-cache-control (production)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBeNull();
     expect(res.headers.get("vary")).toBe(
-      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
+      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Intercept-Source, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
     );
   });
 
@@ -171,7 +171,7 @@ test.describe("prefetch-cache-control (production)", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBeNull();
     expect(res.headers.get("vary")).toBe(
-      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
+      "accept, X-Rango-State, X-RSC-Router-Client-Path, X-RSC-Router-Intercept-Source, X-Rango-Fragment-Passthrough, X-Rango-Fragment-Recovery",
     );
   });
 

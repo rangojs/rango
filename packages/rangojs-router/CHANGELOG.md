@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a link inside an open intercept to another item of its route opens it in the intercept
+
+**Before.** From an open intercept (`/item/2` over `/list`), a link,
+`router.push` or `router.replace` to another item of the same intercepted
+route (`/item/1`) rendered the item's full page.
+
+**Now.** The item opens in the intercept over the same page, with the URL
+updated, and `when()` sees the page under the intercept as `from`, as the
+intercept skill documents. Back steps through the items, then closes the
+intercept. Links to routes with no intercept from that page, and reloads,
+still render the full page. A navigation from inside an open intercept always
+fetches: it does not reuse the history cache or a prefetch.
+
 ## 0.33.2 (2026-11-02)
 
 ### Fixed: `router.refresh()` keeps the page's location state ([#1369](https://github.com/rangojs/rango/pull/1369))

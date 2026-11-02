@@ -35,7 +35,8 @@ see History below).
 
 The client still sends the value as the `X-Rango-State` request header on every
 prefetch and navigation fetch, and the server answers with
-`Vary: accept, X-Rango-State, X-RSC-Router-Client-Path`. The browser's HTTP
+`Vary: accept, X-Rango-State, X-RSC-Router-Client-Path,
+X-RSC-Router-Intercept-Source, ...`. The browser's HTTP
 cache therefore keys responses by (URL, state value): rotate the value and
 every previously cached response misses cleanly.
 

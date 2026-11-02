@@ -69,6 +69,7 @@ export const urlpatterns = urls(({ path, layout, intercept, loader, loading }) =
 | Click link `/shop/product/abc`                        | `<ProductModal />` in `@modal`, background preserved |
 | Direct URL `/shop/product/abc`, or a reload           | Full `<ProductPage />` page                          |
 | `router.refresh()`, or another tab's action           | Full `<ProductPage />` page, as a reload             |
+| Link inside the intercept to another intercepted URL  | That intercept, over the same source page            |
 | Back from the open intercept                          | The intercept closes; the source page stays          |
 | Back/Forward onto the intercept's entry               | The intercept over its source page                   |
 | The same, uncached, from a page other than the source | Full `<ProductPage />` page, as a document load      |
