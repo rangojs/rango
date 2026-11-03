@@ -256,12 +256,13 @@ function useLoaderInternal<T>(
     [groupKey],
   );
   const hasGroups = groupList.length > 0;
+  // A grouped read without a key refreshes a bucket no other reader names.
+  const usesPrivateBucket = hasGroups && key === undefined;
   const privateBucketIdRef = useRef<string | null>(null);
-  if (hasGroups && key === undefined && privateBucketIdRef.current === null) {
+  if (usesPrivateBucket && privateBucketIdRef.current === null) {
     privateBucketIdRef.current = `__rg${privateGroupBucketSeq++}`;
   }
-  const effectiveKey =
-    key ?? (hasGroups ? privateBucketIdRef.current! : undefined);
+  const effectiveKey = usesPrivateBucket ? privateBucketIdRef.current! : key;
   const bucketKey =
     effectiveKey === undefined ? loaderId : `${loaderId}::${effectiveKey}`;
 
@@ -341,6 +342,8 @@ function useLoaderInternal<T>(
     // ephemeral: a reader with no route context has no route-context reset
     // trigger, so its keyed bucket is reference-counted by the store. A
     // route-registered reader makes the bucket sticky (reset via clearFamily).
+    // owned: no other reader names a private group bucket, and a remount
+    // takes a new one, so the store drops it after this reader leaves.
     return loaders.subscribe(
       bucketKey,
       () => {
@@ -352,6 +355,7 @@ function useLoaderInternal<T>(
       {
         loaderId,
         ephemeral: !hasContextData,
+        owned: usesPrivateBucket,
         group: hasGroups ? groupList : undefined,
         refetch: hasGroups ? groupRefetch : undefined,
         onStreamPending: hasContextData

@@ -465,6 +465,74 @@ describe("LoaderStore", () => {
     });
   });
 
+  describe("owned bucket lifecycle", () => {
+    const owned = { loaderId: "L", owned: true };
+
+    it("is reset by clearFamily while its subscriber is mounted", () => {
+      store.subscribe("L::__rg0", () => {}, owned);
+      const r = store.reserveRequestId("L::__rg0");
+      store.finishData("L::__rg0", r, "v");
+      store.clearFamily("L");
+      expect(store.getSnapshot("L::__rg0")).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+
+    it("is dropped after its subscriber leaves, though sticky", async () => {
+      const unsub = store.subscribe("L::__rg0", () => {}, owned);
+      const r = store.reserveRequestId("L::__rg0");
+      store.finishData("L::__rg0", r, "v");
+      unsub();
+      await flushMicrotasks();
+      expect(store.getSnapshot("L::__rg0")).toBe(EMPTY_LOADER_SNAPSHOT);
+      // The entry is gone: request ids start over.
+      expect(store.reserveRequestId("L::__rg0")).toBe(1);
+    });
+
+    it("a resubscribe before the microtask keeps it", async () => {
+      const unsub = store.subscribe("L::__rg0", () => {}, owned);
+      const r = store.reserveRequestId("L::__rg0");
+      store.finishData("L::__rg0", r, "v");
+      unsub();
+      store.subscribe("L::__rg0", () => {}, owned);
+      await flushMicrotasks();
+      expect(store.getSnapshot("L::__rg0").value).toBe("v");
+    });
+
+    it("left mid-flight: dropped once the request settles", async () => {
+      const unsub = store.subscribe("L::__rg0", () => {}, owned);
+      const r = store.reserveRequestId("L::__rg0");
+      store.beginRequest("L::__rg0", r);
+      unsub();
+      await flushMicrotasks();
+      expect(store.getSnapshot("L::__rg0").isLoading).toBe(true);
+      store.finishData("L::__rg0", r, "late");
+      expect(store.getSnapshot("L::__rg0")).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+
+    it("left mid-flight, then reset by clearFamily: dropped by the reset", async () => {
+      const unsub = store.subscribe("L::__rg0", () => {}, owned);
+      const r = store.reserveRequestId("L::__rg0");
+      store.beginRequest("L::__rg0", r);
+      unsub();
+      await flushMicrotasks();
+      store.clearFamily("L");
+      // The late answer fails the request gate and finds no entry.
+      store.finishData("L::__rg0", r, "late");
+      expect(store.getSnapshot("L::__rg0")).toBe(EMPTY_LOADER_SNAPSHOT);
+      expect(store.reserveRequestId("L::__rg0")).toBe(1);
+    });
+
+    it("a subscriber without owned keeps it for life", async () => {
+      const unsubOwned = store.subscribe("L::k", () => {}, owned);
+      const unsubShared = store.subscribe("L::k", () => {}, { loaderId: "L" });
+      const r = store.reserveRequestId("L::k");
+      store.finishData("L::k", r, "v");
+      unsubShared();
+      unsubOwned();
+      await flushMicrotasks();
+      expect(store.getSnapshot("L::k").value).toBe("v");
+    });
+  });
+
   describe("refreshGroups (cross-loader)", () => {
     it("calls the refetch thunk for each bucket in the group", async () => {
       const a = vi.fn().mockResolvedValue(undefined);

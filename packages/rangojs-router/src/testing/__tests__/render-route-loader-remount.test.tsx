@@ -9,6 +9,7 @@ import {
   useNavigation,
   useRefreshLoaders,
 } from "../../client.js";
+import { EMPTY_LOADER_SNAPSHOT } from "../../loader-store.js";
 import type { LoaderDefinition } from "../../types.js";
 import {
   renderRoute,
@@ -590,6 +591,58 @@ describe("renderRoute: a load() in flight across the navigation", () => {
     expect(text("data")).toBe("B route data");
     expect(text("data-error")).toBe("");
     expect(text("data-loading")).toBe("false");
+  });
+});
+
+// useLoader(L, { refreshGroup }) without a key refreshes a bucket of its own
+// (use-loader.tsx). No other reader ever names that bucket, so it lives only
+// as long as its reader.
+describe("renderRoute: a refreshGroup reader without a key, after it unmounts", () => {
+  /** Page A's reader mounted, and the bucket key it subscribed to. */
+  async function openA(router: TestRouterHandle): Promise<string> {
+    const subscribe = vi.spyOn(router.store.loaders, "subscribe");
+    await router.navigate(url("a"), at("a", { label: "A route data" }));
+    const bucketKey = subscribe.mock.calls
+      .map(([key]) => key)
+      .find((key) => key.startsWith(`${DataLoader.$$id}::`));
+    subscribe.mockRestore();
+    expect(bucketKey).toBeDefined();
+    return bucketKey!;
+  }
+
+  /** No entry left: a reset entry would keep counting its request ids. */
+  function expectFreed(router: TestRouterHandle, bucketKey: string): void {
+    expect(router.store.loaders.getSnapshot(bucketKey)).toBe(
+      EMPTY_LOADER_SNAPSHOT,
+    );
+    expect(router.store.loaders.reserveRequestId(bucketKey)).toBe(1);
+  }
+
+  it("its refreshed bucket is freed", async () => {
+    const { router } = await renderPages("group");
+    const bucketKey = await openA(router);
+    await refreshNow(router, "A refreshed");
+    expect(router.store.loaders.getSnapshot(bucketKey).value).toEqual({
+      label: "A refreshed",
+    });
+
+    await router.navigate(url("home"), at("home"));
+    await settle();
+    expect(unmounts).toBe(1);
+    expectFreed(router, bucketKey);
+  });
+
+  it("a refresh in flight at the unmount: freed once it settles", async () => {
+    const { router } = await renderPages("group");
+    const bucketKey = await openA(router);
+    const answer = await startPendingLoad(router);
+
+    await router.navigate(url("home"), at("home"));
+    await settle();
+    expect(unmounts).toBe(1);
+    await act(async () => answer.resolve({ label: "A late" }));
+    await settle();
+    expectFreed(router, bucketKey);
   });
 });
 

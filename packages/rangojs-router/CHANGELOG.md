@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `useLoader(L, { refreshGroup })` without a `key` frees its refreshed data when it unmounts
+
+**Before.** Each mount of a grouped read with no `key` refreshed into a
+client-side entry of its own, and that entry stayed in memory for the rest of
+the session after the component unmounted: one per mount, holding the last
+refreshed value.
+
+**Now.** The entry is freed once the component unmounts, or once a refresh
+still in flight at that moment settles. What every reader shows is unchanged:
+a remount already started from fresh route data, and a reader that stays
+mounted still resets its refresh when its route data changes. Keyed reads
+(`{ key, refreshGroup }`) keep their shared entry as before.
+
 ## 0.34.0 (2026-11-02)
 
 ### Changed: a hover prefetch skips `prefetch: false` work again; mark a loader or `loading()` `prefetch: "intent"` to run it on hover ([#1373](https://github.com/rangojs/rango/pull/1373))

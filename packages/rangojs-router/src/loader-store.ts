@@ -28,6 +28,10 @@
  *     cancelled on resubscribe so a StrictMode / transition remount does not
  *     reclaim a bucket that is about to be reused, and is held until any
  *     in-flight load settles.
+ *   - Owned buckets (one reader's private refresh-group bucket,
+ *     `useLoader(L, { refreshGroup })` without a key) are sticky while that
+ *     reader is mounted and dropped like an ephemeral bucket once it leaves:
+ *     no other reader names the bucket, and a remount takes a new one.
  *
  * Each router's NavigationStore owns one (navigation-store.ts), and hooks reach
  * it through NavigationStoreContext: the router store is the single source of
@@ -98,6 +102,13 @@ export interface SubscribeOptions {
    */
   ephemeral?: boolean;
   /**
+   * When true, the bucket belongs to this subscriber alone (a private
+   * refresh-group bucket): it is dropped after its last subscriber leaves even
+   * when sticky, and is reset by `clearFamily` while subscribed. Any subscriber
+   * without it keeps a sticky bucket for the rest of its life.
+   */
+  owned?: boolean;
+  /**
    * Cross-loader refresh group name(s). Tags this bucket so `refreshGroups(name)`
    * can refresh it alongside buckets of other loaders. A bucket may be tagged
    * with several group names at once (pass an array); it is then refreshed when
@@ -130,10 +141,15 @@ interface InternalEntry {
   /** Family id (loader.$$id) this bucket belongs to. */
   loaderId: string;
   /**
-   * True once any non-ephemeral subscriber has attached. Sticky buckets are
-   * never reference-count-dropped; they reset via clearFamily().
+   * True once any non-ephemeral subscriber has attached. Sticky buckets reset
+   * via clearFamily() and are reference-count-dropped only when not `shared`.
    */
   sticky: boolean;
+  /**
+   * True once a subscriber without `owned` has attached. A sticky bucket is
+   * reference-count-dropped only while this is false.
+   */
+  shared: boolean;
   /** A deferred refcount-drop microtask is scheduled and not yet cancelled. */
   pendingClear: boolean;
   /**
@@ -198,6 +214,7 @@ export class LoaderStore {
         latestRequestId: 0,
         loaderId: bucketKey,
         sticky: false,
+        shared: false,
         pendingClear: false,
         clearWhenSettled: false,
         groups: new Map(),
@@ -236,6 +253,7 @@ export class LoaderStore {
     e.loaderId = loaderId;
     this.registerFamily(loaderId, bucketKey);
     if (options?.ephemeral !== true) e.sticky = true;
+    if (options?.owned !== true) e.shared = true;
     // Normalize the group tag(s) to a deduped list so one subscriber is counted
     // once per distinct group, and subscribe/unsubscribe stay symmetric (the
     // same list drives both addToGroup and releaseGroup).
@@ -354,17 +372,17 @@ export class LoaderStore {
   }
 
   /**
-   * Schedule a deferred drop for an ad-hoc (never-sticky) bucket whose last
-   * subscriber just left. Deferred to a microtask so a StrictMode / transition
-   * remount that resubscribes in the same tick cancels it.
+   * Schedule a deferred drop for an ad-hoc (never-sticky) or owned bucket
+   * whose last subscriber just left. Deferred to a microtask so a StrictMode /
+   * transition remount that resubscribes in the same tick cancels it.
    */
   private maybeScheduleRefcountClear(
     bucketKey: string,
     e: InternalEntry,
   ): void {
     if (e.listeners.size > 0) return;
-    // Sticky buckets persist for remount; they reset via clearFamily().
-    if (e.sticky) return;
+    // Shared sticky buckets persist for remount; they reset via clearFamily().
+    if (e.sticky && e.shared) return;
     if (e.pendingClear) return;
     e.pendingClear = true;
     queueMicrotask(() => {
@@ -393,7 +411,7 @@ export class LoaderStore {
     }
   }
 
-  /** Drop an ephemeral bucket that settled with no subscribers left. */
+  /** Drop an ephemeral or owned bucket that settled with no subscribers left. */
   private dropIfSettled(bucketKey: string, e: InternalEntry): void {
     if (e.clearWhenSettled && e.listeners.size === 0) {
       e.clearWhenSettled = false;
@@ -523,7 +541,8 @@ export class LoaderStore {
    * Reset a single bucket entry. Bumps `latestRequestId` so any in-flight
    * `load()` whose promise is still pending will fail its gate when it resolves
    * and be dropped — prevents pre-navigation loads from clobbering the new
-   * route's context. The entry itself is kept (sticky-bucket semantics).
+   * route's context. The entry itself is kept (sticky-bucket semantics),
+   * unless it was only waiting for that request to be dropped.
    */
   clear(bucketKey: string): void {
     const e = this.entries.get(bucketKey);
@@ -532,6 +551,9 @@ export class LoaderStore {
     if (e.snapshot === EMPTY_SNAPSHOT) return;
     e.snapshot = EMPTY_SNAPSHOT;
     this.notify(e);
+    // An owned bucket left mid-flight waits for its request to settle, which
+    // the bump above stops from committing.
+    this.dropIfSettled(bucketKey, e);
   }
 
   /**
