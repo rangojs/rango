@@ -521,13 +521,13 @@ describe("LoaderStore", () => {
       expect(store.reserveRequestId("L::__rg0")).toBe(1);
     });
 
-    it("a subscriber without owned keeps it for life", async () => {
+    it("a sticky bucket whose last subscriber is not owned is kept", async () => {
       const unsubOwned = store.subscribe("L::k", () => {}, owned);
       const unsubShared = store.subscribe("L::k", () => {}, { loaderId: "L" });
       const r = store.reserveRequestId("L::k");
       store.finishData("L::k", r, "v");
-      unsubShared();
       unsubOwned();
+      unsubShared();
       await flushMicrotasks();
       expect(store.getSnapshot("L::k").value).toBe("v");
     });

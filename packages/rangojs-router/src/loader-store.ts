@@ -103,9 +103,9 @@ export interface SubscribeOptions {
   ephemeral?: boolean;
   /**
    * When true, the bucket belongs to this subscriber alone (a private
-   * refresh-group bucket): it is dropped after its last subscriber leaves even
-   * when sticky, and is reset by `clearFamily` while subscribed. Any subscriber
-   * without it keeps a sticky bucket for the rest of its life.
+   * refresh-group bucket, which no other reader names): it is reset by
+   * `clearFamily` while subscribed, and dropped after the subscriber leaves
+   * even when sticky.
    */
   owned?: boolean;
   /**
@@ -142,14 +142,9 @@ interface InternalEntry {
   loaderId: string;
   /**
    * True once any non-ephemeral subscriber has attached. Sticky buckets reset
-   * via clearFamily() and are reference-count-dropped only when not `shared`.
+   * via clearFamily() and are reference-count-dropped only when owned.
    */
   sticky: boolean;
-  /**
-   * True once a subscriber without `owned` has attached. A sticky bucket is
-   * reference-count-dropped only while this is false.
-   */
-  shared: boolean;
   /** A deferred refcount-drop microtask is scheduled and not yet cancelled. */
   pendingClear: boolean;
   /**
@@ -214,7 +209,6 @@ export class LoaderStore {
         latestRequestId: 0,
         loaderId: bucketKey,
         sticky: false,
-        shared: false,
         pendingClear: false,
         clearWhenSettled: false,
         groups: new Map(),
@@ -253,7 +247,6 @@ export class LoaderStore {
     e.loaderId = loaderId;
     this.registerFamily(loaderId, bucketKey);
     if (options?.ephemeral !== true) e.sticky = true;
-    if (options?.owned !== true) e.shared = true;
     // Normalize the group tag(s) to a deduped list so one subscriber is counted
     // once per distinct group, and subscribe/unsubscribe stay symmetric (the
     // same list drives both addToGroup and releaseGroup).
@@ -279,7 +272,7 @@ export class LoaderStore {
       // different groups stays in each group until ALL of that group's
       // subscribers have left (order-independent).
       for (const group of groups) this.releaseGroup(group, bucketKey, e);
-      this.maybeScheduleRefcountClear(bucketKey, e);
+      this.maybeScheduleRefcountClear(bucketKey, e, options?.owned);
     };
   }
 
@@ -379,10 +372,11 @@ export class LoaderStore {
   private maybeScheduleRefcountClear(
     bucketKey: string,
     e: InternalEntry,
+    owned: boolean | undefined,
   ): void {
     if (e.listeners.size > 0) return;
-    // Shared sticky buckets persist for remount; they reset via clearFamily().
-    if (e.sticky && e.shared) return;
+    // Sticky buckets persist for remount; they reset via clearFamily().
+    if (e.sticky && !owned) return;
     if (e.pendingClear) return;
     e.pendingClear = true;
     queueMicrotask(() => {
