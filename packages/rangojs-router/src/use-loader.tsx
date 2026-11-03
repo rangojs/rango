@@ -256,12 +256,13 @@ function useLoaderInternal<T>(
     [groupKey],
   );
   const hasGroups = groupList.length > 0;
+  // A grouped read without a key refreshes a bucket no other reader names.
+  const usesPrivateBucket = hasGroups && key === undefined;
   const privateBucketIdRef = useRef<string | null>(null);
-  if (hasGroups && key === undefined && privateBucketIdRef.current === null) {
+  if (usesPrivateBucket && privateBucketIdRef.current === null) {
     privateBucketIdRef.current = `__rg${privateGroupBucketSeq++}`;
   }
-  const effectiveKey =
-    key ?? (hasGroups ? privateBucketIdRef.current! : undefined);
+  const effectiveKey = usesPrivateBucket ? privateBucketIdRef.current! : key;
   const bucketKey =
     effectiveKey === undefined ? loaderId : `${loaderId}::${effectiveKey}`;
 
@@ -352,6 +353,7 @@ function useLoaderInternal<T>(
       {
         loaderId,
         ephemeral: !hasContextData,
+        owned: usesPrivateBucket,
         group: hasGroups ? groupList : undefined,
         refetch: hasGroups ? groupRefetch : undefined,
         onStreamPending: hasContextData

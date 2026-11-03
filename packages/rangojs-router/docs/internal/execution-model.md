@@ -1837,6 +1837,12 @@ Bucket reset has two boundaries:
   (deferred a microtask, cancelled on resubscribe, held until any in-flight load
   settles). A persistent reader outside the outlet keeps its value across a
   navigation; a route-scoped reader's value is reclaimed on unmount.
+- **Owned buckets** (the private `$$id::__rg<n>` bucket of a grouped read with
+  no `key`) are sticky while their one reader is mounted, so they reset with
+  the family, and are dropped like an ephemeral bucket once it unmounts
+  (`subscribe(..., { owned: true })`). No other reader names the bucket and a
+  remount takes a new one, so without the drop every mount left one behind
+  for the rest of the session.
 
 **Cross-loader refresh groups.** `key` partitions readers of one loader; the
 `refreshGroup` option + `useRefreshLoaders()` refresh **different** loaders

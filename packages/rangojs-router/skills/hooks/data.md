@@ -261,7 +261,10 @@ tag (`"account"`) covers everything, while a finer tag (`"orders"`) targets a
 subset. Sharing within a group is opt-in via `key`: members that share a `key`
 share one value (and one fetch); a grouped reader **without** a `key` gets its own
 private bucket, so a group refresh updates only that read and never leaks into
-unrelated unkeyed reads of the same loader. A bucket may belong to several groups
+unrelated unkeyed reads of the same loader. That private bucket lives as long as
+its read is mounted, and a hidden React `<Activity>` counts as unmounted: when it
+shows again, the read is back on the route's data until the next refresh. To keep
+a refreshed value across an `<Activity>` hide, give the read a `key`. A bucket may belong to several groups
 at once (one read tagged with multiple names, or different reads tagging the same
 keyed bucket with different names). Keep parameterized loaders on the single-loader
 `key` — a plain-GET group refresh sends no params.

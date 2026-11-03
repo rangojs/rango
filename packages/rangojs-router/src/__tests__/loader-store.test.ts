@@ -465,6 +465,75 @@ describe("LoaderStore", () => {
     });
   });
 
+  describe("owned bucket lifecycle", () => {
+    const owned = { loaderId: "L", owned: true };
+    const K = "L::__rg0";
+    /** An owned subscriber on K whose bucket holds "v". */
+    function mountWithValue(): () => void {
+      const unsub = store.subscribe(K, () => {}, owned);
+      store.finishData(K, store.reserveRequestId(K), "v");
+      return unsub;
+    }
+
+    it("is reset by clearFamily while its subscriber is mounted", () => {
+      mountWithValue();
+      store.clearFamily("L");
+      expect(store.getSnapshot(K)).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+
+    it("is dropped after its subscriber leaves, though sticky", async () => {
+      const unsub = mountWithValue();
+      unsub();
+      await flushMicrotasks();
+      expect(store.getSnapshot(K)).toBe(EMPTY_LOADER_SNAPSHOT);
+      // The entry is gone: request ids start over.
+      expect(store.reserveRequestId(K)).toBe(1);
+    });
+
+    it("a resubscribe before the microtask keeps it", async () => {
+      const unsub = mountWithValue();
+      unsub();
+      store.subscribe(K, () => {}, owned);
+      await flushMicrotasks();
+      expect(store.getSnapshot(K).value).toBe("v");
+    });
+
+    it("left mid-flight: dropped once the request settles", async () => {
+      const unsub = store.subscribe(K, () => {}, owned);
+      const r = store.reserveRequestId(K);
+      store.beginRequest(K, r);
+      unsub();
+      await flushMicrotasks();
+      expect(store.getSnapshot(K).isLoading).toBe(true);
+      store.finishData(K, r, "late");
+      expect(store.getSnapshot(K)).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+
+    it("left mid-flight, then reset by clearFamily: dropped by the reset", async () => {
+      const unsub = store.subscribe(K, () => {}, owned);
+      const r = store.reserveRequestId(K);
+      store.beginRequest(K, r);
+      unsub();
+      await flushMicrotasks();
+      store.clearFamily("L");
+      // The late answer fails the request gate and finds no entry.
+      store.finishData(K, r, "late");
+      expect(store.getSnapshot(K)).toBe(EMPTY_LOADER_SNAPSHOT);
+      expect(store.reserveRequestId(K)).toBe(1);
+    });
+
+    it("a sticky bucket whose last subscriber is not owned is kept", async () => {
+      const unsubOwned = store.subscribe("L::k", () => {}, owned);
+      const unsubShared = store.subscribe("L::k", () => {}, { loaderId: "L" });
+      const r = store.reserveRequestId("L::k");
+      store.finishData("L::k", r, "v");
+      unsubOwned();
+      unsubShared();
+      await flushMicrotasks();
+      expect(store.getSnapshot("L::k").value).toBe("v");
+    });
+  });
+
   describe("refreshGroups (cross-loader)", () => {
     it("calls the refetch thunk for each bucket in the group", async () => {
       const a = vi.fn().mockResolvedValue(undefined);

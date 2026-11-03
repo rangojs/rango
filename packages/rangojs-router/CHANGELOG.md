@@ -28,6 +28,24 @@ made with no intercept open are unchanged.
 | `/list/1?page=2`                         | re-run                 | re-run              | slot closes       |
 | `/item/1` (opens in the intercept)       | held                   | held                | re-run, as before |
 
+### Fixed: `useLoader(L, { refreshGroup })` without a `key` frees its refreshed data when it unmounts
+
+**Before.** Each mount of a grouped read with no `key` refreshed into a
+client-side entry of its own, and that entry stayed in memory for the rest of
+the session after the component unmounted: one per mount, holding the last
+refreshed value.
+
+**Now.** The entry is freed once the component unmounts, or once a refresh
+still in flight at that moment settles. What readers show is otherwise unchanged:
+a remount already started from fresh route data, and a reader that stays
+mounted still resets its refresh when its route data changes. Keyed reads
+(`{ key, refreshGroup }`) keep their shared entry as before.
+
+One case changes: a hidden React `<Activity>` cleans up its children's effects
+as an unmount does, so a grouped read with no `key` inside one is back on the
+route's data when it shows again, until the next refresh. Give the read a `key`
+to keep its refreshed value across the hide.
+
 ## 0.34.0 (2026-11-02)
 
 ### Changed: a hover prefetch skips `prefetch: false` work again; mark a loader or `loading()` `prefetch: "intent"` to run it on hover ([#1373](https://github.com/rangojs/rango/pull/1373))
