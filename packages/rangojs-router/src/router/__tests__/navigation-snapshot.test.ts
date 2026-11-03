@@ -273,7 +273,7 @@ describe("resolveNavigation", () => {
         findMatch,
       });
 
-      expect(result!.prevUrl.pathname).toBe("/public-1");
+      expect(result!.interceptPrev.url.pathname).toBe("/public-1");
       expect(result!.prevVisitorUrl).toBeNull();
     });
 
@@ -333,6 +333,41 @@ describe("resolveNavigation", () => {
     expect(result!.interceptContextUrl.pathname).toBe("/source");
     expect(result!.interceptContextMatch).toBe(sourceMatch);
     expect(result!.hasInterceptSource).toBe(true);
+  });
+
+  it("compares the page with the intercept source, the slot with the page left", async () => {
+    const source = makeMatch({ routeKey: "list", params: { id: "1" } });
+    const left = makeMatch({ routeKey: "item", params: { id: "2" } });
+    const { request, url } = makeRequest("http://localhost/list/2", {
+      "X-RSC-Router-Client-Path": "/item/2#top",
+      "X-RSC-Router-Intercept-Source": "/list/1?q=a,b#top",
+    });
+
+    const result = await resolveNavigation(request, url, "list", {
+      findMatch: (pathname) => (pathname === "/list/1" ? source : left),
+    });
+
+    expect(result!.prevUrl.href).toBe("http://localhost/list/1?q=a%2Cb");
+    expect(result!.prevParams).toEqual({ id: "1" });
+    expect(result!.prevMatch).toBe(left);
+    expect(result!.interceptPrev.url.href).toBe("http://localhost/item/2");
+    expect(result!.interceptPrev.params).toEqual({ id: "2" });
+    // when()'s `from` keeps the source's query as the browser sent it.
+    expect(result!.effectiveFromUrl.search).toBe("?q=a,b");
+  });
+
+  it("compares the page and the slot with the page left without an intercept source", async () => {
+    const left = makeMatch({ routeKey: "item", params: { id: "2" } });
+    const { request, url } = makeRequest("http://localhost/list/2", {
+      "X-RSC-Router-Client-Path": "/item/2",
+    });
+
+    const result = await resolveNavigation(request, url, "list", {
+      findMatch: () => left,
+    });
+
+    expect(result!.interceptPrev.url).toBe(result!.prevUrl);
+    expect(result!.interceptPrev.params).toBe(result!.prevParams);
   });
 
   it("uses prevUrl as interceptContextUrl when no intercept source", async () => {

@@ -103,7 +103,7 @@
  */
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
-import { resolutionPassInput } from "../match-context.js";
+import { interceptPassInput } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog } from "../logging.js";
@@ -176,7 +176,7 @@ export function withInterceptResolution<TEnv>(
     const Store = ctx.Store;
     const interceptSegments = await Store.run(() =>
       resolveInterceptEntry(
-        resolutionPassInput(ctx),
+        interceptPassInput(ctx),
         ctx.interceptResult!.intercept,
         ctx.interceptResult!.entry,
         true, // belongsToRoute
@@ -232,7 +232,7 @@ async function handleCacheHitIntercept<TEnv>(
   const loaderSegments = resolveInterceptLoadersOnly
     ? await ctx.Store.run(() =>
         resolveInterceptLoadersOnly(
-          resolutionPassInput(ctx),
+          interceptPassInput(ctx),
           ctx.interceptResult!.intercept,
           ctx.interceptResult!.entry,
           true, // belongsToRoute

@@ -27,6 +27,9 @@ async function hit(slot: ResolvedSegment) {
     clientSegmentSet: new Set<string>(),
     Store: { run: <T>(fn: () => T) => fn() },
     matched: { params: {} },
+    prevUrl: new URL("http://localhost/list"),
+    prevParams: {},
+    interceptPrev: { url: new URL("http://localhost/list"), params: {} },
     localRouteName: "item",
   } as unknown as MatchContext<any>;
   const state = createPipelineState();

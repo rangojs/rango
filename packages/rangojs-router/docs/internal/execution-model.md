@@ -137,19 +137,28 @@ item's full page rendered. So the browser keeps the committed URL as
 slot's), and names the source in `X-RSC-Router-Intercept-Source`
 (`navigation-bridge.ts` `navigate`, `partial-update.ts`). The server resolves
 the intercept and `when`'s `from` against the source (`navigation-snapshot.ts`
-`effectiveFromUrl`); the held slot's loaders compare their params with the
-committed URL, the page they were rendered for. Named as the page left, the
-source's params made an item whose params equal the source's (`/s/1` under
-`/t/2`, linking to `/t/1`) keep the item left. Back/Forward onto an intercept
-entry it must fetch sends the same request. Such a click never adopts a
-prefetch (`navigation-client.ts` `canUsePrefetch`) or the history cache.
+`effectiveFromUrl`). Each held segment compares with the page it was rendered
+for. The slot's segments take the committed URL and its params
+(`NavigationSnapshot.interceptPrev`, the slot's pass in `match-context.ts`
+`interceptPassInput`): named as the page left, the source's params made an
+item whose params equal the source's (`/s/1` under `/t/2`, linking to `/t/1`)
+keep the item left. The page under the slot takes the source's URL and params
+(`prevUrl`, `prevParams`): compared with the intercept's, a link from
+`/item/2` over `/list/1` to `/list/2` read as param-equal, and `/list/2`
+showed `/list/1`'s loader data; from `/item/1` over `/list/1?page=2`, a link
+to `/list/1` kept page 2's. A `Prerender()` record decides its segments the
+same way (`cache-lookup.ts` `storedEntrySends`). Back/Forward onto an
+intercept entry it must fetch sends the same request. Such a click never
+adopts a prefetch (`navigation-client.ts` `canUsePrefetch`) or the history
+cache.
 
-| Target                                     | What the client sends                  | Result                                                     |
-| ------------------------------------------ | -------------------------------------- | ---------------------------------------------------------- |
-| Another item of the intercepted route      | committed URL, ids held, source header | The item in the intercept, over the source                 |
-| A route no intercept takes from the source | the same                               | The target's full page                                     |
-| The source page itself                     | the same                               | The source again (`match-api.ts` forces the route segment) |
-| The intercept's own URL                    | `leave-intercept`, no source           | Leaves the intercept for the full page                     |
+| Target                                     | What the client sends                  | Result                                                                       |
+| ------------------------------------------ | -------------------------------------- | ---------------------------------------------------------------------------- |
+| Another item of the intercepted route      | committed URL, ids held, source header | The item in the intercept, over the source                                   |
+| A route no intercept takes from the source | the same                               | The target's full page                                                       |
+| The source's route with other params       | the same                               | That page; its loaders re-run, whatever the intercept's params               |
+| The source page itself                     | the same                               | The source again (`match-api.ts` forces the route segment); its loaders kept |
+| The intercept's own URL                    | `leave-intercept`, no source           | Leaves the intercept for the full page                                       |
 
 A refresh reloads the intercept's URL the same way. `router.refresh()`, and
 the refresh another tab's action triggers (`navigation-bridge.ts` `refresh`),

@@ -49,6 +49,7 @@ import {
   type MatchPipelineState,
 } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
+import type { PrevPage } from "../navigation-snapshot.js";
 import { freshPassInput } from "../segment-resolution/resolution-pass.js";
 import { observeEvent } from "../instrument.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
@@ -336,7 +337,12 @@ function storedEntrySends<TEnv>(
   router: RouterContext<TEnv>,
 ): (segment: ResolvedSegment) => boolean | Promise<boolean> {
   if (ctx.isFullMatch) return () => true;
-  const paramsChanged = !paramsEqual(ctx.matched.params, ctx.prevParams);
+  // An intercept variant's slot compares with the intercept's own page, the
+  // page under it with the source (MatchContext.interceptPrev).
+  const pagePrev: PrevPage = { url: ctx.prevUrl, params: ctx.prevParams };
+  const slotPrev = ctx.interceptPrev;
+  const pageParamsChanged = !paramsEqual(ctx.matched.params, pagePrev.params);
+  const slotParamsChanged = !paramsEqual(ctx.matched.params, slotPrev.params);
   const resendRouteSegments = replaceable && (ctx.isAction || ctx.stale);
   const entryRevalidateMap =
     ctx.clientSegmentSet.size > 0
@@ -345,11 +351,11 @@ function storedEntrySends<TEnv>(
   // A keep that hangs on the source's params is right for the pages with
   // the same params only: scope a prefetch of the answer to them, as a
   // predicate that compared every param would (#1331).
-  const heldForSource = (): false => {
+  const heldForSource = (prevParams: Record<string, string>): false => {
     markSourceHeld(
       ctx.handlerContext as InternalHandlerContext<any, TEnv>,
-      readsOfAllParams(ctx.prevParams),
-      { params: ctx.prevParams, routeName: undefined },
+      readsOfAllParams(prevParams),
+      { params: prevParams, routeName: undefined },
     );
     return false;
   };
@@ -362,23 +368,26 @@ function storedEntrySends<TEnv>(
       ctx.clientSegmentSet,
     );
     if (fill !== undefined) return fill;
+    const ofSlot = isInterceptSegment(segment);
+    const prev = ofSlot ? slotPrev : pagePrev;
+    const paramsChanged = ofSlot ? slotParamsChanged : pageParamsChanged;
     if (segment.type === "route" || segment.belongsToRoute === true) {
       if (paramsChanged || resendRouteSegments) return true;
       // Kept on equal params, whatever the search: a source with other
       // params is sent it.
-      return heldForSource();
+      return heldForSource(prev.params);
     }
     const revalidate = entryRevalidateMap?.get(segment.id)?.revalidate;
     if (!revalidate?.length) return false;
     // Kept on equal params: from another source the rules run and may send
     // it.
-    if (!paramsChanged) return heldForSource();
+    if (!paramsChanged) return heldForSource(prev.params);
     return router.evaluateRevalidation({
       segment,
-      prevParams: ctx.prevParams,
+      prevParams: prev.params,
       getPrevSegment: null,
       request: ctx.request,
-      prevUrl: ctx.prevUrl,
+      prevUrl: prev.url,
       nextUrl: ctx.url,
       revalidations: revalidate.map((fn, i) => ({
         name: `revalidate${i}`,

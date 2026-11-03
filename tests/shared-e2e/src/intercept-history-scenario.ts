@@ -17,12 +17,15 @@ import {
  * A link inside an open intercept is resolved from the page under it: a link
  * to another item of the same intercepted route opens that item in the
  * intercept, Back steps through the items and then closes it, and a link to
- * a route no intercept targets from that page renders its full page.
+ * a route no intercept targets from that page renders its full page. A link
+ * to the source's route shows that page's data even when its params equal
+ * the intercept's.
  *
  * Fixture: intercept-held* in each app (the handler intercept links to the
- * next handler item, to the index and to /away, a page no intercept targets;
- * the mixed modal links to /loader/1). Both apps call this from a dev and a
- * (production) describe.
+ * next handler item, to the index, to /away, a page no intercept targets,
+ * and to /list/<its id>, whose page shows its loader's id and opens
+ * /handler/2; the mixed modal links to /loader/1). Both apps call this from a
+ * dev and a (production) describe.
  */
 
 export interface InterceptHistoryScenarioOptions {
@@ -280,6 +283,27 @@ export function runInterceptHistoryTests(
     await page.getByTestId("ih-handler-intercept-to-index").click();
 
     await expectIndexAlone(page);
+  });
+
+  test("a link inside the intercept to the source's route, with the intercept's own param value, shows that page's loader data", async ({
+    page,
+  }) => {
+    await page.goto(options.url(`${options.basePath}/list/1`));
+    await waitForShellHydration(page);
+    await expect(page.getByTestId("ih-list-data")).toHaveText("1");
+    await markDocument(page);
+    await page.getByTestId("ih-list-open-handler").click();
+    await expect(page.getByTestId("ih-handler-modal-id")).toHaveText("2");
+    await expect(page.getByTestId("ih-list-data")).toHaveText("1");
+
+    // /list/2 from /handler/2 over /list/1: equal to the intercept's params,
+    // not to the page's under it.
+    await page.getByTestId("ih-handler-intercept-list").click();
+
+    await expect(page).toHaveURL(new RegExp(`${options.basePath}/list/2$`));
+    await expect(page.getByTestId("ih-handler-modal")).toHaveCount(0);
+    await expect(page.getByTestId("ih-list-data")).toHaveText("2");
+    expect(await isMarkedDocument(page)).toBe(true);
   });
 
   test("a reload after a same-route link inside the intercept renders that item's full page", async ({
