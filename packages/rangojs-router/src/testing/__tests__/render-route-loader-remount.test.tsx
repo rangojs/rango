@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useEffect, useState, type ReactNode } from "react";
+import { Activity, useEffect, useState, type ReactNode } from "react";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import {
   Outlet,
@@ -733,3 +733,45 @@ describe("renderRoute: a load() with params", () => {
     expect(realFetch).not.toHaveBeenCalled();
   });
 });
+
+// A hidden <Activity> runs its children's effect cleanup as an unmount does.
+// skills/hooks/data.md: a grouped read without a key is back on the route's
+// data when it shows again; a key keeps the refreshed value.
+describe.each([
+  { id: "without a key", mode: "group" as const, shown: "A route data" },
+  { id: "with a key", mode: "keyedGroup" as const, shown: "A refreshed" },
+])(
+  "renderRoute: a refreshGroup reader $id inside a hidden <Activity>",
+  ({ mode, shown }) => {
+    it("shows again with " + shown, async () => {
+      const Reader = makeReader(mode);
+      function Route(): ReactNode {
+        const [visible, setVisible] = useState(true);
+        return (
+          <>
+            <button
+              data-testid="toggle"
+              onClick={() => setVisible((v) => !v)}
+            />
+            <Activity mode={visible ? "visible" : "hidden"}>
+              <Reader />
+            </Activity>
+          </>
+        );
+      }
+      const { router } = await renderRoute([{ path: "/p", Component: Route }], {
+        request: url("a"),
+        loaders: [[DataLoader, { label: "A route data" }]],
+      });
+      await refreshNow(router, "A refreshed");
+
+      fireEvent.click(document.querySelector('[data-testid="toggle"]')!);
+      await settle();
+      expect(unmounts).toBe(1);
+      fireEvent.click(document.querySelector('[data-testid="toggle"]')!);
+      await settle();
+      expect(mounts).toBe(2);
+      expect(text("data")).toBe(shown);
+    });
+  },
+);
