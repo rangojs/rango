@@ -11,10 +11,9 @@ export interface PrevPage {
 
 export interface NavigationSnapshot {
   /**
-   * `prevUrl` and `prevParams`: the page the page's held segments were
-   * rendered for. The page left, or, while an intercept is open
-   * (`hasInterceptSource`), the source page under it: the intercept's own URL
-   * is `interceptPrev`'s.
+   * `prevUrl` and `prevParams`: the page the held page segments were rendered
+   * for. That is the page left, or the source page while an intercept is open
+   * (`hasInterceptSource`).
    */
   prevUrl: URL;
   /** The visitor's URL of the page left, when `prevUrl` is its rewrite target. */
@@ -23,9 +22,9 @@ export interface NavigationSnapshot {
   /** The match of the page left: the intercept's URL while one is open. */
   prevMatch: RouteMatchResult | null;
   /**
-   * The page an open intercept's slot was rendered for: the page left, the
-   * intercept's own URL (match-context.ts interceptPassInput). The same as
-   * `prevUrl` and `prevParams` when the request names no intercept source.
+   * The page an open intercept's slot was rendered for: the intercept's own
+   * URL (match-context.ts interceptPassInput). Equals `prevUrl`/`prevParams`
+   * when the request names no intercept source.
    */
   interceptPrev: PrevPage;
 
@@ -214,11 +213,8 @@ export async function resolveNavigation(
     url: left,
     params: prevMatch?.params || {},
   };
-  // The page under an open intercept was rendered for the source, not for the
-  // intercept's URL. Compared with the intercept's params, a link from
-  // /item/2 over /list/1 to /list/2 read as param-equal and kept /list/1's
-  // loader data; compared with its search, /list/1?page=2 kept page 2's at
-  // /list/1.
+  // The page under an open intercept was rendered for the source, with its
+  // search, not for the intercept's URL.
   const prev: PrevPage = interceptSourceUrl
     ? {
         url: formSearch(new URL(interceptContextUrl)),

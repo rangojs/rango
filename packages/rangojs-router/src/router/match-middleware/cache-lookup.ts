@@ -342,10 +342,7 @@ function storedEntrySends<TEnv>(
   const pagePrev: PrevPage = { url: ctx.prevUrl, params: ctx.prevParams };
   const slotPrev = ctx.interceptPrev;
   const pageParamsChanged = !paramsEqual(ctx.matched.params, pagePrev.params);
-  const slotParamsChanged =
-    slotPrev.params === pagePrev.params
-      ? pageParamsChanged
-      : !paramsEqual(ctx.matched.params, slotPrev.params);
+  const slotParamsChanged = !paramsEqual(ctx.matched.params, slotPrev.params);
   const resendRouteSegments = replaceable && (ctx.isAction || ctx.stale);
   const entryRevalidateMap =
     ctx.clientSegmentSet.size > 0

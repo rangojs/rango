@@ -140,14 +140,12 @@ export interface MatchContext<TEnv = any> {
   /** NavigationSnapshot.heldBoundary: the walk stops above it. */
   heldBoundary?: string;
 
-  // Previous navigation state. `prevUrl` and `prevParams`: the page the
-  // page's held segments were rendered for, the intercept source while an
-  // intercept is open; `interceptPrev`: the one its slot was rendered for
-  // (NavigationSnapshot).
+  // Previous navigation state: see NavigationSnapshot.
   prevUrl: URL;
   prevParams: Record<string, string>;
   /** The match of the page left: the intercept's URL while one is open. */
   prevMatch: RouteMatchResult | null;
+  /** The page an open intercept's slot was rendered for. */
   interceptPrev: PrevPage;
 
   // Current route match
