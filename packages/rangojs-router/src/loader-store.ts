@@ -105,7 +105,7 @@ export interface SubscribeOptions {
    * When true, the bucket belongs to this subscriber alone (a private
    * refresh-group bucket, which no other reader names): it is reset by
    * `clearFamily` while subscribed, and dropped after the subscriber leaves
-   * even when sticky.
+   * even when sticky. Read at unsubscribe, so pass it on every subscribe.
    */
   owned?: boolean;
   /**
@@ -234,8 +234,8 @@ export class LoaderStore {
    * Subscribe to entry changes for `bucketKey`.
    * Returns an unsubscribe function. A sticky bucket's entry is kept around even
    * after the last subscriber leaves so that an in-flight `load()` can still
-   * commit if the consumer remounts. An ephemeral bucket is dropped once its
-   * last subscriber leaves (deferred, see maybeScheduleRefcountClear).
+   * commit if the consumer remounts. An ephemeral or owned bucket is dropped
+   * once its last subscriber leaves (deferred, see maybeScheduleRefcountClear).
    */
   subscribe(
     bucketKey: string,
@@ -375,7 +375,7 @@ export class LoaderStore {
     owned: boolean | undefined,
   ): void {
     if (e.listeners.size > 0) return;
-    // Sticky buckets persist for remount; they reset via clearFamily().
+    // Sticky buckets persist for remount unless owned; they reset via clearFamily().
     if (e.sticky && !owned) return;
     if (e.pendingClear) return;
     e.pendingClear = true;

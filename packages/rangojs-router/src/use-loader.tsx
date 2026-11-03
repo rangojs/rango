@@ -342,8 +342,6 @@ function useLoaderInternal<T>(
     // ephemeral: a reader with no route context has no route-context reset
     // trigger, so its keyed bucket is reference-counted by the store. A
     // route-registered reader makes the bucket sticky (reset via clearFamily).
-    // owned: no other reader names a private group bucket, and a remount
-    // takes a new one, so the store drops it after this reader leaves.
     return loaders.subscribe(
       bucketKey,
       () => {

@@ -467,58 +467,59 @@ describe("LoaderStore", () => {
 
   describe("owned bucket lifecycle", () => {
     const owned = { loaderId: "L", owned: true };
+    const K = "L::__rg0";
+    /** An owned subscriber on K whose bucket holds "v". */
+    function mountWithValue(): () => void {
+      const unsub = store.subscribe(K, () => {}, owned);
+      store.finishData(K, store.reserveRequestId(K), "v");
+      return unsub;
+    }
 
     it("is reset by clearFamily while its subscriber is mounted", () => {
-      store.subscribe("L::__rg0", () => {}, owned);
-      const r = store.reserveRequestId("L::__rg0");
-      store.finishData("L::__rg0", r, "v");
+      mountWithValue();
       store.clearFamily("L");
-      expect(store.getSnapshot("L::__rg0")).toBe(EMPTY_LOADER_SNAPSHOT);
+      expect(store.getSnapshot(K)).toBe(EMPTY_LOADER_SNAPSHOT);
     });
 
     it("is dropped after its subscriber leaves, though sticky", async () => {
-      const unsub = store.subscribe("L::__rg0", () => {}, owned);
-      const r = store.reserveRequestId("L::__rg0");
-      store.finishData("L::__rg0", r, "v");
+      const unsub = mountWithValue();
       unsub();
       await flushMicrotasks();
-      expect(store.getSnapshot("L::__rg0")).toBe(EMPTY_LOADER_SNAPSHOT);
+      expect(store.getSnapshot(K)).toBe(EMPTY_LOADER_SNAPSHOT);
       // The entry is gone: request ids start over.
-      expect(store.reserveRequestId("L::__rg0")).toBe(1);
+      expect(store.reserveRequestId(K)).toBe(1);
     });
 
     it("a resubscribe before the microtask keeps it", async () => {
-      const unsub = store.subscribe("L::__rg0", () => {}, owned);
-      const r = store.reserveRequestId("L::__rg0");
-      store.finishData("L::__rg0", r, "v");
+      const unsub = mountWithValue();
       unsub();
-      store.subscribe("L::__rg0", () => {}, owned);
+      store.subscribe(K, () => {}, owned);
       await flushMicrotasks();
-      expect(store.getSnapshot("L::__rg0").value).toBe("v");
+      expect(store.getSnapshot(K).value).toBe("v");
     });
 
     it("left mid-flight: dropped once the request settles", async () => {
-      const unsub = store.subscribe("L::__rg0", () => {}, owned);
-      const r = store.reserveRequestId("L::__rg0");
-      store.beginRequest("L::__rg0", r);
+      const unsub = store.subscribe(K, () => {}, owned);
+      const r = store.reserveRequestId(K);
+      store.beginRequest(K, r);
       unsub();
       await flushMicrotasks();
-      expect(store.getSnapshot("L::__rg0").isLoading).toBe(true);
-      store.finishData("L::__rg0", r, "late");
-      expect(store.getSnapshot("L::__rg0")).toBe(EMPTY_LOADER_SNAPSHOT);
+      expect(store.getSnapshot(K).isLoading).toBe(true);
+      store.finishData(K, r, "late");
+      expect(store.getSnapshot(K)).toBe(EMPTY_LOADER_SNAPSHOT);
     });
 
     it("left mid-flight, then reset by clearFamily: dropped by the reset", async () => {
-      const unsub = store.subscribe("L::__rg0", () => {}, owned);
-      const r = store.reserveRequestId("L::__rg0");
-      store.beginRequest("L::__rg0", r);
+      const unsub = store.subscribe(K, () => {}, owned);
+      const r = store.reserveRequestId(K);
+      store.beginRequest(K, r);
       unsub();
       await flushMicrotasks();
       store.clearFamily("L");
       // The late answer fails the request gate and finds no entry.
-      store.finishData("L::__rg0", r, "late");
-      expect(store.getSnapshot("L::__rg0")).toBe(EMPTY_LOADER_SNAPSHOT);
-      expect(store.reserveRequestId("L::__rg0")).toBe(1);
+      store.finishData(K, r, "late");
+      expect(store.getSnapshot(K)).toBe(EMPTY_LOADER_SNAPSHOT);
+      expect(store.reserveRequestId(K)).toBe(1);
     });
 
     it("a sticky bucket whose last subscriber is not owned is kept", async () => {
