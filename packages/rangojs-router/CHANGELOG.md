@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a link inside an open intercept to the page under it shows that page's data when the params match the intercept's
+
+**Before.** From an open intercept (`/item/2` over `/list/1`), a link to the
+page's route with the intercept's own param value (`/list/2`) closed the
+intercept and re-rendered the route, but its loaders were compared with the
+intercept's URL (`id: "2"`), found equal, and kept: `useLoader()` showed
+`/list/1`'s data at `/list/2`. The same happened with the query: from
+`/item/1` over `/list/1?page=2`, a link to `/list/1` kept page 2's data. A
+link back to the source page itself (`/list/1`) re-ran its loaders whenever
+the intercept's params differed.
+
+**Now.** The page under an open intercept is compared with the source page's
+URL and params, and the intercept's slot with the intercept's own. `/list/2`
+re-runs its loaders and shows its own data; `/list/1` keeps the data it
+holds. The same holds for a page served from a `Prerender()` or `cache()`
+record, and for the `currentUrl` and `currentParams` a `revalidate()` rule on
+the page's segments reads (the slot's rules read the intercept's). Navigations
+made with no intercept open are unchanged.
+
+| From `/item/2` over `/list/1`, a link to | page's loaders, before | page's loaders, now | slot's loaders    |
+| ---------------------------------------- | ---------------------- | ------------------- | ----------------- |
+| `/list/2`                                | kept (stale)           | re-run              | slot closes       |
+| `/list/1`                                | re-run                 | kept                | slot closes       |
+| `/list/1?page=2`                         | re-run                 | re-run              | slot closes       |
+| `/item/1` (opens in the intercept)       | held                   | held                | re-run, as before |
+
 ## 0.34.0 (2026-11-02)
 
 ### Changed: a hover prefetch skips `prefetch: false` work again; mark a loader or `loading()` `prefetch: "intent"` to run it on hover ([#1373](https://github.com/rangojs/rango/pull/1373))

@@ -161,6 +161,7 @@ async function lookup(
     url,
     prevUrl: new URL("http://localhost/p"),
     prevParams: {},
+    interceptPrev: { url: new URL("http://localhost/p"), params: {} },
     clientSegmentSet: new Set(options.clientSegments),
     entries: [],
     matched: { params: {}, routeKey: "list" },
@@ -347,6 +348,10 @@ describe("withCacheLookup: a fill served from the prerender store", () => {
       // The client says it came from another slug.
       prevUrl: new URL("http://localhost/guide/a"),
       prevParams: { slug: "a" },
+      interceptPrev: {
+        url: new URL("http://localhost/guide/a"),
+        params: { slug: "a" },
+      },
       clientSegmentSet: new Set([ROUTE]),
       entries: [{ ...chainEntry("route", ROUTE, false), isPrerender: true }],
       matched: { params: { slug: "b" }, routeKey: "guide", pr: true },

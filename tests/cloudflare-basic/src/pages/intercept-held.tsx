@@ -2,6 +2,7 @@ import { redirect, urls } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import {
   InterceptHeldCrumbsBar,
+  InterceptHeldListData,
   InterceptHeldLoaderModal,
   InterceptHeldMixedModal,
   InterceptHeldPushModal,
@@ -10,6 +11,7 @@ import {
 } from "./intercept-held.client.js";
 import {
   InterceptHeldCrumbs,
+  InterceptHeldListLoader,
   InterceptHeldLoader,
   InterceptHeldPushLoader,
   InterceptPushLoader,
@@ -38,6 +40,8 @@ import {
 // The /mixed modal links to /loader/1: both modals read the held loader.
 // The /handler intercept and its full page link to /away, which no
 // intercept targets (intercept-history-scenario).
+// /list/:id shows its loader's id and opens /handler/2; the /handler intercept
+// links to /list/<its id>, a source route with a param of the same name.
 // The layout shows the crumb handle; it pushes "layout" itself.
 function InterceptHeldLayout() {
   return (
@@ -143,6 +147,22 @@ function InterceptHeldSearch() {
         to="/intercept-held/handler/1"
         prefetch="none"
         data-testid="ih-search-open-handler"
+      >
+        Open handler-push modal
+      </Link>
+    </div>
+  );
+}
+
+// A source page with an :id param, like the /handler route it opens.
+function InterceptHeldList() {
+  return (
+    <div data-testid="ih-list">
+      <InterceptHeldListData />
+      <Link
+        to="/intercept-held/handler/2"
+        prefetch="none"
+        data-testid="ih-list-open-handler"
       >
         Open handler-push modal
       </Link>
@@ -300,6 +320,10 @@ export const interceptHeldPatterns = urls(
 
         path("/search", InterceptHeldSearch, { name: "search" }),
 
+        path("/list/:id", InterceptHeldList, { name: "list" }, () => [
+          loader(InterceptHeldListLoader),
+        ]),
+
         path("/handler/:id", InterceptHeldHandlerPage, {
           name: "handlerItem",
         }),
@@ -335,6 +359,13 @@ export const interceptHeldPatterns = urls(
                 data-testid="ih-handler-intercept-next"
               >
                 Next item
+              </Link>
+              <Link
+                to={`/intercept-held/list/${ctx.params.id}`}
+                prefetch="none"
+                data-testid="ih-handler-intercept-list"
+              >
+                List
               </Link>
             </div>
           );

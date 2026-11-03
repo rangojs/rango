@@ -168,6 +168,7 @@ export const NamedRoutes = {
   "interceptHeld.deferredItem": "/intercept-held/deferred/:id",
   "interceptHeld.handlerItem": "/intercept-held/handler/:id",
   "interceptHeld.index": "/intercept-held",
+  "interceptHeld.list": "/intercept-held/list/:id",
   "interceptHeld.loaderItem": "/intercept-held/loader/:id",
   "interceptHeld.mixedItem": "/intercept-held/mixed/:id",
   "interceptHeld.pushHeldItem": "/intercept-held/push-held/:id",

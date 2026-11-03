@@ -9,6 +9,7 @@ import {
 } from "./intercept-held.actions.js";
 import {
   InterceptHeldCrumbs,
+  InterceptHeldListLoader,
   InterceptHeldLoader,
   InterceptHeldPushLoader,
   InterceptPushLoader,
@@ -125,4 +126,11 @@ export function InterceptHeldPushModal({
       <ActionButton />
     </Modal>
   );
+}
+
+// The /list/:id page's loader data, read in the browser: a held loader
+// segment keeps the data of the page it was resolved for.
+export function InterceptHeldListData() {
+  const { data } = useLoader(InterceptHeldListLoader);
+  return <p data-testid="ih-list-data">{data.id}</p>;
 }

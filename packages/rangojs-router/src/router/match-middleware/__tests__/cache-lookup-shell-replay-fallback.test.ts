@@ -178,6 +178,7 @@ async function drain(options: {
     url,
     prevUrl: new URL("http://localhost/from"),
     prevParams: {},
+    interceptPrev: { url: new URL("http://localhost/from"), params: {} },
     clientSegmentSet: new Set<string>(),
     entries: [],
     matched: {
