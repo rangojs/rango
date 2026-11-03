@@ -158,6 +158,7 @@ async function lookup(options: {
     url,
     prevUrl: url,
     prevParams: PARAMS,
+    interceptPrev: { url, params: PARAMS },
     clientSegmentSet: new Set<string>(),
     entries: routeEntries(options.passthrough === true),
     matched: { params: PARAMS, routeKey: "product", pr: true, od: true },

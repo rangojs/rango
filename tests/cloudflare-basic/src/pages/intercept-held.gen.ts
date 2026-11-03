@@ -4,6 +4,7 @@ export const routes = {
   deferredItem: "/deferred/:id",
   handlerItem: "/handler/:id",
   index: "/",
+  list: "/list/:id",
   loaderItem: "/loader/:id",
   mixedItem: "/mixed/:id",
   pushHeldItem: "/push-held/:id",

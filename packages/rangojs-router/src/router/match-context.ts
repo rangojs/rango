@@ -116,6 +116,7 @@ import type {
 } from "../server/context.js";
 import type { HandlerContext, ResolvedSegment } from "../types.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
+import type { PrevPage } from "./navigation-snapshot.js";
 import type { InterceptResult } from "./router-context.js";
 import type { ResolutionPassInput } from "./segment-resolution/resolution-pass.js";
 import type { ActionContext } from "./types.js";
@@ -139,10 +140,15 @@ export interface MatchContext<TEnv = any> {
   /** NavigationSnapshot.heldBoundary: the walk stops above it. */
   heldBoundary?: string;
 
-  // Previous navigation state
+  // Previous navigation state. `prevUrl` and `prevParams`: the page the
+  // page's held segments were rendered for, the intercept source while an
+  // intercept is open; `interceptPrev`: the one its slot was rendered for
+  // (NavigationSnapshot).
   prevUrl: URL;
   prevParams: Record<string, string>;
+  /** The match of the page left: the intercept's URL while one is open. */
   prevMatch: RouteMatchResult | null;
+  interceptPrev: PrevPage;
 
   // Current route match
   matched: RouteMatchResult;
@@ -222,6 +228,23 @@ export function resolutionPassInput<TEnv>(
     actionContext: ctx.actionContext,
     stale: ctx.stale,
     heldBoundary: ctx.heldBoundary,
+  };
+}
+
+/**
+ * This match as the input of the pass that resolves its intercept's slot: its
+ * held segments compare with the intercept's own URL (`interceptPrev`), not
+ * with the source page under it. From /item/2 over /list/1, a link to /item/1
+ * compared with the source's params would read as param-equal and keep item
+ * 2's slot.
+ */
+export function interceptPassInput<TEnv>(
+  ctx: MatchContext<TEnv>,
+): ResolutionPassInput<TEnv> {
+  return {
+    ...resolutionPassInput(ctx),
+    prevUrl: ctx.interceptPrev.url,
+    prevParams: ctx.interceptPrev.params,
   };
 }
 

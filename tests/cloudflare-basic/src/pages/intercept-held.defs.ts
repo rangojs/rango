@@ -33,6 +33,12 @@ export const InterceptHeldPushLoader = createLoader(async (ctx) => {
   return { id: ctx.params.id };
 });
 
+// The /list/:id page's loader: its id shows which page's data is on screen
+// after a link inside the /handler intercept (intercept-history-scenario).
+export const InterceptHeldListLoader = createLoader(async (ctx) => ({
+  id: ctx.params.id,
+}));
+
 // Writes of the index page's redirecting action. The index
 // renders the count: the page under the intercept the redirect opens shows
 // whether it was rendered again after the action.

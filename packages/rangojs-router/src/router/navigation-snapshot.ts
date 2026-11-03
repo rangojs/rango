@@ -3,12 +3,31 @@ import { requestHeaders } from "../server/request-headers.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import { WIRE } from "../wire-params.js";
 
+/** A page held segments were rendered for: what their revalidation compares with. */
+export interface PrevPage {
+  url: URL;
+  params: Record<string, string>;
+}
+
 export interface NavigationSnapshot {
+  /**
+   * `prevUrl` and `prevParams`: the page the page's held segments were
+   * rendered for. The page left, or, while an intercept is open
+   * (`hasInterceptSource`), the source page under it: the intercept's own URL
+   * is `interceptPrev`'s.
+   */
   prevUrl: URL;
   /** The visitor's URL of the page left, when `prevUrl` is its rewrite target. */
   prevVisitorUrl: URL | null;
   prevParams: Record<string, string>;
+  /** The match of the page left: the intercept's URL while one is open. */
   prevMatch: RouteMatchResult | null;
+  /**
+   * The page an open intercept's slot was rendered for: the page left, the
+   * intercept's own URL (match-context.ts interceptPassInput). The same as
+   * `prevUrl` and `prevParams` when the request names no intercept source.
+   */
+  interceptPrev: PrevPage;
 
   interceptContextUrl: URL;
   interceptContextMatch: RouteMatchResult | null;
@@ -176,29 +195,43 @@ export async function resolveNavigation(
   }
   // An intercept's request diffs from its source, which _rsc_rt does not name.
   const shown = interceptSourceUrl ? null : getShownRouteUrl(url);
-  const prevUrl = shown ?? visitor;
+  const left = shown ?? visitor;
 
   let interceptContextUrl: URL;
   try {
     interceptContextUrl = interceptSourceUrl
       ? withoutHash(new URL(interceptSourceUrl, url.origin))
-      : prevUrl;
+      : left;
   } catch {
-    interceptContextUrl = prevUrl;
+    interceptContextUrl = left;
   }
 
-  const prevMatch = await deps.findMatch(prevUrl.pathname);
-  const prevParams = prevMatch?.params || {};
+  const prevMatch = await deps.findMatch(left.pathname);
   const interceptContextMatch = interceptSourceUrl
     ? await deps.findMatch(interceptContextUrl.pathname)
     : prevMatch;
+  const interceptPrev: PrevPage = {
+    url: left,
+    params: prevMatch?.params || {},
+  };
+  // The page under an open intercept was rendered for the source, not for the
+  // intercept's URL. Compared with the intercept's params, a link from
+  // /item/2 over /list/1 to /list/2 read as param-equal and kept /list/1's
+  // loader data; compared with its search, /list/1?page=2 kept page 2's at
+  // /list/1.
+  const prev: PrevPage = interceptSourceUrl
+    ? {
+        url: formSearch(new URL(interceptContextUrl)),
+        params: interceptContextMatch?.params || {},
+      }
+    : interceptPrev;
 
   const isSameRouteNavigation = !!(
     interceptContextMatch && interceptContextMatch.routeKey === currentRouteKey
   );
 
   const hasInterceptSource = !!interceptSourceUrl;
-  const effectiveFromUrl = hasInterceptSource ? interceptContextUrl : prevUrl;
+  const effectiveFromUrl = hasInterceptSource ? interceptContextUrl : left;
   const effectiveFromMatch = hasInterceptSource
     ? interceptContextMatch
     : prevMatch;
@@ -212,10 +245,11 @@ export async function resolveNavigation(
   const clientSegmentSet = new Set(clientSegmentIds);
 
   return {
-    prevUrl,
+    prevUrl: prev.url,
     prevVisitorUrl: shown && visitor,
-    prevParams,
+    prevParams: prev.params,
     prevMatch,
+    interceptPrev,
     interceptContextUrl,
     interceptContextMatch,
     clientSegmentIds,
@@ -240,6 +274,7 @@ export function createNavigationSnapshot(
     prevVisitorUrl: null,
     prevParams: {},
     prevMatch: null,
+    interceptPrev: { url: defaultUrl, params: {} },
     interceptContextUrl: defaultUrl,
     interceptContextMatch: null,
     clientSegmentIds: [],
