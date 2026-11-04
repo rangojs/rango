@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { expectConsole } from "./console-guard.js";
 
-// An ssr: false loader that throws on a document load, with no
+// An ssr: "await" loader that throws on a document load, with no
 // errorBoundary() on its chain, ends on the router's default error boundary:
 // on a plain document, a ppr MISS, and a ppr shell HIT whose loader run
 // throws. Before the fix the HIT went blank (the browser's tree build rejected

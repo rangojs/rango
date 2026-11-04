@@ -347,7 +347,7 @@ describe("PPR HIT tail context (createTailContext)", () => {
             () => <p>page</p>,
             { name: "ppr", ppr: true },
             () => [
-              loader(BakedLoader, { ssr: false }),
+              loader(BakedLoader, { ssr: "await" }),
               loader(LiveLoader),
               loading(<i>loading</i>),
             ],

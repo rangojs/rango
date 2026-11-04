@@ -472,7 +472,7 @@ export async function resolveOwnerLoaders<TEnv>(
           loaderEntry,
           ctx,
           ctx.pathname,
-          // The bake key rides for flagged loaders too (`bake`): ssr: false
+          // The bake key rides for flagged loaders too (`bake`): ssr: "await"
           // bakes at capture regardless of the entry's loading() lane
           // (loader-cache.ts capture branch), its HIT-tail seed overlay needs
           // the same key, and on a navigation it pins exactly as on the
@@ -510,7 +510,7 @@ export async function resolveOwnerLoaders<TEnv>(
     ? buildLoaderErrorContext(ctx)
     : { ...buildLoaderErrorContext(ctx), isPartial: true };
 
-  // FRESH: awaitBeforeFlush (loader(Def, { ssr: false })). A document render
+  // FRESH: awaitBeforeFlush (loader(Def, { ssr: "await" })). A document render
   // awaits these loaders before returning, so their data is settled, their
   // handle pushes beat the barrier snapshot, and a thrown notFound()'s status
   // write deterministically precedes Response construction. The ids must
@@ -554,7 +554,7 @@ export async function resolveOwnerLoaders<TEnv>(
       registerDeferredLoader(ctx, loader.$$id, shortCode, () =>
         kickoff(loaderEntry, segmentId),
       );
-      // A ppr shell record this request restored keeps an ssr: false
+      // A ppr shell record this request restored keeps an ssr: "await"
       // loader's pushes as copies that wait for its run (loaderPins "hole").
       // No run is made here: drop them, the fill sends the run's pushes.
       _getRequestContext()?._handleStore?.settleLoaderRun(loader.$$id);

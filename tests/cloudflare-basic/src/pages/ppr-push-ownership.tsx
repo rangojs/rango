@@ -92,7 +92,7 @@ export function PprPushMetaAwaitedPage() {
 }
 
 // #1182: the view reads the live loader, so the handle reader renders inside
-// the route's loading() boundary; the note comes from the ssr: false loader.
+// the route's loading() boundary; the note comes from the ssr: "await" loader.
 export function PprPushSuspendedPage() {
   return (
     <main data-testid="ppr-push-suspended-page">

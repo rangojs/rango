@@ -561,11 +561,11 @@ describe("createShellCaptureHandler", () => {
   });
 });
 
-// Issue #1206: a capture whose matched chain has a loader(Def, { ssr: false })
+// Issue #1206: a capture whose matched chain has a loader(Def, { ssr: "await" })
 // raises progressiveChunkSize as the live render does, so a completed boundary
 // ships in place in the prelude instead of as a fallback plus an outlined
 // `<div hidden>` segment and a $RC reveal.
-describe("createShellCaptureHandler: the ssr: false progressiveChunkSize auto-raise (#1206)", () => {
+describe('createShellCaptureHandler: the ssr: "await" progressiveChunkSize auto-raise (#1206)', () => {
   /** Past both Fizz outlining gates on its own: >500 B and >12800 B. */
   function Grid({ label }: { label: string }) {
     return React.createElement(
@@ -662,7 +662,7 @@ describe("createShellCaptureHandler: the ssr: false progressiveChunkSize auto-ra
     );
   });
 
-  it("outlines the same boundary without an ssr: false loader (React's default)", async () => {
+  it('outlines the same boundary without an ssr: "await" loader (React\'s default)', async () => {
     const result = await captureGrid(gridDeps(false));
     const prelude = decoder.decode(result.prelude);
 
@@ -693,7 +693,7 @@ describe("createShellCaptureHandler: the ssr: false progressiveChunkSize auto-ra
     mockedRenderSegments.mockImplementation(() =>
       Promise.resolve(makeGridTree(Promise.resolve("ok"))),
     );
-    // Resume deps without the ssr: false signal: the raise can only come
+    // Resume deps without the ssr: "await" signal: the raise can only come
     // from the postponed state.
     const tail = await readAll(
       await createShellResumeHandler(gridDeps(false))(

@@ -509,7 +509,7 @@ global map entirely.
   the full loader body contract: thrown `notFound()`/`redirect()` authority
   signals, handle writes (`ctx.use(Meta)({ title })`, handler parity), and
   `ctx.get(handle)` reads behind `await ctx.rendered()`;
-- per-loader delivery options: `loader(Def, { ssr: false, prefetch: false },
+- per-loader delivery options: `loader(Def, { ssr: "await", prefetch: false },
 use?)`;
 - hard-load server matching, SSR, hydration, and canonical partial Flight soft
   navigation, with implicitly-suspending `useLoader` reads (a pending first
@@ -1021,7 +1021,7 @@ For a failure the user should see in place of the data without an error
 boundary, return it from the loader as data (`{ ok: false, reason }`) and
 render it at the read. The skill carries the example. One caveat: the failure
 is then an ordinary value, so a `cache()` on the loader, a `ppr` bake of an
-`ssr: false` loader, or a prerender stores and serves it like any other. A
+`ssr: "await"` loader, or a prerender stores and serves it like any other. A
 thrown error is never stored: the miss path stores only what `execute()`
 returned (`cache/read-through-swr.ts:159`), and a background revalidation
 that throws keeps the stale entry. Cache the call the loader makes instead
@@ -1047,12 +1047,12 @@ that keeps the layout, a layout loader's fallback that clears),
 `serveShellRequest(...).readAction()` in
 `src/testing/__tests__/client-urls-revalidate.rsc-test.tsx`.
 
-`loader(Def, { ssr: false }, use?)` is the SSR-completeness opt-in.
+`loader(Def, { ssr: "await" }, use?)` is the SSR-completeness opt-in.
 By default every loader streams on every render, so nothing a slow loader
 produces is guaranteed to be in the SSR'd HTML — its section SSRs as the
 Suspense fallback, a late handle push applies post-hydration, and a
 loader-thrown `notFound()` only wins a real 404 status opportunistically.
-With `ssr: false`, DOCUMENT renders await that loader before first
+With `ssr: "await"`, DOCUMENT renders await that loader before first
 flush: its data is settled at first paint, its handle pushes ride the SSR
 handle snapshot, and a thrown `notFound()` deterministically precedes
 Response construction. Client navigations stream unchanged — the name says
@@ -1067,7 +1067,7 @@ A browser without JavaScript sees only what the first flush carries: a
 boundary that completes later ships its fallback and swaps the content in with
 a script that never runs. A client component a loader's answer draws under an
 inline `<Suspense>` is in the first flush when the loader settles before it
-(a fast loader usually does; `ssr: false` guarantees the loader's data, not
+(a fast loader usually does; `ssr: "await"` guarantees the loader's data, not
 the module load a build's first render of a reference still waits for). That
 used to differ in
 dev. plugin-rsc tags client reference ids with a per-render cache tag in dev, so
@@ -1092,7 +1092,7 @@ Pinned dev+prod in `e2e/client-urls-loader-element.test.ts` and
 `src/ssr/__tests__/ssr-handler.test.tsx` ("dev client-reference loads").
 
 Settled data is not always enough on its own, either. A `useActionState` form
-under an inline `<Suspense>` whose loader is `ssr: false` shipped its fallback
+under an inline `<Suspense>` whose loader is `ssr: "await"` shipped its fallback
 on every no-script load of the fixture, dev and production (#1138). Here is
 why. Fizz's `useActionState` binds the state onto the action, and encoding a
 bound server reference for `<form action>` throws the Flight client's
@@ -1106,12 +1106,12 @@ and a document whole at shell-ready takes no turn. Each turn retries one
 generation: the form, a `formAction` button inside it, and the same form
 behind `lazy()` are one, two and three. A boundary waiting on I/O still
 streams its fallback, sent at most three turns later. A document without an
-`ssr: false` loader returns at shell-ready as before, so its `loading()`
+`ssr: "await"` loader returns at shell-ready as before, so its `loading()`
 skeletons still lead the first flush. Pinned dev+prod in
 `e2e/client-urls-ssr-false-form.test.ts` and
 `tests/cloudflare-basic/e2e/client-urls-ssr-false-form.test.ts` (body
 `tests/shared-e2e/src/ssr-false-form-scenario.ts`), and by
-`src/ssr/__tests__/ssr-handler.test.tsx` ("ssr: false first flush").
+`src/ssr/__tests__/ssr-handler.test.tsx` (`ssr: "await" first flush`).
 
 `loader(Def, { prefetch: false }, use?)` keeps one loader out of the route's
 `<Link>` prefetches, as on a server route

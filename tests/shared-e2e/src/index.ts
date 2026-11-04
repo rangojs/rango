@@ -2296,7 +2296,7 @@ export async function expectBackLeavesScrollToBrowser(
 
 /**
  * The push-ownership fixture (both apps: issues #1001, #1003). Each route is
- * a `ppr` route with one `ssr: false` loader whose value and handle pushes
+ * a `ppr` route with one `ssr: "await"` loader whose value and handle pushes
  * carry the generation of the run that produced them, per `?probe=`:
  *
  * - `pinnedUrl`: returns a nested promise (it runs on every replay of its
@@ -2306,10 +2306,10 @@ export async function expectBackLeavesScrollToBrowser(
  * - `deferredUrl`: promise-free, bound with its own `cache()`, value
  *   `deferred@g<n>`, a settled push `settled-note@g<n>` and a deferred one
  *   `deferred-note@g<n>`.
- * - `liveUrl`: a loader WITHOUT `ssr: false` under `loading()`, value
+ * - `liveUrl`: a loader WITHOUT `ssr: "await"` under `loading()`, value
  *   `live@g<n>`, one push `live-note@g<n>` made after an await. The view
  *   reads the loader, so it renders inside the `loading()` boundary.
- * - `suspendedUrl`: an `ssr: false` loader that pushes a promise
+ * - `suspendedUrl`: an `ssr: "await"` loader that pushes a promise
  *   `baked-note@g<n>`, and a live loader (no push) under `loading()`, value
  *   `live-value@g<n>`. The view reads the live loader, so the handle reader
  *   renders inside the `loading()` boundary (#1182).
@@ -2435,7 +2435,7 @@ async function pushValueGeneration(page: Page, kind: string): Promise<number> {
 
 /**
  * #1003: a client navigation that replays a shell keeps the captured handle
- * push of a promise-carrying `ssr: false` loader next to its pinned data, as
+ * push of a promise-carrying `ssr: "await"` loader next to its pinned data, as
  * the document HIT of the same shell does. Before, the navigation showed the
  * capture's data next to the push of the run it made.
  */
@@ -2464,7 +2464,7 @@ export async function expectReplayKeepsCapturedPushWithPinnedData(
 
 /**
  * #1001: a client navigation that replays a shell delivers the deferred
- * handle push of an `ssr: false` loader with its own `cache()` next to the
+ * handle push of an `ssr: "await"` loader with its own `cache()` next to the
  * settled push, each once, at the capture's generation. Both come from the
  * shell's record, which keeps the deferred push resolved (#1182). Before
  * #1001, the navigation dropped the deferred push.
@@ -2535,7 +2535,7 @@ export async function expectShellHitHydratesFromRecord(
 }
 
 /**
- * #1182: a deferred push by an `ssr: false` loader that settles after
+ * #1182: a deferred push by an `ssr: "await"` loader that settles after
  * `ppr.captureTimeout` refuses the capture, as a handler's push does: the
  * route stays on MISS. Each MISS waits for the push, so its HTML has both
  * rows. Before, the capture left the push out of the record and stored the
@@ -2571,7 +2571,7 @@ export async function expectSlowDeferredPushRefusesCapture(
 
 /**
  * #1182 next to #1035: a `useHandle` reader inside a `loading()` boundary
- * (`suspendedUrl`) hydrates with the promise an `ssr: false` loader pushed,
+ * (`suspendedUrl`) hydrates with the promise an `ssr: "await"` loader pushed,
  * as the shell baked it. The boundary hydrates after the root; the row is in
  * the HIT's HTML, on screen from the first parse on, and never changes. The
  * live loader's value is this request's.
@@ -2593,7 +2593,7 @@ export async function expectSuspendedHandleReaderHydratesWithBakedPush(
 }
 
 /**
- * The #1182 routes: an `ssr: false` loader that pushes the page title. The
+ * The #1182 routes: an `ssr: "await"` loader that pushes the page title. The
  * `metaPromiseUrl` page has a button (`push-meta-action`) that calls a
  * server action doing nothing; loaders re-run after every action.
  */
@@ -2628,7 +2628,7 @@ async function titlesMissThenHit(
 }
 
 /**
- * #1182, the expectation the issue reports: the title an `ssr: false`
+ * #1182, the expectation the issue reports: the title an `ssr: "await"`
  * loader pushes to Meta as a promise is in the HTML of the document MISS
  * and of every shell HIT after it.
  *
@@ -2805,7 +2805,7 @@ async function warmShellToReplay(
 }
 
 /**
- * A capture whose `ssr: false` loader pins exceed
+ * A capture whose `ssr: "await"` loader pins exceed
  * `ppr.maxSnapshotBytes` stores the navigation half of the entry only. A
  * document is a MISS: its HTML and hydration data come from one run, so it
  * hydrates clean and shows the run's data next to the run's push. A client
@@ -2880,11 +2880,11 @@ export async function expectLateBoundaryHandleReaderHydratesClean(
  * The `Prerender` + `ppr` push fixture (#1057), next to the
  * push-ownership routes. Each route's view is the push-ownership view.
  *
- * - `preSettledUrl`: `Prerender` + `ppr` with a promise-free `ssr: false`
+ * - `preSettledUrl`: `Prerender` + `ppr` with a promise-free `ssr: "await"`
  *   loader, value `settled@g<n>`, one settled push `settled-only@g<n>`.
  * - `pprSettledUrl`: the same loader and view on a `ppr` route without
  *   `Prerender` (the control).
- * - `preDeferredUrl`: `Prerender` + `ppr` with a promise-free `ssr: false`
+ * - `preDeferredUrl`: `Prerender` + `ppr` with a promise-free `ssr: "await"`
  *   loader without `cache()`, value `deferred@g<n>`, a settled push
  *   `settled-note@g<n>` and a promise push `deferred-note@g<n>`.
  * - `bumpUrl`: as in {@link PushOwnershipFixture}.
@@ -2924,7 +2924,7 @@ async function expectHitKeepsRows(
 
 /**
  * #1057: a shell HIT of `url`'s route keeps the settled push of its
- * promise-free `ssr: false` loader. Its HTML has the row, the page hydrates
+ * promise-free `ssr: "await"` loader. Its HTML has the row, the page hydrates
  * with it (no hydration error) and keeps it. The loader is served from its
  * pin, so the value and the row stay at the capture's generation after a
  * bump. The document MISS that captured the shell is clean too.
@@ -2975,7 +2975,7 @@ export async function expectBuildShellHitKeepsSettledLoaderPush(
 
 /**
  * #1057 with #1182 on a `Prerender` + `ppr` route: a promise pushed from the
- * `ssr: false` loader is in the shell next to the settled push, both at the
+ * `ssr: "await"` loader is in the shell next to the settled push, both at the
  * capture's generation. The HIT hydrates clean with both rows, which never
  * change: the pin asks for no run, so nothing arrives after hydration.
  *
@@ -3004,7 +3004,7 @@ export async function expectPrerenderShellHitKeepsPromisePush(
 /**
  * #1182 for the shell `vite build` bakes for a `Prerender` + `ppr` route
  * (served for a URL without a query string; in dev the same capture runs on
- * demand): its HTML has the promise the `ssr: false` loader pushed, next to
+ * demand): its HTML has the promise the `ssr: "await"` loader pushed, next to
  * the settled push, and its HIT hydrates clean with both.
  */
 export async function expectBuildShellHitKeepsPromiseLoaderPush(

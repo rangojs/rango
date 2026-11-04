@@ -154,7 +154,7 @@ export type LoaderEntry = {
   cache?: EntryCacheConfig;
   /**
    * Document renders await this loader before segment resolution returns
-   * (loader(Def, { ssr: false })), so its data, handle pushes, and
+   * (loader(Def, { ssr: "await" })), so its data, handle pushes, and
    * thrown notFound()/redirect() deterministically precede first flush.
    * Resolved at DSL-evaluation time from ctx.isSSR — entries are cached
    * per-isSSR (router/manifest.ts cache key), so the flag is already
@@ -164,7 +164,7 @@ export type LoaderEntry = {
    */
   awaitBeforeFlush?: true;
   /**
-   * loader(Def, { ssr: false }) on every DSL evaluation, document and
+   * loader(Def, { ssr: "await" }) on every DSL evaluation, document and
    * navigation: the loader's PPR bake lane (loader-cache.ts
    * resolveLoaderData). The bake/seed key rides on it, so a client
    * navigation's shell replay pins exactly the loaders a document HIT pins,
@@ -913,7 +913,7 @@ export function getIsolatedLazyParent(
  * called from both.
  */
 
-/** loader(Def, { ssr: false }): a document awaits it before the first flush. */
+/** loader(Def, { ssr: "await" }): a document awaits it before the first flush. */
 export function documentModeLoader(entry: LoaderEntry): LoaderEntry {
   return entry.bake ? { ...entry, awaitBeforeFlush: true } : entry;
 }
@@ -1213,11 +1213,11 @@ export function requestReadCaptureFix(
     capture:
       `The captured shell is served to every user of this URL, so ` +
       `request-scoped data read here would leak one user's ${what} to ` +
-      `others. Read it inside a loader without ssr: false and consume it ` +
+      `others. Read it inside a loader without ssr: "await" and consume it ` +
       `with useLoader, e.g. createLoader(async () => ` +
       `getUser(cookies().get("session")?.value)). ${PPR_LANE_HINT}`,
     warning:
-      "Read it in a loader without ssr: false and consume it with useLoader " +
+      'Read it in a loader without ssr: "await" and consume it with useLoader ' +
       "under loading() or an inline <Suspense> (a live hole). A promise the " +
       "handler passes or pushes does not help: the capture waits for it.",
   };

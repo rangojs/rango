@@ -48,8 +48,8 @@ Use it only when you need capabilities beyond what the handler provides:
   document loads, never an HTTP 302 — pre-stream 302s move to middleware)
 - **`meta({ data })` / `handle` exports** — data-derived page metadata becomes
   a handle push from the loader body (`ctx.use(Meta)({ title: data.name })`),
-  with `loader(L, { ssr: false })` when it must be in the SSR'd head (not
-  RR7's `ssr: false` SPA mode, which has no route-wide Rango equivalent: the
+  with `loader(L, { ssr: "await" })` when it must be in the SSR'd head (not
+  RR7's `ssr: "await"` SPA mode, which has no route-wide Rango equivalent: the
   loader flag makes the server settle that loader before the first flush)
 
 If the React Router loader just fetches data for its page component AND the

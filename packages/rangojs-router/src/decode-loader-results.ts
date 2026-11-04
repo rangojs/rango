@@ -26,7 +26,7 @@ import { LoaderRedirect } from "./loader-redirect.js";
  * decodeLoaderResults runs during the tree build on settled results, where a
  * throw would collapse the whole payload — it routes signals through the
  * errorFallback slot instead (same visual: the slot replaces the children
- * under OutletProvider). The document lane's `{ ssr: false }` results take
+ * under OutletProvider). The document lane's `{ ssr: "await" }` results take
  * this route (segment-system buildLoaderStreams): they are settled before the
  * tree is built, and the read-site throw would land in the Fizz shell with no
  * boundary to absorb it.

@@ -210,12 +210,12 @@ export const SHELL_CAPTURE_TASK_HARD_CAP_MS = 25_000;
  * (ShellCaptureDebugEvent.refusal, `caches.refusal` on a `router.prerender()`
  * result): `identity` (a request-scoped read: cookies(), headers(), the
  * theme, a `{ cache: false }` variable), `dynamic` (`ctx.dynamic()`),
- * `loader` (a `{ ssr: false }` loader rejected, settled with
+ * `loader` (a `{ ssr: "await" }` loader rejected, settled with
  * redirect()/notFound(), or a promise it pushed rejected),
  * `no-record` (no doc record: the route's cache() refused the write, or the
  * handler output failed), `handles` (a pushed
  * handle value did not finish encoding), `size` (over the store's value
- * limit, or `ssr: false` loader pins over `ppr.maxSnapshotBytes`: a
+ * limit, or `ssr: "await"` loader pins over `ppr.maxSnapshotBytes`: a
  * navigation-only entry was stored in place of the document shell),
  * `record-expired` (the route cache() record
  * the capture wrote ran out first), `invalidated` (a tag of the shell was
@@ -241,7 +241,7 @@ export type ShellCaptureRefusal =
  * rule: resolveLoaderData (router/segment-resolution/loader-cache.ts).
  */
 export const PPR_LANE_HINT: string =
-  "Lane rule: only loader(Def, { ssr: false }) executes at capture and bakes its " +
+  'Lane rule: only loader(Def, { ssr: "await" }) executes at capture and bakes its ' +
   "non-promise data; every other loader is live (masked at capture, fresh per " +
   "request) and needs loading() or an inline <Suspense> above its reader. See the " +
   '/ppr skill, "The loader lane rule" (node_modules/@rangojs/router/skills/ppr/SKILL.md).';

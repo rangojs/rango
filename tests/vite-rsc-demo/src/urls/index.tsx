@@ -123,7 +123,7 @@ export const urlpatterns = urls(
     layout(ClientShopOuterLayout, () => [
       middleware(clientShopGuardMiddleware),
       // Consumer-app chrome mirror: unflagged loaders stream at the layout
-      // level while the route's { ssr: false } loader is awaited.
+      // level while the route's { ssr: "await" } loader is awaited.
       loader(DemoSessionLoader),
       loader(DemoBasketLoader),
       loader(DemoVehicleLoader),

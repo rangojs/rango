@@ -199,7 +199,7 @@ const HoleyBakeLoader = createLoader(async () => {
 /** Body runs of the /bake-under-loading loaders, across tests. */
 const underLoadingRuns = { baked: 0, live: 0 };
 
-/** An ssr: false loader on an entry whose loading() masks its live sibling. */
+/** An ssr: "await" loader on an entry whose loading() masks its live sibling. */
 const UnderLoadingBakeLoader = createLoader(async () => {
   underLoadingRuns.baked += 1;
   return { baked: `x-run-${underLoadingRuns.baked}` };
@@ -530,8 +530,8 @@ function makeRouter(options: RangoOptions = {}) {
             ppr: true,
           },
           () => [
-            loader(PlainBakeLoader, { ssr: false }),
-            loader(HoleyBakeLoader, { ssr: false }),
+            loader(PlainBakeLoader, { ssr: "await" }),
+            loader(HoleyBakeLoader, { ssr: "await" }),
           ],
         ),
         path("/raced", RacedPage, { name: "raced", ppr: true }),
@@ -540,7 +540,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>bake under loading</p>,
           { name: "bakeUnderLoading", ppr: true },
           () => [
-            loader(UnderLoadingBakeLoader, { ssr: false }),
+            loader(UnderLoadingBakeLoader, { ssr: "await" }),
             loader(UnderLoadingLiveLoader),
             loading(<p>loading</p>),
           ],
@@ -551,7 +551,9 @@ function makeRouter(options: RangoOptions = {}) {
             () => <p>owned replay</p>,
             { name: "ownedReplay", ppr: { ttl: 10, swr: 300 } },
             () => [
-              loader(OwnedLoader, { ssr: false }, () => [cache({ ttl: 300 })]),
+              loader(OwnedLoader, { ssr: "await" }, () => [
+                cache({ ttl: 300 }),
+              ]),
             ],
           ),
         ]),
@@ -560,7 +562,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>deferred owned</p>,
           { name: "deferredOwned", ppr: true },
           () => [
-            loader(DeferredOwnedLoader, { ssr: false }, () => [
+            loader(DeferredOwnedLoader, { ssr: "await" }, () => [
               cache({ ttl: 300 }),
             ]),
           ],
@@ -570,7 +572,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>shared stamp</p>,
           { name: "sharedStamp", ppr: true },
           () => [
-            loader(BakedStampLoader, { ssr: false }),
+            loader(BakedStampLoader, { ssr: "await" }),
             loader(StampLoader),
             loading(<p>stamping</p>),
           ],
@@ -579,26 +581,26 @@ function makeRouter(options: RangoOptions = {}) {
           "/holey-stamp",
           () => <p>holey stamp</p>,
           { name: "holeyStamp", ppr: true },
-          () => [loader(HoleyStampLoader, { ssr: false })],
+          () => [loader(HoleyStampLoader, { ssr: "await" })],
         ),
         path(
           "/nested-stamp",
           () => <p>nested stamp</p>,
           { name: "nestedStamp", ppr: true },
-          () => [loader(NestedStampLoader, { ssr: false })],
+          () => [loader(NestedStampLoader, { ssr: "await" })],
         ),
         path(
           "/outer-dep",
           () => <p>outer dep</p>,
           { name: "outerDep", ppr: true },
-          () => [loader(OuterDepLoader, { ssr: false })],
+          () => [loader(OuterDepLoader, { ssr: "await" })],
         ),
         path(
           "/live-dep",
           () => <p>live dep</p>,
           { name: "liveDep", ppr: true },
           () => [
-            loader(BakeAwaitsDepLoader, { ssr: false }),
+            loader(BakeAwaitsDepLoader, { ssr: "await" }),
             loader(LiveDepLoader),
             loading(<p>loading dep</p>),
           ],
@@ -608,7 +610,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>holey live dep</p>,
           { name: "holeyLiveDep", ppr: true },
           () => [
-            loader(HoleyAwaitsLiveDepLoader, { ssr: false }),
+            loader(HoleyAwaitsLiveDepLoader, { ssr: "await" }),
             loader(LiveDepLoader),
             loading(<p>loading dep</p>),
           ],
@@ -619,7 +621,7 @@ function makeRouter(options: RangoOptions = {}) {
           { name: "holeyLiveDepRev", ppr: true },
           () => [
             loader(LiveDepLoader),
-            loader(HoleyAwaitsLiveDepLoader, { ssr: false }),
+            loader(HoleyAwaitsLiveDepLoader, { ssr: "await" }),
             loading(<p>loading dep</p>),
           ],
         ),
@@ -628,7 +630,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>holey late dep</p>,
           { name: "holeyLateDep", ppr: true },
           () => [
-            loader(HoleyAwaitsLateDepLoader, { ssr: false }),
+            loader(HoleyAwaitsLateDepLoader, { ssr: "await" }),
             loader(LateLiveDepLoader),
             loading(<p>loading dep</p>),
           ],
@@ -638,7 +640,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>holey nested</p>,
           { name: "holeyNested", ppr: true },
           () => [
-            loader(HoleyAwaitsNestingLoader, { ssr: false }),
+            loader(HoleyAwaitsNestingLoader, { ssr: "await" }),
             loader(NestingLiveLoader),
             loading(<p>loading nested</p>),
           ],
@@ -649,7 +651,7 @@ function makeRouter(options: RangoOptions = {}) {
           { name: "holeyNestedRev", ppr: true },
           () => [
             loader(NestingLiveLoader),
-            loader(HoleyAwaitsNestingLoader, { ssr: false }),
+            loader(HoleyAwaitsNestingLoader, { ssr: "await" }),
             loading(<p>loading nested</p>),
           ],
         ),
@@ -658,7 +660,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>holey failing</p>,
           { name: "holeyFailing", ppr: true },
           () => [
-            loader(HoleyAwaitsFailingLoader, { ssr: false }),
+            loader(HoleyAwaitsFailingLoader, { ssr: "await" }),
             loader(FailingLiveLoader),
             loading(<p>loading failing</p>),
           ],
@@ -668,7 +670,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>holey skipping</p>,
           { name: "holeySkipping", ppr: true },
           () => [
-            loader(HoleyAwaitsSkippingLoader, { ssr: false }),
+            loader(HoleyAwaitsSkippingLoader, { ssr: "await" }),
             loader(SkippingLiveLoader),
             loading(<p>loading skipping</p>),
           ],
@@ -678,7 +680,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>after live</p>,
           { name: "afterLive", ppr: true },
           () => [
-            loader(BakePushesAfterLiveLoader, { ssr: false }),
+            loader(BakePushesAfterLiveLoader, { ssr: "await" }),
             loader(LiveDepLoader),
             loading(<p>loading after</p>),
           ],
@@ -687,14 +689,14 @@ function makeRouter(options: RangoOptions = {}) {
           "/once-noted",
           () => <p>once noted</p>,
           { name: "onceNoted", ppr: true },
-          () => [loader(OnceNotedBakeLoader, { ssr: false })],
+          () => [loader(OnceNotedBakeLoader, { ssr: "await" })],
         ),
         path(
           "/cached-hole",
           () => <p>cached hole</p>,
           { name: "cachedHole", ppr: true },
           () => [
-            loader(BakeAwaitsCachedHoleLoader, { ssr: false }),
+            loader(BakeAwaitsCachedHoleLoader, { ssr: "await" }),
             loader(CachedHoleLoader, () => [cache({ ttl: 300 })]),
             loading(<p>loading cached hole</p>),
           ],
@@ -704,7 +706,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>quiet cached hole</p>,
           { name: "quietCachedHole", ppr: true },
           () => [
-            loader(BakeAwaitsQuietHoleLoader, { ssr: false }),
+            loader(BakeAwaitsQuietHoleLoader, { ssr: "await" }),
             loader(QuietCachedHoleLoader, () => [cache({ ttl: 300 })]),
             loading(<p>loading quiet hole</p>),
           ],
@@ -717,7 +719,7 @@ function makeRouter(options: RangoOptions = {}) {
           },
           { name: "earlyCachedHole", ppr: true },
           () => [
-            loader(EarlyBakeLoader, { ssr: false }),
+            loader(EarlyBakeLoader, { ssr: "await" }),
             loader(EarlyCachedHoleLoader, () => [cache({ ttl: 300 })]),
             loading(<p>loading early hole</p>),
           ],
@@ -727,7 +729,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>recapture live</p>,
           { name: "recaptureLive", ppr: { ttl: 10, swr: 300 } },
           () => [
-            loader(RecaptureBakeLoader, { ssr: false }),
+            loader(RecaptureBakeLoader, { ssr: "await" }),
             loader(RecaptureLiveLoader),
             loading(<p>loading recapture</p>),
           ],
@@ -737,7 +739,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>shared dep</p>,
           { name: "sharedDep", ppr: true },
           () => [
-            loader(BakeAwaitsSharedLoader, { ssr: false }),
+            loader(BakeAwaitsSharedLoader, { ssr: "await" }),
             loader(LiveAwaitsSharedLoader),
             loading(<p>loading shared</p>),
           ],
@@ -747,7 +749,7 @@ function makeRouter(options: RangoOptions = {}) {
           () => <p>shared dep live</p>,
           { name: "sharedDepLive", ppr: true },
           () => [
-            loader(BakeAwaitsSharedLoader, { ssr: false }),
+            loader(BakeAwaitsSharedLoader, { ssr: "await" }),
             loader(LiveAwaitsSharedLoader),
             loader(SharedDepLoader),
             loading(<p>loading shared</p>),
@@ -1284,7 +1286,7 @@ describe("serveShellRequest: bake-lane loaders on a HIT", () => {
     }
   });
 
-  it("an ssr: false loader on an entry with loading() is pinned on a client navigation, as on a document HIT", async () => {
+  it('an ssr: "await" loader on an entry with loading() is pinned on a client navigation, as on a document HIT', async () => {
     const { serve } = setup();
     await serve("/bake-under-loading");
     const baked = underLoadingRuns.baked;

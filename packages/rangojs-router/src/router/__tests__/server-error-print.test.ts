@@ -77,11 +77,11 @@ describe("a loader that throws prints the original error once, whatever handles 
     ["no boundary", {}],
     ["a declared errorBoundary()", { declared: true }],
     [
-      "ssr: false, no boundary (the router's default boundary)",
+      'ssr: "await", no boundary (the router\'s default boundary)',
       { ssrFalse: true },
     ],
     [
-      "ssr: false, a declared errorBoundary()",
+      'ssr: "await", a declared errorBoundary()',
       { declared: true, ssrFalse: true },
     ],
   ])("%s", async (_label, options) => {

@@ -566,17 +566,17 @@ export const cachePatterns = urls(
 
     // A cached loader's ctx.use dependency, also read by an uncached sibling
     // loader: its crumb appears once on the MISS and on the HIT, where the
-    // sibling's live run replaces the replayed crumb. ssr: false puts every
+    // sibling's live run replaces the replayed crumb. ssr: "await" puts every
     // push in the document.
     path(
       "/cache-test/cached-loader-dep",
       CacheCachedLoaderDepHandler,
       { name: "cacheTest.cachedLoaderDep" },
       () => [
-        loader(DepCrumbProductLoader, { ssr: false }, () => [
+        loader(DepCrumbProductLoader, { ssr: "await" }, () => [
           cache({ ttl: 600 }),
         ]),
-        loader(DepCrumbSiblingLoader, { ssr: false }),
+        loader(DepCrumbSiblingLoader, { ssr: "await" }),
       ],
     ),
 

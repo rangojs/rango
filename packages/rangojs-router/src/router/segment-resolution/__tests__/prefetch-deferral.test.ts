@@ -278,7 +278,7 @@ describe("resolveDeferralScope", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("defers an ssr: false loader outside ppr", () => {
+  it('defers an ssr: "await" loader outside ppr', () => {
     const loader = loaderEntry("doc", { prefetch: false, bake: true });
     const scope = resolveDeferralScope([entry("route", { loader: [loader] })]);
     expect(scope.loaders.has(loader)).toBe(true);

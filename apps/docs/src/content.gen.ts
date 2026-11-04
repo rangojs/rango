@@ -969,8 +969,8 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 3,
-        "id": "ssr-false",
-        "text": "ssr: false"
+        "id": "ssr-await",
+        "text": "ssr: \"await\""
       },
       {
         "depth": 3,
@@ -1979,8 +1979,8 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 3,
-        "id": "loaders-ssr-false-picks-the-lane",
-        "text": "Loaders: ssr: false picks the lane"
+        "id": "loaders-ssr-await-picks-the-lane",
+        "text": "Loaders: ssr: \"await\" picks the lane"
       },
       {
         "depth": 2,

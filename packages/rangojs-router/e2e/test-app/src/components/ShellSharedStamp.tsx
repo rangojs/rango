@@ -6,7 +6,7 @@ import type { ShellSharedStampData } from "../urls/shell-cache.defs.js";
 
 // A stamp of the shared-key fixture: the live hole's loader reads the same
 // cached item the shell layout read, and renders what the store holds on this
-// request; the ssr: false loader's stamp is the capture's, served from its pin.
+// request; the ssr: "await" loader's stamp is the capture's, served from its pin.
 export function ShellSharedStamp({
   loader,
   testId = "shell-shared-hole",

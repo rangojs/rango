@@ -3,11 +3,11 @@ import { runSsrFalseFormTests } from "@shared/e2e";
 import { useFixture } from "./fixture";
 
 /**
- * A no-script document of a clientUrls() route whose ssr: false loader feeds
+ * A no-script document of a clientUrls() route whose ssr: "await" loader feeds
  * a useActionState form under an inline <Suspense> has the form whole
  * (#1138). Body: tests/shared-e2e/src/ssr-false-form-scenario.ts.
  */
-test.describe("clientUrls ssr: false form", () => {
+test.describe('clientUrls ssr: "await" form', () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
   runSsrFalseFormTests({
     url: (pathname) => f.url(pathname),
@@ -15,7 +15,7 @@ test.describe("clientUrls ssr: false form", () => {
   });
 });
 
-test.describe("clientUrls ssr: false form (production)", () => {
+test.describe('clientUrls ssr: "await" form (production)', () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   runSsrFalseFormTests({
     url: (pathname) => f.url(pathname),

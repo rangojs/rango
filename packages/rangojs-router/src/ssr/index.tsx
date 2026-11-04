@@ -232,7 +232,7 @@ export interface SSRDependencies<TEnv = unknown> {
    *
    * When UNSET, createSSRHandler and createShellCaptureHandler auto-raise to
    * Number.MAX_SAFE_INTEGER for document renders and shell captures whose
-   * matched chain has a `loader(Def, { ssr: false })` entry (payload segments
+   * matched chain has a `loader(Def, { ssr: "await" })` entry (payload segments
    * carry `awaitBeforeFlush`): the loader was awaited before first flush
    * precisely so its content ships in-place, and React 19.2's Fizz would
    * otherwise move any completed boundary over ~500 bytes to an end-of-stream
@@ -441,7 +441,7 @@ function trackDocumentClientLoads<T>(decode: () => T): {
 const SSR_FALSE_FIRST_FLUSH_TURNS = 3;
 
 /**
- * True when the matched chain has a `loader(Def, { ssr: false })` entry: its
+ * True when the matched chain has a `loader(Def, { ssr: "await" })` entry: its
  * payload segments carry `awaitBeforeFlush` (resolveOwnerLoaders).
  */
 function hasAwaitBeforeFlush(payload: {
@@ -453,7 +453,7 @@ function hasAwaitBeforeFlush(payload: {
 /**
  * The progressiveChunkSize renderHTML and captureShellHTML pass to Fizz (see
  * SSRDependencies.progressiveChunkSize): the explicit option, else the
- * ssr:false auto-raise.
+ * ssr: "await" auto-raise.
  */
 function documentChunkSize(
   explicit: number | undefined,
@@ -463,7 +463,7 @@ function documentChunkSize(
 }
 
 /**
- * ssr: false documents only: before the first flush, give Fizz the turns a
+ * ssr: "await" documents only: before the first flush, give Fizz the turns a
  * task waiting on an already-settling thenable needs, so a boundary that
  * waits on nothing else completes in place (#1138).
  *
@@ -953,7 +953,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
 
       const bootstrap = await resolveBootstrap(deps);
 
-      // ssr:false auto-raise (see SSRDependencies.progressiveChunkSize).
+      // ssr: "await" auto-raise (see SSRDependencies.progressiveChunkSize).
       // Awaiting the payload here is latency-neutral: fizz cannot emit even
       // <html> until this same promise settles. A rejection lands in the
       // catch below — the same reportRenderError path a shell error takes.
@@ -1149,7 +1149,7 @@ export function createShellCaptureHandler<TEnv = unknown>(
         origin: opts.origin,
       });
 
-      // ssr:false auto-raise (SSRDependencies.progressiveChunkSize); resume()
+      // ssr: "await" auto-raise (SSRDependencies.progressiveChunkSize); resume()
       // inherits it from the postponed state. A rejected or late payload
       // skips it and fails or degrades below as before.
       const awaitsBeforeFlush = await Promise.race([

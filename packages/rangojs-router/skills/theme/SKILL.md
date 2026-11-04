@@ -141,10 +141,10 @@ Read the theme where it is per request instead:
   visitor with no stored theme sees the default, and one with a stored theme
   sees it after hydration. Any other render, a 404 included, starts at the
   visitor's own theme.
-- A live loader (no `ssr: false`). Loaders do not get `ctx.theme` or
+- A live loader (no `ssr: "await"`). Loaders do not get `ctx.theme` or
   `ctx.setTheme`; read the cookie directly. A live loader runs on every
   request, HITs included, and on a `ppr` route needs `loading()` or an inline
-  `<Suspense>` above its reader. A bake-lane loader (`ssr: false`) runs at
+  `<Suspense>` above its reader. A bake-lane loader (`ssr: "await"`) runs at
   capture, where this `cookies()` read refuses the capture, and so does a
   loader a handler awaits with `ctx.use()`.
 

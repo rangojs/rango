@@ -397,7 +397,7 @@ See "Rewrite" below for what moves and what stays.
 - A loader's data and the settled handle values it pushed come from one
   source on every replay of a PPR shell: the entry's pin, the loader's own
   `cache()` entry, or a run in this request. The shell record holds the
-  settled pushes of each loader body the capture ran (an `ssr: false`
+  settled pushes of each loader body the capture ran (an `ssr: "await"`
   loader's own and those of the loaders it awaits), a pushed promise
   included: the capture waits for it under `ppr.captureTimeout` and records
   the value it settled to, unless that value holds a promise; one that
@@ -406,9 +406,9 @@ See "Rewrite" below for what moves and what stays.
   answers for both (`servedPins` / `loaderPins` in `loader-cache.ts`, the
   seed keyed by loader id), not the request's type:
   - A loader served from its pin: its pushes go through `pushRestored` and
-    stand, unclaimed. A promise-free `ssr: false` loader does not run on the
+    stand, unclaimed. A promise-free `ssr: "await"` loader does not run on the
     replay, so they are the only copy; a loader that does run (a
-    hole-carrying `ssr: false` loader) reads the store, and its settled
+    hole-carrying `ssr: "await"` loader) reads the store, and its settled
     pushes, and those made anywhere inside its body (a `"use cache"` hit
     replaying a dependency's push), are dropped, while the ones holding a
     promise are added; a pushed promise is judged once it settles, the same
@@ -420,7 +420,7 @@ See "Rewrite" below for what moves and what stays.
     and on the seeded fallback after an explicit route `cache()` miss (#1001,
     #1003).
   - Any other loader is a hole: one the route runs on the live lane, or an
-    `ssr: false` loader the entry has no pin for (a navigation-only entry,
+    `ssr: "await"` loader the entry has no pin for (a navigation-only entry,
     which a capture over `maxSnapshotBytes` also stores). Its pushes are restored through
     `pushPlaceholder`, unclaimed. Its run replaces them in place
     (#936), even when a running pinned loader awaits it (a hole's body ends
@@ -432,14 +432,14 @@ See "Rewrite" below for what moves and what stays.
   - A dependency the route registers on neither lane is credited at capture
     to the first registered loader around it: under a live-lane loader its
     pushes are that hole's; run only under a bake-lane loader, they are
-    recorded under its own id and stand while every `ssr: false` loader of
+    recorded under its own id and stand while every `ssr: "await"` loader of
     the route is pinned (the record does not name the loader that ran it).
 
   A route `cache()` record a capture wrote has no pins, so every owner in it
   is a placeholder: the loader's run or its own `cache()` entry replaces the
   copy. Owned values a capture restores from such a record keep their owner
   in the shell record too. A PPR partial replay whose doc record hits serves
-  the same loader pins as the document HIT, by each loader's own `ssr: false`
+  the same loader pins as the document HIT, by each loader's own `ssr: "await"`
   flag (`LoaderEntry.bake`), whatever `loading()` sits on its entry. Not
   covered: a reader that starts a cached loader before its binding (by
   design: the reader runs it live while the binding serves its entry, so the
@@ -469,7 +469,7 @@ See "Rewrite" below for what moves and what stays.
   `serveStoredSegments`; pinned by `cached-handle-push-order.rsc-test.tsx`.
 
 - Under PPR shell capture, of the DSL `loader()` registrations only
-  `loader(Def, { ssr: false })` executes and bakes; every other registration
+  `loader(Def, { ssr: "await" })` executes and bakes; every other registration
   is masked and live, whatever its `loading()`
   ([`/ppr` → The loader lane rule](../../skills/ppr/SKILL.md#the-loader-lane-rule);
   source: `resolveLoaderData` in `loader-cache.ts`). A loader a handler
@@ -569,7 +569,7 @@ See "Rewrite" below for what moves and what stays.
     `serve-shell-request-push-ownership.rsc-test.tsx`,
     `handle-store.test.ts`, and `expectShellHitHydratesFromRecord` in both
     apps (#1035).
-  - **A document HIT holds a pin for every `ssr: false` loader its prelude
+  - **A document HIT holds a pin for every `ssr: "await"` loader its prelude
     baked.** Loader data has no record copy: without its pin a loader runs on
     the HIT and its value hydrates over HTML rendered from the capture's, and
     React renders the document again on the client. So a capture whose pins
@@ -728,7 +728,7 @@ See "Rewrite" below for what moves and what stays.
   the record under `cache()` rules. Live-lane segment loaders are
   masked — they are the structural holes. Holes come from loaders only:
   `loading()` or inline-Suspense subtrees over a live-lane loader read
-  (structural), and promises nested in an `ssr: false` loader's return value
+  (structural), and promises nested in an `ssr: "await"` loader's return value
   (masked by shape). Everything else is shell.
 - **Serve-time guarding is guaranteed on every serve.** Every serve — MISS and
   HIT — runs the full middleware chain and the live loaders. A MISS renders
@@ -754,7 +754,7 @@ See "Rewrite" below for what moves and what stays.
   revalidation rules, and diff collection decide what is returned; captured
   item pins are excluded. Live loaders run fresh. When the doc record hits in a
   shell a document request captured, the replay arms the bake-lane loader seed
-  (`matchPartialWithPprReplay`'s `onHit`), so `ssr: false` loaders are served
+  (`matchPartialWithPprReplay`'s `onHit`), so `ssr: "await"` loaders are served
   from their pins as on a document HIT; a navigation-only capture carries no
   loader pins, and its replay runs them fresh. The overlay is the
   implicit scope's explicit store, not the request's app store, so route-authored
@@ -883,7 +883,7 @@ captured handler promise, top-level handles, and Meta` dev+production e2e
     separate tier and keeps its old contract.
   - Client-side consumption (`useLoader` in a `"use client"` component) is the
     LIVE lane: fresh per request, per visitor. A slot-owned identity loader
-    under PPR is registered live-lane (`loader()` without `ssr: false`, the
+    under PPR is registered live-lane (`loader()` without `ssr: "await"`, the
     slot's `loading()` as its boundary) and read client-side.
   - DSL `loader()` segments follow their PPR lane (lane rule above; the bake
     lane runs WITH the identity guard active).
@@ -906,7 +906,7 @@ segment record — the same record the capture rendered its prelude from — so
 the prelude and the hydration payload cannot disagree, and nothing that
 depends on handler timing can drift between them. What still runs on a HIT:
 the full middleware chain (before the commit) and the loaders (live-lane
-holes, and `ssr: false` loaders re-running against their pinned reads).
+holes, and `ssr: "await"` loaders re-running against their pinned reads).
 
 How the tail is held to it: `serveShellHit` (`src/rsc/rsc-rendering.ts`) arms
 the `_shellImplicitCache` marker with `docTail: true` and
@@ -1146,7 +1146,7 @@ Rules that are easy to break:
   error there. The PPR capture and the build-time shell capture run
   `captureShellHTML`, which still rejects on a shell error; they never call
   `renderHTML`.
-- An `ssr: false` loader's error answers 500 whichever boundary renders it
+- An `ssr: "await"` loader's error answers 500 whichever boundary renders it
   (`useDefaultErrorBoundary` in `wrapLoaderWithErrorHandling`). It
   settles before the first flush, so the write lands; on a shell HIT the
   status went out with the shell and the write is inert.
@@ -2463,7 +2463,7 @@ set these rules.
 
 ## Non-Guarantees
 
-- A loader cannot rewrite, by design (`ssr: false` included): `rewrite()` is
+- A loader cannot rewrite, by design (`ssr: "await"` included): `rewrite()` is
   a middleware tool. A loader's throw becomes the loader's error UI and is
   reported through onError (phase `"loader"`), its message pointing to route
   middleware. A rewrite that depends on data goes in the route's middleware,
@@ -2886,7 +2886,7 @@ should not be treated as equivalent.
   owner's call). A loader `redirect()` replaces only the route's
   content and navigates; `notFound()` renders its
   not-found UI in the segment. Only the document lane (SSR and its
-  hydration) decodes a settled entry in the build, for a `{ ssr: false }`
+  hydration) decodes a settled entry in the build, for a `{ ssr: "await" }`
   loader, and replaces the whole page for its `redirect()`, because Fizz has
   no boundary to catch a throw at the read. Before, these lanes
   decoded the set in the build: an error with no `errorBoundary()` rejected

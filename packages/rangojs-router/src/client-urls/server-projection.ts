@@ -103,7 +103,7 @@ export interface ClientUrlProjectionRoute {
   readonly options: ClientUrlProjectionOptions;
   readonly loaderIds: readonly string[];
   readonly hasLoading: boolean;
-  /** Indices into loaderIds of loaders declared loader(Def, { ssr: false });
+  /** Indices into loaderIds of loaders declared loader(Def, { ssr: "await" });
    *  materialization passes the option through to the server loader() so
    *  document renders await them before first flush. Absent (= none) in
    *  projections serialized before the option existed. */
@@ -348,7 +348,7 @@ function serializeRoute(
 
   const awaitedLoaderIndices = indicesWhere(
     route.loaders,
-    ({ ssr }) => ssr === false,
+    ({ ssr }) => ssr === "await",
   );
 
   const transition = serializeTransition(route);
@@ -832,7 +832,7 @@ function materializeRouteItems(
   };
 
   // The loader() items of a route's or an intercept's projected loaders: each
-  // stub with its `ssr: false` and `prefetch` flags and its revalidate()
+  // stub with its `ssr: "await"` and `prefetch` flags and its revalidate()
   // predicates.
   const materializeLoaders = (owner: ProjectedLoaders) =>
     owner.projected.loaderIds.map((id, loaderIndex) => {
@@ -841,7 +841,7 @@ function materializeRouteItems(
         createLoaderStub(id),
         {
           ...(owner.projected.awaitedLoaderIndices?.includes(loaderIndex) && {
-            ssr: false,
+            ssr: "await" as const,
           }),
           ...(owner.projected.deferrableLoaderIndices?.includes(
             loaderIndex,

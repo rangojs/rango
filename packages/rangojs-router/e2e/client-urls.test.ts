@@ -120,7 +120,7 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     await expect(testId(page, "cu-vars-route")).toHaveText(VARS_EXPECTED);
   });
 
-  test("ssr:false loader redirect() on the document lane: 200 document, client replace, for layout, page, and child-read readers", async ({
+  test('ssr: "await" loader redirect() on the document lane: 200 document, client replace, for layout, page, and child-read readers', async ({
     page,
     request,
   }) => {
@@ -145,7 +145,7 @@ function clientUrlsTests(f: ReturnType<typeof useFixture>): void {
     }
   });
 
-  test("ssr:false loader notFound() on the document lane: real 404 with the not-found UI, no 500", async ({
+  test('ssr: "await" loader notFound() on the document lane: real 404 with the not-found UI, no 500', async ({
     page,
     request,
   }) => {

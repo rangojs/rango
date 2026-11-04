@@ -4,7 +4,7 @@ import { assertShellStatus } from "@rangojs/router/testing/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import { expectNoPageError, testId, waitForHydration } from "./helper";
 
-// Issue #942: an ssr:false loader value carrying JSX (loaders/ppr-jsx.tsx).
+// Issue #942: an ssr: "await" loader value carrying JSX (loaders/ppr-jsx.tsx).
 // In dev the route stayed x-rango-shell: MISS.
 
 const HTML_HEADERS = { Accept: "text/html" };
@@ -12,7 +12,7 @@ const LIVE_VALUE = /live run \d+/;
 const REVIEWS_VALUE = /reviews run \d+/;
 
 function defineBakeLaneJsxTests(f: Fixture) {
-  test("ssr:false loader value with JSX: HITs, bakes the elements, streams the promises inside JSX, hydrates cleanly", async ({
+  test('ssr: "await" loader value with JSX: HITs, bakes the elements, streams the promises inside JSX, hydrates cleanly', async ({
     page,
   }) => {
     using _ = expectNoPageError(page);

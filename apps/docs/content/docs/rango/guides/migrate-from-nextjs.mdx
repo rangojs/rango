@@ -320,7 +320,7 @@ If the param set really is closed, export the `Prerender()` definition alone and
 
 ### Partial prerendering: the ppr path option
 
-Next.js PPR statically prerenders a shell at build time and streams the parts inside `<Suspense>` at request time. Rango ships a similar model as a path option: the shell is captured at runtime into the app cache store and resumed on later requests, with the holes rendered fresh per request. The difference is what counts as a hole. In Rango everything a handler produces is shell material, as it is under `cache()` — including a promise it hands to a component under `<Suspense>`. The capture awaits that promise and bakes its value. A live hole is loader data: move the per-request fetch into a loader (no `ssr: false`) and read it under a boundary:
+Next.js PPR statically prerenders a shell at build time and streams the parts inside `<Suspense>` at request time. Rango ships a similar model as a path option: the shell is captured at runtime into the app cache store and resumed on later requests, with the holes rendered fresh per request. The difference is what counts as a hole. In Rango everything a handler produces is shell material, as it is under `cache()` — including a promise it hands to a component under `<Suspense>`. The capture awaits that promise and bakes its value. A live hole is loader data: move the per-request fetch into a loader (no `ssr: "await"`) and read it under a boundary:
 
 ```tsx
 import { Suspense } from "react";
@@ -339,7 +339,7 @@ function ProductPage(ctx: HandlerContext) {
   );
 }
 
-// Rango shape for a live price: a loader without ssr: false, read with
+// Rango shape for a live price: a loader without ssr: "await", read with
 // useLoader(LivePriceLoader) in a client component. loading() (or an inline
 // <Suspense> around the reader) is the hole boundary.
 function ProductPageLive() {
@@ -359,9 +359,9 @@ path(
 
 Differences that matter during migration:
 
-- **Handler output bakes; loader data is the hole.** A promise the handler passes down, an async server component, a promise nested in a handle it pushes, and a loader it awaits are all awaited at capture (bounded by `ppr.captureTimeout`, 15 seconds by default) and served frozen for the shell's lifetime; a shell HIT never runs a handler. Keep the parts that must be fresh in loaders without `ssr: false`; inside an `ssr: false` loader, return them as nested promises. For loaders, `ssr: false` selects the lane, not `loading()` — see [the loader lane rule](/docs/rango/guides/ppr#loaders-ssr-false-picks-the-lane).
+- **Handler output bakes; loader data is the hole.** A promise the handler passes down, an async server component, a promise nested in a handle it pushes, and a loader it awaits are all awaited at capture (bounded by `ppr.captureTimeout`, 15 seconds by default) and served frozen for the shell's lifetime; a shell HIT never runs a handler. Keep the parts that must be fresh in loaders without `ssr: "await"`; inside an `ssr: "await"` loader, return them as nested promises. For loaders, `ssr: "await"` selects the lane, not `loading()` — see [the loader lane rule](/docs/rango/guides/ppr#loaders-ssr-await-picks-the-lane).
 - **Shell freshness is explicit.** Next's PPR shell is fixed until the next build; Rango's has `ttl`/`swr`/`tags` per route, and `updateTag()` / `revalidateTag()` drop the shell (`revalidate()` does not — it selects what re-renders and never touches shell HTML).
-- **Request-scoped reads in shell material refuse the capture** (in Next they silently force dynamic rendering). `cookies()`, `headers()`, `ctx.request.headers`, a `{ cache: false }` variable, and `ctx.dynamic()` throw or refuse anywhere the capture waits for them: a handler, a promise it passes or pushes, an async component, a loader it awaits. Per-user reads must move into a live loader (no `ssr: false`); a nested promise does not help, because its body still runs during capture. A normal `ctx.get()` value is not guarded and bakes as the capturing request's value. The problem surfaces during migration instead of in production.
+- **Request-scoped reads in shell material refuse the capture** (in Next they silently force dynamic rendering). `cookies()`, `headers()`, `ctx.request.headers`, a `{ cache: false }` variable, and `ctx.dynamic()` throw or refuse anywhere the capture waits for them: a handler, a promise it passes or pushes, an async component, a loader it awaits. Per-user reads must move into a live loader (no `ssr: "await"`); a nested promise does not help, because its body still runs during capture. A normal `ctx.get()` value is not guarded and bakes as the capturing request's value. The problem surfaces during migration instead of in production.
 - **A store is required.** PPR needs the app-level `createRouter({ cache })` store (`MemorySegmentCacheStore`, `CFCacheStore`, `VercelCacheStore`). Without one the route stays fully dynamic and logs a warning once per key.
 - **Middleware still guards every serve.** Auth middleware runs before any shell byte on a cache hit and a miss alike, so there is no "PPR bypasses middleware" caveat to migrate around.
 
@@ -572,7 +572,7 @@ const HomePage: Handler<"home"> = (ctx) => {
 };
 ```
 
-`generateMetadata({ params })` derives metadata from data and blocks the document until it is ready. In Rango, push the metadata from the loader that owns the data, and register that loader with `{ ssr: false }` so document requests await it before the first flush:
+`generateMetadata({ params })` derives metadata from data and blocks the document until it is ready. In Rango, push the metadata from the loader that owns the data, and register that loader with `{ ssr: "await" }` so document requests await it before the first flush:
 
 ```tsx
 // Next.js: export async function generateMetadata({ params }) {
@@ -590,11 +590,11 @@ export const ProductLoader = createLoader(async (ctx) => {
 });
 
 path("/product/:slug", ProductPage, { name: "product" }, () => [
-  loader(ProductLoader, { ssr: false }),
+  loader(ProductLoader, { ssr: "await" }),
 ]);
 ```
 
-Without `{ ssr: false }` the push still applies, but a slow loader's title can arrive after the document response has started instead of in the server-rendered `<head>`.
+Without `{ ssr: "await" }` the push still applies, but a slow loader's title can arrive after the document response has started instead of in the server-rendered `<head>`.
 
 Render `<Html.Meta />` in the Document's `<head>`:
 
@@ -675,7 +675,7 @@ See [Theme](/docs/rango/guides/theme) for system detection and cookie persistenc
 8. Replace `next/link` with `Link` from `@rangojs/router/client`, and set `prefetch` where you relied on Next's automatic prefetching
 9. Convert loading/error files to `loading()` / `errorBoundary()`, with a client `ErrorBoundary` where you need `reset`
 10. Migrate API routes to `path.json()` / `path.text()`
-11. Update metadata to the `Meta` handle + `<Html.Meta />` in the document head (`generateMetadata` becomes a loader push with `{ ssr: false }`)
+11. Update metadata to the `Meta` handle + `<Html.Meta />` in the document head (`generateMetadata` becomes a loader push with `{ ssr: "await" }`)
 12. Replace `next-themes` with `theme: true` in `createRouter`
 13. Map segment config: `revalidate = N` to `cache({ ttl })`, `force-static` to `Static()`/`Prerender()`, `experimental_ppr` to the `ppr` path option
 14. Run `npx rango generate src/` to generate route types (see [CLI](/docs/rango/reference/cli))

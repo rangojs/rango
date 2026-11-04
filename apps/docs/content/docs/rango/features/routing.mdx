@@ -147,7 +147,7 @@ path("/product/:slug", async (ctx) => {
 });
 ```
 
-`notFound()` falls back through the nearest `notFoundBoundary()` in the tree, then `defaultNotFoundBoundary` from `createRouter()`, then the `notFound` option, then a built-in `<h1>Not Found</h1>`. No-match and handler-thrown 404s always set HTTP 404. A loader can call `notFound()` too; on a document load its 404 status is only guaranteed when the loader is registered with `{ ssr: false }` ([reference](/docs/rango/reference/create-router#fallback-chain-for-notfound)).
+`notFound()` falls back through the nearest `notFoundBoundary()` in the tree, then `defaultNotFoundBoundary` from `createRouter()`, then the `notFound` option, then a built-in `<h1>Not Found</h1>`. No-match and handler-thrown 404s always set HTTP 404. A loader can call `notFound()` too; on a document load its 404 status is only guaranteed when the loader is registered with `{ ssr: "await" }` ([reference](/docs/rango/reference/create-router#fallback-chain-for-notfound)).
 
 ### Errors and `notFound()` in a streamed handler
 

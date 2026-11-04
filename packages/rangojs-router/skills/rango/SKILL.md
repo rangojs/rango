@@ -27,7 +27,7 @@ with the shape, then pick a primitive.
   **stream**, so data latency overlaps first paint instead of blocking it (a
   cache hit streams UI instantly while loaders resolve fresh alongside). Opt into
   caching explicitly. See `/loader` → "Parallel and streaming". The one
-  exception is a `ppr` route's `ssr: false` loader: it bakes into the shell
+  exception is a `ppr` route's `ssr: "await"` loader: it bakes into the shell
   and runs on a shell HIT only when its return carries promises (`/ppr`).
 - **One identity, one store** — loaders, handles, cached fns, and actions are all
   `path#export`; all caches share one store. Entries expire by TTL/SWR, and are
@@ -71,7 +71,7 @@ are immune to partial-revalidation staleness by construction.
 
 1. **A loader** (`loader()` + `useLoader()`). Loaders resolve fresh on every
    pass — full renders, action revalidations, cache hits, PPR shell HITs (on a
-   `ppr` route, keep it off `ssr: false`, which bakes it into the shell).
+   `ppr` route, keep it off `ssr: "await"`, which bakes it into the shell).
    Nothing to keep in sync. If the data can be a loader, make it a loader.
 2. **Middleware `ctx.set()`**. Route middleware wraps every render pass,
    including post-action revalidation and PE re-renders, so its variables are
@@ -117,7 +117,7 @@ stated, greppable contract.
 | modal / soft navigation                 | `intercept()`                      | /intercept              |
 | route group of client components        | `clientUrls()` in `"use client"`   | /client-urls            |
 | set meta/breadcrumbs from loader data   | `ctx.use(Handle)` in the loader    | /loader                 |
-| guarantee loader output in the SSR HTML | `loader(L, { ssr: false })`        | /loader                 |
+| guarantee loader output in the SSR HTML | `loader(L, { ssr: "await" })`      | /loader                 |
 | pre-render a route at build time        | `Prerender(...)` wrapper           | /prerender              |
 | make a route ready before traffic       | `router.prerender({ env })(url)`   | /prerender              |
 | feed live loaders from a cached shell   | replayed handle + `ctx.rendered()` | /shell-manifest         |
@@ -130,7 +130,7 @@ stated, greppable contract.
 - `path()`/`include()` are always visible in `urls()`; config helpers are extractable.
 - **Cache decides freshness; `revalidate()` decides client-update.** Orthogonal; compose.
 - Loaders resolve fresh every request (even inside `cache()`) and never run twice/request.
-  The exception is a `ppr` route's `ssr: false` loader: it bakes into the shell
+  The exception is a `ppr` route's `ssr: "await"` loader: it bakes into the shell
   and runs on a shell HIT only when its return carries promises.
 - **The consumption-lane rule.** For every shared artifact (`cache()`,
   `"use cache"`, the PPR shell): server-side handler consumption
@@ -143,14 +143,14 @@ stated, greppable contract.
   `loader()` binding, or the cached function itself) and REFUSE a PPR capture: the route serves uncached until
   the read moves to a live loader. Client-side consumption
   (`useLoader` in a `"use client"` component) is the LIVE lane. DSL
-  `loader()` segments follow their PPR lane (only `ssr: false` bakes; see
+  `loader()` segments follow their PPR lane (only `ssr: "await"` bakes; see
   `/ppr` → The loader lane rule).
 - **A PPR shell HIT never runs a handler.** Everything a handler produces
   (promises it passes under `<Suspense>`, async server components, handle
   pushes, loaders it awaits) is shell material, as under `cache()`; a HIT
-  runs middleware and live loaders only (an `ssr: false` loader runs there
+  runs middleware and live loaders only (an `ssr: "await"` loader runs there
   only when its return carries promises). Live data belongs in a loader without
-  `ssr: false`, read with `useLoader` under `loading()` or an inline
+  `ssr: "await"`, read with `useLoader` under `loading()` or an inline
   `<Suspense>`.
 - Inside `"use cache"`: `cookies()`/`headers()`/`ctx.request.headers` and `ctx` side-effects
   (`set`/`header`/`setTheme`/`onResponse`/`setLocationState`) throw; `ctx.use(Handle)`

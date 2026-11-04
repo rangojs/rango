@@ -20,7 +20,7 @@ export interface OutletContextValue {
   loaderStreams?: Record<string, unknown>;
   /**
    * Loader $$ids on this segment that the render awaited before first flush
-   * (loader(Def, { ssr: false })). Dev-diagnostic input only: useLoader uses
+   * (loader(Def, { ssr: "await" })). Dev-diagnostic input only: useLoader uses
    * it to warn when a read still suspends during SSR on a render that awaited
    * flagged loaders (ssr-suspension-warning.ts). Present only where a
    * segment carries flagged loaders (document and shell-capture renders, and

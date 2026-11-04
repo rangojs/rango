@@ -241,7 +241,7 @@ describe("clientUrls", () => {
     ]);
   });
 
-  it("stores the ssr flag from loader(Def, { ssr: false }, use?)", () => {
+  it('stores the ssr flag from loader(Def, { ssr: "await" }, use?)', () => {
     const PlainLoader = loader("loaders#plain");
     const FlaggedLoader = loader("loaders#flagged");
     const FlaggedWithUse = loader("loaders#flagged-use");
@@ -249,8 +249,8 @@ describe("clientUrls", () => {
     const patterns = clientUrls(({ path, loader: useLoader, revalidate }) => [
       path("/mixed", AccountPage, () => [
         useLoader(PlainLoader),
-        useLoader(FlaggedLoader, { ssr: false }),
-        useLoader(FlaggedWithUse, { ssr: false }, () => [
+        useLoader(FlaggedLoader, { ssr: "await" }),
+        useLoader(FlaggedWithUse, { ssr: "await" }, () => [
           revalidate(() => false),
         ]),
       ]),
@@ -263,11 +263,11 @@ describe("clientUrls", () => {
     });
     expect(route.loaders[1]).toMatchObject({
       loader: FlaggedLoader,
-      ssr: false,
+      ssr: "await",
     });
     expect(route.loaders[2]).toMatchObject({
       loader: FlaggedWithUse,
-      ssr: false,
+      ssr: "await",
     });
     expect(route.loaders[2].revalidate).toHaveLength(1);
   });
@@ -287,14 +287,38 @@ describe("clientUrls", () => {
           useLoader(AccountLoader, { ssr: "never" } as never),
         ]),
       ]),
-    ).toThrow(/ssr must be a boolean/);
+    ).toThrow(/ssr must be "stream" or "await" \(got "never"\)/);
+    expect(() =>
+      clientUrls(({ path, loader: useLoader }) => [
+        path("/x", AccountPage, () => [
+          useLoader(AccountLoader, { ssr: true } as never),
+        ]),
+      ]),
+    ).toThrow(/ssr must be "stream" or "await" \(got true\)/);
+    expect(() =>
+      clientUrls(({ path, loader: useLoader }) => [
+        path("/x", AccountPage, () => [
+          // @ts-expect-error -- false is not a LoaderOptions["ssr"] value
+          useLoader(AccountLoader, { ssr: false }),
+        ]),
+      ]),
+    ).toThrow(
+      /clientUrls\(\) loader\(\) ssr: false was replaced: use loader\(Def, \{ ssr: "await" \}\)/,
+    );
+    expect(
+      clientUrls(({ path, loader: useLoader }) => [
+        path("/x", AccountPage, () => [
+          useLoader(AccountLoader, { ssr: "stream" }),
+        ]),
+      ]).routes[0]!.loaders[0],
+    ).toEqual({ loader: AccountLoader, revalidate: [] });
     expect(() =>
       clientUrls(({ path, loader: useLoader }) => [
         path("/x", AccountPage, () => [
           useLoader(AccountLoader, { stream: "navigation" } as never),
         ]),
       ]),
-    ).toThrow(/stream was replaced.*ssr: false/);
+    ).toThrow(/stream was replaced.*ssr: "await"/);
   });
 
   // prefetch: false on a group route's loader (docs/design/prefetch-false.md,
@@ -312,7 +336,7 @@ describe("clientUrls", () => {
         useLoader(ReviewsLoader, { prefetch: false }, () => [
           revalidate(() => false),
         ]),
-        useLoader(BothLoader, { ssr: false, prefetch: false }),
+        useLoader(BothLoader, { ssr: "await", prefetch: false }),
         useLoader(TrueLoader, { prefetch: true }),
       ]),
     ]);
@@ -327,7 +351,7 @@ describe("clientUrls", () => {
     expect(route.loaders[1].ssr).toBeUndefined();
     expect(route.loaders[2]).toMatchObject({
       loader: BothLoader,
-      ssr: false,
+      ssr: "await",
       prefetch: false,
     });
     expect(route.loaders[3]).toEqual({ loader: TrueLoader, revalidate: [] });
@@ -414,13 +438,13 @@ describe("clientUrls", () => {
     ]);
   });
 
-  it("rejects ssr: false on intercept loaders", () => {
+  it('rejects ssr: "await" on intercept loaders', () => {
     const DetailLoader = loader("loaders#detail");
     expect(() =>
       clientUrls(({ path, intercept, loader: useLoader }) => [
         path("/items/:id", AccountPage, { name: "detail" }),
         intercept("@modal", ".detail", AccountLayout, () => [
-          useLoader(DetailLoader, { ssr: false }),
+          useLoader(DetailLoader, { ssr: "await" }),
         ]),
       ]),
     ).toThrow(/intercepts render on client navigations only/);
@@ -1097,14 +1121,14 @@ describe("clientUrls(): a mounted component's own use items (Component.use)", ()
     expect(patterns.intercepts[0]!.loading).toBe("modal skeleton");
 
     const ssr = withUse("SsrModal", () => [
-      globalLoader(Modal, { ssr: false }),
+      globalLoader(Modal, { ssr: "await" }),
     ]);
     expect(() =>
       clientUrls(({ path, intercept }) => [
         path("/items/:id", UserPage, { name: "item" }),
         intercept("@modal", ".item", ssr),
       ]),
-    ).toThrow("intercept() loaders cannot use ssr: false");
+    ).toThrow('intercept() loaders cannot use ssr: "await"');
   });
 
   it("validates the component's items for its mount site, naming the component", () => {

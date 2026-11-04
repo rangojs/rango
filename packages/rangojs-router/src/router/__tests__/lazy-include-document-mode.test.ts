@@ -55,18 +55,18 @@ const sectionPatterns = urls<any>(({ path }) => [
 const rootPatterns = urls<any>(
   ({ layout, loader, loading, parallel, path, include }) => [
     layout(Div, () => [
-      loader(RootLoader, { ssr: false }),
+      loader(RootLoader, { ssr: "await" }),
       loading(Fallback, { ssr: false }),
       layout(Div, () => [
-        loader(StoreLoader, { ssr: false }),
+        loader(StoreLoader, { ssr: "await" }),
         loader(LiveLoader),
         loading(Fallback, { ssr: false }),
         parallel({ "@aside": Div }, () => [
-          loader(SlotLoader, { ssr: false }),
+          loader(SlotLoader, { ssr: "await" }),
           loading(Fallback, { ssr: false }),
         ]),
         layout(Div, () => [
-          loader(OrphanLoader, { ssr: false }),
+          loader(OrphanLoader, { ssr: "await" }),
           loading(Fallback, { ssr: false }),
         ]),
         path("/direct", Div, { name: "direct" }),

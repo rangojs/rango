@@ -6,7 +6,7 @@ import { waitForHydration, prodDescribe } from "./helper";
  * ppr on a clientUrls route (/client-shop/ppr/:slug) — the /ssr shape plus a
  * shell declaration, deliberately WITHOUT loading() (loader-container-bake):
  *
- * - MISS document: identical semantics to /ssr — the { ssr: false } loader is
+ * - MISS document: identical semantics to /ssr — the { ssr: "await" } loader is
  *   awaited before first flush (data + <head> title in the shell, its skeleton
  *   never SSRs) while the unflagged sidecar streams. Capture runs in the
  *   background.

@@ -190,7 +190,7 @@ interface RangoBaseOptions {
    * which is why React outlines by default.
    *
    * When UNSET, document renders and PPR shell captures whose matched chain
-   * has a `loader(Def, { ssr: false })` entry auto-raise to MAX_SAFE_INTEGER —
+   * has a `loader(Def, { ssr: "await" })` entry auto-raise to MAX_SAFE_INTEGER —
    * the loader was awaited before first flush precisely so its content ships
    * in-place, and outlining the boundary it feeds would defeat that. A shell
    * HIT inherits the captured value, so it matches the live render. Setting

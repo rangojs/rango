@@ -886,11 +886,11 @@ describe("createSSRHandler", () => {
       });
     });
 
-    // A document whose chain has an ssr: false loader settles the Fizz tasks
+    // A document whose chain has an ssr: "await" loader settles the Fizz tasks
     // parked on settling thenables before its first flush (#1138). The form
     // action is what useActionState makes of the server reference the SSR
     // environment imports: a bound reference, whose encode suspends once.
-    describe("ssr: false first flush", () => {
+    describe('ssr: "await" first flush', () => {
       const save = createServerReference("test#save") as (
         previous: string | null,
         formData: FormData,
@@ -1090,10 +1090,10 @@ describe("createSSRHandler", () => {
         expect(html).toContain("streamed");
       });
 
-      // The #1120 scar: a document without an ssr: false loader flushes as
+      // The #1120 scar: a document without an ssr: "await" loader flushes as
       // before. A skeleton whose content lands one turn after the shell is
       // ready is still the first flush's.
-      it("a document without an ssr: false loader is returned with no turn, so its skeleton flushes first", async () => {
+      it('a document without an ssr: "await" loader is returned with no turn, so its skeleton flushes first', async () => {
         const order: string[] = [];
         let resolveData!: () => void;
         const data = new Promise<void>((resolve) => {

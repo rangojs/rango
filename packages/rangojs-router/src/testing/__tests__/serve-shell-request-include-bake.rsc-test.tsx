@@ -1,10 +1,10 @@
 /**
  * Issue #1179: a page mounted through include() under a layout with
- * `loader(Def, { ssr: false })` or `loading(fallback, { ssr: false })` gets
+ * `loader(Def, { ssr: "await" })` or `loading(fallback, { ssr: false })` gets
  * the document semantics of both, like the same page declared directly under
  * the layout. include() captures the layout on an evaluation without isSSR;
  * a document request used that capture as is, so a ppr capture took the
- * layout's ssr: false loader for a live one and masked it, and a document
+ * layout's ssr: "await" loader for a live one and masked it, and a document
  * showed the ssr: false fallback.
  *
  * In an app, a chrome that read the masked loader outside <Suspense> made the
@@ -55,7 +55,7 @@ const sectionUrls = urls(({ path }) => [
 const router = createRouter({}).routes(
   urls(({ layout, loader, path, include }) => [
     layout(StoreLayout, () => [
-      loader(ChromeLoader, { ssr: false }),
+      loader(ChromeLoader, { ssr: "await" }),
       path("/direct", Page, { name: "direct", ppr: true }),
       include("/section", sectionUrls, { name: "section" }),
     ]),
@@ -74,7 +74,7 @@ const fallbackRouter = createRouter({}).routes(
   urls(({ layout, loader, loading, path, include }) => [
     path("/other", () => <p>other</p>, { name: "other" }),
     layout(StoreLayout, () => [
-      loader(ChromeLoader, { ssr: false }),
+      loader(ChromeLoader, { ssr: "await" }),
       loading(<p>store fallback</p>, { ssr: false }),
       path("/direct", Page, { name: "direct" }),
       include("/section", plainSectionUrls, { name: "section" }),
@@ -88,7 +88,7 @@ beforeEach(async () => {
   await resetShellTestState();
 });
 
-describe("serveShellRequest: a layout's ssr: false loader and loading() above include() (#1179)", () => {
+describe('serveShellRequest: a layout\'s ssr: "await" loader and loading() above include() (#1179)', () => {
   it.each([
     ["declared directly under the layout", "/direct"],
     ["mounted through include() under the layout", "/section/page"],

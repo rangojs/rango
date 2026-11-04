@@ -164,7 +164,7 @@ export interface ResolvedSegment {
   loaderData?: any; // For loaders: the resolved data from loader execution
   /**
    * True when this loader was awaited before first flush
-   * (loader(Def, { ssr: false })). Stamped by resolveOwnerLoaders on
+   * (loader(Def, { ssr: "await" })). Stamped by resolveOwnerLoaders on
    * document AND shell-capture renders — capture bakes flagged loaders and
    * awaits the same lane. Feeds segment-system's settled-value delivery and
    * the dev SSR suspension warning (ssr-suspension-warning.ts).
@@ -185,7 +185,7 @@ export interface ResolvedSegment {
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
   /**
    * Per-loader UNDECODED results for a layout/route stream map.
-   * Flagged (ssr:false) entries are settled values; unflagged siblings
+   * Flagged (ssr: "await") entries are settled values; unflagged siblings
    * stay promises. Parallel slots do not use this channel — they pin
    * loading() / live-lane holes via use(loaderDataPromise).
    */

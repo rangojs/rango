@@ -323,14 +323,13 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   return <div>{data.name}</div>;
    * }
    * ```
-   * Pass `{ ssr: false }` — the same knob as loading(fallback, { ssr:
-   * false }) — to await this loader before first flush on DOCUMENT requests
-   * (see {@link LoaderOptions}): the opt-in for loaders whose data, handle
+   * Pass `{ ssr: "await" }` to await this loader before first flush on
+   * DOCUMENT requests (see {@link LoaderOptions}): the opt-in for loaders whose data, handle
    * pushes, or thrown notFound()/redirect() must be in the SSR'd HTML.
    * Per-loader: a streaming sibling in the same segment keeps streaming.
    *
    * ```typescript
-   * loader(ProductLoader, { ssr: false }, () => [cache()]),
+   * loader(ProductLoader, { ssr: "await" }, () => [cache()]),
    * loader(RecommendationsLoader),  // still streams behind loading()
    * ```
    *

@@ -160,7 +160,7 @@ function pushHandleValue(
  *   This has a simplified signature for internal use - the caller (typically
  *   wrapLoaderPromise in router.ts) is responsible for bridging to the full
  *   OnErrorCallback with complete request context (request, url, env, etc.).
- * @param useDefaultErrorBoundary - An `ssr: false` loader on a document or
+ * @param useDefaultErrorBoundary - An `ssr: "await"` loader on a document or
  *   capture render: an error with no declared boundary gets
  *   `DefaultErrorFallback` (it would otherwise reject the tree), and every
  *   error answers 500.
@@ -758,7 +758,7 @@ function createLoaderExecutor<TEnv>(
         }
 
         // awaitBeforeFlush cycle: segment resolution awaits this loader
-        // (loader(Def, { ssr: false })), the barrier awaits segment
+        // (loader(Def, { ssr: "await" })), the barrier awaits segment
         // resolution, and rendered() awaits the barrier — waiting here can
         // never complete. Fail fast with the cause instead of hanging the
         // document render. Only document renders populate the set (the flag is
@@ -767,10 +767,10 @@ function createLoaderExecutor<TEnv>(
         if (reqCtx._awaitBeforeFlushLoaderIds?.has(currentLoaderId)) {
           throw new Error(
             `Deadlock: loader "${currentLoaderId}" is registered with ` +
-              `ssr: false, so the document render awaits it before ` +
+              `ssr: "await", so the document render awaits it before ` +
               `the render barrier resolves — ctx.rendered() (and the ` +
               `ctx.get(handle) read it gates) can never settle here. Drop ` +
-              `ssr: false on this loader or move the handle read to ` +
+              `ssr: "await" on this loader or move the handle read to ` +
               `a component.`,
           );
         }

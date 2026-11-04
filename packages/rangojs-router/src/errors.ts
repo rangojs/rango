@@ -406,17 +406,19 @@ export function invariant(condition: any, message: string): asserts condition {
 }
 
 /**
- * Rejects a boolean-only DSL option that holds anything else (undefined
- * passes), as an invariant.
+ * Rejects a loader `ssr` option other than `"stream"` or `"await"`
+ * (undefined passes), as an invariant. `false` gets its own message naming
+ * `"await"`, the value that awaits the loader, since a reader may expect a
+ * boolean here. clientUrls() inlines the same checks (client-urls.ts).
  */
-export function assertBooleanOption(
-  value: unknown,
-  option: string,
-  effect: string,
-): void {
+export function assertLoaderSsrOption(value: unknown, helper: string): void {
   invariant(
-    value === undefined || typeof value === "boolean",
-    `${option} must be a boolean (got ${JSON.stringify(value)}). Omit it (or pass true) to ${effect}.`,
+    value !== false,
+    `${helper} ssr: false was replaced: use loader(Def, { ssr: "await" }) to await the loader before first flush on document requests.`,
+  );
+  invariant(
+    value === undefined || value === "stream" || value === "await",
+    `${helper} ssr must be "stream" or "await" (got ${JSON.stringify(value)}). Omit it (or pass "stream") to stream on every render.`,
   );
 }
 

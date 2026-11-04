@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })`
+
+**Before.** The option that makes the server render wait for a loader was
+spelled `ssr: false`. It read as "keep this loader out of SSR", the meaning
+`ssr: false` has elsewhere in React tooling, when it does the opposite: it
+guarantees the loader's data is in the server's HTML.
+
+**Now.** The value says what the render does with the loader. `ssr: "await"`
+makes the document render await it before the first flush, a `ppr` shell
+capture bake its value and a prerender store it, exactly as `ssr: false` did.
+`ssr: "stream"` is the default, the same as leaving `ssr` out. There is no
+alias: `ssr: false` is a type error, and at runtime `loader()` throws
+`loader() ssr: false was replaced: use loader(Def, { ssr: "await" }) ...`.
+`ssr: true` is a type error too and throws, as does any value other than
+`"stream"` or `"await"`. The same holds for `loader()` inside `clientUrls()`.
+
+```ts
+// Before
+loader(ProductLoader, { ssr: false });
+loader(ProductLoader, { ssr: false, prefetch: false }, () => [
+  cache({ ttl: 60 }),
+]);
+
+// Now
+loader(ProductLoader, { ssr: "await" });
+loader(ProductLoader, { ssr: "await", prefetch: false }, () => [
+  cache({ ttl: 60 }),
+]);
+```
+
+`loading(fallback, { ssr: false })` is unchanged: there `false` means the
+fallback is not server-rendered on a document request.
+
+The dev warning for a read that still suspends during SSR, and the error
+messages that pointed at `ssr: false`, now name `ssr: "await"`.
+
 ## 0.34.1 (2026-11-04)
 
 ### Fixed: a link inside an open intercept to the page under it shows that page's data when the params match the intercept's ([#1376](https://github.com/rangojs/rango/pull/1376))

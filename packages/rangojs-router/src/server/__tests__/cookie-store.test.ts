@@ -631,7 +631,7 @@ describe("shell-capture guards", () => {
       expect(() => headers()).toThrow();
       expect(getRequestContext()._shellCaptureState?.guardTripped).toEqual({
         surface: "headers()",
-        fix: expect.stringContaining("a loader without ssr: false"),
+        fix: expect.stringContaining('a loader without ssr: "await"'),
       });
     });
   });
@@ -817,7 +817,7 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
           "leak one user's cookies",
         ],
       },
-      fix: "a loader without ssr: false",
+      fix: 'a loader without ssr: "await"',
     },
     {
       surface: "headers()",
@@ -837,7 +837,7 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
           "leak one user's headers",
         ],
       },
-      fix: "a loader without ssr: false",
+      fix: 'a loader without ssr: "await"',
     },
     ...(["ctx.theme", "getRequestContext().theme"] as const).map((surface) => ({
       surface,
@@ -853,7 +853,7 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
         "cache()": [
           `${surface} cannot be read inside a cache() boundary`,
           "useTheme()",
-          "live loader (no ssr: false)",
+          'live loader (no ssr: "await")',
         ],
         capture: [
           `${surface} cannot be read while capturing a shared shell`,
@@ -901,7 +901,7 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
           "leak one user's headers",
         ],
       },
-      fix: "a loader without ssr: false",
+      fix: 'a loader without ssr: "await"',
     },
     ...(
       [
@@ -932,7 +932,7 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
           "leak one user's cookies",
         ],
       },
-      fix: "a loader without ssr: false",
+      fix: 'a loader without ssr: "await"',
     })),
     {
       surface: "ctx.get() for a non-cacheable variable",
@@ -955,7 +955,7 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
           "leak one user's per-request variables",
         ],
       },
-      fix: "a loader without ssr: false",
+      fix: 'a loader without ssr: "await"',
     },
     {
       surface: 'ctx.get() for a non-cacheable variable "site"',
@@ -974,7 +974,7 @@ describe("identity read guards: cookies(), headers(), the theme reads, a non-cac
           'ctx.get() for a non-cacheable variable "site" cannot be called while capturing a shared shell',
         ],
       },
-      fix: "a loader without ssr: false",
+      fix: 'a loader without ssr: "await"',
     },
   ];
 

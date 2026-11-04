@@ -100,7 +100,7 @@ afterEach(() => {
 /**
  * Run one scheduled capture of `key` whose bake-lane loader settles with
  * `container`. The capture's match registers the record the way
- * resolveLoaderData does for an `ssr: false` loader.
+ * resolveLoaderData does for an `ssr: "await"` loader.
  */
 async function capture(
   key: string,

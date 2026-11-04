@@ -575,7 +575,7 @@ export class LoaderStore {
   /**
    * Register a still-streaming per-loader result for `loaderId`. No-op for a
    * settled Flight chunk (unwrapsSynchronously / "rejected"): the forceAwait
-   * and action lanes commit settled chunks, and a { ssr: false } loader is
+   * and action lanes commit settled chunks, and a { ssr: "await" } loader is
    * awaited before flush. Released as the stream settles, either way.
    */
   trackPendingStream(loaderId: string, stream: Promise<unknown>): void {

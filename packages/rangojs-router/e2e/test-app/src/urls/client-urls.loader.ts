@@ -100,7 +100,7 @@ export const ClientUrlsPprLoader = createLoader(async () => {
 let pprBakedSeq = 0;
 
 /**
- * ssr:false loader on the group's ppr route: executes at capture
+ * ssr: "await" loader on the group's ppr route: executes at capture
  * and its settled return is SHELL material — the group analog of the
  * server-route bake pin. Monotonic so frozen-ness is observable (the seq
  * must NOT advance across HITs).

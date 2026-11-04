@@ -5,7 +5,7 @@ import { useLoader } from "@rangojs/router/client";
 import { PprIncludeChromeLoader } from "../urls/ppr-include-bake.defs.js";
 
 /**
- * Store chrome that reads the layout's `ssr: false` loader outside any
+ * Store chrome that reads the layout's `ssr: "await"` loader outside any
  * Suspense boundary (issue #1179): a capture that masked the loader
  * postponed above <body> and stored no shell.
  */

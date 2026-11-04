@@ -63,7 +63,7 @@ const runs = { sch: 0, owned: 0, ownedDep: 0, order: 0 };
 const Notes = createHandle<string>();
 
 /**
- * A promise-carrying `ssr: false` loader: it runs on every shell HIT and
+ * A promise-carrying `ssr: "await"` loader: it runs on every shell HIT and
  * every navigation replay, and pushes a settled value (#1003).
  */
 const EbBake = createLoader(async (ctx) => {
@@ -75,7 +75,7 @@ const EbBake = createLoader(async (ctx) => {
 });
 
 /**
- * A promise-carrying `ssr: false` loader with its own cache(): a route
+ * A promise-carrying `ssr: "await"` loader with its own cache(): a route
  * cache() record or a shell record a capture writes keeps its push as owned.
  */
 const OwnedBake = createLoader(async (ctx) => {
@@ -93,13 +93,13 @@ const DepNoted = createLoader(async (ctx) => {
   return { dep: `dep@g${source.generation}` };
 });
 
-/** A promise-free `ssr: false` loader whose value derives from DepNoted's. */
+/** A promise-free `ssr: "await"` loader whose value derives from DepNoted's. */
 const BakeAwaitsDep = createLoader(async (ctx) => ({
   baked: `baked-${(await ctx.use(DepNoted)).dep}`,
 }));
 
 /**
- * A promise-carrying `ssr: false` loader whose value derives from DepNoted's:
+ * A promise-carrying `ssr: "await"` loader whose value derives from DepNoted's:
  * it runs on a HIT, and DepNoted runs inside it.
  */
 const HoleyAwaitsDep = createLoader(async (ctx) => ({
@@ -107,13 +107,13 @@ const HoleyAwaitsDep = createLoader(async (ctx) => ({
   later: Promise.resolve("holey-later"),
 }));
 
-/** A promise-free `ssr: false` loader that neither pushes nor awaits. */
+/** A promise-free `ssr: "await"` loader that neither pushes nor awaits. */
 const PlainBake = createLoader(async () => ({
   plain: `plain@g${source.generation}`,
 }));
 
 /**
- * An `ssr: false` loader with its own cache() that awaits DepNoted and then
+ * An `ssr: "await"` loader with its own cache() that awaits DepNoted and then
  * pushes: its entry records the dependency's push and its own.
  */
 const OwnedAwaitsDep = createLoader(async (ctx) => {
@@ -129,7 +129,7 @@ const DepOnce = createLoader(async (ctx) => {
   return { depOnce: `dep-once@g${source.generation}` };
 });
 
-/** An `ssr: false` loader with its own cache() that awaits DepOnce. */
+/** An `ssr: "await"` loader with its own cache() that awaits DepOnce. */
 const OwnedAwaitsDepOnce = createLoader(async (ctx) => {
   const { depOnce } = await ctx.use(DepOnce);
   ctx.use(Notes)(`owned-once-note@g${source.generation}`);
@@ -137,7 +137,7 @@ const OwnedAwaitsDepOnce = createLoader(async (ctx) => {
 });
 
 /**
- * An `ssr: false` loader with its own cache() that pushes, awaits DepNoted
+ * An `ssr: "await"` loader with its own cache() that pushes, awaits DepNoted
  * (which pushes), and pushes again.
  */
 const OrderBake = createLoader(async (ctx) => {
@@ -148,7 +148,7 @@ const OrderBake = createLoader(async (ctx) => {
   return { order: `order-${dep}` };
 });
 
-/** A promise-carrying `ssr: false` loader that pushes after the capture only. */
+/** A promise-carrying `ssr: "await"` loader that pushes after the capture only. */
 const LateNoted = createLoader(async (ctx) => {
   if (source.generation > 1) {
     ctx.use(Notes)(`late-note@g${source.generation}`);
@@ -159,7 +159,7 @@ const LateNoted = createLoader(async (ctx) => {
   };
 });
 
-/** A promise-free `ssr: false` loader a navigation never revalidates. */
+/** A promise-free `ssr: "await"` loader a navigation never revalidates. */
 const HeldNoted = createLoader(async (ctx) => {
   ctx.use(Notes)(`held-note@g${source.generation}`);
   return { held: `held@g${source.generation}` };
@@ -195,7 +195,7 @@ async function SchReadingPage(ctx: HandlerContext): Promise<React.ReactNode> {
 }
 
 /**
- * A promise-free `ssr: false` loader without cache() that pushes a settled
+ * A promise-free `ssr: "await"` loader without cache() that pushes a settled
  * value and a promise: its body runs at capture only, and the shell keeps
  * both pushes (#1182).
  */
@@ -205,7 +205,7 @@ const PlainDeferred = createLoader(async (ctx) => {
   return { plain: `plain@g${source.generation}` };
 });
 
-/** A promise-free `ssr: false` loader that pushes a value holding a promise. */
+/** A promise-free `ssr: "await"` loader that pushes a value holding a promise. */
 const NestedNoted = createLoader(async (ctx) => {
   ctx.use(Notes)({
     label: `nested@g${source.generation}`,
@@ -220,7 +220,7 @@ const slowAfterBudget = (value: string): Promise<string> =>
   new Promise((resolve) => setTimeout(() => resolve(value), 400));
 
 /**
- * An `ssr: false` loader whose deferred push settles after the budget: the
+ * An `ssr: "await"` loader whose deferred push settles after the budget: the
  * capture waits for it, so it refuses, as a handler's push does (#1182).
  */
 const SlowDeferred = createLoader(async (ctx) => {
@@ -235,7 +235,7 @@ function SlowHandlerPush(ctx: HandlerContext): React.ReactNode {
   return <p>slow handler push</p>;
 }
 
-/** A live-lane loader (no `ssr: false`) that pushes before its first await. */
+/** A live-lane loader (no `ssr: "await"`) that pushes before its first await. */
 const LiveNoted = createLoader(async (ctx) => {
   ctx.use(Notes)(`live-note@g${source.generation}`);
   return { live: `live@g${source.generation}` };
@@ -254,7 +254,7 @@ function NotedPage(ctx: HandlerContext): React.ReactNode {
 }
 
 /**
- * A promise-carrying `ssr: false` loader that throws once the capture is
+ * A promise-carrying `ssr: "await"` loader that throws once the capture is
  * done: its pin has a hole, so it runs on every HIT.
  */
 const HoleyThrowsLater = createLoader(async () => {
@@ -278,41 +278,41 @@ function makeRouter(options: Parameters<typeof createRouter>[0] = {}) {
         "/eb",
         () => <p>eb</p>,
         { name: "eb", ppr: true },
-        () => [loader(EbBake, { ssr: false })],
+        () => [loader(EbBake, { ssr: "await" })],
       ),
       path(
         "/eb-capped",
         () => <p>eb capped</p>,
         { name: "ebCapped", ppr: NO_PINS },
-        () => [loader(EbBake, { ssr: false })],
+        () => [loader(EbBake, { ssr: "await" })],
       ),
       path(
         "/dep-capped",
         () => <p>dep capped</p>,
         { name: "depCapped", ppr: NO_PINS },
-        () => [loader(BakeAwaitsDep, { ssr: false })],
+        () => [loader(BakeAwaitsDep, { ssr: "await" })],
       ),
       path(
         "/holey-throws",
         () => <p>holey throws</p>,
         { name: "holeyThrows", ppr: true },
-        () => [loader(HoleyThrowsLater, { ssr: false })],
+        () => [loader(HoleyThrowsLater, { ssr: "await" })],
       ),
       path(
         "/two-bake",
         () => <p>two bake</p>,
         { name: "twoBake", ppr: true },
         () => [
-          loader(HoleyAwaitsDep, { ssr: false }),
-          loader(PlainBake, { ssr: false }),
+          loader(HoleyAwaitsDep, { ssr: "await" }),
+          loader(PlainBake, { ssr: "await" }),
         ],
       ),
-      // The app-wide shape: the `ssr: false` loader sits on the layout, so
+      // The app-wide shape: the `ssr: "await"` loader sits on the layout, so
       // its pin is stored under the layout's shortCode.
       layout(
         () => <header>eb layout</header>,
         () => [
-          loader(EbBake, { ssr: false }),
+          loader(EbBake, { ssr: "await" }),
           path("/eb-layout", () => <p>eb layout page</p>, {
             name: "ebLayout",
             ppr: true,
@@ -323,34 +323,36 @@ function makeRouter(options: Parameters<typeof createRouter>[0] = {}) {
         "/once-capped",
         () => <p>once capped</p>,
         { name: "onceCapped", ppr: NO_PINS },
-        () => [loader(OnceNotedBakeLoader, { ssr: false })],
+        () => [loader(OnceNotedBakeLoader, { ssr: "await" })],
       ),
       path(
         "/late",
         () => <p>late</p>,
         { name: "late", ppr: true },
-        () => [loader(LateNoted, { ssr: false })],
+        () => [loader(LateNoted, { ssr: "await" })],
       ),
       path(
         "/held",
         () => <p>held</p>,
         { name: "held", ppr: true },
         () => [
-          loader(HeldNoted, { ssr: false }, () => [revalidate(() => false)]),
+          loader(HeldNoted, { ssr: "await" }, () => [revalidate(() => false)]),
         ],
       ),
       path(
         "/owned-capped",
         () => <p>owned capped</p>,
         { name: "ownedCapped", ppr: NO_PINS },
-        () => [loader(OwnedBake, { ssr: false }, () => [cache({ ttl: 300 })])],
+        () => [
+          loader(OwnedBake, { ssr: "await" }, () => [cache({ ttl: 300 })]),
+        ],
       ),
       path(
         "/owned-dep-capped",
         () => <p>owned dep capped</p>,
         { name: "ownedDepCapped", ppr: NO_PINS },
         () => [
-          loader(OwnedAwaitsDep, { ssr: false }, () => [cache({ ttl: 300 })]),
+          loader(OwnedAwaitsDep, { ssr: "await" }, () => [cache({ ttl: 300 })]),
         ],
       ),
       path(
@@ -358,7 +360,7 @@ function makeRouter(options: Parameters<typeof createRouter>[0] = {}) {
         () => <p>owned dep once capped</p>,
         { name: "ownedDepOnceCapped", ppr: NO_PINS },
         () => [
-          loader(OwnedAwaitsDepOnce, { ssr: false }, () => [
+          loader(OwnedAwaitsDepOnce, { ssr: "await" }, () => [
             cache({ ttl: 300 }),
           ]),
         ],
@@ -367,27 +369,29 @@ function makeRouter(options: Parameters<typeof createRouter>[0] = {}) {
         "/order-capped",
         () => <p>order capped</p>,
         { name: "orderCapped", ppr: NO_PINS },
-        () => [loader(OrderBake, { ssr: false }, () => [cache({ ttl: 300 })])],
+        () => [
+          loader(OrderBake, { ssr: "await" }, () => [cache({ ttl: 300 })]),
+        ],
       ),
       path(
         "/outer-dep-capped",
         () => <p>outer dep capped</p>,
         { name: "outerDepCapped", ppr: NO_PINS },
-        () => [loader(OuterDepLoader, { ssr: false })],
+        () => [loader(OuterDepLoader, { ssr: "await" })],
       ),
       cache({ ttl: 3000 }, () => [
         path(
           "/eb-cached",
           () => <p>eb cached</p>,
           { name: "ebCached", ppr: true },
-          () => [loader(EbBake, { ssr: false })],
+          () => [loader(EbBake, { ssr: "await" })],
         ),
         path(
           "/owned-cached",
           () => <p>owned cached</p>,
           { name: "ownedCached", ppr: { ttl: 10, swr: 20 } },
           () => [
-            loader(OwnedBake, { ssr: false }, () => [cache({ ttl: 3000 })]),
+            loader(OwnedBake, { ssr: "await" }, () => [cache({ ttl: 3000 })]),
           ],
         ),
       ]),
@@ -396,7 +400,7 @@ function makeRouter(options: Parameters<typeof createRouter>[0] = {}) {
         () => <p>deferred owned</p>,
         { name: "deferredOwned", ppr: true },
         () => [
-          loader(DeferredOwnedLoader, { ssr: false }, () => [
+          loader(DeferredOwnedLoader, { ssr: "await" }, () => [
             cache({ ttl: 300 }),
           ]),
         ],
@@ -405,7 +409,7 @@ function makeRouter(options: Parameters<typeof createRouter>[0] = {}) {
         "/slow-deferred",
         () => <p>slow deferred</p>,
         { name: "slowDeferred", ppr: { captureTimeout: SLOW_PUSH_BUDGET_MS } },
-        () => [loader(SlowDeferred, { ssr: false })],
+        () => [loader(SlowDeferred, { ssr: "await" })],
       ),
       path("/slow-handler-push", SlowHandlerPush, {
         name: "slowHandlerPush",
@@ -415,13 +419,13 @@ function makeRouter(options: Parameters<typeof createRouter>[0] = {}) {
         "/deferred-plain",
         () => <p>deferred plain</p>,
         { name: "deferredPlain", ppr: true },
-        () => [loader(PlainDeferred, { ssr: false })],
+        () => [loader(PlainDeferred, { ssr: "await" })],
       ),
       path(
         "/nested-noted",
         () => <p>nested noted</p>,
         { name: "nestedNoted", ppr: true },
-        () => [loader(NestedNoted, { ssr: false })],
+        () => [loader(NestedNoted, { ssr: "await" })],
       ),
       path("/live-noted", NotedPage, { name: "liveNoted", ppr: true }, () => [
         loader(LiveNoted),
@@ -430,14 +434,14 @@ function makeRouter(options: Parameters<typeof createRouter>[0] = {}) {
       ]),
       path("/plain-noted", NotedPage, { name: "plainNoted" }, () => [
         loader(LiveNoted),
-        loader(PlainDeferred, { ssr: false }),
+        loader(PlainDeferred, { ssr: "await" }),
       ]),
       path(
         "/sch",
         () => <p>sch</p>,
         { name: "sch", ppr: true },
         () => [
-          loader(SchBakeReader, { ssr: false }),
+          loader(SchBakeReader, { ssr: "await" }),
           loader(SchHole, () => [cache({ ttl: 300 })]),
           loading(<p>loading sch</p>),
         ],
@@ -448,7 +452,7 @@ function makeRouter(options: Parameters<typeof createRouter>[0] = {}) {
         { name: "schRev", ppr: true },
         () => [
           loader(SchHole, () => [cache({ ttl: 300 })]),
-          loader(SchBakeReader, { ssr: false }),
+          loader(SchBakeReader, { ssr: "await" }),
           loading(<p>loading sch</p>),
         ],
       ),
@@ -599,7 +603,7 @@ afterEach(() => {
 });
 
 describe("one run per loader: a shell record's pushes follow the loader's pin", () => {
-  it("a document HIT keeps a promise-carrying ssr: false loader's captured push next to its pinned data", async () => {
+  it('a document HIT keeps a promise-carrying ssr: "await" loader\'s captured push next to its pinned data', async () => {
     const { serve } = setup();
     expect((await serve("/eb")).shellStatus).toBe("MISS");
     source.generation = 2;
@@ -758,7 +762,7 @@ describe("one run per loader: a shell record's pushes follow the loader's pin", 
 
   // The app-wide shape: the pin is stored under the layout's shortCode, and
   // both the value and the pushes find it by loader.
-  it("an ssr: false loader on a layout: a HIT and a navigation replay keep the captured push next to the pinned data", async () => {
+  it('an ssr: "await" loader on a layout: a HIT and a navigation replay keep the captured push next to the pinned data', async () => {
     const { serve } = setup();
     expect((await serve("/eb-layout")).shellStatus).toBe("MISS");
     source.generation = 3;
@@ -1031,13 +1035,13 @@ describe("one run per loader: without a pin the record's copy is a placeholder",
 // PENDING, not regressions; filed as #1036 (open). The shell record names the loader
 // that pushed a value, not the registered loader that ran it. So a
 // dependency no route registers follows an approximation: its copies stand
-// while every `ssr: false` loader is pinned, and are placeholders otherwise
+// while every `ssr: "await"` loader is pinned, and are placeholders otherwise
 // (loader-cache.ts loaderPins). Each `red` test is a case where that is not
 // the loader's own source (docs/design/handle-push-ownership.md, "What is
 // not built").
 describe("PENDING #1036: a dependency the record does not attribute to the loader that ran it", () => {
   red(
-    "a dependency of a pinned loader, while another ssr: false loader lost its pin: the captured push stays next to the pinned data",
+    'a dependency of a pinned loader, while another ssr: "await" loader lost its pin: the captured push stays next to the pinned data',
     async () => {
       const { serve } = setup();
       const miss = await serve("/two-bake");
@@ -1457,7 +1461,7 @@ describe("a shell HIT hydrates from its record (#1035)", () => {
 // failed" in dev, React error #418 in production) and renders the page again
 // on the client (expectPinlessHitHydratesClean in tests/shared-e2e). So a
 // document HIT is served only from an entry that holds a pin for every
-// `ssr: false` loader its prelude baked. An entry over maxSnapshotBytes holds
+// `ssr: "await"` loader its prelude baked. An entry over maxSnapshotBytes holds
 // the navigation half only: documents MISS, navigations replay it. A pin that
 // fails to decode on a HIT costs that one response a mismatch, and the entry
 // is retired and recaptured.
@@ -1508,7 +1512,7 @@ describe("a document HIT hydrates with the loader data its shell was rendered fr
         .filter((text) => text.includes("/eb-capped")),
     ).toEqual([
       expect.stringContaining(
-        "the document shell was not stored; raise maxSnapshotBytes or shrink the ssr: false data.",
+        'the document shell was not stored; raise maxSnapshotBytes or shrink the ssr: "await" data.',
       ),
     ]);
     source.generation = 2;
@@ -1806,7 +1810,7 @@ describe("#1002 by design: a loader read that starts a cache()-bound loader firs
     };
   }
 
-  it("a ppr route: an ssr: false reader declared before the cached hole runs it live on a HIT and a replay (2 body runs): the data is the entry's g2, the push is the live run's g3", async () => {
+  it("a ppr route: an ssr: \"await\" reader declared before the cached hole runs it live on a HIT and a replay (2 body runs): the data is the entry's g2, the push is the live run's g3", async () => {
     expect(await pprHitAndReplay("/sch")).toEqual({
       bodyRuns: 2,
       hit: { data: ['"sch":"sch@g2"'], push: ["sch-note@g3"] },
@@ -1814,7 +1818,7 @@ describe("#1002 by design: a loader read that starts a cache()-bound loader firs
     });
   });
 
-  it("a ppr route: an ssr: false reader declared after the cached hole (control: the binding starts first, no body run, the entry's g2 serves data and push)", async () => {
+  it('a ppr route: an ssr: "await" reader declared after the cached hole (control: the binding starts first, no body run, the entry\'s g2 serves data and push)', async () => {
     expect(await pprHitAndReplay("/sch-rev")).toEqual({
       bodyRuns: 0,
       hit: { data: ['"sch":"sch@g2"'], push: ["sch-note@g2"] },

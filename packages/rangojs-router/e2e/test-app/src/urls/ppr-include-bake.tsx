@@ -4,7 +4,7 @@ import { PprIncludeChrome } from "../components/PprIncludeChrome.js";
 import { PprIncludeChromeLoader } from "./ppr-include-bake.defs.js";
 
 // Issue #1179 fixture (e2e/ppr-include-bake.test.ts): a store layout whose
-// client chrome reads its ssr: false loader outside Suspense, over one ppr
+// client chrome reads its ssr: "await" loader outside Suspense, over one ppr
 // page declared directly and mounted through include(). This module is itself
 // mounted through include(), so the inner include captures its parent on the
 // runtime expansion; tests/cloudflare-basic declares the layout in the root
@@ -29,7 +29,7 @@ const pprIncludeSectionPatterns = urls(({ path }) => [
 export const pprIncludeBakePatterns = urls(
   ({ layout, loader, path, include }) => [
     layout(PprIncludeBakeLayout, () => [
-      loader(PprIncludeChromeLoader, { ssr: false }),
+      loader(PprIncludeChromeLoader, { ssr: "await" }),
       path("/ppr-include/direct", PprIncludeBakePage, {
         name: "pprIncludeDirect",
         ppr: true,

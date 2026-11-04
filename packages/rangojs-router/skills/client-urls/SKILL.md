@@ -1,6 +1,6 @@
 ---
 name: client-urls
-description: Define client-component route groups with clientUrls() in a "use client" module — no handlers, useLoader at read sites, server-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the ssr:false SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a "use client" file work.
+description: Define client-component route groups with clientUrls() in a "use client" module — no handlers, useLoader at read sites, server-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the ssr:"await" SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a "use client" file work.
 argument-hint: "[setup]"
 ---
 
@@ -132,7 +132,7 @@ flow into the generated route map, so `href()`, `ctx.reverse()` and
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `path()`       | Options are `name`, `search`, `trailingSlash`, `ppr` (shell caching — see `/ppr` → The loader lane rule); no response variants. Use callback may contain `loader()`, `loading()`, `transition()` |
 | `layout()`     | `layout(Component, () => [...])` — children are required and must contain at least one `path()`; may also hold `loader()`, `loading()`, `intercept()`, nested `layout()`                         |
-| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: false, prefetch: false \| "intent" }, use?)` — see below                                                                                              |
+| `loader()`     | `loader(Def, use?)` or `loader(Def, { ssr: "await", prefetch: false \| "intent" }, use?)` — see below                                                                                            |
 | `loading()`    | Route-level boundary around the optimistic render; inline `<Suspense>` at read sites keeps the destination's chrome visible while only the reads wait                                            |
 | `revalidate()` | Valid **inside a loader() use callback only**; runs on the server (the build hoists it out of the `"use client"` module)                                                                         |
 | `transition()` | Inside a `path()` use callback only (at most one). ViewTransition config plus a browser-run `when` predicate (see `/view-transitions`); same-route navs in a group already hold without it       |
@@ -185,11 +185,11 @@ export default clientUrls(({ path }) => [
 ]);
 ```
 
-| Component mounted by | Its `.use` may return                          |
-| -------------------- | ---------------------------------------------- |
-| `path()`             | `loader()`, `loading()`, `transition()`        |
-| `layout()`           | `loader()`, `loading()`                        |
-| `intercept()`        | `loader()` (without `ssr: false`), `loading()` |
+| Component mounted by | Its `.use` may return                            |
+| -------------------- | ------------------------------------------------ |
+| `path()`             | `loader()`, `loading()`, `transition()`          |
+| `layout()`           | `loader()`, `loading()`                          |
+| `intercept()`        | `loader()` (without `ssr: "await"`), `loading()` |
 
 - **Merge order is the server's.** The component's items come first and the
   mount site's own items second: an explicit `loading()` or `transition()`
@@ -511,7 +511,7 @@ The next action or navigation that reruns the loader replaces the message.
 
 A failure returned as data is an ordinary value, so whatever stores the
 loader's value stores it too: a `cache()` on the loader serves it for its TTL,
-a `ppr` shell bakes an `ssr: false` loader's value, and a prerender stores it
+a `ppr` shell bakes an `ssr: "await"` loader's value, and a prerender stores it
 at build time. A thrown error is never stored (a stale entry keeps serving).
 To cache the expensive part, cache the call the loader makes (`"use cache"` on
 that function: a call that throws stores nothing) and turn the throw into
@@ -545,7 +545,7 @@ export const ProductLoader = createLoader(async (ctx) => {
 On a document load, `notFound()` streams the resolved not-found UI in the
 envelope and _opportunistically_ sets a real 404 status — the status write only
 wins if the rejection settles before the document Response is constructed (a
-fast, pre-fetch existence check usually wins; see `ssr: false` below
+fast, pre-fetch existence check usually wins; see `ssr: "await"` below
 for the deterministic version). On navigations the 404 UI swaps in with the
 URL preserved. A loader `redirect()` is always a client-side navigate — there
 is no document-lane 302 from loaders; pre-stream redirect authority belongs to
@@ -557,10 +557,10 @@ push. Reads moved to `ctx.get(handle)`, gated behind `await ctx.rendered()`.
 Delivery follows the race model: pushes that settle before the handler barrier
 ride the SSR handle snapshot; later ones stream and apply post-hydration
 (document loads) or progressively (navigations). On a `ppr` shell HIT a loader
-without `ssr: false` never ran during the capture, so its pushes are never in
+without `ssr: "await"` never ran during the capture, so its pushes are never in
 the shell and always apply client-side. See `/loader` for the full contract.
 
-## `ssr: false` — the SSR-completeness opt-in
+## `ssr: "await"` — the SSR-completeness opt-in
 
 By default every loader streams on every render, so nothing a slow loader
 produces is _guaranteed_ to be in the SSR'd HTML — data SSRs as the Suspense
@@ -570,7 +570,7 @@ document — `<head>` meta via a handle, or a real 404 status — flag it:
 
 ```ts
 path("/product/:slug", ProductPage, { name: "product" }, () => [
-  loader(ProductLoader, { ssr: false }, () => [
+  loader(ProductLoader, { ssr: "await" }, () => [
     revalidate(({ currentParams, nextParams, defaultShouldRevalidate }) =>
       currentParams.slug !== nextParams.slug ? defaultShouldRevalidate : false,
     ),
@@ -579,9 +579,10 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ]),
 ```
 
-The knob mirrors `loading(fallback, { ssr: false })` — SSR delivery is off
-for this loader, so nothing of it is left to stream in the document: document
-renders await this loader before first flush (data settled — no fallback
+The value says what the server render does with the loader: `"stream"` (the
+default) streams it, `"await"` awaits it. `ssr` takes no boolean here either:
+`false` throws with a pointer to `"await"`. Document renders await a flagged
+loader before first flush (data settled — no fallback
 paints; handle pushes beat the barrier snapshot; a thrown `notFound()` is a
 deterministic real 404, no warm-up race); client navigations stream exactly as
 before. Scoped per loader — the flagged loader awaits only itself, siblings
@@ -613,12 +614,12 @@ Pinned end to end by dev + production e2e in the router repository.
 ships its fallback and swaps the content in with a script, which a browser
 without JavaScript never runs. That includes a client component a loader's
 answer draws under an inline `<Suspense>`: a fast loader's answer usually
-makes the first flush, and `ssr: false` guarantees the loader's data does. It
+makes the first flush, and `ssr: "await"` guarantees the loader's data does. It
 does not cover the client component's module: the first document a build's
 fresh server renders can still be waiting for it. The dev server matches a
 build here: when the shell is ready, it waits for the client components the
 payload has named and that are still loading, and for nothing else. On a
-document with an `ssr: false` loader, a part React finishes a moment after the
+document with an `ssr: "await"` loader, a part React finishes a moment after the
 shell, such as a `useActionState` form (React suspends it once to encode its
 action), is in the first flush too: the router gives React up to three more
 turns before it, and none when the document is already complete.
@@ -665,7 +666,7 @@ rest of the destination; otherwise it is held. A same-route click
   prefetch of the intercept's target defers it, and the click opens the
   modal at once with one fill for it; a hover's runs a loader marked
   `"intent"`.
-- With `ssr: false` on a `ppr` group route the flag works as on a server
+- With `ssr: "await"` on a `ppr` group route the flag works as on a server
   route: deferred unless the prefetch serves the loader from a pin of a
   document-captured shell (`/ppr` → "`prefetch: false` on a `ppr` route").
 - Test it with `serveShellRequest` in the Flight project: mount the module
@@ -726,7 +727,7 @@ a hard load of the target URL renders the full route.
   matches) never renders as a group route: the server ships the competing
   routes with the group.
 - **Two parallel loaders with equal latency look "SSR'd" together.** Loaders
-  kick off in parallel, so awaiting one (`ssr: false`) gives
+  kick off in parallel, so awaiting one (`ssr: "await"`) gives
   same-or-faster siblings time to settle coincidentally. Do not read "it was
   in the HTML once" as a guarantee — only the flagged loader is guaranteed.
 - **Hook semantics shift inside a group.** `usePathname` is ABSOLUTE (mount
@@ -786,7 +787,7 @@ The router repository (not shipped in this package) carries a canonical
 consumer at `tests/vite-rsc-demo/src/urls/client-shop.client.tsx`: layout +
 index + product routes, param-sensitive predicates, action-scoped cart
 revalidation, loader-thrown `notFound()`/`redirect()`, loader-written
-Meta/Breadcrumbs, viewport prefetch on cards, and the `ssr: false`
+Meta/Breadcrumbs, viewport prefetch on cards, and the `ssr: "await"`
 fixtures — with e2e suites next to it pinning each contract in dev and
 production. The sections above are self-contained; the app is corroboration,
 not required reading.

@@ -138,7 +138,7 @@ describe("loaderPins", () => {
   });
 
   describe("a dependency the route does not register", () => {
-    it('is "copies" while every ssr: false loader is pinned', () => {
+    it('is "copies" while every ssr: "await" loader is pinned', () => {
       expect(loaderPins(entries, request(ALL))("Dependency#L")).toBe("copies");
     });
 
@@ -151,7 +151,7 @@ describe("loaderPins", () => {
       );
     });
 
-    it('is "placeholders" on a route without an ssr: false loader', () => {
+    it('is "placeholders" on a route without an ssr: "await" loader', () => {
       const liveOnly = [entry("R0", [loaderEntry("RouteLive#L", false)])];
 
       expect(
@@ -160,7 +160,7 @@ describe("loaderPins", () => {
     });
   });
 
-  it("a loader the route also registers without ssr: false is a hole, whatever pin its other registration has", () => {
+  it('a loader the route also registers without ssr: "await" is a hole, whatever pin its other registration has', () => {
     const both = [
       entry("L0", [loaderEntry("Shared#L", true)]),
       entry("L0R1", [loaderEntry("Shared#L", false)]),
@@ -168,7 +168,7 @@ describe("loaderPins", () => {
     const authority = loaderPins(both, request({ "Shared#L": PIN }));
 
     expect(authority("Shared#L")).toBe("hole");
-    // No ssr: false loader is pinned, so a dependency's copies do not stand.
+    // No ssr: "await" loader is pinned, so a dependency's copies do not stand.
     expect(authority("Dependency#L")).toBe("placeholders");
   });
 
@@ -232,7 +232,7 @@ describe("the pin a loader's value is served from is the pin its pushes follow",
   const route = [entry("R0", [bake, live])];
   const pins = { "Bake#L": PIN };
 
-  it("an ssr: false loader with a pin: the value is the pin's and its copies stand", async () => {
+  it('an ssr: "await" loader with a pin: the value is the pin\'s and its copies stand', async () => {
     expect(await served(bake, pins)).toBe("pin");
     expect(loaderPins(route, request(pins))("Bake#L")).toBe("pin");
   });
@@ -249,8 +249,8 @@ describe("the pin a loader's value is served from is the pin its pushes follow",
   });
 
   // An entry without loading() passes its key for every loader (revalidation.ts
-  // resolveOwnerLoaders); only the `ssr: false` registration is on the bake lane.
-  it("a loader registered without ssr: false runs, pin or no pin, and is a hole", async () => {
+  // resolveOwnerLoaders); only the `ssr: "await"` registration is on the bake lane.
+  it('a loader registered without ssr: "await" runs, pin or no pin, and is a hole', async () => {
     const stale = { "Live#L": PIN };
 
     expect(await served(live, stale)).toBe("run");
@@ -262,9 +262,9 @@ describe("the pin a loader's value is served from is the pin its pushes follow",
   });
 
   // The value is per registration and the pushes are per loader. The
-  // `ssr: false` registration is served its pin (the prelude holds it); the
+  // `ssr: "await"` registration is served its pin (the prelude holds it); the
   // capture credited the loader's pushes to the live registration's run.
-  it("a loader registered on both lanes: its ssr: false registration is served the pin, its pushes follow the live run", async () => {
+  it('a loader registered on both lanes: its ssr: "await" registration is served the pin, its pushes follow the live run', async () => {
     const both = [
       entry("L0", [bake]),
       entry("L0R1", [loaderEntry("Bake#L", false)]),
@@ -285,7 +285,7 @@ describe("servesLoaderPin answers as resolveLoaderData serves", () => {
   const live = loaderEntry("Live#L", false);
   const pins = { "Bake#L": PIN, "Live#L": PIN };
 
-  it("an ssr: false loader with a pin: served", () => {
+  it('an ssr: "await" loader with a pin: served', () => {
     expect(servesLoaderPin(bake, request(pins))).toBe(true);
     expect(servesLoaderPin(bake, request({ "Bake#L": LEGACY_PIN }))).toBe(true);
   });
@@ -295,7 +295,7 @@ describe("servesLoaderPin answers as resolveLoaderData serves", () => {
     expect(servesLoaderPin(bake, request({ "Live#L": PIN }))).toBe(false);
   });
 
-  it("a registration without ssr: false is never served a pin", () => {
+  it('a registration without ssr: "await" is never served a pin', () => {
     expect(servesLoaderPin(live, request(pins))).toBe(false);
   });
 

@@ -121,8 +121,8 @@ payload from that record (`settleCaptureRecord` in `src/rsc/shell-capture.ts`).
 A boundary whose content is only handler output is therefore expected to bake
 its content as a completed boundary instead of postponing. What still
 postpones at capture is a boundary over live data: a loader without
-`ssr: false` read with `useLoader` under `loading()` or an inline
-`<Suspense>`, or a promise nested in an `ssr: false` loader's value. Run the
+`ssr: "await"` read with `useLoader` under `loading()` or an inline
+`<Suspense>`, or a promise nested in an `ssr: "await"` loader's value. Run the
 prelude check in "Verifying and measuring" on your page rather than assuming
 either shape.
 

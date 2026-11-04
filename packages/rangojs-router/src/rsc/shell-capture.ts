@@ -391,15 +391,15 @@ function warnNullCaptureOnce(
       (cause
         ? `Cause: ${cause}. Every capture waits for the handler layer to finish and ` +
           'bakes it; make the slow part cheaper (cache() or "use cache"), raise ' +
-          "ppr.captureTimeout, or move it into a live loader (no ssr: false) read under " +
+          'ppr.captureTimeout, or move it into a live loader (no ssr: "await") read under ' +
           "loading() or an inline <Suspense>.\n"
         : "Causes, told apart by whether the route ever flips to HIT:\n" +
           "  1. Cold-start warmup (dev module transform, or a cold worker): the capture raced " +
           "an unfinished shell render. This SELF-HEALS — the route flips to HIT once a later " +
           "request warms the modules.\n" +
           "  2. Something suspends above <body> with no Suspense boundary and never settles " +
-          "within the capture window: a live loader (no ssr: false) read without loading() or " +
-          "an inline <Suspense>, or a loader(Def, { ssr: false }) or top-level push (e.g. Meta) " +
+          'within the capture window: a live loader (no ssr: "await") read without loading() or ' +
+          'an inline <Suspense>, or a loader(Def, { ssr: "await" }) or top-level push (e.g. Meta) ' +
           "slower than ppr.captureTimeout. The boundary belongs to the entry or component " +
           "that owns the data.\n") +
       (pendingStacks && pendingStacks.length > 0
@@ -565,8 +565,8 @@ function warnSnapshotOverCapOnce(
     key,
     () =>
       `[rango] Shell capture for "${key}" recorded ${snapshotBytes} bytes of ` +
-      `ssr: false loader pins, over the ${capBytes}-byte cap: the document ` +
-      "shell was not stored; raise maxSnapshotBytes or shrink the ssr: false " +
+      `ssr: "await" loader pins, over the ${capBytes}-byte cap: the document ` +
+      'shell was not stored; raise maxSnapshotBytes or shrink the ssr: "await" ' +
       "data. Documents of this route are a MISS until then; client " +
       "navigations still replay its handler layer.",
   );
@@ -599,9 +599,9 @@ function warnBakeCostOnce(key: string, source: string, ms: number): void {
       "of the route and occupies the per-isolate capture queue; the served " +
       "response never shows it. To keep it baked but cheap, wrap the work in " +
       'cache() or "use cache"; to make it per-request, load it in a live ' +
-      "loader (no ssr: false) read under loading() or an inline <Suspense>; for " +
-      "a loader(Def, { ssr: false }), return the slow part as a nested promise " +
-      "or drop ssr: false. " +
+      'loader (no ssr: "await") read under loading() or an inline <Suspense>; for ' +
+      'a loader(Def, { ssr: "await" }), return the slow part as a nested promise ' +
+      'or drop ssr: "await". ' +
       PPR_LANE_HINT,
   );
 }
@@ -1747,7 +1747,7 @@ export async function settleCaptureRecord(
       capture.key,
       `${describeLoaderPromisePush(rejected)} rejected during capture; a ` +
         "failed value must not bake into the shared shell. Catch it and push " +
-        "a fallback, or push it from a loader without ssr: false.",
+        'a fallback, or push it from a loader without ssr: "await".',
       PPR_LANE_HINT,
     );
     return { kind: "refused", refusal: "loader" };
@@ -2209,7 +2209,7 @@ export function deriveShellCaptureContext(
   //    cache() record's restore (handle-snapshot.ts restoreHandles) lands
   //    here too: a value it restores as a placeholder keeps that loader as
   //    owner, so a HIT restores it as that loader's (pushRestored).
-  //  - DSL-LOADER pushes. Only bake-lane { ssr: false } loaders and the
+  //  - DSL-LOADER pushes. Only bake-lane { ssr: "await" } loaders and the
   //    loaders they await via ctx.use execute at capture (live loaders are
   //    masked), their pushes are in the captured HTML (<head> title/meta,
   //    useHandle echoes), and a HIT does not run a promise-free bake-lane
@@ -2547,7 +2547,7 @@ async function captureAndStoreShell(
           warnCaptureRefusedOnce(
             capture.key,
             `the loader for segment "${segmentKey}" rejected during capture; its error UI must not bake into the shared shell. ` +
-              "Fix the loader, or drop its ssr: false to move it to the live lane.",
+              'Fix the loader, or drop its ssr: "await" to move it to the live lane.',
             PPR_LANE_HINT,
           );
           return refuse(stats, "loader");
@@ -2564,7 +2564,7 @@ async function captureAndStoreShell(
           warnCaptureRefusedOnce(
             capture.key,
             `the loader for segment "${segmentKey}" settled with redirect()/notFound() during capture; a request-specific signal must not bake into the shared shell. ` +
-              "Drop its ssr: false to move it to the live lane, or move the decision into middleware.",
+              'Drop its ssr: "await" to move it to the live lane, or move the decision into middleware.',
             PPR_LANE_HINT,
           );
           return refuse(stats, "loader");

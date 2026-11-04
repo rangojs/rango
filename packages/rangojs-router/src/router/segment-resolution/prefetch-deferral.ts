@@ -283,7 +283,7 @@ function collectDeferrable(
     for (const loaderEntry of entry.loader ?? []) {
       const own = counts(loaderEntry.prefetch);
       if (!own && behind.length === 0) continue;
-      // An ssr: false loader on a ppr route is in scope too: whether this
+      // An ssr: "await" loader on a ppr route is in scope too: whether this
       // request serves it from a shell pin is per request (defersLoader).
       loaders.set(loaderEntry, own ? true : behind);
     }

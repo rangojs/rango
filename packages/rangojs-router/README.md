@@ -304,7 +304,7 @@ Loaders run in parallel with the handler and stream their results.
 into it. Without `loading()`, the segment has no skeleton, and the HTML
 normally arrives with the data already in place. To guarantee that a
 loader's data, head tags, or a real 404 are in the first HTML flush, register
-it with `loader(StockLoader, { ssr: false })`.
+it with `loader(StockLoader, { ssr: "await" })`.
 
 When a loader's data changes, every component that reads it updates too.
 Calling `load()` from `useLoader()` refetches it on the client, and

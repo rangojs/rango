@@ -9,7 +9,7 @@ export interface PprSharedStampData {
 
 // A stamp of the shared-key fixture (pages/ppr-drift.tsx): the live hole's
 // loader reads the same cached item the shell layout read, and renders what
-// the store holds on this request; the ssr: false loader's stamp is the
+// the store holds on this request; the ssr: "await" loader's stamp is the
 // capture's, served from its pin.
 export function PprSharedStamp({
   loader,

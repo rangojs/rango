@@ -102,11 +102,11 @@ Two pushes from one segment accumulate in push order (`Shop › product`).
 Delivery follows the loader race model: a push that beats the handler barrier
 is in the SSR'd document; a push after a slow fetch streams and applies
 client-side (`useHandle` re-renders when it lands). To guarantee document
-delivery, register the loader as `loader(Def, { ssr: false })` —
+delivery, register the loader as `loader(Def, { ssr: "await" })` —
 see `/loader` → "Writing Handles from Loaders". On a `ppr` route the race is
-decided at capture: a loader without `ssr: false` never runs there, so its
+decided at capture: a loader without `ssr: "await"` never runs there, so its
 crumb is not in the shell and applies client-side on every HIT; with
-`ssr: false` the crumb bakes into the shell (`/ppr` → "On a shell HIT").
+`ssr: "await"` the crumb bakes into the shell (`/ppr` → "On a shell HIT").
 Under `cache()` loader crumbs are not stored with the cached segments; the
 loader re-pushes them on every hit, so they appear once even without an `href`.
 A loader with its own `cache()` keeps its crumbs on its own hits too: they are
@@ -147,7 +147,7 @@ in a `ppr` shell it is stored resolved: the cache write, or the shell capture
 (within `ppr.captureTimeout`), waits for a `content` promise and for a
 `.defer()` slot (below), and every HIT replays the crumb as it was resolved
 then, without running the handler. For per-request crumb content, push it
-from a loader without `ssr: false` (see "Pushing from Loaders").
+from a loader without `ssr: "await"` (see "Pushing from Loaders").
 
 ### Deferred content (decide now, resolve from a deep component)
 
@@ -211,7 +211,7 @@ swap in — no blank, no pending entry. The hold-then-swap is deliberate: a hand
 undefined, the entry is simply dropped. Use `.defer()` only when even
 `label`/`href` are unknown at handler time AND the producer is a component,
 not a loader — a loader-produced crumb pushes directly from the loader body
-(add `{ ssr: false }` if it must be in the SSR'd document), and if
+(add `{ ssr: "await" }` if it must be in the SSR'd document), and if
 you know `label`/`href` and only the `content` is async, push a concrete item
 with a `Promise` `content` field instead (the `content` field is a nested
 promise you resolve with `use()` in your component; no `.defer()` needed).

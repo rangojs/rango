@@ -487,10 +487,10 @@ function runClientUrlsSpec(f: Fixture): void {
     await expect(testId(page, "cu-held-runs")).toHaveText(String(held));
   });
 
-  test("ssr:false document render keeps the large awaited grid in-place (no outlining)", async ({
+  test('ssr: "await" document render keeps the large awaited grid in-place (no outlining)', async ({
     request,
   }) => {
-    // The route's loader is flagged { ssr: false }, so the document render is
+    // The route's loader is flagged { ssr: "await" }, so the document render is
     // awaited and the grid boundary COMPLETES by first flush. The grid is
     // sized past both Fizz outlining gates (see the fixture comment), so
     // without the progressiveChunkSize auto-raise Fizz emits its skeleton

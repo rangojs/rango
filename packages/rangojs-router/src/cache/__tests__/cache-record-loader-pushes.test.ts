@@ -104,7 +104,7 @@ const CachedLoader = (createLoader as Function)(
 );
 
 // PPR shell capture fixture. An unflagged (live-lane) DSL loader never executes
-// at capture (loader-cache.ts resolveLoaderData masks it). An ssr:false
+// at capture (loader-cache.ts resolveLoaderData masks it). An ssr: "await"
 // (bake-lane) loader does, and so does every loader it awaits via ctx.use; on a
 // HIT that replays the record the bake-lane loader re-runs and the awaited
 // loader re-runs with it.
@@ -205,7 +205,7 @@ beforeAll(async () => {
       shellPageHandler,
       { name: "shellRecordCrumbs", ppr: true },
       () => [
-        loader(ShellBakedLoader, { ssr: false }),
+        loader(ShellBakedLoader, { ssr: "await" }),
         loader(ShellLiveLoader),
         loading(createElement("span", null, "loading")),
       ],
@@ -214,14 +214,14 @@ beforeAll(async () => {
       "/ppr-bake-repush",
       repushPageHandler,
       { name: "shellRecordBakeRepush", ppr: true },
-      () => [loader(BakeRepushLoader, { ssr: false })],
+      () => [loader(BakeRepushLoader, { ssr: "await" })],
     ),
     path(
       "/ppr-cached-bake-repush",
       repushPageHandler,
       { name: "shellRecordCachedBakeRepush", ppr: true },
       () => [
-        loader(CachedRepushLoader, { ssr: false }, () => [
+        loader(CachedRepushLoader, { ssr: "await" }, () => [
           cache({ ttl: 60, store: new MemorySegmentCacheStore() }),
         ]),
       ],
@@ -231,7 +231,7 @@ beforeAll(async () => {
       shellPageHandler,
       { name: "shellRecordCachedCrumbs", ppr: true },
       () => [
-        loader(ShellCachedBakedLoader, { ssr: false }, () => [
+        loader(ShellCachedBakedLoader, { ssr: "await" }, () => [
           cache({ ttl: 60, store: new MemorySegmentCacheStore() }),
         ]),
       ],
@@ -453,7 +453,7 @@ describe("PPR shell capture record vs loader handle pushes", () => {
     expect(recorded).toContain("handler-string");
   });
 
-  it("records a bake-lane (ssr: false) loader's own pushes, primitive and object", () => {
+  it('records a bake-lane (ssr: "await") loader\'s own pushes, primitive and object', () => {
     expect(recorded).toContain("baked-string");
     expect(withLabel(recorded, "baked-object")).toHaveLength(1);
   });

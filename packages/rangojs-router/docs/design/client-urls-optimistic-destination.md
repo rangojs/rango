@@ -29,7 +29,7 @@ Decisions taken with the maintainer (2026-09-12):
   authorization belongs in `urls()`, not in a group. `clientUrls()` means
   instant.
 - Hard loads are unchanged. Document requests still await middleware and
-  `loader(Def, { ssr: false })` before the shell streams. Only navigations
+  `loader(Def, { ssr: "await" })` before the shell streams. Only navigations
   become instant.
 - App-level state waits for the server. History, the URL bar, `useNavigation`,
   `useLinkStatus`, and any route hook read from chrome outside the group
@@ -53,7 +53,7 @@ Decisions taken with the maintainer (2026-09-12):
 | Fully prefetched click                                         | commits from cache with no fallback frame                                  | unchanged; the optimistic branch is replaced by the commit in the same beat         |
 | Middleware or loader redirect / error                          | optimistic branch discarded at commit                                      | unchanged                                                                           |
 | Intercept target                                               | local presentation declined                                                | unchanged                                                                           |
-| Hard load                                                      | shell after middleware and `ssr:false` loaders                             | unchanged                                                                           |
+| Hard load                                                      | shell after middleware and `ssr: "await"` loaders                          | unchanged                                                                           |
 
 The same-route row is deliberately untouched: held data and `revalidate()`
 predicates already keep that case content-stable, and re-rendering the
@@ -342,5 +342,5 @@ as well.
 - Same-route navigations: held data and `transition()` already cover them.
 - Rendering the destination before the browser has the group at all (first
   entry from a server page remains a server navigation; prefetch covers it).
-- Any change to middleware, `ssr: false`, or hard-load behavior.
+- Any change to middleware, `ssr: "await"`, or hard-load behavior.
 - A per-route opt-out.

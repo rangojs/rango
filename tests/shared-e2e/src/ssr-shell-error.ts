@@ -480,7 +480,7 @@ export function defineSsrShellErrorTests(
     expect(frames.filter((c) => !/(^|\s)dark(\s|$)/.test(c))).toEqual([]);
   });
 
-  test("an ssr: false loader with no boundary prints its error once", async ({
+  test('an ssr: "await" loader with no boundary prints its error once', async ({
     page,
   }) => {
     const f = fixture();
@@ -505,7 +505,7 @@ export function defineSsrShellErrorTests(
     );
   });
 
-  test("an ssr: false loader whose error a declared errorBoundary() renders prints it once too", async ({
+  test('an ssr: "await" loader whose error a declared errorBoundary() renders prints it once too', async ({
     page,
   }) => {
     const f = fixture();

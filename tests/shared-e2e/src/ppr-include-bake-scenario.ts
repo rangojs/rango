@@ -4,7 +4,7 @@ import { guardHydrationErrors } from "./hydration-guard.js";
 
 /**
  * A `ppr` page under a store layout whose client chrome reads the layout's
- * `loader(Def, { ssr: false })` outside any `<Suspense>`, declared directly
+ * `loader(Def, { ssr: "await" })` outside any `<Suspense>`, declared directly
  * under the layout and mounted through `include()` under it (#1179: the
  * included page stayed on MISS). Fixture: ppr-include-bake* in each app.
  */

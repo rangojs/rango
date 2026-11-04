@@ -254,7 +254,7 @@ Notes:
   them.
 - `progressiveChunkSize` sets React's Fizz `progressiveChunkSize` for document
   renders and PPR shell capture. Unset, documents whose route has a
-  `loader(Def, { ssr: false })` raise it automatically so that content stays
+  `loader(Def, { ssr: "await" })` raise it automatically so that content stays
   in place; see `/loader`.
 - `encryptionKey` is the key that encrypts inline server-action bound
   arguments: base64-encoded 32 bytes (`openssl rand -base64 32`). Pass it as
@@ -504,7 +504,7 @@ When `notFound()` is thrown, the router uses the first of:
 Handler-thrown and no-match 404s always set HTTP status 404. A loader-thrown
 `notFound()` on a document request always renders the not-found UI, but the
 404 status is set only if the loader rejects before the document Response is
-constructed (loaders stream). Register the loader as `loader(Def, { ssr: false })` to
+constructed (loaders stream). Register the loader as `loader(Def, { ssr: "await" })` to
 make the 404 status deterministic. On client navigations the 404 UI swaps in
 with the URL preserved and the payload stays 200. See `/loader` → "Loader
 Authority".

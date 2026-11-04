@@ -5,15 +5,15 @@ import { expectNoPageError, testId, waitForHydration } from "./helper";
 const SIGNALS_PATH = "/client-urls-ssr-signals";
 
 /**
- * workerd mirror of the test-app "ssr:false loader redirect()/notFound()"
- * cases (packages/rangojs-router/e2e/client-urls.test.ts): a { ssr: false }
+ * workerd mirror of the test-app `ssr: "await" loader redirect()/notFound()`
+ * cases (packages/rangojs-router/e2e/client-urls.test.ts): a { ssr: "await" }
  * loader settles before the document flush, so its signal is resolved while
  * the server tree is built — a redirect is a 200 document that replaces to
  * the target on hydration, a notFound is a real 404 with the not-found UI.
  * Neither may reach the read site (a throw there 500s the Fizz shell).
  */
 function runSsrSignalsSpec(f: Fixture): void {
-  test("ssr:false loader redirect(): 200 document then client replace, for layout, page, and child-read readers", async ({
+  test('ssr: "await" loader redirect(): 200 document then client replace, for layout, page, and child-read readers', async ({
     page,
     request,
   }) => {
@@ -38,7 +38,7 @@ function runSsrSignalsSpec(f: Fixture): void {
     }
   });
 
-  test("ssr:false loader notFound(): real 404 with the not-found UI, no 500", async ({
+  test('ssr: "await" loader notFound(): real 404 with the not-found UI, no 500', async ({
     page,
     request,
   }) => {
@@ -59,12 +59,12 @@ function runSsrSignalsSpec(f: Fixture): void {
   });
 }
 
-test.describe("clientUrls ssr:false signals", () => {
+test.describe('clientUrls ssr: "await" signals', () => {
   const f = useFixture({ root: ".", mode: "dev" });
   runSsrSignalsSpec(f);
 });
 
-test.describe("clientUrls ssr:false signals (production)", () => {
+test.describe('clientUrls ssr: "await" signals (production)', () => {
   const f = useFixture({ root: ".", mode: "build" });
   runSsrSignalsSpec(f);
 });

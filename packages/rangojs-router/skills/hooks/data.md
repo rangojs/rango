@@ -28,7 +28,7 @@ boundary (or the route's `loading()`) — it does NOT render with
 `isLoading: true`. Put a boundary above every read whose loader can be slow;
 `isLoading` covers later refetches (`load()`, key/group refreshes). Once the
 component renders, `data` is present. (On document loads a loader registered
-with `{ ssr: false }` is already settled at first paint, so its
+with `{ ssr: "await" }` is already settled at first paint, so its
 reads never suspend there — see `/loader`.)
 
 **`isLoading` covers navigations and `load()` only.** When a server action

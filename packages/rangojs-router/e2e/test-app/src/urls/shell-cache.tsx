@@ -87,7 +87,7 @@ import { onErrorLog } from "../error-log.js";
 //   STRUCTURAL — the route loader behind loading(): masked at capture, the
 //     LoaderBoundary postpones, the fallback bakes into the shell as route
 //     structure (the LIVE lane).
-//   BAKE LANE — a loader flagged `ssr: false` executes at capture:
+//   BAKE LANE — a loader flagged `ssr: "await"` executes at capture:
 //     its settled return bakes (snapshot-pinned on HITs), nested pending
 //     promises hole at the consumer's own Suspense. /shell-cache/baked and
 //     /shell-cache/baked-only exercise it; a PLAIN loader without loading()
@@ -362,7 +362,7 @@ async function ShellLargePage() {
 
 // Snapshot SIZE-CAP fixture layout (issue #651): same shape as the drift
 // fixture — a cached stamp baked into the shell + the live price hole — under a
-// tiny ppr.maxSnapshotBytes, which bounds ssr: false loader pins only (this
+// tiny ppr.maxSnapshotBytes, which bounds ssr: "await" loader pins only (this
 // route has none). See getCapStamp.
 async function CapStamp({ stamp }: { stamp: Promise<string> }) {
   return <p data-testid="cap-stamp">{await stamp}</p>;
@@ -721,7 +721,7 @@ export const shellCachePatterns = urls(
           ),
         ],
       ),
-      // ssr:false BAKE lane: the flagged loader executes at
+      // ssr: "await" BAKE lane: the flagged loader executes at
       // capture and its settled return is SHELL material even though the
       // route declares loading(); the nested promise in that return and the
       // unflagged sibling stay live holes at their own boundaries.
@@ -730,7 +730,7 @@ export const shellCachePatterns = urls(
         ShellBakedPage,
         { name: "shellCacheBaked", ppr: { ttl: 300, swr: 120 } },
         () => [
-          loader(ShellBakedNavLoader, { ssr: false }),
+          loader(ShellBakedNavLoader, { ssr: "await" }),
           loader(ShellBakedSiblingLoader),
           loading(
             <div data-testid="shell-baked-loading">Loading baked...</div>,
@@ -744,7 +744,7 @@ export const shellCachePatterns = urls(
         "/shell-cache/baked-only",
         ShellBakedOnlyPage,
         { name: "shellCacheBakedOnly", ppr: { ttl: 300, swr: 120 } },
-        () => [loader(ShellBakedOnlyLoader, { ssr: false })],
+        () => [loader(ShellBakedOnlyLoader, { ssr: "await" })],
       ),
       // Loader-carried promise WITH loading(): the loading() boundary is the hole.
       // On a HIT the resume streams three layers in one body — cached shell, then
@@ -807,17 +807,17 @@ export const shellCachePatterns = urls(
         ],
       ),
     ]),
-    // Shared-key route (issue #941): the shell layout, an ssr: false loader
+    // Shared-key route (issue #941): the shell layout, an ssr: "await" loader
     // and the live hole read the same "drift" item. The snapshot records no
     // cache read, so after the item expires the hole shows a newer stamp than
-    // the shell and the ssr: false loader's pin.
+    // the shell and the ssr: "await" loader's pin.
     layout(ShellSharedLayout, () => [
       path(
         "/shell-cache/shared-key",
         ShellSharedPage,
         { name: "shellCacheSharedKey", ppr: { ttl: 300, swr: 120 } },
         () => [
-          loader(ShellSharedBakedStampLoader, { ssr: false }),
+          loader(ShellSharedBakedStampLoader, { ssr: "await" }),
           loader(ShellSharedStampLoader),
           loading(
             <p data-testid="shell-shared-hole-fallback">Loading stamp...</p>,
@@ -825,7 +825,7 @@ export const shellCachePatterns = urls(
         ],
       ),
     ]),
-    // Live-dep route: the ssr: false loader runs on every HIT (its return holds
+    // Live-dep route: the ssr: "await" loader runs on every HIT (its return holds
     // a promise) and awaits the live loader declared after it, so the live
     // loader's body runs inside the restored loader's body. Its push stays
     // live on a HIT and a client navigation, like its data.
@@ -834,7 +834,7 @@ export const shellCachePatterns = urls(
       ShellLiveDepPage,
       { name: "shellCacheLiveDep", ppr: { ttl: 300, swr: 120 } },
       () => [
-        loader(ShellHoleyDepLoader, { ssr: false }),
+        loader(ShellHoleyDepLoader, { ssr: "await" }),
         loader(ShellLiveDepLoader),
         loading(
           <p data-testid="shell-live-dep-fallback">Loading live dep...</p>,
@@ -850,8 +850,8 @@ export const shellCachePatterns = urls(
       () => [loader(ShellPriceLoader)],
     ),
     // Snapshot SIZE-CAP route (issue #651): a tiny maxSnapshotBytes. The cap
-    // bounds ssr: false loader pins only and the doc record is exempt; this
-    // route has no ssr: false loader, so it stores and serves its shell, and
+    // bounds ssr: "await" loader pins only and the doc record is exempt; this
+    // route has no ssr: "await" loader, so it stores and serves its shell, and
     // the HIT hydrates cleanly. (A route whose pins exceed the cap stores the
     // navigation half only and serves documents as MISS.)
     layout(ShellCapLayout, () => [
@@ -1005,31 +1005,31 @@ export const shellCachePatterns = urls(
       { name: "shellCacheSettled", ppr: true },
       () => [loader(ShellSettledLoader)],
     ),
-    // Issue #888: the ssr:false loader awaits an unflagged loader that pushes
+    // Issue #888: the ssr: "await" loader awaits an unflagged loader that pushes
     // a string handle. Outside ShellCacheLayout so a HIT takes the fast path
     // (see ShellWarningsPage); the replayed record must not carry the push.
     path(
       "/shell-cache/warnings",
       ShellWarningsPage,
       { name: "shellCacheWarnings", ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellStorefrontLoader, { ssr: false })],
+      () => [loader(ShellStorefrontLoader, { ssr: "await" })],
     ),
-    // Issue #929: the ssr:false loader pushes the string handle itself; the
+    // Issue #929: the ssr: "await" loader pushes the string handle itself; the
     // replayed record keeps it and the HIT restores it once.
     path(
       "/shell-cache/restock",
       ShellWarningsPage,
       { name: "shellCacheRestock", ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellRestockLoader, { ssr: false })],
+      () => [loader(ShellRestockLoader, { ssr: "await" })],
     ),
-    // Issue #927: the capture's snapshot encode of the ssr:false loader value
+    // Issue #927: the capture's snapshot encode of the ssr: "await" loader value
     // fails once per ?probe= (ShellFlightErrorLoader); that capture must not
     // store, and a later clean capture must.
     path(
       "/shell-cache/flight-error",
       ShellWarningsPage,
       { name: "shellCacheFlightError", ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellFlightErrorLoader, { ssr: false })],
+      () => [loader(ShellFlightErrorLoader, { ssr: "await" })],
     ),
     // Capture outcome for one ?probe=: `refused` when onError got the capture's
     // cache-write report, `passes` from shellFlightErrorPasses. `stored` only
@@ -1064,14 +1064,14 @@ export const shellCachePatterns = urls(
       "/shell-cache/jsx",
       ShellJsxPage,
       { ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellJsxLoader, { ssr: false })],
+      () => [loader(ShellJsxLoader, { ssr: "await" })],
     ),
     // Issue #1206 fixture (shell-cache-inline.tsx).
     path(
       "/shell-cache/inline",
       ShellInlinePage,
       { ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellInlineLoader, { ssr: false })],
+      () => [loader(ShellInlineLoader, { ssr: "await" })],
     ),
     path("/shell-cache/stale-replay/:id", ShellStaleReplayPage, {
       name: "shellCacheStaleReplay",
@@ -1093,7 +1093,7 @@ export const shellCachePatterns = urls(
             ? false
             : undefined,
         ),
-        loader(ShellLoadMorePageLoader, { ssr: false }),
+        loader(ShellLoadMorePageLoader, { ssr: "await" }),
       ],
     ),
     // Storefront shape: ppr routes under an ancestor cache() scope (the
@@ -1184,7 +1184,7 @@ export const shellCachePatterns = urls(
         ],
       ),
     ]),
-    // Identity-guard negative: a bake-lane loader (ssr: false) that reads
+    // Identity-guard negative: a bake-lane loader (ssr: "await") that reads
     // cookies(). Capture refuses deterministically (guard flag) — MISS forever
     // — while axis 1 serves the per-user value normally.
     path(
@@ -1194,7 +1194,7 @@ export const shellCachePatterns = urls(
         name: "shellCacheGuard",
         ppr: true,
       },
-      () => [loader(ShellIdentityLoader, { ssr: false })],
+      () => [loader(ShellIdentityLoader, { ssr: "await" })],
     ),
     // Slot-hole escape: see ShellSlotChromeLayout above.
     layout(ShellSlotChromeLayout, () => [

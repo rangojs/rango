@@ -108,7 +108,7 @@ export const ProductLoader = createLoader(async (ctx) => {
 });
 ```
 
-Two pushes from one segment accumulate in push order (`Shop / product`). Delivery follows the loader's streaming: a push that lands before the page's handlers finish is in the server-rendered document; a later push streams and applies on the client, and `useHandle` re-renders when it lands. To guarantee the crumb is in the document, register the loader as `loader(ProductLoader, { ssr: false })`, which awaits it before the first flush. See [Loaders](/docs/rango/features/loaders).
+Two pushes from one segment accumulate in push order (`Shop / product`). Delivery follows the loader's streaming: a push that lands before the page's handlers finish is in the server-rendered document; a later push streams and applies on the client, and `useHandle` re-renders when it lands. To guarantee the crumb is in the document, register the loader as `loader(ProductLoader, { ssr: "await" })`, which awaits it before the first flush. See [Loaders](/docs/rango/features/loaders).
 
 ## Render the trail on the client
 

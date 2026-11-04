@@ -332,7 +332,7 @@ Rango's `createLoader()` is a live data layer, not a one-for-one replacement for
 - **Shared data across segments** — a loader registered on a layout is available to all child routes via `ctx.use(Loader)` or `useLoader(Loader)`
 - **Independent revalidation** — `revalidate()` on a specific loader after actions
 - **Per-loader caching** — `loader(L, () => [cache({ ttl: 60 })])`
-- **Loader-shaped authority** — a Rango loader can throw `redirect()` or `notFound()` and push data-derived metadata with `ctx.use(Meta)`. Register it with `loader(L, { ssr: false })` when the 404 status or the title must be in the server-rendered document. One habit does not carry over: a redirect thrown from a loader becomes a client-side navigation on document loads, never an HTTP 302. Keep auth redirects in middleware ([Step 4](#step-4-route-protection)).
+- **Loader-shaped authority** — a Rango loader can throw `redirect()` or `notFound()` and push data-derived metadata with `ctx.use(Meta)`. Register it with `loader(L, { ssr: "await" })` when the 404 status or the title must be in the server-rendered document. One habit does not carry over: a redirect thrown from a loader becomes a client-side navigation on document loads, never an HTTP 302. Keep auth redirects in middleware ([Step 4](#step-4-route-protection)).
 
 If the React Router loader just fetches data for its page component and the component can become a server component, merge it into the handler. If the component stays a client component, consider porting the whole group with [`clientUrls()`](#choose-a-target-shape-per-route-group). When a client component needs live data:
 
@@ -552,7 +552,7 @@ const HomePage: Handler<"home"> = (ctx) => {
 };
 ```
 
-A data-derived `meta({ data })` becomes the same push from the loader that owns the data — `ctx.use(Meta)({ title: data.name })` in the loader body — registered with `loader(L, { ssr: false })` when the title must be in the server-rendered `<head>`. See [Metadata](/docs/rango/features/metadata).
+A data-derived `meta({ data })` becomes the same push from the loader that owns the data — `ctx.use(Meta)({ title: data.name })` in the loader body — registered with `loader(L, { ssr: "await" })` when the title must be in the server-rendered `<head>`. See [Metadata](/docs/rango/features/metadata).
 
 Resource routes become typed response routes:
 

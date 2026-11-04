@@ -620,7 +620,7 @@ branch; 0.1-0.2 ms from the shell memo either way.
 - e2e, dev + production: `/ppr-large`, `/ppr-large/holes` and
   `/shell-cache/large` report `records=segment:1` and hydrate with zero
   errors; `/ppr-shared-key` and `/shell-cache/shared-key` keep the shell's
-  and the `ssr: false` loader's capture stamp while the hole moves on, with
+  and the `ssr: "await"` loader's capture stamp while the hole moves on, with
   zero hydration errors.
 
 The unit test pins the tail's Flight payload, not the resumed HTML: it stubs

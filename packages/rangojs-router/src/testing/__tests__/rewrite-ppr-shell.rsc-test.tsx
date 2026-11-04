@@ -314,7 +314,7 @@ describe("a visitor-keyed shell and the other shared caches", () => {
             () => <main>loader item</main>,
             { ppr: true },
             () => [
-              loader(FromLoader, { ssr: false }, () => [cache({ ttl: 60 })]),
+              loader(FromLoader, { ssr: "await" }, () => [cache({ ttl: 60 })]),
             ],
           ),
           path("/summer", () => <main>never</main>),

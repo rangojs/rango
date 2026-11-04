@@ -329,7 +329,7 @@ describe("segment-system", () => {
         });
       });
 
-      it("delivers { ssr: false } loaders as SETTLED values in loaderStreams; unflagged siblings keep the promise", async () => {
+      it('delivers { ssr: "await" } loaders as SETTLED values in loaderStreams; unflagged siblings keep the promise', async () => {
         // The SSR-completeness contract must hold by construction, not by the
         // read site's use() winning a Flight-chunk scheduling race: a flagged
         // segment's stream entry is the awaited result (decoded synchronously
@@ -368,7 +368,7 @@ describe("segment-system", () => {
         expect(outlets[0].props.awaitedLoaderIds).toEqual(["flagged-loader"]);
       });
 
-      it("delivers { ssr: false } loaders as SETTLED values through the LoaderBoundary streams too", async () => {
+      it('delivers { ssr: "await" } loaders as SETTLED values through the LoaderBoundary streams too', async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route", loading: "Loading..." }),
           seg({
@@ -394,7 +394,7 @@ describe("segment-system", () => {
         ]);
       });
 
-      it("resolves a settled { ssr: false } redirect() to LoaderRedirect and replaces the whole page", async () => {
+      it('resolves a settled { ssr: "await" } redirect() to LoaderRedirect and replaces the whole page', async () => {
         // Document lane: the flagged result is settled before the tree is
         // built, and a read-site throw would land in the Fizz shell. The
         // redirect carrier replaces every segment (an ancestor reading the
@@ -427,7 +427,7 @@ describe("segment-system", () => {
         expect(collectByType(tree, MockOutletProvider)).toHaveLength(0);
       });
 
-      it("resolves a settled { ssr: false } notFound() to its fallback at the owning segment", async () => {
+      it('resolves a settled { ssr: "await" } notFound() to its fallback at the owning segment', async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route" }),
           seg({
@@ -452,7 +452,7 @@ describe("segment-system", () => {
         expect(collectByType(tree, LoaderRedirect)).toHaveLength(0);
       });
 
-      it("resolves a settled { ssr: false } redirect() through the LoaderBoundary branch too", async () => {
+      it('resolves a settled { ssr: "await" } redirect() through the LoaderBoundary branch too', async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "R0", type: "route", loading: "Loading..." }),
           seg({

@@ -1,5 +1,5 @@
 /**
- * An `ssr: false` loader that throws on a document load, on a route
+ * An `ssr: "await"` loader that throws on a document load, on a route
  * with no errorBoundary() on its chain, is answered with the router's default
  * error boundary and a 500: on a plain document, a ppr MISS, and a ppr shell
  * HIT whose loader run throws. Before, the payload carried the error with no
@@ -46,13 +46,13 @@ function setup() {
   const router = createRouter({ cache: { store: cacheStore } }).routes(
     urls(({ path, loader, errorBoundary }) => [
       path("/plain", Page, { name: "plain" }, () => [
-        loader(Flagged, { ssr: false }),
+        loader(Flagged, { ssr: "await" }),
       ]),
       path("/shell", Page, { name: "shell", ppr: true }, () => [
-        loader(Flagged, { ssr: false }),
+        loader(Flagged, { ssr: "await" }),
       ]),
       path("/declared", Page, { name: "declared" }, () => [
-        loader(Flagged, { ssr: false }),
+        loader(Flagged, { ssr: "await" }),
         errorBoundary(<p>declared-error</p>),
       ]),
       path(
@@ -60,7 +60,7 @@ function setup() {
         Page,
         { name: "declaredShell", ppr: true },
         () => [
-          loader(Flagged, { ssr: false }),
+          loader(Flagged, { ssr: "await" }),
           errorBoundary(<p>declared-error</p>),
         ],
       ),
@@ -98,7 +98,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("an ssr: false loader that throws, with no errorBoundary()", () => {
+describe('an ssr: "await" loader that throws, with no errorBoundary()', () => {
   it("a document renders the router's default error boundary with a 500", async () => {
     const { serve } = setup();
     failing = true;
@@ -138,7 +138,7 @@ describe("an ssr: false loader that throws, with no errorBoundary()", () => {
   });
 });
 
-describe("an ssr: false loader that throws, with a declared errorBoundary()", () => {
+describe('an ssr: "await" loader that throws, with a declared errorBoundary()', () => {
   it("a document keeps its own fallback and answers 500", async () => {
     const { serve } = setup();
     failing = true;

@@ -449,7 +449,7 @@ a captured entry supersedes the baked one as soon as it lands.
 
 A plain `ppr` shell keeps everything its prelude rendered from in one place,
 the doc record: the handler layer, and the handle values the handlers and the
-`ssr: false` loaders pushed (`CachedEntryData.handles`, with `handleOwners`
+`ssr: "await"` loaders pushed (`CachedEntryData.handles`, with `handleOwners`
 naming the loader of each loader push). A HIT restores that record before any
 loader runs, and the document hydrates with exactly that (#1035).
 
@@ -458,7 +458,7 @@ by the prerender store (`settleCaptureRecord` returns `prerender`), and every
 HIT takes the handler layer from the same store, so storing it again would
 only duplicate the build artifact. That artifact was written at build time,
 though, when no loader runs, so it holds the handlers' pushes and none of the
-loaders'. Yet the prelude rendered the settled pushes of the `ssr: false`
+loaders'. Yet the prelude rendered the settled pushes of the `ssr: "await"`
 loaders, and a promise-free one is served from its pin on the HIT and does not
 run. Until #1057 those values were in the HTML and nowhere else: every HIT
 hydrated without them (React #418), and they never arrived.

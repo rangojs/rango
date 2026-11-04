@@ -381,7 +381,7 @@ middleware `ctx` passed in); under `cache()` loaders can still read it because a
 DSL loader re-runs on every hit (a `"use cache"` function a loader calls cannot,
 and a loader bound with its own `cache()` only with a `key()`, which switches
 the check off, so the key must include the value). On a `ppr` route only a
-loader without `ssr: false` that no handler awaits may read it: a read the shell
+loader without `ssr: "await"` that no handler awaits may read it: a read the shell
 capture waits for refuses the capture. A middleware `ctx` passed to a
 `"use cache"` function keys the call by host, pathname, params and search, plus
 the route name once the route is matched (a global middleware before `next()`
@@ -556,7 +556,7 @@ direct visit does. A shell keyed by the visitor's URL
 that URL.
 
 **Middleware only, by design.** `rewrite()` is a middleware tool. A route
-handler or a loader (any loader, `ssr: false` included) cannot rewrite: its
+handler or a loader (any loader, `ssr: "await"` included) cannot rewrite: its
 throw is an error whose message points you to route middleware. A rewrite
 that depends on data goes in the route's middleware, reading the data
 through a cached function the loader shares, so the lookup runs once:

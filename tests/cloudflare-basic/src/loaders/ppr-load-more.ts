@@ -15,7 +15,7 @@ export const PprLoadMoreLoader = createLoader(
   true,
 );
 
-// The page the URL names, read on every request (ssr: false bakes it into a
+// The page the URL names, read on every request (ssr: "await" bakes it into a
 // document shell only). Its data reaches the list in the same commit as the
 // navigation's segments, so the list shows page N once ?page=N has rendered.
 export const PprLoadMorePageLoader = createLoader(
