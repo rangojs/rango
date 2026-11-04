@@ -16,6 +16,7 @@
  */
 
 import {
+  absoluteHref,
   buildInterceptKey,
   buildParamsKey,
   buildPrefetchKey,
@@ -161,15 +162,6 @@ function withoutHash(href: string): string {
  */
 function openInterceptSource(): string | null {
   return getRegisteredStore()?.getInterceptSourceUrl() ?? null;
-}
-
-/** `href` made absolute against the document, as navigation-client.ts does. */
-function absoluteHref(href: string): string | null {
-  try {
-    return new URL(href, window.location.origin).href;
-  } catch {
-    return null;
-  }
 }
 
 /**

@@ -89,6 +89,7 @@ vi.mock("../browser/prefetch/cache", async (importOriginal) => {
     // Pure over the shapes the real cache remembered.
     paramsCandidateKeys: actual.paramsCandidateKeys,
     pageMatchesParamsLabel: actual.pageMatchesParamsLabel,
+    absoluteHref: actual.absoluteHref,
   };
 });
 
@@ -1187,6 +1188,33 @@ describe("navigation-client", () => {
         } as any);
 
         await client.fetchPartial({ ...click, staleRevalidation: true });
+
+        expect(consumePrefetchMock).not.toHaveBeenCalled();
+        expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("fetches rather than falling back to the other slots for an unparseable source", async () => {
+        // No intercept slot can be built from this source, and the wildcard
+        // and source slots hold other requests' answers: nothing is adoptable.
+        consumePrefetchMock.mockReturnValue(
+          makeEntry({ metadata: { body: "another request's page" } }),
+        );
+        consumeInflightPrefetchMock.mockReturnValue(
+          Promise.resolve(makeEntry({ metadata: { body: "inflight" } })),
+        );
+        const fetchMock = vi.fn(
+          async () => new Response("fresh", { status: 200 }),
+        );
+        vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+        const client = createNavigationClient({
+          createFromFetch: async (responsePromise: Promise<Response>) => {
+            await responsePromise;
+            return { metadata: { matched: [], diff: [] } };
+          },
+        } as any);
+
+        await client.fetchPartial({ ...click, interceptSourceUrl: "http://" });
 
         expect(consumePrefetchMock).not.toHaveBeenCalled();
         expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();

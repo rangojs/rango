@@ -278,6 +278,24 @@ export function buildSourceKey(
 }
 
 /**
+ * `href` made absolute against the document. Both sides of an intercept key
+ * name their URLs through this — the prefetch that fills the slot
+ * (prefetch/fetch.ts) and the navigation that adopts it (navigation-client.ts)
+ * — because a key only matches when both spelled the URL the same way.
+ *
+ * Null when it does not parse: a slot built from such a value could never be
+ * matched, so the caller treats the source as unusable rather than warming or
+ * consulting an entry nothing reads.
+ */
+export function absoluteHref(href: string): string | null {
+  try {
+    return new URL(href, window.location.origin).href;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Build an intercept-scoped cache key: a prefetch sent from inside an open
  * intercept. Key shape:
  * `rangoState\0i:<interceptSourceHref>\0<clientHref>\0/target?...`.
