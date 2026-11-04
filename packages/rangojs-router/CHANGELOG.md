@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.35.0 (2026-11-04)
 
-### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })`
+### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
 
 **Before.** The option that makes the server render wait for a loader was
 spelled `ssr: false`. It read as "keep this loader out of SSR", the meaning
