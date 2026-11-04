@@ -353,18 +353,15 @@ export const loader: ClientUrlHelpers["loader"] = (
   }
   // Inline, not errors.ts assertLoaderSsrOption: this module is in the
   // client router chunk, where the helper costs bytes on every page.
-  if ((options?.ssr as unknown) === false) {
-    throw new Error(
-      'clientUrls() loader() ssr: false was replaced: use loader(Def, { ssr: "await" }) to await the loader before first flush on document requests.',
-    );
-  }
   if (
     options?.ssr !== undefined &&
     options.ssr !== "stream" &&
     options.ssr !== "await"
   ) {
     throw new Error(
-      `clientUrls() loader() ssr must be "stream" or "await" (got ${JSON.stringify(options.ssr)}). Omit it (or pass "stream") to stream on every render.`,
+      (options.ssr as unknown) === false
+        ? 'clientUrls() loader() ssr: false was replaced: use loader(Def, { ssr: "await" }) to await the loader before first flush on document requests.'
+        : `clientUrls() loader() ssr must be "stream" or "await" (got ${JSON.stringify(options.ssr)}). Omit it (or pass "stream") to stream on every render.`,
     );
   }
   if (

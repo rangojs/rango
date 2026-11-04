@@ -161,8 +161,9 @@ export interface ClientUrlHelpers {
    * revalidate() only: a per-loader predicate the server runs, as in urls().
    *
    * Pass `{ ssr: "await" }` to await this loader before first flush on
-   * DOCUMENT requests (see {@link LoaderOptions}): the opt-in for loaders whose data, handle
-   * pushes, or thrown notFound()/redirect() must be in the SSR'd HTML.
+   * DOCUMENT requests (see {@link LoaderOptions}): the opt-in for loaders
+   * whose data, handle pushes, or thrown notFound()/redirect() must be in the
+   * SSR'd HTML.
    * Per-loader: a streaming sibling keeps streaming. Under a `ppr` group
    * route the flag BAKES: the loader executes at shell capture and its
    * settled return freezes into the shell (nested promises stay live

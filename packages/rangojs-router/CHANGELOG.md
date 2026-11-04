@@ -10,8 +10,9 @@ spelled `ssr: false`. It read as "keep this loader out of SSR", the meaning
 guarantees the loader's data is in the server's HTML.
 
 **Now.** The value says what the render does with the loader. `ssr: "await"`
-makes the document render await it before the first flush, a `ppr` shell
-capture bake its value and a prerender store it, exactly as `ssr: false` did.
+makes the document render await it before the first flush and a `ppr` shell
+capture (at runtime, or at build time on a `Prerender` + `ppr` route) bake
+its value, exactly as `ssr: false` did.
 `ssr: "stream"` is the default, the same as leaving `ssr` out. There is no
 alias: `ssr: false` is a type error, and at runtime `loader()` throws
 `loader() ssr: false was replaced: use loader(Def, { ssr: "await" }) ...`.

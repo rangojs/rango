@@ -180,14 +180,15 @@ export type LoaderFn<
  * throws may land AFTER the document Response is constructed, so none of
  * them are guaranteed to be in the SSR'd HTML.
  *
- * `ssr: "await"` makes every server render that produces HTML await this
+ * `ssr: "await"` makes the server renders that produce HTML await this
  * loader: on a DOCUMENT request the loader is awaited before first flush, so
  * no fallback paints for it (`useLoader` still suspends, but on an
- * already-settled promise); a ppr shell capture and a prerender await it
- * too. Client navigations keep streaming it. This is the SSR-completeness
- * opt-in; any other value, `false` and `true` included, throws at
- * registration. Choose
- * it when the loader feeds something that must exist in the document:
+ * already-settled promise); a ppr shell capture, at runtime or at build time
+ * for a Prerender + ppr route, awaits it too. Client navigations keep
+ * streaming it. This is the SSR-completeness opt-in; any value other than
+ * `"stream"` or `"await"`, `false` and `true` included, throws at
+ * registration. Choose it when the loader feeds something that must exist in
+ * the document:
  * `<head>` meta via a handle, or a real 404 status (an awaited `notFound()`
  * deterministically precedes Response construction, where the streamed
  * default only wins that race opportunistically). Under ppr it is also the
@@ -209,8 +210,8 @@ export type LoaderFn<
  */
 export type LoaderOptions = {
   /**
-   * `"await"`: document renders, ppr shell captures and prerenders await
-   * this loader (see {@link LoaderOptions}). `"stream"` (the default when
+   * `"await"`: document renders and ppr shell captures await this loader
+   * (see {@link LoaderOptions}). `"stream"` (the default when
    * omitted): it streams behind its boundary.
    */
   ssr?: "stream" | "await";

@@ -324,8 +324,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * }
    * ```
    * Pass `{ ssr: "await" }` to await this loader before first flush on
-   * DOCUMENT requests (see {@link LoaderOptions}): the opt-in for loaders whose data, handle
-   * pushes, or thrown notFound()/redirect() must be in the SSR'd HTML.
+   * DOCUMENT requests (see {@link LoaderOptions}): the opt-in for loaders
+   * whose data, handle pushes, or thrown notFound()/redirect() must be in the
+   * SSR'd HTML.
    * Per-loader: a streaming sibling in the same segment keeps streaming.
    *
    * ```typescript
