@@ -344,6 +344,14 @@ stored per source page, whether or not the intercept applies from that page
 prefetches keep one shared entry, unless a `revalidate()` that read the source
 page kept a segment (`MatchResult.sourceHeld`, same header).
 
+While an intercept is open, a prefetch of a link inside it is that modal's own
+answer: it names the intercept's source and the modal's URL, and is stored for
+that context alone (`browser/prefetch/fetch.ts` `interceptSlotKey`), so the
+click on that link adopts it and opens the item in the modal with no second
+request. A prefetch made outside the modal is never served inside it, and one
+made inside it is never served once the modal closed: each was rendered for a
+different request.
+
 ```typescript
 // Intercept only when opened from the shop index
 intercept("@modal", "product", <ProductModal />, {

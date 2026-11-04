@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a click inside an open intercept uses the link's prefetch
+
+**Before.** From an open intercept (`/item/2` over `/list/1`), hovering a
+link to another item prefetched it and then threw the answer away: a
+prefetch was keyed by its URL alone and named no intercept, so the click
+could not tell whether that answer was the modal or the target's full page.
+It fetched again, and the modal only opened once that request landed.
+
+**Now.** A prefetch sent while an intercept is open names the intercept's
+source and is stored for that context alone, so the click that sends the same
+request adopts it and shows the item in the modal without a second round
+trip. A prefetch made with no intercept open is never adopted inside one, and
+one made inside is never adopted once the modal closed: each was rendered for
+a different request. Clicks with no prefetch, and every other navigation, are
+unchanged.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

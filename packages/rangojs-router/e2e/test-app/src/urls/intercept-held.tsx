@@ -43,6 +43,10 @@ import {
 // intercept targets (intercept-history-scenario).
 // /list/:id shows its loader's id and opens /handler/2; the /handler intercept
 // links to /list/<its id>, a source route with a param of the same name.
+// The index also links to /handler/2 twice, one prefetching and one not, and
+// the /handler intercept links to /handler/2 with prefetch on: a click inside
+// an open intercept adopts the prefetch sent from inside it, and only that one
+// (intercept-history-scenario).
 // The layout shows the crumb handle; it pushes "layout" itself.
 function InterceptHeldLayout() {
   return (
@@ -92,6 +96,20 @@ function InterceptHeldIndex() {
         data-testid="ih-open-handler"
       >
         Open handler-push modal
+      </Link>
+      <Link
+        to="/intercept-held/handler/2"
+        prefetch="hover"
+        data-testid="ih-open-handler-2-pf"
+      >
+        Prefetched handler item
+      </Link>
+      <Link
+        to="/intercept-held/handler/2"
+        prefetch="none"
+        data-testid="ih-open-handler-2"
+      >
+        Second handler item
       </Link>
       <Link
         to="/intercept-held/push-held/1"
@@ -367,6 +385,13 @@ export const interceptHeldPatterns = urls(
                 data-testid="ih-handler-intercept-list"
               >
                 List
+              </Link>
+              <Link
+                to="/intercept-held/handler/2"
+                prefetch="hover"
+                data-testid="ih-handler-intercept-pf"
+              >
+                Prefetched item
               </Link>
             </Modal>
           );

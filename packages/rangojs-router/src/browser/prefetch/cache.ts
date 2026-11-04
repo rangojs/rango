@@ -23,6 +23,13 @@
  *   targets, matched or not), OR when a Link opts in with
  *   `prefetchKey=":source"` — in both cases so source-sensitive responses
  *   cannot bleed into navigations from other pages.
+ * - Intercept-scoped: built by
+ *   `buildInterceptKey(rangoState, interceptSourceHref, clientHref, target)`
+ *   — shape `rangoState\0i:<interceptSourceHref>\0<clientHref>\0/target?...`.
+ *   Every prefetch sent while an intercept is open is stored ONLY under this
+ *   key, and only a navigation that sends the same intercept source and the
+ *   same client path looks under it: a prefetch made outside an intercept is
+ *   never adopted inside one, and one made inside is never adopted outside.
  * - Params-scoped: built by `buildParamsKey(rangoState, label, target)` —
  *   shape `rangoState\0p:<label>\0/target?...`. Populated when the server
  *   tags a response with `X-RSC-Prefetch-Scope: params; <label>`: a
@@ -264,6 +271,43 @@ export function buildSourceKey(
     rangoState +
     "\0" +
     sourceHref +
+    "\0" +
+    targetUrl.pathname +
+    targetUrl.search
+  );
+}
+
+/**
+ * Build an intercept-scoped cache key: a prefetch sent from inside an open
+ * intercept. Key shape:
+ * `rangoState\0i:<interceptSourceHref>\0<clientHref>\0/target?...`.
+ *
+ * The key names exactly what the request names, because a click may only
+ * adopt an answer rendered for the request it is about to send: the
+ * intercept's source (`X-RSC-Router-Intercept-Source`), the client path
+ * (`X-RSC-Router-Client-Path`, the intercept's own URL — the server diffs the
+ * slot's params against it, so two items of one route are two answers), and
+ * the target with its `_rsc_segments`, the held tree the answer was diffed
+ * from (kept for the reason buildSourceKey keeps them).
+ *
+ * Nothing else looks under it and it is the only slot an intercept prefetch
+ * writes, so a prefetch made outside an intercept is never adopted inside one
+ * and one made inside is never adopted outside: either would commit an answer
+ * rendered against another request — a full page where the modal belongs, or
+ * a diff against a tree the page does not hold.
+ */
+export function buildInterceptKey(
+  rangoState: string,
+  interceptSourceHref: string,
+  clientHref: string,
+  targetUrl: URL,
+): string {
+  return (
+    rangoState +
+    "\0i:" +
+    interceptSourceHref +
+    "\0" +
+    clientHref +
     "\0" +
     targetUrl.pathname +
     targetUrl.search
