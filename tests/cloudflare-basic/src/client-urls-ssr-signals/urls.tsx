@@ -48,18 +48,18 @@ function PageReader() {
 
 export default clientUrls(({ layout, path, loader }) => [
   layout(LayoutReader, () => [
-    loader(SsrRedirectLayoutLoader, { ssr: false }),
+    loader(SsrRedirectLayoutLoader, { ssr: "await" }),
     path("/layout", LayoutPage),
   ]),
   path("/page", PageReader, () => [
-    loader(SsrRedirectPageLoader, { ssr: false }),
+    loader(SsrRedirectPageLoader, { ssr: "await" }),
   ]),
   layout(ChildReadingLayout, () => [
     path("/child", ChildPage, () => [
-      loader(SsrRedirectChildLoader, { ssr: false }),
+      loader(SsrRedirectChildLoader, { ssr: "await" }),
     ]),
   ]),
   path("/notfound", NotFoundReader, () => [
-    loader(SsrNotFoundPageLoader, { ssr: false }),
+    loader(SsrNotFoundPageLoader, { ssr: "await" }),
   ]),
 ]);

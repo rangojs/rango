@@ -141,7 +141,7 @@ interface LoaderItem extends ItemBase {
   readonly type: "loader";
   readonly definition: LoaderDefinition<any, any>;
   readonly revalidate: ClientUrlLoaderRecord["revalidate"];
-  readonly ssr?: false;
+  readonly ssr?: "await";
   readonly prefetch?: PrefetchFlag;
 }
 
@@ -348,14 +348,21 @@ export const loader: ClientUrlHelpers["loader"] = (
   const use = typeof optionsOrUse === "function" ? optionsOrUse : maybeUse;
   if ((options as { stream?: unknown } | undefined)?.stream !== undefined) {
     throw new Error(
-      "clientUrls() loader() stream was replaced: use loader(Def, { ssr: false }) — the same knob as loading(fallback, { ssr: false }) — to await the loader before first flush on document requests.",
+      'clientUrls() loader() stream was replaced: use loader(Def, { ssr: "await" }) to await the loader before first flush on document requests.',
     );
   }
-  // Inline, not errors.ts assertBooleanOption: this module is in the
-  // client router chunk, where the helper costs 20 B gzip.
-  if (options?.ssr !== undefined && typeof options.ssr !== "boolean") {
+  // Inline, not errors.ts assertLoaderSsrOption: this module is in the
+  // client router chunk, where the helper costs bytes on every page.
+  if (
+    options?.ssr !== undefined &&
+    options.ssr !== "stream" &&
+    options.ssr !== "await"
+  ) {
     throw new Error(
-      `clientUrls() loader() ssr must be a boolean (got ${JSON.stringify(options.ssr)}). Omit it (or pass true) to stream on every render.`,
+      process.env.NODE_ENV !== "production" &&
+        (options.ssr as unknown) === false
+        ? 'clientUrls() loader() ssr: false was replaced: use loader(Def, { ssr: "await" }) to await the loader before first flush on document requests.'
+        : `clientUrls() loader() ssr must be "stream" or "await" (got ${JSON.stringify(options.ssr)}). Omit it (or pass "stream") to stream on every render.`,
     );
   }
   if (
@@ -380,7 +387,7 @@ export const loader: ClientUrlHelpers["loader"] = (
           item.type === "revalidate",
       )
       .map((item) => item.fn),
-    ...(options?.ssr === false ? { ssr: false as const } : {}),
+    ...(options?.ssr === "await" ? { ssr: "await" as const } : {}),
     ...(isPrefetchFlag(options?.prefetch)
       ? { prefetch: options.prefetch }
       : {}),
@@ -580,7 +587,7 @@ function createHelpers(): ClientUrlHelpers {
       // await can never apply, so accepting the flag would be silently inert.
       if (item.type === "loader" && item.ssr !== undefined) {
         throw new Error(
-          "clientUrls() intercept() loaders cannot use ssr: false — intercepts render on client navigations only",
+          'clientUrls() intercept() loaders cannot use ssr: "await" — intercepts render on client navigations only',
         );
       }
     }
@@ -633,7 +640,7 @@ function applyConfig(
         Object.freeze({
           loader: item.definition,
           revalidate: Object.freeze([...item.revalidate]),
-          ...(item.ssr === false ? { ssr: false as const } : {}),
+          ...(item.ssr === "await" ? { ssr: "await" as const } : {}),
           ...(item.prefetch !== undefined ? { prefetch: item.prefetch } : {}),
         }),
       );

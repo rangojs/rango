@@ -834,7 +834,7 @@ describe("captureAndStoreShell", () => {
       expect(warnings).toHaveLength(1);
       expect(warnings[0][0]).toContain("1024-byte cap");
       expect(warnings[0][0]).toContain(
-        "the document shell was not stored; raise maxSnapshotBytes or shrink the ssr: false data",
+        'the document shell was not stored; raise maxSnapshotBytes or shrink the ssr: "await" data',
       );
     } finally {
       warnSpy.mockRestore();
@@ -2579,7 +2579,7 @@ describe("runShellCapture", () => {
       // boundary-ownership rule, and the shared lane hint.
       expect(keyWarnings[0][0]).toContain("Suspense boundary");
       expect(keyWarnings[0][0]).toContain("owns the data");
-      expect(keyWarnings[0][0]).toContain("a live loader (no ssr: false)");
+      expect(keyWarnings[0][0]).toContain('a live loader (no ssr: "await")');
       expect(keyWarnings[0][0]).toContain("The loader lane rule");
       expect(keyWarnings[0][0]).toContain("Cold-start");
       expect(keyWarnings[0][0]).toContain("SELF-HEALS");

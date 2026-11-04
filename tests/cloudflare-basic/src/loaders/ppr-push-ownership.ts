@@ -2,7 +2,7 @@ import { createHandle, createLoader, Meta } from "@rangojs/router";
 
 // Push-ownership fixture (issues #1001, #1003), mirroring
 // packages/rangojs-router/e2e/test-app/src/urls/shell-push-ownership.defs.ts:
-// `ssr: false` loaders whose data and handle pushes carry the generation of
+// `ssr: "await"` loaders whose data and handle pushes carry the generation of
 // the run that produced them. The suite bumps the generation of one ?probe=
 // after the capture (/__test/ppr-push-bump), so a value from the capture
 // reads @g1 and a value from a later run reads @g2. A loader's data and its
@@ -67,7 +67,7 @@ export const PprPushSettledLoader = createLoader(
 );
 
 /**
- * A live-lane loader (no `ssr: false`), read under loading(): it pushes
+ * A live-lane loader (no `ssr: "await"`), read under loading(): it pushes
  * after an await, so its push is never in the document's handle snapshot
  * and reaches the client after the root has hydrated (#1035).
  */
@@ -85,7 +85,7 @@ const SLOW_PUSH_DELAY_MS = 1500;
 export const PPR_PUSH_SLOW_CAPTURE_TIMEOUT_MS = 300;
 
 /**
- * Promise-free `ssr: false` loader with a settled push and a deferred one
+ * Promise-free `ssr: "await"` loader with a settled push and a deferred one
  * that settles after the route's ppr.captureTimeout. The capture waits for
  * the deferred push under its deadline, so it refuses, as for a handler's
  * push (#1182).
@@ -107,7 +107,7 @@ export const PprPushSlowLoader = createLoader(
 );
 
 /**
- * #1182: an `ssr: false` loader that pushes its page title to Meta as a
+ * #1182: an `ssr: "await"` loader that pushes its page title to Meta as a
  * promise. A document MISS renders the title, and the shell keeps it.
  */
 export const PprPushMetaPromiseLoader = createLoader(
@@ -130,7 +130,7 @@ export const PprPushMetaAwaitedLoader = createLoader(
 );
 
 /**
- * #1182: an `ssr: false` loader that pushes a note as a promise and is read
+ * #1182: an `ssr: "await"` loader that pushes a note as a promise and is read
  * by nothing. The shell bakes the note.
  */
 export const PprPushBakedNoteLoader = createLoader(
@@ -142,7 +142,7 @@ export const PprPushBakedNoteLoader = createLoader(
 );
 
 /**
- * A live-lane loader (no `ssr: false`) without pushes, read under loading():
+ * A live-lane loader (no `ssr: "await"`) without pushes, read under loading():
  * the handle reader next to it hydrates inside that boundary (#1182).
  */
 export const PprPushLiveValueLoader = createLoader(

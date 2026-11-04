@@ -249,7 +249,7 @@ layer produces is AWAITED by the capture and baked into the stored shell: a
 promise a handler passes to a component, an async server component, a promise
 nested in a handle push (`ctx.use(Meta)({ title: dataPromise })`), a
 top-level pushed promise, a loader the handler awaits, and the bake-lane
-(`ssr: false`) loader containers. Material that settles slower than the budget
+(`ssr: "await"`) loader containers. Material that settles slower than the budget
 makes the route uncapturable (MISS + backoff + the no-usable-shell warning).
 `ppr.captureTimeout` (ms, default 15000, raised from 5000; see the Cost model
 below) declares the budget per route:
@@ -517,7 +517,7 @@ Parity now comes from two mechanisms, one per layer of the page:
   from that record, and stores the record inside the entry; every HIT replays
   it. Handler output cannot drift because it is never recomputed.
 - **The loader layer is pinned by the capture data snapshot** — Next.js's
-  resume-data-cache, adapted to Rango's rings. A bake-lane (`ssr: false`)
+  resume-data-cache, adapted to Rango's rings. A bake-lane (`ssr: "await"`)
   loader's container is pinned in the entry. A promise-free one is served
   from the pin and does not run on a HIT; one whose return holds promises
   runs on every HIT (only its body mints the holes). That run reads the
@@ -532,7 +532,7 @@ The core invariant, which you should be able to recite:
 > record's; every cache read on a HIT, a hole's included, reads the store.
 
 Put the other way round, the rule the whole layer serves: **a PPR hole (a
-live-lane loader, or a promise nested inside an `ssr: false` loader's return)
+live-lane loader, or a promise nested inside an `ssr: "await"` loader's return)
 never reads the shell snapshot. It is dynamic or has its own cache.**
 
 Until issue #941 the snapshot was "exactly the set of cache-store reads the
@@ -548,7 +548,7 @@ bake-lane loader's settled pushes) is now the record's by rule
 (`HandleStore.pushRestored`, "The handles contract" below).
 
 This self-aligns with the hole doctrine. LIVE-lane loaders (every loader
-without `ssr: false`, postponing at `loading()` or an inline `<Suspense>`)
+without `ssr: "await"`, postponing at `loading()` or an inline `<Suspense>`)
 are MASKED at capture (never executed), so their reads are never recorded and
 stay fresh on hits. Content that baked into the shell is, by definition,
 content that settled at capture. So "replay what the capture produced" and
@@ -669,7 +669,7 @@ body carries the capture's generation).
 #### The loader layer: the capture data snapshot
 
 The LOADER family (docs/design/loader-container-bake.md) carries the same
-invariant for BAKE-lane loaders (`loader(Def, { ssr: false })`, whatever the
+invariant for BAKE-lane loaders (`loader(Def, { ssr: "await" })`, whatever the
 entry's `loading()`; before #813 the trigger was a missing `loading()`): they
 EXECUTE during capture (the record-first step waits for their real
 latency), their settled containers are
@@ -907,7 +907,7 @@ derived from `"use cache"`, the nested promise, and a deferred push reaching
 the HIT through the loader's own `cache()`), and by dev+prod e2e
 (`/ppr-large`, `/ppr-large/holes`, `/shell-cache/large`: `records=segment:1`
 and a clean hydration; `/ppr-shared-key`, `/shell-cache/shared-key`: the
-shell and the `ssr: false` loader keep the capture stamp while the hole moves
+shell and the `ssr: "await"` loader keep the capture stamp while the hole moves
 on, zero hydration errors).
 
 ## The hole doctrine (encode verbatim)
@@ -930,7 +930,7 @@ timing:
 
 > **(a) STRUCTURAL: live-loader boundaries** — the region under a `loading()`
 > registration, or under an inline `<Suspense>` above a `useLoader` reader of
-> a live-lane loader (no `ssr: false`). The loader is masked at capture, the
+> a live-lane loader (no `ssr: "await"`). The loader is masked at capture, the
 > boundary postpones, the fallback bakes into the shell as route structure,
 > and the loader runs per request on every HIT.
 >
@@ -941,7 +941,7 @@ timing:
 > promises nested in a handler's handle push (`push({ x: promise })`); a
 > loader the handler awaits (`await ctx.use(Loader)`); replayed cached
 > segments; and the settled, non-promise parts of a bake-lane
-> (`ssr: false`) loader container. The capture WAITS for all of it
+> (`ssr: "await"`) loader container. The capture WAITS for all of it
 > (`settleCaptureRecord`, bounded by `ppr.captureTimeout`), and every HIT
 > replays it from the doc record.
 
@@ -1006,7 +1006,7 @@ The expiry invariant holds BY CONSTRUCTION, no filtering logic:
 
 - **tagged bake ⇒ evicts** — handler output and the server components it renders
   are the doc record, so their `cacheTag()` calls and `"use cache"` reads are on
-  the record's tags. A bake-lane (`ssr: false`) loader's data is shell material
+  the record's tags. A bake-lane (`ssr: "await"`) loader's data is shell material
   that no handler reads; `loader-cache.ts` links it to `SHELL_BAKE_TAG_OWNER`
   (`cache-tag.ts`), and the capture adds that owner's tags.
 - **live loader ⇒ untagged unless read** — the framework's own start of a
@@ -1108,7 +1108,7 @@ tells them apart with `isInsideLoaderScope()`:
   HIT, so its captured pushes never enter the record's handle snapshot
   (replay would duplicate the fresh push). A nested promise is masked
   (`maskNestedContainerThenables`) and stays a hole the HIT's run fills.
-  Pushes from a bake-lane (`ssr: false`) loader whose value, once settled,
+  Pushes from a bake-lane (`ssr: "await"`) loader whose value, once settled,
   is thenable-free are the exception. A top-level pushed promise
   (`push(promise)`, `.defer()`) is judged by the value it settles to, as
   `push(await promise)` would be (#1182): the capture waits for it under
@@ -1159,7 +1159,7 @@ tells them apart with `isInsideLoaderScope()`:
   their place (`replacePlaceholders`), unless a reader already ran the hole
   in that request. A
   dependency the route registers on neither lane that the capture ran only
-  under a bake-lane loader is no hole while every `ssr: false` loader of the
+  under a bake-lane loader is no hole while every `ssr: "await"` loader of the
   route is pinned: its pushes are restored under its own id and stay as
   captured.
 
@@ -1189,7 +1189,7 @@ step, the gate was held open for them (`holdUntil`): a pushed promise with
 real latency lost the byte-quiet race, froze out the handles row, and
 root-suspended the prerender.
 
-The asymmetry versus loaders, stated once: a live (non-`ssr: false`) LOADER
+The asymmetry versus loaders, stated once: a live (non-`ssr: "await"`) LOADER
 container is a hole at its boundary (the entire loader value is the live
 lane), while a HANDLE container is shell via root consumption (the handles
 generator drains before SSR). The unified rule: **a promise nested inside a
@@ -1700,7 +1700,7 @@ capture debug sink prints one line per attempt instead of a stack dump.
 
 ### Refused-capture backoff (declaring ppr on an ineligible route)
 
-An ineligible route — a live (non-`ssr: false`) loader read with no
+An ineligible route — a live (non-`ssr: "await"`) loader read with no
 `loading()` or inline `<Suspense>` above it, or a cookie-reading handler whose
 capture throws — refuses on every request. Without a memory of
 that, a `ppr`-declared route in that shape would schedule a doomed background
@@ -1820,7 +1820,7 @@ Flight-side renderer.
 > The loading-less tree-build await it describes is gone for streaming lanes:
 > a live loader's reader now suspends to the nearest `loading()` OR inline
 > `<Suspense>`, so either boundary makes a hole, and only a boundary-less read
-> still refuses the capture. `loader(Def, { ssr: false })` loaders bake
+> still refuses the capture. `loader(Def, { ssr: "await" })` loaders bake
 > instead of masking. The diagnosis below is kept as history.
 
 This started as "the capture prerender hangs" — the HIT e2e was `test.fixme` and
@@ -1878,12 +1878,12 @@ separately instrumented in v1.
 
 ## Loaders and handles under PPR
 
-Loaders without `ssr: false` are the live lane — always fresh, never cached —
+Loaders without `ssr: "await"` are the live lane — always fresh, never cached —
 and that is exactly what makes them the holes. Capture masks them (never
 executed, never-resolving values), so a loader-consuming subtree behind a
 `loading()` or inline `<Suspense>` boundary suspends and postpones there
 (with no boundary above the read there is no hole, only a refused capture;
-see "The hole contract" above for the pre-#813 history). `ssr: false`
+see "The hole contract" above for the pre-#813 history). `ssr: "await"`
 loaders are the bake lane instead (docs/design/loader-container-bake.md).
 Serve runs the live ones fresh through the unchanged execution path; `resume`
 streams their output into the frozen shell's holes. Fetchable loaders and refresh
@@ -1911,7 +1911,7 @@ shell — HOW a loader is consumed decides its lane:
   a loader registered with `loader()`) is the LIVE lane: fresh per request,
   per visitor.
 - **DSL `loader()` segments** keep their lane machinery unchanged:
-  `ssr: false` = bake (executes at capture WITH the identity guard active),
+  `ssr: "await"` = bake (executes at capture WITH the identity guard active),
   otherwise live (masked at the `resolveLoaderData` funnel).
 
 The parallel-slot shape deserves a sentence, because its answer changed. A
@@ -2174,7 +2174,7 @@ was invisible: `kv.put` rejects deep inside `waitUntil`.
 `DEFAULT_PPR_MAX_SNAPSHOT_BYTES`) bounds only the PINS: the loader-family
 records. The doc record is exempt,
 because without it a HIT could not serve at all. A document HIT is served
-only from an entry that holds a pin for every `ssr: false` loader its
+only from an entry that holds a pin for every `ssr: "await"` loader its
 prelude baked: without one, the loader's run hydrates over HTML
 rendered from the capture's value and React renders the document again on
 the client. So over the cap `captureAndStoreShell` stores the navigation

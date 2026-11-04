@@ -17,7 +17,7 @@ import { ShellPushActionButton } from "../components/ShellPushActionButton.js";
 
 // Push-ownership fixture (e2e/shell-push-ownership.test.ts): a loader's data
 // and the handle values it pushed come from one run on every replay of a
-// shell. Those loaders are `ssr: false`, so their routes need no loading().
+// shell. Those loaders are `ssr: "await"`, so their routes need no loading().
 // /shell-push/live is the #1035 fixture: a live loader under loading().
 
 function ShellPushPinnedPage() {
@@ -65,7 +65,7 @@ function ShellPushMetaPromisePage() {
 }
 
 // #1182: the view reads the live loader, so the handle reader renders inside
-// the route's loading() boundary; the note comes from the ssr: false loader.
+// the route's loading() boundary; the note comes from the ssr: "await" loader.
 function ShellPushSuspendedPage() {
   return (
     <main data-testid="shell-push-suspended-page">
@@ -113,7 +113,7 @@ export const shellPushOwnershipPatterns = urls(
       "/shell-push/pinned",
       ShellPushPinnedPage,
       { name: "shellPushPinned", ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellPushPinnedLoader, { ssr: false })],
+      () => [loader(ShellPushPinnedLoader, { ssr: "await" })],
     ),
     // The same loader over maxSnapshotBytes: the capture stores the
     // navigation half only, so documents MISS and a navigation replays the
@@ -125,7 +125,7 @@ export const shellPushOwnershipPatterns = urls(
         name: "shellPushCapped",
         ppr: { ttl: 300, swr: 120, maxSnapshotBytes: 1 },
       },
-      () => [loader(ShellPushPinnedLoader, { ssr: false })],
+      () => [loader(ShellPushPinnedLoader, { ssr: "await" })],
     ),
     // #1001: the deferred push reaches a replay from the loader's own
     // cache() entry.
@@ -134,7 +134,7 @@ export const shellPushOwnershipPatterns = urls(
       ShellPushDeferredPage,
       { name: "shellPushDeferred", ppr: { ttl: 300, swr: 120 } },
       () => [
-        loader(ShellPushDeferredLoader, { ssr: false }, () => [
+        loader(ShellPushDeferredLoader, { ssr: "await" }, () => [
           cache({ ttl: 300 }),
         ]),
       ],
@@ -152,7 +152,7 @@ export const shellPushOwnershipPatterns = urls(
           captureTimeout: SHELL_PUSH_SLOW_CAPTURE_TIMEOUT_MS,
         },
       },
-      () => [loader(ShellPushSlowLoader, { ssr: false })],
+      () => [loader(ShellPushSlowLoader, { ssr: "await" })],
     ),
     // #1035: a live loader that pushes after an await, read (data and handle)
     // inside its loading() boundary, which hydrates after the root.
@@ -171,44 +171,44 @@ export const shellPushOwnershipPatterns = urls(
       "/shell-push/pre-settled",
       ShellPushPreSettledPage,
       { name: "shellPushPreSettled", ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellPushSettledLoader, { ssr: false })],
+      () => [loader(ShellPushSettledLoader, { ssr: "await" })],
     ),
     // The control: the same loader and view without Prerender.
     path(
       "/shell-push/ppr-settled",
       ShellPushPprSettledPage,
       { name: "shellPushPprSettled", ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellPushSettledLoader, { ssr: false })],
+      () => [loader(ShellPushSettledLoader, { ssr: "await" })],
     ),
     // #1057 next to #1054: a promise push on a Prerender + ppr route.
     path(
       "/shell-push/pre-deferred",
       ShellPushPreDeferredPage,
       { name: "shellPushPreDeferred", ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellPushDeferredLoader, { ssr: false })],
+      () => [loader(ShellPushDeferredLoader, { ssr: "await" })],
     ),
-    // #1182: an ssr: false loader's title, pushed to Meta as a promise and
+    // #1182: an ssr: "await" loader's title, pushed to Meta as a promise and
     // awaited (the control).
     path(
       "/shell-push/meta-promise",
       ShellPushMetaPromisePage,
       { name: "shellPushMetaPromise", ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellPushMetaPromiseLoader, { ssr: false })],
+      () => [loader(ShellPushMetaPromiseLoader, { ssr: "await" })],
     ),
     path(
       "/shell-push/meta-awaited",
       ShellPushMetaAwaitedPage,
       { name: "shellPushMetaAwaited", ppr: { ttl: 300, swr: 120 } },
-      () => [loader(ShellPushMetaAwaitedLoader, { ssr: false })],
+      () => [loader(ShellPushMetaAwaitedLoader, { ssr: "await" })],
     ),
-    // #1182: an ssr: false loader's promise push, read inside a live
+    // #1182: an ssr: "await" loader's promise push, read inside a live
     // loader's loading() boundary.
     path(
       "/shell-push/suspended",
       ShellPushSuspendedPage,
       { name: "shellPushSuspended", ppr: { ttl: 300, swr: 120 } },
       () => [
-        loader(ShellPushBakedNoteLoader, { ssr: false }),
+        loader(ShellPushBakedNoteLoader, { ssr: "await" }),
         loader(ShellPushLiveValueLoader),
         loading(<p data-testid="push-loading">Loading value...</p>),
       ],

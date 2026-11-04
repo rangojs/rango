@@ -66,7 +66,7 @@ const PINS = (): Map<string, ShellLoaderSeedEntry> =>
     [BAKE, { container: {}, holes: false, runs: true, complete: true }],
   ]);
 
-/** A Prerender + ppr route with an `ssr: false` loader and a live one. */
+/** A Prerender + ppr route with an `ssr: "await"` loader and a live one. */
 const ENTRIES = [
   {
     id: "route",

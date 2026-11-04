@@ -7,7 +7,7 @@ import {
 } from "./shell-request.js";
 
 /**
- * A `ppr` route with a `loader(Def, { ssr: false })` and a completed Suspense
+ * A `ppr` route with a `loader(Def, { ssr: "await" })` and a completed Suspense
  * boundary past both Fizz outlining gates (#1206). The live render raises
  * `progressiveChunkSize` for such a route, so the boundary ships in place; a
  * shell HIT must too, instead of painting the fallback and revealing the
@@ -55,7 +55,7 @@ export function runPprSsrFalseInlineTests(
     if (firstHiddenAt !== -1) expect.soft(gridAt).toBeLessThan(firstHiddenAt);
   }
 
-  test("a shell HIT ships an ssr: false route's completed boundary in place, as the live render does", async ({
+  test('a shell HIT ships an ssr: "await" route\'s completed boundary in place, as the live render does', async ({
     page,
   }) => {
     const url = options.url(`${options.path}?probe=${randomUUID()}`);

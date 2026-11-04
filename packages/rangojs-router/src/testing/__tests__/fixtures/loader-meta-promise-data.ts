@@ -72,7 +72,7 @@ export const AwaitedGridLoader: LoaderDefinition<{ grid: string }> =
     return payload.data;
   });
 
-/** A layout's ssr: false loader above the include (the #1179 shape). */
+/** A layout's ssr: "await" loader above the include (the #1179 shape). */
 export const ChromeLoader: LoaderDefinition<{ chrome: string }> = createLoader(
   async () => ({ chrome: `chrome@g${source.generation}` }),
 );
@@ -80,7 +80,7 @@ export const ChromeLoader: LoaderDefinition<{ chrome: string }> = createLoader(
 /**
  * A recipe that needs no router change: the payload is fetched once per
  * request by a dependency loader (no route registers it), whose data keeps
- * `seo` a promise. The page's loader returns the grid; a second `ssr: false`
+ * `seo` a promise. The page's loader returns the grid; a second `ssr: "await"`
  * loader awaits `seo` and pushes a settled title. On a document both are
  * awaited before the first flush; on a navigation each streams on its own,
  * and nothing reads the title loader, so the grid does not wait for `seo`.
@@ -215,7 +215,7 @@ export const TitleDependency: LoaderDefinition<{ grid: string }> = createLoader(
   },
 );
 
-/** The route's ssr: false loader: it awaits the dependency. */
+/** The route's ssr: "await" loader: it awaits the dependency. */
 export const DependentGridLoader: LoaderDefinition<{ grid: string }> =
   createLoader(async (ctx) => await ctx.use(TitleDependency));
 
@@ -283,7 +283,7 @@ export const CachedTitleLoader: LoaderDefinition<{ grid: string }> =
 export const StockNotes: Handle<string> = createHandle<string>();
 
 /**
- * The migration recipe (N12): the page's ssr: false loader pushes its title
+ * The migration recipe (N12): the page's ssr: "await" loader pushes its title
  * as a promise, which bakes with its data.
  */
 export const ProductLoader: LoaderDefinition<{ product: string }> =

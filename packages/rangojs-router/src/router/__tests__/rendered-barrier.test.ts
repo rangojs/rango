@@ -178,7 +178,7 @@ describe("rendered barrier", () => {
     });
   });
 
-  describe("rendered() guard: awaitBeforeFlush (ssr: false)", () => {
+  describe('rendered() guard: awaitBeforeFlush (ssr: "await")', () => {
     it("rejects rendered() from a loader the document render awaits before flush", async () => {
       // Segment resolution awaits a flagged loader (revalidation.ts resolveOwnerLoaders),
       // the barrier awaits segment resolution, rendered() awaits the barrier —
@@ -203,7 +203,7 @@ describe("rendered barrier", () => {
       const rejection = result[0] as PromiseRejectedResult;
       expect(rejection.status).toBe("rejected");
       expect(rejection.reason.message).toContain("Deadlock");
-      expect(rejection.reason.message).toContain("ssr: false");
+      expect(rejection.reason.message).toContain('ssr: "await"');
     });
 
     it("does not trip for an unflagged loader when a DIFFERENT loader is flagged", async () => {

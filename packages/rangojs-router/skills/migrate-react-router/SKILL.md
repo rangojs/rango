@@ -34,7 +34,7 @@ Common reasons to migrate:
 - **Live data layer** — `createLoader()` and `loader()` keep data fresh
   independently of cached UI. A route can serve cached segments while loaders
   still resolve live on every request (on a `ppr` route, a loader registered
-  with `ssr: false` bakes into the cached HTML shell instead; see `/ppr`).
+  with `ssr: "await"` bakes into the cached HTML shell instead; see `/ppr`).
   See: `/loader`, `/caching`, `/cache-guide`
 - **Explicit caching model** — `cache()` DSL, `revalidate()`, `use cache`, and
   custom cache stores make data and render caching a first-class part of the router.

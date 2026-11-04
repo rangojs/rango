@@ -193,14 +193,14 @@ wildcard`, with backtracking. The regex fallback matches in definition order, wh
   runs, so there's nothing to serialize at build time.
 - **A document request sees an include's ancestors in document mode (#1179).** Two DSL
   decisions depend on the request: on a document (`isSSR`) evaluation,
-  `loader(Def, { ssr: false })` gets `awaitBeforeFlush` and `loading(fallback, { ssr: false })`
+  `loader(Def, { ssr: "await" })` gets `awaitBeforeFlush` and `loading(fallback, { ssr: false })`
   sets `loading` to `false`. That's safe for everything a manifest build creates, because the
   manifest cache is keyed by `isSSR`. But `include()` captures its parent chain on
   `Rango.routes()` or a runtime expansion, which never has `isSSR`, and `loadManifest` hands
   that chain to the include's handler for every request. So every layout _outside_ an include
-  lost both decisions for the routes inside it: a `ppr` capture took the layout's `ssr: false`
+  lost both decisions for the routes inside it: a `ppr` capture took the layout's `ssr: "await"`
   loader for a live one and masked it (a chrome reading it outside `<Suspense>` postponed above
-  `<body>`, so the route never stored a shell), and a document showed an `ssr: false`
+  `<body>`, so the route never stored a shell), and a document showed an `ssr: "await"`
   fallback. The same page declared directly under the layout was fine, which is what made it
   hard to see. Now a document request takes `getDocumentModeEntry` (`server/context.ts`) of the
   captured chain: a copy of the ancestors, their orphan layouts and their parallels with both

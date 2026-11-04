@@ -109,7 +109,7 @@ function MirrorResults(): ReactNode {
       {/* Sized past BOTH Fizz outlining gates on its own (>500-byte
           eligibility floor, >12800 progressiveChunkSize default), so
           `flushedByteSize + boundary.byteSize > progressiveChunkSize` holds
-          regardless of shell size or mode. Pins the ssr:false auto-raise on
+          regardless of shell size or mode. Pins the ssr: "await" auto-raise on
           workerd: without it Fizz renders the skeleton in-place and moves the
           COMPLETED rows to an end-of-stream <div hidden> + $RC reveal. */}
       <Suspense fallback={<div data-testid="mirror-inline-grid-skeleton" />}>
@@ -250,7 +250,7 @@ export default clientUrls(({ layout, path, loader, loading, revalidate }) => [
       loading(<ClientUrlsLoading />),
     ]),
     path("/mirror/:slug", MirrorResults, () => [
-      loader(MirrorPlpLoader, { ssr: false }),
+      loader(MirrorPlpLoader, { ssr: "await" }),
     ]),
   ]),
 ]);

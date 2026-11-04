@@ -1188,7 +1188,7 @@ export const urlpatterns = urls(
       include("/client-urls-loader-element", clientUrlsLoaderElementPatterns, {
         name: "clientLoaderElement",
       }),
-      // A no-script document whose ssr: false loader feeds a useActionState
+      // A no-script document whose ssr: "await" loader feeds a useActionState
       // form under an inline <Suspense> (#1138, client-urls-ssr-false-form.test.ts).
       include("/client-urls-ssr-false-form", clientUrlsSsrFalseFormPatterns, {
         name: "clientSsrFalseForm",
@@ -1339,10 +1339,10 @@ export const urlpatterns = urls(
 
       // PPR push-ownership fixtures — /shell-push (issues #1001, #1003).
       include("/", shellPushOwnershipPatterns, { name: "" }),
-      // An ssr: false loader that throws with no errorBoundary().
+      // An ssr: "await" loader that throws with no errorBoundary().
       include("/", holeyThrowsPatterns, { name: "" }),
 
-      // A ppr page under a store layout with an ssr: false loader, declared
+      // A ppr page under a store layout with an ssr: "await" loader, declared
       // directly and through include() — /ppr-include (issue #1179).
       include("/", pprIncludeBakePatterns, { name: "" }),
 

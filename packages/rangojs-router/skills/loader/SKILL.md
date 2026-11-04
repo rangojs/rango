@@ -1,6 +1,6 @@
 ---
 name: loader
-description: Define data loaders with createLoader and register them on routes with loader(). Use when a route needs per-request data that stays fresh and streams while the page renders, a client component reads server data with useLoader, a loader should re-run after specific actions (revalidate), be cached (cache), be callable from the client (fetchable loaders), throw notFound()/redirect(), write page meta/breadcrumbs handles, must be settled in the SSR'd document (ssr:false), or must stay out of link prefetches (prefetch:false).
+description: Define data loaders with createLoader and register them on routes with loader(). Use when a route needs per-request data that stays fresh and streams while the page renders, a client component reads server data with useLoader, a loader should re-run after specific actions (revalidate), be cached (cache), be callable from the client (fetchable loaders), throw notFound()/redirect(), write page meta/breadcrumbs handles, must be settled in the SSR'd document (ssr:"await"), or must stay out of link prefetches (prefetch:false).
 argument-hint: "[loader]"
 ---
 
@@ -8,7 +8,7 @@ argument-hint: "[loader]"
 
 A loader is a server function created with `createLoader()` and registered on a
 route segment with `loader()`. It runs fresh on every request (on a `ppr` route,
-one registered with `ssr: false` is baked into the shell instead), streams its
+one registered with `ssr: "await"` is baked into the shell instead), streams its
 result to the client, and client components read it with `useLoader()`. This
 skill covers defining, registering, consuming, revalidating, caching, and
 client-fetching loaders.
@@ -130,15 +130,15 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 DSL loaders are the **live data layer**: they resolve fresh on every request,
 even when the route is inside a `cache()` boundary, so `cache()` gives you
 cached UI + fresh data by default. See "Loaders: The Live Data Layer" below.
-The exception is a `ppr` route's `ssr: false` loader: it bakes into the shell,
+The exception is a `ppr` route's `ssr: "await"` loader: it bakes into the shell,
 and a shell HIT runs it only when its return carries promises.
 
 ### Cache safety
 
-A DSL loader without `ssr: false` can read `createVar({ cache: false })`
+A DSL loader without `ssr: "await"` can read `createVar({ cache: false })`
 variables: it runs on every request, `cache()` and PPR shell HITs included, so
 the read guard is bypassed for it. On a `ppr` route the capture runs an
-`ssr: false` loader, and a loader a handler awaits, and bakes their values into
+`ssr: "await"` loader, and a loader a handler awaits, and bakes their values into
 the shell: a `cookies()`, `headers()`, `ctx.request.headers` or
 `{ cache: false }` read there refuses the capture, so the route keeps
 rendering without a shell (warned once per key).
@@ -191,7 +191,7 @@ the tree).
 - The same holds under a PPR shell capture (`/ppr`): handler consumption is the
   BAKED lane — the loader executes at capture and the rendered value is a
   capture-time copy served on every HIT (a HIT never runs the handler);
-  `useLoader` of a loader without `ssr: false` is the live lane (an `ssr: false`
+  `useLoader` of a loader without `ssr: "await"` is the live lane (an `ssr: "await"`
   loader is the bake lane however it is read). Unlike `cache()`, an identity
   read inside that loader (`cookies()`, `headers()`, `ctx.request.headers`, a
   `{ cache: false }` variable) refuses the capture, so the route stays
@@ -226,26 +226,26 @@ never sends it (see `/hooks` `state.md`, "State on a document response").
 
 ### Full field surface
 
-| Field              | Type                            | Notes                                                                                                                                                                                          |
-| ------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `params`           | `TParams`                       | Merged route + explicit loader params; overridable by fetchable `load({ params })`.                                                                                                            |
-| `routeParams`      | `Record<string, string>`        | Server-trusted route params from URL pattern matching; cannot be overridden.                                                                                                                   |
-| `request`          | `Request`                       | The incoming `Request` (headers, method, body, `signal` for abort).                                                                                                                            |
-| `url`              | `URL`                           | Request URL with internal `_rsc*` transport params stripped. Use this for application logic.                                                                                                   |
-| `originalUrl`      | `URL`                           | Request URL with every param intact, including `_rsc*`. Only for debugging or custom cache keying.                                                                                             |
-| `pathname`         | `string`                        | URL pathname (shortcut for `ctx.url.pathname`).                                                                                                                                                |
-| `searchParams`     | `URLSearchParams`               | Shortcut for `ctx.url.searchParams`.                                                                                                                                                           |
-| `search`           | `ResolveSearchSchema<TSearch>`  | Typed query params when a search schema is declared on the route; `{}` otherwise.                                                                                                              |
-| `env`              | `any`                           | Bindings from `createRouter<TEnv>()` (DB, KV, secrets, etc.). `createLoader` types it as `any`; annotate or cast at the use site.                                                              |
-| `waitUntil`        | `(fn: () => Promise<void>)`     | Run work after the response is sent. Takes a function, not a promise. Delegates to Cloudflare's `waitUntil`; fire-and-forget with error logging elsewhere.                                     |
-| `executionContext` | `ExecutionContext \| undefined` | Raw Cloudflare `ExecutionContext` for libraries that need it; `undefined` off Cloudflare. Prefer `waitUntil`.                                                                                  |
-| `get`              | `(key \| ContextVar \| handle)` | Reads middleware variables/context-vars — or READS a handle's collected data, after `await ctx.rendered()`.                                                                                    |
-| `use`              | `(loader \| handle) => T`       | Access another loader's data (Promise), or WRITE a handle: `ctx.use(Meta)({ title })` returns the push function — handler parity. Reads moved to `get`.                                        |
-| `rendered`         | `() => Promise<void>`           | **Experimental.** DSL loaders only — waits for all non-loader segments (including `loading()` streaming handlers) to settle before reading handle data. Not with `ssr: false` (cycle; throws). |
-| `method`           | `string`                        | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.                                                                                                          |
-| `body`             | `TBody \| undefined`            | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                                                                                                                 |
-| `formData`         | `FormData \| undefined`         | Present when a fetchable loader is invoked via form submission.                                                                                                                                |
-| `reverse`          | `AutofillAwareReverseFunction`  | Generate type-checked URLs from route names (same scoped semantics as route handlers; params the matched route carries are optional).                                                          |
+| Field              | Type                            | Notes                                                                                                                                                                                            |
+| ------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `params`           | `TParams`                       | Merged route + explicit loader params; overridable by fetchable `load({ params })`.                                                                                                              |
+| `routeParams`      | `Record<string, string>`        | Server-trusted route params from URL pattern matching; cannot be overridden.                                                                                                                     |
+| `request`          | `Request`                       | The incoming `Request` (headers, method, body, `signal` for abort).                                                                                                                              |
+| `url`              | `URL`                           | Request URL with internal `_rsc*` transport params stripped. Use this for application logic.                                                                                                     |
+| `originalUrl`      | `URL`                           | Request URL with every param intact, including `_rsc*`. Only for debugging or custom cache keying.                                                                                               |
+| `pathname`         | `string`                        | URL pathname (shortcut for `ctx.url.pathname`).                                                                                                                                                  |
+| `searchParams`     | `URLSearchParams`               | Shortcut for `ctx.url.searchParams`.                                                                                                                                                             |
+| `search`           | `ResolveSearchSchema<TSearch>`  | Typed query params when a search schema is declared on the route; `{}` otherwise.                                                                                                                |
+| `env`              | `any`                           | Bindings from `createRouter<TEnv>()` (DB, KV, secrets, etc.). `createLoader` types it as `any`; annotate or cast at the use site.                                                                |
+| `waitUntil`        | `(fn: () => Promise<void>)`     | Run work after the response is sent. Takes a function, not a promise. Delegates to Cloudflare's `waitUntil`; fire-and-forget with error logging elsewhere.                                       |
+| `executionContext` | `ExecutionContext \| undefined` | Raw Cloudflare `ExecutionContext` for libraries that need it; `undefined` off Cloudflare. Prefer `waitUntil`.                                                                                    |
+| `get`              | `(key \| ContextVar \| handle)` | Reads middleware variables/context-vars — or READS a handle's collected data, after `await ctx.rendered()`.                                                                                      |
+| `use`              | `(loader \| handle) => T`       | Access another loader's data (Promise), or WRITE a handle: `ctx.use(Meta)({ title })` returns the push function — handler parity. Reads moved to `get`.                                          |
+| `rendered`         | `() => Promise<void>`           | **Experimental.** DSL loaders only — waits for all non-loader segments (including `loading()` streaming handlers) to settle before reading handle data. Not with `ssr: "await"` (cycle; throws). |
+| `method`           | `string`                        | HTTP method. `"GET"` for SSR loader runs; reflects real method for fetchable loaders.                                                                                                            |
+| `body`             | `TBody \| undefined`            | Parsed request body for fetchable POST/PUT/PATCH/DELETE calls.                                                                                                                                   |
+| `formData`         | `FormData \| undefined`         | Present when a fetchable loader is invoked via form submission.                                                                                                                                  |
+| `reverse`          | `AutofillAwareReverseFunction`  | Generate type-checked URLs from route names (same scoped semantics as route handlers; params the matched route carries are optional).                                                            |
 
 ### Example
 
@@ -556,14 +556,14 @@ served from cache. Route-level `cache()` caches rendered segments but never
 loader data: loaders are excluded when the segments are stored and re-resolved
 when they are served. Caching a loader's own data is a separate opt-in (see
 "Opting a Loader into Caching"). A `ppr` shell does store some loader data: an
-`ssr: false` loader's settled data bakes into the shell, and a HIT runs that
-loader only when its return carries promises (see "`ssr: false`" below and
+`ssr: "await"` loader's settled data bakes into the shell, and a HIT runs that
+loader only when its return carries promises (see "`ssr: "await"`" below and
 `/ppr`).
 
 Pre-rendering follows the same rule: the build-time Flight payload skips
 loaders (there is no real request context), and at runtime the worker resolves
 them fresh against the live database. The exception is a `Prerender` + `ppr`
-route: its build-time shell capture runs `ssr: false` loaders and bakes their
+route: its build-time shell capture runs `ssr: "await"` loaders and bakes their
 settled data into the shell, like a runtime capture.
 
 ### Parallel and streaming — latency overlaps first paint
@@ -584,9 +584,9 @@ boundary a parallel loader blocks its parent, so add one to keep the overlap.)
 If you come from a framework where the loader is a blocking step that runs
 before the response is built, this is the shift to internalize: here the
 response starts streaming first and loader data fills in. (The one deliberate
-exception is per-loader: `loader(Def, { ssr: false })` awaits that
+exception is per-loader: `loader(Def, { ssr: "await" })` awaits that
 loader before first flush on document renders other than a `ppr` shell HIT,
-where the shell flushes first — see "`ssr: false`" below.)
+where the shell flushes first — see "`ssr: "await"`" below.)
 
 ### See it: `debugPerformance`
 
@@ -693,7 +693,7 @@ rejects) skips the whole entry, as above. Entries written
 before handles were recorded replay none until they are rewritten (expiry or
 SWR revalidation).
 
-On a `ppr` route the shell keeps a copy of an `ssr: false` loader's pushes
+On a `ppr` route the shell keeps a copy of an `ssr: "await"` loader's pushes
 too, a pushed promise resolved (#1182). The two never disagree on the page:
 where a replay of the shell serves the loader's data from the shell, the
 shell's copy is the one shown and the entry only adds a push whose value
@@ -1005,12 +1005,12 @@ export const ProductLoader = createLoader(async (ctx) => {
 
 Semantics by lane:
 
-| Signal       | Document load, read inside `<Suspense>` or under `loading()`                                                                                                                                                                                                | Document load, read outside any `<Suspense>`                                                                                          | Client navigation                                 |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `notFound()` | Not-found UI resolves server-side (nearest `notFoundBoundary` → router option → default) and rides the envelope; the 404 STATUS is **opportunistic** — real only if the rejection beats Response construction. `ssr: false` (below) makes it deterministic. | A real 404; the browser renders the not-found UI with the layouts kept (the recovery document, below)                                 | 404 UI swaps in, URL preserved, payload stays 200 |
-| `redirect()` | 200 document, then a client-side replace to the target                                                                                                                                                                                                      | A real 3xx (the redirect's own status) with `Location`; with `state`, the recovery document (200), then the client replace carries it | Redirect envelope navigates to the target         |
+| Signal       | Document load, read inside `<Suspense>` or under `loading()`                                                                                                                                                                                                  | Document load, read outside any `<Suspense>`                                                                                          | Client navigation                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `notFound()` | Not-found UI resolves server-side (nearest `notFoundBoundary` → router option → default) and rides the envelope; the 404 STATUS is **opportunistic** — real only if the rejection beats Response construction. `ssr: "await"` (below) makes it deterministic. | A real 404; the browser renders the not-found UI with the layouts kept (the recovery document, below)                                 | 404 UI swaps in, URL preserved, payload stays 200 |
+| `redirect()` | 200 document, then a client-side replace to the target                                                                                                                                                                                                        | A real 3xx (the redirect's own status) with `Location`; with `state`, the recovery document (200), then the client replace carries it | Redirect envelope navigates to the target         |
 
-With `loader(Def, { ssr: false })` the result is settled BEFORE the document
+With `loader(Def, { ssr: "await" })` the result is settled BEFORE the document
 flushes, so both signals are resolved server-side while the tree is built:
 `redirect()` replaces the whole page with the redirect carrier (still a 200
 document, the client replaces to the target on hydration) and `notFound()`
@@ -1102,7 +1102,7 @@ on document loads (`metadata.handlesLate`) or progressively on navigations.
 Handle values land on their own channel and never hold the page, so an effect that needs a late push keys on the handle value, not the URL (see [hooks](../hooks/handle-and-actions.md#when-handle-values-change-by-design)).
 A push before your slow fetch usually beats the barrier; a push derived from
 the fetched data usually does not. When it MUST be in the document, use
-`ssr: false` below. A loader with its own `cache()` keeps its pushes on a hit —
+`ssr: "await"` below. A loader with its own `cache()` keeps its pushes on a hit —
 they are replayed from the entry (see "Opting a Loader into Caching"). On a
 `ppr` route the race does not apply to a document served from its shell:
 there every push a loader makes on that request applies post-hydration (see
@@ -1115,8 +1115,8 @@ handler reserved with `.defer()` instead (`/breadcrumbs`, "Deferred content").
 
 Under `cache()`, loader pushes are not stored with the cached segments: the
 loader re-runs on every hit and its live push is the only copy. (`ppr` keeps
-the pushes of an `ssr: false` loader, and of the loaders it awaits, in the
-shell, a pushed promise resolved, and a promise-free `ssr: false` loader does
+the pushes of an `ssr: "await"` loader, and of the loaders it awaits, in the
+shell, a pushed promise resolved, and a promise-free `ssr: "await"` loader does
 not run on a shell HIT — see `/ppr`.)
 
 Reads are the other direction and gated: `ctx.get(handle)` throws unless the
@@ -1124,7 +1124,7 @@ loader first does `await ctx.rendered()` (DSL-registered loaders only —
 handler-invoked loaders cannot use `rendered()`, and a handler already
 awaiting the loader via `ctx.use()` makes it a detected deadlock).
 
-## `ssr: false` — Guarantee a Loader in the Document
+## `ssr: "await"` — Guarantee a Loader in the Document
 
 Streaming means nothing a slow loader produces is _guaranteed_ in the SSR'd
 HTML: its section SSRs as the fallback, a late handle push applies
@@ -1135,7 +1135,7 @@ use callback:
 
 ```typescript
 path("/product/:slug", ProductPage, { name: "product" }, () => [
-  loader(ProductLoader, { ssr: false }, () => [cache({ ttl: 60 })]),
+  loader(ProductLoader, { ssr: "await" }, () => [cache({ ttl: 60 })]),
   loader(RelatedLoader),   // untouched: still streams behind its boundary
 ]),
 ```
@@ -1143,9 +1143,14 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 The options object is typed as `LoaderOptions`
 (`import type { LoaderOptions } from "@rangojs/router"`).
 
-The knob mirrors `loading(fallback, { ssr: false })` — SSR delivery is off for
-this loader, so nothing of it is left to stream in the document: document
-renders await this loader before first flush — data is settled (`useLoader`
+The value says what the server render does with the loader: `"stream"` (the
+default, the same as leaving `ssr` out) streams it behind its boundary;
+`"await"` awaits it in the renders that produce HTML — the document render and
+a `ppr` shell capture (at runtime, or at build time on a `Prerender` + `ppr`
+route). (`loading(fallback, { ssr: false })` is a different option: there
+`false` means the fallback is not server-rendered.)
+
+Document renders await this loader before first flush — data is settled (`useLoader`
 reads it synchronously, no fallback paints), handle pushes beat the barrier
 snapshot, and a thrown `notFound()` deterministically precedes Response
 construction (real 404, no warm-up race). Client navigations stream exactly as
@@ -1212,7 +1217,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ```
 
 (`prefetch` sits beside `ssr` in `LoaderOptions`; combine them as
-`{ ssr: false, prefetch: false }` if you need both.)
+`{ ssr: "await", prefetch: false }` if you need both.)
 
 | Request                                                      | unflagged  | `prefetch: false`        | `prefetch: "intent"`     |
 | ------------------------------------------------------------ | ---------- | ------------------------ | ------------------------ |
@@ -1404,7 +1409,7 @@ The limits:
   `intercept()` defers nothing. Each intercept loader also runs its own
   `revalidate()`, so an action from the modal re-runs only those that say so
   (see `/intercept`).
-- **`ppr` and `ssr: false`.** On a `ppr` route an `ssr: false` loader is the
+- **`ppr` and `ssr: "await"`.** On a `ppr` route an `ssr: "await"` loader is the
   bake lane. A prefetch that replays a shell a document request captured
   serves it from its pin: it is not deferred, does not run, and the click
   sends nothing. Every other prefetch (a navigation-only shell, a cold page,

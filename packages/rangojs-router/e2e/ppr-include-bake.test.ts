@@ -3,7 +3,7 @@ import { runPprIncludeBakeTests } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
 
 // Issue #1179: a ppr page mounted through include() under a store layout
-// whose client chrome reads the layout's ssr: false loader outside Suspense
+// whose client chrome reads the layout's ssr: "await" loader outside Suspense
 // stores its shell, like the same page declared directly. Fixture:
 // test-app/src/urls/ppr-include-bake.tsx (mounted through include("/"), so
 // the inner include captures its parent on the runtime expansion). The body

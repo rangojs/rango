@@ -150,7 +150,7 @@ describe("restoreHandles: a record's loader-owned values follow the loader's pin
   });
 
   // The entry lost its pins (a navigation-only entry, `maxSnapshotBytes`), or
-  // the record is a route cache() record: the same `ssr: false` loader that
+  // the record is a route cache() record: the same `ssr: "await"` loader that
   // stands above is a placeholder here, because it runs.
   it("without a pin every owner is a placeholder, a bake-lane loader included", () => {
     const store = createHandleStore();

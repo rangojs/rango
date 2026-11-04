@@ -23,7 +23,7 @@ import {
 
 // A loader's data and the handle values it pushed come from one run on every
 // replay of a PPR shell (issues #1001, #1003), a Prerender + ppr shell
-// hydrates with them too (#1057), and an ssr: false loader's pushed promise
+// hydrates with them too (#1057), and an ssr: "await" loader's pushed promise
 // bakes into the shell (#1182), in a real browser. The fixture
 // is test-app/src/urls/shell-push-ownership.tsx; the bodies are shared with
 // tests/cloudflare-basic/e2e/ppr-push-ownership.test.ts. Every path, the

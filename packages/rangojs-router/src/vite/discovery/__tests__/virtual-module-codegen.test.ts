@@ -208,7 +208,7 @@ describe("generateRoutesManifestModule — client URL projections", () => {
           loader({ __brand: "loader", $$id: "loaders#price" }),
           loader(
             { __brand: "loader", $$id: "loaders#reviews" },
-            { ssr: false, prefetch: false },
+            { ssr: "await", prefetch: false },
           ),
         ]),
         intercept("@modal", ".product", ProductPage, () => [

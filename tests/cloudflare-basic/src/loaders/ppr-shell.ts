@@ -224,8 +224,8 @@ export function makePprStaleReplayData(id: string): Promise<string> {
 }
 
 // Issue #888 fixture: a string handle pushed by an unflagged loader that an
-// ssr:false loader awaits. Both run at capture and neither runs on a HIT (the
-// promise-free ssr:false loader is served from the shell), so the doc record
+// ssr: "await" loader awaits. Both run at capture and neither runs on a HIT (the
+// promise-free ssr: "await" loader is served from the shell), so the doc record
 // keeps the push and the HIT restores it once. Default (identity) collect: a
 // duplicate push shows up as a second value.
 export const PprWarnings = createHandle<string>();
@@ -253,7 +253,7 @@ export const PprStorefrontLoader = createLoader(async (ctx) => {
 export const pprNavPinRuns = { baked: 0 };
 
 /**
- * A promise-free ssr:false loader on an entry with loading(): served from the
+ * A promise-free ssr: "await" loader on an entry with loading(): served from the
  * shell, without running, on a document HIT and on a client navigation that
  * replays the shell.
  */
@@ -262,7 +262,7 @@ export const PprNavPinLoader = createLoader(async () => {
   return { baked: `nav-pin-baked-${pprNavPinRuns.baked}` };
 });
 
-// Issue #929 fixture: the ssr:false loader pushes the string handle itself.
+// Issue #929 fixture: the ssr: "await" loader pushes the string handle itself.
 // The doc record keeps the push (the prelude rendered it) and the HIT, which
 // does not run the promise-free loader, restores it once.
 export const PprRestockLoader = createLoader(async (ctx) => {

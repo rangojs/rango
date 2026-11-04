@@ -112,11 +112,11 @@ during navigation.
 > settles before the handler barrier. A push that lands after a slow fetch
 > arrives post-hydration — and for an inline/ordered script the frozen set
 > means it is silently dropped. If a loader must contribute an inline script
-> to the document, register it `loader(Def, { ssr: false })` so the
+> to the document, register it `loader(Def, { ssr: "await" })` so the
 > document render awaits the push; otherwise push from a handler (or use an
 > `async` config, which stays reactive). On a `ppr` route a loader without
-> `ssr: false` never runs during the shell capture, so its inline/ordered
-> script is dropped on every shell HIT; with `ssr: false` the push bakes into
+> `ssr: "await"` never runs during the shell capture, so its inline/ordered
+> script is dropped on every shell HIT; with `ssr: "await"` the push bakes into
 > the shell.
 
 **Nonce caveat for soft-nav async.** The "nonce is applied automatically" claim

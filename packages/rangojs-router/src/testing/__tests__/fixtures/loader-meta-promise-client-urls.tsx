@@ -2,7 +2,7 @@
 
 /**
  * The #1182 shape as an app writes it: a clientUrls() group (the default
- * export of a "use client" module) whose ppr page registers an ssr: false
+ * export of a "use client" module) whose ppr page registers an ssr: "await"
  * loader that pushes its title to Meta as a promise.
  */
 import { clientUrls } from "../../../client-urls/client-urls.js";
@@ -15,10 +15,10 @@ function CategoryPage(): null {
 
 const group: ClientUrlPatterns = clientUrls(({ path, loader }) => [
   path("/c/:id", CategoryPage, { name: "category", ppr: true }, () => [
-    loader(GridLoader, { ssr: false }),
+    loader(GridLoader, { ssr: "await" }),
   ]),
   path("/a/:id", CategoryPage, { name: "awaited", ppr: true }, () => [
-    loader(AwaitedGridLoader, { ssr: false }),
+    loader(AwaitedGridLoader, { ssr: "await" }),
   ]),
 ]);
 

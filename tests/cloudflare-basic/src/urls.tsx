@@ -755,7 +755,7 @@ export const urlpatterns = urls(
   }) => [
     // API routes (response routes - skip RSC pipeline)
     include("/api", apiPatterns, { name: "api" }),
-    // An ssr: false loader that throws with no errorBoundary().
+    // An ssr: "await" loader that throws with no errorBoundary().
     include("/", holeyThrowsPatterns, { name: "" }),
 
     // onError's `background`: only the shell capture after the MISS throws.
@@ -1337,7 +1337,7 @@ export const urlpatterns = urls(
         // SAME canonical urls() tree (no separate router, no worker dispatch).
         layout(<MirrorTemplateLayout />, () => [
           // Consumer-mirror chrome loaders: unflagged, streaming above the
-          // group while a route's { ssr: false } loader is awaited.
+          // group while a route's { ssr: "await" } loader is awaited.
           loader(MirrorSessionLoader),
           loader(MirrorBasketLoader),
           loader(MirrorVehicleLoader),
@@ -1360,7 +1360,7 @@ export const urlpatterns = urls(
         middleware(clientUrlsVarsMiddleware, () => [
           include("/client-urls-vars", clientUrlsVarsPatterns),
         ]),
-        // { ssr: false } loaders settling with redirect()/notFound() before the
+        // { ssr: "await" } loaders settling with redirect()/notFound() before the
         // document flush (e2e/client-urls-ssr-signals.test.ts).
         include("/client-urls-ssr-signals", clientUrlsSsrSignalsPatterns),
         // A no-script document whose inline <Suspense> draws a client
@@ -1372,7 +1372,7 @@ export const urlpatterns = urls(
             name: "clientLoaderElement",
           },
         ),
-        // A no-script document whose ssr: false loader feeds a useActionState
+        // A no-script document whose ssr: "await" loader feeds a useActionState
         // form under an inline <Suspense> (#1138,
         // e2e/client-urls-ssr-false-form.test.ts).
         include("/client-urls-ssr-false-form", clientUrlsSsrFalseFormPatterns, {
@@ -1412,10 +1412,10 @@ export const urlpatterns = urls(
         // shell — the /ppr-shell/no-hole negative below. See
         // pages/ppr-shell.tsx.
         // Issue #1179 (e2e/ppr-include-bake.test.ts): a store layout whose
-        // client chrome reads its ssr: false loader outside Suspense, over the
+        // client chrome reads its ssr: "await" loader outside Suspense, over the
         // same ppr page declared directly and mounted through include().
         layout(PprIncludeBakeLayout, () => [
-          loader(PprIncludeChromeLoader, { ssr: false }),
+          loader(PprIncludeChromeLoader, { ssr: "await" }),
           path("/ppr-include/direct", PprIncludeBakePage, {
             name: "pprIncludeDirect",
             ppr: { ttl: 300, swr: 120 },
@@ -1536,19 +1536,19 @@ export const urlpatterns = urls(
                 ? false
                 : undefined,
             ),
-            loader(PprLoadMorePageLoader, { ssr: false }),
+            loader(PprLoadMorePageLoader, { ssr: "await" }),
           ],
         ),
-        // Issue #888: the ssr:false loader awaits an unflagged loader that
+        // Issue #888: the ssr: "await" loader awaits an unflagged loader that
         // pushes a string handle. A fast-path HIT replays the doc record,
         // which must not carry the push (see pages/ppr-shell.tsx).
         path(
           "/ppr-warnings",
           PprWarningsPage,
           { name: "pprWarnings", ppr: { ttl: 300, swr: 120 } },
-          () => [loader(PprStorefrontLoader, { ssr: false })],
+          () => [loader(PprStorefrontLoader, { ssr: "await" })],
         ),
-        // A promise-free ssr:false loader on an entry with loading(): a
+        // A promise-free ssr: "await" loader on an entry with loading(): a
         // client navigation that replays the shell pins it like the
         // document HIT, without running it.
         path(
@@ -1556,7 +1556,7 @@ export const urlpatterns = urls(
           PprNavPinPage,
           { name: "pprNavPin", ppr: { ttl: 300, swr: 120 } },
           () => [
-            loader(PprNavPinLoader, { ssr: false }),
+            loader(PprNavPinLoader, { ssr: "await" }),
             loading(<div data-testid="ppr-nav-pin-loading">Loading...</div>),
           ],
         ),
@@ -1575,13 +1575,13 @@ export const urlpatterns = urls(
           name: "pprFreshReads",
           ppr: { ttl: 300, swr: 120 },
         }),
-        // Issue #929: the ssr:false loader pushes the string handle itself;
+        // Issue #929: the ssr: "await" loader pushes the string handle itself;
         // the replayed record keeps it and the HIT restores it once.
         path(
           "/ppr-restock",
           PprWarningsPage,
           { name: "pprRestock", ppr: { ttl: 300, swr: 120 } },
-          () => [loader(PprRestockLoader, { ssr: false })],
+          () => [loader(PprRestockLoader, { ssr: "await" })],
         ),
         // router.prerender() warm fixture (issue #1062;
         // e2e/prerender-warm.test.ts): a ppr route, a route under cache()
@@ -1604,7 +1604,7 @@ export const urlpatterns = urls(
           "/ppr-push/pinned",
           PprPushPinnedPage,
           { name: "pprPushPinned", ppr: { ttl: 300, swr: 120 } },
-          () => [loader(PprPushPinnedLoader, { ssr: false })],
+          () => [loader(PprPushPinnedLoader, { ssr: "await" })],
         ),
         // The same loader over maxSnapshotBytes: the capture stores the
         // navigation half only, so documents MISS and a navigation replays the
@@ -1616,7 +1616,7 @@ export const urlpatterns = urls(
             name: "pprPushCapped",
             ppr: { ttl: 300, swr: 120, maxSnapshotBytes: 1 },
           },
-          () => [loader(PprPushPinnedLoader, { ssr: false })],
+          () => [loader(PprPushPinnedLoader, { ssr: "await" })],
         ),
         // #1001: the deferred push reaches a replay from the loader's own
         // cache() entry.
@@ -1625,7 +1625,7 @@ export const urlpatterns = urls(
           PprPushDeferredPage,
           { name: "pprPushDeferred", ppr: { ttl: 300, swr: 120 } },
           () => [
-            loader(PprPushDeferredLoader, { ssr: false }, () => [
+            loader(PprPushDeferredLoader, { ssr: "await" }, () => [
               cache({ ttl: 300 }),
             ]),
           ],
@@ -1643,7 +1643,7 @@ export const urlpatterns = urls(
               captureTimeout: PPR_PUSH_SLOW_CAPTURE_TIMEOUT_MS,
             },
           },
-          () => [loader(PprPushSlowLoader, { ssr: false })],
+          () => [loader(PprPushSlowLoader, { ssr: "await" })],
         ),
         // #1035: a live loader that pushes after an await, read (data and
         // handle) inside its loading() boundary, which hydrates after the
@@ -1663,44 +1663,44 @@ export const urlpatterns = urls(
           "/ppr-push/pre-settled",
           PprPushPreSettledPage,
           { name: "pprPushPreSettled", ppr: { ttl: 300, swr: 120 } },
-          () => [loader(PprPushSettledLoader, { ssr: false })],
+          () => [loader(PprPushSettledLoader, { ssr: "await" })],
         ),
         // The control: the same loader and view without Prerender.
         path(
           "/ppr-push/ppr-settled",
           PprPushPprSettledPage,
           { name: "pprPushPprSettled", ppr: { ttl: 300, swr: 120 } },
-          () => [loader(PprPushSettledLoader, { ssr: false })],
+          () => [loader(PprPushSettledLoader, { ssr: "await" })],
         ),
         // #1057 next to #1054: a promise push on a Prerender + ppr route.
         path(
           "/ppr-push/pre-deferred",
           PprPushPreDeferredPage,
           { name: "pprPushPreDeferred", ppr: { ttl: 300, swr: 120 } },
-          () => [loader(PprPushDeferredLoader, { ssr: false })],
+          () => [loader(PprPushDeferredLoader, { ssr: "await" })],
         ),
-        // #1182: an ssr: false loader's title, pushed to Meta as a promise
+        // #1182: an ssr: "await" loader's title, pushed to Meta as a promise
         // and awaited (the control).
         path(
           "/ppr-push/meta-promise",
           PprPushMetaPromisePage,
           { name: "pprPushMetaPromise", ppr: { ttl: 300, swr: 120 } },
-          () => [loader(PprPushMetaPromiseLoader, { ssr: false })],
+          () => [loader(PprPushMetaPromiseLoader, { ssr: "await" })],
         ),
         path(
           "/ppr-push/meta-awaited",
           PprPushMetaAwaitedPage,
           { name: "pprPushMetaAwaited", ppr: { ttl: 300, swr: 120 } },
-          () => [loader(PprPushMetaAwaitedLoader, { ssr: false })],
+          () => [loader(PprPushMetaAwaitedLoader, { ssr: "await" })],
         ),
-        // #1182: an ssr: false loader's promise push, read inside a live
+        // #1182: an ssr: "await" loader's promise push, read inside a live
         // loader's loading() boundary.
         path(
           "/ppr-push/suspended",
           PprPushSuspendedPage,
           { name: "pprPushSuspended", ppr: { ttl: 300, swr: 120 } },
           () => [
-            loader(PprPushBakedNoteLoader, { ssr: false }),
+            loader(PprPushBakedNoteLoader, { ssr: "await" }),
             loader(PprPushLiveValueLoader),
             loading(<p data-testid="push-loading">Loading value...</p>),
           ],
@@ -2115,17 +2115,17 @@ export const urlpatterns = urls(
             ],
           ),
         ]),
-        // Shared-key route (issue #941): the shell layout, an ssr: false
+        // Shared-key route (issue #941): the shell layout, an ssr: "await"
         // loader and the live hole read the same "drift" item. The snapshot
         // records no cache read, so after the item expires the hole shows a
-        // newer stamp than the shell and the ssr: false loader's pin.
+        // newer stamp than the shell and the ssr: "await" loader's pin.
         layout(PprSharedLayout, () => [
           path(
             "/ppr-shared-key",
             PprSharedPage,
             { name: "pprSharedKey", ppr: { ttl: 300, swr: 120 } },
             () => [
-              loader(PprSharedBakedStampLoader, { ssr: false }),
+              loader(PprSharedBakedStampLoader, { ssr: "await" }),
               loader(PprSharedStampLoader),
               loading(
                 <p data-testid="ppr-shared-hole-fallback">Loading stamp...</p>,
@@ -2556,7 +2556,7 @@ export const urlpatterns = urls(
           "/ppr-flight-error",
           PprWarningsPage,
           { ppr: { ttl: 300, swr: 120 } },
-          () => [loader(PprFlightErrorLoader, { ssr: false })],
+          () => [loader(PprFlightErrorLoader, { ssr: "await" })],
         ),
         // Its per-?run= encode pass count (pprFlightErrorPasses).
         path.json("/ppr-flight-error-passes", (ctx) => ({
@@ -2564,14 +2564,14 @@ export const urlpatterns = urls(
         })),
         // Issue #942 fixture (loaders/ppr-jsx.tsx).
         path("/ppr-jsx", PprJsxPage, { ppr: { ttl: 300, swr: 120 } }, () => [
-          loader(PprJsxLoader, { ssr: false }),
+          loader(PprJsxLoader, { ssr: "await" }),
         ]),
         // Issue #1206 fixture (loaders/ppr-inline.ts).
         path(
           "/ppr-inline",
           PprInlinePage,
           { ppr: { ttl: 300, swr: 120 } },
-          () => [loader(PprInlineLoader, { ssr: false })],
+          () => [loader(PprInlineLoader, { ssr: "await" })],
         ),
         // Issue #925: a { cache: false } var read inside "use cache" throws.
         middleware(requestTenantMiddleware, () => [
@@ -2645,17 +2645,17 @@ export const urlpatterns = urls(
 
         // A cached loader's ctx.use dependency, also read by an uncached
         // sibling loader: its crumb appears once on the MISS and on the HIT,
-        // where the sibling's live run replaces the replayed crumb. ssr: false
+        // where the sibling's live run replaces the replayed crumb. ssr: "await"
         // puts every push in the document.
         path(
           "/loader-cache-dep",
           LoaderCacheDepPage,
           { name: "loaderCacheDep" },
           () => [
-            loader(DepCrumbProductLoader, { ssr: false }, () => [
+            loader(DepCrumbProductLoader, { ssr: "await" }, () => [
               cache({ ttl: 600 }),
             ]),
-            loader(DepCrumbSiblingLoader, { ssr: false }),
+            loader(DepCrumbSiblingLoader, { ssr: "await" }),
           ],
         ),
 

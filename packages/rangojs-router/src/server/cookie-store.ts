@@ -195,7 +195,7 @@ export function guardRequestHeaders(request: Request): Request {
 /** The fix for a theme read that a cache() boundary or a ppr capture refuses. */
 const THEME_READ_FIX =
   "On ppr and cache() routes, read the theme with useTheme() in a client " +
-  "component, or in a live loader (no ssr: false) with cookies().get(<storageKey>). " +
+  'component, or in a live loader (no ssr: "await") with cookies().get(<storageKey>). ' +
   "The <html> theme class needs neither: the theme script sets it before paint. " +
   "See the /theme skill (node_modules/@rangojs/router/skills/theme/SKILL.md).";
 

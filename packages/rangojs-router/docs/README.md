@@ -164,7 +164,7 @@ historical.
   `putShell` store family, and wedge containment
 - [Loader container bake](./design/loader-container-bake.md) - one promise
   doctrine for handlers, handles, and loaders under PPR; the
-  `loader(Def, { ssr: false })` bake lane
+  `loader(Def, { ssr: "await" })` bake lane
 - [Vercel CDN-stitched PPR research](./design/vercel-chain-ppr.md) - rejected
   adapter direction and why the shipped Vercel preset keeps PPR shells inside
   its streaming Node Function

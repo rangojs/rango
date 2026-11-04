@@ -58,7 +58,7 @@ export interface SegmentResolutionDeps<TEnv = any> {
       env?: TEnv;
       isPartial?: boolean;
     },
-    /** An `ssr: false` loader on a document or capture render. */
+    /** An `ssr: "await"` loader on a document or capture render. */
     useDefaultErrorBoundary?: boolean,
   ) => Promise<LoaderDataResult<T>>;
   trackHandler: <T>(

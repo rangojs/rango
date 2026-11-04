@@ -40,7 +40,7 @@ Common reasons to migrate:
   build-time rendering instead of mixing rendering and caching behind conventions.
   See: `/prerender`
 - **Partial prerendering, shipped** — the `ppr` path option caches a page's
-  HTML shell and resumes its holes per request: loaders without `ssr: false`,
+  HTML shell and resumes its holes per request: loaders without `ssr: "await"`,
   read under `loading()` or an inline `<Suspense>`. Handler output bakes into
   the shell. It maps to Next's `experimental_ppr`, stable and per-route, but
   holes come from loaders, not from any `<Suspense>`.
@@ -100,7 +100,7 @@ its call site with the real Rango API:
 `next/dynamic`'s `{ ssr: false }` keeps a component out of server rendering:
 render it only after mount in a `"use client"` component (a `useEffect` flag,
 with `React.lazy()` if its code should split out). Do not map it to
-`loader(L, { ssr: false })`, which does the opposite: the server settles that
+`loader(L, { ssr: "await" })`, which does the opposite: the server settles that
 loader before the first flush, and under `ppr` it bakes into the shell.
 
 If an import has no row here and no obvious Rango equivalent, stop and surface
@@ -533,7 +533,7 @@ function ProductPage(ctx: HandlerContext) {
   );
 }
 
-// Rango, live price: a loader without ssr: false, read with
+// Rango, live price: a loader without ssr: "await", read with
 // useLoader(LivePriceLoader) in a client component. loading() (or an inline
 // <Suspense> around the reader) is the hole boundary (/ppr → The loader lane
 // rule).
@@ -560,9 +560,9 @@ Differences that matter during migration:
   component, a nested promise in a handle it pushes, a loader it awaits — is
   awaited at capture (bounded by `ppr.captureTimeout`) and served frozen for
   the shell's lifetime; a shell HIT never runs a handler. Keep the parts that
-  must be fresh in loaders without `ssr: false`, read with `useLoader` under
-  `loading()` or an inline `<Suspense>`; inside an `ssr: false` loader, return
-  them as nested promises. For loaders, `ssr: false` (not `loading()`) selects
+  must be fresh in loaders without `ssr: "await"`, read with `useLoader` under
+  `loading()` or an inline `<Suspense>`; inside an `ssr: "await"` loader, return
+  them as nested promises. For loaders, `ssr: "await"` (not `loading()`) selects
   the lane — see `/ppr` → The loader lane rule.
 - **Shell freshness is explicit.** Next's PPR shell is fixed until the next
   build; Rango's has `ttl`/`swr`/`tags` per route, and `updateTag()` /
@@ -577,7 +577,7 @@ Differences that matter during migration:
   `ctx.request.headers`, a `{ cache: false }` variable, and `ctx.dynamic()` refuse it anywhere the
   capture waits: a handler, a promise it passes or pushes, an async component,
   a loader it awaits. Per-user reads must move into a live loader (no
-  `ssr: false`; a nested promise does not help). A normal `ctx.get()` value is
+  `ssr: "await"`; a nested promise does not help). A normal `ctx.get()` value is
   not guarded and bakes as the capturing request's value. The refusal surfaces
   at migration time, which is the point.
 - **A store is required.** PPR needs the app-level `createRouter({ cache })`
@@ -890,7 +890,7 @@ const HomePage: Handler<"home"> = (ctx) => {
 
 `generateMetadata({ params })` — DATA-derived, document-blocking metadata —
 maps to a Meta push from the LOADER that owns the data, plus
-`{ ssr: false }` for the blocking-until-in-head part:
+`{ ssr: "await" }` for the blocking-until-in-head part:
 
 ```typescript
 // Next.js: export async function generateMetadata({ params }) {
@@ -907,7 +907,7 @@ export const ProductLoader = createLoader(async (ctx) => {
 });
 
 path("/product/:slug", ProductPage, { name: "product" }, () => [
-  loader(ProductLoader, { ssr: false }),
+  loader(ProductLoader, { ssr: "await" }),
 ]);
 ```
 
@@ -1008,7 +1008,7 @@ See `/theme` for full API including system detection and cookie persistence.
 10. [ ] Convert loading/error files to `loading()` / `errorBoundary()`
 11. [ ] Migrate API routes to `path.json()` / `path.text()`
 12. [ ] Update metadata to use `Meta` handle + `<Html.Meta />` in document head
-        (`generateMetadata` → loader push + `{ ssr: false }`)
+        (`generateMetadata` → loader push + `{ ssr: "await" }`)
 13. [ ] Replace `next-themes` with `theme: true` in createRouter (see `/theme`)
 14. [ ] Map rendering-mode segment config: `revalidate = N` → `cache({ ttl })`,
         `force-static` → `Static()`/`Prerender()`, `experimental_ppr` → the

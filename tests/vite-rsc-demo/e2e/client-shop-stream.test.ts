@@ -3,7 +3,7 @@ import { test as devTest, devURL } from "./dev-fixture";
 import { waitForHydration, prodDescribe } from "./helper";
 
 /**
- * loader(Def, { ssr: false }) — the SSR-completeness opt-in, pinned
+ * loader(Def, { ssr: "await" }) — the SSR-completeness opt-in, pinned
  * on /client-shop/ssr/:slug. The fixture delays are staggered
  * (client-shop-ssr.ts: awaited 400ms, sidecar 1400ms — parallel kickoff means
  * an equal-delay sidecar would coincidentally settle by flush time and SSR its
@@ -67,7 +67,7 @@ function expectSsrCompleteDocument(body: string) {
   expect(body).toContain("client-shop-ssr-catbuttons");
   expect(body).toContain("Sub One");
   expect(body).not.toContain("CategoriesButtons");
-  // Outlining pin (the ssr:false progressiveChunkSize auto-raise): the
+  // Outlining pin (the ssr: "await" progressiveChunkSize auto-raise): the
   // 140-tile grid off the flagged loader exceeds BOTH Fizz outlining gates
   // (>500-byte eligibility floor, >12800 progressiveChunkSize default), so
   // without the auto-raise Fizz renders its skeleton in-place and moves the
@@ -84,7 +84,7 @@ function expectSsrCompleteDocument(body: string) {
   }
 }
 
-devTest.describe("client-shop loader ssr:false", () => {
+devTest.describe('client-shop loader ssr: "await"', () => {
   devTest(
     "document load carries the awaited loader's data and title; the sidecar streams",
     async ({ page, devServerURL }) => {
@@ -136,7 +136,7 @@ devTest.describe("client-shop loader ssr:false", () => {
   );
 });
 
-prodDescribe("client-shop loader ssr:false", (f) => {
+prodDescribe('client-shop loader ssr: "await"', (f) => {
   test("document load carries the awaited loader's data and title; the sidecar streams", async ({
     page,
   }) => {

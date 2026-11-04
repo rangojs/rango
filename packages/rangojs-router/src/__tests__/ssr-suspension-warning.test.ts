@@ -1,5 +1,5 @@
 /**
- * warnAwaitedSsrSuspension — the dev-only SSR diagnostic for { ssr: false }.
+ * warnAwaitedSsrSuspension — the dev-only SSR diagnostic for { ssr: "await" }.
  *
  * The warning must name an unflagged sibling read that suspends a boundary on
  * a document render that awaited flagged loaders, stay silent everywhere else
@@ -42,7 +42,7 @@ describe("warnAwaitedSsrSuspension", () => {
     const message = warnSpy.mock.calls[0]![0] as string;
     expect(message).toContain('useLoader("sidecar#1")');
     expect(message).toContain('["product#1"]');
-    expect(message).toContain("{ ssr: false }");
+    expect(message).toContain('{ ssr: "await" }');
     expect(errorSpy).not.toHaveBeenCalled();
   });
 

@@ -8,7 +8,7 @@
  *
  * Runs on the real wrapper components; only `window` is stubbed for the
  * browser paths. The segments are built here, as each path hands them to
- * renderSegments, so this pins renderSegments (and, for the `ssr: false`
+ * renderSegments, so this pins renderSegments (and, for the `ssr: "await"`
  * row, the client's reconcile before it); what the server walks into those
  * segments is pinned by walker-differential.test.ts and
  * stored-source.rsc-test.tsx.

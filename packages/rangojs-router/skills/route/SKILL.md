@@ -482,7 +482,7 @@ loader re-runs on every hit — but a `"use cache"` function a loader calls is
 not, and neither is a loader bound with its own `cache()` without a `key()` (any
 `key()` switches the check off, so it must include the value; `/loader` → "Cache
 Key"). On a `ppr` route the exemption does not cover a loader the shell capture
-waits for (`ssr: false`, or awaited by a handler via `ctx.use()`): the read
+waits for (`ssr: "await"`, or awaited by a handler via `ctx.use()`): the read
 refuses the capture. Cacheable vars (the default) can be read freely inside
 cache scopes. See `/cache-guide` → "Context Variable Cache Safety".
 

@@ -121,7 +121,7 @@ beforeAll(async () => {
             () => el("p", "ssr false"),
             { name: "ssrFalse" },
             () => [
-              loader(DataLoader, { ssr: false }),
+              loader(DataLoader, { ssr: "await" }),
               loader(SlotLoader),
               loading(Spinner),
             ],

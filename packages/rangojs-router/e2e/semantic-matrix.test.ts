@@ -1093,7 +1093,7 @@ const matrixRows: SemanticMatrixRow[] = [
   // "use cache", and the PPR shell — and replayed on every HIT. The loader
   // executes at capture; an identity read (cookies()/headers()) in it refuses
   // the PPR capture (the capturing request's value would reach every visitor).
-  // A loader ALSO registered live-lane (loader() without ssr: false; the
+  // A loader ALSO registered live-lane (loader() without ssr: "await"; the
   // slot's loading() is its boundary) keeps that boundary a live hole, and a
   // client useLoader read inside it is the live lane.
   {

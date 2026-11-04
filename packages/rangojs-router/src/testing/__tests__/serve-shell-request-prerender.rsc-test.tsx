@@ -41,7 +41,7 @@ const Notes = createHandle<string>();
 /** Prerender handler runs: the bake only, never a HIT. */
 const bakes = { handler: 0 };
 
-/** A promise-free `ssr: false` loader: a HIT serves its pin, its body does not run. */
+/** A promise-free `ssr: "await"` loader: a HIT serves its pin, its body does not run. */
 const SettledNoted = createLoader(async (ctx) => {
   ctx.use(Notes)(`settled-only@g${source.generation}`);
   return { value: `settled@g${source.generation}` };
@@ -65,7 +65,7 @@ function makeRouter() {
           return <p>pre settled</p>;
         }),
         { name: "preSettled", ppr: { ttl: 300, swr: 120 } },
-        () => [loader(SettledNoted, { ssr: false })],
+        () => [loader(SettledNoted, { ssr: "await" })],
       ),
       path(
         "/pre-capped",
@@ -77,13 +77,13 @@ function makeRouter() {
           name: "preCapped",
           ppr: { ttl: 300, swr: 120, maxSnapshotBytes: 1 },
         },
-        () => [loader(SettledNoted, { ssr: false })],
+        () => [loader(SettledNoted, { ssr: "await" })],
       ),
       path(
         "/pre-deferred",
         Prerender(() => <p>pre deferred</p>),
         { name: "preDeferred", ppr: { ttl: 300, swr: 120 } },
-        () => [loader(DeferredNoted, { ssr: false })],
+        () => [loader(DeferredNoted, { ssr: "await" })],
       ),
       path(
         "/ppr-settled",
@@ -92,7 +92,7 @@ function makeRouter() {
           return <p>ppr settled</p>;
         },
         { name: "pprSettled", ppr: { ttl: 300, swr: 120 } },
-        () => [loader(SettledNoted, { ssr: false })],
+        () => [loader(SettledNoted, { ssr: "await" })],
       ),
     ]),
   );
@@ -153,7 +153,7 @@ beforeEach(async () => {
 });
 
 describe("a Prerender + ppr shell HIT hydrates with the loader pushes its shell rendered (#1057)", () => {
-  it("a promise-free ssr: false loader's settled push is in the hydration data, as in the shell", async () => {
+  it('a promise-free ssr: "await" loader\'s settled push is in the hydration data, as in the shell', async () => {
     const { hit, values } = await hitAfterCapture("/pre-settled");
 
     // Served by the prerender store: no doc record, no handler run on the HIT.

@@ -294,7 +294,7 @@ function wrapDefaultOutletContent(
 }
 
 /**
- * Per-loader stream map for read-site suspension. { ssr: false } loaders were
+ * Per-loader stream map for read-site suspension. { ssr: "await" } loaders were
  * awaited before flush (resolveOwnerLoaders), so deliver the SETTLED result, not the
  * settled promise: the read site decodes synchronously instead of use()ing a
  * Flight chunk whose fulfilled-at-read-time status is a scheduling race the
@@ -844,7 +844,7 @@ export async function renderSegments(
           // shell-cache slot-use: masked loaderData is what pins
           // "srv badge pending...") and, on reuse, leaves a stale stream
           // map that ignores the post-action aggregate (mini @cart).
-          // Flagged (ssr:false) delivery still holds: when every owned
+          // Flagged (ssr: "await") delivery still holds: when every owned
           // loader paid the pre-flush await, settle the aggregate so
           // LoaderResolver decodes the array without a Flight-chunk use().
           const settleParallelAggregate = settlesLoaders(
@@ -860,7 +860,7 @@ export async function renderSegments(
             p.awaitedLoaderIds = undefined;
             if (segDebug) {
               segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action/ssr:false)`,
+                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action/ssr: "await")`,
                 {
                   loaderIds: p.loaderIds,
                   ms: Math.round(performance.now() - parallelAwaitStart),

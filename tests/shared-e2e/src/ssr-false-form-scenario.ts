@@ -1,13 +1,13 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * A no-script document of a clientUrls() route whose `ssr: false` loader
+ * A no-script document of a clientUrls() route whose `ssr: "await"` loader
  * feeds a useActionState form under an inline `<Suspense>` (#1138). The
  * form's action is a bound server reference: Fizz suspends the form once
  * while it encodes the action and retries it on a later turn, so a document
  * that flushed at shell-ready shipped the fallback and left the form in
  * `<div hidden id="S:n">`. Fixture: client-urls-ssr-false-form* in each app
- * (an instant page loader flagged `ssr: false`). Both apps call this from a
+ * (an instant page loader flagged `ssr: "await"`). Both apps call this from a
  * dev and a (production) describe.
  */
 

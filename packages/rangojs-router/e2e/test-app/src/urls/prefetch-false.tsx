@@ -116,7 +116,7 @@ import {
 // (`<c>.modal`); loaded as a document, each target is a full page
 // (pf-<c>-page) reading the same loaders.
 //
-// `ppr-bake` is a ppr route whose one loader is `ssr: false` and
+// `ppr-bake` is a ppr route whose one loader is `ssr: "await"` and
 // `prefetch: false`, read in a <Suspense> (pf-ppr-bake-fallback);
 // `ppr-bake-bare` reads the same with no boundary. A prefetch defers the
 // loader unless the shell a document request captured serves it from its
@@ -339,9 +339,9 @@ const CASES = [
   ["cached", "cache() route: handler is stored, only the loader waits"],
   ["prerendered", "Prerender route: only the loader waits"],
   ["ppr", "ppr route: shell replays, the live loader waits"],
-  ["ppr-bake", "ppr route, ssr: false loader: waits unless a document shell"],
+  ["ppr-bake", 'ppr route, ssr: "await" loader: waits unless a document shell'],
   ["ppr-bake-bare", "the same, read with no boundary"],
-  ["ssr-false", "ssr: false with prefetch: false"],
+  ["ssr-false", 'ssr: "await" with prefetch: false'],
   ["control", "no flag: the prefetch runs everything"],
   ["item/a", "same route, flagged loader: held segments are never deferred"],
   ["item/b", "from item/a the prefetch runs the loader, no fill"],
@@ -1230,21 +1230,21 @@ export const prefetchFalsePatterns = urls(
         loading(fallback("ppr")),
       ]),
 
-      // ppr and an ssr: false loader with prefetch: false: a prefetch skips
+      // ppr and an ssr: "await" loader with prefetch: false: a prefetch skips
       // the loader unless the shell a document captured serves it.
       path("/ppr-bake", PprBakePage, { name: "pprBake", ppr: true }, () => [
-        loader(PfPprBakeLoader, { ssr: false, prefetch: false }),
+        loader(PfPprBakeLoader, { ssr: "await", prefetch: false }),
       ]),
       path(
         "/ppr-bake-bare",
         PprBakeBarePage,
         { name: "pprBakeBare", ppr: true },
-        () => [loader(PfPprBakeBareLoader, { ssr: false, prefetch: false })],
+        () => [loader(PfPprBakeBareLoader, { ssr: "await", prefetch: false })],
       ),
 
       // Both options: the document awaits the loader, a prefetch skips it.
       path("/ssr-false", SsrFalsePage, { name: "ssrFalse" }, () => [
-        loader(PfSsrFalseLoader, { ssr: false, prefetch: false }),
+        loader(PfSsrFalseLoader, { ssr: "await", prefetch: false }),
         loading(fallback("ssr-false")),
       ]),
 

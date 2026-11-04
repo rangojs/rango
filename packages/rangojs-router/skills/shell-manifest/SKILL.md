@@ -9,7 +9,7 @@ argument-hint:
 Use this when a cached or prerendered shell has dynamic holes, and the live
 data layer needs to know **what the shell actually contains** — which
 products, which slots, which keys. The frozen render describes itself
-through a handle; live loaders (no `ssr: false`) read that description and
+through a handle; live loaders (no `ssr: "await"`) read that description and
 fetch exactly the dynamic data the shell needs, in one batch.
 
 Canonical case: a prerendered product list where prices must stay live.
@@ -36,7 +36,7 @@ batched.
    cache miss for `cache()`. (Loader bodies can push handles too — see `/loader`
    — but a live loader's push is request-time and is NOT part of the replayed
    artifact; a manifest handle must be pushed by the code that gets frozen with
-   the shell. An `ssr: false` loader on a `ppr` route is the exception: its
+   the shell. An `ssr: "await"` loader on a `ppr` route is the exception: its
    settled pushes are recorded with the shell. On a HIT, one whose return has no
    promises does not run (unless the capture marked it to run), so the recorded
    pushes are what the page shows; one whose return carries promises runs on
@@ -157,7 +157,7 @@ cache({ ttl: 600, tags: ["products"] }, () => [
   fetchable/standalone loader calls that run outside a route render, in
   handler-invoked loaders (a handler already awaiting the loader via
   `ctx.use()` is a detected deadlock), and in loaders registered with
-  `{ ssr: false }` (the document render awaits the loader before
+  `{ ssr: "await" }` (the document render awaits the loader before
   the barrier — a cycle by construction; see `/loader`).
 - **The reading loader serializes after the shell.** `await ctx.rendered()`
   deliberately gives up loader/render parallelism — on a miss the loader

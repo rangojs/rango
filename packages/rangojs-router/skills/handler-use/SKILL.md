@@ -417,11 +417,11 @@ The composition rules are this skill's: the component's items first, the
 mount site's explicit items second, `loading()` and `transition()` last-wins,
 loaders accumulate. What differs:
 
-| Mount site in `clientUrls()` | The component's `.use` may return          |
-| ---------------------------- | ------------------------------------------ |
-| `path()`                     | `loader`, `loading`, `transition`          |
-| `layout()`                   | `loader`, `loading`                        |
-| `intercept()`                | `loader` (without `ssr: false`), `loading` |
+| Mount site in `clientUrls()` | The component's `.use` may return            |
+| ---------------------------- | -------------------------------------------- |
+| `path()`                     | `loader`, `loading`, `transition`            |
+| `layout()`                   | `loader`, `loading`                          |
+| `intercept()`                | `loader` (without `ssr: "await"`), `loading` |
 
 - No `route`, `layout`, `intercept` or `include` items: a group's routes and
   its generated types come from the builder's own items.

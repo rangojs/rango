@@ -1,7 +1,7 @@
 import { Suspense, type ReactNode } from "react";
 import { createLoader } from "@rangojs/router";
 
-// Issue #942 fixture: a bake-lane (ssr: false) loader value carrying JSX. The
+// Issue #942 fixture: a bake-lane (ssr: "await") loader value carrying JSX. The
 // elements bake into the shell, the async server component included. The
 // promise inside `live` (host elements) is the hole and the run stamp beside
 // it stays pinned from the capture; `reviews` is a server component holding a

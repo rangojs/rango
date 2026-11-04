@@ -169,14 +169,14 @@ const BehindRenderedLoader = createLoader(async (ctx) => {
   return { notes: ctx.get(Notes) };
 });
 
-/** ssr: false and prefetch: false on a ppr route, and pushes a handle (R6). */
+/** ssr: "await" and prefetch: false on a ppr route, and pushes a handle (R6). */
 const PprNotedBakeLoader = createLoader(async (ctx) => {
   ran("ppr-noted-bake");
   ctx.use(Notes)("ppr-bake-note");
   return { value: "ppr-noted" };
 });
 
-/** ssr: false and prefetch: false on a ppr route, and reads the barrier (R12). */
+/** ssr: "await" and prefetch: false on a ppr route, and reads the barrier (R12). */
 const PprBakeRenderedLoader = createLoader(async (ctx) => {
   ran("ppr-bake-rendered");
   await ctx.rendered();
@@ -410,7 +410,7 @@ function makeRouter() {
             ]),
             path("/ppr", page("ppr"), { name: "ppr", ppr: true }, () => [
               loader(PprLiveLoader, { prefetch: false }),
-              loader(PprBakeLoader, { ssr: false, prefetch: false }),
+              loader(PprBakeLoader, { ssr: "await", prefetch: false }),
               loading(<p>ppr-loading</p>),
             ]),
             path(
@@ -418,7 +418,10 @@ function makeRouter() {
               page("ppr-rendered-page"),
               { name: "pprRendered", ppr: true },
               () => [
-                loader(PprBakeRenderedLoader, { ssr: false, prefetch: false }),
+                loader(PprBakeRenderedLoader, {
+                  ssr: "await",
+                  prefetch: false,
+                }),
               ],
             ),
             path(
@@ -426,7 +429,7 @@ function makeRouter() {
               page("ppr-noted-page"),
               { name: "pprNoted", ppr: true },
               () => [
-                loader(PprNotedBakeLoader, { ssr: false, prefetch: false }),
+                loader(PprNotedBakeLoader, { ssr: "await", prefetch: false }),
               ],
             ),
             cache({ ttl: 60 }, () => [
@@ -435,7 +438,10 @@ function makeRouter() {
                 page("ppr-cached"),
                 { name: "pprCached", ppr: true },
                 () => [
-                  loader(PprCachedBakeLoader, { ssr: false, prefetch: false }),
+                  loader(PprCachedBakeLoader, {
+                    ssr: "await",
+                    prefetch: false,
+                  }),
                 ],
               ),
             ]),
@@ -444,7 +450,7 @@ function makeRouter() {
               loading(<p>pre-loading</p>, { prefetch: false }),
             ]),
             path("/ssr-false", page("ssr-false-page"), () => [
-              loader(SsrFalseLoader, { ssr: false, prefetch: false }),
+              loader(SsrFalseLoader, { ssr: "await", prefetch: false }),
               loading(<p>ssr-false-loading</p>),
             ]),
             path("/awaited", AwaitedPage, { name: "awaited" }, () => [
@@ -1069,7 +1075,7 @@ describe("R2: a flagged loading() entry in a prefetch", () => {
   });
 });
 
-describe("R3: ssr: false with prefetch: false", () => {
+describe('R3: ssr: "await" with prefetch: false', () => {
   it("outside ppr the document awaits the loader and a prefetch skips it", async () => {
     const { serve, prefetch } = setup();
     await serve("/ssr-false");
@@ -1980,7 +1986,7 @@ describe("R12: a deferrable loader cannot call ctx.rendered()", () => {
     );
   });
 
-  it("throws on a navigation for an ssr: false loader on a ppr route", async () => {
+  it('throws on a navigation for an ssr: "await" loader on a ppr route', async () => {
     const { serve } = setup();
     await serve("/ppr-rendered", { partial: { from: "/" } });
     expect(

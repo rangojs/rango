@@ -261,7 +261,7 @@ function chainLoaderEntries(entry: EntryData): readonly LoaderEntry[] {
 
 /**
  * The lane of each loader the matched chain `entries` registers: "live" (no
- * `ssr: false`) or "bake". A loader registered on both is "live". A PPR
+ * `ssr: "await"`) or "bake". A loader registered on both is "live". A PPR
  * capture credits a push to the first registered loader around it when that
  * one is live (shell-capture.ts deriveShellCaptureContext).
  */
@@ -302,7 +302,7 @@ function servedPins(
 
 /**
  * This request serves `loaderEntry` from a pin (servedPins), so its body does
- * not decide the value: resolveLoaderData serves a pin to an `ssr: false`
+ * not decide the value: resolveLoaderData serves a pin to an `ssr: "await"`
  * registration only. A prefetch does not defer such a loader
  * (prefetch-deferral.ts defersLoader): nothing would run, and the pin is the
  * value the document shows.
@@ -325,14 +325,14 @@ export function servesLoaderPin(
  * only and the store asks while loader bodies run.
  *
  * Each side applies its own lane to the pin. The value is per registration
- * (resolveLoaderData: an `ssr: false` registration is served its pin). The
- * pushes are per loader: one the route also registers without `ssr: false`
+ * (resolveLoaderData: an `ssr: "await"` registration is served its pin). The
+ * pushes are per loader: one the route also registers without `ssr: "await"`
  * is a hole whatever its other registration's pin says, because the capture
  * credited its pushes to the live registration's run (routeLoaderLanes).
  *
  * A dependency the route does not register has no pin of its own, and the
  * record does not name the loader that ran it at capture: its copies stand
- * only while every `ssr: false` loader is pinned (exact when the pins are
+ * only while every `ssr: "await"` loader is pinned (exact when the pins are
  * all there or all gone).
  */
 export function loaderPins(
@@ -482,7 +482,7 @@ function recordOwnerKey(cachedLoaderId: string): () => string {
  * never run under a shell capture), so the lane is decided here, per LOADER,
  * never by the entry's loading():
  *
- * - BAKE lane: `loader(Def, { ssr: false })` (LoaderEntry `bake`: the
+ * - BAKE lane: `loader(Def, { ssr: "await" })` (LoaderEntry `bake`: the
  *   caller passes a `bakeSegmentKey` for it on document and navigation
  *   evaluations alike; a capture, a document evaluation, also has
  *   awaitBeforeFlush). The loader EXECUTES at capture (the
@@ -504,7 +504,7 @@ function recordOwnerKey(cachedLoaderId: string): () => string {
  *   (loader-mask.ts) and postpones at the reader's boundary — loading() or an
  *   inline Suspense — then streams fresh per request. A masked read with NO
  *   boundary above it root-postpones and the <body> sanity gate refuses the
- *   shell (eternal-MISS warning). A route whose loaders are ALL `ssr: false`
+ *   shell (eternal-MISS warning). A route whose loaders are ALL `ssr: "await"`
  *   needs no loading(): nothing masks.
  */
 export function resolveLoaderData<TEnv>(
@@ -540,7 +540,7 @@ export function resolveLoaderData<TEnv>(
     return createMaskedLoaderPromise();
   }
 
-  // `bake`: the pin is the `ssr: false` registration's. The caller's key is
+  // `bake`: the pin is the `ssr: "await"` registration's. The caller's key is
   // passed for an unflagged loader of an entry without loading() too.
   if (bakeSegmentKey && loaderEntry.bake) {
     const recorded = servedPins(reqCtx)?.get(loaderEntry.loader.$$id);

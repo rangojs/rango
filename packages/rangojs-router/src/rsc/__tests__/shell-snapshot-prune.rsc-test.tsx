@@ -506,7 +506,7 @@ describe("PPR snapshot: a bake-lane loader on a HIT", () => {
           "/baked",
           CatalogPage,
           { name: "baked", ppr: { ttl: 300 } },
-          () => [loader(BakeLoader, { ssr: false })],
+          () => [loader(BakeLoader, { ssr: "await" })],
         ),
       ]),
     ]);
@@ -545,7 +545,7 @@ describe("PPR snapshot: a bake-lane loader on a HIT", () => {
           "/holey",
           CatalogPage,
           { name: "holey", ppr: { ttl: 300 } },
-          () => [loader(HoleyLoader, { ssr: false })],
+          () => [loader(HoleyLoader, { ssr: "await" })],
         ),
       ]),
     ]);
@@ -581,7 +581,7 @@ describe("PPR snapshot: a bake-lane loader on a HIT", () => {
           "/nested",
           CatalogPage,
           { name: "nested", ppr: { ttl: 300 } },
-          () => [loader(NestedLoader, { ssr: false })],
+          () => [loader(NestedLoader, { ssr: "await" })],
         ),
       ]),
     ]);

@@ -1,7 +1,7 @@
 # Loader container bake: one promise doctrine for handlers, handles, AND loaders
 
 ADDENDUM 2026-07-28 — the bake lane's TRIGGER is now the per-loader
-`ssr: false` flag (`loader(Def, { ssr: false })`), not
+`ssr: "await"` flag (`loader(Def, { ssr: "await" })`), not
 the entry's missing loading(). #813 (streaming useLoader) retired the
 loading()-less trigger — plain loaders are LIVE at capture on every entry
 shape, and a boundary-less masked read refuses the capture. The flag's
@@ -11,14 +11,14 @@ UNCHANGED machinery below: execute at capture, nested-thenable mask (shape
 is liveness), `_shellCaptureState.loaderRecords` registration (capture gate hold,
 bounded by `ppr.captureTimeout`), snapshot pinning, HIT-tail seed overlay
 (pin-first when hole-free). A route whose loaders are ALL flagged needs no
-loading() and captures a complete shell. Pinned by the "ssr:false loader
-bakes into the shell", "fully-baked route needs no loading()", and group-ppr
+loading() and captures a complete shell. Pinned by the `ssr: "await" loader
+bakes into the shell`, "fully-baked route needs no loading()", and group-ppr
 baked-value probes (shell-cache.test.ts, dev+prod). (The flag was
 `stream: "navigation"` until #820 renamed it.)
 
 Read the rest of this doc with that substitution: wherever it says "no
 `loading()`" / "WITHOUT `loading()`" selects the bake lane, the trigger is
-now `ssr: false`, and `loading()` present is no longer what makes a loader
+now `ssr: "await"`, and `loading()` present is no longer what makes a loader
 live — every unflagged loader is live and needs `loading()` or an inline
 `<Suspense>` above its reader. Passages below are marked where they state
 the old trigger.
@@ -41,7 +41,7 @@ Implementation notes (deltas from the sketch below, all deliberate):
   (`entryLoadingMasksLoaders`, mirroring segment-system's
   isRenderableLoading), resolving open question 1 toward "absent".
   _Superseded (see the addendum):_ the mask decision is now per loader in
-  `resolveLoaderData` — `ssr: false` bakes, everything else masks.
+  `resolveLoaderData` — `ssr: "await"` bakes, everything else masks.
   `entryLoadingMasksLoaders` only decides whether an unflagged loader's
   segment key rides as the bake/seed key, which is inert at capture.
 - **Guard refusal is flag-based**: the capture guard (today the first step
@@ -75,7 +75,7 @@ Implementation notes (deltas from the sketch below, all deliberate):
   would bake the capturing request's identity into every visitor's page; the
   cache() purity guards keep theirs. The lane machinery in THIS doc is
   untouched: it applies to DSL `loader()` SEGMENTS only (unflagged = masked
-  live lane; `ssr: false` = bake lane WITH the guard active). A registered
+  live lane; `ssr: "await"` = bake lane WITH the guard active). A registered
   live-lane segment stays a live hole where it is read client-side with
   `useLoader`; a handler's own `ctx.use` of the same loader bakes. An earlier
   fix MASKED handler consumption instead; it hung the capture's ring-3
@@ -116,7 +116,7 @@ loader the handler awaits`). See ppr-shell-resume.md and
   alone (pending when the capture's quiet window closed); they are now baked
   too: writing the doc record Flight-serializes the handler output and waits
   for every promise in it. Per-request data belongs in live-lane loaders read
-  with `useLoader`, or in promises nested in an `ssr: false` loader's return
+  with `useLoader`, or in promises nested in an `ssr: "await"` loader's return
   value.
 - **SETTLED markers (`$rangoLoaderSettled`) are gone.** Captures cannot
   record them (nested thenables are masked pending, so elide records every
@@ -136,7 +136,7 @@ loader the handler awaits`). See ppr-shell-resume.md and
 > nested in HANDLER output bakes — a promise a handler passes to a component,
 > and `push({ x: promise })` from handler code — because the capture waits
 > for it before writing the doc record. The rule below still holds for loader
-> data: a promise nested in an `ssr: false` loader's return value, or in a
+> data: a promise nested in an `ssr: "await"` loader's return value, or in a
 > push made from a loader, stays a hole.
 
 The PPR hole doctrine had one rule for promises: **a promise nested inside your
@@ -167,7 +167,7 @@ Loaders are the exception, and the exception has two faces:
 > lanes, so an unflagged loader is live on every entry shape and its reader
 > postpones at the nearest `loading()` or inline `<Suspense>`; only a
 > boundary-less read still refuses the capture. The bake lane is opted into
-> per loader with `ssr: false`.
+> per loader with `ssr: "await"`.
 
 The kicker: on axis 1, a no-`loading()` loader ALREADY follows the container
 rule. The tree-build await settles the CONTAINER; a promise nested inside it
@@ -180,7 +180,7 @@ capture match axis 1.
 
 > _Superseded trigger (see the addendum):_ this section, the semantics
 > matrix, and "Mechanics" below key the bake lane on an entry WITHOUT
-> `loading()`. The contract now applies to `loader(Def, { ssr: false })`
+> `loading()`. The contract now applies to `loader(Def, { ssr: "await" })`
 > loaders on any entry shape (with nested promises masked regardless of
 > settle timing, per the implementation notes); an unflagged loader is live
 > whether or not its entry has `loading()`.
@@ -268,7 +268,7 @@ Two sub-edges:
 > nested promise that runs during capture refuses too; the first sub-edge does
 > not hold. The shipped refusal warning (`refuseOnCaptureGuard` in
 > `shell-capture.ts`) therefore advises reading the value in a loader without
-> `ssr: false` (the live lane) consumed with `useLoader`, not a nested promise.
+> `ssr: "await"` (the live lane) consumed with `useLoader`, not a nested promise.
 
 ### 3. HIT parity: extend the capture data snapshot with a loader family
 
@@ -337,7 +337,7 @@ container-with-promise-paths-elided)` into the same
   hole-carrying ones run with their baked paths pinned. Before, a navigation
   ran every loader and served its fresh values. The partial path passes the
   bake key by the loader's own flag (`LoaderEntry.bake`, set on navigation
-  evaluations too, unlike `awaitBeforeFlush`), so an `ssr: false` loader on
+  evaluations too, unlike `awaitBeforeFlush`), so an `ssr: "await"` loader on
   an entry with `loading()` pins there exactly as on the document. A record
   stored before the hole bit existed reads as hole-carrying and keeps the
   gated path; TTL ages those out.

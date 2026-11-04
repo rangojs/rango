@@ -43,9 +43,9 @@ export async function getDriftStamp(ctx: HandlerContext): Promise<string> {
   return `drift-${driftExecutions}`;
 }
 
-// Shared-key fixture (issue #941): the shell, an ssr: false loader and a live
+// Shared-key fixture (issue #941): the shell, an ssr: "await" loader and a live
 // hole read the SAME "drift" item (ttl 1s). The capture bakes the shell's read
-// and pins the ssr: false loader's value. The hole's loader runs on every HIT
+// and pins the ssr: "await" loader's value. The hole's loader runs on every HIT
 // and reads the store, so once the item expires the hole shows a newer stamp
 // than the frozen shell. It did not while the bake-lane loader's read of the
 // key was pinned for every reader on a HIT. The probe keys the item per URL.
@@ -68,21 +68,21 @@ export const ShellSharedStampLoader = createLoader(
   }),
 );
 
-/** The same read, bound with ssr: false: shell material, pinned on a HIT. */
+/** The same read, bound with ssr: "await": shell material, pinned on a HIT. */
 export const ShellSharedBakedStampLoader = createLoader(
   async (ctx): Promise<ShellSharedStampData> => ({
     stamp: await getSharedStamp(ctx.searchParams.get("probe") ?? ""),
   }),
 );
 
-// Live-dep fixture: a live loader that a running ssr: false loader awaits. The
-// ssr: false loader returns a nested promise, so it runs on every HIT; the
+// Live-dep fixture: a live loader that a running ssr: "await" loader awaits. The
+// ssr: "await" loader returns a nested promise, so it runs on every HIT; the
 // route declares it before the live loader, so the live loader's body runs
 // inside its body. The live loader awaits a dependency the route registers on
 // neither lane. All stamp the per-probe generation the suite bumps
 // (/shell-cache/__live-dep-bump). The live loader's push, and its
 // dependency's, must carry the HIT's generation, like its data; the
-// ssr: false loader's settled push is the prelude's.
+// ssr: "await" loader's settled push is the prelude's.
 const liveDepGenerations = new Map<string, number>();
 
 export function liveDepGeneration(probe: string): number {
@@ -130,7 +130,7 @@ export const ShellHoleyDepLoader = createLoader(async (ctx) => {
 
 // Snapshot SIZE-CAP fixture (issue #651): a default-profile cached value baked
 // into the shell above loading(), on a route with a tiny ppr.maxSnapshotBytes.
-// The cap bounds ssr: false loader pins only, and the route has none, so it
+// The cap bounds ssr: "await" loader pins only, and the route has none, so it
 // stores and serves its shell; the value is part of the handler layer the doc
 // record replays.
 let capStampExecutions = 0;
@@ -144,7 +144,7 @@ export async function getCapStamp(ctx: HandlerContext): Promise<string> {
   return `cap-stamp-${capStampExecutions}`;
 }
 
-// ssr:false BAKE-lane fixtures. The flagged loader executes at
+// ssr: "await" BAKE-lane fixtures. The flagged loader executes at
 // capture: its settled top-level return is SHELL material (frozen, snapshot-
 // pinned for HIT parity), while the NESTED promise in the same return stays a
 // live hole (nested-thenable mask — shape is the liveness declaration). The
@@ -196,8 +196,8 @@ export function shellBakedOnlyRuns(): number {
 }
 
 // Issue #888 fixture: a string handle pushed by an unflagged loader that an
-// ssr:false loader awaits. Both run at capture and neither runs on a HIT (the
-// promise-free ssr:false loader is served from the shell), so the doc record
+// ssr: "await" loader awaits. Both run at capture and neither runs on a HIT (the
+// promise-free ssr: "await" loader is served from the shell), so the doc record
 // keeps the push and the HIT restores it once. Default (identity) collect: a
 // duplicate push shows up as a second value.
 export const ShellWarnings = createHandle<string>();
@@ -212,7 +212,7 @@ export const ShellStorefrontLoader = createLoader(async (ctx) => {
   return { lowStock: stock.lowStock };
 });
 
-// Issue #929 fixture: the ssr:false loader pushes the string handle itself.
+// Issue #929 fixture: the ssr: "await" loader pushes the string handle itself.
 // The doc record keeps the push (the prelude rendered it) and the HIT, which
 // does not run the promise-free loader, restores it once.
 export const ShellRestockLoader = createLoader(async (ctx) => {
@@ -461,7 +461,7 @@ export const ShellBadgeLoader = createLoader(async (): Promise<string> => {
 });
 
 // Identity-guard negative (loader-container-bake): a BAKE-lane loader
-// (registered with ssr: false) that reads cookies(). During capture the identity
+// (registered with ssr: "await") that reads cookies(). During capture the identity
 // guard throws inside the loader, wrapLoaderPromise swallows it into error UI,
 // and the guard's context flag makes the capture REFUSE — deterministically,
 // once-per-key warned, MISS forever. On axis 1 (and every serve) the same read
@@ -675,7 +675,7 @@ export const ShellLoadMoreLoader = createLoader(
   true,
 );
 
-// The page the URL names, read on every request (ssr: false bakes it into a
+// The page the URL names, read on every request (ssr: "await" bakes it into a
 // document shell only). Its data reaches the list in the same commit as the
 // navigation's segments, so the list shows page N once ?page=N has rendered.
 export const ShellLoadMorePageLoader = createLoader(

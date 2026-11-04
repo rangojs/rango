@@ -11,7 +11,7 @@ import {
 } from "../components/HoleyThrowsView.js";
 import { HoleyShellNotes, HoleyShellState } from "../components/holey-shell.js";
 
-// Fixture: an ssr: false loader whose value holds a promise (a pin with
+// Fixture: an ssr: "await" loader whose value holds a promise (a pin with
 // a hole, so the loader runs on every shell HIT). Once the probe's generation
 // is bumped the loader throws. No errorBoundary() on the chain, except the
 // bounded comparator's: the failure must end on the router's default error
@@ -163,20 +163,20 @@ export const holeyThrowsPatterns = urls(
         "/holey-throws/document",
         HoleyThrowsPage,
         { name: "holeyThrowsDocument" },
-        () => [loader(HoleyThrowsLoader, { ssr: false })],
+        () => [loader(HoleyThrowsLoader, { ssr: "await" })],
       ),
       path(
         "/holey-throws/plain",
         HoleyThrowsPage,
         { name: "holeyThrowsPlain", ppr: { ttl: 300, swr: 120 } },
-        () => [loader(HoleyThrowsLoader, { ssr: false })],
+        () => [loader(HoleyThrowsLoader, { ssr: "await" })],
       ),
       path(
         "/holey-throws/bounded",
         HoleyThrowsPage,
         { name: "holeyThrowsBounded", ppr: { ttl: 300, swr: 120 } },
         () => [
-          loader(HoleyThrowsLoader, { ssr: false }),
+          loader(HoleyThrowsLoader, { ssr: "await" }),
           errorBoundary(HoleyBoundary),
         ],
       ),

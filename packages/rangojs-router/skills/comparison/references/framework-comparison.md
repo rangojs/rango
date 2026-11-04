@@ -638,17 +638,17 @@ this resource-aware policy layer.
 
 `createLoader(fn)` / `loader()` define **live-by-default** data units: they are
 excluded from an enclosing segment cache and resolve on every request unless the
-loader itself explicitly opts into `cache()`. A loader without `ssr: false` may
+loader itself explicitly opts into `cache()`. A loader without `ssr: "await"` may
 safely read `cookies()`, `headers()`, request context, and `env` because its
 execution is outside the cached shell; a loader with its own `cache()` must put
 those reads in its `key()`, or its miss fails and stores nothing. On a `ppr`
-route an `ssr: false` loader bakes into the shell, so an identity read there
+route an `ssr: "await"` loader bakes into the shell, so an identity read there
 refuses the capture. Loaders run in parallel, stream independently under
 `loading()` boundaries, compose server-side via `ctx.use(OtherLoader)`, and
 carry route-level authority: they can throw `notFound()`/`redirect()`, WRITE
 handles (`ctx.use(Meta)({ title })` — data-derived page metadata pushed from the
 data's producer), read handle data after the render settles (`ctx.get(handle)`
-behind `await ctx.rendered()`), and opt into `loader(Def, { ssr: false })` so a
+behind `await ctx.rendered()`), and opt into `loader(Def, { ssr: "await" })` so a
 document render awaits them before first flush (deterministic SSR'd data, meta,
 and 404 status). Reads happen through `useLoader` in a client component
 (including its SSR pass) or `useFetchLoader` for standalone client fetches.
@@ -715,12 +715,12 @@ that no loader-before-render has:
 
 - it is the **cache-safety escape hatch** — the only place request-coupled reads
   are allowed inside a cache scope, because it is the part guaranteed to re-run
-  (a loader without `ssr: false` and without its own unkeyed `cache()`);
+  (a loader without `ssr: "await"` and without its own unkeyed `cache()`);
 - it is **standalone and composable**, not route-coupled — one `createLoader()`
   read by many segments, composed via `ctx.use`, or exposed as a fetchable endpoint;
 - it **streams as a hole, not a gate** — concurrent, Suspense-resolved under
   `loading()`, so the shell never blocks on it (and gating is a deliberate
-  per-loader opt-in — `{ ssr: false }` awaits ONE loader on document
+  per-loader opt-in — `{ ssr: "await" }` awaits ONE loader on document
   renders while the rest keep streaming — not the model's default);
 - it is **client-addressable and refreshable** independent of navigation (`key`,
   `refreshGroup`, `useRefreshLoaders`), behaving like a built-in, server-defined
@@ -798,7 +798,7 @@ shell.
 
 This is where the taint and loader designs meet. Loaders are the sanctioned
 dynamic holes: they run outside the enclosing segment cache and may read the
-current request (except, on a `ppr` route, an `ssr: false` loader or a loader a
+current request (except, on a `ppr` route, an `ssr: "await"` loader or a loader a
 handler awaits, which the capture runs and refuses on such a read), while the
 shared shell remains protected. Next.js also isolates runtime APIs from ordinary
 `"use cache"`, and React's optional taint APIs protect values at the

@@ -1,5 +1,5 @@
 /**
- * loader() delivery options: loader(Def, { ssr: false }, use?).
+ * loader() delivery options: loader(Def, { ssr: "await" }, use?).
  *
  * The 2-arg loader(Def, use) form and the 3-arg options form share one
  * options-or-use disambiguation (typeof check, like path()'s configOrUse).
@@ -75,7 +75,7 @@ describe("loader() options disambiguation", () => {
     const parent = parentEntry();
     const use = vi.fn(() => []);
     withDslStore(parent, true, () => {
-      loader(testLoaderDef(), { ssr: false }, use);
+      loader(testLoaderDef(), { ssr: "await" }, use);
     });
     expect(use).toHaveBeenCalledTimes(1);
     expect(parent.loader).toHaveLength(1);
@@ -96,16 +96,37 @@ describe("loader() options disambiguation", () => {
       withDslStore(parent, true, () => {
         loader(testLoaderDef(), { ssr: "never" } as never);
       }),
-    ).toThrow(/ssr must be a boolean/);
+    ).toThrow(/ssr must be "stream" or "await" \(got "never"\)/);
   });
 
-  it("rejects the removed stream option with a pointer to ssr: false", () => {
+  it("rejects ssr: true, which is not a value the option takes", () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, true, () => {
+        loader(testLoaderDef(), { ssr: true } as never);
+      }),
+    ).toThrow(/ssr must be "stream" or "await" \(got true\)/);
+  });
+
+  it('rejects ssr: false with a pointer to ssr: "await"', () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, true, () => {
+        // @ts-expect-error -- false is not a LoaderOptions["ssr"] value
+        loader(testLoaderDef(), { ssr: false });
+      }),
+    ).toThrow(
+      /loader\(\) ssr: false was replaced: use loader\(Def, \{ ssr: "await" \}\)/,
+    );
+  });
+
+  it('rejects the removed stream option with a pointer to ssr: "await"', () => {
     const parent = parentEntry();
     expect(() =>
       withDslStore(parent, true, () => {
         loader(testLoaderDef(), { stream: "navigation" } as never);
       }),
-    ).toThrow(/stream was replaced.*ssr: false/);
+    ).toThrow(/stream was replaced.*ssr: "await"/);
   });
 });
 
@@ -113,15 +134,15 @@ describe("awaitBeforeFlush stamping (per-isSSR)", () => {
   it("stamps awaitBeforeFlush on an SSR evaluation", () => {
     const parent = parentEntry();
     withDslStore(parent, true, () => {
-      loader(testLoaderDef(), { ssr: false });
+      loader(testLoaderDef(), { ssr: "await" });
     });
     expect(parent.loader[0]!.awaitBeforeFlush).toBe(true);
   });
 
-  it("ssr: true is the explicit default — no stamp", () => {
+  it('ssr: "stream" is the explicit default — no stamp', () => {
     const parent = parentEntry();
     withDslStore(parent, true, () => {
-      loader(testLoaderDef(), { ssr: true });
+      loader(testLoaderDef(), { ssr: "stream" });
     });
     expect(parent.loader[0]!.awaitBeforeFlush).toBeUndefined();
   });
@@ -129,7 +150,7 @@ describe("awaitBeforeFlush stamping (per-isSSR)", () => {
   it("does NOT stamp on a non-SSR (navigation-lane) evaluation", () => {
     const parent = parentEntry();
     withDslStore(parent, false, () => {
-      loader(testLoaderDef(), { ssr: false });
+      loader(testLoaderDef(), { ssr: "await" });
     });
     expect(parent.loader[0]!.awaitBeforeFlush).toBeUndefined();
   });
@@ -137,7 +158,7 @@ describe("awaitBeforeFlush stamping (per-isSSR)", () => {
   it("does NOT stamp when isSSR is absent from the DSL context", () => {
     const parent = parentEntry();
     withDslStore(parent, undefined, () => {
-      loader(testLoaderDef(), { ssr: false });
+      loader(testLoaderDef(), { ssr: "await" });
     });
     expect(parent.loader[0]!.awaitBeforeFlush).toBeUndefined();
   });
@@ -159,20 +180,20 @@ describe("bake stamping (every evaluation)", () => {
     ["a navigation-lane", false],
     ["an isSSR-less", undefined],
   ] as const)(
-    "stamps bake for ssr: false on %s evaluation",
+    'stamps bake for ssr: "await" on %s evaluation',
     (_label, isSSR) => {
       const parent = parentEntry();
       withDslStore(parent, isSSR, () => {
-        loader(testLoaderDef(), { ssr: false });
+        loader(testLoaderDef(), { ssr: "await" });
       });
       expect(parent.loader[0]!.bake).toBe(true);
     },
   );
 
-  it("does not stamp bake without ssr: false", () => {
+  it('does not stamp bake without ssr: "await"', () => {
     const parent = parentEntry();
     withDslStore(parent, true, () => {
-      loader(testLoaderDef(), { ssr: true });
+      loader(testLoaderDef(), { ssr: "stream" });
       loader(testLoaderDef());
     });
     expect(parent.loader.map((entry) => entry.bake)).toEqual([
@@ -212,11 +233,11 @@ describe("loader() prefetch option", () => {
     ]);
   });
 
-  it("combines with ssr: false and still runs the use() callback", () => {
+  it('combines with ssr: "await" and still runs the use() callback', () => {
     const parent = parentEntry();
     const use = vi.fn(() => []);
     withDslStore(parent, true, () => {
-      loader(testLoaderDef(), { ssr: false, prefetch: false }, use);
+      loader(testLoaderDef(), { ssr: "await", prefetch: false }, use);
     });
     expect(use).toHaveBeenCalledTimes(1);
     expect(parent.loader[0]).toMatchObject({
@@ -230,7 +251,7 @@ describe("loader() prefetch option", () => {
     const parent = parentEntry();
     withDslStore(parent, false, () => {
       loader(testLoaderDef(), { prefetch: "intent" });
-      loader(testLoaderDef(), { ssr: false, prefetch: "intent" });
+      loader(testLoaderDef(), { ssr: "await", prefetch: "intent" });
     });
     expect(parent.loader.map((entry) => entry.prefetch)).toEqual([
       "intent",

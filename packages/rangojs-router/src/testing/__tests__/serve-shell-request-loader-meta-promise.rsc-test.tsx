@@ -1,5 +1,5 @@
 /**
- * Issue #1182, through serveShellRequest: an `ssr: false` loader on a ppr
+ * Issue #1182, through serveShellRequest: an `ssr: "await"` loader on a ppr
  * route pushes its title to Meta as a promise. A document MISS renders the
  * title, and the shell keeps the value its capture rendered: a HIT's HTML
  * and hydration data hold it, and no loader body runs for it. A pushed
@@ -118,10 +118,10 @@ function HandlerTitlePage(ctx: HandlerContext): React.ReactNode {
 
 const sectionUrls = urls(({ path, loader }) => [
   path("/c/:id", Page, { name: "category", ppr: true }, () => [
-    loader(GridLoader, { ssr: false }),
+    loader(GridLoader, { ssr: "await" }),
   ]),
   path("/a/:id", Page, { name: "awaited", ppr: true }, () => [
-    loader(AwaitedGridLoader, { ssr: false }),
+    loader(AwaitedGridLoader, { ssr: "await" }),
   ]),
 ]);
 
@@ -132,29 +132,29 @@ const router = createRouter({}).routes(
       "/pre-grid",
       Prerender(() => <p>pre grid</p>),
       { name: "preGrid", ppr: { ttl: 300, swr: 120 } },
-      () => [loader(GridLoader, { ssr: false })],
+      () => [loader(GridLoader, { ssr: "await" })],
     ),
     layout(StoreLayout, () => [
-      loader(ChromeLoader, { ssr: false }),
+      loader(ChromeLoader, { ssr: "await" }),
       path("/direct/c/:id", Page, { name: "directCategory", ppr: true }, () => [
-        loader(GridLoader, { ssr: false }),
+        loader(GridLoader, { ssr: "await" }),
       ]),
       path("/direct/a/:id", Page, { name: "directAwaited", ppr: true }, () => [
-        loader(AwaitedGridLoader, { ssr: false }),
+        loader(AwaitedGridLoader, { ssr: "await" }),
       ]),
       path("/direct/h", HandlerTitlePage, {
         name: "directHandler",
         ppr: true,
       }),
       path("/recipe/c/:id", Page, { name: "recipe", ppr: true }, () => [
-        loader(RecipeGridLoader, { ssr: false }),
-        loader(RecipeTitleLoader, { ssr: false }),
+        loader(RecipeGridLoader, { ssr: "await" }),
+        loader(RecipeTitleLoader, { ssr: "await" }),
       ]),
       include("/section", sectionUrls, { name: "section" }),
       include("/cu", group, { name: "cu" }),
       // The target design's cases.
       path("/t/reject/:id", Page, { name: "tReject", ppr: true }, () => [
-        loader(RejectingTitleLoader, { ssr: false }),
+        loader(RejectingTitleLoader, { ssr: "await" }),
       ]),
       path(
         "/t/slow/:id",
@@ -163,33 +163,33 @@ const router = createRouter({}).routes(
           name: "tSlow",
           ppr: { captureTimeout: SLOW_TITLE_CAPTURE_TIMEOUT_MS },
         },
-        () => [loader(SlowTitleLoader, { ssr: false })],
+        () => [loader(SlowTitleLoader, { ssr: "await" })],
       ),
       path("/t/nested/:id", Page, { name: "tNested", ppr: true }, () => [
-        loader(NestedTitleLoader, { ssr: false }),
+        loader(NestedTitleLoader, { ssr: "await" }),
       ]),
       path("/t/hole/:id", Page, { name: "tHole", ppr: true }, () => [
-        loader(HoleTitleLoader, { ssr: false }),
+        loader(HoleTitleLoader, { ssr: "await" }),
       ]),
       path("/t/two/:id", Page, { name: "tTwo", ppr: true }, () => [
-        loader(GridLoader, { ssr: false }),
-        loader(NestedSideLoader, { ssr: false }),
+        loader(GridLoader, { ssr: "await" }),
+        loader(NestedSideLoader, { ssr: "await" }),
       ]),
       path("/t/defer/:id", Page, { name: "tDefer", ppr: true }, () => [
-        loader(DeferTitleLoader, { ssr: false }),
+        loader(DeferTitleLoader, { ssr: "await" }),
       ]),
       path("/t/dep/:id", Page, { name: "tDep", ppr: true }, () => [
-        loader(DependentGridLoader, { ssr: false }),
+        loader(DependentGridLoader, { ssr: "await" }),
       ]),
       // N-tests.
       path("/t/null/:id", Page, { name: "tNull", ppr: true }, () => [
-        loader(NullTitleLoader, { ssr: false }),
+        loader(NullTitleLoader, { ssr: "await" }),
       ]),
       path(
         "/t/component-defer/:id",
         DeferResolvingPage,
         { name: "tComponentDefer", ppr: true },
-        () => [loader(ComponentDeferTitleLoader, { ssr: false })],
+        () => [loader(ComponentDeferTitleLoader, { ssr: "await" })],
       ),
       path("/t/handler-defer", HandlerDeferPage, {
         name: "tHandlerDefer",
@@ -199,16 +199,16 @@ const router = createRouter({}).routes(
         "/t/no-pins/:id",
         Page,
         { name: "tNoPins", ppr: { maxSnapshotBytes: 1 } },
-        () => [loader(GridLoader, { ssr: false })],
+        () => [loader(GridLoader, { ssr: "await" })],
       ),
       path("/t/cached/:id", Page, { name: "tCached", ppr: true }, () => [
-        loader(CachedTitleLoader, { ssr: false }),
+        loader(CachedTitleLoader, { ssr: "await" }),
       ]),
       path("/t/fill/:id", Page, { name: "tFill", ppr: true }, () => [
-        loader(GridLoader, { ssr: false, prefetch: false }),
+        loader(GridLoader, { ssr: "await", prefetch: false }),
       ]),
       path("/t/recipe/:id", Page, { name: "tRecipe", ppr: true }, () => [
-        loader(ProductLoader, { ssr: false }),
+        loader(ProductLoader, { ssr: "await" }),
         loader(StockNoteLoader),
       ]),
     ]),
@@ -226,13 +226,13 @@ const warmRouter = createRouter({
 }).routes(
   urls(({ loader, path }) => [
     path("/t/reject/:id", Page, { name: "tReject", ppr: true }, () => [
-      loader(RejectingTitleLoader, { ssr: false }),
+      loader(RejectingTitleLoader, { ssr: "await" }),
     ]),
     path(
       "/t/slow/:id",
       Page,
       { name: "tSlow", ppr: { captureTimeout: SLOW_TITLE_CAPTURE_TIMEOUT_MS } },
-      () => [loader(SlowTitleLoader, { ssr: false })],
+      () => [loader(SlowTitleLoader, { ssr: "await" })],
     ),
   ]),
 );
@@ -317,7 +317,7 @@ const MOUNTS = [
   ["of a clientUrls() group mounted through include()", "/cu"],
 ] as const;
 
-describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", () => {
+describe('#1182: an ssr: "await" loader\'s promise push to Meta on a ppr route', () => {
   describe.each(MOUNTS)("a page %s", (_label, base) => {
     const url = `${base}/c/1`;
 
@@ -386,7 +386,7 @@ describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", ()
     });
   });
 
-  describe("the pre-#1182 recipe keeps working: the title from its own ssr: false loader, pushed settled", () => {
+  describe('the pre-#1182 recipe keeps working: the title from its own ssr: "await" loader, pushed settled', () => {
     it("the shell keeps the title, the HIT hydrates with it, and no loader body runs on the HIT", async () => {
       const { hit, runsAfterCapture } = await hitAfterCapture("/recipe/c/1");
 
@@ -433,7 +433,7 @@ describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", ()
 });
 
 /**
- * On a document request the handle values an `ssr: false` loader pushes,
+ * On a document request the handle values an `ssr: "await"` loader pushes,
  * settled or promise, are resolved before the first flush, and a shell
  * stores and serves exactly the resolved values its capture's document
  * rendered. A pushed promise is judged by its settled value, as
@@ -441,7 +441,7 @@ describe("#1182: an ssr: false loader's promise push to Meta on a ppr route", ()
  * that rejects, or does not settle within ppr.captureTimeout, refuses the
  * capture, as a handler's does.
  */
-describe("#1182: the shell keeps the resolved values of an ssr: false loader's promise pushes", () => {
+describe('#1182: the shell keeps the resolved values of an ssr: "await" loader\'s promise pushes', () => {
   it("a Prerender + ppr page's shell keeps the title in its #1057 record, and the HIT sends nothing after hydration", async () => {
     const { hit } = await hitAfterCapture("/pre-grid");
 
@@ -605,7 +605,7 @@ describe("#1182: the shell keeps the resolved values of an ssr: false loader's p
     });
   });
 
-  it("N7: prefetch: false on an ssr: false loader is ignored under ppr: a prefetch defers nothing and replays the title and the data of one capture", async () => {
+  it('N7: prefetch: false on an ssr: "await" loader is ignored under ppr: a prefetch defers nothing and replays the title and the data of one capture', async () => {
     const { serve } = await hitAfterCapture("/t/fill/1");
     const runsBefore = metaRuns.grid;
 

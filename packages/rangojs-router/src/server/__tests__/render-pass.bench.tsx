@@ -51,7 +51,7 @@ function Page(): React.ReactNode {
   return <p>page</p>;
 }
 
-/** A bare PPR page, one with an ssr: false loader and a handle push, one under a layout. */
+/** A bare PPR page, one with an ssr: "await" loader and a handle push, one under a layout. */
 const ROUTES = ["/a", "/b", "/c/1"] as const;
 
 const router = createRouter({}).routes(
@@ -67,14 +67,14 @@ const router = createRouter({}).routes(
         return <p>b</p>;
       },
       { name: "b", ppr: true },
-      () => [loader(Baked, { ssr: false }), loader(Live), loading(<i>b</i>)],
+      () => [loader(Baked, { ssr: "await" }), loader(Live), loading(<i>b</i>)],
     ),
     layout(
       ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
       () => [
         path("/c/:id", Page, { name: "c", ppr: true }, () => [
           loader(LiveB),
-          loader(Baked, { ssr: false }),
+          loader(Baked, { ssr: "await" }),
           loading(<i>c</i>),
         ]),
       ],

@@ -707,7 +707,7 @@ times out, or whose snapshot is truncated or corrupt (also evicted), cannot
 replay the captured segment record, so it degrades: the entry is replaced and
 recaptured and the page reloads once into a cache-miss render (`/ppr`). The
 snapshot holds only what a HIT reads: every HIT replays the handler layer from
-the captured segment record and serves an `ssr: false` loader's baked
+the captured segment record and serves an `ssr: "await"` loader's baked
 container, so no `"use cache"` or loader `cache()` item is stored in it. A
 live hole, and any loader that runs on the HIT, reads those from the store
 under their own ttl/swr and tags.

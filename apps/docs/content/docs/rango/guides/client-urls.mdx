@@ -241,7 +241,7 @@ export default clientUrls(({ path, intercept, loader, loading }) => [
 ]);
 ```
 
-Compared with the server [`intercept()`](/docs/rango/guides/intercepting-routes), the client form is restricted. The target must be a named route in the same definition, written with a leading dot. There is no `when` selector. The use callback accepts only `loader()` and `loading()`, and those loaders reject `ssr: false`. Only navigations that start on one of the group's routes open the modal, and under a mount with params only with the same params (the same locale). From anywhere else, or on a hard load, the full route renders. The router renders the slot next to the group's content, so you don't place a `<ParallelOutlet>` for it.
+Compared with the server [`intercept()`](/docs/rango/guides/intercepting-routes), the client form is restricted. The target must be a named route in the same definition, written with a leading dot. There is no `when` selector. The use callback accepts only `loader()` and `loading()`, and those loaders reject `ssr: "await"`. Only navigations that start on one of the group's routes open the modal, and under a mount with params only with the same params (the same locale). From anywhere else, or on a hard load, the full route renders. The router renders the slot next to the group's content, so you don't place a `<ParallelOutlet>` for it.
 
 If you need `when` or a server handler, declare the intercept in the server tree around the include. A server-declared intercept can target a group route by its full name (`catalog.product`). When such an intercept applies, the browser skips the optimistic render, and the origin page stays on screen until the modal commits.
 
@@ -407,17 +407,17 @@ function Stock() {
 
 The next action or navigation that re-runs the loader replaces the message.
 
-A failure returned as data is an ordinary value, so anything that stores the loader's value stores it too: a `cache()` on the loader serves it until its TTL runs out, a `ppr` shell bakes the value of an `ssr: false` loader, and a prerender stores it at build time. A thrown error is never stored, and a stale entry keeps serving. To cache the expensive part, cache the call the loader makes, with `"use cache"` on that function (a call that throws stores nothing), and turn the throw into data in a loader that isn't cached itself.
+A failure returned as data is an ordinary value, so anything that stores the loader's value stores it too: a `cache()` on the loader serves it until its TTL runs out, a `ppr` shell bakes the value of an `ssr: "await"` loader, and a prerender stores it at build time. A thrown error is never stored, and a stale entry keeps serving. To cache the expensive part, cache the call the loader makes, with `"use cache"` on that function (a call that throws stores nothing), and turn the throw into data in a loader that isn't cached itself.
 
-### `ssr: false`
+### `ssr: "await"`
 
-By default every loader streams, so nothing a slow loader produces is guaranteed to be in the server-rendered HTML: its data, its handle pushes, or the 404 status from a thrown `notFound()`. `loader(Def, { ssr: false })` makes document renders wait for that loader before the first flush. Client navigations still stream it. The option applies to one loader, and unflagged siblings keep streaming behind their boundaries.
+By default every loader streams, so nothing a slow loader produces is guaranteed to be in the server-rendered HTML: its data, its handle pushes, or the 404 status from a thrown `notFound()`. `loader(Def, { ssr: "await" })` makes document renders wait for that loader before the first flush. Client navigations still stream it. The option applies to one loader, and unflagged siblings keep streaming behind their boundaries.
 
 - A flagged loader must not `await ctx.rendered()` or read handles with `ctx.get()`. The document render waits for the loader before the render barrier resolves, so the two would wait on each other, and the router throws a deadlock error.
 - Intercept loaders reject the option, because intercepts only render on client navigations.
 - Every document load pays the flagged loader's latency before the first byte. Keep flagged loaders fast.
 
-Without JavaScript, a browser sees only what the first flush carries. A boundary that isn't complete by then ships its fallback and swaps the content in with a script, which never runs without JavaScript. That includes a client component a loader's answer draws under an inline `<Suspense>`. A fast loader's answer usually makes the first flush, and `ssr: false` guarantees that the loader's data does. It doesn't cover the client component's module: the first document a freshly started production server renders can still be waiting for it. The dev server behaves like a production build here: when the shell is ready, it waits for the client components the payload has named and that are still loading, and for nothing else.
+Without JavaScript, a browser sees only what the first flush carries. A boundary that isn't complete by then ships its fallback and swaps the content in with a script, which never runs without JavaScript. That includes a client component a loader's answer draws under an inline `<Suspense>`. A fast loader's answer usually makes the first flush, and `ssr: "await"` guarantees that the loader's data does. It doesn't cover the client component's module: the first document a freshly started production server renders can still be waiting for it. The dev server behaves like a production build here: when the shell is ready, it waits for the client components the payload has named and that are still loading, and for nothing else.
 
 ### `prefetch: false`
 
@@ -441,7 +441,7 @@ A click inside the group still shows the destination at once. When the prefetch 
 
 ### Shell caching with `ppr`
 
-A group route with the `ppr` path option caches its shell the same way a server [PPR](/docs/rango/guides/ppr) route does, with the same [loader lane rule](/docs/rango/guides/ppr#loaders-ssr-false-picks-the-lane): only a loader flagged `ssr: false` is baked into the shell, and every other loader stays live behind `loading()` or an inline `<Suspense>`. The search string is part of the shell's identity, so each query string gets its own shell.
+A group route with the `ppr` path option caches its shell the same way a server [PPR](/docs/rango/guides/ppr) route does, with the same [loader lane rule](/docs/rango/guides/ppr#loaders-ssr-await-picks-the-lane): only a loader flagged `ssr: "await"` is baked into the shell, and every other loader stays live behind `loading()` or an inline `<Suspense>`. The search string is part of the shell's identity, so each query string gets its own shell.
 
 ### Fetchable loaders
 

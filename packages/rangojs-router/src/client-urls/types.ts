@@ -79,12 +79,12 @@ export interface ClientUrlLoaderRecord {
     | boolean
   )[];
   /**
-   * loader(Def, { ssr: false }): document renders await this loader before
+   * loader(Def, { ssr: "await" }): document renders await this loader before
    * first flush (see {@link LoaderOptions}). Projected into the server tree,
    * where the per-isSSR entry stamping applies — client navigations stream
    * regardless.
    */
-  readonly ssr?: false;
+  readonly ssr?: "await";
   /**
    * loader(Def, { prefetch: false | "intent" }): a prefetch of the route, or
    * of an intercept's target from its source, defers this loader and the
@@ -160,10 +160,10 @@ export interface ClientUrlHelpers {
    * Attach a projected loader. The optional use callback may contain
    * revalidate() only: a per-loader predicate the server runs, as in urls().
    *
-   * Pass `{ ssr: false }` — the same knob as loading(fallback, { ssr:
-   * false }) — to await this loader before first flush on DOCUMENT requests
-   * (see {@link LoaderOptions}): the opt-in for loaders whose data, handle
-   * pushes, or thrown notFound()/redirect() must be in the SSR'd HTML.
+   * Pass `{ ssr: "await" }` to await this loader before first flush on
+   * DOCUMENT requests (see {@link LoaderOptions}): the opt-in for loaders
+   * whose data, handle pushes, or thrown notFound()/redirect() must be in the
+   * SSR'd HTML.
    * Per-loader: a streaming sibling keeps streaming. Under a `ppr` group
    * route the flag BAKES: the loader executes at shell capture and its
    * settled return freezes into the shell (nested promises stay live

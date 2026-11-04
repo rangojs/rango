@@ -26,7 +26,7 @@ import {
   type LoaderEntry,
 } from "../server/context";
 import {
-  assertBooleanOption,
+  assertLoaderSsrOption,
   assertPrefetchOption,
   invariant,
 } from "../errors";
@@ -920,13 +920,9 @@ const loader: RouteHelpers<any, any>["loader"] = (
   );
   invariant(
     (optionsGiven as { stream?: unknown } | undefined)?.stream === undefined,
-    "loader() stream was replaced: use loader(Def, { ssr: false }) — the same knob as loading(fallback, { ssr: false }) — to await the loader before first flush on document requests.",
+    'loader() stream was replaced: use loader(Def, { ssr: "await" }) to await the loader before first flush on document requests.',
   );
-  assertBooleanOption(
-    optionsGiven?.ssr,
-    "loader() ssr",
-    "stream on every render",
-  );
+  assertLoaderSsrOption(optionsGiven?.ssr, "loader()");
   assertPrefetchOption(
     optionsGiven?.prefetch,
     "loader() prefetch",
@@ -942,7 +938,7 @@ const loader: RouteHelpers<any, any>["loader"] = (
   const loaderEntry: LoaderEntry = {
     loader: loaderDef,
     revalidate: [] as ShouldRevalidateFn<any, any>[],
-    ...(optionsGiven?.ssr === false && { bake: true as const }),
+    ...(optionsGiven?.ssr === "await" && { bake: true as const }),
     ...(isPrefetchFlag(optionsGiven?.prefetch) && {
       prefetch: optionsGiven.prefetch,
     }),

@@ -55,7 +55,7 @@ const router = createRouter({}).routes(
       "/proto-data",
       () => <p>proto data page</p>,
       { name: "protoData", ppr: true },
-      () => [loader(ProtoKeyLoader, { ssr: false })],
+      () => [loader(ProtoKeyLoader, { ssr: "await" })],
     ),
   ]),
 );

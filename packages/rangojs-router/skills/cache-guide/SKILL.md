@@ -38,7 +38,7 @@ Quick rules:
   CDN caching (`/deployment-caching`).
 - A value that must be fresh on **every** request → a loader (never cached
   unless you opt in), read with `useLoader()`; on a `ppr` route, keep it off
-  `ssr: false`. A handler inside a `cache()` or `ppr` boundary that awaits
+  `ssr: "await"`. A handler inside a `cache()` or `ppr` boundary that awaits
   `ctx.use(Loader)` renders the value it got on the miss, and every hit
   replays that output.
 
@@ -161,7 +161,7 @@ The `ppr` shell capture has its own, stricter guard: `cookies()`, `headers()`,
 `ctx.request.headers`, a theme read, a `{ cache: false }` variable read, and
 `ctx.dynamic()` refuse the
 capture anywhere it waits — handlers, promises they pass or push, async server
-components, `ssr: false` loaders, and loaders a handler awaits (no loader
+components, `ssr: "await"` loaders, and loaders a handler awaits (no loader
 exemption there). The route then serves uncached; see `/ppr`.
 
 ### Cross-deploy safety: version-segmented store keys
@@ -490,7 +490,7 @@ So `"use cache: short"` (60s) inside `cache({ ttl: 600 })` yields ~600s freshnes
 on hits, **not** 60s. This is not a bug: setting `cache({ ttl: 600 })` declares
 "this subtree may be ~600s stale." **If a value must be fresher than its
 enclosing segment, put it in a loader** read with `useLoader()` (without
-`ssr: false` on a `ppr` route). `debugPerformance` prints cache hits per
+`ssr: "await"` on a `ppr` route). `debugPerformance` prints cache hits per
 layer, so the actual per-request behavior is observable.
 
 Keys and tags cross the nesting too:
@@ -643,7 +643,7 @@ This means `cache()` gives you cached UI + fresh data by default, where the
 data is read outside the cached output: `useLoader()` in a client component.
 A handler inside the boundary that awaits `ctx.use(Loader)` renders the value
 it got on the miss, and every hit replays that output. On a `ppr` route an
-`ssr: false` loader is the other exception: it bakes into the shell (`/ppr`).
+`ssr: "await"` loader is the other exception: it bakes into the shell (`/ppr`).
 To also cache a loader's data, explicitly opt in with
 `loader(Fn, () => [cache({...})])`.
 That entry is keyed by loader, host, path and params, not by the route's

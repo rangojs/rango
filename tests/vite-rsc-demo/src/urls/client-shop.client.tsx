@@ -221,7 +221,7 @@ function ClientShopIndex() {
         </Link>
       </p>
       <p style={{ color: "#888" }}>
-        {/* ssr: false fixtures: the awaited loader's data/meta/404
+        {/* ssr: "await" fixtures: the awaited loader's data/meta/404
             are deterministic in the SSR'd document; on these client navs the
             same loader still streams. prefetch="none" keeps the nav-lane
             streaming path deterministic. */}
@@ -474,7 +474,7 @@ function SsrInlineGridSkeleton() {
  * gates on its own: >500 bytes (the hardcoded isEligibleForOutlining floor)
  * and >12800 bytes (the progressiveChunkSize default), so `flushedByteSize +
  * boundary.byteSize > progressiveChunkSize` holds regardless of shell size or
- * mode. Pins the ssr:false auto-raise: without it Fizz moves this COMPLETED
+ * mode. Pins the ssr: "await" auto-raise: without it Fizz moves this COMPLETED
  * boundary to an end-of-stream <div hidden> + $RC reveal; with it the tiles
  * are in-place in the raw document (the smaller sections above stay under the
  * 500-byte floor and inline regardless). */
@@ -492,7 +492,7 @@ function SsrInlineGrid() {
 }
 
 /**
- * ssr: false showcase. The awaited section's loader is flagged, so a
+ * ssr: "await" showcase. The awaited section's loader is flagged, so a
  * DOCUMENT load carries its data (and its Meta title, and a real 404 for
  * unknown slugs) in the initial HTML — its skeleton never SSRs. The sidecar
  * has the same latency but no flag: it SSRs as its skeleton and streams in.
@@ -626,7 +626,7 @@ function PprMetaEcho() {
 
 /**
  * The /ssr shape with a shell declaration (ppr path option), no loading().
- * The lane is per loader, not per loading(): the { ssr: false } product loader
+ * The lane is per loader, not per loading(): the { ssr: "await" } product loader
  * is on the BAKE lane (executes at capture; its settled data and Meta push
  * freeze into the stored shell), while the unflagged sidecar is LIVE (masked
  * at capture; its inline <Suspense> is the hole). First document = MISS:
@@ -878,7 +878,7 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
       // navs — inline boundaries remain the finer-grained choice here.
     ]),
     path("/ssr/:slug", ClientShopSsrPage, { name: "ssr" }, () => [
-      loader(ClientShopSsrProductLoader, { ssr: false }, () => [
+      loader(ClientShopSsrProductLoader, { ssr: "await" }, () => [
         revalidate(productData),
       ]),
       loader(ClientShopSsrSidecarLoader, () => [revalidate(productData)]),
@@ -888,7 +888,7 @@ export default clientUrls(({ path, layout, loader, revalidate }) => [
       ClientShopPprPage,
       { name: "ppr", ppr: { ttl: 300, swr: 120 } },
       () => [
-        loader(ClientShopSsrProductLoader, { ssr: false }, () => [
+        loader(ClientShopSsrProductLoader, { ssr: "await" }, () => [
           revalidate(productData),
         ]),
         loader(ClientShopSsrSidecarLoader, () => [revalidate(productData)]),

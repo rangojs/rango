@@ -1,5 +1,5 @@
 /**
- * awaitBeforeFlush (loader(Def, { ssr: false })) in a FRESH pass's loader
+ * awaitBeforeFlush (loader(Def, { ssr: "await" })) in a FRESH pass's loader
  * funnel (revalidation.ts resolveOwnerLoaders).
  *
  * Document renders await flagged loaders before segment resolution returns:
@@ -62,7 +62,7 @@ function createEntry(loaderEntries: LoaderEntry[]): EntryData {
   } as unknown as EntryData;
 }
 
-/** A document evaluation's entry: loader(Def, { ssr: false }) stamps both. */
+/** A document evaluation's entry: loader(Def, { ssr: "await" }) stamps both. */
 function loaderEntry(loader: any, awaitBeforeFlush?: true): LoaderEntry {
   return {
     loader,

@@ -105,7 +105,7 @@ click, stale revalidation, leaving an intercept) hands a route's or layout's loa
 per-loader streams of their settled entries (`buildLoaderStreams` with `settle`),
 not the decoded aggregate, so each read decodes its entry synchronously and a loader
 error throws there, at its read, inside the segment's own boundaries (#1129).
-Only the document lane decodes in the build, for a `{ ssr: false }` loader's entry. A
+Only the document lane decodes in the build, for a `{ ssr: "await" }` loader's entry. A
 stale revalidation whose loader threw hands React nothing: it keeps the page on screen.
 The value path still calls `use()`: `Suspender` and
 `LoaderResolver` call `use(SETTLED_THENABLE)` when they are handed the value, as every

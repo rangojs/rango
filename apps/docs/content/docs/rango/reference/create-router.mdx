@@ -183,7 +183,7 @@ path("/product/:slug", async (ctx) => {
 3. `notFound`: from `createRouter()` (the same component used for no-route-match)
 4. `<h1>Not Found</h1>`: the built-in fallback
 
-Handler-thrown and no-match 404s set HTTP status 404. A `notFound()` thrown from a loader always renders the not-found UI, but because loaders stream, the 404 status is set only if the loader rejects before the document response starts. Register the loader as `loader(Def, { ssr: false })` to make that status deterministic (see [Loaders](/docs/rango/features/loaders)).
+Handler-thrown and no-match 404s set HTTP status 404. A `notFound()` thrown from a loader always renders the not-found UI, but because loaders stream, the 404 status is set only if the loader rejects before the document response starts. Register the loader as `loader(Def, { ssr: "await" })` to make that status deterministic (see [Loaders](/docs/rango/features/loaders)).
 
 `notFoundBoundary()` wraps routes for route-specific not-found UI. Its handler receives `{ notFound: NotFoundInfo }`, where `NotFoundInfo` contains `message`, `segmentId`, `segmentType`, and an optional `pathname`:
 

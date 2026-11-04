@@ -80,7 +80,7 @@ const PIN: ShellLoaderSeedEntry = {
   runs: false,
   complete: true,
 };
-/** The pin of the route's one `ssr: false` loader. */
+/** The pin of the route's one `ssr: "await"` loader. */
 const PINS = (): Map<string, ShellLoaderSeedEntry> => new Map([[BAKE, PIN]]);
 
 function route(loaders: Record<string, unknown>[], ppr: boolean): EntryData[] {
@@ -97,7 +97,7 @@ function route(loaders: Record<string, unknown>[], ppr: boolean): EntryData[] {
   ] as unknown as EntryData[];
 }
 
-/** A ppr route with an `ssr: false` loader and a live one. */
+/** A ppr route with an `ssr: "await"` loader and a live one. */
 const ENTRIES = route(
   [
     { loader: { $$id: BAKE }, revalidate: [], bake: true },
@@ -419,7 +419,7 @@ describe("withCacheLookup: what a record that holds no loader push still decides
 
   // A hole's run decides every copy of its pushes, another cached unit's
   // replay included, whether or not the record holds a copy.
-  it("a ppr route without an ssr: false loader: its loaders are holes", async () => {
+  it('a ppr route without an ssr: "await" loader: its loaders are holes', async () => {
     const liveOnly = route([{ loader: { $$id: LIVE }, revalidate: [] }], true);
     for (const handles of [true, false]) {
       const { reqCtx } = await lookup({

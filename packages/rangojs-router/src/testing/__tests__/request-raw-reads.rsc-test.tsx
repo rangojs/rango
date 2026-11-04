@@ -296,7 +296,7 @@ describe("raw request-identity reads on a ppr route (#976)", () => {
       const refused = refusalWarnings(warn);
       expect(refused).toHaveLength(1);
       expect(refused[0]).toContain(`read ${surface} during capture`);
-      expect(refused[0]).toContain("a loader without ssr: false");
+      expect(refused[0]).toContain('a loader without ssr: "await"');
     },
   );
 

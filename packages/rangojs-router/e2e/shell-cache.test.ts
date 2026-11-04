@@ -420,12 +420,12 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-price")).toContainText("Live price:");
   });
 
-  // ssr:false BAKE lane (per-loader capture policy): the flagged
+  // ssr: "await" BAKE lane (per-loader capture policy): the flagged
   // loader executes at capture and its SETTLED return is shell material even
   // though the route declares loading(); the nested promise in that return
   // and the unflagged sibling stay live holes at their own boundaries.
   // Snapshot pinning keeps HIT hydration byte-agreed with the frozen prelude.
-  test("ssr:false loader bakes into the shell; nested promise and plain sibling stay live", async ({
+  test('ssr: "await" loader bakes into the shell; nested promise and plain sibling stay live', async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -521,9 +521,9 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
   });
 
   // A client navigation that replays the shell matches the document HIT: a
-  // promise-free ssr:false loader is served from its pin without running,
-  // and an ssr:false loader on an entry with loading() is pinned too.
-  test("a client navigation that replays the shell pins ssr:false loaders like the document HIT", async ({
+  // promise-free ssr: "await" loader is served from its pin without running,
+  // and an ssr: "await" loader on an entry with loading() is pinned too.
+  test('a client navigation that replays the shell pins ssr: "await" loaders like the document HIT', async ({
     request,
   }) => {
     const replay = (url: string) =>
@@ -547,7 +547,7 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     expect(await onlyNav.text()).toMatch(/baked-only-\d+/);
     expect(await runs()).toBe(runsBefore);
 
-    // ShellBakedNavLoader: ssr:false beside loading(). Its return carries a
+    // ShellBakedNavLoader: ssr: "await" beside loading(). Its return carries a
     // promise, so it runs; its baked title is the document HIT's.
     const bakedUrl = f.url("/shell-cache/baked?probe=navpin");
     await warmToHit(request, bakedUrl);
@@ -621,7 +621,7 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     const { firstChunk, html } = await measureFirstChunk(url);
     expect(firstChunk).toContain("group shell static");
     expect(firstChunk).toContain("filter:shoes");
-    // The group's ssr:false loader BAKED: its value is shell
+    // The group's ssr: "await" loader BAKED: its value is shell
     // material in the first flushed bytes, frozen across HITs (asserted
     // below); the plain loader stays the live hole.
     expect(firstChunk).toMatch(/group-baked-\d+/);
@@ -809,15 +809,15 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
   });
 
   // Issue #941, snapshot pruning (docs/design/shell-entry-layout.md,
-  // decision 3): /shell-cache/shared-key's layout, its ssr: false loader and
+  // decision 3): /shell-cache/shared-key's layout, its ssr: "await" loader and
   // its live hole read the SAME "drift" item (ttl 1s). The capture bakes the
-  // layout's value inside the doc record and pins the ssr: false loader's
+  // layout's value inside the doc record and pins the ssr: "await" loader's
   // container; it records no cache read, so the hole's loader reads the
   // store: once the item expires the hole shows a newer stamp while the shell
   // and the pin keep the capture stamp, and the page still hydrates cleanly.
   // Before, the bake-lane loader's read pinned the item for every reader on a
   // HIT and the hole never moved on.
-  test("shared key: the shell and an ssr: false loader keep the capture value while the live hole reads the store", async ({
+  test('shared key: the shell and an ssr: "await" loader keep the capture value while the live hole reads the store', async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -861,13 +861,13 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-shared-hole")).toHaveText(/^shared-\d+$/);
   });
 
-  // /shell-cache/live-dep: the ssr: false loader returns a nested promise, so
+  // /shell-cache/live-dep: the ssr: "await" loader returns a nested promise, so
   // it runs on every HIT, and the route declares it before the live loader it
   // awaits, whose body then runs inside it. The live loader awaits a
   // dependency the route registers on neither lane. The live loader is a
   // hole: on a HIT and on a client navigation that replays the shell, its
   // handle push and its dependency's carry that request's generation, once,
-  // like its data. Before, the restored ssr: false loader counted the live
+  // like its data. Before, the restored ssr: "await" loader counted the live
   // loader's push as its own, and the dependency's record copy stood for its
   // push, so the capture's copies showed.
   const bumpLiveDep = async (
@@ -1123,7 +1123,7 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
   // snapshot's loader family overlays the recorded container onto the fresh
   // run (the outer label is PINNED at its capture-time seq, byte-parity with
   // the reader's own boundary) — CONTRACT CHANGE (streaming useLoader): route
-  // loaders are LIVE at capture (except the ssr:false opt-in,
+  // loaders are LIVE at capture (except the ssr: "await" opt-in,
   // which BAKES — see the baked-route pins above); the bake lane for value-slot
   // loaders is gone. This route's outer read has NO boundary above it, so the
   // masked loader root-postpones the capture and the <body> sanity gate
@@ -1285,7 +1285,7 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     expect(secondHtml).toContain("Live price:");
   });
 
-  // /shell-cache/guard: the identity wall. A bake-lane loader (ssr: false)
+  // /shell-cache/guard: the identity wall. A bake-lane loader (ssr: "await")
   // reads cookies() — during capture the guard throws inside the loader, the
   // context flag makes the capture REFUSE deterministically, and the route
   // stays MISS forever. Axis 1 keeps serving the per-user value normally.
@@ -2393,10 +2393,10 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-badge-value")).toContainText(/badge-\d/);
   });
 
-  // Issue #888. The ssr:false loader awaits an unflagged loader that pushes a
+  // Issue #888. The ssr: "await" loader awaits an unflagged loader that pushes a
   // string handle; both run at capture and neither runs on a HIT, so the doc
   // record keeps the push and the HIT shows it exactly once.
-  test("fast-path HIT renders a string handle pushed by a loader an ssr:false loader awaits once", async ({
+  test('fast-path HIT renders a string handle pushed by a loader an ssr: "await" loader awaits once', async ({
     page,
   }) => {
     await warmFragmentGraph(page.request);
@@ -2417,10 +2417,10 @@ function runShellCacheSpec(f: Fixture, production: boolean): void {
     await expect(testId(page, "shell-warning")).toHaveText(["Low stock"]);
   });
 
-  // Issue #929. The ssr:false loader pushes the string handle itself: the doc
+  // Issue #929. The ssr: "await" loader pushes the string handle itself: the doc
   // record keeps the push (the prelude rendered it) and the HIT, which does
   // not run the promise-free loader, restores it once.
-  test("fast-path HIT renders a string handle pushed by an ssr:false loader once", async ({
+  test('fast-path HIT renders a string handle pushed by an ssr: "await" loader once', async ({
     page,
   }) => {
     await warmFragmentGraph(page.request);

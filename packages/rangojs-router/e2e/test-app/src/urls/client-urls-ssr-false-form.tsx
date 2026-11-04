@@ -6,7 +6,7 @@ import { clientUrls, useLoader } from "@rangojs/router/client";
 import { SsrFalseFormLoader } from "./client-urls-ssr-false-form.defs.js";
 import { saveSsrFalseForm } from "./client-urls-ssr-false-form.actions.js";
 
-// A no-script document of a group route whose ssr: false loader feeds a
+// A no-script document of a group route whose ssr: "await" loader feeds a
 // useActionState form under an inline <Suspense> (#1138,
 // client-urls-ssr-false-form.test.ts, body in tests/shared-e2e).
 
@@ -41,6 +41,6 @@ function SsrFalseFormPage(): ReactNode {
 
 export default clientUrls(({ path, loader }) => [
   path("/", SsrFalseFormPage, { name: "index" }, () => [
-    loader(SsrFalseFormLoader, { ssr: false }),
+    loader(SsrFalseFormLoader, { ssr: "await" }),
   ]),
 ]);

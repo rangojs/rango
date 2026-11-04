@@ -674,7 +674,7 @@ export async function expectUnflaggedRouteIsPrefetchedWhole(
 }
 
 /**
- * `ssr: false` with `prefetch: false`: a document request runs the loader
+ * `ssr: "await"` with `prefetch: false`: a document request runs the loader
  * (its value is in the HTML), a prefetch still skips it.
  */
 export async function expectDocumentAwaitsLoaderThatPrefetchSkips(
@@ -699,7 +699,7 @@ export async function expectDocumentAwaitsLoaderThatPrefetchSkips(
 }
 
 /**
- * An `ssr: false` loader with `prefetch: false` on a `ppr` route, before any
+ * An `ssr: "await"` loader with `prefetch: false` on a `ppr` route, before any
  * document request captured the page's shell: nothing serves the loader from
  * a pin, so the prefetch defers it, as on a route without `ppr`, and the
  * click that adopts the prefetch sends one fill. The prefetch still schedules
@@ -2466,7 +2466,7 @@ export interface PrefetchFalseParityCase extends PrefetchFalseFlags {
    */
   commitsWithFill?: boolean;
   /**
-   * A ppr route whose flagged `ssr: false` loader the shell capture runs: the
+   * A ppr route whose flagged `ssr: "await"` loader the shell capture runs: the
    * prefetch schedules that capture in the background. The adopted click is
    * measured once the capture has run, so its run is not counted as the
    * click's work.
@@ -4876,24 +4876,24 @@ export function definePrefetchFalseTests(
       name: "ppr",
     }));
 
-  it("ssr: false with prefetch: false: the document awaits the loader and a prefetch skips it", (page, fixture) =>
+  it('ssr: "await" with prefetch: false: the document awaits the loader and a prefetch skips it', (page, fixture) =>
     expectDocumentAwaitsLoaderThatPrefetchSkips(page, fixture));
 
-  it("a ppr route skips its flagged ssr: false loader when no document shell serves it: one fill, read in a Suspense", (page, fixture) =>
+  it('a ppr route skips its flagged ssr: "await" loader when no document shell serves it: one fill, read in a Suspense', (page, fixture) =>
     expectPprBakeLoaderIsDeferredWithoutADocumentShell(
       page,
       fixture,
       "ppr-bake",
     ));
 
-  it("a ppr route skips its flagged ssr: false loader when no document shell serves it: one fill, read with no boundary", (page, fixture) =>
+  it('a ppr route skips its flagged ssr: "await" loader when no document shell serves it: one fill, read with no boundary', (page, fixture) =>
     expectPprBakeLoaderIsDeferredWithoutADocumentShell(
       page,
       fixture,
       "ppr-bake-bare",
     ));
 
-  it("a ppr route keeps its flagged ssr: false loader when the document shell serves its pin: the click sends nothing", (page, fixture) =>
+  it('a ppr route keeps its flagged ssr: "await" loader when the document shell serves its pin: the click sends nothing', (page, fixture) =>
     expectPprBakeLoaderServedFromTheDocumentShellIsKept(page, fixture));
 
   it("back and forward after a fill restore the filled page", (page, fixture) =>

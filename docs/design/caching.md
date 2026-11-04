@@ -235,7 +235,7 @@ list is not empty. Flight and Fizz fill it from `onError`, and a streamed
 handler recovered into its boundary pushes to it. A loader that throws pushes
 too (`wrapLoaderWithErrorHandling` in `src/router/loader-resolution.ts`): its
 error is an `ok: false` value rendered in place, which neither renderer
-reports, so a navigation's Flight response, or a document whose `ssr: false`
+reports, so a navigation's Flight response, or a document whose `ssr: "await"`
 loader planted its `errorBoundary()` fallback, used to be stored, and a failing
 stale refresh replaced a healthy entry with it.
 
@@ -1053,7 +1053,7 @@ primitive values are covered), and `captureHandles` reads with
 consumed (`await ctx.use(Loader)` from the handler body) is skipped with its
 handler on a HIT, so its pushes stay in the record. PPR shell captures use
 the same tag: the capture's push wrapper passes `loaderPush: false` to
-`HandleStore.push` for an `ssr: false` loader's own settled pushes, which its
+`HandleStore.push` for an `ssr: "await"` loader's own settled pushes, which its
 record keeps, with the loader's id as `owner`. The record carries those owners
 in `CachedEntryData.handleOwners`.
 
@@ -1121,7 +1121,7 @@ registers on neither lane is credited at capture to the first registered loader 
 a live-lane loader its pushes are that hole's and stay live; run only under
 a bake-lane loader, its pushes are recorded under its own id. Such a
 dependency has no pin of its own, and the record does not name the loader
-that ran it, so its copies stand while every `ssr: false` loader of the route
+that ran it, so its copies stand while every `ssr: "await"` loader of the route
 is pinned, even where a live loader runs it on the HIT, and are placeholders
 otherwise. A record without `handleOwners` restores
 as a plain replay (see `docs/design/shell-fast-path.md`).
@@ -2024,7 +2024,7 @@ its prefix, the request kind (`doc`, `partial`, `intercept:{intercept}`).
 The kinds' records hold different segments. A document record is rendered
 in document mode (`getDocumentModeEntry`, `src/server/context.ts`): a
 `loading(..., { ssr: false })` has no fallback there, and a
-`loader(..., { ssr: false })` is awaited before the first flush. A navigation
+`loader(..., { ssr: "await" })` is awaited before the first flush. A navigation
 record keeps the fallback, and is completed in the background where the client
 held a layout (proactive caching). An intercept record holds the layouts and
 the intercept's slot and never the route's page (`rerenderAndCacheRoute`

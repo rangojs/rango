@@ -21,7 +21,7 @@ The handler code and its imports are removed from the production bundle.
 ## Not this skill if…
 
 - You want a cached HTML shell captured at runtime, with holes staying live
-  per request (loaders without `ssr: false` run per request; `ssr: false`
+  per request (loaders without `ssr: "await"` run per request; `ssr: "await"`
   loaders bake) — see `/ppr`.
 - You want runtime segment caching with TTL/SWR — that is the `cache()` DSL:
   see `/caching`. Prerender is the same cache filled at build time.
@@ -355,12 +355,12 @@ own shell identity and is captured at runtime. The runtime shell store is read
 first, so a runtime capture supersedes the baked entry once it exists.
 
 Handle values behave as on any `ppr` shell (`/ppr` → "Handles on a shell
-HIT"): a value an `ssr: false` loader pushes settled is in the shell's HTML and
+HIT"): a value an `ssr: "await"` loader pushes settled is in the shell's HTML and
 in the data a HIT hydrates with, and one it pushes as a promise arrives after
 hydration. The prerendered payload holds only the handler's pushes (loaders
 never run at build), so the shell entry keeps the loader pushes its HTML
 rendered, on a build-baked shell and on one captured at runtime alike. A shell
-stored by router 0.21 or earlier lacks them, and a promise-free `ssr: false`
+stored by router 0.21 or earlier lacks them, and a promise-free `ssr: "await"`
 loader's settled push fails hydration on its HITs until the shell is replaced
 (#1057).
 
@@ -384,7 +384,7 @@ entry STILL serves and a runtime recapture is scheduled that upgrades it in plac
 `Prerender` handler is evicted from the production bundle, that recapture never
 re-runs the handler — it replays the same build-time segments and only refreshes
 what the capture reads again: `cache()`-scoped data baked into the shell, and
-the data of `ssr: false` loaders, which run at every capture. **If the shell
+the data of `ssr: "await"` loaders, which run at every capture. **If the shell
 bakes neither, `ttl` has nothing to refresh** — reach for `updateTag` (or a
 redeploy) instead of a shorter `ttl`.
 
@@ -661,7 +661,7 @@ Passthrough entries are logged distinctly:
 Loaders on pre-rendered routes run at request time. They are bundled normally
 and need `cache()` for caching. Do not use build-only APIs in loaders.
 
-The exception is an `ssr: false` loader on a `Prerender` + `ppr` route: the
+The exception is an `ssr: "await"` loader on a `Prerender` + `ppr` route: the
 build-time shell capture runs it and bakes its settled data into the shell,
 and a shell HIT runs it only when its return carries promises (`/ppr` → "The
 bake lane"). The Flight payload collection itself still skips loaders.

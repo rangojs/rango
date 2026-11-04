@@ -118,9 +118,9 @@ marks a specific write as non-cacheable even if the var itself is cacheable.
 "Least cacheable wins" — if either says `cache: false`, the value throws on
 read inside `cache()` or `"use cache"`. On a `ppr` route the read also throws
 anywhere the shell capture waits for it (a handler, a promise it passes or
-pushes, an async server component, an `ssr: false` loader, a loader a handler
+pushes, an async server component, an `ssr: "await"` loader, a loader a handler
 awaits) and refuses the capture: the route keeps rendering without a shell,
-and a warning fires once per key. A loader without `ssr: false` that no
+and a warning fires once per key. A loader without `ssr: "await"` that no
 handler awaits may read it, unless it is bound with its own `cache()` and no
 `key()`: that miss fails, since the entry is shared (`/loader` → "Cache
 Key").

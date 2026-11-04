@@ -221,7 +221,7 @@ describe("the visitor's theme on a ppr route (#971)", () => {
     const refused = refusalWarnings(warn);
     expect(refused).toHaveLength(1);
     expect(refused[0]).toContain("read cookies() during capture");
-    expect(refused[0]).toContain("a loader without ssr: false");
+    expect(refused[0]).toContain('a loader without ssr: "await"');
   });
 
   it("a live loader reads the visitor's theme on every request, HIT included", async () => {

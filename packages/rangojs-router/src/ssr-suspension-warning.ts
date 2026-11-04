@@ -1,5 +1,5 @@
 /**
- * Dev-only diagnostic for the { ssr: false } SSR-completeness opt-in.
+ * Dev-only diagnostic for the { ssr: "await" } SSR-completeness opt-in.
  *
  * A document render that awaits flagged loaders before first flush is usually
  * expected to produce an SSR-complete boundary — but the await is scoped per
@@ -37,7 +37,7 @@ export function warnAwaitedSsrSuspension(
 
   if (awaitedLoaderIds.includes(loaderId)) {
     console.error(
-      `[rango] Loader "${loaderId}" is flagged { ssr: false } and was awaited ` +
+      `[rango] Loader "${loaderId}" is flagged { ssr: "await" } and was awaited ` +
         `before first flush, but its useLoader read observed a still-pending ` +
         `promise during SSR. If its Suspense fallback appears in the SSR'd HTML, ` +
         `please report it to @rangojs/router with a reproduction.`,
@@ -46,12 +46,12 @@ export function warnAwaitedSsrSuspension(
   }
 
   console.warn(
-    `[rango] The document render awaited { ssr: false } loader(s) ` +
+    `[rango] The document render awaited { ssr: "await" } loader(s) ` +
       `${JSON.stringify(awaitedLoaderIds)} before first flush, but ` +
       `useLoader("${loaderId}") still suspended during SSR. "${loaderId}" is not ` +
       `flagged, so the Suspense boundary above that read streams as its fallback ` +
       `and the content under it stays hidden until JS runs. If the boundary must ` +
-      `be SSR-complete, flag "${loaderId}" with { ssr: false } too, or move its ` +
+      `be SSR-complete, flag "${loaderId}" with { ssr: "await" } too, or move its ` +
       `read behind its own boundary. If it streams deliberately, ignore this.`,
   );
 }

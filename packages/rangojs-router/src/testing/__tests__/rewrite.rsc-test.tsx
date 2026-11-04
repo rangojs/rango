@@ -169,7 +169,7 @@ const router = createRouter({
         "/ssr-false-loader-rewrite",
         () => <p>ssr false loader page</p>,
         {},
-        () => [loader(RewritingLoader, { ssr: false })],
+        () => [loader(RewritingLoader, { ssr: "await" })],
       ),
       path("/shell-target", () => <p>shell target</p>, {
         name: "shell-target",

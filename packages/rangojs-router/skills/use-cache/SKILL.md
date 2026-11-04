@@ -655,7 +655,7 @@ this isolate's invalidations are caught; ttl+swr bounds the rest.
 
 Inside a `ppr` shell, a `"use cache"` value that renders as shell material is
 pinned at capture time for the life of that shell (see `/ppr` → Pitfalls). A
-hole's own read (in a loader without `ssr: false` under `loading()` or an
+hole's own read (in a loader without `ssr: "await"` under `loading()` or an
 inline `<Suspense>`) always returns the store's current entry, never the
 shell's copy, even when a loader the capture ran read the same entry.
 

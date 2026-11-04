@@ -176,7 +176,7 @@ describe("client URL server projection", () => {
     const source = clientUrls(({ path, loader }) => [
       path("/mixed", AccountPage, { name: "mixed" }, () => [
         loader(StreamingLoader),
-        loader(FlaggedLoader, { ssr: false }),
+        loader(FlaggedLoader, { ssr: "await" }),
       ]),
     ]);
 
@@ -235,7 +235,7 @@ describe("client URL server projection", () => {
           loader(loaderDefinition("loaders#price")),
           loader(loaderDefinition("loaders#reviews"), { prefetch: false }),
           loader(loaderDefinition("loaders#both"), {
-            ssr: false,
+            ssr: "await",
             prefetch: false,
           }),
           loader(loaderDefinition("loaders#hover"), { prefetch: "intent" }),

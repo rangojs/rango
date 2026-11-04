@@ -31,7 +31,7 @@ loading(<OrdersSkeleton />, { prefetch: false });
 ```
 
 `prefetch: true`, or leaving it out, is the behaviour you had before. Both
-options sit beside the existing `{ ssr?: boolean }` on the same two helpers.
+options sit beside the existing `ssr` option on the same two helpers.
 
 A third value, `prefetch: "intent"`, keeps the work out of speculative
 prefetches only: a viewport or render prefetch, sent for links the visitor
@@ -205,7 +205,7 @@ optimistically ("`clientUrls()` routes" below).
 
 | Request kind                                                   | Flagged group `loader()`                                                                                                       |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Document request (hard load)                                   | runs, as before (an `ssr: false` one is awaited, R3)                                                                           |
+| Document request (hard load)                                   | runs, as before (an `ssr: "await"` one is awaited, R3)                                                                         |
 | Prefetch request, loader segment new to the client             | not executed, marked deferred (R1); the response is source-scoped (R15)                                                        |
 | Prefetch request, loader segment the client holds (same-route) | runs when it revalidates, as before (R14); the click sends no fill                                                             |
 | In-group click that adopts the prefetch                        | the destination at the click; the prefetched tree, the URL and the other loaders' data with the commit after it; one fill (R4) |
@@ -258,9 +258,9 @@ is stored.
   out of prefetches.
 - A parallel slot with its own flagged `loading()` is its own unit.
 
-**R3. `ssr: false` with `prefetch: false` on a loader.** Outside `ppr` both
+**R3. `ssr: "await"` with `prefetch: false` on a loader.** Outside `ppr` both
 apply: the document awaits the loader, a prefetch skips it. On a `ppr` route
-an `ssr: false` loader is the bake lane. A prefetch that serves it from a pin
+an `ssr: "await"` loader is the bake lane. A prefetch that serves it from a pin
 of a shell a document request captured (`servedPins` in
 `router/segment-resolution/loader-cache.ts`) does not defer it: its body
 decides nothing there, and the pin is what the document shows. Every other
@@ -445,7 +445,7 @@ loader ids) stay the strict set, and defers what `plan.defers` holds: the
 - A loader marked `"intent"` and read through `ctx.rendered()` throws R12 on
   every request, as a `false` one does: the guard reads the strict set.
 - The ppr bake lane (R3) and the intercept scope ("Intercepts") read the same
-  plan, so a pinned `ssr: false` loader is served from its pin and an
+  plan, so a pinned `ssr: "await"` loader is served from its pin and an
   intercept's own loaders follow their own flags under either header.
 - On a `clientUrls()` group chain a `loading()` flag counts for neither set,
   as before. A group loader marked `"intent"` reaches the server through the
@@ -507,7 +507,7 @@ when any of these holds:
 
 And never when:
 
-- The route is `ppr`, the loader is `ssr: false` and this request serves it
+- The route is `ppr`, the loader is `ssr: "await"` and this request serves it
   from a pin of a document-captured shell (R3). Not part of the static scope:
   `defersLoader` asks it per request.
 - The route segment belongs to a `clientUrls()` group and the loader is

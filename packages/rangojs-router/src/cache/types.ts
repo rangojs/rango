@@ -841,7 +841,7 @@ export type SegmentHandleData = Record<string, unknown[]>;
 /**
  * segmentId -> handleName -> the owning loader id of each recorded value, by
  * index (null: not owned). Only a PPR shell capture writes owners: the
- * settled pushes of the loader bodies it ran (an `ssr: false` loader's own,
+ * settled pushes of the loader bodies it ran (an `ssr: "await"` loader's own,
  * the loaders it awaits, and its own cache() replays), which the record keeps
  * because the prelude rendered them. A restore of the record
  * (handle-snapshot.ts restoreHandles) keeps an owner's value where the

@@ -75,7 +75,7 @@ export type LoaderContext<
    * later ones stream to the client and apply post-hydration (document lane)
    * or progressively (navigation/action lanes). To guarantee a loader's
    * handles are in the SSR'd document, register it as
-   * `loader(Def, { ssr: false })` so the document render awaits it
+   * `loader(Def, { ssr: "await" })` so the document render awaits it
    * (see {@link LoaderOptions}).
    *
    * @example
@@ -175,29 +175,29 @@ export type LoaderFn<
 /**
  * SSR delivery for a DSL-registered loader: `loader(Def, { ssr })`.
  *
- * Default (omitted / `true`): the loader streams on every render. Its data,
- * its `ctx.use(Handle)` pushes, and any `notFound()`/`redirect()` it throws
- * may land AFTER the document Response is constructed, so none of them are
- * guaranteed to be in the SSR'd HTML.
+ * Default (omitted / `"stream"`): the loader streams on every render. Its
+ * data, its `ctx.use(Handle)` pushes, and any `notFound()`/`redirect()` it
+ * throws may land AFTER the document Response is constructed, so none of
+ * them are guaranteed to be in the SSR'd HTML.
  *
- * `ssr: false` turns SSR streaming off for this loader — the same knob
- * `loading(fallback, { ssr: false })` is for the fallback: on a DOCUMENT
- * request the loader is awaited before first flush, so no fallback paints for
- * it (`useLoader` still suspends, but on an already-settled promise). Client
- * navigations keep streaming it. This is the SSR-completeness opt-in. Choose
- * it when the loader feeds something that must exist in the document:
- * `<head>` meta via a handle, or a real 404 status (an awaited `notFound()`
- * deterministically precedes Response construction, where the streamed
- * default only wins that race opportunistically). Under ppr it is also the
- * BAKE lane: the loader executes at shell capture and its settled return is
+ * `ssr: "await"` makes the server renders that produce HTML await this
+ * loader: on a DOCUMENT request the loader is awaited before first flush, so
+ * no fallback paints for it (`useLoader` still suspends, but on an
+ * already-settled promise); a ppr shell capture, at runtime or at build time
+ * for a Prerender + ppr route, awaits it too. Client navigations keep
+ * streaming it. This is the SSR-completeness opt-in. Choose it when the
+ * loader feeds something that must exist in the document: `<head>` meta via
+ * a handle, or a real 404 status (an awaited `notFound()` deterministically
+ * precedes Response construction, where the streamed default only wins
+ * that race opportunistically). Under ppr it is also the BAKE lane: the loader executes at shell capture and its settled return is
  * shell material (nested promises stay live holes), and so are its handle
  * pushes, a pushed promise or `.defer()` included: the capture awaits it and
  * every HIT serves the value it settled to (#1182). A pushed promise that
  * rejects, or misses `ppr.captureTimeout`, keeps the route on MISS. A value
- * that must stay per request belongs to a loader without `ssr: false` — see
+ * that must stay per request belongs to a loader without `ssr: "await"` — see
  * the ppr docs.
  *
- * Scoped per LOADER, not per segment: an `ssr: false` loader alongside a
+ * Scoped per LOADER, not per segment: an `ssr: "await"` loader alongside a
  * deliberately streaming sibling awaits only itself, and the sibling keeps
  * streaming behind its `loading()`/Suspense boundary. Watch the scoping when
  * the boundary must be SSR-complete: ONE unflagged read under it still
@@ -206,7 +206,7 @@ export type LoaderFn<
  * site naming the unflagged loader (ssr-suspension-warning.ts).
  */
 export type LoaderOptions = {
-  ssr?: boolean;
+  ssr?: "stream" | "await";
   /**
    * `prefetch: false` keeps this loader out of every `<Link>` prefetch: a
    * prefetch (a partial request with `X-Rango-Prefetch`) does not execute
@@ -236,7 +236,7 @@ export type LoaderOptions = {
    * Limits: a handler that awaits the loader with `ctx.use()` makes it run in
    * the prefetch anyway; the loader cannot call `ctx.rendered()` (it throws
    * on every request); on a `ppr` route the flag is ignored for an
-   * `ssr: false` loader (the bake lane), with a dev warning. In the fill
+   * `ssr: "await"` loader (the bake lane), with a dev warning. In the fill
    * request only deferred work and middleware run, so values a held handler
    * would have set with `ctx.set()` are not visible.
    */

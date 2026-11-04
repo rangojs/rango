@@ -192,7 +192,7 @@ produces is baked" below):
    DSL-loader pushes are filtered OUT of the snapshot's handle records
    (loaders re-run on every HIT: a recorded copy would duplicate the fresh
    push, and a masked one would stall the Flight handle encode). Unflagged loaders never execute at capture, so
-   these pushes come from a loader an `ssr: false` loader awaits via
+   these pushes come from a loader an `ssr: "await"` loader awaits via
    `ctx.use` and from loader-cache replays. The filter is the store's
    positional tag, the same one `cache()` records use: `HandleStore.push`
    tags a loader-scope push by array index and `captureHandles` reads with
@@ -220,14 +220,14 @@ produces is baked" below):
    first push removes them and takes the first one's position, so each value
    appears once and the run's value wins, even when a restored loader
    running on the replay awaits it.
-   A loader the route runs on the live lane is always a hole. An `ssr: false`
+   A loader the route runs on the live lane is always a hole. An `ssr: "await"`
    loader is one exactly when the entry has no pin for it: a navigation-only
    entry (also what a capture over `maxSnapshotBytes` stores), a
    pin that failed to decode (that HIT retires the entry). A dependency the route registers on neither lane is credited
    at capture to the first registered loader around it: under a live-lane
    loader its pushes are that hole's and stay live; run only under a
    bake-lane loader, they are recorded under its own id, and stand while
-   every `ssr: false` loader of the route is pinned.
+   every `ssr: "await"` loader of the route is pinned.
 
    A document HIT, a client navigation and a prefetch that replay the record
    therefore agree, because none of them is asked. Until issues #1001 and
@@ -298,9 +298,9 @@ the contract `cache()` has always had:
   the serve side, a document entry without `docKey` is a MISS (and is
   recaptured), except for a Prerender route (`matched.pr`), whose tail takes
   the handler layer from the prerender store.
-- **Live data is a loader's job.** Live-lane loaders (no `ssr: false`) are
+- **Live data is a loader's job.** Live-lane loaders (no `ssr: "await"`) are
   still masked at capture and run per request on a HIT; that is the only
-  per-request data a HIT renders. Inside an `ssr: false` loader, a nested
+  per-request data a HIT renders. Inside an `ssr: "await"` loader, a nested
   promise stays a hole by shape.
 - **The capture guard covers everything the capture waits for.**
   `cookies()`, `headers()`, a `{ cache: false }` variable, and
@@ -357,7 +357,7 @@ the tail waits for it.
 - **Deterministic carve-outs**: capture-time masking (mask-nested.ts,
   PR #692) guarantees every per-request LOADER value is a hole — never a
   settled value — in both the prelude and the recorded segments: live-lane
-  loader data, and the nested promises of an `ssr: false` loader's data or
+  loader data, and the nested promises of an `ssr: "await"` loader's data or
   handle pushes. Handler output is the other side of the line: it is always
   settled and baked (see "Everything a handler produces is baked"). The
   correctness fix is the prerequisite for the fast path, not an orthogonal

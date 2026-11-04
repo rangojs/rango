@@ -332,7 +332,7 @@ export default clientUrls(({ layout, path, loader, loading }) => [
     path("/ppr", ClientUrlsPprPage, { ppr: { ttl: 300, swr: 120 } }, () => [
       // The flagged loader BAKES at capture (settled return = shell
       // material); the plain loader stays the live hole under loading().
-      loader(ClientUrlsPprBakedLoader, { ssr: false }),
+      loader(ClientUrlsPprBakedLoader, { ssr: "await" }),
       loader(ClientUrlsPprLoader),
       loading(<div data-testid="cu-ppr-fallback">Loading ppr</div>),
     ]),

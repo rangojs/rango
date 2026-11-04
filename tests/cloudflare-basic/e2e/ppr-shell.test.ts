@@ -635,10 +635,10 @@ function describePprShell(mode: "dev" | "build") {
       await expect(counter).toHaveText("count: 1");
     });
 
-    // Issue #888. The ssr:false loader awaits an unflagged loader that pushes
+    // Issue #888. The ssr: "await" loader awaits an unflagged loader that pushes
     // a string handle; both run at capture and neither runs on a HIT, so the
     // doc record keeps the push and the HIT shows it exactly once.
-    test("fast-path HIT renders a string handle pushed by a loader an ssr:false loader awaits once", async ({
+    test('fast-path HIT renders a string handle pushed by a loader an ssr: "await" loader awaits once', async ({
       page,
     }) => {
       // Cold-graph absorber (see the fragment-envelope test above).
@@ -669,9 +669,9 @@ function describePprShell(mode: "dev" | "build") {
     });
 
     // A client navigation that replays the shell matches the document HIT:
-    // a promise-free ssr:false loader is served from its pin without
+    // a promise-free ssr: "await" loader is served from its pin without
     // running, with or without loading() on its entry.
-    test("a client navigation that replays the shell pins ssr:false loaders like the document HIT", async ({
+    test('a client navigation that replays the shell pins ssr: "await" loaders like the document HIT', async ({
       page,
     }) => {
       // Cold-graph absorber (see the fragment-envelope test above).
@@ -745,10 +745,10 @@ function describePprShell(mode: "dev" | "build") {
       expect(render(await after.text())).not.toBe(hitRender);
     });
 
-    // Issue #929. The ssr:false loader pushes the string handle itself: the
+    // Issue #929. The ssr: "await" loader pushes the string handle itself: the
     // doc record keeps the push (the prelude rendered it) and the loader
     // does not run on a HIT: the HIT restores its push once.
-    test("fast-path HIT renders a string handle pushed by an ssr:false loader once", async ({
+    test('fast-path HIT renders a string handle pushed by an ssr: "await" loader once', async ({
       page,
     }) => {
       // Cold-graph absorber (see the fragment-envelope test above).
@@ -1044,15 +1044,15 @@ function describePprShell(mode: "dev" | "build") {
     }
 
     // Issue #941, snapshot pruning (docs/design/shell-entry-layout.md,
-    // decision 3): /ppr-shared-key's layout, its ssr: false loader and its
+    // decision 3): /ppr-shared-key's layout, its ssr: "await" loader and its
     // live hole read the SAME "drift" item (ttl 2s). The capture bakes the
-    // layout's value inside the doc record and pins the ssr: false loader's
+    // layout's value inside the doc record and pins the ssr: "await" loader's
     // container; it records no cache read, so the hole's loader reads the
     // store: once the item expires the hole shows a newer stamp while the
     // shell and the pin keep the capture stamp, and the page still hydrates
     // cleanly. Before, the bake-lane loader's read pinned the item for every
     // reader on a HIT and the hole never moved on.
-    test("shared key: the shell and an ssr: false loader keep the capture value while the live hole reads the store", async ({
+    test('shared key: the shell and an ssr: "await" loader keep the capture value while the live hole reads the store', async ({
       page,
     }) => {
       using _ = expectNoPageError(page);

@@ -5,7 +5,7 @@
  * that must agree with them byte for byte. The handler layer's part of that
  * payload is the capture's own doc segment record: the capture writes it
  * first, renders its prelude from it, and every HIT replays it (no handler
- * runs on a HIT). The loader layer's part is the bake-lane (`ssr: false`)
+ * runs on a HIT). The loader layer's part is the bake-lane (`ssr: "await"`)
  * loader pins: a promise-free bake-lane loader is served from its pin and
  * does not run; one whose return carries promises (`holes`), or whose pushes
  * the record could not keep (`runs`), runs on the HIT. See

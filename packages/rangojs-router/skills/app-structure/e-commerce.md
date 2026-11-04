@@ -379,7 +379,7 @@ product) and the pages render entirely from loaders, mount the shop as a
 `clientUrls()` group, `include("/shop", shopUrls, { name: "shop" })`:
 navigations inside it render at the click, and each loader's `revalidate()`
 holds its data across them. A group has no handlers, so a `ppr` group route
-holds its client components' HTML and its `ssr: false` loaders' data, and
+holds its client components' HTML and its `ssr: "await"` loaders' data, and
 every other loader is a hole; handler output baked from a tagged
 `"use cache"` read, as in the catalog above, needs `urls()` routes. The router
 repository's `tests/vite-rsc-demo/src/urls/client-shop.client.tsx` is a full

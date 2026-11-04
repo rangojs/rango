@@ -1,7 +1,7 @@
 import { createLoader, notFound, redirect } from "@rangojs/router";
 
 // workerd mirror of the test-app fixture (packages/rangojs-router/e2e/test-app/
-// src/urls/client-urls-ssr-redirect*): `{ ssr: false }` loaders that settle
+// src/urls/client-urls-ssr-redirect*): `{ ssr: "await" }` loaders that settle
 // with a redirect()/notFound() signal before the document flush.
 export const SsrRedirectLayoutLoader = createLoader(async () => {
   throw redirect("/__client-urls?from=ssr-redirect-layout");
@@ -16,5 +16,5 @@ export const SsrRedirectChildLoader = createLoader(async () => {
 });
 
 export const SsrNotFoundPageLoader = createLoader(async () => {
-  notFound("ssr:false not found");
+  notFound('ssr: "await" not found');
 });

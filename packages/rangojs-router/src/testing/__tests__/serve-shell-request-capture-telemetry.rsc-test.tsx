@@ -3,7 +3,7 @@
  * (serveShellRequest): the background shell capture sends nothing to the
  * sink, so the visitor's request reports one id and every loader.start it
  * reports is followed by its loader.end. A live loader is held back in the
- * capture and never settles there; an `ssr: false` loader runs in it, so its
+ * capture and never settles there; an `ssr: "await"` loader runs in it, so its
  * loader.end and loader.error would come from the capture too.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -61,13 +61,13 @@ const router = createRouter({
       "/bake",
       () => <main>bake page</main>,
       { name: "bake", ppr: true },
-      () => [loader(BakeLoader, { ssr: false })],
+      () => [loader(BakeLoader, { ssr: "await" })],
     ),
     path(
       "/bake-flaky",
       () => <main>flaky bake page</main>,
       { name: "bakeFlaky", ppr: true },
-      () => [loader(FlakyBakeLoader, { ssr: false })],
+      () => [loader(FlakyBakeLoader, { ssr: "await" })],
     ),
     path(
       "/late-push",
@@ -115,7 +115,7 @@ beforeEach(() => {
 describe("telemetry of a PPR shell capture", () => {
   for (const [lane, url] of [
     ["a live loader", "/ppr"],
-    ["an ssr: false loader", "/bake"],
+    ['an ssr: "await" loader', "/bake"],
   ] as const) {
     it(`a document shell MISS with ${lane} reports only the visitor's events, under one requestId`, async () => {
       const result = await serveShellRequest(router, url, {
@@ -144,7 +144,7 @@ describe("telemetry of a PPR shell capture", () => {
     });
   }
 
-  it("an ssr: false loader that fails only in the capture reports no loader.error", async () => {
+  it('an ssr: "await" loader that fails only in the capture reports no loader.error', async () => {
     const result = await serveShellRequest(router, "/bake-flaky", {
       cacheStore: new MemorySegmentCacheStore(),
     });
