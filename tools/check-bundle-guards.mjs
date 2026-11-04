@@ -299,7 +299,21 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // observer marks the entry first and the link does not name its ids as held.
 // It cannot load lazily: it runs on every link. By the owner's rule above:
 // 53633B + 256B, rounded up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 52.75 * 1024;
+//
+// Raised 52.75KB -> 53.25KB on 2026-11-04 for the intercept prefetch slot,
+// measured on cloudflare-basic from main 52608194 53842B -> 54051B gzip (gzip
+// -9; the guard's own build of the change reads 54203B, +187B over the old
+// cap). A prefetch sent while an intercept is open names the intercept's
+// source and the modal's URL as the client path, and is stored for that
+// context alone, so the click inside the modal adopts it instead of fetching
+// again (browser/prefetch/cache.ts buildInterceptKey, prefetch/fetch.ts
+// interceptSlotKey and the header it sends, the lookup in
+// browser/navigation-client.ts). None of it can load lazily: a hover
+// prefetch and a click both decide the slot synchronously, and
+// browser/prefetch/ is on the rejected-splits list (AGENTS.md, Bundle
+// hygiene). By the owner's rule above: 54203B + 256B, rounded up to the next
+// 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 53.25 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

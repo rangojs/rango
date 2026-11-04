@@ -199,6 +199,30 @@ describe("a link inside an open intercept", () => {
     expect(loaderRuns).toEqual(["2", "1"]);
   });
 
+  // The request a prefetch inside the modal sends is the click's request, so
+  // the answer it warms is the modal — the browser stores it for that
+  // context alone and the click adopts it (browser/prefetch/cache.ts
+  // buildInterceptKey). A prefetch that named no source would warm the item's
+  // full page instead.
+  it("a prefetch of the same link renders the item in the intercept too", async () => {
+    const { serve, held } = await openIntercept(makeRouter());
+    froms.length = 0;
+
+    const result = await serve("/item/1", {
+      from: "/item/2",
+      interceptSource: "/list/1",
+      segments: held,
+      prefetch: true,
+    });
+
+    const sent = interceptIds(metadataOf(result.flight));
+    expect(sent.some((id) => id.endsWith(".@modal"))).toBe(true);
+    expect(result.flight).toContain("modal");
+    expect(result.flight).not.toContain("item page");
+    expect(froms).toEqual(["/list/1"]);
+    expect(loaderRuns).toEqual(["2", "1"]);
+  });
+
   it("control: from the intercept's URL with no source, the same route is not intercepted", async () => {
     const { serve, held } = await openIntercept(makeRouter());
 
