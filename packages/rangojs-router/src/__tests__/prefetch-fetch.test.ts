@@ -7,6 +7,9 @@ vi.mock("../browser/rango-state", () => ({
 
 // The page on screen's rewrite target, as the registered store remembers it.
 let shownRewriteTarget: string | undefined;
+// The page under an open intercept, as the store holds it (a path, as the
+// client records the page it commits), or null when none is open.
+let interceptSource: string | null = null;
 // The URL the registered store committed, when a test sets one apart from
 // window.location (a back/forward still loading); else the store follows
 // window.location, as it does once a navigation commits.
@@ -22,6 +25,7 @@ vi.mock("../browser/navigation-store-handle", () => ({
       currentUrl: committedUrl ?? window.location.href,
       currentSegmentIds: [],
     }),
+    getInterceptSourceUrl: () => interceptSource,
   }),
   getCommittedPage: () => committedPage,
 }));
@@ -39,11 +43,13 @@ import {
   setPrefetchDecoder,
 } from "../browser/prefetch/fetch";
 import {
+  buildPrefetchKey,
   clearPrefetchCache,
   consumePrefetch,
   hasPrefetch,
   isPrefetchStale,
   markPrefetchesStale,
+  prefetchKeyPrefix,
 } from "../browser/prefetch/cache";
 import { resetPrefetchPolicy } from "../browser/prefetch/policy";
 import { abortAllPrefetches } from "../browser/prefetch/queue";
@@ -1894,5 +1900,117 @@ describe("prefetch in flight when an action marks prefetches stale", () => {
       return served!;
     });
     expect(isPrefetchStale(entry)).toBe(false);
+  });
+});
+
+describe("prefetch inside an open intercept", () => {
+  const ORIGIN = "http://localhost:4173";
+  // The intercept's own URL: the page the client committed, and the client
+  // path the click that follows sends (partial-update.ts).
+  const INTERCEPT_HREF = `${ORIGIN}/intercept-held/handler/1`;
+  // The page under it, as the store holds it: a path, as the client records
+  // the page it commits.
+  const SOURCE = "/intercept-held";
+  const SOURCE_HREF = `${ORIGIN}/intercept-held`;
+
+  beforeEach(() => {
+    setupBrowser();
+    committedUrl = INTERCEPT_HREF;
+  });
+
+  afterEach(() => {
+    committedUrl = undefined;
+    interceptSource = null;
+    shownRewriteTarget = undefined;
+    clearPrefetchCache();
+    abortAllPrefetches();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  it("names the page under the intercept, and is keyed by it", async () => {
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(new Response("payload", { status: 200 })),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    interceptSource = SOURCE;
+    // The source page was rewritten by middleware: a navigation from inside
+    // the intercept drops the target, and the server ignores it beside the
+    // source, so the prefetch must drop it too or its key differs from the
+    // click's.
+    shownRewriteTarget = "/item/1?sort=a";
+
+    prefetchDirect("/intercept-held/handler/2", ["A0"], "v1");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    const headers = fetchMock.mock.calls[0]![1]!.headers as Record<
+      string,
+      string
+    >;
+    // Absolute, as the keys name it; the click sends the store's value and
+    // the server resolves both against the same page.
+    expect(headers["X-RSC-Router-Intercept-Source"]).toBe(SOURCE_HREF);
+    expect(headers["X-RSC-Router-Client-Path"]).toBe(INTERCEPT_HREF);
+    const fetchedUrl = new URL(String(fetchMock.mock.calls[0]![0]));
+    expect(fetchedUrl.searchParams.get("_rsc_rt")).toBeNull();
+
+    // Stored where a click inside the same intercept looks ...
+    const insideKey = buildPrefetchKey(
+      prefetchKeyPrefix("v1:abc", SOURCE_HREF),
+      fetchedUrl,
+    );
+    await vi.waitFor(() => expect(hasPrefetch(insideKey)).toBe(true));
+    // ... and not where a click from the page itself, or from another page
+    // under another intercept, looks.
+    expect(hasPrefetch(buildPrefetchKey("v1:abc", fetchedUrl))).toBe(false);
+    expect(
+      hasPrefetch(
+        buildPrefetchKey(
+          prefetchKeyPrefix("v1:abc", `${ORIGIN}/intercept-held/search`),
+          fetchedUrl,
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("a prefetch made outside an intercept is not the one made inside it", async () => {
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(new Response("payload", { status: 200 })),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    // The page itself prefetches the target, then the same page opens an
+    // intercept over it and the modal's link prefetches the same target.
+    prefetchDirect("/intercept-held/handler/2", ["A0"], "v1");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    interceptSource = SOURCE;
+    prefetchDirect("/intercept-held/handler/2", ["A0"], "v1");
+
+    // Two answers, not one: the page's is a full page, the intercept's is the
+    // modal over that page.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const fetchedUrl = new URL(String(fetchMock.mock.calls[0]![0]));
+    const insideKey = buildPrefetchKey(
+      prefetchKeyPrefix("v1:abc", SOURCE_HREF),
+      fetchedUrl,
+    );
+    await vi.waitFor(() => expect(hasPrefetch(insideKey)).toBe(true));
+    expect(hasPrefetch(buildPrefetchKey("v1:abc", fetchedUrl))).toBe(true);
+  });
+
+  it("sends no prefetch when the store's intercept source is not a URL", () => {
+    const fetchMock = vi.fn((_url: string | URL) =>
+      Promise.resolve(new Response("payload", { status: 200 })),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    interceptSource = "http://";
+
+    prefetchDirect("/intercept-held/handler/2", ["A0"], "v1");
+
+    // A key that cannot be partitioned by the source could be adopted by a
+    // page the answer was not computed for.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -344,6 +344,14 @@ stored per source page, whether or not the intercept applies from that page
 prefetches keep one shared entry, unless a `revalidate()` that read the source
 page kept a segment (`MatchResult.sourceHeld`, same header).
 
+A link inside an open modal prefetches like any other, and its click uses that
+prefetch: the request names the page under the modal in
+`X-RSC-Router-Intercept-Source`, as the click does, and the answer is stored
+under keys that carry that page (`prefetchKeyPrefix`). A prefetch of the same
+target made outside a modal is never adopted inside one, and one made inside
+is never adopted after the modal closes: an answer computed against the page
+under the modal is only right there. See `execution-model.md` flow 4 and 5.
+
 ```typescript
 // Intercept only when opened from the shop index
 intercept("@modal", "product", <ProductModal />, {

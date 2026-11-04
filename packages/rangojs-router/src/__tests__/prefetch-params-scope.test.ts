@@ -207,6 +207,33 @@ describe("precedence of the three scopes", () => {
       prefetchStorageSlot(true, `params; ${EN}`, "src", "w", STATE, TARGET),
     ).toEqual({ scope: "source", key: "src" });
   });
+
+  // A prefetch made from inside an open intercept is answered against the page
+  // under it, and a params label names that page's values, which the browser
+  // cannot read while the intercept is open (getCommittedPage is the
+  // intercept's own page). Stored page-only, the answer still reaches the
+  // clicks it was computed for.
+  it("a params-scoped answer from inside an open intercept is stored page-only", () => {
+    expect(
+      prefetchStorageSlot(
+        false,
+        `params; ${EN}`,
+        "src",
+        "w",
+        STATE,
+        TARGET,
+        true,
+      ),
+    ).toEqual({ scope: "source", key: "src" });
+    // No intercept: the label is stored as the group of pages it serves.
+    expect(
+      prefetchStorageSlot(false, `params; ${EN}`, "src", "w", STATE, TARGET),
+    ).toEqual({
+      scope: "params",
+      key: buildParamsKey(STATE, EN, TARGET),
+      paramsLabel: EN,
+    });
+  });
 });
 
 describe("invalidation and eviction", () => {

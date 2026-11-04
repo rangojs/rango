@@ -26,8 +26,10 @@
  * - adoption of a prefetch still in flight (pinned by
  *   navigation-client.test.ts "shared in-flight entry that turns out
  *   source-scoped");
- * - the canUsePrefetch gates (stale, HMR, fill, intercept source): a link
- *   click passes none;
+ * - the canUsePrefetch gates (stale, HMR, fill, an intercept source that is
+ *   not a URL): a link click passes none, and no click here opens an
+ *   intercept, whose keys are partitioned by its source
+ *   (prefetch/cache.ts prefetchKeyPrefix);
  * - handle values: serveShellRequest exposes an answer's own handles, but
  *   the merge with the pushes the page keeps lives in hook-locked
  *   event-controller.ts and navigation-bridge.ts (pinned by

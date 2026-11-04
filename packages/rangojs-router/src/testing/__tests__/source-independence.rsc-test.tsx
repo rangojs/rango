@@ -451,8 +451,12 @@ describe("a shared prefetch renders the same on every source page", () => {
       await tab.load(from);
       const { screen } = await tab.click(to);
       clicks++;
-      // A click on an intercept screen sends interceptSourceUrl, which the
-      // navigation client never serves a prefetch for (canUsePrefetch).
+      // A click on an intercept screen sends interceptSourceUrl, and this
+      // harness stores every prefetch under the keys of a page with no
+      // intercept open: it does not model the partition by source
+      // (prefetch/cache.ts prefetchKeyPrefix), so the screen is skipped.
+      // The adoption itself is pinned by intercept-prefetch-inside (both
+      // apps, dev and production).
       if (isInterceptOnlyCache(screen.segments)) {
         intercepts++;
         continue;

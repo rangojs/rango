@@ -32,6 +32,12 @@
  *   target, what the stored labels read, so a lookup rebuilds the label of
  *   the page on screen (paramsCandidateKeys).
  *
+ * Every scope above is partitioned by the intercept a prefetch is made
+ * inside (`prefetchKeyPrefix`): the server answers such a prefetch against
+ * the page under the intercept, so its answer belongs to that source alone.
+ * A prefetch made outside an intercept is therefore never adopted inside one,
+ * and one made inside is never adopted outside.
+ *
  * Also tracks in-flight prefetch promises. Each promise resolves to the
  * decoded prefetch entry (or null), letting navigation adopt a
  * still-downloading prefetch without issuing a duplicate request. A
@@ -218,6 +224,52 @@ let generation = 0;
 let staleEpoch = 0;
 
 /**
+ * The absolute URL of the intercept source a prefetch is answered against,
+ * from the store's value (a path, as the client records the page it commits,
+ * or an absolute URL). Null when no intercept is open, undefined when the
+ * value is not a URL: a caller must then send no prefetch at all, since a key
+ * without the partition could be adopted by a page the answer was not
+ * computed for.
+ */
+export function interceptSourceHrefOf(
+  interceptSourceUrl: string | null | undefined,
+  origin: string,
+): string | null | undefined {
+  if (!interceptSourceUrl) return null;
+  try {
+    return new URL(interceptSourceUrl, origin).href;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The prefix a prefetch key is built with: the Rango state's epoch, plus the
+ * intercept source while an intercept is open.
+ *
+ * A prefetch made from inside an open intercept names that source in
+ * `X-RSC-Router-Intercept-Source` (prefetch/fetch.ts), and the server renders
+ * the intercept from it: the answer is the intercept's over that page, or the
+ * full page when no intercept applies from it. Either way it is that
+ * source's, never the answer a prefetch of the same target from outside an
+ * intercept gets (a full page, or an intercept over another page). Folding
+ * the source into the prefix partitions every scope — wildcard, source and
+ * params — by it, so the two can never be served each other's answers.
+ *
+ * The prefetch and the click that adopts it must build the same prefix from
+ * the same store value (navigation-client.ts), or the prefetch is stored
+ * where no click looks.
+ */
+export function prefetchKeyPrefix(
+  stateKey: string,
+  interceptSourceHref: string | null,
+): string {
+  return interceptSourceHref
+    ? stateKey + "\0i:" + interceptSourceHref
+    : stateKey;
+}
+
+/**
  * Build a cache key by combining a scope prefix with the target URL.
  *
  * Low-level primitive — callers that want a specific scope should use
@@ -240,6 +292,9 @@ let staleEpoch = 0;
  * part of the opt-in contract. Wildcard responses are source-agnostic by
  * contract; callers use source scope when a custom revalidation decision makes
  * the response depend on the current URL or segment tree.
+ *
+ * `prefix` is the key prefix (prefetchKeyPrefix): the state's epoch, and the
+ * intercept source a prefetch from inside an open intercept is answered for.
  */
 export function buildPrefetchKey(prefix: string, targetUrl: URL): string {
   const normalizedTarget = new URL(targetUrl);
@@ -249,19 +304,21 @@ export function buildPrefetchKey(prefix: string, targetUrl: URL): string {
 
 /**
  * Build a source-scoped cache key. Key shape:
- * `rangoState\0sourceHref\0/target?...`.
+ * `keyPrefix\0sourceHref\0/target?...`, where `keyPrefix` is the state's
+ * epoch (prefetchKeyPrefix).
  *
- * - `rangoState` is included so state rotation invalidates source-scoped
- *   entries alongside wildcard ones.
+ * - `keyPrefix` is included so state rotation invalidates source-scoped
+ *   entries alongside wildcard ones, and so an intercept's answers stay its
+ *   own.
  * - `sourceHref` makes the key unique per originating page.
  */
 export function buildSourceKey(
-  rangoState: string,
+  keyPrefix: string,
   sourceHref: string,
   targetUrl: URL,
 ): string {
   return (
-    rangoState +
+    keyPrefix +
     "\0" +
     sourceHref +
     "\0" +
@@ -272,16 +329,16 @@ export function buildSourceKey(
 
 /**
  * Build a params-scoped cache key. Key shape:
- * `rangoState\0p:<label>\0/target?...`, the target normalized like the
+ * `keyPrefix\0p:<label>\0/target?...`, the target normalized like the
  * wildcard key's: the answer serves every page with this label, whatever
  * segments it holds, as a wildcard answer serves every page.
  */
 export function buildParamsKey(
-  rangoState: string,
+  keyPrefix: string,
   label: string,
   targetUrl: URL,
 ): string {
-  return buildPrefetchKey(rangoState + "\0p:" + label, targetUrl);
+  return buildPrefetchKey(keyPrefix + "\0p:" + label, targetUrl);
 }
 
 /**
@@ -310,7 +367,7 @@ export function rememberParamsShape(targetUrl: URL, label: string): void {
  * read the most first. Empty without a page (before boot).
  */
 export function paramsCandidateKeys(
-  rangoState: string,
+  keyPrefix: string,
   targetUrl: URL,
   page: SourcePage | null,
 ): string[] {
@@ -320,7 +377,7 @@ export function paramsCandidateKeys(
   return [...shapes.values()]
     .sort((a, b) => weightOf(b) - weightOf(a))
     .map((shape) =>
-      buildParamsKey(rangoState, formatSourceLabel(shape, page), targetUrl),
+      buildParamsKey(keyPrefix, formatSourceLabel(shape, page), targetUrl),
     );
 }
 

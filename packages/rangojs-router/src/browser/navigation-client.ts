@@ -35,10 +35,12 @@ import {
   consumeInflightPrefetch,
   consumePrefetch,
   disableFragmentPassthrough,
+  interceptSourceHrefOf,
   isFragmentPassthroughEnabled,
   isPrefetchStale,
   pageMatchesParamsLabel,
   paramsCandidateKeys,
+  prefetchKeyPrefix,
   type DecodedPrefetch,
 } from "./prefetch/cache.js";
 import { getCommittedPage } from "./navigation-store-handle.js";
@@ -193,15 +195,33 @@ export function createNavigationClient(
       // (acceptStalePrefetch), whose bridge revalidates its page after it
       // settled (stalePrefetch); for any other caller it is a miss.
       // Skip cache for stale revalidation (needs fresh data), HMR (needs
-      // fresh modules), and intercept contexts (source-dependent responses).
+      // fresh modules), and a store intercept source that is not a URL. A
+      // navigation from inside an open intercept DOES adopt: its prefetch
+      // named the same source in X-RSC-Router-Intercept-Source and its keys
+      // carry it (prefetchKeyPrefix), so only an answer computed for this
+      // source, this page and these ids is served. A prefetch made outside an
+      // intercept is stored under another prefix, so neither is ever adopted
+      // by the other.
       // A prefetch served during an action's flight holds pre-write data:
       // the action bridge's follow-up refetches the page it commits.
+      const interceptSourceHref = interceptSourceHrefOf(
+        interceptSourceUrl,
+        window.location.origin,
+      );
       const canUsePrefetch =
-        !staleRevalidation && !hmr && !fill && !interceptSourceUrl;
+        !staleRevalidation &&
+        !hmr &&
+        !fill &&
+        // Undefined: the source is not a URL, so the keys cannot be
+        // partitioned by it and no stored answer is known to be this page's.
+        interceptSourceHref !== undefined;
       const rangoState = getRangoState();
-      const stateKey = stateEpoch(rangoState);
-      const wildcardKey = buildPrefetchKey(stateKey, fetchUrl);
-      const cacheKey = buildSourceKey(stateKey, sourceHref, fetchUrl);
+      const keyPrefix = prefetchKeyPrefix(
+        stateEpoch(rangoState),
+        interceptSourceHref ?? null,
+      );
+      const wildcardKey = buildPrefetchKey(keyPrefix, fetchUrl);
+      const cacheKey = buildSourceKey(keyPrefix, sourceHref, fetchUrl);
       // The page being left, as the router store committed it: the group a
       // params-scoped prefetch must have been answered for.
       const sourcePage = canUsePrefetch ? getCommittedPage() : null;
@@ -209,7 +229,7 @@ export function createNavigationClient(
       const stored = consumeStoredPrefetch(
         canUsePrefetch,
         cacheKey,
-        paramsCandidateKeys(stateKey, fetchUrl, sourcePage),
+        paramsCandidateKeys(keyPrefix, fetchUrl, sourcePage),
         wildcardKey,
         acceptStalePrefetch,
       );

@@ -71,6 +71,9 @@ vi.mock("../browser/prefetch/cache", async (importOriginal) => {
     // Pure over the shapes the real cache remembered.
     paramsCandidateKeys: actual.paramsCandidateKeys,
     pageMatchesParamsLabel: actual.pageMatchesParamsLabel,
+    // Pure key composition: the prefix the prefetch side builds too.
+    interceptSourceHrefOf: actual.interceptSourceHrefOf,
+    prefetchKeyPrefix: actual.prefetchKeyPrefix,
   };
 });
 
@@ -729,6 +732,70 @@ describe("navigation-client", () => {
       expect(createFromFetch).not.toHaveBeenCalled();
       expect(result.payload.metadata).toMatchObject({ matched: [], diff: [] });
       expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    // A prefetch made from inside an open intercept names the page under it
+    // (prefetch/fetch.ts executePrefetchFetch) and is stored under keys
+    // partitioned by that source (prefetch/cache.ts prefetchKeyPrefix). The
+    // click inside the intercept builds the same prefix from the same store
+    // value, so it looks up the prefetch made there — and not the one a page
+    // without an intercept open made of the same target.
+    it("adopts a prefetch made inside the same open intercept", async () => {
+      consumePrefetchMock.mockReturnValue(
+        makeEntry({ metadata: { matched: [], diff: [] } }),
+      );
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const client = createNavigationClient({
+        createFromFetch: vi.fn(),
+      } as any);
+
+      await client.fetchPartial({
+        targetUrl: "/handler/2",
+        previousUrl: "/handler/1",
+        segmentIds: ["root"],
+        interceptSourceUrl: "/list",
+      });
+
+      // The prefix carries the page under the intercept, absolute, and the
+      // client path stays the intercept's own URL.
+      expect(buildSourceKeyMock).toHaveBeenCalledWith(
+        "v1:abc\0i:http://localhost/list",
+        "http://localhost/handler/1",
+        expect.any(URL),
+      );
+      expect(buildPrefetchKeyMock).toHaveBeenCalledWith(
+        "v1:abc\0i:http://localhost/list",
+        expect.any(URL),
+      );
+      expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    // The keys cannot be partitioned by a source that is not a URL, so no
+    // stored answer is known to be this page's.
+    it("adopts nothing inside an intercept whose source is not a URL", async () => {
+      const fetchMock = vi.fn(
+        async () => new Response(null, { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+      const client = createNavigationClient({
+        createFromFetch: async (responsePromise: Promise<Response>) => {
+          await responsePromise;
+          return { metadata: {} };
+        },
+      } as any);
+
+      await client.fetchPartial({
+        targetUrl: "/handler/2",
+        previousUrl: "/handler/1",
+        segmentIds: ["root"],
+        interceptSourceUrl: "http://",
+      });
+
+      expect(consumePrefetchMock).not.toHaveBeenCalled();
+      expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     // #622 follow-up: fullyPrefetched is the prefetch entry's `complete` flag,

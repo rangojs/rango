@@ -164,6 +164,9 @@ export function cancelAllPrefetches(keepUrl?: string | null): void {
   // Key shapes (see prefetch/cache.ts buildPrefetchKey):
   //   wildcard:      "rangoState\0/target?..."
   //   source-scoped: "rangoState\0sourceHref\0/target?..."
+  //   inside an intercept the rangoState part carries the source too
+  //   (prefetchKeyPrefix), adding a part before the target; the target is
+  //   still the last one.
   // The target portion is always the final \0-delimited segment and
   // includes internal `_rsc_*` params (from buildPrefetchUrl); keepUrl
   // comes from NavigationProvider's pendingUrl which is the bare

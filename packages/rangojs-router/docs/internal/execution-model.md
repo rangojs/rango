@@ -148,9 +148,15 @@ keep the item left. The page under the slot takes the source's URL and params
 showed `/list/1`'s loader data; from `/item/1` over `/list/1?page=2`, a link
 to `/list/1` kept page 2's. A `Prerender()` record decides its segments the
 same way (`cache-lookup.ts` `storedEntrySends`). Back/Forward onto an
-intercept entry it must fetch sends the same request. Such a click never
-adopts a prefetch (`navigation-client.ts` `canUsePrefetch`) or the history
-cache.
+intercept entry it must fetch sends the same request. Such a click adopts no
+history cache entry, and only a prefetch made from inside the same intercept:
+a prefetch sent while an intercept is open names the same source in
+`X-RSC-Router-Intercept-Source` and its keys carry that source
+(`prefetch/cache.ts` `prefetchKeyPrefix`, read by `prefetch/fetch.ts` and
+`navigation-client.ts` `canUsePrefetch`), so the two sides never share an
+entry. A prefetch of the same target made outside an intercept is the
+target's full page and is never adopted inside one; one made inside is never
+adopted after the intercept closes.
 
 | Target                                     | What the client sends                  | Result                                                                       |
 | ------------------------------------------ | -------------------------------------- | ---------------------------------------------------------------------------- |
@@ -243,6 +249,18 @@ Three things to keep in mind, because each looks like a bug the first time:
   its source page holds, so a response that defers is used only on that
   page (`x-rsc-prefetch-scope: source`) and is never reused by the document
   cache or a shared cache.
+
+A prefetch sent from inside an open intercept is answered against the page
+under it, as the click that follows is (flow 4): it names that page in
+`X-RSC-Router-Intercept-Source`, drops the page's rewrite target as the click
+does, and every key scope below is partitioned by the source
+(`prefetchKeyPrefix`), so its answer is never served to a page without that
+intercept open, or to another page's intercept. A `params; <label>` scope
+names the page under the intercept's params and route name, which the browser
+cannot read while the intercept is open (`getCommittedPage` is the intercept's
+own page), so such an answer is stored page-only (`prefetchStorageSlot`).
+Pinned by `intercept-prefetch-inside` (router test-app and cloudflare-basic,
+dev and production) and `serve-shell-request-intercept-prefetch`.
 - **Deferral replaces execution; it never adds a skip.** A new segment always
   renders, so the flag only ever turns work that would have run into deferred
   work. Revalidation of held segments is untouched.

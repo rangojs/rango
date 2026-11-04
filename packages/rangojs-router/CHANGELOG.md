@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a link inside an open intercept uses its prefetch instead of fetching again
+
+**Before.** Every prefetch a page made from inside an open intercept was
+thrown away. A `<Link>` in the modal still prefetched its target on hover or
+viewport, but the request carried no intercept source, so the answer was the
+target's full page rather than the modal over the page underneath. A click
+could not use it (the navigation sent the source, the prefetch did not), so
+the modal fetched the target again on every click, even a link hovered a
+moment earlier.
+
+**Now.** A prefetch made while an intercept is open sends
+`X-RSC-Router-Intercept-Source` naming the page under it, exactly as the click
+that follows does, and its cache keys carry that source: the answer is the
+intercept over that page, so the click adopts it and makes no request of its
+own. The two sides never share an entry — a prefetch made outside an
+intercept is not adopted inside one, and one made inside is not adopted after
+the intercept closes — because an answer computed against the page under the
+intercept is only right there.
+
+```tsx
+// Inside the modal, hover then click: one request, and the item opens in the
+// modal over the same page.
+<Link to={`/items/${id + 1}`} prefetch="hover">
+  Next item
+</Link>
+```
+
+A prefetch made from inside an intercept is stored page-only: a
+`revalidate()` rule that read the source page's params shares its answer
+between pages with equal values elsewhere, but the page under an intercept is
+not readable from the browser while the intercept is open, so that answer is
+kept for the exact page and ids it was computed for.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
