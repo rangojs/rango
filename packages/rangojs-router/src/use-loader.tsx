@@ -167,7 +167,7 @@ function useLoaderInternal<T>(
     contextData: T | undefined;
     hasContextData: boolean;
     pendingStream?: Promise<unknown> | Defer<unknown>;
-    /** { ssr: "await" } loader ids seen on the chain up to (and including) the
+    /** { ssr: false } loader ids seen on the chain up to (and including) the
      *  level that owned the read — input for the dev SSR suspension warning. */
     awaitedLoaderIds?: string[];
   } => {
