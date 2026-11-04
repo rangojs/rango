@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.34.1 (2026-11-04)
 
-### Fixed: a link inside an open intercept to the page under it shows that page's data when the params match the intercept's
+### Fixed: a link inside an open intercept to the page under it shows that page's data when the params match the intercept's ([#1376](https://github.com/rangojs/rango/pull/1376))
 
 **Before.** From an open intercept (`/item/2` over `/list/1`), a link to the
 page's route with the intercept's own param value (`/list/2`) closed the
@@ -28,7 +28,7 @@ made with no intercept open are unchanged.
 | `/list/1?page=2`                         | re-run                 | re-run              | slot closes       |
 | `/item/1` (opens in the intercept)       | held                   | held                | re-run, as before |
 
-### Fixed: `useLoader(L, { refreshGroup })` without a `key` frees its refreshed data when it unmounts
+### Fixed: `useLoader(L, { refreshGroup })` without a `key` frees its refreshed data when it unmounts ([#1375](https://github.com/rangojs/rango/pull/1375))
 
 **Before.** Each mount of a grouped read with no `key` refreshed into a
 client-side entry of its own, and that entry stayed in memory for the rest of
