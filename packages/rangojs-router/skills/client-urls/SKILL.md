@@ -580,8 +580,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ```
 
 The value says what the server render does with the loader: `"stream"` (the
-default) streams it, `"await"` awaits it. `ssr` takes no boolean here either:
-`false` throws with a pointer to `"await"`. Document renders await a flagged
+default) streams it, `"await"` awaits it. Document renders await a flagged
 loader before first flush (data settled — no fallback
 paints; handle pushes beat the barrier snapshot; a thrown `notFound()` is a
 deterministic real 404, no warm-up race); client navigations stream exactly as

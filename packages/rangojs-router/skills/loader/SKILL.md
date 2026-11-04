@@ -1147,10 +1147,8 @@ The value says what the server render does with the loader: `"stream"` (the
 default, the same as leaving `ssr` out) streams it behind its boundary;
 `"await"` awaits it in the renders that produce HTML — the document render and
 a `ppr` shell capture (at runtime, or at build time on a `Prerender` + `ppr`
-route). `ssr` takes no boolean: `false` throws
-at registration with a pointer to `"await"`. (`loading(fallback, { ssr: false
-})` is a different option: there `false` means the fallback is not
-server-rendered.)
+route). (`loading(fallback, { ssr: false })` is a different option: there
+`false` means the fallback is not server-rendered.)
 
 Document renders await this loader before first flush — data is settled (`useLoader`
 reads it synchronously, no fallback paints), handle pushes beat the barrier

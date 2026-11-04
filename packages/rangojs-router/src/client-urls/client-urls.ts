@@ -359,7 +359,8 @@ export const loader: ClientUrlHelpers["loader"] = (
     options.ssr !== "await"
   ) {
     throw new Error(
-      (options.ssr as unknown) === false
+      process.env.NODE_ENV !== "production" &&
+        (options.ssr as unknown) === false
         ? 'clientUrls() loader() ssr: false was replaced: use loader(Def, { ssr: "await" }) to await the loader before first flush on document requests.'
         : `clientUrls() loader() ssr must be "stream" or "await" (got ${JSON.stringify(options.ssr)}). Omit it (or pass "stream") to stream on every render.`,
     );

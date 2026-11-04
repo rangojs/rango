@@ -185,14 +185,11 @@ export type LoaderFn<
  * no fallback paints for it (`useLoader` still suspends, but on an
  * already-settled promise); a ppr shell capture, at runtime or at build time
  * for a Prerender + ppr route, awaits it too. Client navigations keep
- * streaming it. This is the SSR-completeness opt-in; any value other than
- * `"stream"` or `"await"`, `false` and `true` included, throws at
- * registration. Choose it when the loader feeds something that must exist in
- * the document:
- * `<head>` meta via a handle, or a real 404 status (an awaited `notFound()`
- * deterministically precedes Response construction, where the streamed
- * default only wins that race opportunistically). Under ppr it is also the
- * BAKE lane: the loader executes at shell capture and its settled return is
+ * streaming it. This is the SSR-completeness opt-in. Choose it when the
+ * loader feeds something that must exist in the document: `<head>` meta via
+ * a handle, or a real 404 status (an awaited `notFound()` deterministically
+ * precedes Response construction, where the streamed default only wins
+ * that race opportunistically). Under ppr it is also the BAKE lane: the loader executes at shell capture and its settled return is
  * shell material (nested promises stay live holes), and so are its handle
  * pushes, a pushed promise or `.defer()` included: the capture awaits it and
  * every HIT serves the value it settled to (#1182). A pushed promise that
@@ -209,11 +206,6 @@ export type LoaderFn<
  * site naming the unflagged loader (ssr-suspension-warning.ts).
  */
 export type LoaderOptions = {
-  /**
-   * `"await"`: document renders and ppr shell captures await this loader
-   * (see {@link LoaderOptions}). `"stream"` (the default when
-   * omitted): it streams behind its boundary.
-   */
   ssr?: "stream" | "await";
   /**
    * `prefetch: false` keeps this loader out of every `<Link>` prefetch: a

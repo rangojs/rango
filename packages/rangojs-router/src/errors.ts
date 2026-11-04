@@ -407,9 +407,7 @@ export function invariant(condition: any, message: string): asserts condition {
 
 /**
  * Rejects a loader `ssr` option other than `"stream"` or `"await"`
- * (undefined passes), as an invariant. `false` gets its own message naming
- * `"await"`, the value that awaits the loader, since a reader may expect a
- * boolean here. clientUrls() inlines the same checks (client-urls.ts).
+ * (undefined passes). clientUrls() inlines the same checks.
  */
 export function assertLoaderSsrOption(value: unknown, helper: string): void {
   invariant(
