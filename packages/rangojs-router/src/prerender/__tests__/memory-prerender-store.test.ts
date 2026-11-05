@@ -3,6 +3,7 @@ import { createMemoryPrerenderStore } from "../memory-prerender-store.js";
 import {
   serializePrerenderKey,
   composeStoredEntry,
+  composeStoredRedirect,
   composeStoredTombstone,
   isStoredEntryValidFor,
   isStoredEntryStale,
@@ -470,6 +471,100 @@ describe("the removed marker (tombstone)", () => {
   it("a later page write replaces it", async () => {
     const store = createMemoryPrerenderStore();
     await store.set(key(), removeMarker());
+    const page = stored();
+    await store.set(key(), page);
+    expect(await store.get(key())).toBe(page);
+    expect(store.size).toBe(1);
+  });
+});
+
+describe("the stored redirect", () => {
+  const params = { id: "42" };
+  const moved = () =>
+    composeStoredRedirect(
+      key(),
+      { location: "/products/43", status: 301 },
+      { ttl: 60, tags: ["product:42"], params },
+      1000,
+    );
+
+  it("is stamped like a page: no entry, the ttl as staleAt, the tags", () => {
+    const redirect = moved();
+    expect(redirect).toEqual({
+      v: 1,
+      redirect: { location: "/products/43", status: 301 },
+      meta: {
+        storedAt: 1000,
+        staleAt: 61_000,
+        ttl: 60,
+        tags: ["product:42"],
+        version: "b1",
+        params,
+      },
+    });
+    expect("entry" in redirect).toBe(false);
+    expect(redirect.meta).toEqual(
+      stored({ ttl: 60, tags: ["product:42"] }).meta,
+    );
+    expect(isStoredEntryStale(redirect, 61_000)).toBe(true);
+    // The external opt-in is kept only as `true`.
+    expect(
+      composeStoredRedirect(
+        key(),
+        { location: "https://x.example/", status: 302, external: true },
+        { tags: [], params },
+        1000,
+      ).redirect,
+    ).toEqual({ location: "https://x.example/", status: 302, external: true });
+  });
+
+  it("is valid under the same version and params checks as a page, through a JSON round trip", () => {
+    const redirect = JSON.parse(JSON.stringify(moved()));
+    expect(isStoredEntryValidFor(redirect, key(), params)).toBe(true);
+    expect(isStoredEntryValidFor(redirect, key(), { id: "99" })).toBe(false);
+    expect(
+      isStoredEntryValidFor(redirect, key({ version: "b2" }), params),
+    ).toBe(false);
+  });
+
+  it("a malformed redirect reads as a miss, never as a redirect or as the page it holds", () => {
+    const meta = { version: "b1", params, tags: [], storedAt: 1 };
+    const target = { location: "/products/43", status: 301 };
+    for (const redirect of [
+      null,
+      "/products/43",
+      { status: 301 },
+      { ...target, location: "" },
+      { ...target, status: 200 },
+      { ...target, status: 400 },
+      { ...target, status: 301.5 },
+      { ...target, status: "301" },
+      { ...target, external: false },
+    ]) {
+      expect(
+        isStoredEntryValidFor({ v: 1, redirect, meta }, key(), params),
+      ).toBe(false);
+      // A whole entry beside it does not make it a page.
+      expect(
+        isStoredEntryValidFor({ v: 1, redirect, entry, meta }, key(), params),
+      ).toBe(false);
+    }
+  });
+
+  it("a router from before it reads it as a miss, not as an empty page", () => {
+    const redirect = JSON.parse(JSON.stringify(moved()));
+    expect(validatorBeforeTheRemovedMarker(redirect, key(), params)).toBe(
+      false,
+    );
+  });
+
+  it("markStale reaches it through its tags, and a later page write replaces it", async () => {
+    const store = createMemoryPrerenderStore({ now: () => 5000 });
+    const redirect = moved();
+    await store.set(key(), redirect);
+    await store.markStale("r1", ["product:42"]);
+    expect(isStoredEntryStale((await store.get(key()))!, 5000)).toBe(true);
+
     const page = stored();
     await store.set(key(), page);
     expect(await store.get(key())).toBe(page);

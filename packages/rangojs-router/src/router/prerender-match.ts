@@ -33,8 +33,11 @@ import type {
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
+import type { StoredRedirectTarget } from "../prerender/writable-store.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponse } from "../response-utils.js";
+import { isExternalRedirect } from "../redirect-origin.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -62,6 +65,12 @@ export interface PrerenderMatchDeps<TEnv = any> {
    * whole-build fallback (server/build-version-table.ts getCacheVersions).
    */
   versions?: RouterVersions;
+  /**
+   * The owning router's basename. Set on the on-demand producer's context as
+   * `_basename`, so a `redirect("/path")` there carries it as it does on a
+   * request: the trigger stores that redirect as the route's answer.
+   */
+  basename?: string;
   findMatch: (
     pathname: string,
   ) => RouteMatchResult<TEnv> | null | Promise<RouteMatchResult<TEnv> | null>;
@@ -110,6 +119,11 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /**
+   * On-demand only: the render answered a redirect (a handler or layout threw
+   * or returned one), as a request would be answered with it.
+   */
+  redirect?: StoredRedirectTarget;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -271,6 +285,7 @@ export async function matchForPrerender<TEnv = any>(
         // skipped-personalized. Build/dev prerender leave this unset.
         ...(onDemand ? { _onDemandProducer: true as const } : {}),
         ...(onDemand && deps.versions ? { _versions: deps.versions } : {}),
+        ...(onDemand && deps.basename ? { _basename: deps.basename } : {}),
         request: new Request("http://prerender" + pathname),
         url: new URL("http://prerender" + pathname),
         originalUrl: new URL("http://prerender" + pathname),
@@ -349,17 +364,50 @@ export async function matchForPrerender<TEnv = any>(
         setupBuildUse(buildCtx);
 
         // 8. Resolve all segments with skipLoaders
-        const { segments: allSegments } = await deps.resolveAllSegments(
-          freshPassInput(buildCtx, matched.routeKey, matchedParams, {
-            skipLoaders: true,
-            // A render failure (or `throw new Skip()`) must reach the
-            // build/dev caller, not be baked into a frozen error page
-            // (issue #587).
-            throwOnError: true,
-          }),
-          entries,
-          { pathname: buildCtx.pathname },
-        );
+        let allSegments: ResolvedSegment[];
+        try {
+          ({ segments: allSegments } = await deps.resolveAllSegments(
+            freshPassInput(buildCtx, matched.routeKey, matchedParams, {
+              skipLoaders: true,
+              // A render failure (or `throw new Skip()`) must reach the
+              // build/dev caller, not be baked into a frozen error page
+              // (issue #587).
+              throwOnError: true,
+            }),
+            entries,
+            { pathname: buildCtx.pathname },
+          ));
+        } catch (error) {
+          // On-demand: a redirect a handler or layout threw or returned is
+          // what a request is answered with (the walk rethrows a Response,
+          // resolveWithErrorBoundary), so it is an outcome the trigger
+          // stores in place of the page. Caught here, not around the whole
+          // render: a Response Flight collects below (a streamed handler's,
+          // a component's) is rendered into the stream as an error on a
+          // request, and stays render-failed. A build render keeps the throw.
+          if (
+            onDemand &&
+            error instanceof Response &&
+            isRedirectResponse(error)
+          ) {
+            return {
+              segments: [],
+              handles: "",
+              routeName: matched.routeKey,
+              params: matchedParams,
+              redirect: {
+                // isRedirectResponse guarantees a Location.
+                location: error.headers.get("Location")!,
+                status: error.status,
+                ...(isExternalRedirect(error)
+                  ? { external: true as const }
+                  : {}),
+              },
+              onDemandConfig,
+            };
+          }
+          throw error;
+        }
 
         // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
         // When the route declares loading(), the handler result is deferred so the

@@ -5,6 +5,10 @@
  * on to the route's handler: a Passthrough route's live handler, or a plain
  * route's gated producer (gateOnDemandProducer, urls/path-helper.ts), which
  * `_prerenderRemoved` on the handler context closes in dev too.
+ *
+ * And the redirect a refresh stored in place of a page: the lookup throws it,
+ * as a handler throws a redirect, before any store serves and before the
+ * handler runs.
  */
 import { afterEach, describe, it, expect, vi } from "vitest";
 
@@ -59,6 +63,7 @@ import {
   type WritablePrerenderStore,
 } from "../../../prerender/writable-store.js";
 import type { PrerenderConfig } from "../../../prerender/on-demand.js";
+import { isExternalRedirect } from "../../../redirect-origin.js";
 import type { EntryData } from "../../../server/context.js";
 import type { MatchContext, MatchPipelineState } from "../../match-context.js";
 import { seg, gen } from "./helpers.js";
@@ -401,5 +406,115 @@ describe("withCacheLookup: an intercepted navigation", () => {
 
     expect(served).toEqual(["BUILD"]);
     expect(buildReads).toBe(1);
+  });
+});
+
+/** The redirect a refresh stored, as a durable store hands it back. */
+const storedRedirect = (
+  now: number,
+  redirect: { location: string; status: number; external?: true } = {
+    location: "/product/43",
+    status: 301,
+  },
+  staleAt?: number,
+): PrerenderStoredEntry => ({
+  v: 1,
+  redirect,
+  meta: {
+    storedAt: now,
+    ...(staleAt != null ? { staleAt } : {}),
+    tags: [],
+    version: KEY.version,
+    params: PARAMS,
+  },
+});
+
+/**
+ * The Response the lookup threw. Served segments fail the test: a stored
+ * redirect leaves nothing to serve, the build-time entry included.
+ */
+async function lookupThrows(
+  options: Parameters<typeof lookup>[0],
+): Promise<{ response: Response }> {
+  let served: string[];
+  try {
+    ({ served } = await lookup(options));
+  } catch (error) {
+    if (!(error instanceof Response)) throw error;
+    return { response: error };
+  }
+  throw new Error(`served ${served.join(",")} instead of redirecting`);
+}
+
+describe("withCacheLookup: a stored redirect answers the request", () => {
+  const cases: Array<[string, Parameters<typeof lookup>[0]]> = [
+    ["a plain route's document request", {}],
+    [
+      "a Passthrough route's request, ahead of its live handler",
+      { passthrough: true },
+    ],
+    ["a plain route's server-action re-render", { action: true }],
+    ["a client navigation", { partial: true }],
+  ];
+  for (const [name, options] of cases) {
+    it(`${name}: the redirect is thrown, as a handler throws one`, async () => {
+      const { response } = await lookupThrows({
+        ...options,
+        overlay: (now) => storedRedirect(now),
+      });
+
+      expect(response.status).toBe(301);
+      expect(response.headers.get("Location")).toBe("/product/43");
+      expect(isExternalRedirect(response)).toBe(false);
+    });
+  }
+
+  it("the external opt-in is branded again on the Response", async () => {
+    const { response } = await lookupThrows({
+      overlay: (now) =>
+        storedRedirect(now, {
+          location: "https://shop.example/p/43",
+          status: 302,
+          external: true,
+        }),
+    });
+
+    expect(response.status).toBe(302);
+    expect(isExternalRedirect(response)).toBe(true);
+  });
+
+  it("a stale one schedules onRevalidate like a stale page, and still answers", async () => {
+    const onRevalidate = vi.fn();
+    const { response } = await lookupThrows({
+      overlay: (now) => storedRedirect(now - 5000, undefined, now - 4000),
+      onRevalidate,
+    });
+
+    await vi.waitFor(() => expect(onRevalidate).toHaveBeenCalledTimes(1));
+    expect(onRevalidate.mock.calls[0]![0]).toEqual({
+      route: "product",
+      params: PARAMS,
+    });
+    expect(response.status).toBe(301);
+  });
+
+  it("one stored for other params under the same key is a miss: the build-time entry serves", async () => {
+    const { served } = await lookup({
+      overlay: (now) => ({
+        ...storedRedirect(now),
+        meta: { ...storedRedirect(now).meta, params: { id: "99" } },
+      }),
+    });
+
+    expect(served).toEqual(["BUILD"]);
+  });
+
+  it("an intercepted navigation does not read the overlay, so it does not see the redirect", async () => {
+    const { served } = await lookup({
+      overlay: (now) => storedRedirect(now),
+      intercept: true,
+    });
+
+    expect(served).toEqual(["BUILD"]);
   });
 });
