@@ -267,8 +267,10 @@ default, but a CUSTOM-collect handle that failed to register silently gets the w
 shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 
 **A streamed handler's pushes stay in its own segment:** `runAsSegment` /
-`segmentPinOf` (`server/context.ts`); see execution-model.md "A streamed handler
-keeps its segment".
+`segmentPinOf` (`server/context.ts`), plus `_handleSegmentId` on a layout's or
+slot's ctx (`withSegmentScope`, `router/handler-context.ts`) for a push from a
+component the handler handed that ctx to; see execution-model.md "A streamed
+handler keeps its segment".
 
 ---
 
@@ -420,7 +422,7 @@ Internal API (`RangoInternal`, not exported):
 
 - `route()` macro expansion, `href()`, `href.<format>()`, `reverse()`, scoped reverse APIs
 - `AutofillAwareReverseFunction` (`types/handler-context.ts`): the `reverse` type of handlers, `LoaderContext` and `RequestContext` (global-name params optional; the runtime fills them from the matched route, none before the match)
-- Segment-scoped dot-local `ctx.reverse(".name")`: a layout, parallel slot or their loader resolves in the module that declares it, not the matched route's (`ReverseScope`, `server/context.ts`; the handler gets `withReverseScope(ctx, scope)`, `router/handler-context.ts`; see execution-model.md "Dot-local `ctx.reverse` follows the defining module"; `runLoader({ declaredIn })` in `@rangojs/router/testing` runs a loader in one)
+- Segment-scoped dot-local `ctx.reverse(".name")`: a layout, parallel slot or their loader resolves in the module that declares it, not the matched route's (`ReverseScope`, `server/context.ts`; the handler gets `withSegmentScope(ctx, segmentId, scope)`, `router/handler-context.ts`; see execution-model.md "Dot-local `ctx.reverse` follows the defining module"; `runLoader({ declaredIn })` in `@rangojs/router/testing` runs a loader in one)
 - `GlobalReverseFunction`: the global-only `ctx.reverse` type of middleware and response-route handlers (no `include()` scope, no param auto-fill; `.name` is a type error)
 - `ProblemDetails` (RFC 9457) error type and response-route type extraction
 

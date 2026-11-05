@@ -528,7 +528,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             keyArgs.push(ctx._routeName);
           }
           // A layout's / parallel's / their loader's ctx resolves dot names
-          // in its own module (withReverseScope), so one route's segments
+          // in its own module (withSegmentScope), so one route's segments
           // can reverse the same name differently.
           const scope = ctx._reverseScope;
           if (scope) {
