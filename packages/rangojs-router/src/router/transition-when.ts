@@ -1,4 +1,8 @@
-import { getParallelSlotEntries, type EntryData } from "../server/context.js";
+import {
+  getParallelSlotEntries,
+  slotSegmentId,
+  type EntryData,
+} from "../server/context.js";
 import type { RequestContext } from "../server/request-context.js";
 import type { TransitionWhenSite } from "../transition-when-ref.js";
 import type { TransitionWhenFn } from "../types/segments.js";
@@ -20,8 +24,8 @@ export interface TransitionWhenRecord {
  * applyViewTransitionDefault strips `when` at resolution, since segment stores
  * JSON-serialize the transition config (dropping a function on some stores,
  * keeping it by reference on others). Segment ids follow resolution: an
- * entry's shortCode, and `${owner.shortCode}.${slot}` for a rendered parallel
- * slot.
+ * entry's shortCode, and slotSegmentId (server/context.ts) for a rendered
+ * parallel slot.
  */
 export function recordTransitionWhenRefs<TEnv>(
   entries: readonly EntryData[] | undefined,
@@ -49,7 +53,7 @@ export function recordTransitionWhenRefs<TEnv>(
     for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
       entry.parallel,
     )) {
-      record(parallelEntry, `${entry.shortCode}.${slot}`);
+      record(parallelEntry, slotSegmentId(entry, slot));
     }
   };
 

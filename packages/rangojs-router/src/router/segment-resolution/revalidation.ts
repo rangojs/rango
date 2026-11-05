@@ -78,6 +78,7 @@ import {
   runAsSegment,
   latchCachedHeaderScope,
   latchPprHeaderScopeForEntries,
+  slotSegmentId,
 } from "../../server/context.js";
 
 /**
@@ -740,7 +741,7 @@ export function buildEntryRevalidateMap(
       for (const { slot, entry: parallelEntry } of getParallelSlotEntries(
         entry.parallel,
       )) {
-        map.set(`${entry.shortCode}.${slot}`, {
+        map.set(slotSegmentId(entry, slot), {
           entry: parallelEntry,
           revalidate: parallelEntry.revalidate,
         });
@@ -924,7 +925,7 @@ export async function resolveParallelSegments<TEnv>(
     // We defer the handler check until after tryStaticSlot.
     const handler = slots[slot];
 
-    const parallelId = `${entry.shortCode}.${slot}`;
+    const parallelId = slotSegmentId(entry, slot);
 
     const isFullRefetch = clientSegmentIds.size === 0;
     const isNewParent = !clientSegmentIds.has(entry.shortCode);

@@ -32,6 +32,7 @@ import {
   RangoContext,
   latchPprHeaderScopeForEntries,
   runAsSegment,
+  slotSegmentId,
 } from "../server/context.js";
 import { _getRequestContext } from "../server/request-context.js";
 
@@ -215,7 +216,7 @@ function renderInterceptHandlerError<TEnv>(
   pass: ResolutionPass<TEnv>,
   error: unknown,
   parentEntry: EntryData,
-  slotSegmentId: string,
+  slotId: string,
   background: boolean | undefined,
 ): ReactNode {
   if (error instanceof Response) throw error;
@@ -236,7 +237,7 @@ function renderInterceptHandlerError<TEnv>(
       telemetry,
     },
     pass.context.pathname,
-    { id: slotSegmentId, type: "parallel" },
+    { id: slotId, type: "parallel" },
   );
   if (background) throw error;
   return component;
@@ -247,7 +248,7 @@ export function interceptSlotId(
   parentEntry: EntryData,
   intercept: InterceptEntry,
 ): string {
-  return `${parentEntry.shortCode}.${intercept.slotName}`;
+  return slotSegmentId(parentEntry, intercept.slotName);
 }
 
 /**
@@ -356,7 +357,7 @@ export async function resolveInterceptEntry<TEnv>(
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
   const { context, params } = pass;
-  const slotSegmentId = interceptSlotId(parentEntry, interceptEntry);
+  const slotId = interceptSlotId(parentEntry, interceptEntry);
   const { segments: loaderSegments } = await resolveInterceptLoaders(
     pass,
     interceptEntry,
@@ -366,14 +367,13 @@ export async function resolveInterceptEntry<TEnv>(
   // The slot's tag scope (#957, cache-tag.ts runInSegmentTagScope) and the
   // owner of its handler's handle pushes (a handler's ctx.use(Handle) reads
   // it when called).
-  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-    slotSegmentId;
+  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId = slotId;
 
   const slotSegment = (
     component: ReactNode,
     layout: ReactNode | undefined,
   ): ResolvedSegment => ({
-    id: slotSegmentId,
+    id: slotId,
     namespace: `intercept:${interceptEntry.routeName}`,
     type: "parallel",
     index: 0,
@@ -389,7 +389,7 @@ export async function resolveInterceptEntry<TEnv>(
   // A fill keeps a slot the client holds: neither its handler nor its layout
   // runs, only the loaders the client lacks (match-result.ts leaves the null
   // slot out of the response).
-  if (fillSends(context, slotSegmentId, pass.client) === false) {
+  if (fillSends(context, slotId, pass.client) === false) {
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
@@ -399,8 +399,8 @@ export async function resolveInterceptEntry<TEnv>(
     handlerResult =
       typeof handler === "function"
         ? handleHandlerResult(
-            runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+            runAsSegment(slotId, () =>
+              runInSegmentTagScope(slotId, handler, context),
             ),
           )
         : handler;
@@ -409,7 +409,7 @@ export async function resolveInterceptEntry<TEnv>(
       pass,
       error,
       parentEntry,
-      slotSegmentId,
+      slotId,
       options?.background,
     );
   }
@@ -422,11 +422,7 @@ export async function resolveInterceptEntry<TEnv>(
   if (interceptEntry.layout) {
     const layout = interceptEntry.layout;
     if (typeof layout === "function") {
-      const layoutResult = await runInSegmentTagScope(
-        slotSegmentId,
-        layout,
-        context,
-      );
+      const layoutResult = await runInSegmentTagScope(slotId, layout, context);
       if (layoutResult instanceof Response) {
         throw layoutResult;
       }
@@ -444,7 +440,7 @@ export async function resolveInterceptEntry<TEnv>(
   const streamedComponent = (promise: Promise<unknown>): ReactNode =>
     trackStreamedHandler(pass.deps, promise, {
       boundaryEntry: parentEntry,
-      segmentId: slotSegmentId,
+      segmentId: slotId,
       segmentType: "parallel",
       context,
       routeKey: interceptEntry.routeName,
@@ -477,7 +473,7 @@ export async function resolveInterceptEntry<TEnv>(
           pass,
           error,
           parentEntry,
-          slotSegmentId,
+          slotId,
           options?.background,
         );
       }

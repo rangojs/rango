@@ -472,4 +472,12 @@ The public DOM seam is
   (`UpdateMode.navigate.presentation`, passed by
   [browser/navigation-bridge.ts](../../src/browser/navigation-bridge.ts)).
   Design: [prefetch-false.md](../../../../docs/design/prefetch-false.md).
+- A parallel slot's segment id, `${shortCode}.${slot}`, has one owner:
+  `slotSegmentId` in [server/context.ts](../../src/server/context.ts). The
+  revalidation map and walker, the `transition({ when })` recording and the
+  prefetch-deferral plan call it, and `pnpm check:internals` rule
+  `parallel-slot-id` fails any other spelling in the router source (a copy
+  keyed an orphan's slot by its parent while the walker keyed it by the
+  orphan, so a `revalidate()` rule matched no segment). The shape is
+  wire-visible, since the client parses these ids, so it does not change.
 - Some entries in this map are intentionally grouped (for example `router/segment-resolution/*`) because behavior is split across multiple files.
