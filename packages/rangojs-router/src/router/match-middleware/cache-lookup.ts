@@ -613,7 +613,15 @@ async function* serveStoredSegments<TEnv>(
       });
     }
     if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    else {
+      sentIds?.add(segment.id);
+      // The record's handler values stand where the MISS's run pushed them, so
+      // this response delivers that run: resolvedIds must name it, as the live
+      // walk that wrote the record did. A kept segment keeps the client's
+      // values and is not marked. buildMatchResult strips the marker
+      // (match-result.ts); only resolvedIds reaches the wire.
+      segment._handlerRan = true;
+    }
     yield segment;
   }
 

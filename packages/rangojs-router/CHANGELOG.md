@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `cache()`, `Prerender()` or `ppr` replay HIT replaces the handle values of every segment it re-sends
+
+**Before.** A partial response's `resolvedIds` names the segments whose
+handle values (`useHandle()`, `collectHandle()`) replace the ones the page
+holds. A live render listed every segment whose handler ran, but a response
+served from a `cache()` record, a `Prerender()` entry or a `ppr` navigation
+replay listed none: the record does not carry the marker the list is built
+from. A layout that stopped pushing a value kept the old one after a
+navigation that hit a record, and it came back on every later hit.
+
+**Now.** A stored response lists each segment it re-sends, the same set the
+live render that wrote the record listed, and a segment the client keeps
+still keeps its values. The record format is unchanged: the list is derived
+from the decision that already picks which stored segments the response
+carries.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
