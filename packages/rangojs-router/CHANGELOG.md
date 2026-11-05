@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a modal that re-renders and pushes no handle value clears the ones it pushed before
+
+**Before.** A `ctx.use(Handle)` push made inside an open modal outlived the
+render that made it. Navigating inside the modal, or calling a server action
+from it, re-ran the intercept's handler; a handler (or the `layout(Chrome)`
+wrapping the modal's content) that pushed nothing this time left the previous
+value on the page, so a breadcrumb or a title from the modal's last render
+stayed in the layout above it until the modal closed.
+
+**Now.** A partial response lists the intercept's slot among the segments it
+re-ran (`resolvedIds`), so the browser replaces the slot's handle values with
+what the render delivered, nothing when it delivered none — as it already did
+for a layout, a route and a `parallel()` slot. A request that keeps a slot the
+page already holds (the fill of an intercept) still leaves its values alone,
+as does a slot served from a `cache()` or `Prerender()` record, whose handler
+did not run.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
