@@ -34,7 +34,10 @@ import { ownerOf, resolveOwnerLoaders } from "../revalidation.js";
 import { makeFreshPass } from "../../../__tests__/kit/resolution-pass.js";
 import type { ResolvedSegment, HandlerContext } from "../../../types.js";
 import { setupLoaderAccess } from "../../loader-resolution.js";
-import { createHandlerContext } from "../../handler-context.js";
+import {
+  createHandlerContext,
+  withSegmentScope,
+} from "../../handler-context.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -851,5 +854,39 @@ describe("loader-level cache: a HIT over a record's copies of the loader's pushe
 
     expect(noted.calls).toBe(1);
     expect(hit.handles[Crumbs.$$id]).toEqual(crumbs("Settled record"));
+  });
+
+  // executeLoaderData installs ONE interceptor on the request ctx's `use` for
+  // the rest of the request, so a push from a layout's or slot's ctx goes
+  // through it. It must forward the receiver, or the scoped ctx's segment is
+  // lost and the push files under whatever the walker pinned since
+  // (handlePushSegment, router/loader-resolution.ts).
+  it("a layout ctx's push through a cached loader's use interceptor keeps the layout's segment", async () => {
+    const store = new MemorySegmentCacheStore();
+    const loader = defineLoader("ProductLoader#L", async () => ({
+      name: "Widget",
+    }));
+    const entry = entryWith([cachedEntry(loader, store)]);
+    let handlerCtx: any;
+
+    const { reqCtx } = await runRequest(entry, {
+      whileLoading: (_reqCtx, ctx) => {
+        handlerCtx = ctx;
+      },
+    });
+
+    // The cached loader replaced the request ctx's use.
+    expect(handlerCtx._loaderCacheOverrides).toBeInstanceOf(Map);
+
+    const layoutCtx = withSegmentScope(handlerCtx, "L1", undefined);
+    const { use } = layoutCtx;
+    use(Meta)({ title: "Layout" });
+
+    expect(reqCtx._handleStore.getDataForSegment("L1")[Meta.$$id]).toEqual([
+      { title: "Layout" },
+    ]);
+    expect(
+      reqCtx._handleStore.getDataForSegment("R0")[Meta.$$id],
+    ).toBeUndefined();
   });
 });

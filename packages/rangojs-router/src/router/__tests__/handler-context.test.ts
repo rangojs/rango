@@ -622,6 +622,30 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: use reaches the request ctx as the scoped ctx, however it is called", () => {
+      // The receiver is what names a handle push's segment
+      // (handlePushSegment, router/loader-resolution.ts), so the scoped ctx
+      // must be it even for a destructured or detached `use`.
+      const receivers: unknown[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use: function (this: unknown, item: unknown) {
+          receivers.push(this);
+          return item;
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      const handle = { $$id: "handle" } as any;
+      scoped.use(handle);
+      const { use } = scoped;
+      use(handle);
+      const detached = scoped.use;
+      detached(handle);
+      expect(receivers).toEqual([scoped, scoped, scoped]);
+      // The request ctx itself is never the receiver.
+      expect(receivers).not.toContain(ctx);
+    });
   });
 
   describe("optional params", () => {

@@ -2551,9 +2551,10 @@ Limits:
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
 - A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `_handleSegmentId`, and `reverse` and `_reverseScope` when the
-  segment has a scope, so `{ ...ctx }` there copies only those. A getter keyed
-  by its holder resolves through the prototype chain (`rewrittenFrom`,
+  fields are `_handleSegmentId`, `use` (bound to itself, see "A streamed
+  handler keeps its segment"), and `reverse` and `_reverseScope` when the
+  segment has a scope, so `{ ...ctx }` there copies those. A getter keyed by
+  its holder resolves through the prototype chain (`rewrittenFrom`,
   `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
@@ -2594,16 +2595,24 @@ scope. Await continuations inherit the scope. A layout's or slot's ctx is the
 case the scope cannot reach: React renders the components that ctx was
 handed to after the handler returned, outside every scope, so the object is
 the only thing left to ask. That ctx carries its segment
-(`_handleSegmentId`, `withSegmentScope`), and `ctx.use` resolves the push
-segment off the receiver it was called on (`handlePushSegment`,
-`loader-resolution.ts`) — a push from such a component, and the dev
-`LateHandlePushError` it throws, names the layout or the slot, not whichever
-segment the walker pinned since. The other readers take `segmentPinOf(ctx)`,
-the innermost scope's segment else the ctx's carried one else its pin: a
-handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the build
-pass, which runs the same walker), a started loader's owning segment
-(`loaderOwner`, after a prefetch-deferred loader's registered owner), and the
-caller segment a `"use cache"` call records and replays under
+(`_handleSegmentId`, `withSegmentScope`) and owns a `use` bound to itself: it
+re-enters the request ctx's `use` with itself as receiver, so the push names
+the layout or the slot however the caller reaches it — a destructured
+`const { use } = ctx`, a `use` handed on as a prop, or a wrapper around
+either. A push from such a component, and the dev `LateHandlePushError` it
+throws, names the layout or the slot, not whichever segment the walker
+pinned since. The binding reads the request ctx's `use` at call time, so the
+interceptor a cached loader installs there (`executeLoaderData`,
+loader-cache.ts) still runs, and that interceptor has to forward its
+receiver; the layout-ctx case in `loader-cache-handles.test.ts` pins it.
+
+Only the push funnel consults the carried segment (`handlePushSegment`,
+`loader-resolution.ts`): it substitutes it for the pin, so `segmentPinOf`
+keeps its precedence — the innermost `runAsSegment` scope, then the pin.
+Everything else that asks which segment a ctx's work belongs to still reads
+`segmentPinOf(ctx)` and so still reads the pin: a started loader's owning
+segment (`loaderOwner`, after a prefetch-deferred loader's registered owner)
+and the caller segment a `"use cache"` call records and replays under
 (`cache-runtime.ts`). A route handler's ctx is still the request's one ctx,
 so `{ ...ctx }` there copies what it copies in any route.
 

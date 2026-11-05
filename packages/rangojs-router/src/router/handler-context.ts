@@ -214,10 +214,9 @@ function createPrerenderPassthroughFn(
  * moves the shared `_currentSegmentId` on while an async component the handler
  * handed this ctx to is still rendering, so a push made through this ctx after
  * an `await` would otherwise file under (and a LateHandlePushError name)
- * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
- * router/loader-resolution.ts), which holds after an `await` and in a
- * component the ctx is handed to.
+ * whatever segment the walker pinned since. `_handleSegmentId` carries it, and
+ * the child's own `use` is bound to this object (below), so the segment holds
+ * however the caller reaches the push.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -235,6 +234,18 @@ export function withSegmentScope<C>(
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  // `use` re-enters the request ctx's own `use` with THIS object as receiver,
+  // so the segment survives any call shape: a destructured `const { use } =
+  // ctx`, a `use` handed on as a callback or prop, and a wrapper around either
+  // all still reach handlePushSegment (router/loader-resolution.ts) as this
+  // object. The parent's `use` is read at call time, so an interceptor
+  // installed on the request ctx later (executeLoaderData, loader-cache.ts)
+  // still runs.
+  (scoped as unknown as { use: (item: unknown) => unknown }).use = function (
+    item: unknown,
+  ) {
+    return Reflect.apply((ctx as any).use, scoped, [item]);
+  };
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

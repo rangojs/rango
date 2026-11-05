@@ -103,13 +103,14 @@ export type LoaderErrorCallback = (
 /**
  * The segment a handle push through `ctx.use` files under.
  *
- * The receiver decides when it carries a segment: a layout's or a parallel
- * slot's ctx does (withSegmentScope), and the segment holds however long after
- * the handler returned, so an async component the handler handed the ctx to
- * still files under it after the walker moved the shared pin on. Any other
- * receiver reads the ctx `use` was installed on, whose `_currentSegmentId`
- * the walker pins — a handler that built a smaller ctx with `use` copied onto
- * it (a Prerender handler forwarding to a shared page handler) included.
+ * A layout's or a parallel slot's ctx carries its own segment
+ * (withSegmentScope), and its `use` re-enters with that ctx as receiver, so
+ * the segment holds however long after the handler returned: an async
+ * component the handler handed the ctx to still files under it after the
+ * walker moved the shared pin on. Any other receiver stands in for the pin of
+ * the ctx `use` was installed on — a handler that built a smaller ctx with
+ * `use` copied onto it (a Prerender handler forwarding to a shared page
+ * handler) included.
  */
 function handlePushSegment(
   receiver: unknown,
@@ -117,11 +118,13 @@ function handlePushSegment(
 ): string | undefined {
   const carried = (receiver as { _handleSegmentId?: string } | undefined)
     ?._handleSegmentId;
-  return segmentPinOf(
-    carried === undefined
-      ? (installed as { _currentSegmentId?: string })
-      : { _handleSegmentId: carried },
-  );
+  // The carried segment replaces the pin; segmentPinOf keeps its precedence
+  // (an explicit runAsSegment scope wins, then the pin).
+  return segmentPinOf({
+    _currentSegmentId:
+      carried ??
+      (installed as InternalHandlerContext<any, any>)._currentSegmentId,
+  });
 }
 
 /**

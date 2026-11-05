@@ -8,6 +8,10 @@
  * ctx made the push, not whichever segment the walker pinned last. A layout
  * handler's ctx carries its own segment, so the message names the layout; a
  * route handler's ctx reads the request's pin, which is still the route's.
+ *
+ * The call shape must not matter: `const { use } = ctx` and a detached
+ * `ctx.use` handed on as a prop are ordinary ways to reach the push, and both
+ * still file under the ctx's own segment.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -35,20 +39,37 @@ const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
 const errors: string[] = [];
 
+/**
+ * How the push is reached from the ctx: as a method, destructured off it, or
+ * detached from it and handed on as a callback (the shape a component prop
+ * takes).
+ */
+type CallShape = "method" | "destructured" | "detached";
+
 /** An async server component pushing the ctx its handler handed it. */
 async function LatePush({
   ctx,
   label,
+  shape = "method",
 }: {
   ctx: HandlerContext;
   label: string;
+  shape?: CallShape;
 }) {
   await new Promise((resolve) => setTimeout(resolve, 0));
-  ctx.use(Crumbs)(label);
+  if (shape === "method") {
+    ctx.use(Crumbs)(label);
+  } else if (shape === "destructured") {
+    const { use } = ctx;
+    use(Crumbs)(label);
+  } else {
+    const use = ctx.use;
+    use(Crumbs)(label);
+  }
   return <span>{label}</span>;
 }
 
-function makeRouter() {
+function makeRouter(shape?: CallShape) {
   return createRouter({
     onError: ({ error }) => {
       errors.push(error instanceof Error ? error.message : String(error));
@@ -61,7 +82,7 @@ function makeRouter() {
           layout(
             (ctx) => (
               <div>
-                <LatePush ctx={ctx} label="layout" />
+                <LatePush ctx={ctx} label="layout" shape={shape} />
               </div>
             ),
             () => [
@@ -98,9 +119,9 @@ async function matchedOf(flight: string | undefined): Promise<string[]> {
   return metadata.matched;
 }
 
-async function serve(url: string) {
+async function serve(url: string, shape?: CallShape) {
   errors.length = 0;
-  const result = await serveShellRequest(makeRouter(), url, {
+  const result = await serveShellRequest(makeRouter(shape), url, {
     cacheStore: new MemorySegmentCacheStore(),
   });
   return { errors: [...errors], matched: await matchedOf(result.flight) };
@@ -136,4 +157,18 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
   });
+
+  // A ctx handed to a component is an ordinary object: the component may
+  // destructure the method it needs, or take it as a prop. Neither may change
+  // which segment the push names.
+  for (const shape of ["destructured", "detached"] as CallShape[]) {
+    it(`the layout's, for a ${shape} use the layout handler's ctx reached`, async () => {
+      const { errors: reported, matched } = await serve(
+        "/component-layout",
+        shape,
+      );
+      const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+      expect(latePushSegment(reported)).toBe(layout);
+    });
+  }
 });
