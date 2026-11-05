@@ -28,6 +28,7 @@ import { fillSends } from "./segment-resolution/prefetch-deferral.js";
 import type { ResolutionPass } from "./segment-resolution/resolution-pass.js";
 import { getRouterContext, type InterceptResult } from "./router-context.js";
 import { runInSegmentTagScope } from "../cache/cache-tag.js";
+import { withSegmentScope } from "./handler-context.js";
 import {
   RangoContext,
   latchPprHeaderScopeForEntries,
@@ -336,8 +337,26 @@ async function settleLoaderSegments(
  * (heldNothingPassInput, resolution-pass.ts): every segment renders fresh, and
  * its loaders are skipped (skipLoaders), each registered for the handler's
  * read.
+ *
+ * The caller's shared pin goes back after the intercept resolves: a component
+ * the route handler handed its ctx to renders after the intercept ran, and
+ * would otherwise read (and a LateHandlePushError name) the slot's segment.
  */
 export async function resolveInterceptEntry<TEnv>(
+  ...args: Parameters<typeof resolveInterceptEntryInSegment<TEnv>>
+): Promise<ResolvedSegment[]> {
+  const [pass, interceptEntry, parentEntry] = args;
+  const internal = pass.context as InternalHandlerContext<any, TEnv>;
+  const pinned = internal._currentSegmentId;
+  internal._currentSegmentId = interceptSlotId(parentEntry, interceptEntry);
+  try {
+    return await resolveInterceptEntryInSegment<TEnv>(...args);
+  } finally {
+    internal._currentSegmentId = pinned;
+  }
+}
+
+async function resolveInterceptEntryInSegment<TEnv>(
   pass: ResolutionPass<TEnv>,
   interceptEntry: InterceptEntry,
   parentEntry: EntryData,
@@ -368,6 +387,9 @@ export async function resolveInterceptEntry<TEnv>(
   // it when called).
   (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
     slotSegmentId;
+  // The handler's and the layout's ctx carries the slot, so a component they
+  // hand it to still files under the slot after the caller's pin goes back.
+  const interceptCtx = withSegmentScope(context, slotSegmentId, undefined);
 
   const slotSegment = (
     component: ReactNode,
@@ -400,7 +422,7 @@ export async function resolveInterceptEntry<TEnv>(
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, interceptCtx),
             ),
           )
         : handler;
@@ -425,7 +447,7 @@ export async function resolveInterceptEntry<TEnv>(
       const layoutResult = await runInSegmentTagScope(
         slotSegmentId,
         layout,
-        context,
+        interceptCtx,
       );
       if (layoutResult instanceof Response) {
         throw layoutResult;
@@ -495,6 +517,19 @@ export async function resolveInterceptEntry<TEnv>(
  * keeps its cached component and layout, its loaders are never cached.
  */
 export async function resolveInterceptLoadersOnly<TEnv>(
+  ...args: Parameters<typeof resolveInterceptLoadersOnlyInSegment<TEnv>>
+): Promise<ResolvedSegment[]> {
+  const [pass] = args;
+  const internal = pass.context as InternalHandlerContext<any, TEnv>;
+  const pinned = internal._currentSegmentId;
+  try {
+    return await resolveInterceptLoadersOnlyInSegment<TEnv>(...args);
+  } finally {
+    internal._currentSegmentId = pinned;
+  }
+}
+
+async function resolveInterceptLoadersOnlyInSegment<TEnv>(
   pass: ResolutionPass<TEnv>,
   interceptEntry: InterceptEntry,
   parentEntry: EntryData,

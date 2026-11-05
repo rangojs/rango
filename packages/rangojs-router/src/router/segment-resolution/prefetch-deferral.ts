@@ -554,7 +554,8 @@ export function startDeferredLoader(
 /**
  * The segment a run of `loaderId` files its handle pushes under: the one
  * that registers it when it is registered (registerDeferredLoader), else the
- * segment whose code starts it (segmentPinOf).
+ * segment the ctx the read came through carries or runs in (segmentPinOf:
+ * a layout's or slot's ctx keeps its own after the handler returned).
  */
 export function loaderOwner(
   ctx: HandlerContext<any, any>,

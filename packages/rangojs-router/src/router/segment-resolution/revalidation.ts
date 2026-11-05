@@ -871,8 +871,26 @@ async function resolveParallelSlotComponent<TEnv>(
 
 /**
  * Resolve an entry's parallel slots: each slot's segment and its loaders.
+ *
+ * Each slot pins the shared `_currentSegmentId` while its loaders and handler
+ * resolve; the caller's pin goes back after. A component the entry's handler
+ * handed its ctx to renders once every slot ran, and would otherwise read
+ * (and a LateHandlePushError name) the last slot's segment.
  */
 export async function resolveParallelSegments<TEnv>(
+  ...args: Parameters<typeof resolveParallelSegmentsUnpinned<TEnv>>
+): Promise<SegmentRevalidationResult> {
+  const [pass] = args;
+  const internal = pass.context as InternalHandlerContext<any, TEnv>;
+  const pinned = internal._currentSegmentId;
+  try {
+    return await resolveParallelSegmentsUnpinned<TEnv>(...args);
+  } finally {
+    internal._currentSegmentId = pinned;
+  }
+}
+
+async function resolveParallelSegmentsUnpinned<TEnv>(
   pass: ResolutionPass<TEnv>,
   entry: EntryData,
   belongsToRoute: boolean,
@@ -1467,8 +1485,27 @@ async function orphanRevalidates<TEnv>(
 /**
  * Resolve an orphan layout: its loaders, its handler, its slots and the
  * routeless entries nested in it.
+ *
+ * Its loaders, handler, slots and nested orphans file their pushes under it;
+ * the caller's pin goes back after, so a component the route handler handed
+ * its ctx to still reads the route's (segmentPinOf). An orphan resolved after
+ * the route handler would otherwise leave the shared pin on its own segment.
  */
 export async function resolveOrphanLayout<TEnv>(
+  ...args: Parameters<typeof resolveOrphanLayoutInSegment<TEnv>>
+): Promise<SegmentRevalidationResult> {
+  const [pass, orphan] = args;
+  const internal = pass.context as InternalHandlerContext<any, TEnv>;
+  const pinned = internal._currentSegmentId;
+  internal._currentSegmentId = orphan.shortCode;
+  try {
+    return await resolveOrphanLayoutInSegment<TEnv>(...args);
+  } finally {
+    internal._currentSegmentId = pinned;
+  }
+}
+
+async function resolveOrphanLayoutInSegment<TEnv>(
   pass: ResolutionPass<TEnv>,
   orphan: EntryData,
   belongsToRoute: boolean,
@@ -1534,13 +1571,6 @@ export async function resolveOrphanLayout<TEnv>(
     deferred = deferUnit(context, orphan.shortCode, "below");
     if (!deferred) {
       handlerRan = true;
-      // Its handler's pushes are its own. Pinned only while it runs: a route
-      // under loading() streams its handler, whose pushes after an await
-      // read the pin after this returns where a runtime lost its
-      // runAsSegment scope (segmentPinOf).
-      const internal = context as InternalHandlerContext<any, TEnv>;
-      const pinned = internal._currentSegmentId;
-      internal._currentSegmentId = orphan.shortCode;
       const doneHandler = track(`handler:${orphan.id}`, 2);
       try {
         component = await resolveLayoutComponent(orphan, context);
@@ -1548,9 +1578,8 @@ export async function resolveOrphanLayout<TEnv>(
         // Its owning entry's boundary catches it.
         throw noteThrower(error, orphan.shortCode, orphan.type);
       } finally {
-        internal._currentSegmentId = pinned;
+        doneHandler();
       }
-      doneHandler();
     }
   }
 

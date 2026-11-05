@@ -35,4 +35,13 @@ describe("segmentPinOf", () => {
     ).toBe("L0");
     expect(runAsSegment(undefined, () => segmentPinOf(ctx))).toBe("R0.@side");
   });
+
+  it("a ctx that carries a segment beats the pin the walker left on it", () => {
+    // A layout's ctx (withSegmentScope) after the walker resolved a sibling:
+    // its own segment, not the shared pin's.
+    const carried = { _currentSegmentId: "R0", _handleSegmentId: "L0" };
+    expect(segmentPinOf(carried)).toBe("L0");
+    // While a handler or loader body runs, its scope still wins.
+    expect(runAsSegment("R0", () => segmentPinOf(carried))).toBe("R0");
+  });
 });

@@ -622,6 +622,29 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: use reaches the parent's with this ctx as receiver, however it is called", () => {
+      // The receivers `use` is installed on, by the segment they carry.
+      const receivers: (string | undefined)[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use(this: { _handleSegmentId?: string }) {
+          receivers.push(this?._handleSegmentId);
+          return "called";
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // A component may hold the function alone; the segment must survive.
+      const use = scoped.use as (item: unknown) => unknown;
+      const detached = use;
+      expect(detached("detached")).toBe("called");
+      expect(use("method")).toBe("called");
+      // A ctx built on this one keeps its own segment, not the parent's.
+      const inner = withSegmentScope(scoped, "M0L0L0R0", undefined);
+      const innerUse = inner.use as (item: unknown) => unknown;
+      expect(innerUse("inner")).toBe("called");
+      expect(receivers).toEqual(["M0L0L0", "M0L0L0", "M0L0L0R0"]);
+    });
   });
 
   describe("optional params", () => {
