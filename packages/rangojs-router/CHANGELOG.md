@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a dev `LateHandlePushError` names the segment whose ctx pushed
+
+**Before.** An async server component a layout's (or a parallel slot's)
+handler handed its `ctx` to that pushed a handle after an `await` was rejected
+— by design, the `.defer()` path is the mitigation — and the dev
+`LateHandlePushError` named the child route's segment: `ctx.use(Handle)` read
+the request's shared segment id when it was called, and by then the walker had
+run the route handler and moved it on.
+
+**Now.** The message names the layout's or the slot's segment, the one that
+owns the ctx the push went through:
+`Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
+The push is still rejected, at the same moment, and production still shows no
+message.
+
+Three more things follow from the same fix, all of them naming the segment
+that owns the ctx instead of the one the walker happened to be resolving:
+
+- A handle pushed through a layout's, a parallel slot's or an intercept's
+  `ctx` — in the handler or after an `await` in a component it handed the ctx
+  to — is filed under that segment. A loader started with that
+  `ctx.use(Loader)` runs under it too, so its pushes land there as well.
+- A `"use cache"` call given that ctx records that segment as its caller
+  segment, so a hit's handle replay lands under it.
+- Every layout, parallel slot and intercept handler now gets its own ctx: a
+  prototype child of the request's ctx that carries `_handleSegmentId` and its
+  own `use`. `ctx.params`, `ctx.get()`, `ctx.set()` and the rest still read and
+  write the request's ctx, but `{ ...ctx }` and `Object.keys(ctx)` see only
+  the child's own fields (`_handleSegmentId`, `use`, and `reverse` with
+  `_reverseScope` when the segment has an include scope), so a handler that
+  spreads its ctx gets a smaller object than before.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

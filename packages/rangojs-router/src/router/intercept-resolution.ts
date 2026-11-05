@@ -28,6 +28,7 @@ import { fillSends } from "./segment-resolution/prefetch-deferral.js";
 import type { ResolutionPass } from "./segment-resolution/resolution-pass.js";
 import { getRouterContext, type InterceptResult } from "./router-context.js";
 import { runInSegmentTagScope } from "../cache/cache-tag.js";
+import { withSegmentScope } from "./handler-context.js";
 import {
   RangoContext,
   latchPprHeaderScopeForEntries,
@@ -396,11 +397,15 @@ export async function resolveInterceptEntry<TEnv>(
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
+    // The slot's ctx owns its segment, as a layout's does: a component the
+    // handler hands it to names the slot in a late push. An intercept's
+    // `.name` resolves from the route, so it takes no reverse scope.
+    const handlerContext = withSegmentScope(context, slotSegmentId, undefined);
     handlerResult =
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, handlerContext),
             ),
           )
         : handler;

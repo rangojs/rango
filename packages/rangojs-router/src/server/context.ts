@@ -8,6 +8,7 @@ import type {
   LoaderDefinition,
   MiddlewareFn,
   NotFoundBoundaryHandler,
+  InternalHandlerContext,
   ShouldRevalidateFn,
   TransitionConfig,
 } from "../types";
@@ -814,7 +815,7 @@ export function getRootScoped(): boolean {
  * module's route. Structural entries (layout, cache, parallel, wrapping
  * middleware) and the loaders they declare capture the scope where the DSL
  * defined them. Their handler gets a ctx whose `reverse` carries it
- * (withReverseScope, router/handler-context.ts), and their loaders' DSL
+ * (withSegmentScope, router/handler-context.ts), and their loaders' DSL
  * kickoff carries it in the loader scope (runInsideLoaderScope) for the
  * loader ctx the executor builds. Global names and mount-param autofill do
  * not change.
@@ -1742,13 +1743,20 @@ export function runAsSegment<R>(segmentId: string | undefined, fn: () => R): R {
 }
 
 /**
- * The segment code here runs for: the innermost runAsSegment scope, else
- * `ctx`'s pin (a handler the walker awaits).
+ * The segment code here runs for: the innermost runAsSegment scope, else the
+ * segment `ctx` owns (a layout's, slot's or intercept's, `_handleSegmentId`:
+ * it holds after the walker moved on, withSegmentScope), else the request
+ * ctx's pin (a handler the walker awaits).
  */
-export function segmentPinOf(ctx: {
-  _currentSegmentId?: string;
-}): string | undefined {
-  return segmentPinALS.getStore() ?? ctx._currentSegmentId;
+export function segmentPinOf(
+  ctx: Pick<
+    InternalHandlerContext<any, any>,
+    "_currentSegmentId" | "_handleSegmentId"
+  >,
+): string | undefined {
+  return (
+    segmentPinALS.getStore() ?? ctx._handleSegmentId ?? ctx._currentSegmentId
+  );
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).

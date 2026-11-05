@@ -22,9 +22,13 @@ import {
   createStaticContext,
   createReverseFunction,
   stripInternalParams,
-  withReverseScope,
+  withSegmentScope,
 } from "../handler-context";
-import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import {
+  scopeReverse,
+  segmentPinOf,
+  type ReverseScope,
+} from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
 
 beforeEach(() => {
@@ -537,7 +541,7 @@ describe("createReverseFunction", () => {
     });
   });
 
-  describe("segment reverse scope (withReverseScope)", () => {
+  describe("segment ctx scope (withSegmentScope)", () => {
     // include("/:accountId", account, { name: "account" }) containing
     // include("/:projectId", project, { name: "project" }).
     const nestedMap: Record<string, string> = {
@@ -589,14 +593,14 @@ describe("createReverseFunction", () => {
       );
     });
 
-    it("withReverseScope: the scope rides the ctx; other fields read through live", () => {
+    it("withSegmentScope: the scope and the segment ride the ctx; other fields read through live", () => {
       const ctx = {
         params,
         reverse: routeReverse(),
         _currentSegmentId: "L0",
       } as unknown as InternalHandlerContext<any, any>;
       const scope = { prefix: "account", rootScoped: false };
-      const scoped = withReverseScope(ctx, scope);
+      const scoped = withSegmentScope(ctx, "M0L0L0", scope);
       // Destructured and called later, as a component handed the ctx does.
       const { reverse } = scoped;
       ctx._currentSegmentId = "L1";
@@ -604,9 +608,67 @@ describe("createReverseFunction", () => {
       expect(scoped._currentSegmentId).toBe("L1");
       expect(scoped.params).toBe(params);
       expect(scoped._reverseScope).toBe(scope);
+      // The segment the push through this ctx files under holds too.
+      expect(scoped._handleSegmentId).toBe("M0L0L0");
+      expect(ctx._handleSegmentId).toBeUndefined();
       // The shared ctx keeps the route's resolution.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
-      expect(withReverseScope(ctx, undefined)).toBe(ctx);
+    });
+
+    it("withSegmentScope: a segment without a reverse scope still carries the segment", () => {
+      const ctx = {
+        reverse: routeReverse(),
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
+      expect(scoped).not.toBe(ctx);
+      expect(scoped._handleSegmentId).toBe("M0L0L0R0");
+      expect(scoped._reverseScope).toBeUndefined();
+      // No own reverse: the shared one, as before the scope existed.
+      expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
+    });
+
+    it("withSegmentScope: ctx.use through the child runs as the child's segment", () => {
+      // The parent's use, as setupLoaderAccess installs it: the segment a push
+      // or a loader kickoff files under is segmentPinOf of the ctx it was
+      // installed on. Destructured and called later, as a component handed the
+      // ctx does, so nothing may ride the receiver.
+      const seen: Array<string | undefined> = [];
+      const ctx = {
+        _currentSegmentId: "M0L0L0R0",
+        use: () => {
+          seen.push(segmentPinOf(ctx));
+          return "pushed";
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // The walker moved the shared pin on before the component pushed.
+      ctx._currentSegmentId = "M0L0L0L1";
+      const { use } = scoped;
+      expect(use(undefined as any)).toBe("pushed");
+      expect(seen).toEqual(["M0L0L0"]);
+    });
+
+    it("withSegmentScope: the child owns the segment and use; everything else reads through", () => {
+      const variables: Record<string, unknown> = {};
+      const ctx = {
+        params,
+        get: (key: string) => variables[key],
+        set: (key: string, value: unknown) => {
+          variables[key] = value;
+        },
+        _currentSegmentId: "L0",
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      expect(Object.keys(scoped).sort()).toEqual(["_handleSegmentId", "use"]);
+      // Reads and writes go through the prototype to the request's one ctx.
+      expect(scoped.params).toBe(params);
+      scoped.set("k" as any, "v");
+      expect(ctx.get("k" as any)).toBe("v");
+      // A spread copies own fields only: a handler that spreads its ctx gets
+      // the segment and use, not params or the rest (execution-model.md).
+      const copy = { ...scoped };
+      expect(copy).not.toHaveProperty("params");
+      expect(copy._handleSegmentId).toBe("M0L0L0");
     });
   });
 

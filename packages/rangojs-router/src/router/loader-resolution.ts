@@ -986,6 +986,8 @@ export function setupLoaderAccess<TEnv>(
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
+      // A layout's or slot's ctx runs this call as its own segment
+      // (withSegmentScope), so the push function captures that segment.
       const segmentId = segmentPinOf(ctx as InternalHandlerContext<any, TEnv>);
 
       if (!segmentId) {
@@ -1056,7 +1058,7 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
   const handleStoreRef = _getRequestContext()?._handleStore;
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
-    // Handle case: return a push function bound to the current segment
+    // Handle case: return a push function bound to the current segment.
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;

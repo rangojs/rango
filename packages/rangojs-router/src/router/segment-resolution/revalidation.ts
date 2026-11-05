@@ -69,7 +69,7 @@ import { isRenderableLoading } from "../../types/boundaries.js";
 import { isLayoutLoaderCopy } from "../../client-urls/layout-loader-copies.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeSegmentHandler } from "../instrument.js";
-import { withReverseScope } from "../handler-context.js";
+import { withSegmentScope } from "../handler-context.js";
 import { trackStreamedHandler } from "./streamed-handler-boundary.js";
 import {
   track,
@@ -815,11 +815,19 @@ async function resolveParallelSlotComponent<TEnv>(
     } else {
       // Slot-keyed pushes — slot owns its own bucket, parent layout owns its
       // own. On slot-only revalidations the partial merge updates only the
-      // slot's bucket; the parent's bucket stays intact.
-      (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-        parallelId;
+      // slot's bucket; the parent's bucket stays intact. Pinned only while the
+      // handler runs: the entry's own ctx reads this pin after the walk, and a
+      // slot's id left there names the slot in its late pushes
+      // (withSegmentScope, router/handler-context.ts).
+      const internal = context as InternalHandlerContext<any, TEnv>;
+      const pinned = internal._currentSegmentId;
+      internal._currentSegmentId = parallelId;
       handlerRan = true;
-      const slotContext = withReverseScope(context, parallelEntry.reverseScope);
+      const slotContext = withSegmentScope(
+        context,
+        parallelId,
+        parallelEntry.reverseScope,
+      );
       const doneHandler = track(`handler:${parallelEntry.id}.${slot}`, 2);
       const run = () =>
         typeof handler !== "function"
@@ -858,6 +866,8 @@ async function resolveParallelSlotComponent<TEnv>(
         }
       } catch (error) {
         throw noteThrower(error, parallelId, "parallel");
+      } finally {
+        internal._currentSegmentId = pinned;
       }
     }
   }

@@ -20,6 +20,7 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  runAsSegment,
   scopeReverse,
   type ReverseScope,
   type ScopableReverse,
@@ -207,22 +208,55 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a layout's or parallel slot's handler gets: a prototype child of
- * the request's one handler ctx with its own `reverse` in the segment's
- * ReverseScope, so `.name` resolves in the module that declared the segment.
- * The scope rides the object, not the call frame: it holds after an `await`
- * and in a component the ctx is handed to. Every other field reads through
- * live (`_currentSegmentId` as resolution moves it, ctx.set values).
- * `_reverseScope` keys a "use cache" call that takes this ctx (cache-runtime.ts).
+ * The ctx a layout's, parallel slot's or intercept's handler gets: a prototype
+ * child of the request's one handler ctx that owns its segment.
+ *
+ * The segment rides the object, not the call frame, because the walker moves
+ * the shared `_currentSegmentId` on: it resolves the next segment while an
+ * async component this ctx was handed to is still rendering, so a push made
+ * after that component's `await` would otherwise file under — and a dev
+ * LateHandlePushError would name — whatever segment the walker pinned since.
+ *
+ * The child owns `use`: it calls the parent's as this segment's code
+ * (`runAsSegment`, server/context.ts), so the push function it returns and a
+ * loader it starts are filed under this segment however long after the
+ * handler returned. `_handleSegmentId` answers the same for readers that get
+ * the ctx without calling `use` (`segmentPinOf`: a "use cache" call's caller
+ * segment, a handler-invoked loader's owner).
+ *
+ * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
+ * the module that declared the segment (`_reverseScope` keys a "use cache"
+ * call that takes this ctx, cache-runtime.ts). Every other field reads
+ * through live (`_currentSegmentId` as resolution moves it, ctx.set values).
+ *
+ * Every layout, slot and intercept gets a child, scoped or not, so
+ * `{ ...ctx }` and `Object.keys(ctx)` see only the child's own fields
+ * (`_handleSegmentId`, `use`, and `reverse` + `_reverseScope` when scoped);
+ * `ctx.params`, `ctx.get` and the rest read through the prototype.
  */
-export function withReverseScope<C>(
+export function withSegmentScope<C extends object>(
   ctx: C,
+  segmentId: string,
   scope: ReverseScope | undefined,
 ): C {
-  if (scope === undefined) return ctx;
-  const scoped = Object.create(ctx as object);
-  scoped.reverse = scopeReverse((ctx as any).reverse, scope);
-  scoped._reverseScope = scope;
+  const scoped = Object.create(ctx) as C & {
+    _handleSegmentId: string;
+    use: unknown;
+    reverse?: unknown;
+    _reverseScope?: ReverseScope;
+  };
+  scoped._handleSegmentId = segmentId;
+  scoped.use = (item: unknown) =>
+    runAsSegment(segmentId, () =>
+      (ctx as { use: (value: unknown) => unknown }).use(item),
+    );
+  if (scope !== undefined) {
+    scoped.reverse = scopeReverse(
+      (ctx as { reverse: ScopableReverse }).reverse,
+      scope,
+    );
+    scoped._reverseScope = scope;
+  }
   return scoped;
 }
 
@@ -245,7 +279,7 @@ export function createReverseFunction(
 ): ScopableReverse {
   return (name, hrefParams, search, segmentScope) => {
     // A dot-local name from a segment's handler or loader resolves in the
-    // segment's own include scope (withReverseScope); everything else from
+    // segment's own include scope (withSegmentScope); everything else from
     // the route's name.
     const scope = name.startsWith(".") ? segmentScope : undefined;
     const pattern = scope
