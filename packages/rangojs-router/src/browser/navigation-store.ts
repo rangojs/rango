@@ -149,8 +149,7 @@ function getCacheInvalidationChannel(): BroadcastChannel | null {
  * apps — the document load `createHostRouter()` produces — re-renders from
  * scratch instead of restoring instantly. Closing here and reopening on pageshow
  * buys the restore; the price is that no invalidation arrives while the document
- * is frozen, which the owner settles on a persisted pageshow (see
- * `restored()` above).
+ * is frozen, which `cacheInvalidationOnRestore` settles on a persisted pageshow.
  */
 function closeCacheInvalidationChannel(): void {
   if (!cacheInvalidationChannel) return;
