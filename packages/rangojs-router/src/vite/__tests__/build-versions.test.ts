@@ -12,7 +12,9 @@
  * graph the importer of a/actions (a server action only client code imports).
  */
 import { posix } from "node:path";
-import { describe, expect, it } from "vitest";
+import { format } from "node:util";
+import debugFactory from "debug";
+import { describe, expect, it, vi } from "vitest";
 import {
   classifyExternal,
   computeRouterVersions,
@@ -1692,6 +1694,97 @@ describe("digestBundle", () => {
     expect(() => digestBundle(bundle, ROOT, read(missing), "SSR")).toThrow(
       "the SSR bundle lists assets/data-BBBBBBBB.txt, which is not in its output directory",
     );
+  });
+});
+
+// The map's chunk says so when the markers blank but no marker named the map:
+// a marker format the build does not know leaves every app's action list in
+// every router's version.
+describe("a chunk whose markers do not let the server-reference map through", () => {
+  const map = SERVER_REFERENCES;
+  const other = `${ROOT}/src/a.ts`;
+
+  // A marker form neither stripServerReferenceMap nor stripModulePaths knows.
+  const unknownMarker = [
+    "//#region src/a.ts",
+    "var a = 1;",
+    "//#endregion",
+    `//#region: \\0${map.slice(1)}`,
+    "var refs = { a: 1 };",
+  ].join("\n");
+
+  /**
+   * The debugger is created when the module loads, and the import at the top
+   * of this file ran with the namespace off: import the module again with it
+   * on and return the lines it logged.
+   */
+  const digestWithBuildDebug = async (
+    moduleIds: string[],
+    source: string,
+  ): Promise<string[]> => {
+    const log: string[] = [];
+    const previousLog = debugFactory.log;
+    const previousNamespaces = debugFactory.disable();
+    debugFactory.log = (...args: unknown[]) => log.push(format(...args));
+    debugFactory.enable("rango:build");
+    vi.resetModules();
+    try {
+      const fresh = await import("../discovery/build-versions.js");
+      fresh.digestBundle(
+        {
+          chunks: [{ fileName: "index.js", name: "index", moduleIds }],
+          assets: [],
+        },
+        ROOT,
+        (fileName) =>
+          fileName === "index.js"
+            ? new TextEncoder().encode(source)
+            : undefined,
+        "RSC",
+      );
+    } finally {
+      debugFactory.log = previousLog;
+      debugFactory.disable();
+      if (previousNamespaces) debugFactory.enable(previousNamespaces);
+      vi.resetModules();
+    }
+    return log;
+  };
+
+  it("names the chunk, so a third marker form shows up in the build", async () => {
+    const log = await digestWithBuildDebug([map, other], unknownMarker);
+    expect(log).toHaveLength(1);
+    expect(log[0]).toContain("the RSC chunk index.js");
+    expect(log[0]).toContain("no marker named the map");
+  });
+
+  it("says nothing when the map was found", async () => {
+    const log = await digestWithBuildDebug(
+      [map, other],
+      [
+        `//#region \\0${map.slice(1)}`,
+        "var refs = { a: 1 };",
+        "//#endregion",
+        "//#region src/a.ts",
+        "var a = 1;",
+        "//#endregion",
+      ].join("\n"),
+    );
+    expect(log).toEqual([]);
+  });
+
+  // A minified chunk has no markers to blank: keeping the map is expected.
+  it("says nothing for a chunk with no markers", async () => {
+    const log = await digestWithBuildDebug([map], "var refs={a:1};");
+    expect(log).toEqual([]);
+  });
+
+  it("says nothing for a chunk without the map", async () => {
+    const log = await digestWithBuildDebug(
+      [other],
+      "//#region src/a.ts\nvar a = 1;",
+    );
+    expect(log).toEqual([]);
   });
 });
 

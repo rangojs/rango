@@ -31,6 +31,7 @@ import {
   type RouterVersionsTable,
 } from "../../router-versions.js";
 import { escapeRegExp } from "../../regex-escape.js";
+import { createRangoDebugger, NS } from "../debug.js";
 import {
   ROUTER_VERSIONS_PLACEHOLDER,
   VIRTUAL_IDS,
@@ -41,6 +42,8 @@ import {
   VIRTUAL_LOADER_MANIFEST_ID,
   VIRTUAL_ROUTES_MANIFEST_ID,
 } from "./state.js";
+
+const debug = createRangoDebugger(NS.build);
 
 /** Import edges of one module, as the bundler resolved them. */
 export interface BuildModuleEdges {
@@ -796,10 +799,27 @@ export function digestBundle(
       };
     }
     const references: string[] = [];
-    const text = stripModulePaths(
-      stripServerReferenceMap(decoder.decode(bytes)),
-      chunk.moduleIds,
-    );
+    const source = decoder.decode(bytes);
+    const withoutMap = stripServerReferenceMap(source);
+    const text = stripModulePaths(withoutMap, chunk.moduleIds);
+    // The map is in this chunk and the bundler prints markers this build
+    // knows, yet none named the map: a marker format the stripping above does
+    // not know, which leaves every app's action list in every router's
+    // version (a new action in one app moves all of them). A minified build
+    // prints no markers and keeps the map by design.
+    if (
+      chunk.moduleIds.includes(SERVER_REFERENCES_MODULE_ID) &&
+      withoutMap === source &&
+      text !== withoutMap
+    ) {
+      debug?.(
+        "the %s chunk %s holds plugin-rsc's server-reference map and prints module markers, " +
+          "but no marker named the map: its body stays in every router's cache version, " +
+          "so a new action in one app moves every app's version",
+        label,
+        fileName,
+      );
+    }
     const blanked = reference
       ? text.replace(reference, (name) => {
           references.push(fileOfBaseName.get(name)!);

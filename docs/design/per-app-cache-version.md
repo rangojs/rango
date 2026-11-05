@@ -305,7 +305,10 @@ before hashing (`digestBundle`), each for a measured reason:
   This works on the bundler's module markers (below): the body runs from the
   map's marker to the next marker. A minified server build has none, and a
   map no marker follows is kept; both keep the map in the hash, which clears
-  more, never less.
+  more, never less. A chunk that prints markers this build knows, holds the
+  map, and has no marker naming it logs a line under the `rango:build`
+  namespace, naming the chunk: a bundler that prints a third form then shows
+  up in a build instead of only in versions that move.
 - **The paths in module markers** (`stripModulePaths`). The bundler prints
   each module's path above its code, and that path is about the build, not
   the code:
