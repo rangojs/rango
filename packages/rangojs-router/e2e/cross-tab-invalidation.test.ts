@@ -133,6 +133,83 @@ async function testCrossTabInvalidation(
   await pageC.close();
 }
 
+/**
+ * The cross-tab channel's page lifecycle. An open BroadcastChannel keeps the
+ * document out of the bfcache, so the store closes it on pagehide and reopens it
+ * on pageshow: a Back that crosses apps then restores the page instead of
+ * re-rendering it from scratch. Nothing in the page exposes the channel, so the
+ * suite wraps the global before any app script runs and records every instance
+ * and every close.
+ *
+ * The two events are dispatched by hand: Chromium under automation reports
+ * harness reasons only for a bfcache restore and never performs one, so the
+ * events the browser would fire are the half of the contract reachable here.
+ */
+async function testChannelPageLifecycle(page: Page, url: string) {
+  await page.addInitScript(() => {
+    interface RecordedChannel {
+      name: string;
+      closed?: boolean;
+    }
+    const w = window as unknown as {
+      BroadcastChannel: typeof BroadcastChannel;
+      __rangoChannels: RecordedChannel[];
+    };
+    const Native = w.BroadcastChannel;
+    w.__rangoChannels = [];
+    w.BroadcastChannel = class extends Native {
+      constructor(name: string) {
+        super(name);
+        w.__rangoChannels.push(this as unknown as RecordedChannel);
+      }
+
+      close(): void {
+        (this as unknown as RecordedChannel).closed = true;
+        super.close();
+      }
+    } as unknown as typeof BroadcastChannel;
+  });
+
+  const readChannels = () =>
+    page.evaluate(() =>
+      (
+        window as unknown as {
+          __rangoChannels: Array<{ name: string; closed?: boolean }>;
+        }
+      ).__rangoChannels.map((channel) => ({
+        name: channel.name,
+        closed: channel.closed === true,
+      })),
+    );
+
+  await page.goto(url);
+  await waitForHydration(page);
+
+  await expect.poll(async () => (await readChannels()).length).toBe(1);
+  expect(await readChannels()).toEqual([
+    { name: "rsc-router-cache-invalidation", closed: false },
+  ]);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new PageTransitionEvent("pagehide", { persisted: true }),
+    );
+  });
+  expect(await readChannels()).toEqual([
+    { name: "rsc-router-cache-invalidation", closed: true },
+  ]);
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new PageTransitionEvent("pageshow", { persisted: true }),
+    );
+  });
+  expect(await readChannels()).toEqual([
+    { name: "rsc-router-cache-invalidation", closed: true },
+    { name: "rsc-router-cache-invalidation", closed: false },
+  ]);
+}
+
 test.describe("cross-tab rango-state invalidation (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -143,6 +220,12 @@ test.describe("cross-tab rango-state invalidation (dev)", () => {
     context,
   }) => {
     await testCrossTabInvalidation(context, f.url("/"));
+  });
+
+  test("the cross-tab channel closes on pagehide and reopens on pageshow", async ({
+    page,
+  }) => {
+    await testChannelPageLifecycle(page, f.url("/link-behavior"));
   });
 });
 
@@ -158,5 +241,11 @@ test.describe("cross-tab rango-state invalidation (production)", () => {
     context,
   }) => {
     await testCrossTabInvalidation(context, f.url("/"));
+  });
+
+  test("the cross-tab channel closes on pagehide and reopens on pageshow", async ({
+    page,
+  }) => {
+    await testChannelPageLifecycle(page, f.url("/link-behavior"));
   });
 });

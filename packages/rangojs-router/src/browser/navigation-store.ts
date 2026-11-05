@@ -109,7 +109,23 @@ const CACHE_INVALIDATION_CHANNEL = "rsc-router-cache-invalidation";
 let cacheInvalidationChannel: BroadcastChannel | null = null;
 
 /**
- * Get or create the BroadcastChannel for cache invalidation
+ * What the page's store owes the channel across a close and reopen: the message
+ * handler to re-attach, and what a bfcache restore invalidates.
+ */
+interface CacheInvalidationChannelOwner {
+  attach(channel: BroadcastChannel | null): void;
+  restored(): void;
+}
+
+let cacheInvalidationOwner: CacheInvalidationChannelOwner | null = null;
+
+// The window whose pagehide/pageshow pair is bound. Keyed by the object rather
+// than a boolean so a test's fresh stubbed window binds its own pair.
+let cacheInvalidationLifecycleWindow: Window | null = null;
+
+/**
+ * Get or create the BroadcastChannel for cache invalidation, re-attaching the
+ * page's handler when the channel was closed on pagehide.
  */
 function getCacheInvalidationChannel(): BroadcastChannel | null {
   if (
@@ -120,8 +136,51 @@ function getCacheInvalidationChannel(): BroadcastChannel | null {
   }
   if (!cacheInvalidationChannel) {
     cacheInvalidationChannel = new BroadcastChannel(CACHE_INVALIDATION_CHANNEL);
+    cacheInvalidationOwner?.attach(cacheInvalidationChannel);
   }
   return cacheInvalidationChannel;
+}
+
+/**
+ * Close the channel as the document leaves the page.
+ *
+ * An open BroadcastChannel keeps the document out of the bfcache (the channel is
+ * a page feature the browser cannot re-create on restore), so a Back that crosses
+ * apps — the document load `createHostRouter()` produces — re-renders from
+ * scratch instead of restoring instantly. Closing here and reopening on pageshow
+ * buys the restore; the price is that no invalidation arrives while the document
+ * is frozen, which the owner settles on a persisted pageshow (see
+ * `restored()` above).
+ */
+function closeCacheInvalidationChannel(): void {
+  if (!cacheInvalidationChannel) return;
+  // Drop the handler before closing: a closed channel delivers nothing, and a
+  // reopened one re-attaches the page's own handler through the owner.
+  cacheInvalidationChannel.onmessage = null;
+  cacheInvalidationChannel.close();
+  cacheInvalidationChannel = null;
+}
+
+function handleCacheInvalidationPageShow(event: PageTransitionEvent): void {
+  // `persisted` is a bfcache restore: every broadcast sent while the document
+  // was frozen was missed, so the caches it still holds may be behind another
+  // tab. A first load has nothing to miss.
+  if (event.persisted) cacheInvalidationOwner?.restored();
+  getCacheInvalidationChannel();
+}
+
+/**
+ * Bind the pagehide/pageshow pair once per window. A test that stubs `window`
+ * without the event API gets no lifecycle: the channel then stays open, as it
+ * did before this pair existed.
+ */
+function bindCacheInvalidationLifecycle(): void {
+  if (typeof window === "undefined") return;
+  if (typeof window.addEventListener !== "function") return;
+  if (cacheInvalidationLifecycleWindow === window) return;
+  cacheInvalidationLifecycleWindow = window;
+  window.addEventListener("pagehide", closeCacheInvalidationChannel);
+  window.addEventListener("pageshow", handleCacheInvalidationPageShow);
 }
 
 /**
@@ -390,6 +449,10 @@ export function createNavigationStore(
     // Only broadcast if cross-tab sync is enabled
     if (!crossTabSync) return;
 
+    // Reopens a channel closed by pagehide: an invalidation that lands before
+    // the document is frozen must still reach the other tabs. Losing the
+    // restore for a mutation another tab would otherwise miss is the right
+    // trade, and the window is a task wide.
     const channel = getCacheInvalidationChannel();
     if (channel) {
       // Broadcast path and segment IDs - receiver checks for shared segments
@@ -406,60 +469,80 @@ export function createNavigationStore(
     }
   }
 
+  /**
+   * Another tab's invalidation. Runs as the channel's onmessage, and again
+   * whenever pageshow reopens the channel with the same handler.
+   */
+  function handleInvalidation(event: MessageEvent): void {
+    if (event.data?.type === "invalidate") {
+      const mutatedPath = event.data.path;
+      const mutatedSegmentIds: string[] = event.data.segmentIds ?? [];
+      const currentSegmentIds = segmentState.currentSegmentIds;
+
+      // Check for shared segments between tabs
+      // Routes sharing any segment (layout, loader, etc.) should invalidate together
+      const hasSharedSegment = mutatedSegmentIds.some((id) =>
+        currentSegmentIds.includes(id),
+      );
+
+      if (!hasSharedSegment) {
+        // No shared segments - routes are unrelated, ignore invalidation
+        return;
+      }
+
+      const rangoState = event.data.rangoState;
+      const stateCookieName = event.data.stateCookieName;
+      if (
+        typeof rangoState === "string" &&
+        typeof stateCookieName === "string"
+      ) {
+        if (stateCookieName !== getRangoStateCookieName()) return;
+        markHistoryStale();
+        if (adoptRangoState(rangoState)) {
+          // The sender carries a newer state (it rotated the shared
+          // cookie: invalidateClientCache() on either seat). Adopt it
+          // before flushing locally, whether or not the message is soft,
+          // so tabs cannot ping-pong rotations and obsolete each other's
+          // post-invalidation prefetches.
+          clearPrefetchCache(false);
+        } else if (event.data.soft === true) {
+          // A server action that rotated nothing: mark, never flush.
+          markPrefetchesStale();
+        } else {
+          clearPrefetchCache(true);
+        }
+      } else {
+        // Compatibility with an already-open tab running an older sender.
+        markCacheAsStaleInternal();
+      }
+
+      // Auto-refresh if enabled and callback is registered
+      if (crossTabAutoRefresh && crossTabRefreshCallback) {
+        crossTabRefreshCallback();
+      }
+    }
+  }
+
   // Set up cross-tab cache invalidation listener (only if enabled)
   if (crossTabSync) {
-    const channel = getCacheInvalidationChannel();
-    if (channel) {
-      channel.onmessage = (event) => {
-        if (event.data?.type === "invalidate") {
-          const mutatedPath = event.data.path;
-          const mutatedSegmentIds: string[] = event.data.segmentIds ?? [];
-          const currentSegmentIds = segmentState.currentSegmentIds;
-
-          // Check for shared segments between tabs
-          // Routes sharing any segment (layout, loader, etc.) should invalidate together
-          const hasSharedSegment = mutatedSegmentIds.some((id) =>
-            currentSegmentIds.includes(id),
-          );
-
-          if (!hasSharedSegment) {
-            // No shared segments - routes are unrelated, ignore invalidation
-            return;
-          }
-
-          const rangoState = event.data.rangoState;
-          const stateCookieName = event.data.stateCookieName;
-          if (
-            typeof rangoState === "string" &&
-            typeof stateCookieName === "string"
-          ) {
-            if (stateCookieName !== getRangoStateCookieName()) return;
-            markHistoryStale();
-            if (adoptRangoState(rangoState)) {
-              // The sender carries a newer state (it rotated the shared
-              // cookie: invalidateClientCache() on either seat). Adopt it
-              // before flushing locally, whether or not the message is soft,
-              // so tabs cannot ping-pong rotations and obsolete each other's
-              // post-invalidation prefetches.
-              clearPrefetchCache(false);
-            } else if (event.data.soft === true) {
-              // A server action that rotated nothing: mark, never flush.
-              markPrefetchesStale();
-            } else {
-              clearPrefetchCache(true);
-            }
-          } else {
-            // Compatibility with an already-open tab running an older sender.
-            markCacheAsStaleInternal();
-          }
-
-          // Auto-refresh if enabled and callback is registered
-          if (crossTabAutoRefresh && crossTabRefreshCallback) {
-            crossTabRefreshCallback();
-          }
-        }
-      };
-    }
+    cacheInvalidationOwner = {
+      attach(channel) {
+        if (channel) channel.onmessage = handleInvalidation;
+      },
+      restored() {
+        // Stale, not flushed and not refreshed: the restored page keeps the
+        // pixels the user expects Back to return, and the next navigation to any
+        // entry revalidates. Refreshing here would trade the instant restore for
+        // a fallback flash.
+        markHistoryStale();
+        markPrefetchesStale();
+      },
+    };
+    bindCacheInvalidationLifecycle();
+    // Attach even to a channel that is already open: a page with more than one
+    // store (a test, an embedded second router) hands the channel to the last
+    // one, as the plain onmessage assignment always did.
+    cacheInvalidationOwner.attach(getCacheInvalidationChannel());
   }
 
   const store: NavigationStore = {
