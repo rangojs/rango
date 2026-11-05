@@ -814,7 +814,7 @@ export function getRootScoped(): boolean {
  * module's route. Structural entries (layout, cache, parallel, wrapping
  * middleware) and the loaders they declare capture the scope where the DSL
  * defined them. Their handler gets a ctx whose `reverse` carries it
- * (withReverseScope, router/handler-context.ts), and their loaders' DSL
+ * (withSegmentScope, router/handler-context.ts), and their loaders' DSL
  * kickoff carries it in the loader scope (runInsideLoaderScope) for the
  * loader ctx the executor builds. Global names and mount-param autofill do
  * not change.
@@ -1742,13 +1742,42 @@ export function runAsSegment<R>(segmentId: string | undefined, fn: () => R): R {
 }
 
 /**
- * The segment code here runs for: the innermost runAsSegment scope, else
- * `ctx`'s pin (a handler the walker awaits).
+ * The segment code here runs for: the segment the ctx was made for
+ * (`_handleSegmentId`, the ctx a layout's or slot's handler is handed,
+ * router/handler-context.ts withSegmentScope), else the innermost
+ * runAsSegment scope, else `ctx`'s pin (a handler the walker awaits).
+ *
+ * The ctx's own segment comes first because it outlives the handler: a
+ * component the handler handed the ctx to is rendered after the walker moved
+ * the shared pin on to the next segment, and its push still belongs to the
+ * segment that made the ctx.
  */
 export function segmentPinOf(ctx: {
   _currentSegmentId?: string;
+  _handleSegmentId?: string;
 }): string | undefined {
-  return segmentPinALS.getStore() ?? ctx._currentSegmentId;
+  return (
+    ctx._handleSegmentId ?? segmentPinALS.getStore() ?? ctx._currentSegmentId
+  );
+}
+
+/**
+ * `segmentPinOf` for a `ctx.use` call: `receiver` is the ctx the method was
+ * called on (JS `this`), so a call through a handler's scoped ctx resolves
+ * that ctx's segment. A detached call (`const { use } = ctx`) has no
+ * receiver and falls back to the request's ctx, as every call did before the
+ * scoped ctx carried a segment.
+ */
+export function useSegmentPinOf(
+  receiver: unknown,
+  ctx: { _currentSegmentId?: string },
+): string | undefined {
+  const carrier = receiver as { _handleSegmentId?: string } | null | undefined;
+  const own =
+    carrier !== null && typeof carrier === "object"
+      ? carrier._handleSegmentId
+      : undefined;
+  return own ?? segmentPinOf(ctx);
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).

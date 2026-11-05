@@ -458,13 +458,20 @@ export type InternalHandlerContext<
   passthrough?: () => unknown;
   /** Current segment ID for handle data attribution. */
   _currentSegmentId?: string;
+  /**
+   * The segment the ctx was made for, on the ctx a layout's or parallel
+   * slot's handler is handed (withSegmentScope). It outlives the handler, so
+   * a push an async component makes after an `await` files under it rather
+   * than under the pin the walker moved on to (segmentPinOf).
+   */
+  _handleSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */
   _responseType?: string;
   /** Route name for cache key scoping (prevents cross-route collisions). */
   _routeName?: string;
   /**
    * The segment's ReverseScope on a layout's / parallel's ctx and its
-   * loaders' (withReverseScope): keys a "use cache" call taking the ctx.
+   * loaders' (withSegmentScope): keys a "use cache" call taking the ctx.
    */
   _reverseScope?: import("../server/context.js").ReverseScope;
   /**

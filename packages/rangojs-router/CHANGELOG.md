@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a late handle push names the layout or slot whose `ctx` it was handed
+
+**Before.** An async component a layout (or a parallel slot) handed its `ctx`
+to, pushing a handle after an `await`, threw `LateHandlePushError` naming the
+child route's segment (`…L0R0`) instead of the layout's (`…L0`):
+`ctx.use(Handle)` read the request ctx's `_currentSegmentId` when it was
+called, and the walker had pinned the route by then.
+
+**Now.** The `ctx` a layout's or parallel slot's handler is handed carries the
+segment the handler ran for, and a push made through it files there after the
+handler returned, so the dev message names the layout's segment. The push is
+still rejected (reserve the slot with `ctx.use(Handle).defer()` and resolve it
+from the component), production still shows no message, and a route handler's
+`ctx` is unchanged.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

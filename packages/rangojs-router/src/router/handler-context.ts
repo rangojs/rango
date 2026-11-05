@@ -209,20 +209,28 @@ function createPrerenderPassthroughFn(
 /**
  * The ctx a layout's or parallel slot's handler gets: a prototype child of
  * the request's one handler ctx with its own `reverse` in the segment's
- * ReverseScope, so `.name` resolves in the module that declared the segment.
- * The scope rides the object, not the call frame: it holds after an `await`
- * and in a component the ctx is handed to. Every other field reads through
- * live (`_currentSegmentId` as resolution moves it, ctx.set values).
- * `_reverseScope` keys a "use cache" call that takes this ctx (cache-runtime.ts).
+ * ReverseScope, so `.name` resolves in the module that declared the segment,
+ * and its own `_handleSegmentId`, the segment the handler runs for.
+ * Both ride the object, not the call frame: they hold after an `await` and in
+ * a component the ctx is handed to, which React renders after the walker
+ * moved the shared `_currentSegmentId` on. A handle push made there then
+ * files under the segment that made the ctx, not the last one pinned
+ * (segmentPinOf, server/context.ts). Every other field reads through live
+ * (ctx.set values). `_reverseScope` keys a "use cache" call that takes this
+ * ctx (cache-runtime.ts).
  */
-export function withReverseScope<C>(
+export function withSegmentScope<C>(
   ctx: C,
+  segmentId: string | undefined,
   scope: ReverseScope | undefined,
 ): C {
-  if (scope === undefined) return ctx;
+  if (segmentId === undefined && scope === undefined) return ctx;
   const scoped = Object.create(ctx as object);
-  scoped.reverse = scopeReverse((ctx as any).reverse, scope);
-  scoped._reverseScope = scope;
+  if (scope !== undefined) {
+    scoped.reverse = scopeReverse((ctx as any).reverse, scope);
+    scoped._reverseScope = scope;
+  }
+  if (segmentId !== undefined) scoped._handleSegmentId = segmentId;
   return scoped;
 }
 
@@ -245,7 +253,7 @@ export function createReverseFunction(
 ): ScopableReverse {
   return (name, hrefParams, search, segmentScope) => {
     // A dot-local name from a segment's handler or loader resolves in the
-    // segment's own include scope (withReverseScope); everything else from
+    // segment's own include scope (withSegmentScope); everything else from
     // the route's name.
     const scope = name.startsWith(".") ? segmentScope : undefined;
     const pattern = scope

@@ -9,7 +9,7 @@ import { expectConsole } from "./console-guard.js";
  * 3. a loader body (/loader, read with useLoader; its layout is synchronous);
  * 4. an async server component handed the route handler's ctx (/component)
  *    or a layout handler's ctx (/component-layout): LateHandlePushError, by
- *    design;
+ *    design, naming the segment whose handler made the ctx;
  * 5. the designed path for 4: the layout and route handlers reserve the
  *    slots with .defer() and an async component resolves them after its
  *    await (/defer).
@@ -421,16 +421,16 @@ export function runHandlesAfterAwaitTests(
       name: "route handler",
       path: "/component",
       link: "haa-link-component",
-      observed: "",
+      segment: /for segment "\w*R\d+" was pushed after/,
     },
     {
       name: "layout handler",
       path: "/component-layout",
       link: "haa-link-component-layout",
-      observed: " (observed: the dev message names the child route's segment)",
+      segment: /for segment "\w*L\d+" was pushed after/,
     },
   ]) {
-    test(`an async component given the ${variant.name}'s ctx that pushes after await wait(1000) throws LateHandlePushError on the document and on a navigation${variant.observed}`, async ({
+    test(`an async component given the ${variant.name}'s ctx that pushes after await wait(1000) throws LateHandlePushError on the document and on a navigation`, async ({
       page,
     }) => {
       test.setTimeout(TEST_TIMEOUT);
@@ -460,14 +460,12 @@ export function runHandlesAfterAwaitTests(
       } else {
         await expect(page.getByText(LATE_PUSH_MESSAGE).first()).toBeVisible();
         await expect(page.getByText(DEFER_HINT).first()).toBeVisible();
-        // The message names a route segment (an id ending in R<n>; a
-        // layout's ends in L<n>). For the layout variant that is the child
-        // route's, not the layout's: ctx.use(Handle) reads the request's one
-        // ctx's _currentSegmentId when it is called, after the await, by
-        // which time the route handler has run.
-        await expect(
-          page.getByText(/for segment "\w*R\d+" was pushed after/).first(),
-        ).toBeVisible();
+        // The message names the segment whose handler made the ctx: a
+        // route's id ends in R<n>, a layout's in L<n>. The ctx a layout hands
+        // its component carries the layout's segment, so the push after the
+        // component's await still files there after the walker has pinned the
+        // route under it.
+        await expect(page.getByText(variant.segment).first()).toBeVisible();
       }
 
       // Back onto the page before the error restores its title and crumb.
