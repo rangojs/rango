@@ -1742,18 +1742,13 @@ export function runAsSegment<R>(segmentId: string | undefined, fn: () => R): R {
 }
 
 /**
- * The segment code here runs for: the innermost runAsSegment scope, else the
- * segment `ctx` was scoped to (a layout's or parallel slot's ctx, which holds
- * after the walker moved on), else the request ctx's pin (a handler the
- * walker awaits).
+ * The segment code here runs for: the innermost runAsSegment scope, else
+ * `ctx`'s pin (a handler the walker awaits).
  */
 export function segmentPinOf(ctx: {
   _currentSegmentId?: string;
-  _handleSegmentId?: string;
 }): string | undefined {
-  return (
-    segmentPinALS.getStore() ?? ctx._handleSegmentId ?? ctx._currentSegmentId
-  );
+  return segmentPinALS.getStore() ?? ctx._currentSegmentId;
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).

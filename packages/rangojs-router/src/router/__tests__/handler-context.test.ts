@@ -589,11 +589,12 @@ describe("createReverseFunction", () => {
       );
     });
 
-    it("withSegmentScope: the scope and the segment ride the ctx; other fields read through live", () => {
+    it("withSegmentScope: the scope rides the ctx; other fields read through live", () => {
       const ctx = {
         params,
         reverse: routeReverse(),
         _currentSegmentId: "L0",
+        use: () => undefined,
       } as unknown as InternalHandlerContext<any, any>;
       const scope = { prefix: "account", rootScoped: false };
       const scoped = withSegmentScope(ctx, "M0L0L0", scope);
@@ -604,23 +605,38 @@ describe("createReverseFunction", () => {
       expect(scoped._currentSegmentId).toBe("L1");
       expect(scoped.params).toBe(params);
       expect(scoped._reverseScope).toBe(scope);
-      // The segment the push through this ctx files under holds too.
-      expect(scoped._handleSegmentId).toBe("M0L0L0");
-      expect(ctx._handleSegmentId).toBeUndefined();
       // The shared ctx keeps the route's resolution.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
     });
 
-    it("withSegmentScope: a segment without a reverse scope still carries the segment", () => {
+    it("withSegmentScope: a segment without a reverse scope still gets a child ctx", () => {
       const ctx = {
         reverse: routeReverse(),
+        use: () => undefined,
       } as unknown as InternalHandlerContext<any, any>;
       const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
       expect(scoped).not.toBe(ctx);
-      expect(scoped._handleSegmentId).toBe("M0L0L0R0");
       expect(scoped._reverseScope).toBeUndefined();
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
+    });
+
+    it("withSegmentScope: { ...ctx } copies what it copied before", () => {
+      const ctx = {
+        params,
+        reverse: routeReverse(),
+        use: () => undefined,
+      } as unknown as InternalHandlerContext<any, any>;
+      const scope = { prefix: "account", rootScoped: false };
+      // The scoped `use` is non-enumerable: a spread still carries exactly
+      // the scope's own fields (execution-model.md, "A streamed handler keeps
+      // its segment").
+      expect(
+        Object.keys({ ...withSegmentScope(ctx, "M0L0L0", scope) }),
+      ).toEqual(["reverse", "_reverseScope"]);
+      expect(
+        Object.keys({ ...withSegmentScope(ctx, "M0L0L0", undefined) }),
+      ).toEqual([]);
     });
   });
 

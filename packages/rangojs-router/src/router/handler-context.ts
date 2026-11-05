@@ -20,6 +20,7 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  runAsSegment,
   scopeReverse,
   type ReverseScope,
   type ScopableReverse,
@@ -214,10 +215,17 @@ function createPrerenderPassthroughFn(
  * moves the shared `_currentSegmentId` on while an async component the handler
  * handed this ctx to is still rendering, so a push made through this ctx after
  * an `await` would otherwise file under (and a LateHandlePushError name)
- * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
- * router/loader-resolution.ts), which holds after an `await` and in a
- * component the ctx is handed to.
+ * whatever segment the walker pinned since.
+ *
+ * The child owns `use` instead of expecting every caller to keep the receiver.
+ * A destructured `const { use } = ctx`, a `use` passed on as a callback and a
+ * wrapper installed on the request ctx's `use` that forwards only the item all
+ * drop `this`, and the request ctx's `use` would then resolve the push off
+ * itself (segmentPinOf, server/context.ts). The child's own `use` reads the
+ * parent's per call — a loader-cache interceptor installed there still sees
+ * the call — and runs it inside `runAsSegment(segmentId, …)`, the scope every
+ * `segmentPinOf` reader prefers over both pins. Non-enumerable: `{ ...ctx }`
+ * keeps copying the fields it copied before.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -230,11 +238,18 @@ export function withSegmentScope<C>(
   scope: ReverseScope | undefined,
 ): C {
   const scoped = Object.create(ctx as object) as C & {
-    _handleSegmentId: string;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
-  scoped._handleSegmentId = segmentId;
+  Object.defineProperty(scoped, "use", {
+    value: (item: unknown) =>
+      runAsSegment(segmentId, () =>
+        (ctx as { use: (i: unknown) => unknown }).use(item),
+      ),
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

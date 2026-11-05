@@ -35,16 +35,29 @@ const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
 const errors: string[] = [];
 
-/** An async server component pushing the ctx its handler handed it. */
+/**
+ * An async server component pushing the ctx its handler handed it. `shape`
+ * picks how it reaches `use`: as a method, destructured off the ctx, or
+ * passed on as a callback — each an ordinary call shape for a component.
+ */
 async function LatePush({
   ctx,
   label,
+  shape = "method",
 }: {
   ctx: HandlerContext;
   label: string;
+  shape?: "method" | "destructured" | "callback";
 }) {
   await new Promise((resolve) => setTimeout(resolve, 0));
-  ctx.use(Crumbs)(label);
+  if (shape === "destructured") {
+    const { use } = ctx;
+    use(Crumbs)(label);
+  } else if (shape === "callback") {
+    [ctx.use].forEach((use) => use(Crumbs)(label));
+  } else {
+    ctx.use(Crumbs)(label);
+  }
   return <span>{label}</span>;
 }
 
@@ -71,6 +84,30 @@ function makeRouter() {
             ],
           ),
           layout(
+            (ctx) => (
+              <div>
+                <LatePush ctx={ctx} label="layout" shape="destructured" />
+              </div>
+            ),
+            () => [
+              path("/component-layout-destructured", () => <p>page</p>, {
+                name: "componentLayoutDestructured",
+              }),
+            ],
+          ),
+          layout(
+            (ctx) => (
+              <div>
+                <LatePush ctx={ctx} label="layout" shape="callback" />
+              </div>
+            ),
+            () => [
+              path("/component-layout-callback", () => <p>page</p>, {
+                name: "componentLayoutCallback",
+              }),
+            ],
+          ),
+          layout(
             () => <section>slot frame</section>,
             () => [
               parallel({
@@ -78,6 +115,19 @@ function makeRouter() {
               }),
               path("/component-slot", () => <p>page</p>, {
                 name: "componentSlot",
+              }),
+            ],
+          ),
+          layout(
+            () => <section>slot frame</section>,
+            () => [
+              parallel({
+                "@detached": (ctx) => (
+                  <LatePush ctx={ctx} label="slot" shape="destructured" />
+                ),
+              }),
+              path("/component-slot-destructured", () => <p>page</p>, {
+                name: "componentSlotDestructured",
               }),
             ],
           ),
@@ -135,5 +185,29 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     const { errors: reported, matched } = await serve("/component");
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the layout's, for a destructured `use`", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-layout-destructured",
+    );
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("the layout's, for a `use` passed as a callback", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-layout-callback",
+    );
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("the slot's, for a destructured `use`", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-slot-destructured",
+    );
+    const slot = matched.find((id) => id.endsWith(".@detached"))!;
+    expect(latePushSegment(reported)).toBe(slot);
   });
 });
