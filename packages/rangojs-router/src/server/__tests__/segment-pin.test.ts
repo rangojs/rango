@@ -35,4 +35,18 @@ describe("segmentPinOf", () => {
     ).toBe("L0");
     expect(runAsSegment(undefined, () => segmentPinOf(ctx))).toBe("R0.@side");
   });
+
+  it("reads the ctx's own segment before the shared pin", () => {
+    // A layout's or slot's ctx carries its segment (withSegmentScope); the pin
+    // moved on to the route whose handler ran during an await.
+    expect(
+      segmentPinOf({ _handleSegmentId: "L0", _currentSegmentId: "R0" }),
+    ).toBe("L0");
+    // A scope still wins: it names the segment the code runs for.
+    expect(
+      runAsSegment("R0.@side", () =>
+        segmentPinOf({ _handleSegmentId: "L0", _currentSegmentId: "R0" }),
+      ),
+    ).toBe("R0.@side");
+  });
 });

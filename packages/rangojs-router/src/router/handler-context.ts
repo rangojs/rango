@@ -231,10 +231,18 @@ export function withSegmentScope<C>(
 ): C {
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
+    use?: any;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  // The receiver the push segment is read from is gone the moment a component
+  // destructures `use` or hands it on as a prop, which would file the push
+  // under whatever segment the walker pinned since. The child owns a `use`
+  // that closes over the child instead; it reads the parent's `use` at call
+  // time, so a wrapper installed after this ctx was built (the loader cache
+  // interceptor, segment-resolution/loader-cache.ts) still runs.
+  scoped.use = (item: unknown) => (ctx as any).use.call(scoped, item);
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

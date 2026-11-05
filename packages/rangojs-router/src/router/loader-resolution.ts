@@ -110,6 +110,10 @@ export type LoaderErrorCallback = (
  * receiver reads the ctx `use` was installed on, whose `_currentSegmentId`
  * the walker pins — a handler that built a smaller ctx with `use` copied onto
  * it (a Prerender handler forwarding to a shared page handler) included.
+ *
+ * A carried segment wins over the ambient scope: the ctx was handed to the
+ * code that pushed, so that code's segment is the answer even when the push
+ * happens inside another segment's `runAsSegment` scope.
  */
 function handlePushSegment(
   receiver: unknown,
@@ -117,11 +121,7 @@ function handlePushSegment(
 ): string | undefined {
   const carried = (receiver as { _handleSegmentId?: string } | undefined)
     ?._handleSegmentId;
-  return segmentPinOf(
-    carried === undefined
-      ? (installed as { _currentSegmentId?: string })
-      : { _handleSegmentId: carried },
-  );
+  return carried ?? segmentPinOf(installed as { _currentSegmentId?: string });
 }
 
 /**
@@ -514,6 +514,13 @@ function createLoaderExecutor<TEnv>(
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
+  /**
+   * The ctx `ctx.use` was called on, when it carries its segment
+   * (withSegmentScope): a loader a component starts through a layout's ctx
+   * files its handle pushes under the layout, not the segment the walker
+   * pinned since.
+   */
+  receiver?: HandlerContext<any, any>,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
@@ -532,6 +539,7 @@ function createLoaderExecutor<TEnv>(
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    receiver?: HandlerContext<any, any>,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -628,8 +636,10 @@ function createLoaderExecutor<TEnv>(
     // stale. Attributing to the owning route/layout segment gives handle
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
-    // starts anyway keeps the segment that registers it (loaderOwner).
-    const owningSegmentId = loaderOwner(ctx, loader.$$id);
+    // starts anyway keeps the segment that registers it (loaderOwner). The
+    // receiver's carried segment outranks the pin: a component a layout handed
+    // its ctx to starts the loader after the walker moved the pin on.
+    const owningSegmentId = loaderOwner(receiver ?? ctx, loader.$$id);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -1074,7 +1084,7 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    return useLoader(loader, null, this);
   } as typeof ctx.use;
 }
 

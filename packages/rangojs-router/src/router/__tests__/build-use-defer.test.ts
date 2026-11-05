@@ -7,6 +7,8 @@ import {
   createRequestContext,
   runWithRequestContext,
 } from "../../server/request-context.js";
+import { runAsSegment } from "../../server/context.js";
+import { withSegmentScope } from "../handler-context.js";
 import { createHandle } from "../../handle.js";
 import type { HandlerContext } from "../../types";
 
@@ -67,6 +69,25 @@ describe("setupBuildUse — ctx.use(Handle).defer() on the build path (D2)", () 
       push({ label: "Direct" });
       const segData = reqCtx._handleStore.getDataForSegment("R0");
       expect(segData[Breadcrumbs.$$id]).toEqual([{ label: "Direct" }]);
+    });
+  });
+
+  it("a layout's scoped ctx files its push under its own segment, even inside another segment's scope", async () => {
+    const reqCtx = makeReqCtx();
+    await runWithRequestContext(reqCtx, async () => {
+      const ctx = makeCtx("R0");
+      setupBuildUse(ctx);
+      const scoped = withSegmentScope(ctx, "L0", undefined);
+      // Destructured off the ctx, as a component handed the ctx gets it, and
+      // called while the walker is inside another segment's scope.
+      const { use } = scoped as any;
+      runAsSegment("R0", () => use(Breadcrumbs)({ label: "Layout" }));
+      expect(
+        reqCtx._handleStore.getDataForSegment("L0")[Breadcrumbs.$$id],
+      ).toEqual([{ label: "Layout" }]);
+      expect(Object.keys(reqCtx._handleStore.getDataForSegment("R0"))).toEqual(
+        [],
+      );
     });
   });
 });
