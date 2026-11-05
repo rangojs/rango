@@ -23,8 +23,14 @@ import {
   createReverseFunction,
   stripInternalParams,
   withReverseScope,
+  withSegmentPin,
 } from "../handler-context";
-import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import {
+  scopeReverse,
+  segmentPinOf,
+  type ReverseScope,
+} from "../../server/context.js";
+import { createHandle } from "../../handle.js";
 import type { InternalHandlerContext } from "../../types.js";
 
 beforeEach(() => {
@@ -607,6 +613,42 @@ describe("createReverseFunction", () => {
       // The shared ctx keeps the route's resolution.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
       expect(withReverseScope(ctx, undefined)).toBe(ctx);
+    });
+  });
+
+  describe("withSegmentPin", () => {
+    const Crumbs = createHandle<string>(undefined, "crumbs");
+    const Data = { __brand: "loader", $$id: "data" };
+
+    function baseCtx() {
+      const ctx = {
+        _currentSegmentId: "L0",
+        use: (item: unknown) =>
+          item === Crumbs
+            ? segmentPinOf(ctx)
+            : { loader: (item as { $$id: string }).$$id },
+      };
+      return ctx;
+    }
+
+    it("a handle push from the ctx keeps its segment after the shared pin moved on", async () => {
+      const ctx = baseCtx();
+      const pinned = withSegmentPin(ctx, "L0");
+      ctx._currentSegmentId = "L0R0";
+      await Promise.resolve();
+      expect(pinned.use(Crumbs)).toBe("L0");
+      // Destructured, as a component handed the ctx may do.
+      const { use } = pinned;
+      expect(use(Crumbs)).toBe("L0");
+      expect(ctx.use(Crumbs)).toBe("L0R0");
+    });
+
+    it("loaders and other fields read through", () => {
+      const ctx = baseCtx();
+      const pinned = withSegmentPin(ctx, "L0");
+      ctx._currentSegmentId = "L0R0";
+      expect(pinned.use(Data)).toEqual({ loader: "data" });
+      expect(pinned._currentSegmentId).toBe("L0R0");
     });
   });
 

@@ -421,16 +421,16 @@ export function runHandlesAfterAwaitTests(
       name: "route handler",
       path: "/component",
       link: "haa-link-component",
-      observed: "",
+      segment: /for segment "\w*R\d+" was pushed after/,
     },
     {
       name: "layout handler",
       path: "/component-layout",
       link: "haa-link-component-layout",
-      observed: " (observed: the dev message names the child route's segment)",
+      segment: /for segment "\w*L\d+" was pushed after/,
     },
   ]) {
-    test(`an async component given the ${variant.name}'s ctx that pushes after await wait(1000) throws LateHandlePushError on the document and on a navigation${variant.observed}`, async ({
+    test(`an async component given the ${variant.name}'s ctx that pushes after await wait(1000) throws LateHandlePushError on the document and on a navigation`, async ({
       page,
     }) => {
       test.setTimeout(TEST_TIMEOUT);
@@ -460,14 +460,11 @@ export function runHandlesAfterAwaitTests(
       } else {
         await expect(page.getByText(LATE_PUSH_MESSAGE).first()).toBeVisible();
         await expect(page.getByText(DEFER_HINT).first()).toBeVisible();
-        // The message names a route segment (an id ending in R<n>; a
-        // layout's ends in L<n>). For the layout variant that is the child
-        // route's, not the layout's: ctx.use(Handle) reads the request's one
-        // ctx's _currentSegmentId when it is called, after the await, by
-        // which time the route handler has run.
-        await expect(
-          page.getByText(/for segment "\w*R\d+" was pushed after/).first(),
-        ).toBeVisible();
+        // The message names the segment whose ctx the component was given:
+        // a route's id ends in R<n>, a layout's in L<n>. The layout's ctx
+        // keeps its segment after the await, though the walker has moved on
+        // to the child route by then.
+        await expect(page.getByText(variant.segment).first()).toBeVisible();
       }
 
       // Back onto the page before the error restores its title and crumb.

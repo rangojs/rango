@@ -2610,10 +2610,24 @@ own segment for that wait and puts the previous pin back after it
 (`resolveOrphanLayout`). A push function bound before the await
 (`const push = ctx.use(Handle)`) was always filed right.
 
+A layout's or slot's ctx outlives its wait, though: the handler can hand it
+to an async server component, which React renders after the walker has moved
+on to the child route. Such a component pushing after an `await` is too late
+anyway (`LateHandlePushError`; `ctx.use(Handle).defer()` is the designed
+path), but the dev message named the child route's segment, read from the
+shared pin. So the handler gets `withSegmentPin(ctx, segmentId)`
+(`router/handler-context.ts`, under its `withReverseScope` child): a
+prototype child whose `use(Handle)` runs the base `use` inside
+`runAsSegment(segmentId, …)`, wherever and whenever it is called. A loader
+read through it is unchanged, and a route's handler still gets the request's
+ctx itself.
+
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader
 the handler starts, a `"use cache"` call, a loader started from a loader body
-after an await; `{ ...ctx }` in a `loading()` route) and
+after an await; `{ ...ctx }` in a `loading()` route),
+`testing/__tests__/serve-shell-request-layout-ctx-late-push.rsc-test.tsx` (a
+late push from a layout's and a slot's ctx names their segment) and
 `server/__tests__/segment-pin.test.ts`.
 
 ### Cache-safety contract for context variables
