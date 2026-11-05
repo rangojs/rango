@@ -529,6 +529,23 @@ export function peekShortCode(type: ShortCodeType, ahead: number): string {
   return nextShortCode(store, type, false, ahead);
 }
 
+/**
+ * The segment id of a parallel slot on `entry`: `${entry.shortCode}.${slot}`.
+ * One owner because a copy that drifts costs a whole tree: a revalidation map
+ * keyed an orphan's slot by its parent while the walker keyed it by the orphan,
+ * so a revalidate() rule matched no segment. Slot names cannot hold "."
+ * (assertValidSlotName, route-definition/dsl-helpers.ts), which keeps the
+ * separator unambiguous for the client readers (loaderParentId,
+ * browser/react/filter-segment-order.ts). The id is wire-visible: a response
+ * names its segments by it, so the shape cannot change.
+ */
+export function slotSegmentId(
+  entry: Pick<EntryData, "shortCode">,
+  slot: string,
+): string {
+  return `${entry.shortCode}.${slot}`;
+}
+
 export const getContext = (): {
   context: AsyncLocalStorage<HelperContext>;
   getStore: () => HelperContext;

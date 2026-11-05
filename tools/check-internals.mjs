@@ -42,6 +42,13 @@
 //     type` and specifier lists that are all `type` are erased by the build
 //     and not counted. Scope: non-test source.
 //
+//  5. parallel-slot-id. The parallel-slot segment id, `${x.shortCode}.${y}`,
+//     outside server/context.ts, which owns it as slotSegmentId. A copy that
+//     drifts costs a whole tree: one keyed an orphan's slot by its parent
+//     while the walker keyed it by the orphan, so a revalidate() rule matched
+//     no segment. The helper's own body is the one spelling. Scope: non-test
+//     source under packages/rangojs-router/src.
+//
 // Parsing is syntax-only (no Program/TypeChecker), in the style of
 // check-no-external-store.mjs, so the scan stays fast. Rule 1 resolves "typed
 // RequestContext" from declarations in the same file, up to MAX_DEPTH hops:
@@ -61,7 +68,8 @@
 // (`Object.setPrototypeOf`, `__proto__`); rule 2 does not see a computed
 // specifier, a renamed `vi`, or a path into the router source by an alias,
 // an absolute path (`/@fs/...`) or node_modules; rule 3 does not see a name
-// assembled at runtime.
+// assembled at runtime; rule 5 does not see a shortCode read into a variable
+// first (`const code = entry.shortCode`) or a slot id joined at runtime.
 //
 // Usage:
 //   node tools/check-internals.mjs           check against the baseline
@@ -96,17 +104,21 @@ export const RULE_OBJECT_CREATE = "request-context-object-create";
 export const RULE_VI_MOCK = "internal-vi-mock";
 export const RULE_RSC_LITERAL = "rsc-param-literal";
 export const RULE_BROWSER_IMPORT = "browser-import-into-server";
+export const RULE_SLOT_ID = "parallel-slot-id";
 const RULES = [
   RULE_OBJECT_CREATE,
   RULE_VI_MOCK,
   RULE_RSC_LITERAL,
   RULE_BROWSER_IMPORT,
+  RULE_SLOT_ID,
 ];
 
 /** The one module allowed to derive a request context (plan S5, deriveRenderPass). */
 const RENDER_PASS_FILE = `${SRC}server/render-pass.ts`;
 /** The one module allowed to spell the `_rsc_*` wire parameter names (plan S16). */
 const WIRE_PARAMS_FILE = `${SRC}wire-params.ts`;
+/** The one module allowed to build a parallel slot's segment id (slotSegmentId). */
+const SLOT_ID_FILE = `${SRC}server/context.ts`;
 
 const SERVER_DIRS = ["server/", "rsc/", "router/", "cache/"].map(
   (d) => SRC + d,
@@ -187,6 +199,23 @@ function skipWrappers(expr) {
     expr = expr.expression;
   }
   return expr;
+}
+
+/**
+ * True for the parallel-slot id shape, a template literal whose first
+ * substitution is a `shortCode` member access and whose next quasi is exactly
+ * ".". `${x.shortCode}.notFound` (quasi ".notFound") and the shortCode
+ * concatenations in server/context.ts (no "." separator) do not match.
+ */
+function isParallelSlotIdTemplate(node) {
+  const [first, second] = node.templateSpans;
+  if (first === undefined || second === undefined) return false;
+  if (node.head.text !== "" || first.literal.text !== ".") return false;
+  const expression = skipWrappers(first.expression);
+  return (
+    ts.isPropertyAccessExpression(expression) &&
+    expression.name.text === "shortCode"
+  );
 }
 
 function isTestFile(relPath) {
@@ -545,6 +574,7 @@ export function scanSource(relPath, text) {
       text.includes("Object.create"),
     viMock: ROOTS.some((r) => relPath.startsWith(r)) && VI_MOCK_TEXT.test(text),
     literal: inSrc && relPath !== WIRE_PARAMS_FILE && text.includes("_rsc_"),
+    slotId: inSrc && relPath !== SLOT_ID_FILE && text.includes("shortCode"),
     // An L0 helper imports its browser/ siblings without "browser" in the path.
     browserImport:
       inSrc &&
@@ -629,6 +659,16 @@ export function scanSource(relPath, text) {
         node.moduleReference.expression.text,
         "import = require",
       );
+    }
+
+    if (want.slotId && ts.isTemplateExpression(node)) {
+      if (isParallelSlotIdTemplate(node)) {
+        push(
+          node,
+          RULE_SLOT_ID,
+          `${node.getText(sf).split("\n")[0].slice(0, 60)} builds a parallel slot id outside server/context.ts`,
+        );
+      }
     }
 
     if (want.literal) {
