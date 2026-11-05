@@ -28,6 +28,15 @@ function IsLoading() {
 }
 ```
 
+A selector's value is compared when the store notifies. A plain object or an
+array compares by its own keys, so a selector that rebuilds one
+(`(nav) => ({ state: nav.state })`) keeps its reference while the content is
+equal. Everything else compares by identity: `(nav) => nav.location` returns
+the page's `URL` object and re-renders when the page's location moves, while a
+selector that builds a new instance each call
+(`(nav) => new URL(nav.location)`) re-renders on every notification — select a
+field (`(nav) => nav.location.href`) or the whole state instead.
+
 #### Navigation versus server action
 
 `state` is `"loading"` while a navigation is in flight and also while a server

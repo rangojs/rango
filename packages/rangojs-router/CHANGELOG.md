@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `useNavigation` with a selector that returns the location follows the page
+
+**Before.** `useNavigation((nav) => nav.location)` kept the URL it first
+rendered, for the life of the component. A selector's value was compared by its
+own enumerable keys, and a `URL` has none, so any two URLs compared equal and
+the hook never set a new value. A `URLSearchParams`, `Date`, `Map` or any other
+class instance a selector returned behaved the same way. The full state
+(`useNavigation()`) and primitive selectors (`(nav) => nav.location.href`) were
+not affected, and neither were `useParams`, `useHandle` and `useAction`, whose
+selectors return plain objects or primitives.
+
+```tsx
+// Before: shows the first URL it rendered, for the life of the component
+const location = useNavigation((nav) => nav.location);
+
+// Now: the page on screen's URL, moving with the page
+const location = useNavigation((nav) => nav.location);
+```
+
+**Now.** A selector value that is a plain object or an array still compares by
+its keys; every other object compares by identity, so a URL-returning selector
+updates when the location moves. A selector that builds a plain object on every
+call keeps its value while its keys are equal, as before; one that builds a
+class instance (`(nav) => new URL(nav.location)`) takes a new value on every
+notification, so select a field instead (`(nav) => nav.location.href`).
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
