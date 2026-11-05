@@ -633,11 +633,11 @@ describe("createReverseFunction", () => {
         },
       } as unknown as InternalHandlerContext<any, any>;
       const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
-      const push = scoped.use as unknown as () => void;
-      // The walker moves the shared pin on after the handler returned.
+      // A `use` taken off the ctx before the walker moves on, a destructured
+      // one, and a spread copy of the ctx.
+      const taken = scoped.use as unknown as () => void;
       ctx._currentSegmentId = "M0L0L0R0";
-      // A method call, a destructured `use`, and a spread copy of the ctx.
-      push();
+      taken();
       const { use } = scoped;
       (use as unknown as () => void)();
       const copy = { ...(scoped as any) };
