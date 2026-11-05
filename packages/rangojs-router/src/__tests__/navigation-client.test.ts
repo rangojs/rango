@@ -8,6 +8,7 @@ const {
   consumeInflightPrefetchMock,
   buildPrefetchKeyMock,
   buildSourceKeyMock,
+  buildInterceptKeyMock,
   cancelAllPrefetchesMock,
   disableFragmentPassthroughMock,
   isFragmentPassthroughEnabledMock,
@@ -25,6 +26,22 @@ const {
   buildSourceKeyMock: vi.fn(
     (rangoState: string, sourceHref: string, target: URL) =>
       rangoState + "\0" + sourceHref + "\0" + target.pathname + target.search,
+  ),
+  buildInterceptKeyMock: vi.fn(
+    (
+      rangoState: string,
+      interceptSourceHref: string,
+      clientHref: string,
+      target: URL,
+    ) =>
+      rangoState +
+      "\0i:" +
+      interceptSourceHref +
+      "\0" +
+      clientHref +
+      "\0" +
+      target.pathname +
+      target.search,
   ),
   cancelAllPrefetchesMock: vi.fn(),
   disableFragmentPassthroughMock: vi.fn(),
@@ -65,12 +82,14 @@ vi.mock("../browser/prefetch/cache", async (importOriginal) => {
     consumeInflightPrefetch: consumeInflightPrefetchMock,
     buildPrefetchKey: buildPrefetchKeyMock,
     buildSourceKey: buildSourceKeyMock,
+    buildInterceptKey: buildInterceptKeyMock,
     disableFragmentPassthrough: disableFragmentPassthroughMock,
     isFragmentPassthroughEnabled: isFragmentPassthroughEnabledMock,
     isPrefetchStale: isPrefetchStaleMock,
     // Pure over the shapes the real cache remembered.
     paramsCandidateKeys: actual.paramsCandidateKeys,
     pageMatchesParamsLabel: actual.pageMatchesParamsLabel,
+    absoluteHref: actual.absoluteHref,
   };
 });
 
@@ -1058,6 +1077,148 @@ describe("navigation-client", () => {
       expect(consumePrefetchMock).toHaveBeenCalledTimes(2);
       expect(result.payload.metadata).toMatchObject({
         body: "wildcard-cached",
+      });
+    });
+
+    // A click inside an open intercept adopts the prefetch sent from inside
+    // that intercept and nothing else: an answer from any other slot was
+    // rendered for a request this click is not (prefetch/cache.ts
+    // buildInterceptKey).
+    describe("inside an open intercept", () => {
+      const click = {
+        targetUrl: "/item/3",
+        previousUrl: "/item/2",
+        segmentIds: ["root"],
+        interceptSourceUrl: "/list/1",
+      };
+      const interceptKey = expect.stringContaining(
+        "\0i:http://localhost/list/1\0http://localhost/item/2\0/item/3?_rsc_partial=true",
+      );
+
+      it("adopts the prefetch sent from inside it, with no fetch and no re-decode", async () => {
+        consumePrefetchMock.mockReturnValue(
+          makeEntry({ metadata: { matched: [], diff: [] } }, "source"),
+        );
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+        const createFromFetch = vi.fn();
+        const client = createNavigationClient({ createFromFetch } as any);
+
+        const result = await client.fetchPartial(click);
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(createFromFetch).not.toHaveBeenCalled();
+        expect(result.payload.metadata).toMatchObject({
+          matched: [],
+          diff: [],
+        });
+        // The intercept slot only: the wildcard and source slots hold other
+        // requests' answers.
+        expect(consumePrefetchMock).toHaveBeenCalledTimes(1);
+        expect(consumePrefetchMock).toHaveBeenCalledWith(interceptKey, {
+          acceptStale: false,
+        });
+      });
+
+      it("adopts an in-flight prefetch sent from inside it", async () => {
+        consumeInflightPrefetchMock.mockReturnValue(
+          Promise.resolve(makeEntry({ metadata: { matched: [], diff: [] } })),
+        );
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+        const client = createNavigationClient({
+          createFromFetch: vi.fn(),
+        } as any);
+
+        const result = await client.fetchPartial(click);
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(result.payload.metadata).toMatchObject({
+          matched: [],
+          diff: [],
+        });
+        expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
+        expect(consumeInflightPrefetchMock).toHaveBeenCalledWith(interceptKey);
+      });
+
+      it("fetches rather than adopting an entry outside the intercept, and looks nowhere else", async () => {
+        // Any other key would return this entry: only the intercept slot is
+        // asked, so the answer is a miss.
+        consumePrefetchMock.mockImplementation((key?: string) =>
+          key && key.includes("\0i:")
+            ? null
+            : makeEntry({ metadata: { body: "another request's page" } }),
+        );
+        const fetchMock = vi.fn(
+          async () => new Response("fresh", { status: 200 }),
+        );
+        vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+        const client = createNavigationClient({
+          createFromFetch: async (responsePromise: Promise<Response>) => {
+            await responsePromise;
+            return { metadata: { matched: [], diff: [] } };
+          },
+        } as any);
+
+        const result = await client.fetchPartial(click);
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(result.payload.metadata).toMatchObject({
+          matched: [],
+          diff: [],
+        });
+        expect(consumePrefetchMock.mock.calls.map(([key]) => key)).toEqual([
+          interceptKey,
+        ]);
+        // No wildcard inflight fallback either.
+        expect(consumeInflightPrefetchMock).toHaveBeenCalledTimes(1);
+        expect(consumeInflightPrefetchMock).toHaveBeenCalledWith(interceptKey);
+      });
+
+      it("fetches with no prefetch lookup at all for a stale revalidation", async () => {
+        const fetchMock = vi.fn(
+          async () => new Response("fresh", { status: 200 }),
+        );
+        vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+        const client = createNavigationClient({
+          createFromFetch: async (responsePromise: Promise<Response>) => {
+            await responsePromise;
+            return { metadata: { matched: [], diff: [] } };
+          },
+        } as any);
+
+        await client.fetchPartial({ ...click, staleRevalidation: true });
+
+        expect(consumePrefetchMock).not.toHaveBeenCalled();
+        expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("fetches rather than falling back to the other slots for an unparseable source", async () => {
+        // No intercept slot can be built from this source, and the wildcard
+        // and source slots hold other requests' answers: nothing is adoptable.
+        consumePrefetchMock.mockReturnValue(
+          makeEntry({ metadata: { body: "another request's page" } }),
+        );
+        consumeInflightPrefetchMock.mockReturnValue(
+          Promise.resolve(makeEntry({ metadata: { body: "inflight" } })),
+        );
+        const fetchMock = vi.fn(
+          async () => new Response("fresh", { status: 200 }),
+        );
+        vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+        const client = createNavigationClient({
+          createFromFetch: async (responsePromise: Promise<Response>) => {
+            await responsePromise;
+            return { metadata: { matched: [], diff: [] } };
+          },
+        } as any);
+
+        await client.fetchPartial({ ...click, interceptSourceUrl: "http://" });
+
+        expect(consumePrefetchMock).not.toHaveBeenCalled();
+        expect(consumeInflightPrefetchMock).not.toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
       });
     });
 

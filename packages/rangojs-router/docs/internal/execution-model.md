@@ -148,9 +148,25 @@ keep the item left. The page under the slot takes the source's URL and params
 showed `/list/1`'s loader data; from `/item/1` over `/list/1?page=2`, a link
 to `/list/1` kept page 2's. A `Prerender()` record decides its segments the
 same way (`cache-lookup.ts` `storedEntrySends`). Back/Forward onto an
-intercept entry it must fetch sends the same request. Such a click never
-adopts a prefetch (`navigation-client.ts` `canUsePrefetch`) or the history
-cache.
+intercept entry it must fetch sends the same request. Such a click adopts no
+history entry, and adopts a prefetch only from the slot that same request
+filled (`prefetch/cache.ts` `buildInterceptKey`).
+
+A prefetch sent while an intercept is open is that request too: it carries
+`X-RSC-Router-Intercept-Source`, names the committed URL (the modal's own) as
+`X-RSC-Router-Client-Path`, leaves `_rsc_rt` out, and is stored under
+`rangoState\0i:<source>\0<clientPath>\0<target>?_rsc_segments=...` and
+nowhere else (`prefetch/fetch.ts` `interceptSlotKey`). So the click inside
+the modal commits it with no second request, and the scoping is what keeps
+every other click honest: a prefetch made with no intercept open sits in the
+wildcard or source slot, which an intercept navigation never looks under, and
+one made inside the modal is never looked under once it closed. Each would
+otherwise commit an answer rendered against a request the click is not — a
+full page where the modal belongs, or a diff against a tree the page does not
+hold. The response's `x-rsc-prefetch-scope` header cannot widen the slot for
+the same reason: the key already names the source, the client path and the
+held tree. Pinned by the `intercept-history` e2e in both apps (dev and
+production) and by `prefetch-fetch`/`navigation-client` unit cases.
 
 | Target                                     | What the client sends                  | Result                                                                       |
 | ------------------------------------------ | -------------------------------------- | ---------------------------------------------------------------------------- |
@@ -1554,10 +1570,10 @@ request's own URL and middleware, so a forged value runs and skips no
 middleware; it can make the server re-render more or less of what the client
 claims to hold, which `_rsc_segments` can already do. A value of another
 origin, or one that does not parse, is ignored. It never names an intercept's
-source: a navigation from an open modal names its source in
-`X-RSC-Router-Client-Path` and leaves `_rsc_rt` out (`partial-update.ts`),
-and a fill or an action from a modal sends both, so the server ignores it
-beside `X-RSC-Router-Intercept-Source`.
+source: a navigation or a prefetch from an open modal names its source in
+`X-RSC-Router-Intercept-Source` and leaves `_rsc_rt` out (`partial-update.ts`,
+`prefetch/fetch.ts`), and a fill or an action from a modal sends both, so the
+server ignores it beside `X-RSC-Router-Intercept-Source`.
 
 Leaving a page, the server compares URLs the browser names (the header,
 `_rsc_rt`) with the request's own, so `resolveNavigation` writes their query

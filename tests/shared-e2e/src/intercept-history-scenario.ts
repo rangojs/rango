@@ -21,6 +21,12 @@ import {
  * to the source's route shows that page's data even when its params equal
  * the intercept's.
  *
+ * A prefetch sent while an intercept is open names the intercept and is kept
+ * for that context alone, so the click inside the modal adopts it and no
+ * other click can (the modal's prefetching link); a prefetch made with no
+ * intercept open is never adopted inside one, and one made inside is never
+ * adopted once the modal closed.
+ *
  * Fixture: intercept-held* in each app (the handler intercept links to the
  * next handler item, to the index, to /away, a page no intercept targets,
  * and to /list/<its id>, whose page shows its loader's id and opens
@@ -113,6 +119,54 @@ export function runInterceptHistoryTests(
     await expect(page.getByTestId("ih-handler-page")).toHaveCount(0);
     await expect(page.getByTestId("ih-away")).toHaveCount(0);
     expect(await isMarkedDocument(page)).toBe(true);
+  }
+
+  /**
+   * Every partial request for `pathname`, in order: the page it named as the
+   * client path, the intercept source it named (null for none), whether it
+   * was a prefetch, and whether it was a `prefetch: false` fill.
+   */
+  function recordPartials(
+    page: Page,
+    pathname: string,
+  ): Array<{
+    source: string;
+    interceptSource: string | null;
+    prefetch: string | null;
+    fill: boolean;
+  }> {
+    const sent: Array<{
+      source: string;
+      interceptSource: string | null;
+      prefetch: string | null;
+      fill: boolean;
+    }> = [];
+    page.on("request", (req) => {
+      const url = new URL(req.url());
+      if (url.pathname !== pathname || !url.searchParams.has("_rsc_partial")) {
+        return;
+      }
+      const headers = req.headers();
+      const pageNamed = headers["x-rsc-router-client-path"];
+      const interceptNamed = headers["x-rsc-router-intercept-source"];
+      sent.push({
+        source: pageNamed ? new URL(pageNamed, page.url()).pathname : "?",
+        interceptSource: interceptNamed
+          ? new URL(interceptNamed, page.url()).pathname
+          : null,
+        prefetch: headers["x-rango-prefetch"] ?? null,
+        fill: url.searchParams.has("_rsc_fill"),
+      });
+    });
+    return sent;
+  }
+
+  /** The next partial response for `pathname` (a prefetch or a click). */
+  function waitForPartial(page: Page, pathname: string) {
+    return page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === pathname && url.searchParams.has("_rsc_partial");
+    });
   }
 
   async function expectIndexAlone(page: Page): Promise<void> {
@@ -304,6 +358,88 @@ export function runInterceptHistoryTests(
     await expect(page.getByTestId("ih-handler-modal")).toHaveCount(0);
     await expect(page.getByTestId("ih-list-data")).toHaveText("2");
     expect(await isMarkedDocument(page)).toBe(true);
+  });
+
+  test("a link inside the intercept adopts the prefetch sent from inside it, and the click sends no request", async ({
+    page,
+  }) => {
+    const item = `${options.basePath}/handler/2`;
+    await openIntercept(page);
+    await markDocument(page);
+    const requests = recordPartials(page, item);
+
+    const prefetched = waitForPartial(page, item);
+    await page.getByTestId("ih-handler-intercept-pf").hover();
+    const response = await prefetched;
+    await response.finished();
+
+    // The prefetch named the intercept it was sent from (the page under the
+    // modal) and the modal's own URL as the client path: the request a click
+    // inside the modal sends.
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.prefetch).toBe("intent");
+    expect(requests[0]!.interceptSource).toBe(options.basePath);
+    expect(requests[0]!.source).toBe(`${options.basePath}/handler/1`);
+
+    await page.getByTestId("ih-handler-intercept-pf").click();
+
+    await expectInterceptOverIndex(page, 2);
+    // Adopted: the click added no request for the item.
+    expect(requests.filter((sent) => !sent.fill)).toHaveLength(1);
+  });
+
+  test("a prefetch made outside the intercept is not adopted inside it", async ({
+    page,
+  }) => {
+    const item = `${options.basePath}/handler/2`;
+    await openIndex(page);
+    await markDocument(page);
+    const requests = recordPartials(page, item);
+
+    // From the index with no intercept open: a full page's answer.
+    const prefetched = waitForPartial(page, item);
+    await page.getByTestId("ih-open-handler-2-pf").hover();
+    await (await prefetched).finished();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.interceptSource).toBeNull();
+
+    await page.getByTestId("ih-open-handler").click();
+    await expect(page.getByTestId("ih-handler-modal")).toBeVisible();
+    await page.getByTestId("ih-handler-intercept-next").click();
+
+    await expectInterceptOverIndex(page, 2);
+    // The click fetched from inside the intercept: the index's answer was
+    // rendered for the page, not for the modal over it.
+    const clicks = requests.filter((sent) => sent.prefetch === null);
+    expect(clicks).toHaveLength(1);
+    expect(clicks[0]!.interceptSource).toBe(options.basePath);
+    expect(clicks[0]!.source).toBe(`${options.basePath}/handler/1`);
+  });
+
+  test("a prefetch made inside the intercept is not adopted once it closed", async ({
+    page,
+  }) => {
+    const item = `${options.basePath}/handler/2`;
+    await openIntercept(page);
+    await markDocument(page);
+    const requests = recordPartials(page, item);
+
+    const prefetched = waitForPartial(page, item);
+    await page.getByTestId("ih-handler-intercept-pf").hover();
+    await (await prefetched).finished();
+    expect(requests).toHaveLength(1);
+
+    await page.getByTestId("ih-handler-intercept-to-index").click();
+    await expectIndexAlone(page);
+
+    await page.getByTestId("ih-open-handler-2").click();
+
+    await expectInterceptOverIndex(page, 2);
+    // The index's click fetched: the modal's answer named the modal's tree.
+    const clicks = requests.filter((sent) => sent.prefetch === null);
+    expect(clicks).toHaveLength(1);
+    expect(clicks[0]!.interceptSource).toBeNull();
+    expect(clicks[0]!.source).toBe(options.basePath);
   });
 
   test("a reload after a same-route link inside the intercept renders that item's full page", async ({

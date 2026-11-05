@@ -11,6 +11,8 @@ let shownRewriteTarget: string | undefined;
 // window.location (a back/forward still loading); else the store follows
 // window.location, as it does once a navigation commits.
 let committedUrl: string | undefined;
+// The open intercept's source, as the store keeps it; null when none is open.
+let openIntercept: string | null = null;
 vi.mock("../browser/navigation-store-handle", () => ({
   getRegisteredStore: () => ({
     getHistoryEntryMemory: () =>
@@ -22,6 +24,7 @@ vi.mock("../browser/navigation-store-handle", () => ({
       currentUrl: committedUrl ?? window.location.href,
       currentSegmentIds: [],
     }),
+    getInterceptSourceUrl: () => openIntercept,
   }),
   getCommittedPage: () => committedPage,
 }));
@@ -58,6 +61,7 @@ const decodeMock = vi.fn(() => Promise.resolve({} as Record<string, unknown>));
 beforeEach(() => {
   decodeMock.mockClear();
   setPrefetchDecoder(decodeMock);
+  openIntercept = null;
 });
 
 const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
@@ -1894,5 +1898,164 @@ describe("prefetch in flight when an action marks prefetches stale", () => {
       return served!;
     });
     expect(isPrefetchStale(entry)).toBe(false);
+  });
+});
+
+describe("prefetch inside an open intercept", () => {
+  afterEach(() => {
+    openIntercept = null;
+    committedUrl = undefined;
+    clearPrefetchCache();
+    abortAllPrefetches();
+    resetPrefetchPolicy();
+    vi.unstubAllGlobals();
+    restoreGlobalProperty("window", originalWindowDescriptor);
+    restoreGlobalProperty("navigator", originalNavigatorDescriptor);
+  });
+
+  /**
+   * /item/2 open over /list/1: the page on screen is the intercept's own URL,
+   * its source is /list/1, and both are what the request names.
+   */
+  function insideIntercept(): void {
+    setupBrowser();
+    window.location.href = "http://localhost:4173/item/2";
+    (window.location as any).pathname = "/item/2";
+    committedUrl = "http://localhost:4173/item/2";
+    openIntercept = "/list/1";
+  }
+
+  const TARGET = "/item/3?_rsc_partial=true&_rsc_segments=A0&_rsc_v=v1";
+  const INTERCEPT_KEY = `v1:abc\0i:http://localhost:4173/list/1\0http://localhost:4173/item/2\0${TARGET}`;
+  // The wildcard key drops `_rsc_segments`: it is shared across pages.
+  const WILDCARD_KEY = "v1:abc\0/item/3?_rsc_partial=true&_rsc_v=v1";
+  const SOURCE_KEY = `v1:abc\0http://localhost:4173/item/2\0${TARGET}`;
+
+  function fetchOk(headers: Record<string, string> = {}) {
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(new Response("payload", { status: 200, headers })),
+    );
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    return fetchMock;
+  }
+
+  function sentHeaders(fetchMock: ReturnType<typeof fetchOk>, call = 0) {
+    return fetchMock.mock.calls[call]![1]!.headers as Record<string, string>;
+  }
+
+  it("sends the intercept source, and stores the answer only under the intercept's slot", async () => {
+    insideIntercept();
+    const fetchMock = fetchOk();
+
+    prefetchDirect("/item/3", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const headers = sentHeaders(fetchMock);
+    expect(headers["X-RSC-Router-Intercept-Source"]).toBe("/list/1");
+    expect(headers["X-RSC-Router-Client-Path"]).toBe(
+      "http://localhost:4173/item/2",
+    );
+
+    // The slots a click outside the intercept looks under stay empty: this
+    // answer was rendered for the intercept's request.
+    expect(consumePrefetch(WILDCARD_KEY)).toBeNull();
+    expect(consumePrefetch(SOURCE_KEY)).toBeNull();
+    await vi.waitFor(() => expect(hasPrefetch(INTERCEPT_KEY)).toBe(true));
+  });
+
+  it("keeps the answer in the intercept slot whatever scope header it carries", async () => {
+    insideIntercept();
+    // The server's params scope is about pages, which an intercept request is
+    // not: the slot it was sent from is the only one a click may adopt from.
+    const fetchMock = fetchOk({
+      "x-rsc-prefetch-scope": "params; $k=id&id=3",
+    });
+
+    prefetchDirect("/item/3", ["A0"], "v1");
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(hasPrefetch(INTERCEPT_KEY)).toBe(true));
+    expect(consumePrefetch(`v1:abc\0p:$k=id&id=3\0${TARGET}`)).toBeNull();
+  });
+
+  it("names no rewrite target, as the navigation from inside the intercept does not", async () => {
+    insideIntercept();
+    const fetchMock = fetchOk();
+    shownRewriteTarget = "/item/2?sort=a";
+    try {
+      prefetchDirect("/item/3", ["A0"], "v1");
+    } finally {
+      shownRewriteTarget = undefined;
+    }
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(
+      new URL(String(fetchMock.mock.calls[0]![0])).searchParams.has("_rsc_rt"),
+    ).toBe(false);
+  });
+
+  it("a prefetch made outside the intercept is neither deduped against nor adopted inside it", async () => {
+    // Outside: the page with no intercept open, prefetching the same target.
+    setupBrowser();
+    window.location.href = "http://localhost:4173/list/1";
+    (window.location as any).pathname = "/list/1";
+    committedUrl = "http://localhost:4173/list/1";
+    const fetchMock = fetchOk();
+    prefetchDirect("/item/3", ["A0"], "v1");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(hasPrefetch(WILDCARD_KEY)).toBe(true);
+
+    // Inside: the same target, the same page under it, an intercept open.
+    // The wildcard slot holds a full page fetched for another request.
+    committedUrl = "http://localhost:4173/item/2";
+    openIntercept = "/list/1";
+    prefetchDirect("/item/3", ["A0"], "v1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(hasPrefetch(INTERCEPT_KEY)).toBe(true));
+  });
+
+  it("a prefetch made inside the intercept is not adopted once it closes", async () => {
+    insideIntercept();
+    const fetchMock = fetchOk();
+    prefetchDirect("/item/3", ["A0"], "v1");
+    await vi.waitFor(() => expect(hasPrefetch(INTERCEPT_KEY)).toBe(true));
+
+    // The modal closed, the page under it is on screen: the same target from
+    // the same page is another request (no source header, no held slot).
+    openIntercept = null;
+    committedUrl = "http://localhost:4173/list/1";
+    prefetchDirect("/item/3", ["A0"], "v1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(hasPrefetch(INTERCEPT_KEY)).toBe(true);
+  });
+
+  it("a queued prefetch carries the intercept source and its slot", async () => {
+    insideIntercept();
+    const fetchMock = fetchOk();
+
+    const key = prefetchQueued("/item/3", ["A0"], "v1");
+
+    expect(key).toBe(INTERCEPT_KEY);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(sentHeaders(fetchMock)["X-RSC-Router-Intercept-Source"]).toBe(
+      "/list/1",
+    );
+    await vi.waitFor(() => expect(hasPrefetch(INTERCEPT_KEY)).toBe(true));
+    expect(hasPrefetch(WILDCARD_KEY)).toBe(false);
+  });
+
+  it("a queued prefetch is dropped when the intercept closes before it runs", async () => {
+    insideIntercept();
+    const fetchMock = fetchOk();
+
+    prefetchQueued("/item/3", ["A0"], "v1");
+    // The modal closed while the item sat in the queue: the request it would
+    // send is no longer the one its slot names.
+    openIntercept = null;
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

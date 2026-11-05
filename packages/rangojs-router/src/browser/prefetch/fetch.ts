@@ -16,6 +16,8 @@
  */
 
 import {
+  absoluteHref,
+  buildInterceptKey,
   buildParamsKey,
   buildPrefetchKey,
   buildSourceKey,
@@ -152,6 +154,17 @@ function withoutHash(href: string): string {
 }
 
 /**
+ * The open intercept's source, as the store keeps it (the value the
+ * navigation sends in `X-RSC-Router-Intercept-Source`), or null when no
+ * intercept is open. Read at fetch time rather than when the Link armed its
+ * trigger: the runtime chunk loads first (prefetch/loader.ts), and the modal
+ * can open or close in between.
+ */
+function openInterceptSource(): string | null {
+  return getRegisteredStore()?.getInterceptSourceUrl() ?? null;
+}
+
+/**
  * Check if a URL resolves to the committed page (same pathname + search).
  * Used to prevent same-page prefetching, which produces a trivial diff
  * that would corrupt the (default wildcard) prefetch cache entry.
@@ -177,6 +190,7 @@ function buildPrefetchUrl(
   segmentIds: string[],
   version?: string,
   routerId?: string,
+  interceptOpen = false,
 ): URL | null {
   let targetUrl: URL;
   try {
@@ -188,13 +202,17 @@ function buildPrefetchUrl(
     return null;
   }
   // The page's rewrite target, so the server diffs against the route that
-  // rendered it, as for the navigation.
+  // rendered it, as for the navigation — which drops it beside an intercept
+  // source, because the server diffs from the source and `_rsc_rt` does not
+  // name it (partial-update.ts). Same request, same URL.
   return writePartialParams(targetUrl, {
     segmentIds,
     emptySegments: "omit",
     version,
     routerId,
-    rewriteTarget: getRegisteredStore()?.getHistoryEntryMemory()?.rewriteTarget,
+    rewriteTarget: interceptOpen
+      ? undefined
+      : getRegisteredStore()?.getHistoryEntryMemory()?.rewriteTarget,
   });
 }
 
@@ -264,14 +282,34 @@ export function prefetchStorageSlot(
  *   navigations that adopted via `wildcardKey` can bail out in
  *   `navigation-client.ts` when the adopted entry turns out source-scoped,
  *   or params-scoped to a group their page is not in.
+ *
+ * - `interceptKey` (an intercept was open when the prefetch was sent): single
+ *   inflight registration and storage under `interceptKey`, whatever the
+ *   response's scope header says — the key already names the source, the
+ *   client path and the held tree, so it is strictly narrower than any slot
+ *   the header could pick, and no navigation outside that context looks under
+ *   it (cache.ts buildInterceptKey). The request carries the intercept source
+ *   header, so the answer is the one the click inside the intercept will send
+ *   for.
  */
 function executePrefetchFetch(
   wildcardKey: string,
   sourceKey: string,
-  /** The committed page sent as the source, the one `sourceKey` names. */
+  /**
+   * The committed page sent as the source, the one `sourceKey` names. While an
+   * intercept is open it is also the client path, the intercept's own URL.
+   */
   sourceHref: string,
   targetUrl: URL,
   forceSourceScope: boolean,
+  /**
+   * The open intercept's source, as the store keeps it: sent as
+   * `X-RSC-Router-Intercept-Source`, the value a click inside the intercept
+   * sends. Null when no intercept is open.
+   */
+  interceptSource: string | null,
+  /** The slot an intercept prefetch is stored under (cache.ts). */
+  interceptKey: string | null,
   /**
    * Rango state captured once by the caller (keys + header share one read).
    * The header sends it whole; the keys hold its epoch.
@@ -291,9 +329,11 @@ function executePrefetchFetch(
   // An action that lands while this fetch is out marks it stale without
   // aborting it: it finishes and is stored stale (cache.ts isPrefetchStale).
   const epoch = currentPrefetchEpoch();
-  const inflightKeys = forceSourceScope
-    ? [sourceKey]
-    : [wildcardKey, sourceKey];
+  const inflightKeys = interceptKey
+    ? [interceptKey]
+    : forceSourceScope
+      ? [sourceKey]
+      : [wildcardKey, sourceKey];
   for (const k of inflightKeys) markPrefetchInflight(k);
 
   // Always layer a stall timeout. It covers BOTH "no response ever arrives"
@@ -350,6 +390,9 @@ function executePrefetchFetch(
     headers: {
       "X-Rango-State": rangoState,
       "X-RSC-Router-Client-Path": sourceHref,
+      ...(interceptSource && {
+        "X-RSC-Router-Intercept-Source": interceptSource,
+      }),
       [PREFETCH_HEADER]: intent ? PREFETCH_INTENT : "1",
       ...(isFragmentPassthroughEnabled() && {
         [SEGMENT_FRAGMENT_CAPABILITY_HEADER]: "1",
@@ -376,14 +419,19 @@ function executePrefetchFetch(
       // The one place the storage key is decided: from the header, with the
       // values the server read. A key computed when the fetch was scheduled
       // and written again later would undo it (vercel/next.js#91488).
-      const slot = prefetchStorageSlot(
-        forceSourceScope,
-        response.headers.get("x-rsc-prefetch-scope"),
-        sourceKey,
-        wildcardKey,
-        stateEpoch(rangoState),
-        targetUrl,
-      );
+      const slot: PrefetchSlot = interceptKey
+        ? // An answer to an intercept request: only the click that sends the
+          // same request may adopt it, so the header cannot widen the slot.
+          // "source" is what it is — one page's, one tree's.
+          { scope: "source", key: interceptKey }
+        : prefetchStorageSlot(
+            forceSourceScope,
+            response.headers.get("x-rsc-prefetch-scope"),
+            sourceKey,
+            wildcardKey,
+            stateEpoch(rangoState),
+            targetUrl,
+          );
       const storageKey = slot.key;
 
       // Track stream completion off a tee so navigation's scroll/revalidation
@@ -516,6 +564,10 @@ function executePrefetchFetch(
  * otherwise the source slot would stay unpopulated and navigation from
  * this source would fall through to the (potentially wrong) wildcard
  * response, defeating the opt-out.
+ *
+ * Inside an open intercept only the intercept slot counts, for the same
+ * reason: an entry in any other slot is another request's answer, which this
+ * prefetch's click could never adopt.
  */
 function hasPrefetchHit(
   forceSourceScope: boolean,
@@ -523,7 +575,9 @@ function hasPrefetchHit(
   sourceKey: string,
   stateKey: string,
   targetUrl: URL,
+  interceptKey: string | null,
 ): boolean {
+  if (interceptKey) return hasPrefetch(interceptKey);
   if (forceSourceScope) return hasPrefetch(sourceKey);
   return (
     hasPrefetch(wildcardKey) ||
@@ -531,6 +585,30 @@ function hasPrefetchHit(
     paramsCandidateKeys(stateKey, targetUrl, getCommittedPage()).some(
       hasPrefetch,
     )
+  );
+}
+
+/**
+ * The slot a prefetch sent from inside an open intercept is stored under
+ * (cache.ts buildInterceptKey), or null: no intercept open, or a source the
+ * browser cannot parse — no click could ever look under such a key, so the
+ * caller sends nothing rather than warm an entry nothing reads.
+ */
+function interceptSlotKey(
+  interceptSource: string | null,
+  stateKey: string,
+  clientHref: string,
+  targetUrl: URL,
+): string | null {
+  const interceptSourceHref = interceptSource
+    ? absoluteHref(interceptSource)
+    : null;
+  if (!interceptSourceHref) return null;
+  return buildInterceptKey(
+    stateKey,
+    interceptSourceHref,
+    clientHref,
+    targetUrl,
   );
 }
 
@@ -549,6 +627,10 @@ function hasPrefetchHit(
  * dedup and for responses that are not source-sensitive; source-scoped
  * storage is automatic when the server emits `X-RSC-Prefetch-Scope: source`.
  *
+ * While an intercept is open the request names its source, and the answer is
+ * stored under that context alone, so the click inside the intercept adopts
+ * it and nothing else can (cache.ts buildInterceptKey).
+ *
  * Pass `prefetchKey=":source"` to force source-scoped inflight + storage
  * (e.g. when the target uses a custom `revalidate()` that reads
  * `currentUrl` and the wildcard slot would serve the wrong diff).
@@ -562,7 +644,17 @@ export function prefetchDirect(
 ): void {
   if (!shouldPrefetch()) return;
 
-  const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
+  // An open intercept changes the request (the source header, the client
+  // path) and so the answer: read it before the URL, which drops the page's
+  // rewrite target beside it exactly as the navigation does.
+  const interceptSource = openInterceptSource();
+  const targetUrl = buildPrefetchUrl(
+    url,
+    segmentIds,
+    version,
+    routerId,
+    interceptSource !== null,
+  );
   if (!targetUrl) return;
   const forceSourceScope = prefetchKey === ":source";
   const sourceHref = committedHref();
@@ -577,6 +669,13 @@ export function prefetchDirect(
   const stateKey = stateEpoch(rangoState);
   const wildcardKey = buildPrefetchKey(stateKey, targetUrl);
   const sourceKey = buildSourceKey(stateKey, sourceHref, targetUrl);
+  const interceptKey = interceptSlotKey(
+    interceptSource,
+    stateKey,
+    sourceHref,
+    targetUrl,
+  );
+  if (interceptSource && !interceptKey) return;
   if (
     hasPrefetchHit(
       forceSourceScope,
@@ -584,6 +683,7 @@ export function prefetchDirect(
       sourceKey,
       stateKey,
       targetUrl,
+      interceptKey,
     )
   ) {
     if (IS_BROWSER_DEBUG) {
@@ -591,6 +691,7 @@ export function prefetchDirect(
         url,
         wildcardKey,
         sourceKey,
+        interceptKey,
         forceSourceScope,
       });
     }
@@ -601,7 +702,9 @@ export function prefetchDirect(
       url,
       wildcardKey,
       sourceKey,
+      interceptKey,
       source: sourceHref,
+      interceptSource,
       forceSourceScope,
     });
   }
@@ -611,6 +714,8 @@ export function prefetchDirect(
     sourceHref,
     targetUrl,
     forceSourceScope,
+    interceptSource,
+    interceptKey,
     rangoState,
     true,
     routerId,
@@ -622,7 +727,8 @@ export function prefetchDirect(
  * Used by viewport/render strategies to avoid flooding the server. A
  * speculative prefetch: the server defers `prefetch: false` work in it.
  * Returns the inflight key (wildcard by default, source-scoped when
- * `prefetchKey=":source"` is passed).
+ * `prefetchKey=":source"` is passed, intercept-scoped while an intercept is
+ * open).
  */
 export function prefetchQueued(
   url: string,
@@ -632,7 +738,15 @@ export function prefetchQueued(
   prefetchKey?: ":source",
 ): string {
   if (!shouldPrefetch()) return "";
-  const targetUrl = buildPrefetchUrl(url, segmentIds, version, routerId);
+  // See prefetchDirect: an open intercept changes the request and the answer.
+  const interceptSource = openInterceptSource();
+  const targetUrl = buildPrefetchUrl(
+    url,
+    segmentIds,
+    version,
+    routerId,
+    interceptSource !== null,
+  );
   if (!targetUrl) return "";
   const forceSourceScope = prefetchKey === ":source";
   const sourceHref = committedHref();
@@ -643,7 +757,14 @@ export function prefetchQueued(
   const stateKey = stateEpoch(rangoState);
   const wildcardKey = buildPrefetchKey(stateKey, targetUrl);
   const sourceKey = buildSourceKey(stateKey, sourceHref, targetUrl);
-  const queueKey = forceSourceScope ? sourceKey : wildcardKey;
+  const interceptKey = interceptSlotKey(
+    interceptSource,
+    stateKey,
+    sourceHref,
+    targetUrl,
+  );
+  if (interceptSource && !interceptKey) return "";
+  const queueKey = interceptKey ?? (forceSourceScope ? sourceKey : wildcardKey);
   if (
     hasPrefetchHit(
       forceSourceScope,
@@ -651,6 +772,7 @@ export function prefetchQueued(
       sourceKey,
       stateKey,
       targetUrl,
+      interceptKey,
     )
   ) {
     if (IS_BROWSER_DEBUG) {
@@ -658,6 +780,7 @@ export function prefetchQueued(
         url,
         wildcardKey,
         sourceKey,
+        interceptKey,
         forceSourceScope,
       });
     }
@@ -681,10 +804,15 @@ export function prefetchQueued(
         sourceKey,
         stateKey,
         targetUrl,
+        interceptKey,
       )
     ) {
       return Promise.resolve();
     }
+    // An intercept opened or closed while this sat in the queue: the request
+    // would name another source (or none) than the click that adopts it, and
+    // its slot is not the one a click would look under.
+    if (openInterceptSource() !== interceptSource) return Promise.resolve();
     // The segment ids and the source were read when it was queued: once the
     // committed page has moved, they name a page no longer on screen.
     // A hash-only change commits the same page, so the hash is not compared.
@@ -701,6 +829,8 @@ export function prefetchQueued(
       sourceHref,
       targetUrl,
       forceSourceScope,
+      interceptSource,
+      interceptKey,
       liveState,
       false,
       routerId,

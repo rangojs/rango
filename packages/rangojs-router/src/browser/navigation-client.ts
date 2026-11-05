@@ -30,6 +30,8 @@ import {
   isForeignRouterId,
 } from "./response-adapter.js";
 import {
+  absoluteHref,
+  buildInterceptKey,
   buildPrefetchKey,
   buildSourceKey,
   consumeInflightPrefetch,
@@ -192,36 +194,74 @@ export function createNavigationClient(
       // entries stale instead, and one is still served to a click
       // (acceptStalePrefetch), whose bridge revalidates its page after it
       // settled (stalePrefetch); for any other caller it is a miss.
-      // Skip cache for stale revalidation (needs fresh data), HMR (needs
-      // fresh modules), and intercept contexts (source-dependent responses).
-      // A prefetch served during an action's flight holds pre-write data:
-      // the action bridge's follow-up refetches the page it commits.
+      // Skip cache for stale revalidation (needs fresh data) and HMR (needs
+      // fresh modules). A prefetch served during an action's flight holds
+      // pre-write data: the action bridge's follow-up refetches the page it
+      // commits.
+      // A navigation that names an intercept's source adopts only the prefetch
+      // sent from inside that intercept: its answer was rendered for this exact
+      // request (the source, this client path, this held tree), where every
+      // other slot holds another request's answer — a full page where the
+      // modal belongs, or a diff against a tree the page does not hold
+      // (prefetch/cache.ts buildInterceptKey). A source that does not parse
+      // leaves no such slot, so there is nothing it may adopt: the wildcard and
+      // source slots hold other requests' answers too.
+      const interceptSourceHref = interceptSourceUrl
+        ? absoluteHref(interceptSourceUrl)
+        : null;
       const canUsePrefetch =
-        !staleRevalidation && !hmr && !fill && !interceptSourceUrl;
+        !staleRevalidation &&
+        !hmr &&
+        !fill &&
+        !(interceptSourceUrl && !interceptSourceHref);
       const rangoState = getRangoState();
       const stateKey = stateEpoch(rangoState);
       const wildcardKey = buildPrefetchKey(stateKey, fetchUrl);
       const cacheKey = buildSourceKey(stateKey, sourceHref, fetchUrl);
+      const interceptKey =
+        canUsePrefetch && interceptSourceHref
+          ? buildInterceptKey(
+              stateKey,
+              interceptSourceHref,
+              sourceHref,
+              fetchUrl,
+            )
+          : null;
       // The page being left, as the router store committed it: the group a
       // params-scoped prefetch must have been answered for.
       const sourcePage = canUsePrefetch ? getCommittedPage() : null;
 
-      const stored = consumeStoredPrefetch(
-        canUsePrefetch,
-        cacheKey,
-        paramsCandidateKeys(stateKey, fetchUrl, sourcePage),
-        wildcardKey,
-        acceptStalePrefetch,
-      );
-      const cachedEntry = stored.entry;
-      let hitKey = stored.hitKey;
+      let cachedEntry: DecodedPrefetch | null = null;
+      let hitKey: string | null = null;
+      if (interceptSourceUrl) {
+        // Only this navigation's own slot: a miss here is a fetch, never a
+        // look under the wildcard or source slots.
+        if (interceptKey) {
+          cachedEntry = consumePrefetch(interceptKey, {
+            acceptStale: acceptStalePrefetch,
+          });
+          if (cachedEntry) hitKey = interceptKey;
+        }
+      } else {
+        const stored = consumeStoredPrefetch(
+          canUsePrefetch,
+          cacheKey,
+          paramsCandidateKeys(stateKey, fetchUrl, sourcePage),
+          wildcardKey,
+          acceptStalePrefetch,
+        );
+        cachedEntry = stored.entry;
+        hitKey = stored.hitKey;
+      }
 
       let inflightEntryPromise: Promise<DecodedPrefetch | null> | null = null;
       if (canUsePrefetch && !cachedEntry) {
-        inflightEntryPromise = consumeInflightPrefetch(cacheKey);
+        inflightEntryPromise = consumeInflightPrefetch(
+          interceptKey ?? cacheKey,
+        );
         if (inflightEntryPromise) {
-          hitKey = cacheKey;
-        } else {
+          hitKey = interceptKey ?? cacheKey;
+        } else if (!interceptKey) {
           inflightEntryPromise = consumeInflightPrefetch(wildcardKey);
           if (inflightEntryPromise) hitKey = wildcardKey;
         }
