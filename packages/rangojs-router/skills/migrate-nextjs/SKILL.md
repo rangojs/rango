@@ -478,6 +478,13 @@ data source may be failing, throw anything else: that keeps the page.
 knows the item is gone, and is permanent until a `prerender(path)` renders the
 page again. See `/prerender` → "Remove a page".
 
+A page whose item moved, where `getStaticProps` returns `{ redirect }` on a
+revalidation, throws `redirect(url, status)` in the on-demand handler: the
+next `prerender(path)` stores that redirect (`{ ok: true, status:
+"redirected" }`), the old URL is redirected instead of serving the page or its
+build-time entry, and the redirect is rechecked per the route's `ttl` like a
+page. See `/prerender` → "A page that moved".
+
 Three differences to plan for:
 
 - Prerender tags are their own namespace. `updateTag()` / `revalidateTag()`

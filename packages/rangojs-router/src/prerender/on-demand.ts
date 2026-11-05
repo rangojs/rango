@@ -161,7 +161,7 @@ export type PrerenderResult =
        * else: that is `render-failed` and keeps the page.
        *
        * `redirected`: the render answered `redirect()` (a route or layout
-       * handler threw or returned it), and that redirect is stored in place
+       * handler threw it), and that redirect is stored in place
        * of the page: requests are redirected, not served the page or its
        * build-time entry, on a `Passthrough` route too. It has the route's
        * `tags` and `ttl` and is rechecked like a page, and a refresh that

@@ -44,10 +44,14 @@ const runs = { producer: 0, hot: 0, live: 0, layout: 0 };
 /** Make the next redirect an off-host one with `{ external: true }`. */
 let external = false;
 
+/** A `moves` value that makes the handler throw a 410 Response instead. */
+const GONE_410 = "410";
+
 /** Throws the redirect a moved slug answers with. */
 function followMove(slug: string, status?: number): void {
   const to = moves.get(slug);
   if (to === undefined) return;
+  if (to === GONE_410) throw new Response("gone", { status: 410 });
   throw external
     ? redirect(to, { status, external: true })
     : redirect(to, status);
@@ -309,6 +313,21 @@ describe("on-demand prerender: a refresh whose render answers redirect()", () =>
     const served = await serveShellRequest(router, "/streamed/a");
     expect(served.response.status).toBe(200);
     expect(served.flight).toContain("streamed:a");
+  });
+
+  it("a Response that is not a redirect is render-failed, and the page keeps serving", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+    await prerender("/products/a");
+
+    moves.set("a", GONE_410);
+    const failed = await prerender("/products/a");
+
+    expect(failed).toMatchObject({ ok: false, status: "render-failed" });
+    expect((failed as { error: Response }).error.status).toBe(410);
+    const served = await serveShellRequest(router, "/products/a");
+    expect(served.response.status).toBe(200);
+    expect(served.flight).toContain("a:render-1");
   });
 
   describe("rechecked like the page it replaced", () => {

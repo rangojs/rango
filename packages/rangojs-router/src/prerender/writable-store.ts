@@ -93,9 +93,9 @@ type StoredTombstone = StoredEnvelope & {
 };
 
 /**
- * The redirect a refresh's render answered (a handler or layout that threw or
- * returned `redirect()`), as the request handler answers it: `Location` as
- * the render's Response carried it, its 3xx status, and the
+ * The redirect a refresh's render answered (a route or layout handler that
+ * threw `redirect()`), as the request handler answers it: `Location` as the
+ * render's Response carried it, its 3xx status, and the
  * `redirect(url, { external: true })` opt-in, which is a brand on the
  * Response object and so has to be stored to survive.
  */

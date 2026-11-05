@@ -120,8 +120,8 @@ export async function matchForPrerender<TEnv = any>(
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
   /**
-   * On-demand only: the render answered a redirect (a handler or layout threw
-   * or returned one), as a request would be answered with it.
+   * On-demand only: the segment walk rethrew a redirect (a route or layout
+   * handler threw one), as a request would be answered with it.
    */
   redirect?: StoredRedirectTarget;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
@@ -378,8 +378,8 @@ export async function matchForPrerender<TEnv = any>(
             { pathname: buildCtx.pathname },
           ));
         } catch (error) {
-          // On-demand: a redirect a handler or layout threw or returned is
-          // what a request is answered with (the walk rethrows a Response,
+          // On-demand: a redirect a route or layout handler threw is what a
+          // request is answered with (the walk rethrows a Response,
           // resolveWithErrorBoundary), so it is an outcome the trigger
           // stores in place of the page. Caught here, not around the whole
           // render: a Response Flight collects below (a streamed handler's,

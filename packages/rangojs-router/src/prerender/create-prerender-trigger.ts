@@ -26,8 +26,8 @@
  *   is rechecked like a page. `prerender.remove()` stores one without
  *   rendering, which never goes stale. A Passthrough build handler that
  *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
- * - A `redirect()` a handler or layout answers in the render is stored in
- *   place of the page, stamped like one, and a request is answered with it.
+ * - A `redirect()` a route or layout handler throws in the render is stored
+ *   in place of the page, stamped like one, and a request is answered with it.
  * - A page, a stored redirect and a render's marker (a `notFound()` or a
  *   decline) carry the render's start as `storedAt`, so a `markStale()` that
  *   lands during the render marks the result; `staleAt` counts the ttl from
@@ -633,12 +633,12 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       if (!noPage) {
         // A marker stored after this render started is not overwritten by its
         // page or redirect: a remove() (stamped with its write time) always
-        // qualifies. A
-        // render's own marker carries that render's start, so only a render
-        // that started later than this one wins; an older render's notFound()
-        // does not (this one read newer data). This narrows the race, it
-        // cannot close it: the read and the write are two store calls, and KV
-        // is eventually consistent. Otherwise last write wins.
+        // qualifies. A render's own marker carries that render's start, so
+        // only a render that started later than this one wins; an older
+        // render's notFound() does not (this one read newer data). This
+        // narrows the race, it cannot close it: the read and the write are
+        // two store calls, and KV is eventually consistent. Otherwise last
+        // write wins.
         const current = await readVerifiedStoredEntry(store, key, match.params);
         if (current?.removed === true && current.meta.storedAt > startedAt) {
           return held("removed", current.meta);
