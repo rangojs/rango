@@ -463,6 +463,11 @@ export function createMatchHandlers<TEnv = any>(
                 emitter.cacheDecision(ctx.routeKey, state, signalSegments);
               }
               emitter.end(matchResult.segments.length, state.cacheHit);
+              // A redirect is not a partial answer: the caller falls back to a
+              // full match, which reports it as a control response. The same
+              // contract as a route-level redirect, which
+              // createMatchContextForPartial turns into a null context.
+              if (matchResult.redirect) return null;
               return matchResult;
             } catch (error) {
               flushRevalidationTrace();

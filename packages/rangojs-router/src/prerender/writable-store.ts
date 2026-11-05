@@ -71,7 +71,11 @@ interface StoredEnvelope {
   };
 }
 
-type StoredPage = StoredEnvelope & { entry: PrerenderEntry; removed?: never };
+type StoredPage = StoredEnvelope & {
+  entry: PrerenderEntry;
+  removed?: never;
+  redirect?: never;
+};
 
 /**
  * The "removed" marker (tombstone) stored in place of a page, by
@@ -82,14 +86,35 @@ type StoredPage = StoredEnvelope & { entry: PrerenderEntry; removed?: never };
  * `meta` is stamped like a page's for a render outcome, so that marker goes
  * stale and is rechecked; a `remove()` marker has no `staleAt` and no tags.
  */
-type StoredTombstone = StoredEnvelope & { removed: true; entry?: never };
+type StoredTombstone = StoredEnvelope & {
+  removed: true;
+  entry?: never;
+  redirect?: never;
+};
+
+/**
+ * The redirect stored in place of a page: a refresh whose render answered
+ * `redirect()` (a 3xx Response) persists that answer, so the URL serves the
+ * redirect a live render would instead of the page stored before it. No
+ * `entry`: the URL has no page. `meta` is a page's, so it goes stale and is
+ * rechecked like one; a later refresh that renders a page replaces it.
+ */
+type StoredRedirect = StoredEnvelope & {
+  redirect: { location: string; status: number };
+  entry?: never;
+  removed?: never;
+};
 
 /**
  * Versioned envelope the router composes on a refresh or a removal and
- * verifies on every read: a page, or the marker that the page was removed. A
- * store persists either as given and returns it as stored.
+ * verifies on every read: a page, the marker that the page was removed, or the
+ * redirect that answers in its place. A store persists it as given and returns
+ * it as stored.
  */
-export type PrerenderStoredEntry = StoredPage | StoredTombstone;
+export type PrerenderStoredEntry =
+  | StoredPage
+  | StoredTombstone
+  | StoredRedirect;
 
 /**
  * The writable durable overlay: plain get/set. Backed in production by a
@@ -112,8 +137,9 @@ export interface WritablePrerenderStore {
   get(key: PrerenderKey): Promise<PrerenderStoredEntry | null>;
 
   /**
-   * Persist `stored` (a page, or the marker that the page was removed) under
-   * `key`, replacing any previous entry. No expiry.
+   * Persist `stored` (a page, the marker that the page was removed, or the
+   * redirect that answers in its place) under `key`, replacing any previous
+   * entry. No expiry.
    */
   set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void>;
 
@@ -199,6 +225,29 @@ export function composeStoredTombstone(
 }
 
 /**
+ * @internal Compose the redirect stored in place of a page (a refresh whose
+ * render answered `redirect()`). Its meta is a page's, so `ttl` and `tags`
+ * mean the same: the redirect is rechecked like a page and a later refresh
+ * that renders replaces it.
+ */
+export function composeStoredRedirect(
+  key: PrerenderKey,
+  redirect: { location: string; status: number },
+  options: StoredEntryOptions,
+  now: number,
+  staleFrom: number = now,
+): StoredRedirect {
+  const { v, meta } = composeStoredEntry(
+    key,
+    { segments: [], handles: "" },
+    options,
+    now,
+    staleFrom,
+  );
+  return { v, redirect, meta };
+}
+
+/**
  * @internal Verify a store's answer is safe to serve for this key: the
  * envelope shape and version tag, the key version, and the stored params
  * against the request's (the 8-hex DJB2 collision guard, param-hash.ts: a
@@ -218,14 +267,23 @@ export function isStoredEntryValidFor(
   const candidate = stored as Partial<PrerenderStoredEntry>;
   const entry = candidate.entry;
   const meta = candidate.meta;
+  const redirect = candidate.redirect;
   if (
     candidate.v !== 1 ||
-    // The "removed" marker has no entry; a page must have a whole one.
+    // The "removed" marker and the stored redirect have no entry; a page must
+    // have a whole one.
     (candidate.removed !== true &&
+      redirect === undefined &&
       (entry == null ||
         typeof entry !== "object" ||
         !Array.isArray(entry.segments) ||
         typeof entry.handles !== "string")) ||
+    // A redirect is served as an HTTP answer, so its two fields are required
+    // and typed: a hand-written or corrupted record is a miss, not a 500.
+    (redirect !== undefined &&
+      (typeof redirect !== "object" ||
+        typeof redirect.location !== "string" ||
+        typeof redirect.status !== "number")) ||
     meta == null ||
     typeof meta !== "object" ||
     !Array.isArray(meta.tags) ||

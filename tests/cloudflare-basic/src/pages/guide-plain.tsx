@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -14,6 +14,14 @@ export const guidePlainGoneKey = (slug: string): string =>
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
+/**
+ * KV key of a slug whose data source moved it: the value is where a refresh's
+ * render answers `redirect()`, so the refresh stores the redirect in place of
+ * the page.
+ */
+export const guidePlainMovedKey = (slug: string): string =>
+  `gp-moved:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
 // entry and no baked entry throws DataNotFoundError -> 404 (the retained
@@ -26,6 +34,12 @@ export const guidePlainFailKey = (slug: string): string =>
 export const GuidePlainDef = Prerender<{ slug: string }>(
   async () => [{ slug: "intro" }],
   async (ctx) => {
+    if (ctx.onDemand) {
+      const movedTo = await ctx.env.PRERENDER_KV.get(
+        guidePlainMovedKey(ctx.params.slug),
+      );
+      if (movedTo) return redirect(movedTo);
+    }
     if (
       ctx.onDemand &&
       (await ctx.env.PRERENDER_KV.get(guidePlainGoneKey(ctx.params.slug)))

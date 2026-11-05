@@ -398,7 +398,8 @@ function* peRenderPlan<TEnv>(
 
   if (match.redirect) {
     return createResponseWithMergedHeaders(null, {
-      status: 308,
+      // A stored redirect keeps the status its render answered with.
+      status: match.redirectStatus ?? 308,
       headers: { Location: match.redirect },
     });
   }

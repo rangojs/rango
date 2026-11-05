@@ -986,6 +986,14 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   `ctx` typing.
 - Pre-render manifest generation, intercept pre-render artifacts
 - Runtime prerender cache lookup flow
+- On-demand overlay answers in place of a page: a page, a "removed" marker
+  (`prerender.remove()`, a `notFound()` render, a `ctx.passthrough()` decline),
+  or a stored redirect (a render that answers `redirect()`, kept with its own
+  3xx status and `Location`; `PrerenderResult.status: "redirected"`).
+  `serveStoredSegments` (`router/match-middleware/cache-lookup.ts`) turns a
+  stored redirect into `MatchResult.redirect`/`redirectStatus`, which every
+  request shape already answers (a document GET, a navigation, a
+  progressive-enhancement form post, an action's revalidation).
 - `Passthrough(prerenderDef, liveHandler)` wrapper for live runtime fallback
 - `ctx.passthrough()` per-param artifact skip (defers to Passthrough live handler)
 - `PRERENDER_PASSTHROUGH` sentinel, `isPrerenderPassthrough()` type guard

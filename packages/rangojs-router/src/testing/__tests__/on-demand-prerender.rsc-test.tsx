@@ -25,7 +25,9 @@ import {
   cookies,
   createLoader,
   createRouter,
+  Passthrough,
   Prerender,
+  redirect,
   urls,
 } from "../../index.rsc.js";
 import { getCacheVersions } from "../../cache/index.js";
@@ -85,6 +87,29 @@ const VersionsDef = Prerender<{ slug: string }>(
   { onDemand: true },
 );
 
+/** Set by the e2e-shaped tests below: the item's data source moved it. */
+let redirectTo: { location: string; status: number } | undefined;
+let liveHandlerRuns = 0;
+
+// A producer that answers a redirect once the data source moves the item.
+const MovedDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) =>
+    redirectTo ? (
+      redirect(redirectTo.location, redirectTo.status)
+    ) : (
+      <h1>{`moved:${ctx.params.slug}`}</h1>
+    ),
+  { onDemand: true },
+);
+
+// The Passthrough shape: the overlay is the newest answer, so the stored
+// redirect answers and the live handler does not run.
+const MovedLiveDef = Passthrough(MovedDef, async (ctx) => {
+  liveHandlerRuns += 1;
+  return <h1>{`live:${ctx.params.slug}`}</h1>;
+});
+
 function makeRouter(
   config: PrerenderConfig,
   options: { id?: string; version?: string } = {},
@@ -97,6 +122,8 @@ function makeRouter(
       path("/personalized/:slug", PersonalizedDef, { name: "personalized" }),
       path("/versions/:slug", VersionsDef, { name: "versions" }),
       path("/hot/:slug", HotDef, { name: "hot" }),
+      path("/moved/:slug", MovedDef, { name: "moved" }),
+      path("/moved-live/:slug", MovedLiveDef, { name: "movedLive" }),
     ]),
   );
 }
@@ -110,6 +137,8 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     counts.producer = 0;
     counts.loader = 0;
     holdRender = undefined;
+    redirectTo = undefined;
+    liveHandlerRuns = 0;
   });
 
   afterEach(() => {
@@ -254,6 +283,81 @@ describe("on-demand prerender: router.prerender() then serve", () => {
         String(args[0]).includes("built outside a request"),
       ),
     ).toBe(false);
+  });
+
+  // A refresh whose render answers redirect() stores the redirect in place of
+  // the page: the URL serves the 3xx a live render would. Before, the refresh
+  // was render-failed and the page stored earlier kept serving.
+  describe("a refresh whose producer redirects", () => {
+    it("serves the redirect instead of the page stored before it", async () => {
+      const router = makeRouter({ store });
+      const prerender = router.prerender({ env: {} });
+      expect(await prerender("/moved/42")).toMatchObject({
+        ok: true,
+        status: "rendered",
+      });
+      expect((await serveShellRequest(router, "/moved/42")).flight).toContain(
+        "moved:42",
+      );
+
+      redirectTo = { location: "/moved/new-home", status: 302 };
+      expect(await prerender("/moved/42")).toMatchObject({
+        ok: true,
+        status: "redirected",
+        redirect: redirectTo,
+      });
+
+      // A document request answers the stored redirect, not the page.
+      const document = await serveShellRequest(router, "/moved/42");
+      expect(document.response.status).toBe(302);
+      expect(document.response.headers.get("Location")).toBe("/moved/new-home");
+
+      // A client navigation gets the soft redirect the browser follows
+      // itself, so the target renders as a normal navigation.
+      const navigation = await serveShellRequest(router, "/moved/42", {
+        partial: { from: "/moved/1" },
+      });
+      expect(navigation.response.headers.get("X-RSC-Redirect")).toContain(
+        "/moved/new-home",
+      );
+
+      // The item comes back: the next refresh stores the page again.
+      redirectTo = undefined;
+      expect(await prerender("/moved/42")).toMatchObject({
+        ok: true,
+        status: "rendered",
+      });
+      const back = await serveShellRequest(router, "/moved/42");
+      expect(back.response.status).toBe(200);
+      expect(back.flight).toContain("moved:42");
+    });
+
+    it("keeps the status the render answered with", async () => {
+      const router = makeRouter({ store });
+      redirectTo = { location: "/moved/new-home", status: 301 };
+      await router.prerender({ env: {} })("/moved/7");
+
+      const document = await serveShellRequest(router, "/moved/7");
+
+      // A temporary move must not be served as a permanent one: browsers
+      // cache a 308/301 for good.
+      expect(document.response.status).toBe(301);
+    });
+
+    it("a Passthrough route serves the stored redirect, not its live handler", async () => {
+      const router = makeRouter({ store });
+      const prerender = router.prerender({ env: {} });
+      await prerender("/moved-live/42");
+      liveHandlerRuns = 0;
+
+      redirectTo = { location: "/moved/new-home", status: 302 };
+      await prerender("/moved-live/42");
+      const document = await serveShellRequest(router, "/moved-live/42");
+
+      expect(document.response.status).toBe(302);
+      expect(document.response.headers.get("Location")).toBe("/moved/new-home");
+      expect(liveHandlerRuns).toBe(0);
+    });
   });
 
   it("schedules onRevalidate once per stale key while one is in flight", async () => {

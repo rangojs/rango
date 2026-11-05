@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a refresh whose render answers `redirect()` serves the redirect, not the page stored before it
+
+**Before.** `router.prerender()` on an on-demand route whose render called
+`redirect()` was `render-failed`: the refresh wrote nothing, so the page
+stored by an earlier refresh kept serving, and a param that had never been
+stored answered 404. A moved item therefore kept its old URL until the next
+deploy, and the redirect the app asked for was never served.
+
+**Now.** The redirect is stored in place of the page, and requests for the URL
+get it: a document request answers the `redirect()`'s own status (302, 301,
+307, 308) with its `Location`; a navigation, a progressive-enhancement form
+post and an action's revalidation answer the soft redirect the browser
+follows. The refresh reports `{ ok: true, status: "redirected", redirect: {
+location, status } }`. The stored redirect carries the route's `ttl` and
+`tags`, so it goes stale and is rechecked like a page: a sweep
+(`onlyIfStale`) leaves a fresh one (`already-fresh`, with the same
+`redirect`) and renders a stale one, and a refresh that renders a page again
+replaces it. `prerender.remove()` still wins over it.
+
+```ts
+// Before: the moved item's old URL kept serving its old page.
+const result = await router.prerender({ env })("/products/42");
+// { ok: false, status: "render-failed", error: <Response 302> }
+
+// Now: the render's redirect answers the URL from here on.
+// { ok: true, status: "redirected",
+//   redirect: { location: "/products/43", status: 302 } }
+```
+
+A `Prerender()` handler may now return a `Response`, so `return redirect(...)`
+typechecks as it does in a route handler; before, only `throw redirect(...)`
+did.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

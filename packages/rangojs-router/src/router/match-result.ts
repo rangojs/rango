@@ -234,6 +234,15 @@ export function buildMatchResult<TEnv>(
     ...(!ctx.isFullMatch && sendsOnlyStored(segmentsToRender, state)
       ? { fromStorage: true as const }
       : {}),
+    // The on-demand overlay holds a redirect in place of the page: the URL's
+    // answer, in the same field a route-level redirect uses, so every request
+    // shape that already answers one answers this too.
+    ...(state.prerenderRedirect
+      ? {
+          redirect: state.prerenderRedirect.location,
+          redirectStatus: state.prerenderRedirect.status,
+        }
+      : {}),
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };

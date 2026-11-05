@@ -3864,6 +3864,8 @@ export interface PrerenderOutcomesFixture extends PrerenderRemoveFixture {
   path: (slug: string) => string;
   stampTestId: string;
   onDemandTestId: string;
+  /** Where a redirecting producer sends the visitor (a real route). */
+  redirectTarget: (slug: string) => string;
   passthrough: PrerenderRemoveFixture["passthrough"] & {
     declineBakedSlug: string;
   };
@@ -3957,6 +3959,64 @@ export async function expectFailedRefreshKeepsStoredPage(
 
   await refreshPage(page, trigger);
   expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
+
+/**
+ * A refresh whose handler answers `redirect()` stores the redirect in place
+ * of the page: the next request is the 3xx, not the page stored before it, and
+ * not a 404. Once the data source stops redirecting, a refresh stores the page
+ * again and the URL serves it.
+ *
+ * The trigger's `?redirect=<location>` switch (and `?redirect=` to clear it)
+ * makes the plain route's producer answer that redirect, the way a moved item
+ * would.
+ */
+export async function expectRedirectedPageServesRedirect(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("moved");
+  const trigger = fixture.triggerUrl(slug);
+  const target = fixture.redirectTarget(slug);
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  await removeTrigger(page, trigger, `?redirect=${encodeURIComponent(target)}`);
+  try {
+    const redirected = await removeTrigger(page, trigger);
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "redirected",
+      redirect: { location: target },
+    });
+
+    // The document request answers the redirect: not the stored page, and not
+    // the 404 a removed page gives.
+    const res = await page.request.get(fixture.pageUrl(slug), {
+      maxRedirects: 0,
+    });
+    expect(res.status()).toBe(302);
+    expect(res.headers()["location"]).toBe(target);
+    expect(await res.text()).not.toContain(
+      `data-testid="${fixture.slugTestId}"`,
+    );
+
+    // A sweep leaves the fresh redirect where it is.
+    const swept = await removeTrigger(page, trigger, "?onlyIfStale=1");
+    expect(swept, JSON.stringify(swept)).toMatchObject({
+      ok: true,
+      status: "already-fresh",
+      redirect: { location: target },
+    });
+  } finally {
+    await removeTrigger(page, trigger, "?redirect=");
+  }
+
+  // The item came back: a refresh renders the page and the URL serves it.
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
 }
 
 /**

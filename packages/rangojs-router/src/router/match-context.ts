@@ -268,6 +268,11 @@ export interface MatchPipelineState {
   // Source of cache hit ("runtime" or "prerender")
   cacheSource?: "runtime" | "prerender";
 
+  // The on-demand prerender overlay holds a redirect in place of this URL's
+  // page: the match reports it (MatchResult.redirect) and no segment is
+  // resolved. Set by serveStoredSegments (cache-lookup.ts).
+  prerenderRedirect?: { location: string; status: number };
+
   // Resolved segments from pipeline
   segments: ResolvedSegment[];
   matchedIds: string[];

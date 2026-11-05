@@ -918,6 +918,31 @@ needs a response-delete on the store interface, or an implicit per-page tag on
 documents served from the overlay; neither is small, and both are left as
 follow-ups.
 
+### A render that redirects
+
+A refresh whose render answers `redirect()` stores the redirect in place of
+the page: the overlay's third envelope, after a page and a "removed" marker.
+Requests for the URL then get the 3xx the live render would, with the status
+the render chose (302, 301, 307, 308) and its `Location`; the refresh reports
+`{ ok: true, status: "redirected", redirect: { location, status } }`.
+
+The alternative was the "removed" marker. It stops the old page serving, but
+the answer becomes a 404 on a plain route (no live handler), and the redirect
+the app asked for is thrown away: every later refresh would redirect again and
+store another marker. A redirect is an answer, so it is cached like one.
+
+It carries the route's `ttl` and `tags`, so it is rechecked like a page: a
+sweep leaves a fresh one (`already-fresh`, with the same `redirect`) and
+renders a stale one, `markStale()` reaches it through its tags, and a refresh
+that renders a page again replaces it. `prerender.remove()` still wins over
+it, and no warm follows it — there is no page to rebuild a cache on, the same
+reason a removal warms nothing.
+
+The caches around the route behave as they do after any other overlay write:
+a document record a client already holds keeps serving until its `s-maxage`
+and `stale-while-revalidate` run out (the table above), and a prefetch cache
+in the browser keeps its answer until it expires.
+
 ### Precedent
 
 The Next.js Pages Router has the same rule for the `notFound()` half,

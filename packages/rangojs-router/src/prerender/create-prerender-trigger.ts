@@ -47,6 +47,7 @@ import { isPrerenderPersonalizationError } from "./producer-guard.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
 import {
   composeStoredEntry,
+  composeStoredRedirect,
   composeStoredTombstone,
   isStoredEntryStale,
   readVerifiedStoredEntry,
@@ -89,6 +90,11 @@ export interface ProducerOutput {
   passthrough?: true;
   /** The render hit `notFound()` and nothing else failed: no page to store. */
   notFound?: true;
+  /**
+   * The render answered `redirect()`: the URL's answer is that redirect, so
+   * it is stored in place of the page (matchForPrerender, prerender-match.ts).
+   */
+  redirect?: { location: string; status: number };
   onDemandConfig?: OnDemandRouteConfig;
 }
 
@@ -479,10 +485,11 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     };
     const keyStr = serializePrerenderKey(key);
     const store = config.store;
-    /** What the store holds for the page, as a result reports it. */
+    /** What the store holds for the URL, as a result reports it. */
     const held = (
-      status: "already-fresh" | "removed",
-      meta: PrerenderStoredEntry["meta"],
+      status: "already-fresh" | "removed" | "redirected",
+      meta: Pick<PrerenderStoredEntry["meta"], "tags" | "ttl">,
+      redirect?: { location: string; status: number },
     ): PrerenderResult => ({
       ok: true,
       path: "on-demand",
@@ -494,6 +501,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       // The configured ttl, not staleAt - storedAt: storedAt is the render's
       // start and a markStale() lowers staleAt, so the difference is neither.
       ...(meta.ttl != null ? { ttl: meta.ttl } : {}),
+      ...(redirect ? { redirect } : {}),
     });
     // Replace-on-success: a failed write leaves the prior durable entry (and
     // the bundled manifest fallback) in place.
@@ -531,12 +539,13 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       // An unreadable or unverifiable entry is "couldn't confirm fresh":
       // render, never throw (one result per target, many() keeps going).
       const existing = await readVerifiedStoredEntry(store, key, match.params);
-      // A fresh marker is left like a fresh page; a stale one (a notFound()
-      // past its ttl, or marked stale) is rendered again below.
+      // A fresh marker or stored redirect is left like a fresh page; a stale
+      // one (past its ttl, or marked stale) is rendered again below.
       if (existing && !isStoredEntryStale(existing, Date.now())) {
         return held(
           existing.removed === true ? "removed" : "already-fresh",
           existing.meta,
+          existing.redirect,
         );
       }
     }
@@ -589,6 +598,9 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     // handler is to answer, which it only does once nothing in a prerender
     // store does). Both store the "removed" marker, stamped below with the
     // route's ttl and tags like a page, so the outcome is rechecked like one.
+    // A redirect is no page either, but it is an answer: it is stored in place
+    // of the page (below) instead of the marker, so the URL serves the 3xx a
+    // live render would rather than a 404 the app never asked for.
     const noPage = produced.notFound === true || produced.passthrough === true;
 
     // Resolve soft TTL + tags from the route's onDemand config (read off the
@@ -619,32 +631,54 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         // page: a remove() (stamped with its write time) always qualifies. A
         // render's own marker carries that render's start, so only a render
         // that started later than this one wins; an older render's notFound()
-        // does not (this one read newer data). This narrows the race, it
-        // cannot close it: the read and the write are two store calls, and KV
-        // is eventually consistent. Otherwise last write wins.
+        // does not (this one read newer data). A stored redirect is a marker
+        // of the same kind: the URL stopped being this page after this render
+        // began, so it answers and this render does not. This narrows the
+        // race, it cannot close it: the read and the write are two store
+        // calls, and KV is eventually consistent. Otherwise last write wins.
         const current = await readVerifiedStoredEntry(store, key, match.params);
         if (current?.removed === true && current.meta.storedAt > startedAt) {
           return held("removed", current.meta);
+        }
+        if (current?.redirect && current.meta.storedAt > startedAt) {
+          return held("redirected", current.meta, current.redirect);
         }
       }
       // The router composes the envelope; the store only persists it.
       const writtenAt = Date.now();
       await store.set(
         key,
-        noPage
-          ? composeStoredTombstone(key, stamp, startedAt, writtenAt)
-          : composeStoredEntry(
+        produced.redirect
+          ? composeStoredRedirect(
               key,
-              { segments: produced.segments, handles: produced.handles },
+              produced.redirect,
               stamp,
               startedAt,
               writtenAt,
-            ),
+            )
+          : noPage
+            ? composeStoredTombstone(key, stamp, startedAt, writtenAt)
+            : composeStoredEntry(
+                key,
+                { segments: produced.segments, handles: produced.handles },
+                stamp,
+                startedAt,
+                writtenAt,
+              ),
       );
     } catch (err) {
       return storeFailed(err);
     }
 
+    // The redirect answers the URL from here on; nothing is rendered, so
+    // there is no cache to rebuild on top of it (no warm, see run()).
+    if (produced.redirect) {
+      return held(
+        "redirected",
+        { tags, ...(ttl != null ? { ttl } : {}) },
+        produced.redirect,
+      );
+    }
     if (produced.passthrough) {
       return {
         ok: false,

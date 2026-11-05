@@ -337,12 +337,13 @@ export function Prerender<
     | Record<string, any> = {},
   TRouteMap extends {} = DefaultPrerenderRouteMap,
 >(
-  handler: (
-    ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
-  ) =>
+  handler: (ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>) =>
     | ReactNode
+    // A redirect(): the URL's answer is that 3xx, not a page. An on-demand
+    // refresh stores it in place of the page (create-prerender-trigger.ts).
+    | Response
     | PrerenderPassthroughResult
-    | Promise<ReactNode | PrerenderPassthroughResult>,
+    | Promise<ReactNode | Response | PrerenderPassthroughResult>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
@@ -364,8 +365,9 @@ export function Prerender<
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
   ) =>
     | ReactNode
+    | Response
     | PrerenderPassthroughResult
-    | Promise<ReactNode | PrerenderPassthroughResult>,
+    | Promise<ReactNode | Response | PrerenderPassthroughResult>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;

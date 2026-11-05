@@ -48,7 +48,12 @@ route was pre-rendered.
   (`DataNotFoundError`), never an in-request producer render. A page is taken
   out of service by a "removed" marker in the overlay (`prerender.remove()`,
   or a refresh whose handler calls `notFound()`), which also hides the
-  build-time entry below it. A refresh cannot
+  build-time entry below it. A refresh whose render answers `redirect()`
+  stores the redirect in place of the page (a third overlay envelope), and
+  requests for the URL get that 3xx with its own status and `Location` — not
+  the page stored before it, and not a 404. The redirect carries the route's
+  `ttl` and `tags`, so it is rechecked like a page and a later refresh that
+  renders replaces it. A refresh cannot
   reach connected clients until their prefetch caches expire — see the
   staleness call-outs in `docs/design/ondemand-prerender.md`.
 

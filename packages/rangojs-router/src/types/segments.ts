@@ -317,11 +317,18 @@ export interface MatchResult {
    */
   fromStorage?: true;
   /**
-   * Redirect URL for trailing slash normalization.
-   * When set, the RSC handler should return a 308 redirect to this URL
-   * instead of rendering the page.
+   * Redirect URL: trailing-slash normalization, a route-level `redirectTo`, or
+   * a redirect an on-demand prerender refresh stored in place of the page
+   * (`router.prerender()`'s `redirected`). When set, the RSC handler returns a
+   * redirect to this URL instead of rendering the page.
    */
   redirect?: string;
+  /**
+   * The HTTP status of {@link redirect}, when the source carries one (a stored
+   * redirect keeps the 3xx the render answered with, so a temporary move is
+   * not served as a permanent one). Absent: the handler's own default (308).
+   */
+  redirectStatus?: number;
   /**
    * Route-level middleware collected from the matched entry tree.
    * These run with the same onion-style execution as app-level middleware,

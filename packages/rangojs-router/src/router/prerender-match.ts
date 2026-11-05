@@ -35,6 +35,7 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponse } from "../response-utils.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -110,6 +111,13 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /**
+   * On-demand only: the render answered `redirect()` — a 3xx Response escaped
+   * it (a handler's return, or any component throwing one). The URL's answer
+   * is that redirect, not a page; the trigger stores it in place of the page
+   * (create-prerender-trigger.ts). A build render keeps the throw.
+   */
+  redirect?: { location: string; status: number };
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -637,11 +645,31 @@ export async function matchForPrerender<TEnv = any>(
   // An on-demand refresh reports a notFound() anywhere in the render (a
   // handler's throw, or the only kind of error Flight collected) as an
   // outcome, with the route's onDemand config: the trigger stores the
-  // "removed" marker stamped like a page (create-prerender-trigger.ts).
+  // "removed" marker stamped like a page (create-prerender-trigger.ts). A
+  // redirect Response is the same kind of outcome: the URL's answer is the
+  // redirect, so it is stored in place of the page rather than failing the
+  // refresh (which would keep the page the URL no longer serves).
   try {
     return await rendered;
   } catch (error) {
-    if (!isDataNotFoundError(error)) throw error;
+    if (!isDataNotFoundError(error)) {
+      // instanceof first: a thrown null/Error has no `status` to read, and
+      // every other redirect site in the router pairs the two the same way.
+      if (!(error instanceof Response) || !isRedirectResponse(error)) {
+        throw error;
+      }
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        redirect: {
+          location: error.headers.get("Location")!,
+          status: error.status,
+        },
+        onDemandConfig,
+      };
+    }
     return {
       segments: [],
       handles: "",

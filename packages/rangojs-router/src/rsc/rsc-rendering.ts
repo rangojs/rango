@@ -920,7 +920,9 @@ function* preparePayloadPlan<TEnv>(
     return {
       kind: "control",
       response: createResponseWithMergedHeaders(null, {
-        status: 308,
+        // A stored redirect keeps the status its render answered with; a
+        // route-level one has none and stays the historical 308.
+        status: match.redirectStatus ?? 308,
         headers: { Location: match.redirect },
       }),
     };

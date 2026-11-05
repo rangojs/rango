@@ -148,6 +148,11 @@ async function ensurePrerenderDeps(): Promise<void> {
  *   newer than the client's copy: one that a refresh (possibly inside this
  *   very action) replaced. `stale`: it is past its soft `staleAt` (serves
  *   while a refresh is due).
+ * - `prerender-redirect`: the overlay holds the URL's answer as a redirect (a
+ *   refresh whose render called `redirect()`), not a page. It carries no
+ *   segments: the match reports the redirect and the request handler answers
+ *   it, so nothing below (the build manifest, a cache() record, the live
+ *   walk) runs.
  */
 type StoredSegmentSource =
   | {
@@ -158,7 +163,12 @@ type StoredSegmentSource =
       restoreHandles?: (sentIds: ReadonlySet<string>) => Promise<void>;
     }
   | { kind: "prerender-build"; entry: PrerenderEntry }
-  | { kind: "prerender-overlay"; entry: PrerenderEntry; stale: boolean };
+  | { kind: "prerender-overlay"; entry: PrerenderEntry; stale: boolean }
+  | {
+      kind: "prerender-redirect";
+      redirect: { location: string; status: number };
+      stale: boolean;
+    };
 
 /**
  * Decode a prerender entry's segments and replay its handle data into the
@@ -517,6 +527,17 @@ async function* serveStoredSegments<TEnv>(
   }
   const source: StoredSegmentSource = stored;
 
+  if (source.kind === "prerender-redirect") {
+    // The overlay holds a redirect in place of the page. Nothing is decoded and
+    // nothing falls through: buildMatchResult turns the marker into the match's
+    // `redirect`, which the request handler answers for every request shape
+    // (a document GET, a navigation, a PE form post, an action's revalidation).
+    state.cacheHit = true;
+    state.cacheSource = "prerender";
+    state.prerenderRedirect = source.redirect;
+    return;
+  }
+
   const fromCache = source.kind === "segment-cache";
   const storedSends = fromCache
     ? undefined
@@ -849,6 +870,12 @@ async function readPrerenderSource<TEnv>(
           ctx.handlerContext as InternalHandlerContext<any, TEnv>
         )._prerenderRemoved = true;
         return null;
+      }
+      if (stored.redirect) {
+        // The URL's answer is a redirect, not a page: served for both route
+        // shapes (the overlay is the newest answer, as a stored page is), so
+        // a Passthrough route's live handler does not run either.
+        return { kind: "prerender-redirect", redirect: stored.redirect, stale };
       }
       return { kind: "prerender-overlay", entry: stored.entry, stale };
     }
