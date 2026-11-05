@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a component given a layout's ctx files its handle pushes under the layout
+
+**Before.** A late push from it named the child route's segment in the dev
+`LateHandlePushError`, and a `"use cache"` call given that ctx replayed its
+pushes under the route on a cache hit.
+
+**Now.** Both name the layout's or slot's segment. A push after an `await`
+is still rejected; use `ctx.use(Handle).defer()` in the handler instead.
+
+Every layout's and slot's ctx is now its own object over the route's, as an
+include-scoped layout's already was: `{ ...ctx }` there copies only that
+object's own fields, so pass `ctx` itself rather than a spread of it.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

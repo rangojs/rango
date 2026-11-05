@@ -20,10 +20,12 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  runAsSegment,
   scopeReverse,
   type ReverseScope,
   type ScopableReverse,
 } from "../server/context.js";
+import { isHandle } from "../handle.js";
 import {
   guardRequestHeaders,
   readGuardedTheme,
@@ -224,6 +226,22 @@ export function withReverseScope<C>(
   scoped.reverse = scopeReverse((ctx as any).reverse, scope);
   scoped._reverseScope = scope;
   return scoped;
+}
+
+/**
+ * Pins a layout's or slot's ctx to `segmentId`: a component the ctx is handed
+ * to runs after the walker moved the shared `_currentSegmentId` on, so its
+ * handle pushes and "use cache" attribution (`_segmentPin`) name the segment.
+ */
+export function withSegmentPin<C>(ctx: C, segmentId: string): C {
+  const pinned = Object.create(ctx as object);
+  pinned._segmentPin = segmentId;
+  // The base `use` closes over the base ctx and never sees `_segmentPin`.
+  pinned.use = (item: unknown) =>
+    isHandle(item)
+      ? runAsSegment(segmentId, () => (ctx as any).use(item))
+      : (ctx as any).use(item);
+  return pinned;
 }
 
 /**

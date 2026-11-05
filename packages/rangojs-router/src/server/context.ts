@@ -1743,12 +1743,14 @@ export function runAsSegment<R>(segmentId: string | undefined, fn: () => R): R {
 
 /**
  * The segment code here runs for: the innermost runAsSegment scope, else
- * `ctx`'s pin (a handler the walker awaits).
+ * `ctx`'s own segment (withSegmentPin), else its shared pin (a handler the
+ * walker awaits).
  */
 export function segmentPinOf(ctx: {
+  _segmentPin?: string;
   _currentSegmentId?: string;
 }): string | undefined {
-  return segmentPinALS.getStore() ?? ctx._currentSegmentId;
+  return segmentPinALS.getStore() ?? ctx._segmentPin ?? ctx._currentSegmentId;
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).
