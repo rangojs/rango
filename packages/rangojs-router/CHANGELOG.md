@@ -14,8 +14,10 @@ handler had run and moved it on.
 **Now.** The message names the layout's or the slot's segment, the one that
 owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+That holds however the component holds the push function — `ctx.use(Handle)`,
+`const { use } = ctx`, `push={ctx.use}` — and for an intercept's slot handler
+too. The push is still rejected, at the same moment, and production still
+shows no message.
 
 ## 0.35.0 (2026-11-04)
 

@@ -104,9 +104,12 @@ export type LoaderErrorCallback = (
  * The segment a handle push through `ctx.use` files under.
  *
  * The receiver decides when it carries a segment: a layout's or a parallel
- * slot's ctx does (withSegmentScope), and the segment holds however long after
- * the handler returned, so an async component the handler handed the ctx to
- * still files under it after the walker moved the shared pin on. Any other
+ * slot's ctx does (withSegmentScope, router/handler-context.ts), and it is the
+ * receiver however the consumer calls its `use` — that ctx owns a `use` closed
+ * over the segment that calls back in here with itself, so a detached, bound
+ * or wrapped call files under the same segment. The segment holds however long
+ * after the handler returned, so an async component the handler handed the ctx
+ * to still files under it after the walker moved the shared pin on. Any other
  * receiver reads the ctx `use` was installed on, whose `_currentSegmentId`
  * the walker pins — a handler that built a smaller ctx with `use` copied onto
  * it (a Prerender handler forwarding to a shared page handler) included.

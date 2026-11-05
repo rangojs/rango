@@ -622,6 +622,61 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: a detached, propped or bound `use` still calls the base with the scoped ctx", () => {
+      const seen: unknown[] = [];
+      const ctx = {
+        params,
+        reverse: routeReverse(),
+        _currentSegmentId: "L1",
+        // Stands in for setupLoaderAccess's install, which reads `this`.
+        use: function (this: unknown, item: unknown) {
+          seen.push(this, item);
+          return item;
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // A string stands in for a Handle; the shapes are what this pins.
+      const call = (fn: unknown, item: string) =>
+        (fn as (item: unknown) => unknown)(item);
+      const { use } = scoped;
+      call(use, "detached");
+      const prop = scoped.use;
+      call(prop, "propped");
+      call(scoped.use.bind(undefined), "bound");
+      // The scoped ctx is the receiver every time: that is what
+      // handlePushSegment reads the segment off.
+      expect(seen).toEqual([
+        scoped,
+        "detached",
+        scoped,
+        "propped",
+        scoped,
+        "bound",
+      ]);
+      // And `use` stays off the ctx's own enumerable fields, so `{ ...ctx }`
+      // still copies what it copied when `use` was only inherited.
+      expect(Object.keys(scoped)).not.toContain("use");
+    });
+
+    it("withSegmentScope: `use` installed on the base after the child exists is the one that runs", () => {
+      const ctx = {
+        params,
+        reverse: routeReverse(),
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      const seen: unknown[] = [];
+      // executeLoaderData wraps the base ctx's `use` for a loader-cache window.
+      (ctx as { use?: (item: unknown) => unknown }).use = function (
+        this: unknown,
+        item: unknown,
+      ) {
+        seen.push(this, item);
+        return item;
+      };
+      (scoped.use as unknown as (item: unknown) => unknown)("late-installed");
+      expect(seen).toEqual([scoped, "late-installed"]);
+    });
   });
 
   describe("optional params", () => {

@@ -214,10 +214,17 @@ function createPrerenderPassthroughFn(
  * moves the shared `_currentSegmentId` on while an async component the handler
  * handed this ctx to is still rendering, so a push made through this ctx after
  * an `await` would otherwise file under (and a LateHandlePushError name)
- * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
- * router/loader-resolution.ts), which holds after an `await` and in a
- * component the ctx is handed to.
+ * whatever segment the walker pinned since.
+ *
+ * The child owns `use` for that: a function closed over the segment that
+ * delegates to the base ctx's `use` with the child as the receiver
+ * (handlePushSegment, router/loader-resolution.ts, reads the segment off the
+ * receiver). The segment sits in the closure, not in `this`, so every shape a
+ * consumer can give that function — destructured off the ctx, passed as a
+ * prop, bound, wrapped — still files under this segment. `use` is resolved on
+ * the base at call time, so a wrapper installed on the base after this child
+ * was created stays in the path (executeLoaderData's loader-cache interceptor,
+ * segment-resolution/loader-cache.ts).
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -231,10 +238,19 @@ export function withSegmentScope<C>(
 ): C {
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
+    use: HandlerContext<any, any>["use"];
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  const base = ctx as { use: (item: any) => any };
+  // Not enumerable, so `{ ...ctx }` keeps copying what it copied when `use`
+  // was only inherited from the request ctx.
+  Object.defineProperty(scoped, "use", {
+    configurable: true,
+    writable: true,
+    value: (item: any) => base.use.call(scoped, item),
+  });
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;
