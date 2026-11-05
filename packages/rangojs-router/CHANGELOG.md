@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Changed: a build whose module markers changed shape says so instead of silently moving every router's cache version
+
+**Before.** The per-app cache versions leave plugin-rsc's server-reference
+map out of the hash by finding the comment the bundler prints above each
+module. A bundler that printed that comment another way (vite 8.2's rolldown
+1.2.15 did) put the map back into every app's version with no sign of it: one
+app's new action moved every app's version and cleared every cache, and only
+a unit test on a dependency bump noticed.
+
+**Now.** A server build that prints module markers, holds the map, and finds
+no marker naming it logs a line under `DEBUG=rango:build` (or
+`INTERNAL_RANGO_DEBUG=1`) that names the chunk. The versions themselves are
+unchanged: the line is what a bundler bump shows next time.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
