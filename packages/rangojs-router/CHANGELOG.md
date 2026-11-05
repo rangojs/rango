@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a stored HIT replaces the handle values it re-serves
+
+**Before.** A partial response's `resolvedIds` names the segments whose handle
+values (`ctx.use(Handle)`: a breadcrumb, a title) the browser replaces. A
+segment whose handler ran was named; a segment served from a stored record was
+not, because the record keeps the segment's data but not the marker the live
+walk sets. So every `cache()` HIT, `Prerender()` HIT and PPR navigation replay
+kept the previous page's values for the segments it served: a layout whose
+handler stopped pushing its breadcrumb kept showing it after a HIT, where the
+MISS that wrote the record cleared it. An intercept slot whose handler re-ran
+and pushed nothing kept its values on a live navigation as well.
+
+**Now.** A HIT names the segments it serves from the record — the ones it does
+not keep for the client — in the same `resolvedIds` its MISS reported, so the
+browser replaces exactly those values. A segment the HIT keeps (its
+`revalidate()` declined) is still not named and keeps the client's values, and
+so is a slot a `prefetch: false` fill keeps. The record format is unchanged, so
+entries written by earlier versions serve the same way.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

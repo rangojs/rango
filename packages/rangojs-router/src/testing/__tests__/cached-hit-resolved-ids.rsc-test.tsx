@@ -56,6 +56,7 @@ const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 /** Whether the layouts push on this request. */
 let chainPushes = true;
 let keptPushes = true;
+let modalPushes = true;
 
 /** The chain layout: its rule re-runs it on every navigation. */
 const Chain = (ctx: HandlerContext): React.ReactNode => {
@@ -88,6 +89,7 @@ const buildTwin = (ctx: BuildContext<{ id: string }>): React.ReactNode =>
 interface Answer {
   matched: string[];
   resolvedIds?: string[];
+  fromStorage?: true;
 }
 
 /** A response's metadata and the handle state it streamed. */
@@ -129,7 +131,7 @@ function pageCrumbs(handles: HandleData, matched: string[]): string[] {
 }
 
 /** The document at /a: its handles and the ids the client then holds. */
-async function pageOf(router: ReturnType<typeof createRouter>) {
+async function pageOf(router: Parameters<typeof serveShellRequest>[0]) {
   const cacheStore = new MemorySegmentCacheStore();
   const page = await answerOf(
     await serveShellRequest(router, "/a", { cacheStore }),
@@ -145,6 +147,7 @@ async function pageOf(router: ReturnType<typeof createRouter>) {
 beforeEach(async () => {
   chainPushes = true;
   keptPushes = true;
+  modalPushes = true;
   await resetShellTestState();
 });
 
@@ -178,6 +181,57 @@ describe("a stored segment a HIT re-serves replaces its handle values", () => {
     // The chain layout's handler stopped pushing: the page drops its crumb on
     // the HIT as it did on the MISS.
     expect(await crumbsAfter(page.handles, await serve())).toEqual(["b"]);
+  });
+
+  it("an intercept slot whose handler re-runs: the MISS and the HIT both list it", async () => {
+    const router = createRouter({}).routes(
+      urls(({ path, cache, layout, intercept, revalidate }) => [
+        cache({ ttl: 600 }, () => [
+          layout(Chain, () => [
+            revalidate(() => true),
+            path("/list", crumbPage("list"), { name: "list" }),
+            path(
+              "/item/:id",
+              (ctx: HandlerContext<{ id: string }>) => {
+                ctx.use(Crumbs)("item");
+                return <p>item</p>;
+              },
+              { name: "item" },
+            ),
+            intercept("@modal", ".item", (ctx: HandlerContext) => {
+              if (modalPushes) ctx.use(Crumbs)("modal");
+              return <dialog>modal</dialog>;
+            }),
+          ]),
+        ]),
+      ]),
+    );
+    const page = await pageOf(router);
+    // A modal navigation that pushes: the page then holds the slot's crumb.
+    const opened = await serveShellRequest(router, "/item/1", {
+      cacheStore: page.cacheStore,
+      partial: { from: "/list", segments: page.matched },
+    });
+    expect(await crumbsAfter(page.handles, opened)).toEqual(["chain", "modal"]);
+    modalPushes = false;
+    const partial = { from: "/list", segments: page.matched } as const;
+    const serve = () =>
+      serveShellRequest(router, "/item/2", {
+        cacheStore: page.cacheStore,
+        partial,
+      });
+    const missResult = await serve();
+    const miss = await answerOf(missResult);
+    const hitResult = await serve();
+    const hit = await answerOf(hitResult);
+    const slotId = miss.answer.matched.find((id) => id.endsWith(".@modal"));
+    expect(slotId).toBeDefined();
+    expect(miss.answer.resolvedIds).toContain(slotId);
+    expect(hit.answer.resolvedIds).toEqual(miss.answer.resolvedIds);
+    expect(hitResult.flight).not.toContain("_handlerRan");
+    // The slot's handler pushed nothing this time, on either path.
+    expect(await crumbsAfter(page.handles, missResult)).toEqual(["chain"]);
+    expect(await crumbsAfter(page.handles, hitResult)).toEqual(["chain"]);
   });
 
   it("a Prerender() HIT lists the segments it serves, as a live render does", async () => {

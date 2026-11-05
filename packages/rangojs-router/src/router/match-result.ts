@@ -201,16 +201,14 @@ export function buildMatchResult<TEnv>(
   }
 
   // One pass over segmentsToRender: strip the internal _handlerRan marker and
-  // collect the diff ids (id is unchanged by the strip) together.
-  const cleanedSegments: ResolvedSegment[] = [];
+  // collect the diff ids together. Deleted on the segment, not copied out of
+  // it: the same objects reach the payload through `slots` too (MatchResult.
+  // slots carries an intercept's segments), and that container is not rebuilt
+  // here — a copy left the mark on them and it reached the client.
+  const cleanedSegments: ResolvedSegment[] = segmentsToRender;
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    if (s._handlerRan !== undefined) delete s._handlerRan;
     diff.push(s.id);
   }
 

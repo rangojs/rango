@@ -11,10 +11,6 @@
  */
 import { describe, it, expect, vi } from "vitest";
 
-vi.mock("../../../prerender/store.js", () => ({
-  createPrerenderStore: () => ({ get: async () => null }),
-}));
-
 // lookupRoute decodes segments and handles through segment-codec; the same
 // JSON stand-in as cache-lookup-owned-pushes.test.ts.
 function pluginRscMock() {
