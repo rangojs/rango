@@ -69,7 +69,7 @@ import { isRenderableLoading } from "../../types/boundaries.js";
 import { isLayoutLoaderCopy } from "../../client-urls/layout-loader-copies.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeSegmentHandler } from "../instrument.js";
-import { withReverseScope } from "../handler-context.js";
+import { withSegmentScope } from "../handler-context.js";
 import { trackStreamedHandler } from "./streamed-handler-boundary.js";
 import {
   track,
@@ -819,7 +819,11 @@ async function resolveParallelSlotComponent<TEnv>(
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         parallelId;
       handlerRan = true;
-      const slotContext = withReverseScope(context, parallelEntry.reverseScope);
+      const slotContext = withSegmentScope(
+        context,
+        parallelId,
+        parallelEntry.reverseScope,
+      );
       const doneHandler = track(`handler:${parallelEntry.id}.${slot}`, 2);
       const run = () =>
         typeof handler !== "function"

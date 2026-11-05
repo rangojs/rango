@@ -814,7 +814,7 @@ export function getRootScoped(): boolean {
  * module's route. Structural entries (layout, cache, parallel, wrapping
  * middleware) and the loaders they declare capture the scope where the DSL
  * defined them. Their handler gets a ctx whose `reverse` carries it
- * (withReverseScope, router/handler-context.ts), and their loaders' DSL
+ * (withSegmentScope, router/handler-context.ts), and their loaders' DSL
  * kickoff carries it in the loader scope (runInsideLoaderScope) for the
  * loader ctx the executor builds. Global names and mount-param autofill do
  * not change.
@@ -1742,13 +1742,18 @@ export function runAsSegment<R>(segmentId: string | undefined, fn: () => R): R {
 }
 
 /**
- * The segment code here runs for: the innermost runAsSegment scope, else
- * `ctx`'s pin (a handler the walker awaits).
+ * The segment code here runs for: the innermost runAsSegment scope, else the
+ * segment `ctx` was scoped to (a layout's or parallel slot's ctx, which holds
+ * after the walker moved on), else the request ctx's pin (a handler the
+ * walker awaits).
  */
 export function segmentPinOf(ctx: {
   _currentSegmentId?: string;
+  _handleSegmentId?: string;
 }): string | undefined {
-  return segmentPinALS.getStore() ?? ctx._currentSegmentId;
+  return (
+    segmentPinALS.getStore() ?? ctx._handleSegmentId ?? ctx._currentSegmentId
+  );
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).
