@@ -279,11 +279,14 @@ export function isStoredEntryValidFor(
         !Array.isArray(entry.segments) ||
         typeof entry.handles !== "string")) ||
     // A redirect is served as an HTTP answer, so its two fields are required
-    // and typed: a hand-written or corrupted record is a miss, not a 500.
+    // and typed, and the status is a 3xx: a hand-written or corrupted record
+    // is a miss, never a 200 that carries a `Location`.
     (redirect !== undefined &&
       (typeof redirect !== "object" ||
         typeof redirect.location !== "string" ||
-        typeof redirect.status !== "number")) ||
+        typeof redirect.status !== "number" ||
+        redirect.status < 300 ||
+        redirect.status >= 400)) ||
     meta == null ||
     typeof meta !== "object" ||
     !Array.isArray(meta.tags) ||

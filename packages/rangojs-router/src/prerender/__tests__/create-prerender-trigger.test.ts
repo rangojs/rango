@@ -523,6 +523,43 @@ describe("createPrerenderTrigger", () => {
       expect(store.peek(storedKey)).not.toHaveProperty("redirect");
     });
 
+    it("a stored redirect with a status that is not a 3xx is a miss, not a served answer", async () => {
+      const store = createMemoryPrerenderStore();
+      const { trigger } = harness({ config: { store } });
+      await store.set(storedKey, {
+        v: 1,
+        redirect: { location: "/products/43", status: 200 },
+        meta: {
+          storedAt: 1,
+          tags: [],
+          version: "b1",
+          params: { id: "42" },
+        },
+      });
+
+      // A 200 carrying a `Location` is not an answer anyone wrote: the sweep
+      // renders instead of reporting the entry fresh.
+      expect(
+        await trigger("/products/42", { onlyIfStale: true }),
+      ).toMatchObject({ ok: true, status: "rendered" });
+    });
+
+    it("many() stores a redirect per target and reports one result each", async () => {
+      const { trigger, store } = harness({
+        runProducer: async () => output({ redirect: redirectTo }),
+      });
+      const results = await trigger.many(["/products/1", "/products/2"]);
+
+      expect(results).toHaveLength(2);
+      expect(results.every((r) => r.ok && r.status === "redirected")).toBe(
+        true,
+      );
+      expect(store.size).toBe(2);
+      expect(
+        store.entries().every(([, stored]) => stored.redirect !== undefined),
+      ).toBe(true);
+    });
+
     it("a non-redirect Response is still render-failed", async () => {
       const { trigger, store } = harness({
         runProducer: async () => {
