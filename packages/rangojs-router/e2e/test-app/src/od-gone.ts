@@ -9,6 +9,11 @@ export const goneSlugs: Set<string> = new Set();
 // slug in this set (?fail=1 / ?fail=0), so a refresh is `render-failed`.
 export const failSlugs: Set<string> = new Set();
 
+// A product whose page moved: the plain producer throws redirect() to the
+// slug mapped here (?moved=<slug> / ?moved= on /od-plain-trigger), so a
+// refresh stores the redirect in place of the page.
+export const movedSlugs: Map<string, string> = new Map();
+
 // And a Passthrough build handler that declines a baked param on demand: the
 // handler calls ctx.passthrough() for a slug in this set (?decline=1 /
 // ?decline=0 on /od-trigger), so a refresh is `skipped-passthrough`.

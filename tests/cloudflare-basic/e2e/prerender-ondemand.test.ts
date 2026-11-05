@@ -6,10 +6,12 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectMovedBakedPageRedirects,
+  expectMovedPageRedirects,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
-  type PrerenderOutcomesFixture,
+  type PrerenderMoveFixture,
 } from "@shared/e2e";
 
 test.describe.configure({ mode: "serial" });
@@ -311,9 +313,10 @@ function definePlainOnDemandFlow(f: Fixture) {
 // Removing a refreshed page (#1060), on the KV store. The plain route's baked
 // "intro" is shared with the plain flows above, which refresh it first (this
 // file is serial); the Passthrough route's baked "removable" belongs to these
-// tests alone, as is "decline-baked" for the decline case. The bodies are
-// shared with packages/rangojs-router/e2e/on-demand-prerender.test.ts.
-const guideFixture = (f: Fixture): PrerenderOutcomesFixture => ({
+// tests alone, as is "decline-baked" for the decline case and the plain
+// route's "movable" for a page that moved. The bodies are shared with
+// packages/rangojs-router/e2e/on-demand-prerender.test.ts.
+const guideFixture = (f: Fixture): PrerenderMoveFixture => ({
   path: (slug) => `/guide-plain/${slug}`,
   stampTestId: "gp-stamp",
   onDemandTestId: "gp-ondemand",
@@ -323,6 +326,7 @@ const guideFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   slugTestId: "gp-slug",
   actionTestId: "gp-action-noop",
   bakedSlug: "intro",
+  movableSlug: "movable",
   passthrough: {
     pageUrl: (slug) => f.url(`/guides/${slug}`),
     triggerUrl: (slug) => f.url(`/guide-trigger/${slug}`),
@@ -349,6 +353,18 @@ function defineRemoveFlow(f: Fixture) {
     page,
   }) => {
     await expectRemovedPassthroughPageRunsLiveHandler(page, guideFixture(f));
+  });
+
+  test("a refresh whose handler now redirects stores the redirect: the page is redirected, to a request and to a server action, until a refresh renders it", async ({
+    page,
+  }) => {
+    await expectMovedPageRedirects(page, guideFixture(f));
+  });
+
+  test("a baked page that moved is redirected, not served from its build-time entry", async ({
+    page,
+  }) => {
+    await expectMovedBakedPageRedirects(page, guideFixture(f));
   });
 }
 

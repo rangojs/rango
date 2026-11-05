@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -14,6 +14,13 @@ export const guidePlainGoneKey = (slug: string): string =>
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
+/**
+ * KV key of a slug whose page the e2e moved: its value is the slug it moved
+ * to, and a refresh throws redirect() there.
+ */
+export const guidePlainMovedKey = (slug: string): string =>
+  `gp-moved:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
 // entry and no baked entry throws DataNotFoundError -> 404 (the retained
@@ -22,10 +29,16 @@ export const guidePlainFailKey = (slug: string): string =>
 // retains this producer body for router.prerender().
 // A slug the e2e deleted from the data source (guidePlainGoneKey, set by the
 // trigger's ?gone=1 op) is a notFound(): a refresh of it stores the "removed"
-// marker. Read only on a refresh, where ctx.env is the live env.
+// marker. A slug it moved (guidePlainMovedKey, ?moved=<slug>) throws
+// redirect(): a refresh stores the redirect. Read only on a refresh, where
+// ctx.env is the live env. "movable" is baked for the move e2e alone.
 export const GuidePlainDef = Prerender<{ slug: string }>(
-  async () => [{ slug: "intro" }],
+  async () => [{ slug: "intro" }, { slug: "movable" }],
   async (ctx) => {
+    const movedTo = ctx.onDemand
+      ? await ctx.env.PRERENDER_KV.get(guidePlainMovedKey(ctx.params.slug))
+      : null;
+    if (movedTo) throw redirect(`/guide-plain/${movedTo}`);
     if (
       ctx.onDemand &&
       (await ctx.env.PRERENDER_KV.get(guidePlainGoneKey(ctx.params.slug)))
