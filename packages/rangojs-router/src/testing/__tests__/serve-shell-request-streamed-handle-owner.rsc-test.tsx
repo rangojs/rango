@@ -16,6 +16,11 @@
  * resolves after the main walk, on the shared ctx; the intercept case guards
  * that order. `{ ...ctx }` in a loading() route copies what it copies in an
  * awaited route.
+ *
+ * A layout's or slot's ctx can be handed to an async component React renders
+ * after the walker moved on to the route. That ctx pins handle pushes and a
+ * "use cache" call's attribution to its segment (withSegmentPin,
+ * router/handler-context.ts), on a cache miss and its replay alike.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -35,6 +40,7 @@ import {
   createLoader,
   createRouter,
   urls,
+  type HandlerContext,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
@@ -255,6 +261,84 @@ function orphanLayout() {
   );
 }
 
+/** Pushes after a timer: past handle collection, so rejected. */
+async function LatePush({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  ctx.use(Crumbs)(label);
+  return <p>{label}</p>;
+}
+
+/** A layout and its slot each hand their ctx to LatePush. */
+function layoutCtxLatePush(errors: string[]) {
+  return createRouter({
+    onError: ({ error }) => {
+      errors.push(error instanceof Error ? error.message : String(error));
+    },
+  }).routes(
+    urls(({ path, layout, parallel }) => [
+      path("/a", () => <p>a</p>, { name: "a" }),
+      layout(
+        (ctx: HandlerContext) => (
+          <div>
+            <LatePush ctx={ctx} label="layout" />
+          </div>
+        ),
+        () => [
+          path("/l", () => <p>page</p>, { name: "l" }),
+          parallel({
+            "@side": (ctx: HandlerContext) => (
+              <aside>
+                <LatePush ctx={ctx} label="side" />
+              </aside>
+            ),
+          }),
+        ],
+      ),
+    ]),
+  );
+}
+
+/** Calls a "use cache" function that pushes, after a short await. */
+async function CachedPush({ ctx }: { ctx: HandlerContext }) {
+  await wait("a timer");
+  return <p>{await cachedCrumb(ctx, "layout")}</p>;
+}
+
+/**
+ * A layout that hands its ctx to CachedPush, above a loading() route whose
+ * handler keeps handle collection open past CachedPush's call.
+ */
+function layoutCtxCached() {
+  return createRouter({}).routes(
+    urls(({ path, layout, loading }) => [
+      layout(
+        (ctx: HandlerContext) => (
+          <main>
+            <CachedPush ctx={ctx} />
+          </main>
+        ),
+        () => [
+          path(
+            "/k",
+            async () => {
+              await new Promise((resolve) => setTimeout(resolve, 20));
+              return <article>k</article>;
+            },
+            { name: "k" },
+            () => [loading(<p>k-loading</p>)],
+          ),
+        ],
+      ),
+    ]),
+  );
+}
+
 type Mode = "document" | "navigation";
 
 type Copy = Record<string, any>;
@@ -418,6 +502,44 @@ describe("{ ...ctx } in a loading() route", () => {
     expect(await serve(router, "/u/7", "document", options)).toEqual(expected);
     expect(cachedCrumbRuns.count - runs).toBe(1);
   });
+});
+
+describe("a component given a layout's or slot's ctx", () => {
+  for (const mode of ["document", "navigation"] as const) {
+    it(`${mode}: a late push names the layout's or slot's segment`, async () => {
+      const errors: string[] = [];
+      const result = await serveShellRequest(layoutCtxLatePush(errors), "/l", {
+        cacheStore: new MemorySegmentCacheStore(),
+        partial: mode === "document" ? undefined : { from: "/a", segments: [] },
+      });
+      await result.readHandles();
+      const late = () =>
+        errors.flatMap((message) => {
+          const match =
+            /^Handle "[^"]*" for segment "([^"]+)" was pushed after/.exec(
+              message,
+            );
+          return match ? [match[1]!] : [];
+        });
+      await vi.waitFor(() => expect(late()).toHaveLength(2));
+      expect(late().sort()).toEqual(["M0L0L0", "M0L0L0.@side"]);
+    });
+
+    it(`${mode}: a "use cache" call pushes, and replays, under the layout`, async () => {
+      const cacheStore = new MemorySegmentCacheStore();
+      const options = { handle: CachedCrumbs, cacheStore };
+      const expected = {
+        buckets: { M0L0L0: ["layout"] },
+        collected: ["layout"],
+      };
+      const router = layoutCtxCached();
+      const runs = cachedCrumbRuns.count;
+      // A miss runs the body, the second request replays its record.
+      expect(await serve(router, "/k", mode, options)).toEqual(expected);
+      expect(await serve(router, "/k", mode, options)).toEqual(expected);
+      expect(cachedCrumbRuns.count - runs).toBe(1);
+    });
+  }
 });
 
 for (const mode of ["document", "navigation"] as const) {

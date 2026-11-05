@@ -641,6 +641,8 @@ describe("createReverseFunction", () => {
       const { use } = pinned;
       expect(use(Crumbs)).toBe("L0");
       expect(ctx.use(Crumbs)).toBe("L0R0");
+      // A "use cache" call given the ctx records its caller from here.
+      expect(segmentPinOf(pinned)).toBe("L0");
     });
 
     it("loaders and other fields read through", () => {

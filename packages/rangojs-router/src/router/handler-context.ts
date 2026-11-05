@@ -229,15 +229,14 @@ export function withReverseScope<C>(
 }
 
 /**
- * The ctx a layout's or parallel slot's handler gets, pinned to its segment:
- * a prototype child of the request's one handler ctx whose `use(Handle)`
- * binds the push to `segmentId`, wherever and whenever it is called. The
- * shared `_currentSegmentId` names whichever segment the walker resolved
- * last: a component the ctx is handed to runs after the walker moved on to
- * the child route. Loaders and every other field read through unchanged.
+ * Pins a layout's or slot's ctx to `segmentId`: a component the ctx is handed
+ * to runs after the walker moved the shared `_currentSegmentId` on, so its
+ * handle pushes and "use cache" attribution (`_segmentPin`) name the segment.
  */
 export function withSegmentPin<C>(ctx: C, segmentId: string): C {
   const pinned = Object.create(ctx as object);
+  pinned._segmentPin = segmentId;
+  // The base `use` closes over the base ctx and never sees `_segmentPin`.
   pinned.use = (item: unknown) =>
     isHandle(item)
       ? runAsSegment(segmentId, () => (ctx as any).use(item))
