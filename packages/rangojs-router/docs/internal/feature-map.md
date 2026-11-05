@@ -1047,7 +1047,9 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   Response (the `external` opt-in branded again), ahead of the bundled
   manifest and of a Passthrough route's live handler, and the request takes a
   handler redirect's path (3xx document, soft redirect for a navigation or an
-  action). A redirect Flight collects (a streamed handler's) or a Response
+  action). A Passthrough route's action re-render does not read the overlay
+  and stays live, as over a stored page. A redirect Flight collects (a
+  streamed handler's) or a Response
   that is not a redirect stays `render-failed`. The producer's context
   carries the router's basename (`PrerenderMatchDeps.basename`).
 - `remove()` and a refresh are two writes to one key: last write wins, except

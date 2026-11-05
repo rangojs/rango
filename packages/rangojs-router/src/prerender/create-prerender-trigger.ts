@@ -605,7 +605,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     // The render answered a redirect (the page moved): it is stored in place
     // of the page, stamped like one, and a request is answered with it. Not
     // the marker: on a plain route that is a 404, not the redirect.
-    const redirect = noPage ? undefined : produced.redirect;
+    const redirect = produced.redirect;
 
     // Resolve soft TTL + tags from the route's onDemand config (read off the
     // loaded route entry by the producer), falling back to the router default.

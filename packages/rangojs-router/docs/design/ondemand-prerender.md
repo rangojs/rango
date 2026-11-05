@@ -997,7 +997,9 @@ The stored redirect is what shipped. The comparison, from the visitor's seat:
   page's: the route's `ttl` and `tags`, `storedAt` the render's start. It
   re-reads the key before the write as for a page, so a `remove()` that
   landed during the render wins. No warm follows: the warm request would only
-  be answered with the stored redirect.
+  be answered with the stored redirect. Two refreshes in flight are two
+  writes, as for pages: an older render's page written after a newer
+  render's redirect replaces it, until the next refresh.
 - **The serve path** (`readPrerenderSource`, `cache-lookup.ts`) schedules
   `onRevalidate` for a stale one first, as for any envelope, then throws a
   fresh redirect Response built from it (`storedRedirectResponse`). From
@@ -1006,6 +1008,9 @@ The stored redirect is what shipped. The comparison, from the visitor's seat:
   the 3xx and a navigation or an action with the soft redirect
   (`interceptRedirectForPartial`). The outgoing guard
   (`rsc/redirect-guard.ts`) judges its `Location` as it judges a live one.
+  Where the overlay is not read, the redirect is not either: a `Passthrough`
+  route's action re-render and stale navigation render live, as they do over
+  a stored page, and an HMR re-render skips the overlay in dev.
 
 ### The rules, and why
 

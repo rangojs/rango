@@ -17,7 +17,8 @@ From the next request on, the URL is answered with that redirect, as a live
 handler's `redirect()` is answered: a 3xx with its `Location` for a document
 request, the soft redirect for a client navigation or a server action's
 re-render, in dev and production. It answers ahead of the page or build-time
-entry below it and of a `Passthrough` route's live handler. The stored
+entry below it and of a `Passthrough` route's live handler, except where that
+route renders live over a stored page too: its server-action re-renders. The stored
 redirect has the route's `ttl` and `tags`, so it is rechecked like a page
 (`onRevalidate` on a stale one, `onlyIfStale`, `markStale()`), and a refresh
 that renders the page again replaces it.

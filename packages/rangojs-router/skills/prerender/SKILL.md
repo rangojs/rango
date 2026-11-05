@@ -989,8 +989,9 @@ live handler's `redirect()` is answered: a document request gets the 3xx
 with its `Location`, a client navigation or a server action's re-render the
 soft redirect. Nothing else answers for it: not the page stored before, not
 the build-time entry of a baked param, and not a `Passthrough` route's live
-handler. A plain on-demand route needs this: the "removed" marker would
-answer it with a 404, not with the redirect.
+handler, except on that route's server-action re-renders, which run the live
+handler over a stored page too. A plain on-demand route needs this: the
+"removed" marker would answer it with a 404, not with the redirect.
 
 - **Rechecked like a page.** The stored redirect has the route's `ttl` and
   `tags`. A request that finds it stale schedules `onRevalidate` and is still
