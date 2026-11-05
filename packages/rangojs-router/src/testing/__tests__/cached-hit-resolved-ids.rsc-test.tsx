@@ -55,7 +55,6 @@ const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
 /** Whether the layouts push on this request. */
 let chainPushes = true;
-let keptPushes = true;
 let modalPushes = true;
 
 /** The chain layout: its rule re-runs it on every navigation. */
@@ -66,7 +65,7 @@ const Chain = (ctx: HandlerContext): React.ReactNode => {
 
 /** A routeless sibling its rule keeps: its values stay the client's. */
 const Kept = (ctx: HandlerContext): React.ReactNode => {
-  if (keptPushes) ctx.use(Crumbs)("kept");
+  ctx.use(Crumbs)("kept");
   return <aside>kept</aside>;
 };
 
@@ -146,7 +145,6 @@ async function pageOf(router: Parameters<typeof serveShellRequest>[0]) {
 
 beforeEach(async () => {
   chainPushes = true;
-  keptPushes = true;
   modalPushes = true;
   await resetShellTestState();
 });
