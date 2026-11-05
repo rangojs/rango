@@ -17,6 +17,13 @@ owns the ctx the push went through:
 The push is still rejected, at the same moment, and production still shows no
 message.
 
+The same holds for every shape a component reaches `use` through: a `use`
+destructured off the ctx, a `{ ...ctx }` copy, and a loader started with
+`ctx.use(Loader)` (its handle pushes and the segment a rejection names belong
+to the layout or slot whose ctx started it). A `{ ...ctx }` copy of a layout's
+or slot's ctx now carries `use` and can push at all; before, it had none.
+Previously these filed under the child route.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

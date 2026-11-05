@@ -622,6 +622,44 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    /** A ctx whose `use` records the receiver it was called on. */
+    function ctxWithRecordingUse() {
+      const receivers: unknown[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use: function (this: unknown) {
+          receivers.push(this);
+          return "push";
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      return { ctx, receivers };
+    }
+
+    it("withSegmentScope: `use` reaches the parent's with this ctx as receiver, however it is called", () => {
+      const { ctx, receivers } = ctxWithRecordingUse();
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // A method call, a detached call, and a `{ ...ctx }` copy that owns the
+      // wrapper: all three file the push under this ctx's segment.
+      scoped.use({} as any);
+      const { use } = scoped;
+      use({} as any);
+      ({ ...scoped }).use({} as any);
+      expect(receivers).toEqual([scoped, scoped, scoped]);
+      expect(receivers.every((receiver) => receiver !== ctx)).toBe(true);
+    });
+
+    it("withSegmentScope: `use` reads the parent's current one, so a later install is honored", () => {
+      const { ctx, receivers } = ctxWithRecordingUse();
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      const installed = function (this: unknown) {
+        receivers.push(this);
+        return "intercepted";
+      };
+      ctx.use = installed as unknown as InternalHandlerContext<any, any>["use"];
+      expect(scoped.use({} as any)).toBe("intercepted");
+      expect(receivers).toEqual([scoped]);
+    });
   });
 
   describe("optional params", () => {

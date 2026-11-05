@@ -215,9 +215,16 @@ function createPrerenderPassthroughFn(
  * handed this ctx to is still rendering, so a push made through this ctx after
  * an `await` would otherwise file under (and a LateHandlePushError name)
  * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
+ * `_handleSegmentId` off the receiver it was called on (ctxSegmentOf,
  * router/loader-resolution.ts), which holds after an `await` and in a
  * component the ctx is handed to.
+ *
+ * `use` is bound to this ctx here, not left to the call shape: a detached call
+ * (`const { use } = ctx`, or a destructuring in a prop) and a `{ ...ctx }`
+ * copy both reach the parent's `use` with this ctx as the receiver, so they
+ * file under `segmentId` too. It reads the parent's `use` when called, so a
+ * later install on the request ctx (loader-cache.ts executeLoaderData's
+ * interceptor) is honored.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -239,6 +246,9 @@ export function withSegmentScope<C>(
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;
   }
+  const parent = ctx as unknown as { use: (item: unknown) => unknown };
+  (scoped as unknown as { use: unknown }).use = (item: unknown) =>
+    parent.use.call(scoped, item);
   return scoped;
 }
 

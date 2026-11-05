@@ -224,6 +224,52 @@ function cachedRoute(w: Wait) {
   );
 }
 
+/**
+ * A layout that hands its ctx to an async component pushing after an await,
+ * over a route that streams: the layout's ctx carries its segment, and the
+ * push lands while collection is still open, so it shows in a bucket instead
+ * of being rejected.
+ */
+function handedLayout(push: "handle" | "cache") {
+  async function Handed({ ctx }: { ctx: any }) {
+    await wait("a timer");
+    if (push === "cache") {
+      return <span>{await cachedCrumb(ctx, "handed")}</span>;
+    }
+    ctx.use(Crumbs)("handed");
+    return <span>handed</span>;
+  }
+  return createRouter({}).routes(
+    urls(({ path, layout, loading }) => [
+      layout(
+        () => <main>shell</main>,
+        () => [
+          layout(
+            (ctx) => (
+              <div>
+                <Handed ctx={ctx} />
+              </div>
+            ),
+            () => [
+              path(
+                "/h",
+                async () => {
+                  // Long enough that the handed component's timer has fired
+                  // and its push is in while the store is still collecting.
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                  return <article>h</article>;
+                },
+                { name: "h" },
+                () => [loading(<p>h-loading</p>)],
+              ),
+            ],
+          ),
+        ],
+      ),
+    ]),
+  );
+}
+
 /** A route whose orphan layout pushes, with no await anywhere. */
 function orphanLayout() {
   return createRouter({}).routes(
@@ -524,6 +570,32 @@ for (const mode of ["document", "navigation"] as const) {
         },
         collected: ["layout", "orphan", "route"],
       });
+    });
+
+    // The ctx a layout handed to a component carries the layout's segment
+    // (withSegmentScope), so the push files there rather than under the route
+    // the walker pinned while the component rendered.
+    it("a component a layout's handler handed its ctx to pushes into the layout's bucket", async () => {
+      expect(await serve(handedLayout("handle"), "/h", mode)).toEqual({
+        buckets: { M0L0L0L0: ["handed"] },
+        collected: ["handed"],
+      });
+    });
+
+    it('a "use cache" call given the handed ctx pushes, and replays, under the layout', async () => {
+      const cacheStore = new MemorySegmentCacheStore();
+      const expected = {
+        buckets: { M0L0L0L0: ["handed"] },
+        collected: ["handed"],
+      };
+      const options = { handle: CachedCrumbs, cacheStore };
+      const runs = cachedCrumbRuns.count;
+      // One router: the key is led by the router's id, so a fresh one per
+      // request would miss.
+      const router = handedLayout("cache");
+      expect(await serve(router, "/h", mode, options)).toEqual(expected);
+      expect(await serve(router, "/h", mode, options)).toEqual(expected);
+      expect(cachedCrumbRuns.count - runs).toBe(1);
     });
   });
 }

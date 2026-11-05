@@ -8,6 +8,7 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 import { createHandle } from "../../handle.js";
+import { withSegmentScope } from "../handler-context.js";
 import type { HandlerContext } from "../../types";
 
 // D2: setupBuildUse (the live prerender/build path) and setupLoaderAccessSilent
@@ -67,6 +68,22 @@ describe("setupBuildUse — ctx.use(Handle).defer() on the build path (D2)", () 
       push({ label: "Direct" });
       const segData = reqCtx._handleStore.getDataForSegment("R0");
       expect(segData[Breadcrumbs.$$id]).toEqual([{ label: "Direct" }]);
+    });
+  });
+
+  it("a push through a layout's scoped ctx files under the layout, detached too", async () => {
+    const reqCtx = makeReqCtx();
+    await runWithRequestContext(reqCtx, async () => {
+      const ctx = makeCtx("M0L0L0R0");
+      setupBuildUse(ctx);
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // Destructured: the push still belongs to the layout that handed it on.
+      const { use } = scoped;
+      use(Breadcrumbs)({ label: "Layout" });
+      expect(
+        reqCtx._handleStore.getDataForSegment("M0L0L0")[Breadcrumbs.$$id],
+      ).toEqual([{ label: "Layout" }]);
+      expect(reqCtx._handleStore.getDataForSegment("M0L0L0R0")).toEqual({});
     });
   });
 });
