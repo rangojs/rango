@@ -622,6 +622,63 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: the child owns use, so every call shape reaches it with a receiver", () => {
+      const seen: unknown[] = [];
+      const ctx = {
+        use(this: unknown, item: unknown) {
+          seen.push(this);
+          return item;
+        },
+        _currentSegmentId: "R0",
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // The test's use accepts any item; the ctx type's does not.
+      const call = (target: { use: unknown }, item: string) =>
+        (target.use as (item: unknown) => unknown)(item);
+      call(scoped, "method");
+      // A component that destructures use off the ctx it was handed, and a
+      // copy of the ctx: both reach the installed use with a receiver that
+      // carries the segment, never with none.
+      const { use } = scoped;
+      (use as unknown as (item: unknown) => unknown)("detached");
+      const copy = { ...scoped } as typeof scoped;
+      call(copy, "copy");
+      expect(seen).toEqual([scoped, scoped, copy]);
+      expect(seen).not.toContain(ctx);
+    });
+
+    it("withSegmentScope: use reads the prototype live, so a wrapper installed later is reached", () => {
+      const seen: string[] = [];
+      const ctx = {
+        use(item: string) {
+          seen.push(`installed:${item}`);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // loader-cache.ts installs its interceptor on the shared ctx after the
+      // child exists; the child must go through it.
+      const installed = ctx.use as unknown as (item: string) => void;
+      ctx.use = ((item: string) => {
+        seen.push(`wrapper:${item}`);
+        installed(item);
+      }) as unknown as typeof ctx.use;
+      (scoped.use as unknown as (item: string) => void)("x");
+      expect(seen).toEqual(["wrapper:x", "installed:x"]);
+    });
+
+    it("withSegmentScope: a nested scoped ctx wins over its parent", () => {
+      const seen: unknown[] = [];
+      const ctx = {
+        use(this: unknown) {
+          seen.push(this);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const parent = withSegmentScope(ctx, "M0L0L0", undefined);
+      const child = withSegmentScope(parent, "M0L0L0.@slot", undefined);
+      (child.use as unknown as (item: string) => void)("x");
+      expect(seen).toEqual([child]);
+    });
   });
 
   describe("optional params", () => {

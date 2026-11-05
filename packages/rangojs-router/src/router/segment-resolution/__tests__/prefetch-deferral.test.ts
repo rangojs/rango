@@ -1145,4 +1145,14 @@ describe("a deferred loader's registration", () => {
     expect(loaderOwner(ctx, "deferred")).toBe("L0");
     expect(loaderOwner(ctx, "other")).toBe("reader");
   });
+
+  it("prefers the reader's scoped ctx over the pin, under a registered owner", () => {
+    const ctx = prefetching();
+    // A layout's or slot's ctx started the run (withSegmentScope): its segment
+    // owns the pushes, not the shared pin the walker left behind.
+    expect(loaderOwner(ctx, "other", "M0L0L0")).toBe("M0L0L0");
+    registerDeferredLoader(ctx, "deferred", "L0", async () => "value");
+    // A prefetch's registration still names the segment it registered under.
+    expect(loaderOwner(ctx, "deferred", "M0L0L0")).toBe("L0");
+  });
 });

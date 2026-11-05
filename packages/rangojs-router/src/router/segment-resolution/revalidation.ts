@@ -1783,5 +1783,17 @@ export async function resolveAllSegments<TEnv>(
     );
   }
   deliverStartedLoaders(context, allSegments);
+  // The pin goes back to the route: it is the segment the request's one
+  // handler ctx belongs to, and a route handler hands that ctx to components
+  // that push while the tree renders. Resolution ends on the last parallel
+  // slot's or orphan's pin, and a push read then named that segment instead
+  // of the route (the same defect withSegmentScope fixes for a layout's or a
+  // slot's own ctx). The route's handler ran under the route's pin, so a push
+  // made during resolution is unaffected.
+  const routeEntry = entries.find((entry) => entry.type === "route");
+  if (routeEntry) {
+    (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+      routeEntry.shortCode;
+  }
   return { segments: allSegments, matchedIds };
 }

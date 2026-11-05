@@ -11,11 +11,16 @@ handler handed its `ctx` to that pushed a handle after an `await` was rejected
 the request's shared segment id when it was called, and by then the route
 handler had run and moved it on.
 
-**Now.** The message names the layout's or the slot's segment, the one that
-owns the ctx the push went through:
+**Now.** The message names the layout's, the slot's or the intercept's
+segment, the one that owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+The same ctx keeps that segment for every call shape — a detached
+`const { use } = ctx`, a `{ ...ctx }` copy, and a push made while another
+segment's scope is running — and a loader the ctx starts files its pushes
+under it too. A route handler's ctx is the request's one ctx; the walker puts
+its segment back when resolution ends, so a parallel slot resolved after the
+route no longer takes the route's name. The push is still rejected, at the
+same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

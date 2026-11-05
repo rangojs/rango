@@ -18,6 +18,7 @@ import {
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { withSegmentScope } from "./handler-context.js";
 import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
 import { findInOrphans } from "./error-handling.js";
 import {
@@ -396,11 +397,15 @@ export async function resolveInterceptEntry<TEnv>(
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
+    // The slot's own ctx, like a parallel slot's: a component the handler
+    // hands it to pushes (and a LateHandlePushError names) the slot however
+    // long after this returns, not whatever the pin is then.
+    const slotContext = withSegmentScope(context, slotSegmentId, undefined);
     handlerResult =
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, slotContext),
             ),
           )
         : handler;

@@ -554,15 +554,22 @@ export function startDeferredLoader(
 /**
  * The segment a run of `loaderId` files its handle pushes under: the one
  * that registers it when it is registered (registerDeferredLoader), else the
- * segment whose code starts it (segmentPinOf).
+ * segment of the ctx the reader started it through (a layout's, a slot's or
+ * an intercept's scoped ctx, withSegmentScope), else the segment whose code
+ * starts it (segmentPinOf). The reader's ctx is passed because the executor
+ * runs on the request's one handler ctx, whose pin is not the scoped ctx's
+ * segment once the walker moved on.
  */
 export function loaderOwner(
   ctx: HandlerContext<any, any>,
   loaderId: string,
+  readerSegment?: string,
 ): string | undefined {
   const internal = ctx as InternalHandlerContext<any, any>;
   return (
-    internal._deferredLoaders?.get(loaderId)?.owner ?? segmentPinOf(internal)
+    internal._deferredLoaders?.get(loaderId)?.owner ??
+    readerSegment ??
+    segmentPinOf(internal)
   );
 }
 

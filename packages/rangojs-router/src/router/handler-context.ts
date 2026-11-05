@@ -219,6 +219,17 @@ function createPrerenderPassthroughFn(
  * router/loader-resolution.ts), which holds after an `await` and in a
  * component the ctx is handed to.
  *
+ * The child owns `use` for the call shapes a receiver alone cannot serve: a
+ * detached `const { use } = ctx` (or `use` passed as a callback) would reach
+ * the installed `use` with no receiver, and it would resolve the push from
+ * the shared ctx's pin, the original bug. The own `use` closes over this
+ * child and forwards its `this`, so a detached call, a method call, a copy
+ * that spread it (`{ ...ctx }` copies it, enumerable) and a later nested
+ * scoped ctx all reach the installed `use` with a receiver that carries the
+ * segment. It reads the prototype's `use` at call time, so a wrapper
+ * installed after this child was created (loader-cache.ts
+ * executeLoaderData) is still reached.
+ *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
  * call that takes this ctx, cache-runtime.ts). Every other field reads
@@ -231,10 +242,14 @@ export function withSegmentScope<C>(
 ): C {
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
+    use: (item: unknown) => unknown;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  scoped.use = function (this: unknown, item: unknown) {
+    return (ctx as any).use.call(this ?? scoped, item);
+  };
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

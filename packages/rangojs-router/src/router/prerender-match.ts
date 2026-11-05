@@ -11,6 +11,7 @@ import {
   createPrerenderContext,
   createStaticContext,
   createReverseFunction,
+  withSegmentScope,
 } from "./handler-context.js";
 import { detectPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
@@ -536,10 +537,19 @@ export async function matchForPrerender<TEnv = any>(
             (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
               interceptSegmentId;
 
+            // The slot's own ctx, as the runtime intercept resolves it
+            // (intercept-resolution.ts): a component the handler hands it to
+            // pushes into this intercept's bucket, not the last one's.
+            const slotContext = withSegmentScope(
+              buildCtx,
+              interceptSegmentId,
+              undefined,
+            );
+
             // Resolve handler
             const handlerRaw =
               typeof intercept.handler === "function"
-                ? intercept.handler(buildCtx)
+                ? intercept.handler(slotContext)
                 : intercept.handler;
             const handlerResolved =
               handlerRaw instanceof Promise ? await handlerRaw : handlerRaw;

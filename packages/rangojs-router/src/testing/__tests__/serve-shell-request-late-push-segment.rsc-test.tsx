@@ -5,9 +5,12 @@
  *
  * The push is rejected by design (the `.defer()` path is the mitigation), so
  * the message is all a consumer sees of it: it must name the segment whose
- * ctx made the push, not whichever segment the walker pinned last. A layout
- * handler's ctx carries its own segment, so the message names the layout; a
- * route handler's ctx reads the request's pin, which is still the route's.
+ * ctx made the push, not whichever segment the walker pinned last. A layout's,
+ * a slot's and an intercept handler's ctx carries its own segment
+ * (withSegmentScope), so the message names that segment. A route handler's
+ * ctx is the request's one handler ctx: the walker puts its pin back to the
+ * route when resolution ends, so a slot resolved after the route does not
+ * take the route's name either.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -54,7 +57,7 @@ function makeRouter() {
       errors.push(error instanceof Error ? error.message : String(error));
     },
   }).routes(
-    urls(({ path, layout, parallel }) => [
+    urls(({ path, layout, parallel, intercept }) => [
       layout(
         () => <main>shell</main>,
         () => [
@@ -84,6 +87,24 @@ function makeRouter() {
           path("/component", (ctx) => <LatePush ctx={ctx} label="route" />, {
             name: "component",
           }),
+          // The route's parallel slot resolves after the route handler, so the
+          // walker's pin has moved on by the time the component renders.
+          path(
+            "/component-sibling",
+            (ctx) => <LatePush ctx={ctx} label="route" />,
+            { name: "componentSibling" },
+            () => [parallel({ "@side": () => <aside>side</aside> })],
+          ),
+          parallel({ "@side2": () => <aside>side2</aside> }),
+          path("/intercept-list", () => <ul>list</ul>, {
+            name: "interceptList",
+          }),
+          path("/intercept-item/:id", () => <article>item</article>, {
+            name: "interceptItem",
+          }),
+          intercept("@modal", ".interceptItem", (ctx) => (
+            <LatePush ctx={ctx} label="modal" />
+          )),
         ],
       ),
     ]),
@@ -102,6 +123,24 @@ async function serve(url: string) {
   errors.length = 0;
   const result = await serveShellRequest(makeRouter(), url, {
     cacheStore: new MemorySegmentCacheStore(),
+  });
+  return { errors: [...errors], matched: await matchedOf(result.flight) };
+}
+
+/** A document load, then a partial navigation that opens the intercept. */
+async function serveIntercept() {
+  errors.length = 0;
+  const router = makeRouter();
+  const cacheStore = new MemorySegmentCacheStore();
+  const list = await serveShellRequest(router, "/intercept-list", {
+    cacheStore,
+  });
+  const { metadata } = await deserializeResult<{
+    metadata: { matched: string[] };
+  }>(list.flight!);
+  const result = await serveShellRequest(router, "/intercept-item/1", {
+    cacheStore,
+    partial: { from: "/intercept-list", segments: metadata.matched },
   });
   return { errors: [...errors], matched: await matchedOf(result.flight) };
 }
@@ -135,5 +174,17 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     const { errors: reported, matched } = await serve("/component");
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the route's, for a component the route handler handed its ctx to, with a parallel slot resolved after it", async () => {
+    const { errors: reported, matched } = await serve("/component-sibling");
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the intercept slot's, for a component the intercept handler handed its ctx to", async () => {
+    const { errors: reported, matched } = await serveIntercept();
+    const slot = matched.find((id) => id.endsWith(".@modal"))!;
+    expect(latePushSegment(reported)).toBe(slot);
   });
 });
