@@ -803,10 +803,12 @@ export function digestBundle(
     const withoutMap = stripServerReferenceMap(source);
     const text = stripModulePaths(withoutMap, chunk.moduleIds);
     // The map is in this chunk and the bundler prints markers this build
-    // knows, yet none named the map: a marker format the stripping above does
-    // not know, which leaves every app's action list in every router's
-    // version (a new action in one app moves all of them). A minified build
-    // prints no markers and keeps the map by design.
+    // knows, yet its body stayed in the hash: either a marker format the
+    // stripping above does not know, or the map's own marker is the chunk's
+    // last module and no marker follows it (stripServerReferenceMap's
+    // lookahead needs one). Both leave every app's action list in every
+    // router's version, so a new action in one app moves all of them. A
+    // minified build prints no markers and keeps the map by design.
     if (
       chunk.moduleIds.includes(SERVER_REFERENCES_MODULE_ID) &&
       withoutMap === source &&
@@ -814,8 +816,9 @@ export function digestBundle(
     ) {
       debug?.(
         "the %s chunk %s holds plugin-rsc's server-reference map and prints module markers, " +
-          "but no marker named the map: its body stays in every router's cache version, " +
-          "so a new action in one app moves every app's version",
+          "but nothing took the map's body out (no marker names the map, or the one that " +
+          "does is the chunk's last module and no marker follows it): it stays in every " +
+          "router's cache version, so a new action in one app moves every app's version",
         label,
         fileName,
       );

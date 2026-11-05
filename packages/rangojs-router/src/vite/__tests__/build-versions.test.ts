@@ -1697,8 +1697,8 @@ describe("digestBundle", () => {
   });
 });
 
-// The map's chunk says so when the markers blank but no marker named the map:
-// a marker format the build does not know leaves every app's action list in
+// The map's chunk says so when its markers blank but the map's body stays: a
+// marker format the build does not know leaves every app's action list in
 // every router's version.
 describe("a chunk whose markers do not let the server-reference map through", () => {
   const map = SERVER_REFERENCES;
@@ -1755,10 +1755,29 @@ describe("a chunk whose markers do not let the server-reference map through", ()
     const log = await digestWithBuildDebug([map, other], unknownMarker);
     expect(log).toHaveLength(1);
     expect(log[0]).toContain("the RSC chunk index.js");
-    expect(log[0]).toContain("no marker named the map");
+    expect(log[0]).toContain("holds plugin-rsc's server-reference map");
   });
 
-  it("says nothing when the map was found", async () => {
+  // rolldown 1.2.15 prints only `// <id>` where a module starts, so the map's
+  // marker is the chunk's last line and no marker follows its body: the body
+  // stays in the hash, and the line says so without claiming the marker is
+  // missing.
+  it("names the chunk when the map's marker is its last module", async () => {
+    const log = await digestWithBuildDebug(
+      [map, other],
+      [
+        "// src/a.ts",
+        "var a = 1;",
+        `// \\0${map.slice(1)}`,
+        "var refs = { a: 1 };",
+      ].join("\n"),
+    );
+    expect(log).toHaveLength(1);
+    expect(log[0]).toContain("the RSC chunk index.js");
+    expect(log[0]).toContain("is the chunk's last module");
+  });
+
+  it("says nothing when the map was found behind region markers", async () => {
     const log = await digestWithBuildDebug(
       [map, other],
       [
@@ -1768,6 +1787,19 @@ describe("a chunk whose markers do not let the server-reference map through", ()
         "//#region src/a.ts",
         "var a = 1;",
         "//#endregion",
+      ].join("\n"),
+    );
+    expect(log).toEqual([]);
+  });
+
+  it("says nothing when the map was found behind start-only markers", async () => {
+    const log = await digestWithBuildDebug(
+      [map, other],
+      [
+        `// \\0${map.slice(1)}`,
+        "var refs = { a: 1 };",
+        "// src/a.ts",
+        "var a = 1;",
       ].join("\n"),
     );
     expect(log).toEqual([]);
