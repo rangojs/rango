@@ -1042,6 +1042,20 @@ replaced the values on screen with them; a loader's `ctx.get(handle)` after
 document request restores everything in the lookup, as before. A
 `Prerender()` bake does the same in `decodeStoredEntry`.
 
+The browser decides the same way, and needs the same list. It replaces a
+run's values on the page only when the response delivers values of that run
+or names it in `resolvedIds` (`mergePartialHandleData`, `handles/pushed-by.ts`),
+so a HIT that sends a segment must list it: a segment sent and not listed
+kept the previous page's values, and a layout that stopped pushing a
+breadcrumb kept showing it after a navigation that hit a record. The record
+cannot carry the marker `buildMatchResult` reads (`serializeSegments` copies
+named fields only) and does not need to: `serveStoredSegments` marks each
+segment the send rule sends, the same decision a live walk makes when it
+re-runs a handler, and `buildMatchResult` strips the marker, so only
+`resolvedIds` reaches the wire. A kept segment is not marked, so the client
+keeps its values as on a live walk, and the record format is unchanged:
+records written before the change serve the same list.
+
 **Loader pushes are not recorded.** A DSL loader body can push handles too, and
 its pushes land in the owning route/layout segment's bucket. A HIT runs
 loaders exactly as an uncached render of the same request would (after the
