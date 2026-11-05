@@ -174,14 +174,20 @@ export function buildMatchResult<TEnv>(
     // ids that ran (resolvedIds) together. A partial match resolves only the
     // loaders it runs (revalidation.ts), so each loader segment here ran:
     // the browser replaces that loader's handle pushes, and keeps those of a
-    // loader it skipped (handles/pushed-by.ts).
+    // loader it skipped (handles/pushed-by.ts). A stored segment the HIT
+    // sends stands for its handler's run (MatchPipelineState.sentStored).
     const clientIdSet = new Set(ctx.clientSegmentIds);
+    const sentStored = state.sentStored;
     segmentsToRender = [];
     resolvedIds = [];
     for (const s of allSegments) {
       // A deferred loader (prefetch: false) did not run in this response:
       // its pushes arrive with the fill, which lists it then.
-      if (s._handlerRan || (s.type === "loader" && !isPlaceholder(s))) {
+      if (
+        s._handlerRan ||
+        sentStored?.has(s) ||
+        (s.type === "loader" && !isPlaceholder(s))
+      ) {
         resolvedIds.push(s.id);
       }
       // A deferred unit (prefetch: false) has a null component and is sent:

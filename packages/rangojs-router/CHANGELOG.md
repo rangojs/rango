@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a navigation served from `cache()`, a PPR shell or a `Prerender()` bake clears a breadcrumb the new page does not push
+
+**Before.** A segment that a stored answer re-rendered kept the handle values
+it had pushed for the page you left whenever its stored render pushed none.
+Under `cache()`, from `/item/1` to `/item/2`, a breadcrumb that only item 1
+pushes (from the route, from a layout with `revalidate()`, or from a layout
+its `path()` declares) was cleared by the first navigation and came back on
+every HIT: `useHandle(Crumbs)` read `["root", "item-1"]` at `/item/2`. A PPR
+navigation replay and a `Prerender()` route showed the same stale value, and
+so did an intercept's slot served from a `cache()` record when an open modal
+moved to another item.
+
+**Now.** A segment a stored answer sends takes its handle values from the
+stored render, and has none when that render pushed none, as when its handler
+re-runs live: `/item/2` reads `["root"]` on the first navigation and on every
+HIT. A segment the navigation keeps keeps its values, as before. The partial
+payload's `resolvedIds` lists the stored segments it sends; nothing else in
+the response changes. No change in your code.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -257,6 +257,18 @@ export interface MatchPipelineState {
   cachedSegments?: ResolvedSegment[];
   cachedMatchedIds?: string[];
 
+  /**
+   * The stored segments a partial HIT sends (serveStoredSegments,
+   * cache-lookup.ts), by object. Each one's handler values are the stored
+   * ones, and none where the stored run pushed none, as for a handler that
+   * re-ran: buildMatchResult (match-result.ts) lists it in resolvedIds. Not a
+   * record field: whether a held segment re-runs is decided per request. Not
+   * `_handlerRan` on the segment either: a stored intercept slot also rides
+   * `slots` (intercept-resolution.ts), which buildMatchResult does not strip,
+   * so the marker would reach the client.
+   */
+  sentStored?: ReadonlySet<ResolvedSegment>;
+
   // Whether cache should be revalidated (SWR)
   shouldRevalidate?: boolean;
 

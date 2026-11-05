@@ -480,6 +480,38 @@ describe("match-result", () => {
       expect(result.resolvedIds).toEqual(["R0", "R0D1.rerun"]);
       expect(result.matched).toEqual(["R0", "R0D0.held", "R0D1.rerun"]);
     });
+
+    // A stored segment the HIT sends replaces the client's handler values
+    // with the stored ones, none included, as a handler that re-ran.
+    it("partial match resolvedIds names the stored segments the HIT sends", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["L0", "L0L1", "L0L1R0"],
+        clientSegmentSet: new Set(["L0", "L0L1", "L0L1R0"]),
+      });
+      const kept = createSegment("L0", { type: "layout", component: null });
+      const sentLayout = createSegment("L0L1", { type: "layout" });
+      const sentRoute = createSegment("L0L1R0");
+      const state = createPipelineState();
+      state.cacheHit = true;
+      state.cachedSegments = [kept, sentLayout, sentRoute];
+      state.sentStored = new Set([sentLayout, sentRoute]);
+      state.matchedIds = ["L0", "L0L1", "L0L1R0"];
+
+      const result = buildMatchResult(
+        [kept, sentLayout, sentRoute],
+        ctx,
+        state,
+      );
+
+      expect(result.resolvedIds).toEqual(["L0L1", "L0L1R0"]);
+      expect(result.segments.map((s) => s.id)).toEqual(["L0L1", "L0L1R0"]);
+      // Listed by object: a live copy under a stored segment's id is not.
+      const live = createSegment("L0L1R0");
+      expect(
+        buildMatchResult([kept, sentLayout, live], ctx, state).resolvedIds,
+      ).toEqual(["L0L1"]);
+    });
   });
 
   describe("buildMatchResult() - fromStorage", () => {

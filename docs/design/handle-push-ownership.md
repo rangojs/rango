@@ -1263,7 +1263,11 @@ which run made each one.
 3. **`resolvedIds` names the loaders that ran** (`router/match-result.ts`).
    A partial match resolves only the loaders it runs, so each loader segment
    it returns is in `resolvedIds` next to the handlers that ran. That also
-   makes the field's documented "superset of `diff`" true.
+   makes the field's documented "superset of `diff`" true. A stored segment
+   a `cache()` HIT, a shell replay or a `Prerender()` bake sends counts as a
+   handler that ran (`MatchPipelineState.sentStored`): its stored values,
+   none included, replace the client's (`docs/design/caching.md`, "A sent
+   segment counts as run").
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment

@@ -1042,6 +1042,25 @@ replaced the values on screen with them; a loader's `ctx.get(handle)` after
 document request restores everything in the lookup, as before. A
 `Prerender()` bake does the same in `decodeStoredEntry`.
 
+**A sent segment counts as run.** The restore alone does not clear a value
+the client holds: the browser's merge (`mergePartialHandleData`) replaces a
+run's values only when the response delivers some for it or lists it in
+`resolvedIds`. A live navigation lists a segment whose handler re-ran
+(`_handlerRan`). A record carries no such flag (`serializeSegments` copies
+named fields only), and it would be the wrong one: the background re-render
+that writes a record runs every handler, while whether a held segment re-runs
+is decided per request, in `serveStoredSegments`. So that loop records the
+stored segments it sends (`MatchPipelineState.sentStored`, by object, as
+`sendsOnlyStored` compares), and `buildMatchResult` lists them beside the
+handlers that ran. Without it a HIT listed none: from `/item/1` to `/item/2`, a
+crumb that only item 1's route or layout pushes was cleared by the MISS and
+came back on every HIT, the stored render having pushed nothing for it. A
+navigation replay of a shell's doc record, a `Prerender()` bake and an
+intercept's slot (always sent, unless a fill keeps it) list theirs through
+the same loop. Nothing else on the wire changes: the set never reaches a
+segment, so `slots` carries no marker either. Covered by
+`src/testing/__tests__/stored-hit-resolved-ids.rsc-test.tsx`.
+
 **Loader pushes are not recorded.** A DSL loader body can push handles too, and
 its pushes land in the owning route/layout segment's bucket. A HIT runs
 loaders exactly as an uncached render of the same request would (after the

@@ -592,6 +592,13 @@ async function* serveStoredSegments<TEnv>(
     : storedSends!;
   const restoreHandles = fromCache ? source.restoreHandles : undefined;
   const sentIds = restoreHandles && new Set<string>();
+  // The segments a partial HIT sends. Each one's handler values are the
+  // stored ones (restoreHandles below; decodeStoredEntry for a bake), so it is
+  // listed in resolvedIds as a handler that re-ran: the browser drops the
+  // client's values for it where the stored run pushed none. A full match
+  // lists every segment.
+  const sentStored = ctx.isFullMatch ? undefined : new Set<ResolvedSegment>();
+  state.sentStored = sentStored;
 
   yield* liveSegments;
 
@@ -613,7 +620,10 @@ async function* serveStoredSegments<TEnv>(
       });
     }
     if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    else {
+      sentIds?.add(segment.id);
+      sentStored?.add(segment);
+    }
     yield segment;
   }
 

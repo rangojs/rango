@@ -468,6 +468,16 @@ See "Rewrite" below for what moves and what stays.
   and `releaseRecordedValues` in `handle-store.ts`, held by
   `serveStoredSegments`; pinned by `cached-handle-push-order.rsc-test.tsx`.
 
+- A partial `cache()` or `Prerender()` HIT, a PPR shell replay included,
+  lists in `resolvedIds` every stored segment it sends, as a live partial
+  lists a segment whose handler re-ran: the browser replaces that segment's
+  handler values with the stored ones, and clears them when the stored render
+  pushed none. A segment it keeps is not listed, and keeps the client's
+  values. The record holds no flag for it: `serveStoredSegments` records the
+  segments it sends (`MatchPipelineState.sentStored`) and `buildMatchResult`
+  lists them. Pinned by `stored-hit-resolved-ids.rsc-test.tsx` and
+  `match-result.test.ts`.
+
 - Under PPR shell capture, of the DSL `loader()` registrations only
   `loader(Def, { ssr: "await" })` executes and bakes; every other registration
   is masked and live, whatever its `loading()`
