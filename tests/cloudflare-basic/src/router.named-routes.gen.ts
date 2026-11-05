@@ -36,6 +36,8 @@ export const NamedRoutes = {
   "buildSkip.article": "/build-skip/:slug",
   "buildSkip.staticSkip": "/build-skip/static-skip",
   "buildSkip.workingStatic": "/build-skip/working-static",
+  cacheClearCrumbsIndex: "/cache-clear-crumbs",
+  cacheClearCrumbsItem: "/cache-clear-crumbs/item/:id",
   cachedHandles: "/cached-handles",
   cacheLab: "/cache-lab",
   catchAll: "/*",

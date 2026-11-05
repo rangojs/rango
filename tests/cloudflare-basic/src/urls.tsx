@@ -260,6 +260,11 @@ import {
 import { SlotAncestorLayout } from "./components/SlotAncestorLayout.js";
 import { DslTaggedDocumentPage } from "./pages/dsl-tagged-document.js";
 import { CachedHandlesPage } from "./pages/cached-handles.js";
+import {
+  CacheClearCrumbsIndex,
+  CacheClearCrumbsItem,
+  CacheClearCrumbsLayout,
+} from "./pages/cache-clear-crumbs.js";
 import { LoaderCacheDepPage } from "./pages/loader-cache-dep.js";
 import { LoaderCacheTagPage } from "./pages/loader-cache-tag.js";
 import { RyowActionPage } from "./pages/ryow-action.js";
@@ -2641,6 +2646,20 @@ export const urlpatterns = urls(
         // cache round-trip (see pages/cached-handles.tsx).
         cache({ ttl: 60, swr: 300 }, () => [
           path("/cached-handles", CachedHandlesPage, { name: "cachedHandles" }),
+        ]),
+
+        // A HIT clears the crumb a held layout's re-run pushed nothing for
+        // (see pages/cache-clear-crumbs.tsx).
+        cache({ ttl: 600 }, () => [
+          layout(CacheClearCrumbsLayout, () => [
+            revalidate(() => true),
+            path("/cache-clear-crumbs", CacheClearCrumbsIndex, {
+              name: "cacheClearCrumbsIndex",
+            }),
+            path("/cache-clear-crumbs/item/:id", CacheClearCrumbsItem, {
+              name: "cacheClearCrumbsItem",
+            }),
+          ]),
         ]),
 
         // A cached loader's ctx.use dependency, also read by an uncached

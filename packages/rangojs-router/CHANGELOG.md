@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `cache()` or `Prerender()` HIT clears a handle value whose segment re-ran and pushed nothing
+
+**Before.** A partial response names in `resolvedIds` the runs whose handle
+values the browser replaces: each segment it re-rendered, and each loader it
+ran. A stored record carries no such marker (`serializeSegments` copies named
+fields), so a HIT named no segment at all and the page kept every value it
+held. A breadcrumb a handler pushed on the previous page stayed on screen
+after a navigation served from a `cache()` record or a `Prerender()` bake, in
+which that handler re-ran and pushed nothing, and cleared again on the next
+MISS.
+
+**Now.** A HIT names every stored segment it sends, exactly as the MISS that
+wrote the record did. The browser replaces those segments' handle values with
+the record's — nothing, when the stored render pushed nothing — and keeps the
+values of the segments the response holds.
+
+| Navigation          | `resolvedIds`, before       | `resolvedIds`, now    |
+| ------------------- | --------------------------- | --------------------- |
+| a `cache()` MISS    | the segments it re-rendered | unchanged             |
+| a `cache()` HIT     | `[]`                        | the segments it sends |
+| a `Prerender()` HIT | `[]`                        | the segments it sends |
+
+The client does not change: only `resolvedIds` on the wire. The record's
+format does not change either — whether a HIT sends a segment depends on what
+the client holds and on the request's `revalidate()` answers, so the HIT
+derives the marker.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

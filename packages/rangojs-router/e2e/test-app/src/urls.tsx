@@ -175,6 +175,7 @@ import { heldHandlesPatterns } from "./urls/held-handles.js";
 import { historyHandlesPatterns } from "./urls/history-handles.js";
 import { interceptHeldPatterns } from "./urls/intercept-held.js";
 import { cacheInterceptCrumbsPatterns } from "./urls/cache-intercept-crumbs.js";
+import { cacheClearCrumbsPatterns } from "./urls/cache-clear-crumbs.js";
 import { cacheInterceptWhenPatterns } from "./urls/cache-intercept-when.js";
 import { cacheInterceptKeyPatterns } from "./urls/cache-intercept-key.js";
 import clientUrlsSlowPatterns, { SlowChrome } from "./urls/client-urls-slow.js";
@@ -1242,6 +1243,10 @@ export const urlpatterns = urls(
       // A cache() intercept HIT shows the MISS's crumbs.
       include("/cache-intercept-crumbs", cacheInterceptCrumbsPatterns, {
         name: "cacheInterceptCrumbs",
+      }),
+      // A cache() HIT clears a crumb whose handler re-ran and pushed nothing.
+      include("/cache-clear-crumbs", cacheClearCrumbsPatterns, {
+        name: "cacheClearCrumbs",
       }),
       // Two intercepts selected by when() keep a cache() record each.
       include("/cache-intercept-when", cacheInterceptWhenPatterns, {

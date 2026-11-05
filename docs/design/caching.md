@@ -1042,6 +1042,19 @@ replaced the values on screen with them; a loader's `ctx.get(handle)` after
 document request restores everything in the lookup, as before. A
 `Prerender()` bake does the same in `decodeStoredEntry`.
 
+**A HIT names the segments it sends in `resolvedIds`.** The browser replaces
+a run's handle values when the response delivers values of that run or names
+it in `resolvedIds` (`mergePartialHandleData`, `src/handles/pushed-by.ts`),
+and a live pass names each segment it re-renders. A record carries no such
+marker (`serializeSegments` copies named fields), so a HIT used to name no
+segment and the page kept every value it held: a crumb whose handler re-ran
+and pushed nothing on the HIT stayed on screen until the next MISS cleared it.
+`serveStoredSegments` marks each stored segment it sends (`_handlerRan`, the
+marker a live pass sets), which `buildMatchResult` turns into `resolvedIds`
+and strips from the payload. Whether a HIT sends a segment depends on what the
+client holds and on the request's `revalidate()` answers, so the HIT derives
+the marker; the record's format does not change.
+
 **Loader pushes are not recorded.** A DSL loader body can push handles too, and
 its pushes land in the owning route/layout segment's bucket. A HIT runs
 loaders exactly as an uncached render of the same request would (after the

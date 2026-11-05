@@ -297,6 +297,57 @@ async function expectHeldLayoutStampKept(page: Page): Promise<void> {
 }
 
 /**
+ * /cache-clear-crumbs: the layout re-runs on every navigation
+ * (revalidate(() => true)) and pushes its crumb only on `?cc=1`. The index
+ * page shows the crumb; a navigation that holds the layout and re-runs it
+ * clears it, on the MISS and on the HIT of the record that MISS wrote alike.
+ * The layout run count, shown on the page, tells the record's stored render
+ * from a live one: two HITs of one record show the same count, a MISS the next
+ * one. `awaitWrite` waits for the MISS's background write in dev.
+ */
+async function expectCrumbClearedOnHit(
+  page: Page,
+  url: string,
+  awaitWrite?: () => Promise<void>,
+): Promise<void> {
+  const runs = page.getByTestId("ccc-layout-runs");
+  const crumb = page.getByTestId("ccc-crumb");
+  const detail = page.getByTestId("ccc-detail");
+
+  await page.goto(url);
+  await waitForHydration(page);
+  await expect(crumb).toHaveText(["layout"]);
+
+  // The MISS: the layout re-runs and pushes nothing, and the record it writes
+  // holds no crumb for it.
+  await page.getByTestId("ccc-link").click();
+  await expect(detail).toHaveText("detail a");
+  await expect(crumb).toHaveCount(0);
+  await awaitWrite?.();
+
+  // Back on the index page by a link, which pushes the crumb again.
+  await page.getByTestId("ccc-back").click();
+  await expect(page.getByTestId("ccc-index")).toBeVisible();
+  await expect(crumb).toHaveText(["layout"]);
+
+  // The same navigation again, a HIT of that record: its stored layout pushed
+  // nothing, so the crumb goes.
+  await page.getByTestId("ccc-link").click();
+  await expect(detail).toHaveText("detail a");
+  await expect(crumb).toHaveCount(0);
+  const hitRuns = await runs.textContent();
+
+  // And once more: the same record, so the same stored render and no handler
+  // run. A navigation that missed would show the next count.
+  await page.getByTestId("ccc-back").click();
+  await expect(crumb).toHaveText(["layout"]);
+  await page.getByTestId("ccc-link").click();
+  await expect(detail).toHaveText("detail a");
+  await expect(runs).toHaveText(hitRuns ?? "");
+  await expect(crumb).toHaveCount(0);
+}
+
+/**
  * /cache-test/cached-loader-dep: a loader with its own cache() awaits a
  * dependency that an uncached sibling loader also reads. The dependency's
  * crumb (a per-run id) appears once on the MISS and once on each HIT, and on
@@ -930,6 +981,19 @@ test.describe("cache-intercept-routes", () => {
     );
   });
 
+  // A HIT listed no segment, so a handler that re-ran and pushed nothing
+  // left its crumb on the page.
+  test("a HIT of the record clears the crumb the layout's re-run pushed nothing for", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const beforeWrite = f.proc().stdout().length;
+    await expectCrumbClearedOnHit(page, f.url("/cache-clear-crumbs?cc=1"), () =>
+      waitForCacheWrite(f.proc(), beforeWrite, "/cache-clear-crumbs/item/a"),
+    );
+  });
+
   // The record key named only the URL, so opening the item from
   // /other HIT the record the index's modal wrote and showed the modal.
   test("two intercepts selected by when() each get their own record: each source opens its own intercept, MISS and HIT", async ({
@@ -1047,6 +1111,15 @@ test.describe("cache-intercept-routes (production)", () => {
     await expect(page.getByTestId("cic-modal")).toHaveCount(0);
 
     await openCrumbsIntercept(page);
+  });
+
+  // See the dev describe's case.
+  test("a HIT of the record clears the crumb the layout's re-run pushed nothing for", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await expectCrumbClearedOnHit(page, f.url("/cache-clear-crumbs?cc=1"));
   });
 
   // See the dev describe's case.

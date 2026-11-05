@@ -612,8 +612,20 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      sentIds?.add(segment.id);
+      // A sent segment stands for the run that wrote its handle values: the
+      // browser replaces them with the record's, which is what a live pass's
+      // re-rendered segment asks for (revalidation.ts resolveEntryHandler).
+      // Without it a HIT lists no segment, and a handler that re-ran and
+      // pushed nothing left its old values on the page (match-result.ts
+      // resolvedIds). The record does not carry the marker: which segments a
+      // HIT sends depends on what the client holds and on this request's
+      // revalidate() answers, so it is derived here, not stored.
+      if (!ctx.isFullMatch) segment._handlerRan = true;
+    }
     yield segment;
   }
 

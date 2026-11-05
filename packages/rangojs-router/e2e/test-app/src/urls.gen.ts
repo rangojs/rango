@@ -48,6 +48,8 @@ export const routes = {
   "buildSkip.article": "/build-skip/:slug",
   "buildSkip.staticSkip": "/build-skip/static-skip",
   "buildSkip.workingStatic": "/build-skip/working-static",
+  "cacheClearCrumbs.index": "/cache-clear-crumbs",
+  "cacheClearCrumbs.item": "/cache-clear-crumbs/item/:id",
   "cacheInterceptCrumbs.index": "/cache-intercept-crumbs",
   "cacheInterceptCrumbs.item": "/cache-intercept-crumbs/item/:id",
   "cacheInterceptKey.index": "/cache-intercept-key",
