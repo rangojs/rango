@@ -2551,10 +2551,11 @@ Limits:
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
 - A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `_handleSegmentId`, and `reverse` and `_reverseScope` when the
-  segment has a scope, so `{ ...ctx }` there copies only those. A getter keyed
-  by its holder resolves through the prototype chain (`rewrittenFrom`,
-  `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
+  fields are `_handleSegmentId`, `use`, and `reverse` and `_reverseScope`
+  when the segment has a scope, so `{ ...ctx }` there copies only those. A
+  getter keyed by its holder resolves through the prototype chain
+  (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
+  child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a
@@ -2598,14 +2599,22 @@ the only thing left to ask. That ctx carries its segment
 segment off the receiver it was called on (`handlePushSegment`,
 `loader-resolution.ts`) — a push from such a component, and the dev
 `LateHandlePushError` it throws, names the layout or the slot, not whichever
-segment the walker pinned since. The other readers take `segmentPinOf(ctx)`,
+segment the walker pinned since. The child owns `use` for that receiver: a
+component doing `const { use } = ctx` calls it with no `this`, and the
+wrapper (`withSegmentScope`) puts the scoped ctx back, so the call shape
+never decides the segment. The other readers take `segmentPinOf(ctx)`,
 the innermost scope's segment else the ctx's carried one else its pin: a
 handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the build
 pass, which runs the same walker), a started loader's owning segment
 (`loaderOwner`, after a prefetch-deferred loader's registered owner), and the
 caller segment a `"use cache"` call records and replays under
 (`cache-runtime.ts`). A route handler's ctx is still the request's one ctx,
-so `{ ...ctx }` there copies what it copies in any route.
+so `{ ...ctx }` there copies what it copies in any route. It has no carried
+segment, so a component it handed the ctx to reads the pin — which the walk
+points back at the route before it returns (`resolveAllSegments`): a slot or
+an intercept resolved last used to leave the pin on itself, and the push
+named the slot. `serve-shell-request-late-push-segment` pins that for a
+route that declares a slot.
 
 You might worry about runtimes that lose async context. The fallback is the
 ctx's own segment (a layout's or slot's) or its pin (the request's one ctx),
@@ -2617,7 +2626,8 @@ split them.
 
 Not changed: an awaited route handler (a route without `loading()`, an
 action's route) has no scope and reads the shared pin, which is its own while
-the walker waits on it. An orphan layout pins its own segment for that wait
+the walker waits on it and which the walk restores to the route before it
+returns. An orphan layout pins its own segment for that wait
 and puts the previous pin back after it (`resolveOrphanLayout`); its
 handler's ctx carries the orphan's segment either way. A push function bound
 before the await (`const push = ctx.use(Handle)`) was always filed right.
@@ -2631,7 +2641,9 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to) and `server/__tests__/segment-pin.test.ts`. The e2e
+slot handed the ctx to; through the whole ctx and with `use` destructured;
+a route that declares a slot) and `server/__tests__/segment-pin.test.ts` (the
+carried segment before the pin, the scope before both). The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.
 

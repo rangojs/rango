@@ -5,9 +5,13 @@
  *
  * The push is rejected by design (the `.defer()` path is the mitigation), so
  * the message is all a consumer sees of it: it must name the segment whose
- * ctx made the push, not whichever segment the walker pinned last. A layout
- * handler's ctx carries its own segment, so the message names the layout; a
- * route handler's ctx reads the request's pin, which is still the route's.
+ * ctx made the push, not whichever segment the walker pinned last. A layout's
+ * or a slot's ctx carries its own segment; a route handler's ctx reads the
+ * request's pin, which the walk points back at the route once it is done.
+ *
+ * The call shape must not matter: a component that destructures `use` off the
+ * ctx calls it with no receiver, and one that pushes through the whole ctx
+ * calls it as a method. Both name the same segment.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -48,6 +52,34 @@ async function LatePush({
   return <span>{label}</span>;
 }
 
+/** The same push, through a spread copy of the ctx made in the component. */
+async function LatePushCopy({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  const copy = { ...ctx };
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  copy.use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
+/** The same push, with `use` destructured off the ctx first. */
+async function LatePushDetached({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  const { use } = ctx;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
 function makeRouter() {
   return createRouter({
     onError: ({ error }) => {
@@ -81,9 +113,58 @@ function makeRouter() {
               }),
             ],
           ),
+          layout(
+            (ctx) => (
+              <div>
+                <LatePushDetached ctx={ctx} label="layout-detached" />
+              </div>
+            ),
+            () => [
+              path("/component-layout-detached", () => <p>page</p>, {
+                name: "componentLayoutDetached",
+              }),
+            ],
+          ),
+          layout(
+            (ctx) => (
+              <div>
+                <LatePushCopy ctx={ctx} label="layout-copy" />
+              </div>
+            ),
+            () => [
+              path("/component-layout-copy", () => <p>page</p>, {
+                name: "componentLayoutCopy",
+              }),
+            ],
+          ),
+          layout(
+            () => <section>slot frame</section>,
+            () => [
+              parallel({
+                "@panel": (ctx) => (
+                  <LatePushDetached ctx={ctx} label="slot-detached" />
+                ),
+              }),
+              path("/component-slot-detached", () => <p>page</p>, {
+                name: "componentSlotDetached",
+              }),
+            ],
+          ),
           path("/component", (ctx) => <LatePush ctx={ctx} label="route" />, {
             name: "component",
           }),
+          // A route that declares a slot resolves it after its handler, which
+          // leaves the walk's pin on the slot.
+          path(
+            "/component-route-slot",
+            (ctx) => (
+              <div>
+                <LatePush ctx={ctx} label="route-slot" />
+              </div>
+            ),
+            { name: "componentRouteSlot" },
+            () => [parallel({ "@side": () => <aside>side</aside> })],
+          ),
         ],
       ),
     ]),
@@ -131,8 +212,36 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     expect(latePushSegment(reported)).toBe(slot);
   });
 
+  it("the layout's, for a component that destructured use off its ctx", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-layout-detached",
+    );
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("the layout's, for a component pushing through a spread copy of its ctx", async () => {
+    const { errors: reported, matched } = await serve("/component-layout-copy");
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("the slot's, for a component that destructured use off its ctx", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-slot-detached",
+    );
+    const slot = matched.find((id) => id.endsWith(".@panel"))!;
+    expect(latePushSegment(reported)).toBe(slot);
+  });
+
   it("the route's, for a component the route handler handed its ctx to", async () => {
     const { errors: reported, matched } = await serve("/component");
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the route's, on a route that also resolves a slot after its handler", async () => {
+    const { errors: reported, matched } = await serve("/component-route-slot");
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
   });

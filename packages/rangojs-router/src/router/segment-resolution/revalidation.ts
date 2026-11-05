@@ -1783,5 +1783,16 @@ export async function resolveAllSegments<TEnv>(
     );
   }
   deliverStartedLoaders(context, allSegments);
+  // The walk leaves the shared pin on whatever it resolved last — a slot's
+  // id, an orphan's. A component the ROUTE handler handed the shared ctx to
+  // renders after the walk and reads that pin (segmentPinOf), so its push
+  // named that last segment. Point the pin back at the route: the segment the
+  // shared ctx belongs to. A layout's or a slot's ctx carries its own segment
+  // (withSegmentScope) and does not read it.
+  const routeEntry = chain.find((entry) => entry.type === "route");
+  if (routeEntry) {
+    (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+      routeEntry.shortCode;
+  }
   return { segments: allSegments, matchedIds };
 }

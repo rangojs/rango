@@ -14,8 +14,11 @@ handler had run and moved it on.
 **Now.** The message names the layout's or the slot's segment, the one that
 owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+The call shape does not matter: `ctx.use(Handle)` and a `const { use } = ctx`
+that pushes after an `await` name the same segment. A route handler's ctx has
+no segment of its own, and a route that declares a parallel slot used to name
+the slot (the walk left its pin there); it now names the route. The push is
+still rejected, at the same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

@@ -28,6 +28,23 @@ describe("segmentPinOf", () => {
     expect(segmentPinOf(ctx)).toBe("R0.@side");
   });
 
+  it("reads the segment a layout's or a slot's ctx carries before its pin", () => {
+    // withSegmentScope: the ctx belongs to the layout, the pin is whatever the
+    // walker resolves now (the route's handler moved it on).
+    expect(
+      segmentPinOf({ _handleSegmentId: "L0", _currentSegmentId: "R0" }),
+    ).toBe("L0");
+    // A route handler's ctx carries nothing and keeps reading its pin.
+    expect(segmentPinOf({ _currentSegmentId: "R0" })).toBe("R0");
+    // A streamed handler's scope still wins: the loader body it started is
+    // not the ctx's segment.
+    expect(
+      runAsSegment("L0D0.loader", () =>
+        segmentPinOf({ _handleSegmentId: "L0", _currentSegmentId: "R0" }),
+      ),
+    ).toBe("L0D0.loader");
+  });
+
   it("the innermost scope wins; an undefined segment falls back to the ctx", () => {
     const ctx = { _currentSegmentId: "R0.@side" };
     expect(

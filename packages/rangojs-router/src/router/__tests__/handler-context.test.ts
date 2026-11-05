@@ -611,6 +611,33 @@ describe("createReverseFunction", () => {
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
     });
 
+    it("withSegmentScope: the child's own use keeps it the receiver when destructured", () => {
+      // A component doing `const { use } = ctx` calls use with no `this`; the
+      // child's own wrapper puts the scoped ctx back, so a handle push still
+      // resolves the layout's segment (loader-resolution.ts handlePushSegment)
+      // instead of falling back to the walker's pin.
+      const receivers: unknown[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use: function (this: unknown) {
+          receivers.push(this);
+        },
+        _currentSegmentId: "R0",
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      const { use } = scoped;
+      use({ $$id: "crumb" } as any);
+      expect(receivers).toEqual([scoped]);
+      // The wrapper reads the parent's use when called, so a later rebinding
+      // (loader-cache.ts's override interceptor) still reaches the caller.
+      const rebound: unknown[] = [];
+      (ctx as any).use = function (this: unknown) {
+        rebound.push(this);
+      };
+      use({ $$id: "crumb" } as any);
+      expect(rebound).toEqual([scoped]);
+    });
+
     it("withSegmentScope: a segment without a reverse scope still carries the segment", () => {
       const ctx = {
         reverse: routeReverse(),

@@ -223,6 +223,13 @@ function createPrerenderPassthroughFn(
  * the module that declared the segment (`_reverseScope` keys a "use cache"
  * call that takes this ctx, cache-runtime.ts). Every other field reads
  * through live (`_currentSegmentId` as resolution moves it, ctx.set values).
+ *
+ * The child owns `use` too, and only for the receiver: `const { use } = ctx`
+ * in a component calls it with no `this`, and handlePushSegment would then
+ * fall back to the walker's pin — the child route's segment, the bug this
+ * whole mechanism exists to fix. The wrapper reads `ctx.use` when it is
+ * CALLED, not when the child is made, so a later rebinding stays visible
+ * (loader-cache.ts's override interceptor).
  */
 export function withSegmentScope<C>(
   ctx: C,
@@ -233,8 +240,13 @@ export function withSegmentScope<C>(
     _handleSegmentId: string;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
+    use?: unknown;
   };
   scoped._handleSegmentId = segmentId;
+  const parent = ctx as { use?: (...args: any[]) => any };
+  if (typeof parent.use === "function") {
+    scoped.use = (item: unknown) => parent.use!.call(scoped, item);
+  }
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;
