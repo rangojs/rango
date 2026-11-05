@@ -18,6 +18,7 @@ import {
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { withSegmentScope } from "./handler-context.js";
 import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
 import { findInOrphans } from "./error-handling.js";
 import {
@@ -363,12 +364,6 @@ export async function resolveInterceptEntry<TEnv>(
     parentEntry,
     belongsToRoute,
   );
-  // The slot's tag scope (#957, cache-tag.ts runInSegmentTagScope) and the
-  // owner of its handler's handle pushes (a handler's ctx.use(Handle) reads
-  // it when called).
-  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-    slotSegmentId;
-
   const slotSegment = (
     component: ReactNode,
     layout: ReactNode | undefined,
@@ -393,47 +388,64 @@ export async function resolveInterceptEntry<TEnv>(
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
+  // The slot's tag scope (#957, cache-tag.ts runInSegmentTagScope) and the
+  // owner of its handler's handle pushes (a handler's ctx.use(Handle) reads
+  // it when called). Pinned only while the handler and its layout run, then
+  // put back: the route's ctx is the request's one ctx and reads the pin for
+  // a push from a component it handed that ctx to.
+  const internal = context as InternalHandlerContext<any, TEnv>;
+  const pinned = internal._currentSegmentId;
+  internal._currentSegmentId = slotSegmentId;
+  // The slot's ctx carries the slot's segment (withSegmentScope), as a
+  // parallel slot's handler's does: `runAsSegment` covers the handler's own
+  // awaits, but not a component it hands the ctx to, which React renders
+  // after the walker moved the shared pin on.
+  const slotContext = withSegmentScope(context, slotSegmentId, undefined);
   let handlerResult: ReactNode;
-  try {
-    const handler = interceptEntry.handler;
-    handlerResult =
-      typeof handler === "function"
-        ? handleHandlerResult(
-            runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
-            ),
-          )
-        : handler;
-  } catch (error) {
-    handlerResult = renderInterceptHandlerError(
-      pass,
-      error,
-      parentEntry,
-      slotSegmentId,
-      options?.background,
-    );
-  }
-  // Consumed only after the layout and loader awaits below; a rejection in that
-  // window would be an unhandledRejection (process crash on Node's default
-  // mode). The later await / trackHandler still observes it.
-  if (handlerResult instanceof Promise) handlerResult.catch(() => {});
-
   let layoutElement: ReactNode | undefined;
-  if (interceptEntry.layout) {
-    const layout = interceptEntry.layout;
-    if (typeof layout === "function") {
-      const layoutResult = await runInSegmentTagScope(
+  try {
+    try {
+      const handler = interceptEntry.handler;
+      handlerResult =
+        typeof handler === "function"
+          ? handleHandlerResult(
+              runAsSegment(slotSegmentId, () =>
+                runInSegmentTagScope(slotSegmentId, handler, slotContext),
+              ),
+            )
+          : handler;
+    } catch (error) {
+      handlerResult = renderInterceptHandlerError(
+        pass,
+        error,
+        parentEntry,
         slotSegmentId,
-        layout,
-        context,
+        options?.background,
       );
-      if (layoutResult instanceof Response) {
-        throw layoutResult;
-      }
-      layoutElement = layoutResult;
-    } else {
-      layoutElement = layout;
     }
+    // Consumed only after the layout and loader awaits below; a rejection in
+    // that window would be an unhandledRejection (process crash on Node's
+    // default mode). The later await / trackHandler still observes it.
+    if (handlerResult instanceof Promise) handlerResult.catch(() => {});
+
+    if (interceptEntry.layout) {
+      const layout = interceptEntry.layout;
+      if (typeof layout === "function") {
+        const layoutResult = await runInSegmentTagScope(
+          slotSegmentId,
+          layout,
+          slotContext,
+        );
+        if (layoutResult instanceof Response) {
+          throw layoutResult;
+        }
+        layoutElement = layoutResult;
+      } else {
+        layoutElement = layout;
+      }
+    }
+  } finally {
+    internal._currentSegmentId = pinned;
   }
 
   let component: ReactNode;

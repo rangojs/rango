@@ -622,6 +622,50 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: `use` files under the segment however the caller got it", () => {
+      // The receiver each push reaches setupLoaderAccess with.
+      const seen: Array<string | undefined> = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use(this: { _handleSegmentId?: string }): void {
+          seen.push(this?._handleSegmentId);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      const push = scoped.use as unknown as () => void;
+      // The walker moves the shared pin on after the handler returned.
+      ctx._currentSegmentId = "M0L0L0R0";
+      // A method call, a destructured `use`, and a spread copy of the ctx.
+      push();
+      const { use } = scoped;
+      (use as unknown as () => void)();
+      const copy = { ...(scoped as any) };
+      (copy.use as () => void)();
+      expect(seen).toStrictEqual(["M0L0L0", "M0L0L0", "M0L0L0"]);
+      // The shared ctx carries nothing.
+      expect(ctx._handleSegmentId).toBeUndefined();
+    });
+
+    it("withSegmentScope: the parent's `use` is read at call time, so a later interceptor runs", () => {
+      // segment-resolution/loader-cache.ts replaces ctx.use on the handler ctx
+      // after the segment ctx exists, and must forward the receiver it gets.
+      const calls: string[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use(this: { _handleSegmentId?: string }): void {
+          calls.push(`base:${this?._handleSegmentId}`);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "L0", undefined);
+      const base = ctx.use as unknown as (this: unknown, item: unknown) => void;
+      (ctx as any).use = function (this: unknown, item: unknown): void {
+        calls.push("interceptor");
+        base.call(this, item);
+      };
+      (scoped.use as unknown as () => void)();
+      expect(calls).toStrictEqual(["interceptor", "base:L0"]);
+    });
   });
 
   describe("optional params", () => {

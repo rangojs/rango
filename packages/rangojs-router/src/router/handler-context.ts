@@ -207,8 +207,8 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a layout's or parallel slot's handler gets: a prototype child of
- * the request's one handler ctx that carries its own segment.
+ * The ctx a layout's, parallel slot's or intercept's handler gets: a prototype
+ * child of the request's one handler ctx that carries its own segment.
  *
  * The segment rides the object for the same reason the scope does: the walker
  * moves the shared `_currentSegmentId` on while an async component the handler
@@ -218,6 +218,13 @@ function createPrerenderPassthroughFn(
  * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
  * router/loader-resolution.ts), which holds after an `await` and in a
  * component the ctx is handed to.
+ *
+ * `use` is a closure over this object for the same reason: the receiver has to
+ * be the ctx that carries the segment however the caller got hold of `use` —
+ * destructured (`const { use } = ctx`), passed as a prop or callback, or
+ * copied with a spread. Reading `ctx.use` at call time keeps whatever the
+ * setup installed (build/silent mode, and the loader-cache interceptor in
+ * segment-resolution/loader-cache.ts) in the path.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -231,10 +238,17 @@ export function withSegmentScope<C>(
 ): C {
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
+    use: unknown;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  scoped.use = (item: unknown) =>
+    Reflect.apply(
+      (ctx as unknown as { use: (item: unknown) => unknown }).use,
+      scoped,
+      [item],
+    );
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

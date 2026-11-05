@@ -35,4 +35,15 @@ describe("segmentPinOf", () => {
     ).toBe("L0");
     expect(runAsSegment(undefined, () => segmentPinOf(ctx))).toBe("R0.@side");
   });
+
+  it("a ctx that carries its own segment answers with it, not its pin", () => {
+    // A layout's or slot's ctx (withSegmentScope): the walker moved the shared
+    // pin on after the handler returned.
+    expect(
+      segmentPinOf({ _currentSegmentId: "R0", _handleSegmentId: "L0" }),
+    ).toBe("L0");
+    // An explicit scope still wins over the carried segment.
+    const ctx = { _currentSegmentId: "R0", _handleSegmentId: "L0" };
+    expect(runAsSegment("R0.@side", () => segmentPinOf(ctx))).toBe("R0.@side");
+  });
 });

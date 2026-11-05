@@ -11,11 +11,15 @@ handler handed its `ctx` to that pushed a handle after an `await` was rejected
 the request's shared segment id when it was called, and by then the route
 handler had run and moved it on.
 
-**Now.** The message names the layout's or the slot's segment, the one that
-owns the ctx the push went through:
+**Now.** The message names the segment whose ctx made the push — the layout's,
+the parallel slot's, an intercept's or the route's:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+That name holds however the component got the push: the ctx itself, a `use`
+destructured off it (`const { use } = ctx`), one passed on as a prop, or a
+spread copy of the ctx (`{ ...ctx }`, which now carries `use` and still files
+under the segment). A route's ctx names the route even when a parallel slot
+below it resolved after the handler returned. The push is still rejected, at
+the same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

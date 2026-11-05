@@ -815,7 +815,13 @@ async function resolveParallelSlotComponent<TEnv>(
     } else {
       // Slot-keyed pushes — slot owns its own bucket, parent layout owns its
       // own. On slot-only revalidations the partial merge updates only the
-      // slot's bucket; the parent's bucket stays intact.
+      // slot's bucket; the parent's bucket stays intact. Pinned only while the
+      // handler runs, then put back: a ctx that carries no segment of its own
+      // (the route's, which is the request's one ctx) reads the pin for a push
+      // from a component it handed that ctx to, and the route handler ran
+      // before this slot.
+      const pinned = (context as InternalHandlerContext<any, TEnv>)
+        ._currentSegmentId;
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         parallelId;
       handlerRan = true;
@@ -862,6 +868,9 @@ async function resolveParallelSlotComponent<TEnv>(
         }
       } catch (error) {
         throw noteThrower(error, parallelId, "parallel");
+      } finally {
+        (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+          pinned;
       }
     }
   }
@@ -1197,6 +1206,11 @@ async function resolveRouteComponent<TEnv>(
   // use the build handler from entry.handler.
   const handler =
     !context.build && entry.liveHandler ? entry.liveHandler : entry.handler;
+  // The route's ctx stays the request's one handler ctx, so a `{ ...ctx }`
+  // copy of it is a working ctx (a "use cache" call takes one). Its pushes
+  // read the shared pin, which is the route's: a parallel slot and an
+  // intercept put the pin back after their own handler (revalidation.ts
+  // resolveParallelSlotComponent, intercept-resolution.ts).
   if (!entry.loading) {
     const result = handleHandlerResult(
       await observeSegmentHandler(entry.shortCode, entry.id, handler, context),
