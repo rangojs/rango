@@ -612,8 +612,18 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      sentIds?.add(segment.id);
+      // The response serves this segment's handler run from the record, as a
+      // walk that ran it does: the record's copy of its handle values is the
+      // answer, none included, so the browser replaces what it holds
+      // (match-result.ts resolvedIds, handles/pushed-by.ts). The send
+      // decision is that run's revalidate() answer, so a HIT lists what the
+      // MISS that wrote the record listed.
+      segment._handlerRan = true;
+    }
     yield segment;
   }
 

@@ -174,7 +174,10 @@ export function buildMatchResult<TEnv>(
     // ids that ran (resolvedIds) together. A partial match resolves only the
     // loaders it runs (revalidation.ts), so each loader segment here ran:
     // the browser replaces that loader's handle pushes, and keeps those of a
-    // loader it skipped (handles/pushed-by.ts).
+    // loader it skipped (handles/pushed-by.ts). A stored hit marks the
+    // segments it serves from the record (serveStoredSegments,
+    // match-middleware/cache-lookup.ts): the record's copy of the run is the
+    // answer, so the client replaces what it holds for them too.
     const clientIdSet = new Set(ctx.clientSegmentIds);
     segmentsToRender = [];
     resolvedIds = [];

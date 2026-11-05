@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a cached navigation replaces the handle values of the segments it re-serves
+
+**Before.** A partial response names in `resolvedIds` the segments whose
+handle values the browser replaces, so a segment whose handler stopped
+pushing (a breadcrumb the page no longer sets) cleared its old values on a
+navigation that rendered it. A `cache()` record and a `Prerender()` artifact
+carry no record of which handlers ran when they were written, so a hit that
+served the same segment named nothing: the values it no longer pushes came
+back on every hit after the miss.
+
+**Now.** A stored hit names the segments it serves from the record, so the
+answer a `cache()` record or a `Prerender()` artifact gives a navigation
+carries the `resolvedIds` the render that wrote it did. The client is
+unchanged: only `resolvedIds` on the wire differs.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
