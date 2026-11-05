@@ -261,20 +261,27 @@ function orphanLayout() {
   );
 }
 
-/** Pushes after a timer: past handle collection, so rejected. */
+/**
+ * Pushes after a timer: past handle collection, so rejected. `destructured`
+ * pushes through a `use` taken off the ctx, which must keep the segment too.
+ */
 async function LatePush({
   ctx,
   label,
+  destructured,
 }: {
   ctx: HandlerContext;
   label: string;
+  destructured?: boolean;
 }) {
+  const { use } = ctx;
   await new Promise((resolve) => setTimeout(resolve, 20));
-  ctx.use(Crumbs)(label);
+  if (destructured) use(Crumbs)(label);
+  else ctx.use(Crumbs)(label);
   return <p>{label}</p>;
 }
 
-/** A layout and its slot each hand their ctx to LatePush. */
+/** A layout and its slot each hand their ctx to LatePush; the slot destructures `use`. */
 function layoutCtxLatePush(errors: string[]) {
   return createRouter({
     onError: ({ error }) => {
@@ -294,7 +301,7 @@ function layoutCtxLatePush(errors: string[]) {
           parallel({
             "@side": (ctx: HandlerContext) => (
               <aside>
-                <LatePush ctx={ctx} label="side" />
+                <LatePush ctx={ctx} label="side" destructured />
               </aside>
             ),
           }),
