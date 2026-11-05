@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a page enters the bfcache, so Back between apps restores it instead of re-rendering, and a restored page revalidates
+
+**Before.** The cross-tab cache-invalidation `BroadcastChannel` opened during
+hydration and never closed. An open channel is a page feature the browser cannot
+re-create on a restore, so the document was kept out of the bfcache: a Back that
+crossed apps — `createHostRouter()`, one document per app — re-rendered the page
+from scratch instead of restoring it.
+
+**Now.** The channel closes on `pagehide` and reopens on `pageshow`, so the
+document is eligible and Back and Forward restore it instantly. The broadcasts
+sent while the document was frozen cannot be received, so a `pageshow` with
+`persisted: true` marks the history cache and the prefetches stale rather than
+flushing them: the restored page keeps the pixels the user went Back for, and
+the next navigation revalidates. A tab that is only hidden (`visibilitychange`)
+never fired `pagehide` and keeps receiving invalidations exactly as before.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
