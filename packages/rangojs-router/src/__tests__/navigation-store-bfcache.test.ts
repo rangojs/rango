@@ -225,8 +225,8 @@ describe("navigation-store BroadcastChannel page lifecycle", () => {
   });
 
   it("leaves the channel open when the window has no event API", () => {
-    // A unit test stubs `window` without listeners; the store must still boot and
-    // keep the channel open, which is how it behaved before the pagehide pair.
+    // A unit test stubs `window` without listeners. The store still boots and
+    // keeps the channel open: no lifecycle is bound, so nothing ever closes it.
     vi.stubGlobal("window", {
       location: { href: "http://localhost/products", pathname: "/products" },
     });

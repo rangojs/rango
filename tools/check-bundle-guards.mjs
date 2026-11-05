@@ -299,7 +299,24 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // observer marks the entry first and the link does not name its ids as held.
 // It cannot load lazily: it runs on every link. By the owner's rule above:
 // 53633B + 256B, rounded up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 52.75 * 1024;
+//
+// Raised 52.75KB -> 53.125KB on 2026-11-05 for the cross-tab channel's page
+// lifecycle, measured on cloudflare-basic from main 5260819 53997B -> 54067B
+// (+70B gzip, +309B raw; main left 19B of headroom, less than any encoding of
+// this pair costs). The store closes the channel on pagehide (an open
+// BroadcastChannel keeps the document out of the bfcache) and reopens it on
+// pageshow, marking history and prefetches stale when `persisted` says the
+// document was frozen through broadcasts (navigation-store.ts
+// getCacheInvalidationChannel, bindCacheInvalidationLifecycle). Trimming the
+// first shape's owner object down to module-level callbacks and dropping the
+// dead `mutatedPath` in handleInvalidation paid 30B of it, and that is where
+// trimming stops paying: folding the bind into the getter, inlining the close
+// and assigning the handler unconditionally (-73B raw) measured 54065B, 2B
+// less, because the chunk's gzip is lumpy at this size. It cannot load lazily:
+// the pagehide handler has to be registered before the first unload, which is
+// store creation, and the reopen runs on every restore. By the owner's rule
+// above: 54067B + 256B, rounded up to the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 53.125 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

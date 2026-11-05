@@ -109,23 +109,21 @@ const CACHE_INVALIDATION_CHANNEL = "rsc-router-cache-invalidation";
 let cacheInvalidationChannel: BroadcastChannel | null = null;
 
 /**
- * What the page's store owes the channel across a close and reopen: the message
- * handler to re-attach, and what a bfcache restore invalidates.
+ * What the page's store owes the channel across a pagehide close and a pageshow
+ * reopen: the message handler to re-attach, and what a bfcache restore
+ * invalidates. Module-level because the events outlive any one store.
  */
-interface CacheInvalidationChannelOwner {
-  attach(channel: BroadcastChannel | null): void;
-  restored(): void;
-}
-
-let cacheInvalidationOwner: CacheInvalidationChannelOwner | null = null;
+let cacheInvalidationHandler: ((event: MessageEvent) => void) | null = null;
+let cacheInvalidationOnRestore: (() => void) | null = null;
 
 // The window whose pagehide/pageshow pair is bound. Keyed by the object rather
 // than a boolean so a test's fresh stubbed window binds its own pair.
 let cacheInvalidationLifecycleWindow: Window | null = null;
 
 /**
- * Get or create the BroadcastChannel for cache invalidation, re-attaching the
- * page's handler when the channel was closed on pagehide.
+ * Get or create the BroadcastChannel for cache invalidation. The handler is set
+ * on every call, so a channel pagehide closed comes back wired and a channel a
+ * second store on the page already opened takes the page's handler over.
  */
 function getCacheInvalidationChannel(): BroadcastChannel | null {
   if (
@@ -136,7 +134,9 @@ function getCacheInvalidationChannel(): BroadcastChannel | null {
   }
   if (!cacheInvalidationChannel) {
     cacheInvalidationChannel = new BroadcastChannel(CACHE_INVALIDATION_CHANNEL);
-    cacheInvalidationOwner?.attach(cacheInvalidationChannel);
+  }
+  if (cacheInvalidationHandler) {
+    cacheInvalidationChannel.onmessage = cacheInvalidationHandler;
   }
   return cacheInvalidationChannel;
 }
@@ -154,25 +154,16 @@ function getCacheInvalidationChannel(): BroadcastChannel | null {
  */
 function closeCacheInvalidationChannel(): void {
   if (!cacheInvalidationChannel) return;
-  // Drop the handler before closing: a closed channel delivers nothing, and a
-  // reopened one re-attaches the page's own handler through the owner.
+  // A closed channel delivers nothing; the handler is re-attached by
+  // getCacheInvalidationChannel, so nothing is lost by dropping it here.
   cacheInvalidationChannel.onmessage = null;
   cacheInvalidationChannel.close();
   cacheInvalidationChannel = null;
 }
 
-function handleCacheInvalidationPageShow(event: PageTransitionEvent): void {
-  // `persisted` is a bfcache restore: every broadcast sent while the document
-  // was frozen was missed, so the caches it still holds may be behind another
-  // tab. A first load has nothing to miss.
-  if (event.persisted) cacheInvalidationOwner?.restored();
-  getCacheInvalidationChannel();
-}
-
 /**
- * Bind the pagehide/pageshow pair once per window. A test that stubs `window`
- * without the event API gets no lifecycle: the channel then stays open, as it
- * did before this pair existed.
+ * Bind the pagehide/pageshow pair once per window. A window without the event
+ * API (a unit test's stub) gets no lifecycle and keeps its channel open.
  */
 function bindCacheInvalidationLifecycle(): void {
   if (typeof window === "undefined") return;
@@ -180,7 +171,13 @@ function bindCacheInvalidationLifecycle(): void {
   if (cacheInvalidationLifecycleWindow === window) return;
   cacheInvalidationLifecycleWindow = window;
   window.addEventListener("pagehide", closeCacheInvalidationChannel);
-  window.addEventListener("pageshow", handleCacheInvalidationPageShow);
+  window.addEventListener("pageshow", (event) => {
+    // `persisted` is a bfcache restore: every broadcast sent while the document
+    // was frozen was missed, so the caches it still holds may be behind another
+    // tab. A first load has nothing to miss.
+    if (event.persisted) cacheInvalidationOnRestore?.();
+    getCacheInvalidationChannel();
+  });
 }
 
 /**
@@ -475,7 +472,6 @@ export function createNavigationStore(
    */
   function handleInvalidation(event: MessageEvent): void {
     if (event.data?.type === "invalidate") {
-      const mutatedPath = event.data.path;
       const mutatedSegmentIds: string[] = event.data.segmentIds ?? [];
       const currentSegmentIds = segmentState.currentSegmentIds;
 
@@ -525,24 +521,17 @@ export function createNavigationStore(
 
   // Set up cross-tab cache invalidation listener (only if enabled)
   if (crossTabSync) {
-    cacheInvalidationOwner = {
-      attach(channel) {
-        if (channel) channel.onmessage = handleInvalidation;
-      },
-      restored() {
-        // Stale, not flushed and not refreshed: the restored page keeps the
-        // pixels the user expects Back to return, and the next navigation to any
-        // entry revalidates. Refreshing here would trade the instant restore for
-        // a fallback flash.
-        markHistoryStale();
-        markPrefetchesStale();
-      },
+    cacheInvalidationHandler = handleInvalidation;
+    // Stale, not flushed and not refreshed: the restored page keeps the pixels
+    // the user expects Back to return, and the next navigation to any entry
+    // revalidates. Refreshing here would trade the instant restore for a
+    // fallback flash.
+    cacheInvalidationOnRestore = () => {
+      markHistoryStale();
+      markPrefetchesStale();
     };
     bindCacheInvalidationLifecycle();
-    // Attach even to a channel that is already open: a page with more than one
-    // store (a test, an embedded second router) hands the channel to the last
-    // one, as the plain onmessage assignment always did.
-    cacheInvalidationOwner.attach(getCacheInvalidationChannel());
+    getCacheInvalidationChannel();
   }
 
   const store: NavigationStore = {

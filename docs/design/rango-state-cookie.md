@@ -124,15 +124,16 @@ tissue that still applies):
 
 Live paths that rotate / clear:
 
-| Trigger                     | Path                                                                                                                                                                                                                                              |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Deploy                      | version prefix changes; `initRangoState` mints fresh at boot (`rango-state.ts`, from `rsc-router.tsx`)                                                                                                                                            |
-| Server action               | the response's `Set-Cookie` bumps the write part (`runActionBody`); `server-action-bridge.ts` → at the response, unless the action called `keepClientCache()`: marks history and prefetches stale, marked (`soft`) broadcast; no rotation (#1329) |
-| `invalidateClientCache()`   | public API (both seats) → rotates cookie / marks caches stale; replaces the removed `useClientCache().clear()` hook                                                                                                                               |
-| Cross-tab broadcast receipt | a sibling tab's namespaced `BroadcastChannel` message → mark history stale; adopt a newer state and clear prefetches without re-rotating; a `soft` message whose state is not newer marks prefetches stale; gated on shared segment IDs           |
-| External cookie rotation    | sibling tab / server `Set-Cookie` / cookie clear detected on the next `getRangoState()` read → external-rotation observer, when `{buildVersion}:{timestamp}` changed                                                                              |
-| External write              | a server action's `Set-Cookie` (this tab's or another's) seen on the next `getRangoState()` read, `{buildVersion}:{timestamp}` unchanged → write observer: marks history and prefetches stale, no broadcast                                       |
-| Dev HMR                     | a version change → `navigationBridge.updateVersion()` → `store.clearHistoryCache()`                                                                                                                                                               |
+| Trigger                     | Path                                                                                                                                                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deploy                      | version prefix changes; `initRangoState` mints fresh at boot (`rango-state.ts`, from `rsc-router.tsx`)                                                                                                                                                  |
+| Server action               | the response's `Set-Cookie` bumps the write part (`runActionBody`); `server-action-bridge.ts` → at the response, unless the action called `keepClientCache()`: marks history and prefetches stale, marked (`soft`) broadcast; no rotation (#1329)       |
+| `invalidateClientCache()`   | public API (both seats) → rotates cookie / marks caches stale; replaces the removed `useClientCache().clear()` hook                                                                                                                                     |
+| Cross-tab broadcast receipt | a sibling tab's namespaced `BroadcastChannel` message → mark history stale; adopt a newer state and clear prefetches without re-rotating; a `soft` message whose state is not newer marks prefetches stale; gated on shared segment IDs                 |
+| bfcache restore             | the channel closes on `pagehide` (an open one keeps the document out of the bfcache) and reopens on `pageshow`; a `persisted` pageshow missed every broadcast sent while frozen → marks history and prefetches stale, no flush, no rotation, no refresh |
+| External cookie rotation    | sibling tab / server `Set-Cookie` / cookie clear detected on the next `getRangoState()` read → external-rotation observer, when `{buildVersion}:{timestamp}` changed                                                                                    |
+| External write              | a server action's `Set-Cookie` (this tab's or another's) seen on the next `getRangoState()` read, `{buildVersion}:{timestamp}` unchanged → write observer: marks history and prefetches stale, no broadcast                                             |
+| Dev HMR                     | a version change → `navigationBridge.updateVersion()` → `store.clearHistoryCache()`                                                                                                                                                                     |
 
 Note that `clearPrefetchCache()` is the function that clears the in-memory map,
 discards in-flight prefetches, and normally calls `invalidateRangoState()`. A
@@ -1015,9 +1016,16 @@ write failures are silently absorbed. The failure direction is always toward
 freshness: divergent states produce extra misses, never stale reads — except
 the narrow case of a tab that missed a `BroadcastChannel` message _and_ can't
 read the cookie, which self-heals on its next action or reload and is bounded
-by `prefetchCacheTTL`. Browsers also block site data wholesale, not cookies à
-la carte, so any configuration that breaks the cookie was already breaking
-localStorage; this design inherits the blast radius, it doesn't widen it.
+by `prefetchCacheTTL`. A bfcache-restored page is the second way to miss a
+broadcast: the channel is closed for as long as the document is frozen, so it
+misses every message sent meanwhile. It recovers the same way and without a
+flush: the store marks the restored page's history cache and prefetches stale
+on the `persisted` pageshow (`navigation-store.ts`,
+`bindCacheInvalidationLifecycle`), so the page the user went Back to keeps its
+pixels and the next navigation revalidates. Browsers also block site data
+wholesale, not cookies à la carte, so any configuration that breaks the cookie
+was already breaking localStorage; this design inherits the blast radius, it
+doesn't widen it.
 
 The router no longer writes the HTTP-cache surface at all (#1170: no prefetch
 response carries `Cache-Control`; `Vary` is still emitted and keys responses a
