@@ -273,6 +273,43 @@ describe("resolveInterceptEntry: the slot and its loader segments", () => {
     expect(segments[1]!.namespace).toBe("intercept:test");
   });
 
+  // match-result.ts lists a marked slot in resolvedIds, and the browser drops
+  // the handle values of the slot's last run (handles/pushed-by.ts). One case
+  // per way the handler's result becomes the slot's component.
+  const asyncHandler =
+    (loading: InterceptEntry["loading"]) => (): InterceptEntry => ({
+      ...makeInterceptEntry(loading),
+      loader: [],
+      handler: vi.fn(async () => "modal") as any,
+    });
+  describe.each([
+    ["loading() and loaders", twoLoaders],
+    ["loading() streaming an async handler", asyncHandler("Loading")],
+    ["no loading(), an awaited async handler", asyncHandler(false)],
+  ])("with %s", (_, makeEntry) => {
+    it.each([
+      ["the client lacks", []],
+      ["the client holds (a navigation in the open modal)", ["L0R0.@modal"]],
+    ])(
+      "marks the slot as run when its handler runs: a slot %s",
+      async (_, held) => {
+        const entry = makeEntry();
+        const segments = await resolveInterceptEntry(
+          pass(makeContext(), makeDeps(), held),
+          entry,
+          makeParentEntry(),
+          true,
+        );
+        expect(entry.handler).toHaveBeenCalledTimes(1);
+        expect(
+          segments
+            .filter((s) => s._handlerRan !== undefined)
+            .map((s) => [s.id, s._handlerRan]),
+        ).toEqual([["L0R0.@modal", true]]);
+      },
+    );
+  });
+
   it("in a fill with the slot held, runs neither handler nor layout, only the loaders the client lacks", async () => {
     const entry = twoLoaders();
     const context = makeContext();
@@ -289,5 +326,7 @@ describe("resolveInterceptEntry: the slot and its loader segments", () => {
       ["L0R0.@modal", null],
       ["L0R0.@modalD1.second", null],
     ]);
+    // Not run: the client keeps the slot's handle values.
+    expect(segments[0]!._handlerRan).toBe(false);
   });
 });

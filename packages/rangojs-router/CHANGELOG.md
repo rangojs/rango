@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a modal that re-runs and pushes nothing clears its handle values
+
+**Before.** An `intercept()`'s handler (the modal it renders into its slot)
+re-runs on every intercepted navigation, a link in the open modal to another
+intercepted item included, and on every server action sent from the open
+modal. When it pushed nothing to a handle on such a run, the modal kept the
+values it pushed on the previous one: a breadcrumb read with `useHandle` still
+listed the modal's old crumb. The same held when the handler threw and the
+modal showed the error boundary. A parallel slot or a layout that re-runs and
+pushes nothing drops its old values.
+
+**Now.** The modal replaces its handle values whenever its handler re-runs, as
+a parallel slot does: with what it pushes now, or with nothing. The fill that
+completes a prefetched modal does not re-run the handler, and the modal keeps
+its values. No change in your code.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -171,6 +171,11 @@ the modal keeps the data of the others, as it does on a link to another
 intercepted route that reads the same loader. In `clientUrls()` the predicate
 runs on the server too (`/client-urls`).
 
+Each live re-render replaces the handle values its handler and layout pushed
+(a `Breadcrumbs` crumb, a `Meta` title) with the ones it pushes now, or with
+none when it pushes nothing, as a parallel slot's re-render does. The pushes
+of a loader that did not re-run stay.
+
 The page under an intercept does not re-render while the intercept is on
 screen. An action that settles after the intercept opened (one sent from the
 page underneath just before the user opened it) runs no background

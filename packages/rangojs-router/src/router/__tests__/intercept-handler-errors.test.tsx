@@ -199,6 +199,9 @@ function expectModalFallback(
   expect(modal.type).toBe("parallel");
   expect(modal.namespace).toMatch(/^intercept:/);
   expect(modal.component).toBe(fallback);
+  // The handler ran: the browser drops the slot's handle values from its
+  // last run.
+  expect(result.resolvedIds).toContain(modal.id);
   // The declaring layout is not replaced by an error/notFound segment.
   expect(
     result.segments.filter(
