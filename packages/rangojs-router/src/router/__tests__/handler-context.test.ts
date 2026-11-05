@@ -24,7 +24,11 @@ import {
   stripInternalParams,
   withSegmentScope,
 } from "../handler-context";
-import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import {
+  scopeReverse,
+  segmentPinOf,
+  type ReverseScope,
+} from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
 
 beforeEach(() => {
@@ -589,7 +593,7 @@ describe("createReverseFunction", () => {
       );
     });
 
-    it("withSegmentScope: the scope and the segment ride the ctx; other fields read through live", () => {
+    it("withSegmentScope: the scope rides the ctx; other fields read through live", () => {
       const ctx = {
         params,
         reverse: routeReverse(),
@@ -604,23 +608,70 @@ describe("createReverseFunction", () => {
       expect(scoped._currentSegmentId).toBe("L1");
       expect(scoped.params).toBe(params);
       expect(scoped._reverseScope).toBe(scope);
-      // The segment the push through this ctx files under holds too.
-      expect(scoped._handleSegmentId).toBe("M0L0L0");
-      expect(ctx._handleSegmentId).toBeUndefined();
+      // `{ ...ctx }` on a layout's or slot's ctx copies the same own fields it
+      // always did: `use` is a non-enumerable own method, not a copied one.
+      expect(Object.keys(scoped).sort()).toEqual(["_reverseScope", "reverse"]);
       // The shared ctx keeps the route's resolution.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
     });
 
-    it("withSegmentScope: a segment without a reverse scope still carries the segment", () => {
+    it("withSegmentScope: a segment without a reverse scope still scopes `use`", () => {
       const ctx = {
         reverse: routeReverse(),
       } as unknown as InternalHandlerContext<any, any>;
       const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
       expect(scoped).not.toBe(ctx);
-      expect(scoped._handleSegmentId).toBe("M0L0L0R0");
       expect(scoped._reverseScope).toBeUndefined();
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
+    });
+
+    // The segment a push through a layout's or slot's ctx files under must not
+    // depend on how the caller reaches `ctx.use`: a component may destructure
+    // the method, hand it on as a callback, or reach it through a wrapper that
+    // forwards only the item. Each call runs inside the segment's
+    // runAsSegment scope, which `segmentPinOf` reads first.
+    it("withSegmentScope: `use` runs in the segment's scope however it is called", () => {
+      const seen: (string | undefined)[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use: (item: unknown) => {
+          seen.push(segmentPinOf({}));
+          return item;
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+
+      scoped.use(1 as never);
+      const { use } = scoped;
+      use(2 as never);
+      // The method handed on as a callback: the item is its only argument.
+      const viaCallback = [3].map(
+        scoped.use as unknown as (item: number) => void,
+      );
+      void viaCallback;
+      // A wrapper on the request ctx's `use` that drops the receiver.
+      const installed = ctx.use;
+      ctx.use = ((item: unknown) =>
+        installed(item as never)) as unknown as typeof ctx.use;
+      scoped.use(4 as never);
+
+      expect(seen).toEqual(["M0L0L0", "M0L0L0", "M0L0L0", "M0L0L0"]);
+    });
+
+    it("withSegmentScope: `use` reads the request ctx's current `use` per call", () => {
+      const calls: string[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use: (item: unknown) => calls.push(`first:${String(item)}`),
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // An interceptor installed after the child exists (loader-cache.ts
+      // executeLoaderData) must still see the call.
+      ctx.use = ((item: unknown) =>
+        calls.push(`intercepted:${String(item)}`)) as unknown as typeof ctx.use;
+      scoped.use("x" as never);
+      expect(calls).toEqual(["intercepted:x"]);
     });
   });
 

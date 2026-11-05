@@ -35,20 +35,35 @@ const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
 const errors: string[] = [];
 
+type PushProps = { ctx: HandlerContext; label: string };
+
 /** An async server component pushing the ctx its handler handed it. */
-async function LatePush({
-  ctx,
-  label,
-}: {
-  ctx: HandlerContext;
-  label: string;
-}) {
+async function LatePush({ ctx, label }: PushProps) {
   await new Promise((resolve) => setTimeout(resolve, 0));
   ctx.use(Crumbs)(label);
   return <span>{label}</span>;
 }
 
-function makeRouter() {
+/** The same, with the method taken off the ctx first. */
+async function LatePushDetached({ ctx, label }: PushProps) {
+  const { use } = ctx;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
+/** The same, with the method handed on as a callback. */
+async function LatePushCallback({ ctx, label }: PushProps) {
+  const push = [ctx.use].map((use) => use(Crumbs))[0]!;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  push(label);
+  return <span>{label}</span>;
+}
+
+function makeRouter(
+  component: (props: PushProps) => React.ReactNode = LatePush,
+) {
+  const Push = component;
   return createRouter({
     onError: ({ error }) => {
       errors.push(error instanceof Error ? error.message : String(error));
@@ -61,7 +76,7 @@ function makeRouter() {
           layout(
             (ctx) => (
               <div>
-                <LatePush ctx={ctx} label="layout" />
+                <Push ctx={ctx} label="layout" />
               </div>
             ),
             () => [
@@ -74,14 +89,14 @@ function makeRouter() {
             () => <section>slot frame</section>,
             () => [
               parallel({
-                "@panel": (ctx) => <LatePush ctx={ctx} label="slot" />,
+                "@panel": (ctx) => <Push ctx={ctx} label="slot" />,
               }),
               path("/component-slot", () => <p>page</p>, {
                 name: "componentSlot",
               }),
             ],
           ),
-          path("/component", (ctx) => <LatePush ctx={ctx} label="route" />, {
+          path("/component", (ctx) => <Push ctx={ctx} label="route" />, {
             name: "component",
           }),
         ],
@@ -98,9 +113,12 @@ async function matchedOf(flight: string | undefined): Promise<string[]> {
   return metadata.matched;
 }
 
-async function serve(url: string) {
+async function serve(
+  url: string,
+  component?: (props: PushProps) => React.ReactNode,
+) {
   errors.length = 0;
-  const result = await serveShellRequest(makeRouter(), url, {
+  const result = await serveShellRequest(makeRouter(component), url, {
     cacheStore: new MemorySegmentCacheStore(),
   });
   return { errors: [...errors], matched: await matchedOf(result.flight) };
@@ -136,4 +154,34 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
   });
+});
+
+// The segment does not depend on how the component reaches the method: taking
+// `use` off the ctx or handing it to a callback must name the same segment a
+// method call does.
+describe("a LateHandlePushError names the same segment for every call shape", () => {
+  const shapes = [
+    { name: "a destructured `use`", component: LatePushDetached },
+    { name: "a `use` passed as a callback", component: LatePushCallback },
+  ];
+
+  for (const shape of shapes) {
+    it(`the layout's, for ${shape.name}`, async () => {
+      const { errors: reported, matched } = await serve(
+        "/component-layout",
+        shape.component,
+      );
+      const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+      expect(latePushSegment(reported)).toBe(layout);
+    });
+
+    it(`the slot's, for ${shape.name}`, async () => {
+      const { errors: reported, matched } = await serve(
+        "/component-slot",
+        shape.component,
+      );
+      const slot = matched.find((id) => id.endsWith(".@panel"))!;
+      expect(latePushSegment(reported)).toBe(slot);
+    });
+  }
 });

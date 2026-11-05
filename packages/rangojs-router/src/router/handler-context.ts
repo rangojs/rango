@@ -20,6 +20,7 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  runAsSegment,
   scopeReverse,
   type ReverseScope,
   type ScopableReverse,
@@ -208,16 +209,24 @@ function createPrerenderPassthroughFn(
 
 /**
  * The ctx a layout's or parallel slot's handler gets: a prototype child of
- * the request's one handler ctx that carries its own segment.
+ * the request's one handler ctx that carries its own segment and, with a
+ * ReverseScope, its own `reverse`.
  *
  * The segment rides the object for the same reason the scope does: the walker
  * moves the shared `_currentSegmentId` on while an async component the handler
  * handed this ctx to is still rendering, so a push made through this ctx after
  * an `await` would otherwise file under (and a LateHandlePushError name)
- * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
- * router/loader-resolution.ts), which holds after an `await` and in a
- * component the ctx is handed to.
+ * whatever segment the walker pinned since.
+ *
+ * It reaches `ctx.use` through the async scope, not through the receiver. The
+ * child owns `use` and runs each call inside `runAsSegment(segmentId, ...)`
+ * (server/context.ts), which `segmentPinOf` reads before the ctx's pin. The
+ * push function `ctx.use(Handle)` returns closes over the segment resolved
+ * then, so the push itself — after an `await`, in a component the ctx was
+ * handed to — files right. Nothing along the call path has to carry it, so
+ * every shape of the call works: `ctx.use(Handle)`, a destructured
+ * `const { use } = ctx`, the method passed on as a callback, and a wrapper
+ * installed on the request ctx's `use` that forwards only the item.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -230,11 +239,23 @@ export function withSegmentScope<C>(
   scope: ReverseScope | undefined,
 ): C {
   const scoped = Object.create(ctx as object) as C & {
-    _handleSegmentId: string;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
-  scoped._handleSegmentId = segmentId;
+  // Non-enumerable, like the `use` it shadows: `{ ...ctx }` on a layout's or
+  // slot's ctx keeps copying only `reverse` and `_reverseScope`.
+  Object.defineProperty(scoped, "use", {
+    value: function (item: unknown): unknown {
+      // The request ctx's `use` is read per call, so an interceptor installed
+      // on it after this child exists (loader-cache.ts executeLoaderData) still
+      // sees the call, and needs no `this` forwarding to keep the segment.
+      const parentUse = (ctx as { use: (item: unknown) => unknown }).use;
+      return runAsSegment(segmentId, () => parentUse(item));
+    },
+    writable: true,
+    configurable: true,
+    enumerable: false,
+  });
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;
