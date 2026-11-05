@@ -458,13 +458,19 @@ export type InternalHandlerContext<
   passthrough?: () => unknown;
   /** Current segment ID for handle data attribution. */
   _currentSegmentId?: string;
+  /**
+   * The segment a layout's or parallel slot's ctx belongs to
+   * (withSegmentScope): a handle push made through it files under that
+   * segment, before or after an `await`.
+   */
+  _handleSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */
   _responseType?: string;
   /** Route name for cache key scoping (prevents cross-route collisions). */
   _routeName?: string;
   /**
    * The segment's ReverseScope on a layout's / parallel's ctx and its
-   * loaders' (withReverseScope): keys a "use cache" call taking the ctx.
+   * loaders' (withSegmentScope): keys a "use cache" call taking the ctx.
    */
   _reverseScope?: import("../server/context.js").ReverseScope;
   /**

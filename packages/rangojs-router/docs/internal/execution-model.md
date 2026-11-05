@@ -2525,12 +2525,13 @@ How: the DSL stamps `EntryData.reverseScope` (`getReverseScope()`,
 `server/context.ts`) on layout, cache, parallel and wrapping-middleware
 entries, and a loader copies its declaring entry's (`LoaderEntry.reverseScope`;
 an intercept's temporary parent clears it). A layout's or slot's handler gets
-`withReverseScope(ctx, entry.reverseScope)` (`router/handler-context.ts`): a
-prototype child of the request's handler ctx whose own `reverse` passes the
-scope to `createReverseFunction`'s internal fourth argument. Every other field
-reads through, live. The scope rides the object, not the call frame, so it
-holds after an `await` and in a server component the handler hands the ctx
-to, which React renders after the handler returned.
+`withSegmentScope(ctx, entry.shortCode, entry.reverseScope)`
+(`router/handler-context.ts`): a prototype child of the request's handler ctx
+whose own `reverse` passes the scope to `createReverseFunction`'s internal
+fourth argument. Every other field reads through, live. The scope rides the
+object, not the call frame, so it holds after an `await` and in a server
+component the handler hands the ctx to, which React renders after the handler
+returned. The same child carries the segment (`_handleSegmentId`, below).
 
 Loaders take it from their DSL kickoff: `runInsideLoaderScope` (the loader
 scope revalidation.ts already opens per kickoff) carries
@@ -2550,10 +2551,10 @@ Limits:
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
 - A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `reverse` and `_reverseScope`, so `{ ...ctx }` there copies only
-  those. A getter keyed by its holder resolves through the prototype chain
-  (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
-  child inherits.
+  fields are `_handleSegmentId`, and `reverse` and `_reverseScope` when the
+  segment has a scope, so `{ ...ctx }` there copies only those. A getter keyed
+  by its holder resolves through the prototype chain (`rewrittenFrom`,
+  `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a
@@ -2582,39 +2583,57 @@ next slot's or the route's, and a loader that a loader body started after an
 `await` took whatever the walker had pinned by then. A timer or I/O await did
 it as surely as a microtask one, on the document and on a navigation.
 
-How: the segment travels in the async context, not on the ctx. The walker
-runs a `loading()` route or slot handler inside `runAsSegment(segmentId, …)`
-(`server/context.ts`, revalidation.ts `resolveRouteComponent` and
-`resolveParallelSlotComponent`), and an intercept's handler inside its slot's
-(intercept-resolution.ts). `createLoaderExecutor` runs every loader body
-inside its owning segment's scope. Await continuations inherit the
-scope. The readers take `segmentPinOf(ctx)`, the innermost scope's segment
-else the ctx's pin: a handle push's segment (`setupLoaderAccess`, and
-`setupBuildUse` for the build pass, which runs the same walker), a started
-loader's owning segment (`loaderOwner`, after a prefetch-deferred loader's
-registered owner), and the caller segment a `"use cache"` call records and
-replays under (`cache-runtime.ts`). No ctx object changes, so `{ ...ctx }`
-copies what it copies in any route.
+How: the segment travels in the async context while a handler runs, and on
+the ctx a layout or a parallel slot hands to the components it renders. The
+walker runs a `loading()` route or slot handler inside
+`runAsSegment(segmentId, …)` (`server/context.ts`, revalidation.ts
+`resolveRouteComponent` and `resolveParallelSlotComponent`), and an
+intercept's handler inside its slot's (intercept-resolution.ts).
+`createLoaderExecutor` runs every loader body inside its owning segment's
+scope. Await continuations inherit the scope. A layout's or slot's ctx is the
+case the scope cannot reach: React renders the components that ctx was
+handed to after the handler returned, outside every scope, so the object is
+the only thing left to ask. That ctx carries its segment
+(`_handleSegmentId`, `withSegmentScope`), and `ctx.use` resolves the push
+segment off the receiver it was called on (`handlePushSegment`,
+`loader-resolution.ts`) — a push from such a component, and the dev
+`LateHandlePushError` it throws, names the layout or the slot, not whichever
+segment the walker pinned since. The other readers take `segmentPinOf(ctx)`,
+the innermost scope's segment else the ctx's carried one else its pin: a
+handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the build
+pass, which runs the same walker), a started loader's owning segment
+(`loaderOwner`, after a prefetch-deferred loader's registered owner), and the
+caller segment a `"use cache"` call records and replays under
+(`cache-runtime.ts`). A route handler's ctx is still the request's one ctx,
+so `{ ...ctx }` there copies what it copies in any route.
 
 You might worry about runtimes that lose async context. The fallback is the
-ctx's pin, the behaviour before this scope: a lost store files a push where
-it filed before, never somewhere new. The request context's own ALS is not
+ctx's own segment (a layout's or slot's) or its pin (the request's one ctx),
+the behaviour before this scope: a lost store files a push where it filed
+before, never somewhere new. The request context's own ALS is not
 reused for this: `cache-tag.ts` and `cache-scope.ts` key WeakMaps by the
 request context's identity, so a derived request context per segment would
 split them.
 
-Not changed: an awaited handler (a layout, an orphan layout, a route or slot
-without `loading()`, an action's route) has no scope and reads the shared
-pin, which is its own while the walker waits on it. An orphan layout pins its
-own segment for that wait and puts the previous pin back after it
-(`resolveOrphanLayout`). A push function bound before the await
-(`const push = ctx.use(Handle)`) was always filed right.
+Not changed: an awaited route handler (a route without `loading()`, an
+action's route) has no scope and reads the shared pin, which is its own while
+the walker waits on it. An orphan layout pins its own segment for that wait
+and puts the previous pin back after it (`resolveOrphanLayout`); its
+handler's ctx carries the orphan's segment either way. A push function bound
+before the await (`const push = ctx.use(Handle)`) was always filed right.
+
+An intercept's handler still gets the shared ctx (its `loading()` case is
+covered by its `runAsSegment` scope, a component it hands the ctx to is not).
 
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader
 the handler starts, a `"use cache"` call, a loader started from a loader body
-after an await; `{ ...ctx }` in a `loading()` route) and
-`server/__tests__/segment-pin.test.ts`.
+after an await; `{ ...ctx }` in a `loading()` route),
+`testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
+segment a `LateHandlePushError` names for a component a route, a layout and a
+slot handed the ctx to) and `server/__tests__/segment-pin.test.ts`. The e2e
+`handles-after-await` (test-app and cloudflare-basic, dev and production)
+checks the message on the page.
 
 ### Cache-safety contract for context variables
 
