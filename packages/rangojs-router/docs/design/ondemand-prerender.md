@@ -976,12 +976,12 @@ shape rather than `instanceof`, for the cross-realm reason
 
 A render can produce more than one of these at once, and the order decides:
 
-| the render produced                  | the result                          |
-| ------------------------------------ | ----------------------------------- |
-| a redirect and any other failure     | `render-failed`, whatever was first |
-| a redirect and a `notFound()`        | `skipped-redirect`, nothing stored  |
-| a `notFound()` and any other failure | `render-failed`, whatever was first |
-| a `notFound()` alone                 | `removed`, the marker is stored     |
+| the render produced                  | the result                                    |
+| ------------------------------------ | --------------------------------------------- |
+| a redirect and any other failure     | `render-failed`: the failure is what is shown |
+| a redirect and a `notFound()`        | `skipped-redirect`, nothing stored            |
+| a `notFound()` and any other failure | `render-failed`: the failure is what is shown |
+| a `notFound()` alone                 | `removed`, the marker is stored               |
 
 `firstFlightError` (`prerender-match.ts`) picks the value to rethrow: a
 failure first, then a redirect, then a `notFound()`. Without the middle rank
