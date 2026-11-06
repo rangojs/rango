@@ -1,6 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, testId } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  testId,
+  clickAndWaitFor,
+} from "./helper";
 
 /**
  * Workerd twin of packages/rangojs-router/e2e/slot-redirect.test.ts: a parallel
@@ -18,6 +23,12 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
 function defineSpec(label: string, mode: "dev" | "build") {
   test.describe(`slot redirect (${label})`, () => {
     const f = useFixture({ root: ".", mode });
+
+    // The flag lives in the app's KV, which outlives a run: a suite that stopped
+    // mid-way (a red run, an aborted one) leaves it set, and every page under
+    // the slot's layout would redirect.
+    const slotRenders = (page: Page) =>
+      page.request.get(f.url("/slot-redirect/od-trigger?slot=0"));
 
     test("hard navigation to a slot's redirect lands on the target", async ({
       page,
@@ -40,8 +51,10 @@ function defineSpec(label: string, mode: "dev" | "build") {
       await waitForHydration(page);
       await expect(testId(page, "cf-sr-index")).toBeVisible();
 
-      await testId(page, "cf-sr-link-redirect").click();
-      await expect(testId(page, "cf-sr-target")).toBeVisible();
+      await clickAndWaitFor(
+        testId(page, "cf-sr-link-redirect"),
+        testId(page, "cf-sr-target"),
+      );
       await expect(page).toHaveURL(/\/slot-redirect\/target$/);
     });
 
@@ -50,6 +63,7 @@ function defineSpec(label: string, mode: "dev" | "build") {
     }) => {
       using _ = expectNoPageError(page);
 
+      await slotRenders(page);
       await page.goto(f.url("/slot-redirect/plain"));
       await waitForHydration(page);
 
@@ -63,6 +77,7 @@ function defineSpec(label: string, mode: "dev" | "build") {
       using _ = expectNoPageError(page);
 
       // Store the page.
+      await slotRenders(page);
       const first = await page.request.get(f.url("/slot-redirect/od-trigger"));
       expect(await first.json()).toMatchObject({
         ok: true,
@@ -91,7 +106,7 @@ function defineSpec(label: string, mode: "dev" | "build") {
       await expect(testId(page, "cf-sr-od-stamp")).toHaveText(stored);
 
       // Back to a slot that renders, for the rest of the suite.
-      await page.request.get(f.url("/slot-redirect/od-trigger?slot=0"));
+      await slotRenders(page);
     });
   });
 }

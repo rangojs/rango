@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { useFixture, type Fixture } from "./fixture";
 import {
   waitForHydration,
@@ -20,6 +20,12 @@ import {
 // defineTests takes only the fixture so the dev/production mode stays inline in
 // each describe (statically visible coupling, no title drift).
 function defineTests(f: Fixture) {
+  // The flag is module state of the app's server, which outlives a run: a suite
+  // that stopped mid-way (a red run, an aborted one) leaves it set, and every
+  // page under the slot's layout would redirect.
+  const slotRenders = (page: Page) =>
+    page.request.get(f.url("/slot-redirect/od-trigger?slot=0"));
+
   test("hard navigation to a slot's redirect lands on the target", async ({
     page,
   }) => {
@@ -53,6 +59,7 @@ function defineTests(f: Fixture) {
   }) => {
     using _ = expectNoPageError(page);
 
+    await slotRenders(page);
     await page.goto(f.url("/slot-redirect/plain"));
     await waitForHydration(page);
 
@@ -66,6 +73,7 @@ function defineTests(f: Fixture) {
     using _ = expectNoPageError(page);
 
     // Store the page.
+    await slotRenders(page);
     const first = await page.request.get(f.url("/slot-redirect/od-trigger"));
     expect(await first.json()).toMatchObject({ ok: true, status: "rendered" });
 
@@ -91,7 +99,7 @@ function defineTests(f: Fixture) {
     await expect(testId(page, "sr-od-stamp")).toHaveText(stored);
 
     // Back to a slot that renders, for the rest of the suite.
-    await page.request.get(f.url("/slot-redirect/od-trigger?slot=0"));
+    await slotRenders(page);
   });
 }
 

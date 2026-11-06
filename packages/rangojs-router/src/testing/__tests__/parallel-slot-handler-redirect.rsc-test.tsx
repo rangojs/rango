@@ -90,18 +90,22 @@ type Placement = "layout" | "orphan" | "route";
 
 /**
  * `/plain` lives in a second layout with no slot, so a navigation has a page to
- * start from.
+ * start from. `loading` says what the slot declares: a fallback, `loading(false)`
+ * (no streamed boundary), or nothing.
  */
 function makeRouter(
   slot: Handler,
-  options: { loading?: boolean; placement?: Placement } = {},
+  options: { loading?: "fallback" | "off"; placement?: Placement } = {},
 ) {
   const placement = options.placement ?? "layout";
   return createRouter({}).routes(
     urls(({ path, layout, parallel, loading }) => {
-      const slotEntry = options.loading
-        ? parallel({ "@aside": slot }, () => [loading(Loading)])
-        : parallel({ "@aside": slot });
+      const slotEntry =
+        options.loading === "fallback"
+          ? parallel({ "@aside": slot }, () => [loading(Loading)])
+          : options.loading === "off"
+            ? parallel({ "@aside": slot }, () => [loading(false)])
+            : parallel({ "@aside": slot });
       const routes = [
         path(
           "/page",
@@ -226,25 +230,39 @@ describe("a slot handler's thrown redirect (serveShellRequest)", () => {
 describe("a slot handler's redirect under a declared loading()", () => {
   it("document: a synchronous return still answers 302", async () => {
     expectDocumentRedirect(
-      await document(makeRouter(returnsRedirect, { loading: true })),
+      await document(makeRouter(returnsRedirect, { loading: "fallback" })),
     );
   });
 
   it("navigation: a synchronous return still answers 204", async () => {
     expectNavigationRedirect(
-      await navigation(makeRouter(returnsRedirect, { loading: true })),
+      await navigation(makeRouter(returnsRedirect, { loading: "fallback" })),
     );
   });
 
   it("document: a redirect after an await rides the stream, as a route handler's does", async () => {
     expectStreamedRedirect(
-      await document(makeRouter(returnsRedirectLater, { loading: true })),
+      await document(makeRouter(returnsRedirectLater, { loading: "fallback" })),
     );
   });
 
   it("navigation: a redirect after an await rides the stream", async () => {
     expectStreamedRedirect(
-      await navigation(makeRouter(returnsRedirectLater, { loading: true })),
+      await navigation(
+        makeRouter(returnsRedirectLater, { loading: "fallback" }),
+      ),
+    );
+  });
+
+  it("document: loading(false) is not a streamed boundary, so it answers 302", async () => {
+    expectDocumentRedirect(
+      await document(makeRouter(returnsRedirect, { loading: "off" })),
+    );
+  });
+
+  it("navigation: loading(false) answers 204", async () => {
+    expectNavigationRedirect(
+      await navigation(makeRouter(returnsRedirect, { loading: "off" })),
     );
   });
 });
