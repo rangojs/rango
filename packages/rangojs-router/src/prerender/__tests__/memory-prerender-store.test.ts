@@ -3,11 +3,14 @@ import { createMemoryPrerenderStore } from "../memory-prerender-store.js";
 import {
   serializePrerenderKey,
   composeStoredEntry,
+  composeStoredRedirect,
   composeStoredTombstone,
   isStoredEntryValidFor,
   isStoredEntryStale,
   lowerStoredEntryStaleAt,
   readVerifiedStoredEntry,
+  toRedirectResponse,
+  toStoredRedirect,
   type PrerenderKey,
 } from "../writable-store.js";
 import type { PrerenderEntry } from "../store.js";
@@ -160,6 +163,101 @@ describe("isStoredEntryValidFor — malformed durable values read as a miss", ()
         m,
       ),
     ).toBe(false);
+  });
+
+  it("rejects a redirect entry that is not a 3xx with a Location, without throwing", () => {
+    const meta = { version: k.version, params: m, tags: [], storedAt: 1 };
+    for (const redirect of [
+      null,
+      {},
+      { status: 200, location: "/x" },
+      { status: 301 },
+      { status: 301, location: "" },
+      { status: "301", location: "/x" },
+    ]) {
+      expect(
+        isStoredEntryValidFor({ v: 1, redirect, meta } as any, k, m),
+        JSON.stringify(redirect),
+      ).toBe(false);
+    }
+    // Both a page and a redirect in one envelope is ambiguous: a miss.
+    expect(
+      isStoredEntryValidFor(
+        {
+          v: 1,
+          removed: true,
+          redirect: { status: 301, location: "/x" },
+          meta,
+        } as any,
+        k,
+        m,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("a stored redirect", () => {
+  const k = key();
+  const options = { params: { id: "42" }, tags: ["product:42"] };
+
+  it("round-trips through composeStoredRedirect and verify-on-read", () => {
+    const stored = composeStoredRedirect(
+      k,
+      { status: 301, location: "/products/new-42", soft: true },
+      options,
+      1000,
+      1000,
+    );
+    expect(stored).toMatchObject({
+      v: 1,
+      redirect: { status: 301, location: "/products/new-42", soft: true },
+    });
+    // Stamped like a page: no ttl means never stale, and the tags are the
+    // route's, so markStale() reaches it.
+    expect(stored.meta).toEqual({
+      storedAt: 1000,
+      tags: ["product:42"],
+      version: k.version,
+      params: { id: "42" },
+    });
+    expect(isStoredEntryValidFor(stored, k, { id: "42" })).toBe(true);
+    expect(isStoredEntryValidFor(stored, k, { id: "99" })).toBe(false);
+  });
+
+  it("captures the Response a render threw, and rebuilds it for the serve path", () => {
+    const response = new Response(null, {
+      status: 307,
+      headers: { Location: "/moved", "X-RSC-Redirect": "soft" },
+    });
+    const redirect = toStoredRedirect(response);
+    expect(redirect).toEqual({
+      status: 307,
+      location: "/moved",
+      soft: true,
+    });
+
+    const rebuilt = toRedirectResponse(redirect!);
+    expect(rebuilt.status).toBe(307);
+    expect(rebuilt.headers.get("Location")).toBe("/moved");
+    expect(rebuilt.headers.get("X-RSC-Redirect")).toBe("soft");
+    // A plain Response.redirect() carries no soft marker, and the rebuild does
+    // not invent one.
+    const hard = toStoredRedirect(
+      new Response(null, { status: 302, headers: { Location: "/elsewhere" } }),
+    );
+    expect(hard).toEqual({ status: 302, location: "/elsewhere" });
+    expect(toRedirectResponse(hard!).headers.get("X-RSC-Redirect")).toBeNull();
+  });
+
+  it("is null for anything that is not a redirect: the trigger keeps it render-failed", () => {
+    expect(toStoredRedirect(new Response("ok"))).toBeNull();
+    expect(
+      toStoredRedirect(
+        new Response(null, { status: 302, headers: { Location: "/x" } }),
+      ),
+    ).not.toBeNull();
+    // A 3xx with no Location is not a redirect either.
+    expect(toStoredRedirect(new Response(null, { status: 302 }))).toBeNull();
   });
 });
 

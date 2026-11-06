@@ -34,6 +34,9 @@ import type { RouteMatchResult } from "./pattern-matching.js";
 import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
+import { toStoredRedirect } from "../prerender/writable-store.js";
+import type { StoredRedirect } from "../prerender/writable-store.js";
+import { isRedirectResponse } from "../response-utils.js";
 import { isDataNotFoundError } from "../errors.js";
 
 /**
@@ -110,6 +113,8 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /** On-demand only: the render answered with a redirect, not a page. */
+  redirect?: StoredRedirect;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -396,12 +401,18 @@ export async function matchForPrerender<TEnv = any>(
         // The collected error to rethrow. On an on-demand refresh a failure
         // goes ahead of a notFound(): a render that hit a missing item AND a
         // failing data source must keep the page (render-failed), not remove
-        // it because the notFound() happened to be reported first.
+        // it because the notFound() happened to be reported first. A redirect
+        // ranks between the two: it is an answer for this URL (the app said
+        // where it lives now), while a notFound() can come from an unrelated
+        // sibling.
         const firstFlightError = (): unknown => {
-          const failure = onDemand
-            ? flightErrors.findIndex((e) => !isDataNotFoundError(e))
-            : -1;
-          return flightErrors[failure === -1 ? 0 : failure];
+          if (!onDemand) return flightErrors[0];
+          const failure = flightErrors.findIndex(
+            (e) => !isDataNotFoundError(e) && !isRedirectThrown(e),
+          );
+          if (failure !== -1) return flightErrors[failure];
+          const redirect = flightErrors.findIndex(isRedirectThrown);
+          return flightErrors[redirect !== -1 ? redirect : 0];
         };
         const serializedSegments = await serializeSegments(
           nonLoaderSegments,
@@ -641,16 +652,37 @@ export async function matchForPrerender<TEnv = any>(
   try {
     return await rendered;
   } catch (error) {
-    if (!isDataNotFoundError(error)) throw error;
-    return {
-      segments: [],
-      handles: "",
-      routeName: matched.routeKey,
-      params: matchedParams,
-      notFound: true,
-      onDemandConfig,
-    };
+    if (isDataNotFoundError(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        notFound: true,
+        onDemandConfig,
+      };
+    }
+    // A redirect is an outcome too, not a failure: the URL moved, and keeping
+    // the page it used to answer with would serve it until the next deploy
+    // (create-prerender-trigger.ts stores the redirect in its place).
+    const redirect = error instanceof Response ? toStoredRedirect(error) : null;
+    if (redirect) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        redirect,
+        onDemandConfig,
+      };
+    }
+    throw error;
   }
+}
+
+/** A render's redirect, thrown out of segment resolution as a 3xx Response. */
+function isRedirectThrown(error: unknown): boolean {
+  return error instanceof Response && isRedirectResponse(error);
 }
 
 /**

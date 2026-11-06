@@ -26,6 +26,7 @@ import {
   createLoader,
   createRouter,
   Prerender,
+  redirect,
   urls,
 } from "../../index.rsc.js";
 import { getCacheVersions } from "../../cache/index.js";
@@ -85,6 +86,42 @@ const VersionsDef = Prerender<{ slug: string }>(
   { onDemand: true },
 );
 
+/** Slugs whose page moved: the render answers a redirect instead of a page. */
+const moved = new Set<string>();
+
+const MovedDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    counts.producer += 1;
+    if (moved.has(ctx.params.slug)) {
+      throw redirect(`/article/new-${ctx.params.slug}`, 301);
+    }
+    return <h1>{`${ctx.params.slug}:stamp-${counts.producer}`}</h1>;
+  },
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`moved:${params.slug}`] } },
+);
+
+// A redirect anywhere in the render counts, a server component included: the
+// Flight error row carries the same Response.
+const ComponentMovedDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    if (moved.has(ctx.params.slug)) {
+      throw redirect(`/component-moved/${ctx.params.slug}`, 302);
+    }
+    return <h1>{ctx.params.slug}</h1>;
+  },
+  { onDemand: true },
+);
+
+const OffHostDef = Prerender<{ slug: string }>(
+  async () => [],
+  async () => {
+    throw redirect("https://accounts.example.com/oauth", { external: true });
+  },
+  { onDemand: true },
+);
+
 function makeRouter(
   config: PrerenderConfig,
   options: { id?: string; version?: string } = {},
@@ -97,6 +134,11 @@ function makeRouter(
       path("/personalized/:slug", PersonalizedDef, { name: "personalized" }),
       path("/versions/:slug", VersionsDef, { name: "versions" }),
       path("/hot/:slug", HotDef, { name: "hot" }),
+      path("/moved/:slug", MovedDef, { name: "moved" }),
+      path("/component-moved/:slug", ComponentMovedDef, {
+        name: "componentMoved",
+      }),
+      path("/off-host/:slug", OffHostDef, { name: "offHost" }),
     ]),
   );
 }
@@ -110,6 +152,7 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     counts.producer = 0;
     counts.loader = 0;
     holdRender = undefined;
+    moved.clear();
   });
 
   afterEach(() => {
@@ -357,5 +400,112 @@ describe("on-demand prerender: router.prerender() then serve", () => {
       await serveShellRequest(router, `/article/${slug}`);
     }
     expect(onRevalidate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A page whose URL moved: the render answers with a redirect instead of a
+   * page, so the stored page must stop serving and the request must answer the
+   * redirect, exactly as the live handler would. A "removed" marker would
+   * answer 404 on a plain on-demand route (its handler is evicted at build).
+   */
+  describe("a refresh whose render redirects", () => {
+    it("stores the redirect in place of the page: the document and a client navigation both answer it", async () => {
+      const router = makeRouter({ store });
+      const prerender = router.prerender({ env: {} });
+
+      expect(await prerender("/moved/a")).toMatchObject({
+        ok: true,
+        status: "rendered",
+      });
+      const before = await serveShellRequest(router, "/moved/a");
+      expect(before.response.status).toBe(200);
+      expect(before.flight).toContain("a:stamp-1");
+
+      moved.add("a");
+      expect(await prerender("/moved/a")).toMatchObject({
+        ok: true,
+        path: "on-demand",
+        status: "redirected",
+        target: "/moved/a",
+        routeName: "moved",
+        tags: ["moved:a"],
+        ttl: 3600,
+        location: "/article/new-a",
+      });
+
+      const document = await serveShellRequest(router, "/moved/a");
+      expect(document.response.status).toBe(301);
+      expect(document.response.headers.get("Location")).toBe("/article/new-a");
+      // The stored page is gone: no stamp of it rides along.
+      expect(document.body).not.toContain("a:stamp-1");
+
+      // A client navigation gets the Flight form of the same redirect, as it
+      // does from a live handler (204 + the resolved target).
+      const partial = await serveShellRequest(router, "/moved/a", {
+        partial: { from: "/hot/a" },
+      });
+      expect(partial.response.status).toBe(204);
+      expect(partial.response.headers.get("X-RSC-Redirect")).toBe(
+        "http://localhost/article/new-a",
+      );
+
+      // The URL moved back: the next refresh renders a page that replaces it.
+      moved.delete("a");
+      expect(await prerender("/moved/a")).toMatchObject({
+        ok: true,
+        status: "rendered",
+      });
+      const after = await serveShellRequest(router, "/moved/a");
+      expect(after.response.status).toBe(200);
+      expect(after.flight).toContain("a:stamp-");
+      expect(after.flight).not.toContain("a:stamp-1");
+    });
+
+    it("onlyIfStale on a fresh redirect renders nothing and still says where it goes", async () => {
+      const router = makeRouter({ store });
+      const prerender = router.prerender({ env: {} });
+      moved.add("a");
+      await prerender("/moved/a");
+
+      expect(await prerender("/moved/a", { onlyIfStale: true })).toMatchObject({
+        ok: true,
+        status: "redirected",
+        location: "/article/new-a",
+        ttl: 3600,
+      });
+      expect(counts.producer).toBe(1);
+    });
+
+    it("a redirect from a server component is stored too", async () => {
+      const router = makeRouter({ store });
+      moved.add("a");
+
+      expect(
+        await router.prerender({ env: {} })("/component-moved/a"),
+      ).toMatchObject({
+        ok: true,
+        status: "redirected",
+        location: "/component-moved/a",
+      });
+      const served = await serveShellRequest(router, "/component-moved/a");
+      expect(served.response.status).toBe(302);
+      expect(served.response.headers.get("Location")).toBe(
+        "/component-moved/a",
+      );
+    });
+
+    it("an off-host redirect keeps its external opt-in: the guard does not neutralize the stored target", async () => {
+      const router = makeRouter({ store });
+      expect(await router.prerender({ env: {} })("/off-host/a")).toMatchObject({
+        ok: true,
+        status: "redirected",
+      });
+
+      const served = await serveShellRequest(router, "/off-host/a");
+      expect(served.response.status).toBe(302);
+      expect(served.response.headers.get("Location")).toBe(
+        "https://accounts.example.com/oauth",
+      );
+    });
   });
 });

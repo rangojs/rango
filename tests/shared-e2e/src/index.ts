@@ -3864,6 +3864,11 @@ export interface PrerenderOutcomesFixture extends PrerenderRemoveFixture {
   path: (slug: string) => string;
   stampTestId: string;
   onDemandTestId: string;
+  /**
+   * A Link the plain route's page renders, to a fixed slug, for the client
+   * navigation to a moved URL: the e2e moves `slug` and clicks the link.
+   */
+  movedLink: { slug: string; testId: string };
   passthrough: PrerenderRemoveFixture["passthrough"] & {
     declineBakedSlug: string;
   };
@@ -4028,6 +4033,105 @@ export async function expectDeclinedBakedParamServedLive(
   await refreshPage(page, triggerUrl(declineBakedSlug));
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
+}
+
+/**
+ * A page whose URL moved: the refresh answers with a redirect, stores it in
+ * place of the page, and every request answers the redirect instead of the
+ * page that used to be there. A document request and a client navigation both
+ * land on the target; a refresh once the page is back stores the page again.
+ *
+ * The tombstone `notFound()` writes would answer 404 here: a plain on-demand
+ * route has no live handler in production (gateOnDemandProducer), so a removal
+ * marker can only say "gone", never "moved to".
+ */
+export async function expectMovedPageAnswersTheRedirect(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const target = pushProbe("moved-to");
+  const source = pushProbe("moved-from");
+  const targetPath = fixture.path(target);
+
+  // The redirect's target must serve on its own: a plain on-demand route
+  // answers 404 for a param no refresh produced.
+  await refreshPage(page, fixture.triggerUrl(target));
+  const targetStamp = await readStoredStamp(page, fixture, target);
+
+  // The page as it was, before the data source moved it.
+  await refreshPage(page, fixture.triggerUrl(source));
+  const pageStamp = await readStoredStamp(page, fixture, source);
+
+  await removeTrigger(
+    page,
+    fixture.triggerUrl(source),
+    `?move=${encodeURIComponent(targetPath)}`,
+  );
+  const redirected = await removeTrigger(page, fixture.triggerUrl(source));
+  expect(redirected, JSON.stringify(redirected)).toMatchObject({
+    ok: true,
+    path: "on-demand",
+    status: "redirected",
+    location: targetPath,
+    tags: [fixture.tag(source)],
+  });
+
+  // A document request answers the redirect, and none of the stored page.
+  const res = await page.request.get(fixture.pageUrl(source), {
+    maxRedirects: 0,
+    headers: PUSH_HTML_HEADERS,
+  });
+  expect(res.status()).toBe(301);
+  expect(res.headers()["location"]).toBe(targetPath);
+  expect(await res.text()).not.toContain(pageStamp);
+
+  // A visitor following it lands on the target page.
+  const followed = await page.goto(fixture.pageUrl(source));
+  expect(followed?.status()).toBe(200);
+  expect(new URL(page.url()).pathname).toBe(targetPath);
+  await waitForShellHydration(page);
+  await expect(byTestId(page, fixture.stampTestId)).toHaveText(targetStamp);
+
+  // A client navigation to a moved URL lands there too: the page's Link points
+  // at `movedLink.slug`, which has moved as well.
+  const { slug: linkedSlug, testId: linkTestId } = fixture.movedLink;
+  // A fixed slug, and the move flag outlives a test run (an in-process set, a
+  // durable KV): clear it first so a retry or a reused server starts at the
+  // page, not at the redirect the last run left.
+  await removeTrigger(page, fixture.triggerUrl(linkedSlug), "?move=0");
+  await refreshPage(page, fixture.triggerUrl(linkedSlug));
+  await removeTrigger(
+    page,
+    fixture.triggerUrl(linkedSlug),
+    `?move=${encodeURIComponent(targetPath)}`,
+  );
+  expect(
+    await removeTrigger(page, fixture.triggerUrl(linkedSlug)),
+  ).toMatchObject({ ok: true, status: "redirected" });
+
+  await page.goto(fixture.pageUrl(target));
+  await waitForShellHydration(page);
+  await byTestId(page, linkTestId).click();
+  await expect
+    .poll(() => new URL(page.url()).pathname, { timeout: 5000 })
+    .toBe(targetPath);
+  await expect(byTestId(page, fixture.stampTestId)).toHaveText(targetStamp);
+
+  // The page moves back: a refresh stores the page over the redirect, and a
+  // request answers it again. Read through the request context, not a browser
+  // navigation: the browser followed the 301 above and keeps it, as it keeps
+  // any permanent redirect (the store cannot uncache it).
+  await removeTrigger(page, fixture.triggerUrl(source), "?move=0");
+  await refreshPage(page, fixture.triggerUrl(source));
+  const backRes = await page.request.get(fixture.pageUrl(source), {
+    maxRedirects: 0,
+    headers: PUSH_HTML_HEADERS,
+  });
+  expect(backRes.status()).toBe(200);
+  const backBody = await backRes.text();
+  expect(backBody).toContain(source);
+  expect(backBody).not.toContain(pageStamp);
 }
 export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
 export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";

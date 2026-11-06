@@ -1,4 +1,5 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
+import { Link } from "@rangojs/router/client";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -13,6 +14,13 @@ export const guidePlainGoneKey = (slug: string): string =>
 /** KV key of a slug whose data source the e2e took down: a refresh throws. */
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/**
+ * KV key of a slug the e2e moved: its value is the path the refresh answers a
+ * redirect to, which the trigger stores in place of the page.
+ */
+export const guidePlainMovedKey = (slug: string): string =>
+  `gp-moved:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
@@ -32,6 +40,10 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
     ) {
       notFound();
     }
+    const movedTo =
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainMovedKey(ctx.params.slug)));
+    if (movedTo) throw redirect(movedTo, 301);
     if (
       ctx.onDemand &&
       (await ctx.env.PRERENDER_KV.get(guidePlainFailKey(ctx.params.slug)))
@@ -50,6 +62,11 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
         <p data-testid="gp-stamp">{stamp}</p>
         <GuidePlainLoaderValue />
         <GuidePlainActionPanel slug={ctx.params.slug} />
+        {/* A client navigation to a moved URL: the e2e refreshes and moves
+            "linked", then clicks this and lands on the redirect's target. */}
+        <Link to="/guide-plain/linked" data-testid="gp-moved-link">
+          linked
+        </Link>
       </div>
     );
   },

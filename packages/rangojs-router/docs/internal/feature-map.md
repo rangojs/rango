@@ -1043,6 +1043,17 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   (`renderOnDemand` re-reads the key). No warm request follows `removed`. A
   removal does not reach the document cache or a Passthrough route's live
   caches: remove first, then `updateTag()`.
+- A refresh whose render redirects (`redirect()`, or a 3xx `Response`, anywhere
+  in it) stores the redirect in place of the page (`composeStoredRedirect`,
+  `toStoredRedirect`): result `redirected` with `location`. The serve path
+  rebuilds the Response (`toRedirectResponse`) and throws it from
+  `readPrerenderSource`, the same short-circuit a live `redirect()` takes, so a
+  document gets the 3xx, a client navigation the Flight redirect, and
+  `redirect(url, { external: true })` keeps its re-branded opt-in. A tombstone
+  would answer 404 here: a plain on-demand route has no live handler in
+  production (`gateOnDemandProducer`). Stamped like a page (ttl/tags), so
+  `markStale()` reaches it and `onlyIfStale` reports `redirected` while fresh;
+  a later page render replaces it.
 - `Prerender(..., { onDemand })` is the explicit route opt-in
   (`onDemand: true | { ttl?, tags?: string[] | (target) => string[] }`). Any
   truthy spelling works: producer retention and the runtime `od` trie flag are

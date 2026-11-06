@@ -6,6 +6,7 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectMovedPageAnswersTheRedirect,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
@@ -304,6 +305,7 @@ const removeFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   tag: (slug) => `od-plain:${slug}`,
   slugTestId: "od-plain-slug",
   actionTestId: "od-action-noop",
+  movedLink: { slug: "linked", testId: "od-plain-moved-link" },
   bakedSlug: "baked",
   passthrough: {
     pageUrl: (slug) => f.url(`/on-demand/${slug}`),
@@ -360,6 +362,12 @@ function defineOutcomeTests(f: Fixture) {
     page,
   }) => {
     await expectDeclinedBakedParamServedLive(page, removeFixture(f));
+  });
+
+  test("a page whose URL moved answers the stored redirect, to a document and to a client navigation", async ({
+    page,
+  }) => {
+    await expectMovedPageAnswersTheRedirect(page, removeFixture(f));
   });
 }
 

@@ -159,13 +159,24 @@ export type PrerenderResult =
        * rechecked like a page. `onlyIfStale` finding a fresh marker reports
        * `removed` too. When the data source may be failing, throw anything
        * else: that is `render-failed` and keeps the page.
+       *
+       * `redirected`: the render answered with a redirect (a `redirect()`
+       * anywhere in it, or a 3xx Response), and the redirect is stored in
+       * place of the page: the next request answers it instead of serving the
+       * page the URL moved away from. `location` is where it points. Stamped
+       * with the route's `tags` and `ttl` and rechecked like a page, so a
+       * later refresh can replace it with a page again. `onlyIfStale` finding
+       * a fresh redirect reports `redirected` too. A render that also failed
+       * is `render-failed` and keeps the page.
        */
-      status: "rendered" | "already-fresh" | "removed";
+      status: "rendered" | "already-fresh" | "removed" | "redirected";
       target: string;
       routeName: string;
       /** Opaque, for debugging/logs only — not a stable format. */
       key: string;
       tags: string[];
+      /** Where the stored redirect points, on a `redirected` result. */
+      location?: string;
       /** Absent = never stale. */
       ttl?: number;
       /**

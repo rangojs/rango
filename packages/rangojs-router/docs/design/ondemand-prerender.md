@@ -14,7 +14,9 @@ returns that status, for a route that has no page in the prerender store.
 
 **Shipped in v1:** the `prerender` router option, `router.prerender()` /
 `.many()` / `.remove()` / `.markStale()`, the "removed" marker that takes a
-page out of service (see "Removing A Page"), the
+page out of service (see "Removing A Page"), the stored redirect a refresh
+whose render calls `redirect()` answers with (see "A Render That Redirects"),
+the
 `Prerender(..., { onDemand })` opt-in and
 `od` trie flag, per-request store resolution, the writable durable overlay read
 path (GETs and plain-route action re-renders) with deduplicated
@@ -378,12 +380,15 @@ type PrerenderResult =
       // "removed": the "removed" marker is stored in place of the page, by
       // remove(), by a render that hit notFound(), or found fresh by
       // onlyIfStale. ok: true, so a sweep counts it.
-      status: "rendered" | "already-fresh" | "removed";
+      // "redirected": the render answered with a redirect, stored in place of
+      // the page ("A Render That Redirects"), or found fresh by onlyIfStale.
+      status: "rendered" | "already-fresh" | "removed" | "redirected";
       target: string;
       routeName: string;
       // opaque, for debugging and logs only -- not a stable format
       key: string;
       tags: string[]; // empty for a remove() marker
+      location?: string; // where a stored redirect points
       ttl?: number; // absent = never stale
       // the warm request that followed the store write, when one ran
       caches?: PrerenderWarmCaches;
@@ -602,10 +607,14 @@ interface StoredEnvelope {
 
 type PrerenderStoredEntry =
   | (StoredEnvelope & { entry: PrerenderEntry }) // a refreshed page
-  | (StoredEnvelope & { removed: true }); // the page was removed: no entry
+  | (StoredEnvelope & { removed: true }) // the page was removed: no entry
+  | (StoredEnvelope & { redirect: StoredRedirect }); // the page moved here
 ```
 
 The second variant is the "removed" marker; "Removing A Page" has its rules.
+The third is the stored redirect; "A Render That Redirects" has its rules.
+Every variant carries the same `meta`, so staleness, tags and verify-on-read
+need no rule of their own.
 
 Two rules follow from the envelope:
 
@@ -926,6 +935,66 @@ even if there was a successfully generated page before. This is meant to
 support use cases like user-generated content getting removed by its author.
 Note, `notFound` follows the same `revalidate` behavior described here."
 (nextjs.org/docs/pages/api-reference/functions/get-static-props)
+
+## A Render That Redirects
+
+A product gets renamed. The old URL now answers `redirect("/products/new-slug")`
+from its handler. A refresh of the old URL renders that handler and gets a 3xx
+`Response` thrown out of segment resolution instead of segments. Before this
+was an outcome, the trigger's generic catch mapped it to `render-failed` and
+kept the stored page: the old URL served the page of a product that is not
+there any more, until the next deploy.
+
+You might reuse the removal marker for it. It is wrong here, and the reason is
+the one the removal section gives for why a marker answers 404: a plain
+`Prerender(..., { onDemand })` route has no live handler in production, and
+`gateOnDemandProducer` turns the marker into a `DataNotFoundError`. A tombstone
+would answer **404** where the app says "moved to here", which is worse than
+the bug for every visitor who follows a stale link, and it would report
+`removed` for a URL that is alive. The two are different answers, so they are
+different entries.
+
+So a refresh whose render redirects stores the redirect in place of the page:
+
+```ts
+// The third stored variant (Store Model). `meta` is a page's.
+{ v: 1, redirect: { status: 301, location: "/products/new-slug", soft: true }, meta }
+```
+
+`status` and `location` are the Response the render threw. `soft` is the
+`X-RSC-Redirect: soft` marker `redirect()` sets and a raw `Response.redirect()`
+does not. `external` records `redirect(url, { external: true })`: the opt-in is
+an out-of-band WeakSet brand on the Response object, which a store cannot hold,
+so the serve path re-brands the Response it rebuilds. Without it, a stored
+off-host redirect would be neutralized to the app root by the outgoing guard.
+
+A request that finds the entry throws the rebuilt `Response`
+(`toRedirectResponse`, `writable-store.ts`) from `readPrerenderSource`, which is
+the same short-circuit a live handler's `redirect()` takes: a document request
+returns the 3xx and the browser follows it, a client navigation gets the Flight
+redirect (`interceptRedirectForPartial`), an action re-render behaves as it does
+for a live redirect, and the outgoing same-origin guard sees the same response.
+Nothing is rendered and no segment is served, so there is nothing to decode and
+no internal field to leak.
+
+The redirect counts wherever the render put it: the route handler, a layout, a
+parallel slot, any server component (`firstFlightError` orders the collected
+errors: a real failure first, then a redirect, then a `notFound()`). A render
+that both redirects and fails keeps the page: a redirect from a render whose
+data source is down is not trustworthy either.
+
+Like a page, the entry is stamped with the route's `ttl` and `tags`, so a stale
+redirect still answers and schedules `onRevalidate`, `markStale()` reaches it,
+and `onlyIfStale` renders it again (reporting `redirected` while it is fresh,
+as a held marker reports `removed`). A later refresh that renders a page
+replaces it, and one that hits `notFound()` replaces it with the marker. A
+`remove()` that lands while the render runs wins over the redirect write, the
+same re-read a page write makes.
+
+What a redirect does not do is reach a browser that already followed a
+permanent one. A stored `301` is a real 301: the browser caches it, and a later
+refresh that turns the URL back into a page cannot uncache it. Use a `302`/`307`
+for a move that may be undone.
 
 ## Build-time Durable Seeding
 

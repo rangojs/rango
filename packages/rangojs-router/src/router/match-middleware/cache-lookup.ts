@@ -66,6 +66,7 @@ import {
   isStoredEntryStale,
   readVerifiedStoredEntry,
   serializePrerenderKey,
+  toRedirectResponse,
   type PrerenderKey,
 } from "../../prerender/writable-store.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "../../cache/cache-policy.js";
@@ -838,6 +839,15 @@ async function readPrerenderSource<TEnv>(
           } as PrerenderTargetObject,
           reqCtx,
         );
+      }
+      if (stored.redirect) {
+        // The render answered with a redirect: the URL moved, so the page must
+        // not serve. Thrown, not yielded: a redirect Response is the one
+        // short-circuit a live handler's redirect() takes, so the document
+        // path returns it, a partial request converts it to a Flight redirect
+        // (interceptRedirectForPartial), and the outgoing guard applies to it
+        // with the `{ external: true }` brand the trigger stored.
+        throw toRedirectResponse(stored.redirect);
       }
       if (stored.removed === true) {
         // The page was removed. Not served, and step 2 is skipped: the

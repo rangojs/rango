@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a refresh whose render redirects stores the redirect, so the page the URL moved away from stops serving
+
+**Before.** `router.prerender()` on a `Prerender(..., { onDemand })` route
+whose render called `redirect()` (or returned a 3xx `Response`) came back
+`{ ok: false, status: "render-failed" }` and kept the stored page: a product
+that moved kept answering with the page it used to be, on the URL it moved
+from, until the next deploy. `notFound()` and `ctx.passthrough()` already
+replaced the page with a "removed" marker; a redirect did not.
+
+**Now.** The refresh stores the redirect in place of the page and reports
+`{ ok: true, status: "redirected", location }`. The next request answers the
+redirect — a document request gets the render's 3xx and `Location`, a client
+navigation gets the same Flight redirect a live handler's `redirect()` gives —
+and the stored page no longer serves. The entry carries the route's `ttl` and
+`tags` like a page, so it goes stale and schedules `onRevalidate`,
+`markStale()` reaches it, and `onlyIfStale` reports `redirected` while it is
+fresh; a later refresh that renders a page (or hits `notFound()`) replaces it.
+`redirect(url, { external: true })` keeps its off-host opt-in. A stored `301`
+is a real permanent redirect: a browser that followed it keeps it, so use
+`302`/`307` for a move that may be undone.
+
+```ts
+// A product renamed in the CMS: its old URL's handler now redirects.
+await router.prerender({ env })("/products/old-slug");
+// { ok: true, status: "redirected", location: "/products/new-slug", ... }
+// GET /products/old-slug -> 301 Location: /products/new-slug
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

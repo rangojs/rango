@@ -6,6 +6,7 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectMovedPageAnswersTheRedirect,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
@@ -322,6 +323,7 @@ const guideFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   tag: (slug) => `guide-plain:${slug}`,
   slugTestId: "gp-slug",
   actionTestId: "gp-action-noop",
+  movedLink: { slug: "linked", testId: "gp-moved-link" },
   bakedSlug: "intro",
   passthrough: {
     pageUrl: (slug) => f.url(`/guides/${slug}`),
@@ -378,6 +380,12 @@ function defineOutcomesFlow(f: Fixture) {
     page,
   }) => {
     await expectDeclinedBakedParamServedLive(page, guideFixture(f));
+  });
+
+  test("a page whose URL moved answers the stored redirect, to a document and to a client navigation", async ({
+    page,
+  }) => {
+    await expectMovedPageAnswersTheRedirect(page, guideFixture(f));
   });
 }
 

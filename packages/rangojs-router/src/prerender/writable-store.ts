@@ -12,6 +12,11 @@
 
 import type { PrerenderEntry } from "./store.js";
 import { paramsEqual } from "../router/params-util.js";
+import { isRedirectResponse } from "../response-utils.js";
+import {
+  isExternalRedirect,
+  markExternalRedirect,
+} from "../redirect-origin.js";
 
 /**
  * Structured durable-overlay key. Includes the router's cache version so a
@@ -45,7 +50,7 @@ export interface StoredEntryOptions {
   params: Record<string, string>;
 }
 
-/** What a page and a "removed" marker both carry: a store reads either alike. */
+/** What every stored entry carries: a store reads them all alike. */
 interface StoredEnvelope {
   v: 1;
   meta: {
@@ -71,7 +76,11 @@ interface StoredEnvelope {
   };
 }
 
-type StoredPage = StoredEnvelope & { entry: PrerenderEntry; removed?: never };
+type StoredPage = StoredEnvelope & {
+  entry: PrerenderEntry;
+  removed?: never;
+  redirect?: never;
+};
 
 /**
  * The "removed" marker (tombstone) stored in place of a page, by
@@ -82,14 +91,51 @@ type StoredPage = StoredEnvelope & { entry: PrerenderEntry; removed?: never };
  * `meta` is stamped like a page's for a render outcome, so that marker goes
  * stale and is rechecked; a `remove()` marker has no `staleAt` and no tags.
  */
-type StoredTombstone = StoredEnvelope & { removed: true; entry?: never };
+type StoredTombstone = StoredEnvelope & {
+  removed: true;
+  entry?: never;
+  redirect?: never;
+};
+
+/**
+ * The redirect a refresh's render answered with, stored in place of the page
+ * it replaced. A request that finds it answers the redirect, exactly as the
+ * live handler would: the URL moved, and the page that used to be there must
+ * not keep serving.
+ *
+ * `status` and `location` are the Response the render threw. `external` is the
+ * out-of-band `redirect(url, { external: true })` brand (a WeakSet membership
+ * on that Response object, so it cannot be stored as-is: the rebuilt Response
+ * is re-branded) and `soft` is the `X-RSC-Redirect: soft` marker `redirect()`
+ * sets and a raw `Response.redirect()` does not.
+ */
+export interface StoredRedirect {
+  status: number;
+  location: string;
+  external?: boolean;
+  soft?: boolean;
+}
+
+/**
+ * The stored redirect: a page-like entry (its `meta` is a page's, so it goes
+ * stale and carries tags like one) whose answer is a redirect, not a payload.
+ */
+type StoredRedirectEntry = StoredEnvelope & {
+  redirect: StoredRedirect;
+  entry?: never;
+  removed?: never;
+};
 
 /**
  * Versioned envelope the router composes on a refresh or a removal and
- * verifies on every read: a page, or the marker that the page was removed. A
- * store persists either as given and returns it as stored.
+ * verifies on every read: a page, the marker that the page was removed, or the
+ * redirect the page now answers with. A store persists any of them as given
+ * and returns it as stored.
  */
-export type PrerenderStoredEntry = StoredPage | StoredTombstone;
+export type PrerenderStoredEntry =
+  | StoredPage
+  | StoredTombstone
+  | StoredRedirectEntry;
 
 /**
  * The writable durable overlay: plain get/set. Backed in production by a
@@ -112,8 +158,9 @@ export interface WritablePrerenderStore {
   get(key: PrerenderKey): Promise<PrerenderStoredEntry | null>;
 
   /**
-   * Persist `stored` (a page, or the marker that the page was removed) under
-   * `key`, replacing any previous entry. No expiry.
+   * Persist `stored` (a page, the marker that the page was removed, or the
+   * redirect it now answers with) under `key`, replacing any previous entry. No
+   * expiry.
    */
   set(key: PrerenderKey, stored: PrerenderStoredEntry): Promise<void>;
 
@@ -199,6 +246,66 @@ export function composeStoredTombstone(
 }
 
 /**
+ * @internal Compose the stored redirect for a render that answered with one.
+ * Its meta is a page's (composeStoredEntry): a redirect carries the route's ttl
+ * and tags and is rechecked like a page, because the target may move back.
+ */
+export function composeStoredRedirect(
+  key: PrerenderKey,
+  redirect: StoredRedirect,
+  options: StoredEntryOptions,
+  now: number,
+  staleFrom: number = now,
+): StoredRedirectEntry {
+  const { v, meta } = composeStoredEntry(
+    key,
+    { segments: [], handles: "" },
+    options,
+    now,
+    staleFrom,
+  );
+  return { v, redirect, meta };
+}
+
+/**
+ * @internal The stored form of a Response a requestless render threw, or null
+ * when it is not a redirect (no 3xx, or no Location): a raw 200/file response
+ * cannot be replayed from a requestless render, so the trigger keeps treating
+ * it as render-failed.
+ */
+export function toStoredRedirect(response: Response): StoredRedirect | null {
+  if (!isRedirectResponse(response)) return null;
+  // isRedirectResponse guarantees a Location.
+  return {
+    status: response.status,
+    location: response.headers.get("Location")!,
+    ...(isExternalRedirect(response) ? { external: true } : {}),
+    ...(response.headers.get("X-RSC-Redirect") === "soft"
+      ? { soft: true }
+      : {}),
+  };
+}
+
+/**
+ * @internal Rebuild the Response a stored redirect answers with, in the shape
+ * `redirect()` produces. The serve path throws it, so the request re-enters the
+ * one short-circuit every handler redirect takes: a partial request converts it
+ * to a Flight redirect, the document path returns it, and the outgoing guard
+ * reads the same-origin rule (and the re-branded `external` opt-in).
+ */
+export function toRedirectResponse(redirect: StoredRedirect): Response {
+  const response = new Response(null, {
+    status: redirect.status,
+    headers: {
+      Location: redirect.location,
+      ...(redirect.soft === true ? { "X-RSC-Redirect": "soft" } : {}),
+    },
+  });
+  if (redirect.external === true) markExternalRedirect(response);
+  return response;
+}
+
+/**
  * @internal Verify a store's answer is safe to serve for this key: the
  * envelope shape and version tag, the key version, and the stored params
  * against the request's (the 8-hex DJB2 collision guard, param-hash.ts: a
@@ -218,14 +325,21 @@ export function isStoredEntryValidFor(
   const candidate = stored as Partial<PrerenderStoredEntry>;
   const entry = candidate.entry;
   const meta = candidate.meta;
+  // A stored redirect: a 3xx and a Location, or it is malformed (a miss).
+  // An envelope carrying both variants is ambiguous, so it is a miss too.
+  const redirect = (candidate as { redirect?: unknown }).redirect;
+  if (candidate.removed === true && redirect != null) return false;
+  const isRedirectEntry = redirect != null && typeof redirect === "object";
   if (
     candidate.v !== 1 ||
-    // The "removed" marker has no entry; a page must have a whole one.
-    (candidate.removed !== true &&
-      (entry == null ||
-        typeof entry !== "object" ||
-        !Array.isArray(entry.segments) ||
-        typeof entry.handles !== "string")) ||
+    (isRedirectEntry
+      ? !isValidStoredRedirect(redirect)
+      : // The "removed" marker has no entry; a page must have a whole one.
+        candidate.removed !== true &&
+        (entry == null ||
+          typeof entry !== "object" ||
+          !Array.isArray(entry.segments) ||
+          typeof entry.handles !== "string")) ||
     meta == null ||
     typeof meta !== "object" ||
     !Array.isArray(meta.tags) ||
@@ -235,6 +349,17 @@ export function isStoredEntryValidFor(
   }
   if (meta.version !== key.version) return false;
   return paramsEqual(meta.params ?? {}, params);
+}
+
+function isValidStoredRedirect(value: object): boolean {
+  const redirect = value as Partial<StoredRedirect>;
+  return (
+    typeof redirect.status === "number" &&
+    redirect.status >= 300 &&
+    redirect.status < 400 &&
+    typeof redirect.location === "string" &&
+    redirect.location !== ""
+  );
 }
 
 /** True once `now` has passed the entry's soft `staleAt`. Never-stale entries never go stale. */
