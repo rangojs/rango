@@ -33,7 +33,7 @@ import { payloadLocation } from "./full-payload.js";
 import { publicRouteName } from "../route-name.js";
 import type { RscPayload } from "./types.js";
 import {
-  answerRenderRedirect,
+  createRenderRedirectAnswer,
   hasBodyContent,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
@@ -640,13 +640,12 @@ function renderActionResponse<TEnv>(
       // renders is the page saying where it goes: the call is answered with the
       // Flight redirect the client already follows (server-action-bridge.ts),
       // as a handler-thrown one is.
-      redirect: (thrown: Response) =>
-        answerRenderRedirect(thrown, {
-          flight: true,
-          requestOrigin: url.origin,
-          basename: ctx.router.basename,
-          createRedirectFlightResponse: ctx.createRedirectFlightResponse,
-        }),
+      redirect: createRenderRedirectAnswer({
+        flight: true,
+        requestOrigin: url.origin,
+        basename: ctx.router.basename,
+        createRedirectFlightResponse: ctx.createRedirectFlightResponse,
+      }),
     },
   );
 }

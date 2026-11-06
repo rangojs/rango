@@ -295,9 +295,8 @@ export function* createRscRenderPlan<TEnv>(
   // (a prerender warm, a derived capture) may have left its own in the list.
   const renderErrors = _getRequestContext()?._renderErrors;
   const errorsBefore = renderErrors?.length ?? 0;
-  const answerRedirect =
+  const answerThrownRedirect =
     options.redirect ?? ((thrown: Response): Response => thrown);
-
   const answersRedirect = options.redirect !== undefined;
   const abandoned = { current: false };
   const flight = yield* flightStep<TEnv>(
@@ -311,9 +310,11 @@ export function* createRscRenderPlan<TEnv>(
 
   if (options.html) {
     const html = options.html;
-    // No held chunk here: the HTML step decodes the payload before it can
-    // answer, so everything the render threw in the shell (a synchronous
-    // component's redirect and an async one's alike) is collected by now.
+    // No held chunk here: the HTML step cannot answer before its shell is
+    // rendered, and a segment with no loading() above it is part of that shell
+    // (Fizz waits for it). A redirect thrown later — behind a loading()
+    // fallback, or by a component that suspends — is not in the list yet and
+    // streams as the boundary it always was.
     const page = yield* htmlStep<TEnv>(() =>
       html(flight, { answers: answersRedirect, errorsFrom: errorsBefore }),
     );
@@ -326,7 +327,7 @@ export function* createRscRenderPlan<TEnv>(
       // collected with the request.
       abandoned.current = true;
       cancelBody(page.body);
-      return answerRedirect(redirect);
+      return answerThrownRedirect(redirect);
     }
     return yield* responseStep<TEnv>(() =>
       createResponseWithMergedHeaders(page.body, {
@@ -356,7 +357,7 @@ export function* createRscRenderPlan<TEnv>(
       // render is answered and abandoned, so nothing it reports matters.
       abandoned.current = true;
       await held.discard();
-      return answerRedirect(redirect);
+      return answerThrownRedirect(redirect);
     }
     return createResponseWithMergedHeaders(held.stage.stream, input.init);
   });

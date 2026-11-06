@@ -346,12 +346,15 @@ export function interceptRedirectForPartial(
  * the request's channel can carry.
  *
  * A document follows a real 3xx. A Flight response (a client navigation, an
- * action's revalidation, an explicit `Accept: text/x-component`) converts it
- * exactly as a handler-thrown redirect is converted, because fetch would
- * auto-follow a 3xx to a URL that renders HTML the client cannot parse.
+ * action's revalidation) converts it exactly as a handler-thrown redirect is
+ * converted, because fetch would auto-follow a 3xx to a URL that renders HTML
+ * the client cannot parse.
+ *
+ * One function for both channels so a render path decides only *whether* it
+ * answers (`RscRenderOptions.redirect`), never *how*: every site that passes
+ * the option builds it with createRenderRedirectAnswer.
  */
-export function answerRenderRedirect(
-  thrown: Response,
+export function createRenderRedirectAnswer(
   opts: SoftRedirectResolveOpts & {
     /** The response is a Flight payload, not an HTML document. */
     flight: boolean;
@@ -361,15 +364,17 @@ export function answerRenderRedirect(
       external?: boolean,
     ) => Response;
   },
-): Response {
-  if (!opts.flight) return thrown;
-  return (
-    interceptRedirectForPartial(
-      thrown,
-      opts.createRedirectFlightResponse,
-      opts,
-    ) ?? thrown
-  );
+): (thrown: Response) => Response {
+  return (thrown) => {
+    if (!opts.flight) return thrown;
+    return (
+      interceptRedirectForPartial(
+        thrown,
+        opts.createRedirectFlightResponse,
+        opts,
+      ) ?? thrown
+    );
+  };
 }
 
 /**

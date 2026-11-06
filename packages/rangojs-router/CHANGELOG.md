@@ -37,11 +37,11 @@ when the render reports the redirect:
 - a **document** whose shell is a `loading()` fallback and whose component
   suspends before throwing, for the same reason.
 
-Both render the error boundary as before, and the router now reports the
-redirect through the app's `onError` instead of swallowing it. A redirect a
-streamed handler throws keeps the same limitation it already had. A component
-that throws `notFound()` is unchanged: it has no Response to read back off the
-render.
+Both render the error boundary as before. A client navigation or an action
+whose render answers no redirect in time reports the redirect through the app's
+`onError` when its body ends, so it is not swallowed. A redirect a streamed
+handler throws keeps the same limitation it already had. A component that throws
+`notFound()` is unchanged: it has no Response to read back off the render.
 
 ## 0.35.0 (2026-11-04)
 

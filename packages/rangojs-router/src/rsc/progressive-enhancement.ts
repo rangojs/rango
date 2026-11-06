@@ -15,6 +15,7 @@ import {
 import { printServerError } from "../server/print-server-error.js";
 import { runActionBody } from "../server/cookie-store.js";
 import { createSsrHtmlStage } from "./ssr-setup.js";
+import { createRenderRedirectAnswer } from "./helpers.js";
 import type { MiddlewareFn } from "../router/middleware.js";
 import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
@@ -483,7 +484,12 @@ function renderPeResponse<TEnv>(
       // A PE post's re-render IS the visitor's document: a component that
       // throws redirect() while it renders answers a real 3xx here, as it does
       // on any other document (rsc-rendering.ts renderPreparedRscResponse).
-      redirect: (thrown: Response) => thrown,
+      redirect: createRenderRedirectAnswer({
+        flight: false,
+        requestOrigin: url.origin,
+        basename: ctx.router.basename,
+        createRedirectFlightResponse: ctx.createRedirectFlightResponse,
+      }),
       // metricsStore=undefined is safe: the handler already stashed the early
       // SSR setup promise, so this reuses it instead of starting setup again.
       html: createSsrHtmlStage({
@@ -630,7 +636,12 @@ function renderPeErrorResponse<TEnv>(
     {
       // The visitor's document, as the page render above: a component's
       // redirect answers a real 3xx.
-      redirect: (thrown: Response) => thrown,
+      redirect: createRenderRedirectAnswer({
+        flight: false,
+        requestOrigin: url.origin,
+        basename: ctx.router.basename,
+        createRedirectFlightResponse: ctx.createRedirectFlightResponse,
+      }),
       // Reuse the early setup promise; the driver times only renderHTML.
       html: createSsrHtmlStage({
         ctx,

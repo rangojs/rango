@@ -1207,11 +1207,14 @@ Two consequences, both load-bearing:
   React's stream is reported to `onError` as an `AbortError`; without the flag
   every answered navigation redirect printed `Rendering error ... AbortError`
   and called the app's `onError`;
-- a redirect the render did **not** answer is reported when the Flight body
-  ends (`reportUnansweredRenderRedirects`), because the boundary renders it:
-  the visitor gets an error page, so the app's `onError` hears about it. A
-  render that answers no redirects never suppressed the report in the first
-  place.
+- a redirect the render did **not** answer is reported through the app's
+  `onError` when a Flight body ends (`reportUnansweredRenderRedirects`),
+  because the boundary renders it: the visitor gets an error page, so the app
+  hears about it. That covers a client navigation and an action. A document has
+  no such hook: a redirect that lands after its shell is rendered is not
+  reported, which is the one place this differs from a render that answers no
+  redirects (it reported every one). A render that answers no redirects never
+  suppressed the report in the first place.
 
 The answer is converted for the channel (`helpers.ts` `answerRenderRedirect`):
 a document follows a real 3xx (its `redirect(url, { state })` state rides the

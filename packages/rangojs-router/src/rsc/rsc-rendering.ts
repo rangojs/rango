@@ -31,7 +31,7 @@ import type { RequestContext } from "../server/request-context.js";
 import { markServerErrorPrinted } from "../server/print-server-error.js";
 import type { PprReplayBypassReason } from "./shell-capture-constants.js";
 import {
-  answerRenderRedirect,
+  createRenderRedirectAnswer,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
   attachLocationStateIfPresent,
@@ -1194,13 +1194,12 @@ function renderPreparedRscResponse<TEnv>(
     },
     {
       ...(answersRenderRedirect && {
-        redirect: (thrown: Response) =>
-          answerRenderRedirect(thrown, {
-            flight: isFlightResponse,
-            requestOrigin: url.origin,
-            basename: ctx.router.basename,
-            createRedirectFlightResponse: ctx.createRedirectFlightResponse,
-          }),
+        redirect: createRenderRedirectAnswer({
+          flight: isFlightResponse,
+          requestOrigin: url.origin,
+          basename: ctx.router.basename,
+          createRedirectFlightResponse: ctx.createRedirectFlightResponse,
+        }),
       }),
       ...(isFlightResponse
         ? undefined

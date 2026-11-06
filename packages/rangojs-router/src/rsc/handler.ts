@@ -25,7 +25,7 @@ import type {
 } from "./types.js";
 import {
   actionRenderRequest,
-  answerRenderRedirect,
+  createRenderRedirectAnswer,
   createReloadResponse,
   createResponseWithMergedHeaders,
   finalizeResponse,
@@ -1172,13 +1172,12 @@ export function createRSCHandler<
             },
             {
               ...(answersRenderRedirect && {
-                redirect: (thrown: Response) =>
-                  answerRenderRedirect(thrown, {
-                    flight: isNotFoundFlightResponse,
-                    requestOrigin: url.origin,
-                    basename: router.basename,
-                    createRedirectFlightResponse,
-                  }),
+                redirect: createRenderRedirectAnswer({
+                  flight: isNotFoundFlightResponse,
+                  requestOrigin: url.origin,
+                  basename: router.basename,
+                  createRedirectFlightResponse,
+                }),
               }),
               ...(isNotFoundFlightResponse
                 ? undefined
