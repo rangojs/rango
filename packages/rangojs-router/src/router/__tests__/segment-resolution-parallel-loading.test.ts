@@ -206,10 +206,14 @@ describe("segment-resolution parallel loading", () => {
     expect(slotHandler).toHaveBeenCalledTimes(1);
     expect(result.segments).toHaveLength(1);
     expect(result.segments[0]?.type).toBe("parallel");
-    expect(result.segments[0]?.component).toBe(deferred.promise);
+    // A promise carrying the handler's value, not the handler's own object:
+    // handleHandlerResult derives one to turn a resolved Response into a
+    // rejection, as it does for a route's streamed handler.
+    const component = result.segments[0]?.component as Promise<unknown>;
+    expect(component).toBeInstanceOf(Promise);
 
     deferred.resolve("done");
-    await deferred.promise;
+    await expect(component).resolves.toBe("done");
   });
 
   it("does not await orphan parallel handler promise in revalidation path when loading is set", async () => {
@@ -264,10 +268,11 @@ describe("segment-resolution parallel loading", () => {
     const parallelSegment = result.segments.find((s) => s.type === "parallel");
     expect(slotHandler).toHaveBeenCalledTimes(1);
     expect(parallelSegment).toBeDefined();
-    expect(parallelSegment?.component).toBe(deferred.promise);
+    const component = parallelSegment?.component as Promise<unknown>;
+    expect(component).toBeInstanceOf(Promise);
 
     deferred.resolve("done");
-    await deferred.promise;
+    await expect(component).resolves.toBe("done");
   });
 
   it("awaits parallel handler when loading is explicitly false", async () => {
@@ -519,5 +524,123 @@ describe("segment-resolution parallel loading", () => {
     // Using P0 would produce "L0P0D0.test#ParallelLoader" which the client
     // can't match in segmentTreeWalk, causing useLoader to fail.
     expect(loaderSegment?.id).toBe("L1D0.test#ParallelLoader");
+  });
+
+  // A Response from a slot handler is control flow, as it is for a route
+  // (resolveRouteComponent) or a layout (resolveLayoutComponent):
+  // handleHandlerResult throws it, so it short-circuits the request instead of
+  // being rendered as the slot's component. Before that funnel, a returned
+  // redirect() reached RSC serialization and was rendered.
+  describe("slot handler result", () => {
+    const deps = {
+      trackHandler: (p: any) => p,
+      findNearestErrorBoundary: () => null,
+      findNearestNotFoundBoundary: () => null,
+    } as any;
+
+    function slottedLayout(handler: unknown, loading?: unknown) {
+      return {
+        id: "blog.layout",
+        type: "layout",
+        shortCode: "L0",
+        handler: "layout",
+        loader: [],
+        layout: [],
+        parallel: [
+          loading === undefined
+            ? createParallelEntry(handler)
+            : { ...createParallelEntry(handler), loading },
+        ],
+        intercept: [],
+        middleware: [],
+        revalidate: [],
+        errorBoundary: [],
+        notFoundBoundary: [],
+      } as any;
+    }
+
+    const redirectResponse = () =>
+      new Response(null, { status: 302, headers: { Location: "/target" } });
+
+    it("rejects with a Response the slot handler returns", async () => {
+      const response = redirectResponse();
+      const context = createContext();
+      const pass = makeFreshPass(context, deps, {
+        routeKey: "/blog",
+        params: {},
+      });
+      await expect(
+        resolveParallelSegments(
+          pass,
+          slottedLayout(() => response),
+          false,
+        ),
+      ).rejects.toBe(response);
+    });
+
+    it("rejects with a Response the slot handler throws", async () => {
+      const response = redirectResponse();
+      const context = createContext();
+      const pass = makeFreshPass(context, deps, {
+        routeKey: "/blog",
+        params: {},
+      });
+      await expect(
+        resolveParallelSegments(
+          pass,
+          slottedLayout(() => {
+            throw response;
+          }),
+          false,
+        ),
+      ).rejects.toBe(response);
+    });
+
+    it("rejects with a synchronous Response returned under the slot's loading()", async () => {
+      const response = redirectResponse();
+      const context = createContext();
+      const pass = makeFreshPass(context, deps, {
+        routeKey: "/blog",
+        params: {},
+      });
+      await expect(
+        resolveParallelSegments(
+          pass,
+          slottedLayout(() => response, "sidebar-loading"),
+          false,
+        ),
+      ).rejects.toBe(response);
+    });
+
+    it("hands render a streamed promise that rejects with an async Response", async () => {
+      const response = redirectResponse();
+      const context = createContext();
+      const pass = makeFreshPass(context, deps, {
+        routeKey: "/blog",
+        params: {},
+      });
+      const result = await resolveParallelSegments(
+        pass,
+        slottedLayout(() => Promise.resolve(response), "sidebar-loading"),
+        false,
+      );
+      const component = result.segments[0]?.component;
+      expect(component).toBeInstanceOf(Promise);
+      await expect(component as Promise<unknown>).rejects.toBe(response);
+    });
+
+    it("resolves a component the slot handler returns", async () => {
+      const context = createContext();
+      const pass = makeFreshPass(context, deps, {
+        routeKey: "/blog",
+        params: {},
+      });
+      const result = await resolveParallelSegments(
+        pass,
+        slottedLayout(() => "sidebar"),
+        false,
+      );
+      expect(result.segments[0]?.component).toBe("sidebar");
+    });
   });
 });

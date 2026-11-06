@@ -831,9 +831,14 @@ async function resolveParallelSlotComponent<TEnv>(
               slotContext,
             );
       // A throw before the slot streams reaches the owning entry's boundary.
+      // handleHandlerResult is the slot's own handler-result funnel, as it is
+      // for a route (resolveRouteComponent), a layout (resolveLayoutComponent)
+      // and an intercept slot (resolveInterceptEntry): a returned Response is
+      // control flow (redirect, response route), so it is thrown here and
+      // short-circuits instead of being rendered as the slot's component.
       try {
         if (hasLoadingFallback) {
-          const result = runAsSegment(parallelId, run);
+          const result = handleHandlerResult(runAsSegment(parallelId, run));
           if (result instanceof Promise) {
             warnOnStreamedResponse(result, parallelId);
             result.finally(doneHandler).catch(() => {});
@@ -851,9 +856,14 @@ async function resolveParallelSlotComponent<TEnv>(
             doneHandler();
             component = result as ReactNode;
           }
+        } else if (typeof handler === "function") {
+          component = handleHandlerResult(await run());
+          doneHandler();
         } else {
-          // A static value (a Promise included) goes to render as is.
-          component = typeof handler === "function" ? await run() : handler;
+          // A static value (a Promise included) goes to render as is, not
+          // through handleHandlerResult: it is the slot's declared content,
+          // and a Promise must reach render as the same object.
+          component = handler;
           doneHandler();
         }
       } catch (error) {

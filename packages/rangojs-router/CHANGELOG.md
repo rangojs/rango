@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a parallel slot handler's `redirect()` redirects as a route handler's does
+
+**Before.** A `redirect()` a parallel slot handler **returned** was used as the
+slot's component: a document request answered `200` with the `Response`
+rendered into the RSC stream (no `Location`), a client navigation rendered it
+into the partial payload, and an on-demand `Prerender(..., { onDemand })`
+refresh failed with Flight's "Only plain objects, and a few built-ins, can be
+passed to Client Components from Server Components" instead of reporting the
+redirect. A **thrown** `redirect()` short-circuited, but a returned one under
+the slot's own `loading()` did not.
+
+```ts
+// The slot's handler returned a redirect: the page rendered, no 302.
+layout(Shell, () => [
+  parallel({ "@aside": () => redirect("/login", 302) }),
+  path("/account", AccountPage, { name: "account" }),
+]);
+```
+
+**Now.** A slot handler's result goes through the same `handleHandlerResult`
+funnel as a route's, a layout's and an intercept slot's: a returned `Response`
+is thrown, so it short-circuits. A document request answers the redirect's
+status with its `Location` (basename-prefixed; an `external: true` target
+kept), a client navigation answers the soft redirect the browser follows
+(`204` + `X-RSC-Redirect`), and a synchronous return under the slot's
+`loading()` does the same. A redirect is never stored: a `cache()` entry stays
+unwritten and an on-demand refresh is `render-failed` with the `Response` as
+its error, leaving the page stored before serving until a later refresh
+replaces it. An async handler that resolves to a `Response` under `loading()`
+keeps the documented limitation a `loading()` route has: it streams instead of
+redirecting, and dev warns about it.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
