@@ -639,6 +639,13 @@ describe("createReverseFunction", () => {
       // Called as a method, the child is the receiver.
       expect(scoped.use({} as any)).toBe("M0L0L0");
       expect(receivers[0]).toBe(scoped);
+      // The parent's use() is read at CALL time: a loader-cache interceptor
+      // the request ctx installs after the child exists still answers.
+      ctx.use = function (this: { _handleSegmentId?: string } | undefined) {
+        return `intercepted ${this?._handleSegmentId}`;
+      } as any;
+      expect(scoped.use({} as any)).toBe("intercepted M0L0L0");
+      expect(use({} as any)).toBe("intercepted M0L0L0");
       // Not enumerable: a `{ ...ctx }` copy carries only the segment.
       expect(Object.keys(scoped)).not.toContain("use");
     });
