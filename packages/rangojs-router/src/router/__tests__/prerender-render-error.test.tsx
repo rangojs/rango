@@ -103,6 +103,28 @@ describe("matchForPrerender surfaces prerender render errors (#587)", () => {
     expect(renderSpy).not.toHaveBeenCalled();
   });
 
+  // A build-time render that redirects keeps the pre-existing behaviour: the
+  // Response reaches the build loop, which applies prerender.onError. The
+  // default "fail" fails the build naming the URL; "warn" skips the URL and
+  // bakes nothing (resolvePrerenderError, vite/utils/prerender-utils.ts). Only
+  // an on-demand refresh reports it as an answer (skipped-redirect).
+  test("a redirect at build time reaches the build as a render error", async () => {
+    const redirectResponse = new Response(null, {
+      status: 302,
+      headers: { Location: "/login" },
+    });
+    const router = routerWith("/moved", "moved", () => redirectResponse);
+
+    let err: unknown;
+    try {
+      await router.matchForPrerender("/moved", {});
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBe(redirectResponse);
+    expect(renderSpy).not.toHaveBeenCalled();
+  });
+
   test("a healthy Prerender render still serializes normally", async () => {
     const router = routerWith("/ok", "ok", () => "hello");
 

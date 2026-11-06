@@ -62,6 +62,19 @@ export function isRedirectResponse(response: Response): boolean {
 }
 
 /**
+ * True when a thrown value is a handler's redirect (`redirect()`,
+ * `Response.redirect()`). A handler's Response is thrown rather than rendered
+ * (handleHandlerResult), so a caller that catches render failures has to tell a
+ * redirect, which is the render's answer, from a failure.
+ *
+ * A non-Response value is never a redirect: `throw "nope"` and a bare Error
+ * both fail the render.
+ */
+export function isRedirectResponseValue(value: unknown): value is Response {
+  return value instanceof Response && isRedirectResponse(value);
+}
+
+/**
  * Set a header on a response the router hands to the host, skipping a
  * WebSocket upgrade (its headers are not to be touched) and swallowing the
  * TypeError of immutable headers (a passed-through platform Response):

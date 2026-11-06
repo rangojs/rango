@@ -21,6 +21,9 @@
  * - A refresh always renders and replaces; `onlyIfStale` is the cron-sweep
  *   opt-in and the only path that returns `already-fresh`.
  * - A failed render/store keeps the previous entry (replace-on-success).
+ * - A render that answers `redirect()` is not a failure: `skipped-redirect`,
+ *   and nothing is stored (neither a page nor a "removed" marker), because a
+ *   redirect can depend on the request. The page stored before keeps serving.
  * - A `notFound()` in the render is not a failure: it stores a "removed"
  *   marker in place of the page, stamped with the route's ttl and tags so it
  *   is rechecked like a page. `prerender.remove()` stores one without
@@ -44,6 +47,7 @@ import { createCollectingExecutionContext } from "../cache/background-task.js";
 import { composeWarmResult, runWarmRequest } from "./warm.js";
 import { hashParams } from "./param-hash.js";
 import { isPrerenderPersonalizationError } from "./producer-guard.js";
+import { isRedirectResponseValue } from "../response-utils.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
 import {
   composeStoredEntry,
@@ -558,6 +562,23 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
           ok: false,
           path: "on-demand",
           status: "skipped-personalized",
+          target: display,
+          routeName: match.routeName,
+        };
+      }
+      // A render that answers redirect() stores nothing, neither a redirect
+      // nor a "removed" marker: a redirect can depend on the request (a
+      // session or auth check), so it does not show the page is gone. The page
+      // stored before keeps serving and revalidates on its own schedule. The
+      // producer throws a handler's Response (handleHandlerResult, and the
+      // slot answer in prerender-match.ts), so this is where the render's
+      // redirect arrives; a render that also failed some other way arrives as
+      // that failure instead.
+      if (isRedirectResponseValue(err)) {
+        return {
+          ok: false,
+          path: "on-demand",
+          status: "skipped-redirect",
           target: display,
           routeName: match.routeName,
         };

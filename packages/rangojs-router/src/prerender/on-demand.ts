@@ -140,6 +140,12 @@ export interface PrerenderWarmCaches {
  * `Prerender(..., { onDemand })` route into the prerender store, `warm` is a
  * request through the router's handler that rewrites the route's runtime
  * caches.
+ *
+ * A refresh either stores the page it rendered (`rendered`), stores a
+ * "removed" marker instead (`removed`, `skipped-passthrough`), or stores
+ * nothing and leaves the previous entry alone: `skipped-personalized` (a
+ * request-scoped read) and `skipped-redirect` (a redirect, which may depend on
+ * the request) are the two answers that say nothing about the page itself.
  */
 export type PrerenderResult =
   | {
@@ -195,6 +201,13 @@ export type PrerenderResult =
         // No prerender store (on-demand), or no `createRouter({ cache })` (warm).
         | "no-store"
         | "skipped-personalized"
+        // The render answered redirect() (a route, layout or parallel-slot
+        // handler, a Passthrough build handler, or a handler behind loading()):
+        // nothing is stored, neither a page nor a "removed" marker, because a
+        // redirect can depend on the request. The page stored before keeps
+        // serving to documents and navigations, and revalidates on its own
+        // schedule (its ttl and tags, a later refresh or a sweep).
+        | "skipped-redirect"
         | "skipped-unsupported-target"
         // The route (a Passthrough + onDemand route) returned ctx.passthrough()
         // for this param set: no shared payload to persist. The "removed"

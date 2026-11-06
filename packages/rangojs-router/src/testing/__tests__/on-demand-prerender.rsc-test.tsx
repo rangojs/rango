@@ -25,9 +25,15 @@ import {
   cookies,
   createLoader,
   createRouter,
+  Passthrough,
   Prerender,
+  redirect,
   urls,
 } from "../../index.rsc.js";
+import {
+  expectNoInternalFields,
+  serveEveryShape,
+} from "./helpers/response-shapes.js";
 import { getCacheVersions } from "../../cache/index.js";
 import type {
   MemoryPrerenderStore,
@@ -85,18 +91,177 @@ const VersionsDef = Prerender<{ slug: string }>(
   { onDemand: true },
 );
 
+// ---------------------------------------------------------------------------
+// A redirecting refresh keeps the page: one route per kind of handler that can
+// answer redirect(), each flipped between rendering its page and redirecting.
+// A page's stamp counts its renders, so a stored payload and a fresh render
+// are told apart in the served Flight text.
+// ---------------------------------------------------------------------------
+
+/** Per-kind switch: true makes that kind's handler answer redirect("/login"). */
+const redirecting = {
+  route: false,
+  passthrough: false,
+  layout: false,
+  slot: false,
+  loading: false,
+  /** The route behind loading() throws while the layout's child fails. */
+  failingLayout: false,
+};
+
+const renderCounts: Record<string, number> = {};
+/** Renders started per kind, page or redirect: proves a refresh did not run. */
+const renderAttempts: Record<string, number> = {};
+
+function attempt(kind: string): void {
+  renderAttempts[kind] = (renderAttempts[kind] ?? 0) + 1;
+}
+
+/** A page stamped once per render, tagged so one markStale() reaches every kind. */
+function pageOf(kind: string, slug: string): React.ReactNode {
+  renderCounts[kind] = (renderCounts[kind] ?? 0) + 1;
+  return <h1>{`${kind}:${slug}:r${renderCounts[kind]}`}</h1>;
+}
+
+const redirectTag = ({ params }: { params: Record<string, string> }) => [
+  `redirect:${params.slug}`,
+];
+
+const RedirectRouteDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    attempt("route");
+    if (redirecting.route) throw redirect("/login");
+    return pageOf("route", ctx.params.slug);
+  },
+  { onDemand: { ttl: 3600, tags: redirectTag } },
+);
+
+const RedirectPassthroughDef = Passthrough(
+  Prerender<{ slug: string }>(
+    async () => [],
+    async (ctx) => {
+      attempt("passthrough");
+      if (redirecting.passthrough) throw redirect("/login");
+      return pageOf("passthrough", ctx.params.slug);
+    },
+    { onDemand: { ttl: 3600, tags: redirectTag } },
+  ),
+  async (ctx) => <h1>{`live:${ctx.params.slug}`}</h1>,
+);
+
+const RedirectLayoutPageDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => pageOf("layout", ctx.params.slug),
+  { onDemand: { ttl: 3600, tags: redirectTag } },
+);
+
+const RedirectSlotPageDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => pageOf("slot", ctx.params.slug),
+  { onDemand: { ttl: 3600, tags: redirectTag } },
+);
+
+const RedirectLoadingDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    attempt("loading");
+    if (redirecting.loading) throw redirect("/login");
+    return pageOf("loading", ctx.params.slug);
+  },
+  { onDemand: { ttl: 3600, tags: redirectTag } },
+);
+
+const FailingPageDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    attempt("failing");
+    if (redirecting.failingLayout) throw redirect("/login");
+    return pageOf("failing", ctx.params.slug);
+  },
+  { onDemand: { ttl: 3600, tags: redirectTag } },
+);
+
+/**
+ * A component that fails while the tree is encoded, as a real page's can. A
+ * synchronous throw is reported during the layout segment's own encode, so it
+ * is collected before the streamed handler's redirect rejection lands.
+ */
+function FailingChild(): React.ReactNode {
+  throw new Error("child failed");
+}
+
 function makeRouter(
   config: PrerenderConfig,
   options: { id?: string; version?: string } = {},
 ) {
   return createRouter({ ...options, prerender: config }).routes(
-    urls(({ path, loader }) => [
+    urls(({ path, layout, loading, loader, parallel }) => [
       path("/article/:slug", ArticleDef, { name: "article" }, () => [
         loader(StampLoader),
       ]),
       path("/personalized/:slug", PersonalizedDef, { name: "personalized" }),
       path("/versions/:slug", VersionsDef, { name: "versions" }),
       path("/hot/:slug", HotDef, { name: "hot" }),
+      path("/home", () => <p>home</p>, { name: "home" }),
+      path("/redir-route/:slug", RedirectRouteDef, { name: "redirectRoute" }),
+      path("/redir-passthrough/:slug", RedirectPassthroughDef, {
+        name: "redirectPassthrough",
+      }),
+      layout(
+        () => {
+          attempt("layout");
+          if (redirecting.layout) throw redirect("/login");
+          return <main>layout</main>;
+        },
+        () => [
+          path("/redir-layout/:slug", RedirectLayoutPageDef, {
+            name: "redirectLayout",
+          }),
+        ],
+      ),
+      layout(
+        () => <main>slots</main>,
+        () => [
+          parallel({
+            // Returned, not thrown: a slot's handler result is not run
+            // through handleHandlerResult (segment-resolution/revalidation.ts
+            // keeps it as the segment component), so a Response reaches the
+            // encoder. The cast is the shape an untyped app writes.
+            "@side": () => {
+              attempt("slot");
+              if (redirecting.slot) {
+                return redirect("/login") as unknown as React.ReactNode;
+              }
+              return <aside>side</aside>;
+            },
+          }),
+          path("/redir-slot/:slug", RedirectSlotPageDef, {
+            name: "redirectSlot",
+          }),
+        ],
+      ),
+      path("/redir-loading/:slug", RedirectLoadingDef, {
+        name: "redirectLoading",
+      }, () => [loading(<p>loading spinner</p>)]),
+      // A streamed handler that redirects while the layout's own child fails:
+      // the redirect is the render's answer, the failure is the render's
+      // failure, and the failure is what a refresh reports.
+      layout(
+        () =>
+          redirecting.failingLayout ? (
+            <main>
+              <FailingChild />
+            </main>
+          ) : (
+            <main>failing</main>
+          ),
+        () => [
+          path("/redir-failing/:slug", FailingPageDef, {
+            name: "redirectFailing",
+          }, () => [loading(<p>failing spinner</p>)]),
+        ],
+      ),
     ]),
   );
 }
@@ -110,6 +275,11 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     counts.producer = 0;
     counts.loader = 0;
     holdRender = undefined;
+    for (const key of Object.keys(redirecting)) {
+      (redirecting as Record<string, boolean>)[key] = false;
+    }
+    for (const key of Object.keys(renderCounts)) delete renderCounts[key];
+    for (const key of Object.keys(renderAttempts)) delete renderAttempts[key];
   });
 
   afterEach(() => {
@@ -357,5 +527,185 @@ describe("on-demand prerender: router.prerender() then serve", () => {
       await serveShellRequest(router, `/article/${slug}`);
     }
     expect(onRevalidate).not.toHaveBeenCalled();
+  });
+});
+
+// A render that answers redirect() says nothing about the page itself: the
+// redirect can depend on the request (a session or auth check), so the refresh
+// stores nothing, neither a page nor a "removed" marker, and the page stored
+// before keeps serving. The result is its own status, skipped-redirect, so a
+// sweep does not report a failure for a page that is fine.
+describe("on-demand prerender: a redirecting refresh keeps the page", () => {
+  let store: MemoryPrerenderStore;
+
+  beforeEach(async () => {
+    await resetShellTestState();
+    store = createMemoryPrerenderStore();
+    for (const key of Object.keys(redirecting)) {
+      (redirecting as Record<string, boolean>)[key] = false;
+    }
+    for (const key of Object.keys(renderCounts)) delete renderCounts[key];
+    for (const key of Object.keys(renderAttempts)) delete renderAttempts[key];
+  });
+
+  afterEach(() => {
+    setBuildVersions();
+    vi.restoreAllMocks();
+  });
+
+  const kinds = [
+    ["route", "/redir-route/a", "route", "redirectRoute", "route"],
+    [
+      "passthrough",
+      "/redir-passthrough/a",
+      "passthrough",
+      "redirectPassthrough",
+      "passthrough",
+    ],
+    ["layout", "/redir-layout/a", "layout", "redirectLayout", "layout"],
+    ["slot", "/redir-slot/a", "slot", "redirectSlot", "slot"],
+    ["loading", "/redir-loading/a", "loading", "redirectLoading", "loading"],
+  ] as const;
+
+  for (const [kind, url, label, routeName, attemptKey] of kinds) {
+    it(`${kind}: reports skipped-redirect, stores nothing and keeps serving the page`, async () => {
+      const router = makeRouter({ store });
+      const prerender = router.prerender({ env: {} });
+
+      // A page is stored first, so there is something a redirect could destroy.
+      expect(await prerender(url)).toMatchObject({
+        ok: true,
+        status: "rendered",
+      });
+      const stored = await serveShellRequest(router, url);
+      expect(stored.response.status).toBe(200);
+      expect(stored.flight).toContain(`${label}:a:r1`);
+
+      // The same render now answers redirect(): its own result, and no write.
+      (redirecting as Record<string, boolean>)[kind] = true;
+      const attemptsBefore = renderAttempts[attemptKey] ?? 0;
+      expect(await prerender(url)).toMatchObject({
+        ok: false,
+        path: "on-demand",
+        status: "skipped-redirect",
+        target: url,
+        routeName,
+      });
+      expect(store.size).toBe(1);
+      expect(store.entries()[0]![1].entry).toBeDefined();
+      // The handler that answers the redirect ran, and only it did.
+      expect(renderAttempts[attemptKey], "the refresh rendered").toBe(
+        attemptsBefore + 1,
+      );
+      const attemptsAfterRefresh = renderAttempts[attemptKey];
+
+      // A document and a client navigation both still get the stored page.
+      const document = await serveShellRequest(router, url);
+      expect(document.response.status).toBe(200);
+      expect(document.flight).toBe(stored.flight);
+      const navigation = await serveShellRequest(router, url, {
+        partial: { from: "/home" },
+      });
+      expect(navigation.response.status).toBe(200);
+      expect(navigation.flight).toContain(`${label}:a:r1`);
+
+      // The entry is untouched, so it is still fresh and nothing re-rendered.
+      expect(await prerender(url, { onlyIfStale: true })).toMatchObject({
+        ok: true,
+        status: "already-fresh",
+      });
+      expect(renderAttempts[attemptKey], "no serve rendered it").toBe(
+        attemptsAfterRefresh,
+      );
+
+      // Marked stale, a sweep renders it again: still a redirect, still no
+      // write, and the stored page is what the next request gets.
+      await prerender.markStale([`redirect:a`]);
+      expect(await prerender(url, { onlyIfStale: true })).toMatchObject({
+        ok: false,
+        status: "skipped-redirect",
+      });
+      expect(store.size).toBe(1);
+      expect(renderAttempts[attemptKey], "the sweep rendered it").toBe(
+        attemptsAfterRefresh + 1,
+      );
+      expect((await serveShellRequest(router, url)).flight).toContain(
+        `${label}:a:r1`,
+      );
+
+      // A later refresh that renders a page replaces the entry.
+      (redirecting as Record<string, boolean>)[kind] = false;
+      expect(await prerender(url)).toMatchObject({
+        ok: true,
+        status: "rendered",
+      });
+      expect((await serveShellRequest(router, url)).flight).toContain(
+        `${label}:a:r${renderCounts[label]}`,
+      );
+    });
+  }
+
+  it("every response shape serves the stored page, with no internal field", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+    await prerender("/redir-route/a");
+    redirecting.route = true;
+    expect(await prerender("/redir-route/a")).toMatchObject({
+      status: "skipped-redirect",
+    });
+
+    const shapes = await serveEveryShape(router, {
+      from: "/home",
+      to: "/redir-route/a",
+    });
+    for (const { name, result } of shapes) {
+      expect(result.response.status, name).toBe(200);
+      expect(result.flight, name).toContain(
+        name.startsWith("document from") ? "home" : "route:a:r1",
+      );
+    }
+    expectNoInternalFields(shapes);
+  });
+
+  it("a render that redirects and also fails stays render-failed", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+    const url = "/redir-failing/a";
+
+    expect(await prerender(url)).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
+    // The handler behind loading() answers redirect() while the layout's own
+    // child fails: the failure is what a refresh reports, and the page stays.
+    redirecting.failingLayout = true;
+    const result = await prerender(url);
+    expect(result).toMatchObject({ ok: false, status: "render-failed" });
+    if (result.ok) throw new Error("expected fail");
+    expect((result.error as Error).message).toBe("child failed");
+    expect(store.size).toBe(1);
+    expect((await serveShellRequest(router, url)).flight).toContain(
+      "failing:a:r1",
+    );
+  });
+
+  it("a non-redirect Response from a handler stays render-failed", async () => {
+    // A handler that answers with a Response other than a redirect is a
+    // failure, not an answer: the page stays and the result says so.
+    const failing = Prerender<{ slug: string }>(
+      async () => [],
+      async () => {
+        throw new Response("nope", { status: 500 });
+      },
+      { onDemand: true },
+    );
+    const router = createRouter({ prerender: { store } }).routes(
+      urls(({ path }) => [
+        path("/redir-500/:slug", failing, { name: "redirect500" }),
+      ]),
+    );
+    const result = await router.prerender({ env: {} })("/redir-500/a");
+    expect(result).toMatchObject({ ok: false, status: "render-failed" });
+    expect(store.size).toBe(0);
   });
 });

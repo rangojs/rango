@@ -235,6 +235,70 @@ describe("createPrerenderTrigger", () => {
     expect(store.size).toBe(0);
   });
 
+  // A render that answers redirect() says nothing about the page: the answer
+  // can depend on the request (a session or auth check), so the refresh stores
+  // nothing and the stored page keeps serving. Its own status, not a failure.
+  it("maps a redirect throw to skipped-redirect and stores nothing", async () => {
+    const { trigger, store } = harness({
+      runProducer: async () => {
+        throw new Response(null, {
+          status: 302,
+          headers: { Location: "/login" },
+        });
+      },
+    });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+      target: "/products/42",
+      routeName: "products.detail",
+    });
+    expect(store.size).toBe(0);
+  });
+
+  it("a redirect keeps the page a previous refresh stored", async () => {
+    const store = createMemoryPrerenderStore();
+    const { trigger } = harness({ config: { store } });
+    expect(await trigger("/products/42")).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
+    const before = store.entries()[0]![1];
+
+    const redirecting = harness({
+      config: { store },
+      runProducer: async () => {
+        throw new Response(null, {
+          status: 303,
+          headers: { Location: "/login" },
+        });
+      },
+    });
+    expect(await redirecting.trigger("/products/42")).toMatchObject({
+      ok: false,
+      status: "skipped-redirect",
+    });
+    expect(store.entries()).toHaveLength(1);
+    expect(store.entries()[0]![1]).toBe(before);
+  });
+
+  it("a Response that does not redirect stays render-failed", async () => {
+    // Only a redirect is an answer; any other Response a render throws is a
+    // failure and keeps the page.
+    const { trigger, store } = harness({
+      runProducer: async () => {
+        throw new Response("nope", { status: 500 });
+      },
+    });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({ ok: false, status: "render-failed" });
+    if (result.ok) throw new Error("expected fail");
+    expect(result.error).toBeInstanceOf(Response);
+    expect(store.size).toBe(0);
+  });
+
   it("maps a passthrough sentinel to skipped-passthrough", async () => {
     const { trigger, store } = harness({
       runProducer: async () => output({ passthrough: true }),

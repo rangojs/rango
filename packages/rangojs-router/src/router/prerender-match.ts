@@ -35,6 +35,7 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponseValue } from "../response-utils.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -361,6 +362,24 @@ export async function matchForPrerender<TEnv = any>(
           { pathname: buildCtx.pathname },
         );
 
+        // 8b. A Response a segment answered with. Every handler but a parallel
+        // slot's goes through handleHandlerResult, which throws a returned
+        // Response so it short-circuits; a slot's raw result is kept as the
+        // segment component (resolveParallelSlotComponent), so Flight would
+        // encode the Response into the stream as a corrupt row and the answer
+        // would be lost. On an on-demand refresh the render's answer is that
+        // Response: throw it here, as the other kinds' is thrown, so the
+        // trigger reports it (create-prerender-trigger.ts maps a redirect to
+        // skipped-redirect). Before serialization, like a handler throw: the
+        // render stops where it answered. Build and dev prerender are
+        // unchanged.
+        if (onDemand) {
+          const answered = allSegments.find(
+            (s) => s.component instanceof Response,
+          );
+          if (answered) throw answered.component;
+        }
+
         // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
         // When the route declares loading(), the handler result is deferred so the
         // component is a thenable resolving to the sentinel — detectPrerenderPassthrough
@@ -393,20 +412,49 @@ export async function matchForPrerender<TEnv = any>(
         const onFlightError = (error: unknown): void => {
           flightErrors.push(error);
         };
-        // The collected error to rethrow. On an on-demand refresh a failure
+        // The collected error to rethrow, declared before the serialization
+        // that may reject with a streamed redirect. On an on-demand refresh a failure
         // goes ahead of a notFound(): a render that hit a missing item AND a
         // failing data source must keep the page (render-failed), not remove
-        // it because the notFound() happened to be reported first.
+        // it because the notFound() happened to be reported first. A redirect
+        // that surfaces here (a handler behind loading(), whose Response
+        // rejects inside the stream rather than short-circuiting) is an answer
+        // too, so any other failure goes ahead of it as well: a render that
+        // redirects AND fails stays render-failed. Only a lone redirect is the
+        // render's answer.
         const firstFlightError = (): unknown => {
-          const failure = onDemand
-            ? flightErrors.findIndex((e) => !isDataNotFoundError(e))
-            : -1;
-          return flightErrors[failure === -1 ? 0 : failure];
+          if (!onDemand) return flightErrors[0];
+          const failure = flightErrors.findIndex(
+            (e) => !isDataNotFoundError(e) && !isRedirectResponseValue(e),
+          );
+          if (failure !== -1) return flightErrors[failure];
+          const answer = flightErrors.findIndex((e) => !isDataNotFoundError(e));
+          return flightErrors[answer === -1 ? 0 : answer];
         };
-        const serializedSegments = await serializeSegments(
-          nonLoaderSegments,
-          onFlightError,
-        );
+        let serializedSegments: SerializedSegmentData[];
+        try {
+          serializedSegments = await serializeSegments(
+            nonLoaderSegments,
+            onFlightError,
+          );
+        } catch (error) {
+          // A handler behind loading() that answers redirect() rejects the
+          // segment await, which rejects the whole serialization before the
+          // other segments finish. An error another segment already reported
+          // is the render's failure and wins, so a render that redirects AND
+          // fails stays render-failed (create-prerender-trigger.ts keeps the
+          // page for it).
+          if (
+            onDemand &&
+            isRedirectResponseValue(error) &&
+            flightErrors.some(
+              (e) => !isDataNotFoundError(e) && !isRedirectResponseValue(e),
+            )
+          ) {
+            throw firstFlightError();
+          }
+          throw error;
+        }
         const personalized = flightErrors.find((e) =>
           isPrerenderPersonalizationError(e),
         );
