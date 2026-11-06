@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a stored response replaces the handle values of the segments it re-renders, as the live one does
+
+**Before.** A partial response's `resolvedIds` tells the browser which
+segments' handle values to replace. On a live walk every segment whose handler
+ran is listed; a stored record carries no such mark, so a `cache()`,
+`Prerender()` or PPR replay HIT listed only the loaders it resolved fresh. A
+chain layout whose `revalidate()` re-rendered it and pushed nothing this time —
+a breadcrumb it no longer shows — kept its previous push on the page on every
+HIT: the crumb came back.
+
+**Now.** A stored segment the response re-renders is listed as a run, so the
+browser replaces its handle values with the record's, nothing when the record
+holds none. The HIT reports the same `resolvedIds` as the live navigation it
+stands in for, for a `cache()` record, a `Prerender()` entry and a PPR
+navigation replay alike. The client is unchanged: only `resolvedIds` on the
+wire changes, and only on a HIT.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

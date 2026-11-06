@@ -202,8 +202,10 @@ export interface ResolvedSegment {
    *  segment of one group; see the group-route branch in segment-system.tsx. */
   clientGroup?: string;
   /**
-   * @internal Server-side marker: true when the segment's handler actually ran
-   * this request (not skipped via the revalidate cache path). Used by
+   * @internal Server-side marker: true when the segment's handler ran this
+   * request, or when a stored answer re-rendered the segment from its record
+   * where a live walk would have run it (cache-lookup.ts
+   * serveStoredSegments: a record carries no mark of its own). Used by
    * match-result.ts to populate `MatchResult.resolvedIds` for client-side
    * handle-bucket cleanup. Stripped from the wire payload before serialization
    * — never reaches the client.
@@ -259,14 +261,15 @@ export interface MatchResult {
   matched: string[];
   diff: string[];
   /**
-   * Every segment id whose handler actually ran on the server this request,
-   * including ones with `component === null` that get filtered out of
-   * `segments`/`diff` to avoid wasted bytes, and every loader segment that
-   * ran. Drives the client's handle merge (handles/pushed-by.ts) — a slot
-   * that re-resolves and pushes nothing must clear its previous handle
-   * bucket, but `diff` doesn't carry it because the segment payload doesn't
-   * either; a loader that ran replaces its pushes, one that did not keeps
-   * them. A superset of `diff`.
+   * Every segment id whose handler ran on the server this request, including
+   * ones with `component === null` that get filtered out of `segments`/`diff`
+   * to avoid wasted bytes, and every loader segment that ran. A stored answer
+   * lists the segments it re-renders, which the live walk it stands in for
+   * would have run a handler for (cache-lookup.ts serveStoredSegments). Drives
+   * the client's handle merge (handles/pushed-by.ts) — a slot that re-resolves
+   * and pushes nothing must clear its previous handle bucket, but `diff`
+   * doesn't carry it because the segment payload doesn't either; a loader that
+   * ran replaces its pushes, one that did not keeps them. A superset of `diff`.
    */
   resolvedIds: string[];
   /**

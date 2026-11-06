@@ -612,8 +612,19 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      // A record carries no `_handlerRan` (segment-codec.ts serializeSegments
+      // copies named fields, and the mark belongs to the request that ran the
+      // handler), so mark the segments this HIT re-renders as the live walk
+      // marks the handlers it runs: buildMatchResult lists them in
+      // resolvedIds, and the browser replaces their handle values with the
+      // record's instead of keeping the page's (handles/pushed-by.ts
+      // mergePartialHandleData). A full match lists every id anyway.
+      if (!ctx.isFullMatch) segment._handlerRan = true;
+      sentIds?.add(segment.id);
+    }
     yield segment;
   }
 
