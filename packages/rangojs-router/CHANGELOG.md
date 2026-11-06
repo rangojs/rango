@@ -14,8 +14,13 @@ handler had run and moved it on.
 **Now.** The message names the layout's or the slot's segment, the one that
 owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+The carried segment holds for both call shapes a component uses — `ctx.use(…)`
+and a `use` taken off the ctx (`const { use } = ctx`) — and decides where a
+push made before collection completes lands, not only the error's name: a
+layout's or a slot's component now files its push under that segment, in
+segment order with the handler's own pushes, where it used to take the route's
+bucket. The push is still rejected, at the same moment, and production still
+shows no message.
 
 ## 0.35.0 (2026-11-04)
 

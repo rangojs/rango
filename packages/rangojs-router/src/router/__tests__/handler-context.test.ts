@@ -622,6 +622,33 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: a detached use still resolves against this ctx", () => {
+      // Records the receiver it was called on, as handlePushSegment reads it.
+      const seen: unknown[] = [];
+      const useOf = (value: string) =>
+        function (this: { _handleSegmentId?: string } | undefined) {
+          seen.push(this?._handleSegmentId);
+          return value;
+        };
+      const ctx = {
+        reverse: routeReverse(),
+        use: useOf("first"),
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // Own, but out of the shape `{ ...ctx }` copies.
+      expect(Object.prototype.hasOwnProperty.call(scoped, "use")).toBe(true);
+      expect(Object.keys(scoped)).not.toContain("use");
+      // Destructured and called later, as a component handed the ctx does.
+      const { use } = scoped as unknown as { use: (item: string) => string };
+      expect(use("handle")).toBe("first");
+      expect(seen).toEqual(["M0L0L0"]);
+      // The parent's use is read per call: loader-cache.ts swaps it for its
+      // override interceptor after the scoped ctx exists.
+      (ctx as any).use = useOf("second");
+      expect(use("loader")).toBe("second");
+      expect(seen).toEqual(["M0L0L0", "M0L0L0"]);
+    });
   });
 
   describe("optional params", () => {

@@ -2550,11 +2550,13 @@ Limits:
   first (outer entries resolve first).
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
-- A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `_handleSegmentId`, and `reverse` and `_reverseScope` when the
-  segment has a scope, so `{ ...ctx }` there copies only those. A getter keyed
-  by its holder resolves through the prototype chain (`rewrittenFrom`,
-  `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
+- A layout's or slot's ctx is a different object from the route's. Its
+  enumerable own fields are `_handleSegmentId`, and `reverse` and
+  `_reverseScope` when the segment has a scope, so `{ ...ctx }` there copies
+  only those. Its `use` is an own, non-enumerable forwarder (below), so a copy
+  does not carry a working `use`. A getter keyed by its holder resolves
+  through the prototype chain (`rewrittenFrom`, `server/rewrite-trail.ts`);
+  `theme` reads a symbol the child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a
@@ -2598,7 +2600,15 @@ the only thing left to ask. That ctx carries its segment
 segment off the receiver it was called on (`handlePushSegment`,
 `loader-resolution.ts`) — a push from such a component, and the dev
 `LateHandlePushError` it throws, names the layout or the slot, not whichever
-segment the walker pinned since. The other readers take `segmentPinOf(ctx)`,
+segment the walker pinned since. A detached call (`const { use } = ctx`, a
+component taking `use` as a prop) keeps it too: the child owns a
+non-enumerable `use` forwarder that re-enters the parent's CURRENT `use` with
+the child as the receiver, so `loader-cache.ts`'s override interceptor (it
+replaces the request ctx's `use` lazily) stays in the path. The carried
+segment decides where a push made BEFORE collection completes lands, not only
+the error's name: a layout component's push files under the layout, beside
+the layout handler's, not under the route whose handler the walker pinned by
+the time React rendered it. The other readers take `segmentPinOf(ctx)`,
 the innermost scope's segment else the ctx's carried one else its pin: a
 handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the build
 pass, which runs the same walker), a started loader's owning segment
@@ -2631,7 +2641,9 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to) and `server/__tests__/segment-pin.test.ts`. The e2e
+slot handed the ctx to, `ctx.use` called as a method and taken off the ctx;
+and a layout component's push before collection completes filing under the
+layout) and `server/__tests__/segment-pin.test.ts`. The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.
 
