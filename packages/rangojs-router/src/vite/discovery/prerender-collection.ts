@@ -438,6 +438,23 @@ export async function renderStaticHandlers(
       const owner = (def as any).$$routerId as string | undefined;
       const owned = owner !== undefined ? registry.get(owner) : undefined;
       const candidates = owned ? [owned] : [...registry.values()];
+      // path() stamps the mounted route's full name; layout() and parallel()
+      // stamp only the include name prefix, since a layout or slot is not a
+      // route. A mounted layout or slot is the only kind that has a
+      // ReverseScope to bake in: its dot-local names resolve in the include
+      // scope that declared it, the same scope its live ctx carries. A route's
+      // resolve from its own route name, as its live handler does.
+      const stampedRouteName = (def as any).$$routeName as string | undefined;
+      const stampedRootScoped = (def as any).$$rootScoped as
+        | boolean
+        | undefined;
+      const reverseScope =
+        stampedRouteName === undefined && stampedRootScoped !== undefined
+          ? {
+              prefix: (def as any).$$routePrefix as string | undefined,
+              rootScoped: stampedRootScoped,
+            }
+          : undefined;
       for (const routerInstance of candidates) {
         if (!routerInstance.renderStaticSegment) continue;
         try {
@@ -446,10 +463,11 @@ export async function renderStaticHandlers(
             def.$$id,
             // Full route name when stamped; the historical $$routePrefix is a
             // name PREFIX (never in the root-scope registry) kept as fallback.
-            (def as any).$$routeName ?? (def as any).$$routePrefix,
+            stampedRouteName ?? (def as any).$$routePrefix,
             state.resolvedBuildEnv,
             !state.isBuildMode,
-            (def as any).$$rootScoped,
+            stampedRootScoped,
+            reverseScope,
           );
           if (result) {
             // result.handles is the pre-encoded handle string ("" when none).

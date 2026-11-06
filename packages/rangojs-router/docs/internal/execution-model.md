@@ -2542,6 +2542,18 @@ names, mount-param autofill and explicit params do not change. A
 `"use cache"` function taking a scoped ctx keys by its `_reverseScope` too
 (`cache-runtime.ts`).
 
+A `Static()` layout or slot takes the same route at build time. There is no
+request, so no `EntryData` and no live ctx: `renderStaticSegment`
+(`router/prerender-match.ts`) builds the ctx with `createStaticContext` and
+wraps it in `withReverseScope` with the def's own scope, which the DSL stamps
+on the definition at mount time — `$$routePrefix` is the `include()` name
+prefix (`ctx.namePrefix`), `$$rootScoped` is `getRootScoped()`. The collector
+(`vite/discovery/prerender-collection.ts`) passes both. Without the wrap the
+bake read `$$routePrefix` as a route name and dropped its last segment, so a
+layout at prefix `account.project` baked the account module's URL for
+`.settings`, and at root scope, where the prefix is empty, the bake threw
+`Unknown route` for a name the same layout resolved live.
+
 Limits:
 
 - A loader runs once per request, keyed by its `$$id`. A loader Def declared
@@ -2554,14 +2566,17 @@ Limits:
   those. A getter keyed by its holder resolves through the prototype chain
   (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
   child inherits.
-- `Static()` layouts and slots bake at build time through
-  `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
-  through this scope. At one include level that gives the same module; in a
-  nested module the last name segment is dropped.
+- A `Static()` def mounted more than once is stamped by its last mount, and
+  its artifact is keyed by handler id: both mounts bake in that one scope.
+- A `Static()` layout's or slot's `ctx.routeName` is its include name prefix
+  (`$$routePrefix`), not a route name; a `Static()` route's is its route name.
+  Only `reverse` reads the scope.
 
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,
-and the `reverse-segment-scope` e2e (test-app and cloudflare-basic).
+`router/__tests__/static-reverse-scope.test.ts` for the build path, and the
+`reverse-segment-scope` and `static-reverse-scope` e2e (test-app, both modes;
+`reverse-segment-scope` also in cloudflare-basic).
 
 ### A streamed handler keeps its segment
 

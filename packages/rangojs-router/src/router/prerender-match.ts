@@ -11,6 +11,7 @@ import {
   createPrerenderContext,
   createStaticContext,
   createReverseFunction,
+  withReverseScope,
 } from "./handler-context.js";
 import { detectPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
@@ -23,7 +24,11 @@ import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
 import { freshPassInput } from "./segment-resolution/resolution-pass.js";
 import { runWithRouterContext } from "./router-context.js";
-import type { EntryData, InterceptEntry } from "../server/context";
+import type {
+  EntryData,
+  InterceptEntry,
+  ReverseScope,
+} from "../server/context";
 import type { PartialPrerenderProps } from "../urls/pattern-types.js";
 import type { InternalHandlerContext, ResolvedSegment } from "../types";
 import type {
@@ -668,6 +673,7 @@ export async function renderStaticSegment<TEnv = any>(
   devMode?: boolean,
   routerId?: string,
   rootScoped?: boolean,
+  reverseScope?: ReverseScope,
 ): Promise<{ encoded: string; handles: string } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -736,11 +742,14 @@ export async function renderStaticSegment<TEnv = any>(
 
   return runWithRequestContext(minimalRequestContext, async () => {
     // Static handlers get only reverse, use(handle), and optionally env.
-    const buildCtx = createStaticContext<TEnv>(
-      mergedRouteMap,
-      routeName,
-      buildEnv,
-      devMode,
+    // withReverseScope is the funnel a live layout's / parallel slot's ctx
+    // passes through (segment-resolution/helpers.ts); the bake ctx must carry
+    // the same scope, or its dot-local names resolve from the wrong module.
+    // A route def carries none: its dot names resolve from its route name,
+    // as its live handler's do.
+    const buildCtx = withReverseScope(
+      createStaticContext<TEnv>(mergedRouteMap, routeName, buildEnv, devMode),
+      reverseScope,
     );
 
     // Set segment ID so handle pushes are keyed correctly

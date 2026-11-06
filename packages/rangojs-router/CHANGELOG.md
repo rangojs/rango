@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `Static()` layout or parallel slot links with `ctx.reverse(".name")` in its own module
+
+**Before.** At build, a `Static()` layout's or parallel slot's
+`ctx.reverse(".name")` resolved one include too high. The bake read the
+segment's include name prefix as if it were the route name and dropped its
+last segment, so a layout at prefix `account.project` baked
+`/acme/settings` for `.settings` while the same layout rendered live linked
+`/acme/web/settings`. At the router root, where there is no prefix, the bake
+threw `Unknown route` and failed the build for a name the same layout
+resolved live.
+
+**Now.** A `Static()` layout or slot bakes `ctx.reverse(".name")` in the
+include scope that declared it — the same `ReverseScope` its live ctx
+carries — at every nesting depth, the root included.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
