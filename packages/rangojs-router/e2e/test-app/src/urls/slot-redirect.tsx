@@ -88,19 +88,6 @@ const asidePatterns = urls(({ path, layout, parallel }) => [
 // serving, stamp included, until a later refresh with no redirect replaces it.
 let onDemandRedirects = false;
 
-function OnDemandLayout() {
-  return (
-    <main data-testid="sr-od-layout">
-      <Outlet />
-      <ParallelOutlet name="@sr-od-aside" />
-    </main>
-  );
-}
-
-function OnDemandAside() {
-  return <aside data-testid="sr-od-aside">aside</aside>;
-}
-
 const OnDemandPage = Prerender(
   () => {
     // Captured once per render: a serve that replayed the stored page shows
@@ -116,13 +103,13 @@ const OnDemandPage = Prerender(
 );
 
 const onDemandPatterns = urls(({ path, layout, parallel }) => [
-  layout(OnDemandLayout, () => [
+  layout(SlotLayout, () => [
     parallel({
-      "@sr-od-aside": () =>
+      "@sr-aside": () =>
         onDemandRedirects ? (
           redirect("/slot-redirect/target", 302)
         ) : (
-          <OnDemandAside />
+          <SlotAside />
         ),
     }),
     path("/", OnDemandPage, { name: "index" }),

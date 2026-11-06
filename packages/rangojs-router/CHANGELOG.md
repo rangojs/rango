@@ -26,7 +26,8 @@ funnel as a route's, a layout's and an intercept slot's: a returned `Response`
 is thrown, so it short-circuits. A document request answers the redirect's
 status with its `Location` (basename-prefixed; an `external: true` target
 kept), a client navigation answers the soft redirect the browser follows
-(`204` + `X-RSC-Redirect`), and a synchronous return under the slot's
+(`204` + `X-RSC-Redirect`; an `external: true` target travels in the Flight
+payload, as a route's does), and a synchronous return under the slot's
 `loading()` does the same. A redirect is never stored: a `cache()` entry stays
 unwritten and an on-demand refresh is `render-failed` with the `Response` as
 its error, leaving the page stored before serving until a later refresh
