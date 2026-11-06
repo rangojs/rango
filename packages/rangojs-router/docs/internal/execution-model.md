@@ -464,9 +464,16 @@ See "Rewrite" below for what moves and what stays.
   `resolveInterceptLoadersOnly`), a push into the segment goes in front of
   them. A loader's push made before its first `await` lists ahead of the
   handler's, one made after it behind. A `prefetch: false` fill holds
-  nothing, so its HIT orders as its MISS does. Source: `holdRecordedValues`
-  and `releaseRecordedValues` in `handle-store.ts`, held by
-  `serveStoredSegments`; pinned by `cached-handle-push-order.rsc-test.tsx`.
+  nothing, so its HIT orders as its MISS does. A HIT also lists in
+  `resolvedIds` every stored segment it sends, as the MISS that wrote the
+  record did: the record's values are that run's, so the browser replaces
+  them with what the HIT delivers, none when the record holds none. A
+  segment the HIT keeps is not listed, as on a live walk, and the client
+  keeps its values. Source: `holdRecordedValues` and `releaseRecordedValues`
+  in `handle-store.ts`, held by `serveStoredSegments`, which marks a sent
+  stored segment `_handlerRan` for `resolvedIds` in `match-result.ts`; pinned
+  by `cached-handle-push-order.rsc-test.tsx` and
+  `serve-shell-request-stored-resolved-ids.rsc-test.tsx`.
 
 - Under PPR shell capture, of the DSL `loader()` registrations only
   `loader(Def, { ssr: "await" })` executes and bakes; every other registration
