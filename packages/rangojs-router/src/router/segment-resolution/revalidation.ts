@@ -832,8 +832,13 @@ async function resolveParallelSlotComponent<TEnv>(
             );
       // A throw before the slot streams reaches the owning entry's boundary.
       try {
-        if (hasLoadingFallback) {
-          const result = runAsSegment(parallelId, run);
+        // Streams under loading() only when no action awaits it, as a route
+        // handler does (resolveRouteComponent): an action's revalidation sees
+        // the slot's redirect (or failure) before the payload is built.
+        if (hasLoadingFallback && !pass.actionContext) {
+          // Through handleHandlerResult as a route's is: a Response returned
+          // synchronously short-circuits instead of rendering into the stream.
+          const result = handleHandlerResult(runAsSegment(parallelId, run));
           if (result instanceof Promise) {
             warnOnStreamedResponse(result, parallelId);
             result.finally(doneHandler).catch(() => {});

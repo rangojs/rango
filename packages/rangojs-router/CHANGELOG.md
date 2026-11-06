@@ -19,9 +19,25 @@ handler's does: `302` with its `Location` on a document request, the
 client-navigation redirect on a partial, prefetch or action-revalidation
 request, and `render-failed` on an on-demand refresh, which keeps the page
 stored before serving (a redirect is never stored). A thrown redirect is
-unchanged, and so is a slot that declares `loading()`: its handler streams, so
-its redirect is still rendered into the stream, as a route handler under
-`loading()` is (the dev warning names it).
+unchanged.
+
+### Fixed: a slot that declares `loading()` redirects as a route handler under `loading()` does
+
+**Before.** The `loading()` branch of `resolveParallelSlotComponent` handed the
+slot's raw result to the stream, so a synchronously returned `redirect()` was
+serialized into the Flight stream instead of short-circuiting: a document
+request answered `200` with no `Location`, a client navigation answered `200`
+instead of its redirect, and an action's revalidation carried the `Response`
+in its payload. A route handler under `loading()` redirects in all three cases.
+An asynchronously returned or thrown redirect also failed to redirect on an
+action's revalidation, where a route handler's is awaited and short-circuits.
+
+**Now.** The slot's `loading()` branch runs its result through
+`handleHandlerResult` and streams only when no action awaits it, exactly as
+`resolveRouteComponent` does: a synchronous redirect answers `302` on a
+document and the client-navigation redirect on a partial or action request,
+and an asynchronous one still streams (rendered, with the dev warning), as a
+route handler's does.
 
 ## 0.35.0 (2026-11-04)
 

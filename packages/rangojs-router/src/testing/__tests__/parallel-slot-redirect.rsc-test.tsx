@@ -84,21 +84,26 @@ interface Shape {
   owner?: Owner;
   /** The route whose slot answers: the navigation's destination or the page an action revalidates. */
   slotOn?: "plain" | "page";
+  /** The slot declares loading(): its handler streams unless an action awaits it. */
+  slotLoading?: boolean;
   prerender?: { store: MemoryPrerenderStore };
 }
 
 function makeRouter({
   owner = "route",
   slotOn = "plain",
+  slotLoading = false,
   prerender,
 }: Shape = {}) {
   return createRouter(prerender ? { prerender } : {}).routes(
-    urls(({ path, cache, layout, parallel }) => {
+    urls(({ path, cache, layout, loading, parallel }) => {
       // Every definition is created inside its parent's `use` callback: the DSL
       // registers by side effect, so one built outside it belongs to another
       // entry (and the parent it was written under never sees it).
       const slot = () =>
-        parallel({ "@aside": answerWith(() => slotAnswer, PAGE_BODY) });
+        parallel({ "@aside": answerWith(() => slotAnswer, PAGE_BODY) }, () =>
+          slotLoading ? [loading(<p>slot loading</p>)] : [],
+        );
       const routes = () => [
         path(
           "/page",
@@ -149,15 +154,26 @@ function makeRouter({
  * names the route that carries it (the navigation's destination, or the page
  * an action revalidates).
  */
-function makeRouteRouter(answering: "plain" | "page" = "plain") {
+function makeRouteRouter(
+  answering: "plain" | "page" = "plain",
+  loading = false,
+) {
   const answer = answerWith(() => routeAnswer, PAGE_BODY);
   const page = () => <main>{PAGE_BODY}</main>;
   return createRouter({}).routes(
-    urls(({ path }) => [
-      path("/page", answering === "page" ? answer : page, { name: "page" }),
-      path("/plain", answering === "plain" ? answer : page, {
-        name: "plain",
-      }),
+    urls(({ path, loading: loadingBoundary }) => [
+      path(
+        "/page",
+        answering === "page" ? answer : page,
+        { name: "page" },
+        () => (loading ? [loadingBoundary(<p>route loading</p>)] : []),
+      ),
+      path(
+        "/plain",
+        answering === "plain" ? answer : page,
+        { name: "plain" },
+        () => (loading ? [loadingBoundary(<p>route loading</p>)] : []),
+      ),
       path(TARGET, () => <main>target body</main>, { name: "target" }),
     ]),
   );
@@ -353,41 +369,22 @@ describe("a parallel slot handler's redirect", () => {
   });
 
   describe("a slot that declares loading()", () => {
-    // Streamed, as a route handler under loading() is (warnOnStreamedResponse
-    // documents the limitation): the row pins parity, not a redirect.
+    // A route handler under loading() streams unless an action awaits it: a
+    // Response that arrives after the boundary took over is rendered, not
+    // followed (warnOnStreamedResponse documents it). The slot answers exactly
+    // as the route does on every channel; each row below is one of those
+    // channels, and the sync return is the row a raw slot result broke.
     it("streams the Response, as a route handler under loading() does", async () => {
-      const slotRouter = () =>
-        createRouter({}).routes(
-          urls(({ path, parallel, loading }) => [
-            path(
-              "/plain",
-              () => <main>{PAGE_BODY}</main>,
-              { name: "plain" },
-              () => [
-                parallel(
-                  { "@aside": answerWith(() => slotAnswer, PAGE_BODY) },
-                  () => [loading(<p>slot loading</p>)],
-                ),
-              ],
-            ),
-          ]),
-        );
-      const routeRouter = () =>
-        createRouter({}).routes(
-          urls(({ path, loading }) => [
-            path(
-              "/plain",
-              answerWith(() => routeAnswer, PAGE_BODY),
-              { name: "plain" },
-              () => [loading(<p>route loading</p>)],
-            ),
-          ]),
-        );
-
       slotAnswer = "return-async";
       routeAnswer = "return-async";
-      const viaSlot = await serveShellRequest(slotRouter(), "/plain");
-      const viaRoute = await serveShellRequest(routeRouter(), "/plain");
+      const viaSlot = await serveShellRequest(
+        makeRouter({ slotLoading: true }),
+        "/plain",
+      );
+      const viaRoute = await serveShellRequest(
+        makeRouteRouter("plain", true),
+        "/plain",
+      );
 
       expect(viaSlot.response.status).toBe(viaRoute.response.status);
       expect(viaSlot.response.headers.get("location")).toBe(
@@ -395,5 +392,74 @@ describe("a parallel slot handler's redirect", () => {
       );
       expect(viaSlot.body).toContain("slot loading");
     });
+
+    it("is the HTTP redirect (sync return), as a route handler's is", async () => {
+      slotAnswer = "return";
+      routeAnswer = "return";
+      const viaSlot = await serveShellRequest(
+        makeRouter({ slotLoading: true }),
+        "/plain",
+      );
+      const viaRoute = await serveShellRequest(
+        makeRouteRouter("plain", true),
+        "/plain",
+      );
+
+      expectDocumentRedirect(viaRoute);
+      expectDocumentRedirect(viaSlot);
+    });
+
+    it("is the client-navigation redirect (sync return), as a route handler's is", async () => {
+      slotAnswer = "page";
+      routeAnswer = "page";
+      const slotRouter = makeRouter({ slotLoading: true });
+      const routeRouter = makeRouteRouter("plain", true);
+      const slotSegments = await matchedOf(
+        await serveShellRequest(slotRouter, TARGET),
+      );
+      const routeSegments = await matchedOf(
+        await serveShellRequest(routeRouter, TARGET),
+      );
+      slotAnswer = "return";
+      routeAnswer = "return";
+
+      const viaSlot = await serveShellRequest(slotRouter, "/plain", {
+        cacheStore: new MemorySegmentCacheStore(),
+        partial: { from: TARGET, segments: slotSegments },
+      });
+      const viaRoute = await serveShellRequest(routeRouter, "/plain", {
+        cacheStore: new MemorySegmentCacheStore(),
+        partial: { from: TARGET, segments: routeSegments },
+      });
+
+      expectFlightRedirect(viaRoute);
+      expectFlightRedirect(viaSlot);
+      expect(viaSlot.response.headers.get("x-rsc-redirect")).toBe(
+        viaRoute.response.headers.get("x-rsc-redirect"),
+      );
+    });
+
+    for (const answer of ANSWERS) {
+      it(`is the action revalidation's redirect (${answer}), as a route handler's is`, async () => {
+        const viaSlot = await runAction(
+          makeRouter({ slotOn: "page", slotLoading: true }),
+          () => {
+            slotAnswer = answer;
+          },
+        );
+        const viaRoute = await runAction(
+          makeRouteRouter("page", true),
+          () => {
+            routeAnswer = answer;
+          },
+        );
+
+        expectFlightRedirect(viaRoute);
+        expectFlightRedirect(viaSlot);
+        expect(viaSlot.response.headers.get("x-rsc-redirect")).toBe(
+          viaRoute.response.headers.get("x-rsc-redirect"),
+        );
+      });
+    }
   });
 });
