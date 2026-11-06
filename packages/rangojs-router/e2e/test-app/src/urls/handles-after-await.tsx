@@ -11,6 +11,7 @@ import { Suspense, type ReactNode } from "react";
 import {
   HAA_WAIT_MS,
   HaaAwaitLoader,
+  HaaStartedLoader,
   wait,
 } from "./handles-after-await.defs.js";
 import { HaaLoaderView, HaaTrail } from "./handles-after-await.client.js";
@@ -25,7 +26,9 @@ import { HaaLoaderView, HaaTrail } from "./handles-after-await.client.js";
 //    handler (/component-layout) handed its ctx to;
 // 5. the designed path for case 4: the layout and route handlers reserve the
 //    slots with .defer(), and an async component resolves them after its
-//    await (/defer).
+//    await (/defer);
+// 6. a loader that same component starts with ctx.use(Loader), which pushes
+//    after its own await (/loader-start): the run is the layout's.
 // Run counters show which segments a navigation re-ran.
 
 let awaitLayoutRuns = 0;
@@ -43,6 +46,7 @@ const LINKS: ReadonlyArray<readonly [testId: string, to: string]> = [
   ["haa-link-loader-3", "/handles-after-await/loader?v=3"],
   ["haa-link-component", "/handles-after-await/component"],
   ["haa-link-component-layout", "/handles-after-await/component-layout"],
+  ["haa-link-loader-start", "/handles-after-await/loader-start"],
   ["haa-link-defer-2", "/handles-after-await/defer?v=2"],
   ["haa-link-defer-3", "/handles-after-await/defer?v=3"],
 ];
@@ -168,6 +172,17 @@ function resolveAfterAwait(
   );
 }
 
+/** Case 6: an async component a layout handed its ctx to starts a loader. */
+async function HaaStartsLoader({
+  ctx,
+}: {
+  ctx: Parameters<Handler>[0];
+}): Promise<ReactNode> {
+  await wait(HAA_WAIT_MS);
+  await ctx.use(HaaStartedLoader);
+  return null;
+}
+
 const HaaDeferLayout: Handler = (ctx) => {
   deferLayoutRuns += 1;
   return (
@@ -238,6 +253,21 @@ export const handlesAfterAwaitPatterns = urls(
             "/handles-after-await/component-layout",
             () => <p data-testid="haa-component-layout-page">Page</p>,
             { name: "handlesAfterAwaitComponentLayout" },
+          ),
+        ],
+      ),
+      layout(
+        (ctx) => (
+          <div data-testid="haa-loader-start-layout">
+            <HaaStartsLoader ctx={ctx} />
+            <Outlet />
+          </div>
+        ),
+        () => [
+          path(
+            "/handles-after-await/loader-start",
+            () => <p data-testid="haa-loader-start-page">Page</p>,
+            { name: "handlesAfterAwaitLoaderStart" },
           ),
         ],
       ),

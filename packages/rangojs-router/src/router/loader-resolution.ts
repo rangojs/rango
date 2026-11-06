@@ -101,34 +101,48 @@ export type LoaderErrorCallback = (
  */
 
 /**
- * The segment a handle push through `ctx.use` files under.
+ * The segment the ctx `use` was called on belongs to, when it carries one.
  *
  * The receiver decides when it carries a segment: a layout's or a parallel
  * slot's ctx does (withSegmentScope), and the segment holds however long after
  * the handler returned, so an async component the handler handed the ctx to
- * still files under it after the walker moved the shared pin on. A detached
+ * still belongs to it after the walker moved the shared pin on. A detached
  * call reaches this with the child as the receiver too: the child owns `use`,
  * which supplies it.
  *
  * The request's one handler ctx carries the route's segment instead
  * (`_pushSegmentId`, revalidation.ts resolveEntryHandler): the route handler
  * has no child, because a route handler's `{ ...ctx }` must copy the ctx's
- * fields for a "use cache" call, and its components push after the route's
+ * fields for a "use cache" call, and its components work after the route's
  * slots and orphan layouts were pinned.
  *
- * Any other receiver reads the ctx `use` was installed on, whose
- * `_currentSegmentId` the walker pins — a handler that built a smaller ctx
- * with `use` copied onto it (a Prerender handler forwarding to a shared page
- * handler) included.
+ * Any other receiver carries none: the caller reads the ctx `use` was
+ * installed on, whose `_currentSegmentId` the walker pins — a handler that
+ * built a smaller ctx with `use` copied onto it (a Prerender handler
+ * forwarding to a shared page handler) included.
+ */
+function carriedSegmentOf(
+  receiver: unknown,
+  installed: HandlerContext<any, any>,
+): string | undefined {
+  return (
+    (receiver as { _handleSegmentId?: string } | undefined)?._handleSegmentId ??
+    (installed as { _pushSegmentId?: string })._pushSegmentId
+  );
+}
+
+/**
+ * The segment a handle push through `ctx.use` files under: the receiver's
+ * (carriedSegmentOf), else the pin the walker left on the installed ctx.
  */
 function handlePushSegment(
   receiver: unknown,
   installed: HandlerContext<any, any>,
 ): string | undefined {
-  const carried =
-    (receiver as { _handleSegmentId?: string } | undefined)?._handleSegmentId ??
-    (installed as { _pushSegmentId?: string })._pushSegmentId;
-  return segmentPinOf(installed as { _currentSegmentId?: string }, carried);
+  return segmentPinOf(
+    installed as { _currentSegmentId?: string },
+    carriedSegmentOf(receiver, installed),
+  );
 }
 
 /**
@@ -486,10 +500,15 @@ function warnRenderedBesideUnit(
  * Shared by setupLoaderAccess and setupLoaderAccessSilent; only the handle
  * branch differs between the two, so only the loader logic is extracted here.
  *
- * Returns a useLoader(loader, callerLoaderId) function that:
+ * Returns a useLoader(loader, callerLoaderId, carried) function that:
  * - Tracks dependency edges between loaders for cycle detection
  * - Throws immediately (synchronously inside an async fn) on circular deps
  * - Memoizes each loader's promise so it runs at most once per request
+ *
+ * `carried` is the segment the calling ctx belongs to (carriedSegmentOf), for
+ * a run the calling ctx starts rather than one the DSL declared: its handle
+ * pushes are the calling segment's (loaderOwner), as they are when the handler
+ * itself starts it.
  */
 function createLoaderExecutor<TEnv>(
   ctx: HandlerContext<any, TEnv>,
@@ -521,6 +540,7 @@ function createLoaderExecutor<TEnv>(
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
+  carried?: string,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
@@ -539,6 +559,7 @@ function createLoaderExecutor<TEnv>(
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    carried?: string,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -636,7 +657,7 @@ function createLoaderExecutor<TEnv>(
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
     // starts anyway keeps the segment that registers it (loaderOwner).
-    const owningSegmentId = loaderOwner(ctx, loader.$$id);
+    const owningSegmentId = loaderOwner(ctx, loader.$$id, carried);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -1082,7 +1103,19 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    // The loader's own pushes are the calling segment's: a component a
+    // layout's or slot's handler handed the ctx to starts it long after the
+    // walker pinned that segment and moved on (carriedSegmentOf).
+    //
+    // A DSL kickoff (resolveOwnerLoaders) is the exception, and is inside the
+    // loader scope: it calls ctx.use on the request's one ctx, whose
+    // `_pushSegmentId` is the route's, while the pin it set on the ctx is the
+    // DECLARING segment's (an orphan layout's, a slot's). The pin owns there.
+    return useLoader(
+      loader,
+      null,
+      isInsideLoaderScope() ? undefined : carriedSegmentOf(this, ctx),
+    );
   } as typeof ctx.use;
 }
 

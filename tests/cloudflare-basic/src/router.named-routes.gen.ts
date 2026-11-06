@@ -114,6 +114,7 @@ export const NamedRoutes = {
   handlesAfterAwaitDefer: "/handles-after-await/defer",
   handlesAfterAwaitHandler: "/handles-after-await/handler",
   handlesAfterAwaitLoader: "/handles-after-await/loader",
+  handlesAfterAwaitLoaderStart: "/handles-after-await/loader-start",
   handlesAfterAwaitPlain: "/handles-after-await/plain",
   hcHeld: "/handles-commit/held/:id",
   hcHeldNovt: "/handles-commit/held-novt/:id",

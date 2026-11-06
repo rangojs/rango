@@ -494,6 +494,12 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // replays into it. A route's layouts and page share one handler ctx and
     // so one key; the recorded ids are the first caller's. Its ctx's claim
     // keeps a replayed loader's pushes to one copy per request.
+    //
+    // The segment is the ctx's own when it carries one: a layout's or a slot's
+    // ctx does (withSegmentScope), and the route's does (`_pushSegmentId`), so
+    // a component the handler handed its ctx to replays there, where its own
+    // push files (handlePushSegment, router/loader-resolution.ts). The live
+    // pin would name whichever segment the walker pinned since.
     let callerSegmentId: string | undefined;
     let claimLoaderPushes: ((loaderId: string) => boolean) | undefined;
     // A fetchable loader's request body (loader-fetch.ts) is an input the
@@ -506,11 +512,16 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         if (ctx.body !== undefined || ctx.formData !== undefined) {
           hasBodyCtx = true;
         }
-        // Only an argument with a pin (a handler or loader ctx, or its copy)
-        // is the caller: a request context before it has no claim.
+        // Only an argument with a pin or a carried segment (a handler or
+        // loader ctx, or its copy) is the caller: a request context before it
+        // has no claim.
         if (callerSegmentId === undefined) {
+          const carried: string | undefined =
+            ctx._handleSegmentId ?? ctx._pushSegmentId;
           callerSegmentId =
-            ctx._currentSegmentId === undefined ? undefined : segmentPinOf(ctx);
+            ctx._currentSegmentId === undefined && carried === undefined
+              ? undefined
+              : segmentPinOf(ctx, carried);
           claimLoaderPushes = ctx._claimLoaderPushes;
         }
         if (ctx.params && typeof ctx.params === "object") {

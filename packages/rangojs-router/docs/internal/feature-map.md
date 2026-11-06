@@ -271,8 +271,12 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 (`_handleSegmentId` on a layout's or slot's `withSegmentScope` child, the
 route's `_pushSegmentId` on the request's one ctx; `router/handler-context.ts`,
 `resolveEntryHandler`) for a push from a component the handler handed that ctx
-to, its own `use` keeping the segment when the call lost the receiver; see
-execution-model.md "A streamed handler keeps its segment".
+to, its own `use` keeping the segment when the call lost the receiver. The same
+carried segment (`carriedSegmentOf`, `router/loader-resolution.ts`) names the
+owner of a loader the ctx starts (`loaderOwner`) and the caller segment a
+`"use cache"` call records and replays under (`cache/cache-runtime.ts`); a DSL
+kickoff, which calls `ctx.use` on the request's ctx inside `runInsideLoaderScope`,
+keeps its pin; see execution-model.md "A streamed handler keeps its segment".
 
 ---
 

@@ -21,6 +21,14 @@ Each handler's ctx carries its own segment, and its own `use` keeps it when a
 component calls it detached from the ctx. The push is still rejected, at the
 same moment, and production still shows no message.
 
+The segment is the ctx's own for the work that ctx starts, not only for its own
+push: a loader a component reads with `ctx.use(Loader)` files its body's pushes
+under the handler's segment, and a `"use cache"` function the ctx is passed to
+replays a HIT's pushes there too. Both read the walker's shared segment id
+before, so a layout's or a slot's read from a component after an `await` landed
+in the child route's segment, and the `"use cache"` HIT landed in a different
+segment from the call that wrote the entry.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

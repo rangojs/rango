@@ -419,6 +419,8 @@ export function runHandlesAfterAwaitTests(
   for (const variant of [
     {
       name: "route handler",
+      title:
+        "an async component given the route handler's ctx that pushes after await wait(1000) throws LateHandlePushError on the document and on a navigation",
       path: "/component",
       link: "haa-link-component",
       // The message names the segment whose ctx made the push: the route's
@@ -427,14 +429,24 @@ export function runHandlesAfterAwaitTests(
     },
     {
       name: "layout handler",
+      title:
+        "an async component given the layout handler's ctx that pushes after await wait(1000) throws LateHandlePushError on the document and on a navigation",
       path: "/component-layout",
       link: "haa-link-component-layout",
       segment: /for segment "\w*L\d+" was pushed after/,
     },
+    {
+      // A loader the layout's component starts through its ctx: the run's own
+      // pushes are the layout's, not the route's the walker pinned since.
+      name: "loader the layout started",
+      title:
+        "a loader a layout's component starts through that layout's ctx, pushing after await wait(1000), throws LateHandlePushError naming the layout on the document and on a navigation",
+      path: "/loader-start",
+      link: "haa-link-loader-start",
+      segment: /for segment "\w*L\d+" was pushed after/,
+    },
   ]) {
-    test(`an async component given the ${variant.name}'s ctx that pushes after await wait(1000) throws LateHandlePushError on the document and on a navigation`, async ({
-      page,
-    }) => {
+    test(variant.title, async ({ page }) => {
       test.setTimeout(TEST_TIMEOUT);
       const response = await page.goto(options.url(BASE + variant.path));
       expect(response?.status()).toBe(500);

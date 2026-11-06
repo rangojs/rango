@@ -31,6 +31,7 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   createHandle,
+  createLoader,
   createRouter,
   urls,
   type HandlerContext,
@@ -151,9 +152,13 @@ async function matchedOf(flight: string | undefined): Promise<string[]> {
   return metadata.matched;
 }
 
-async function serve(url: string, hold: Hold) {
+async function serve(
+  url: string,
+  hold: Hold,
+  router: Parameters<typeof serveShellRequest>[0] = makeRouter(hold),
+) {
   errors.length = 0;
-  const result = await serveShellRequest(makeRouter(hold), url, {
+  const result = await serveShellRequest(router, url, {
     cacheStore: new MemorySegmentCacheStore(),
   });
   return { errors: [...errors], matched: await matchedOf(result.flight) };
@@ -312,5 +317,176 @@ describe("a component an intercept handler handed its ctx to", () => {
     // after the response: the message is the only thing to read.
     expect(latePushSegment([...errors])).toBe("M0L0L0.@modal");
     await result.readHandles();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The same question for work a handler's ctx STARTS: a loader it reads with
+// ctx.use(Loader), whose body pushes, and a "use cache" function it passes the
+// ctx to, whose pushes a HIT replays.
+// ---------------------------------------------------------------------------
+
+/** A loader a handler's ctx starts; its body pushes at kickoff. */
+const StartedData = createLoader(async (ctx) => {
+  ctx.use(Crumbs)("from-loader");
+  return { started: true };
+});
+
+/** The ctx as the component holds it, as LatePush varies it above. */
+const START = {
+  ctx: (ctx: HandlerContext) => ctx.use,
+  detached: (ctx: HandlerContext) => {
+    const { use } = ctx;
+    return use;
+  },
+  copy: (ctx: HandlerContext) => {
+    const copy = { ...ctx };
+    return copy.use;
+  },
+} as const;
+
+/** An async component starting a loader through the ctx its handler gave it. */
+function startsLoader(hold: Hold) {
+  const read = START[hold];
+  return async function StartsLoader({ ctx }: { ctx: HandlerContext }) {
+    const use = read(ctx);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Awaited: the push is rejected (the run is after handle collection) and
+    // the router reports it through onError, which is what the test reads.
+    await use(StartedData).catch(() => {});
+    return <span>starts-loader</span>;
+  };
+}
+
+/**
+ * The segment the loader's own push named: the loader body pushes at kickoff,
+ * which is after handle collection here, so the message is all there is.
+ */
+function loaderPushSegment(reported: string[]): string {
+  expect(reported).toHaveLength(1);
+  return latePushSegment(reported);
+}
+
+function loaderRouter(hold: Hold, kind: "layout" | "route" | "slot") {
+  const StartsLoader = startsLoader(hold);
+  const onError = ({ error }: { error: unknown }): void => {
+    errors.push(error instanceof Error ? error.message : String(error));
+  };
+  return createRouter({ onError }).routes(
+    urls(({ path, layout, parallel }) => [
+      layout(
+        () => <main>shell</main>,
+        () => [
+          kind === "layout"
+            ? layout(
+                (ctx) => (
+                  <div>
+                    <StartsLoader ctx={ctx} />
+                  </div>
+                ),
+                () => [path("/p", () => <p>page</p>, { name: "p" })],
+              )
+            : path(
+                "/p",
+                kind === "route"
+                  ? (ctx) => <StartsLoader ctx={ctx} />
+                  : () => <p>page</p>,
+                { name: "p" },
+                kind === "route"
+                  ? // A slot resolves after the route handler: the pin stops
+                    // being the route's.
+                    () => [parallel({ "@aside": () => <aside>aside</aside> })]
+                  : () => [
+                      parallel({
+                        "@panel": (ctx) => <StartsLoader ctx={ctx} />,
+                      }),
+                    ],
+              ),
+        ],
+      ),
+    ]),
+  );
+}
+
+describe("a loader a handler's ctx starts", () => {
+  for (const hold of ["ctx", "detached", "copy"] as const) {
+    it(`files its pushes under the layout whose ctx started it (${hold})`, async () => {
+      const { errors: reported, matched } = await serve(
+        "/p",
+        "ctx",
+        loaderRouter(hold, "layout"),
+      );
+      const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+      expect(loaderPushSegment(reported)).toBe(layout);
+    });
+
+    it(`files its pushes under the route whose ctx started it (${hold})`, async () => {
+      const { errors: reported, matched } = await serve(
+        "/p",
+        "ctx",
+        loaderRouter(hold, "route"),
+      );
+      const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+      expect(loaderPushSegment(reported)).toBe(route);
+    });
+
+    it(`files its pushes under the slot whose ctx started it (${hold})`, async () => {
+      const { errors: reported, matched } = await serve(
+        "/p",
+        "ctx",
+        loaderRouter(hold, "slot"),
+      );
+      const slot = matched.find((id) => id.endsWith(".@panel"))!;
+      expect(loaderPushSegment(reported)).toBe(slot);
+    });
+  }
+});
+
+describe('a "use cache" call through a handler\'s ctx', () => {
+  it("replays its pushes into the segment the body's own push files under", async () => {
+    const { Crumbs: CachedCrumbs, pushCachedCrumbs } =
+      await import("./fixtures/late-push-cached-crumbs.js");
+    /** The layout's handler pushes, then hands its ctx to a late caller. */
+    async function CallsCached({ ctx }: { ctx: HandlerContext }) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await pushCachedCrumbs(ctx, "cached");
+      return <span>calls-cached</span>;
+    }
+    const router = createRouter({
+      onError: ({ error }) => {
+        errors.push(error instanceof Error ? error.message : String(error));
+      },
+    }).routes(
+      urls(({ path, layout }) => [
+        layout(
+          () => <main>shell</main>,
+          () => [
+            layout(
+              async (ctx) => (
+                <div>
+                  {await pushCachedCrumbs(ctx, "cached")}
+                  <CallsCached ctx={ctx} />
+                </div>
+              ),
+              () => [path("/p", () => <p>page</p>, { name: "p" })],
+            ),
+          ],
+        ),
+      ]),
+    );
+    errors.length = 0;
+    const result = await serveShellRequest(router, "/p", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    const matched = await matchedOf(result.flight);
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    // The handler's call runs the body (one push), the component's is a fresh
+    // HIT replaying it: both file under the layout whose ctx called them, so
+    // the two messages name the same segment.
+    expect([...errors].map((message) => latePushSegment([message]))).toEqual([
+      layout,
+      layout,
+    ]);
+    expect(CachedCrumbs.$$id).toBeTruthy();
   });
 });

@@ -22,3 +22,14 @@ export const HaaAwaitLoader = createLoader(async (ctx) => {
   });
   return { v, run: loaderRuns };
 });
+
+/** Case 6: a loader a handler's ctx starts, pushing after its own await. */
+export const HaaStartedLoader = createLoader(async (ctx) => {
+  await wait(HAA_WAIT_MS);
+  ctx.use(Meta)({ title: "Started Loader" });
+  ctx.use(Breadcrumbs)({
+    label: "Started Loader",
+    href: "/handles-after-await/loader-start",
+  });
+  return { started: true };
+});

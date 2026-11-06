@@ -256,6 +256,7 @@ export const routes = {
   handlesAfterAwaitDefer: "/handles-after-await/defer",
   handlesAfterAwaitHandler: "/handles-after-await/handler",
   handlesAfterAwaitLoader: "/handles-after-await/loader",
+  handlesAfterAwaitLoaderStart: "/handles-after-await/loader-start",
   handlesAfterAwaitPlain: "/handles-after-await/plain",
   "hashNavigation.index": "/hash-navigation",
   hcHeld: "/handles-commit/held/:id",
