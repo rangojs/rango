@@ -152,6 +152,17 @@ function ProductLayout(ctx: HandlerContext<{ slug: string }>): React.ReactNode {
 function ProductSlot(ctx: HandlerContext<{ slug: string }>): React.ReactNode {
   return <aside>{`slot:${product(ctx.params.slug)}`}</aside>;
 }
+// The same two handlers, redirecting a product that moved.
+function MovedLayout(ctx: HandlerContext<{ slug: string }>): React.ReactNode {
+  const moved = movedFor(ctx.params.slug);
+  if (moved !== undefined) throw redirect(moved);
+  return <header>{`layout:${product(ctx.params.slug)}`}</header>;
+}
+function MovedSlot(ctx: HandlerContext<{ slug: string }>): React.ReactNode {
+  const moved = movedFor(ctx.params.slug);
+  if (moved !== undefined) throw redirect(moved);
+  return <aside>{`slot:${product(ctx.params.slug)}`}</aside>;
+}
 
 const LiveProductDef = Prerender<{ slug: string }>(
   async () => [],
@@ -290,6 +301,20 @@ function makeRouter(
         path("/moved-failing/:slug", MovedThenFailingDef, {
           name: "movedFailing",
         }),
+        layout(MovedLayout, () => [
+          path("/moved-layout/:slug", StaticDef, { name: "movedLayout" }),
+        ]),
+        layout(
+          () => <header>chrome</header>,
+          () => [
+            parallel({ "@aside": MovedSlot }),
+            path(
+              "/moved-slot/:slug",
+              tree((slug) => <h1>{`title:${slug}`}</h1>),
+              { name: "movedSlot" },
+            ),
+          ],
+        ),
         path("/failing-moved/:slug", FailingThenMovedDef, {
           name: "failingMoved",
         }),
@@ -830,23 +855,41 @@ describe("on-demand prerender: removing a refreshed page", () => {
       expect(gone.body).not.toContain("plain-frozen:Alpha");
     });
 
-    it("a component in the tree that redirects counts too", async () => {
-      const router = makeRouter({ store });
-      const prerender = router.prerender({ env: {} });
-      await prerender("/moved-tree/a");
-      expect(
-        (await serveShellRequest(router, "/moved-tree/a")).flight,
-      ).toContain("title:Alpha");
+    // A redirect counts wherever it happens in the render, as a notFound()
+    // does: a handler's returned/thrown Response surfaces through segment
+    // resolution, a component's through a Flight error row. What the visitor
+    // gets is the route's own answer: a layout or parallel slot handler is a
+    // live handler and issues the redirect itself, while a component below the
+    // route handler of a plain on-demand route is never reached, because the
+    // gated producer throws first.
+    const cases: Array<[where: string, path: string, status: number]> = [
+      ["a server component", "/moved-tree/a", 404],
+      ["a layout handler", "/moved-layout/a", 302],
+      ["a parallel slot handler", "/moved-slot/a", 302],
+    ];
+    for (const [where, path, status] of cases) {
+      it(`${where} that redirects counts too`, async () => {
+        const router = makeRouter({ store });
+        const prerender = router.prerender({ env: {} });
+        expect(await prerender(path)).toMatchObject({ status: "rendered" });
+        expect((await serveShellRequest(router, path)).response.status).toBe(
+          200,
+        );
 
-      movedTo.set("a", "/products/b");
-      expect(await prerender("/moved-tree/a")).toMatchObject({
-        ok: true,
-        status: "removed",
+        movedTo.set("a", "/products/b");
+        expect(await prerender(path)).toMatchObject({
+          ok: true,
+          status: "removed",
+        });
+        const served = await serveShellRequest(router, path);
+        expect(served.response.status).toBe(status);
+        if (status === 302) {
+          expect(served.response.headers.get("location")).toBe("/products/b");
+        } else {
+          expect(served.body).not.toContain("title:Alpha");
+        }
       });
-      expect(
-        (await serveShellRequest(router, "/moved-tree/a")).response.status,
-      ).toBe(404);
-    });
+    }
 
     // One render that redirects and hits an outage: the outage decides,
     // whichever component reports first, exactly as for a notFound().

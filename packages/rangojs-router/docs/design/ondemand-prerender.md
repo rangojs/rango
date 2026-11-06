@@ -803,14 +803,16 @@ It makes `onlyIfStale` lie about freshness. A baked redirect would report
 `already-fresh` from a sweep, which says the page is up to date when what is
 up to date is a URL that may have moved again.
 
-What the marker gives up is the visitor's `302` on a route with no live
-handler: a plain `Prerender(..., { onDemand })` route never runs its handler in
-production (`gateOnDemandProducer`), so it answers the 404 of a param with no
-entry, where a `Passthrough` route's live handler issues the redirect per
-request. That is the same answer the route gives for a param that was never
-prerendered, and the honest one: the router cannot run the handler that knows
-the target. An app that needs the redirect served should make the route a
-`Passthrough`.
+What the marker gives up is the visitor's `302` when the redirect came from a
+plain `Prerender(..., { onDemand })` route's own handler: production never runs
+that handler (`gateOnDemandProducer`), so the visitor gets the 404 of a param
+with no entry. That is the same answer the route gives for a param that was
+never prerendered, and the honest one: the router cannot run the handler that
+knows the target. A redirect from anywhere else still reaches the visitor,
+because that code runs on a live request: a `Passthrough` route's live handler,
+a layout handler, a parallel slot handler, or any live segment below them.
+An app whose plain on-demand route has to serve the redirect should make the
+route a `Passthrough`.
 
 ### Rechecked or permanent
 

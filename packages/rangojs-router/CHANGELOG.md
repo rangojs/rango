@@ -14,10 +14,12 @@ and a cron sweep with `onlyIfStale` retried and reported a failure forever.
 outcome like `notFound()`: the refresh stores the "removed" marker and reports
 `{ ok: true, path: "on-demand", status: "removed" }`, stamped with the route's
 `ttl` and `tags` so a sweep rechecks it like a page. The redirect itself is
-not stored: nothing in the prerender store answers, so the route's own handler
-does. A `Passthrough` route's live handler issues its redirect per request; a
-plain `Prerender(..., { onDemand })` route, which has no live handler in
-production, answers the 404 its own no-data path produces. A redirect collected
+not stored: nothing in the prerender store answers, so the route's own code
+does. A `Passthrough` route's live handler, a layout handler and a parallel
+slot handler all issue their redirect per request; a plain
+`Prerender(..., { onDemand })` route never runs its own handler in production,
+so a redirect thrown there leaves the visitor the 404 its no-data path
+produces. A redirect collected
 in the same render as a real failure still loses to it, so a flaky data source
 never removes a page. A later refresh renders again: a page if the handler
 returns one, the marker again if it still redirects.

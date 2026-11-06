@@ -887,11 +887,13 @@ build-time entry is not served.
 
 A `redirect()` is stored as the marker, never as the redirect itself: the
 marker makes nothing in the prerender store answer, so the route decides per
-request. A `Passthrough` route's live handler issues its own `redirect()`;
-a plain `Prerender(..., { onDemand })` route has no live handler in
-production, so it answers the 404 of a param with no entry. Storing the
-redirect instead would freeze its `Location` at refresh time and serve it
-without a render, which is wrong for a target that depends on live data.
+request. A `Passthrough` route's live handler issues its own `redirect()`,
+and so does a layout or parallel slot handler that throws one. A plain
+`Prerender(..., { onDemand })` route never runs its own handler in
+production, so a redirect thrown there leaves the visitor the 404 of a param
+with no entry. Storing the redirect instead would freeze its `Location` at
+refresh time and serve it without a render, which is wrong for a target that
+depends on live data.
 
 The writers differ in how long they last (`remove()` and a `notFound()`
 below; a refresh that redirects stamps its marker exactly like the
