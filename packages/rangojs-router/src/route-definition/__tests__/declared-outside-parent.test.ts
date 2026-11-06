@@ -7,6 +7,10 @@
  * under the root, so L never rendered and the route answered 200 from the root.
  * The shape is now rejected where it is written.
  *
+ * The per-helper table is the "every helper marks its item" guard: a helper
+ * added without recording the entry it declared its item under would escape
+ * the check, and its row here fails until it records one.
+ *
  * The controls pin the shapes that must keep working: the same definition
  * created inside the callback, and the documented orphan `cache()` form, where
  * ctx.parent moves down to the cache entry so the siblings after it are
@@ -14,9 +18,24 @@
  */
 import { describe, expect, it } from "vitest";
 import { parentEntry, withDslStore } from "./dsl-test-helpers.js";
-import { cache, layout, loader, route } from "../dsl-helpers.js";
+import {
+  cache,
+  errorBoundary,
+  intercept,
+  layout,
+  loading,
+  loader,
+  middleware,
+  notFoundBoundary,
+  parallel,
+  revalidate,
+  route,
+  transition,
+} from "../dsl-helpers.js";
 import { createIncludeHelper } from "../../urls/include-helper.js";
+import { createPathHelper } from "../../urls/path-helper.js";
 import { urls } from "../../urls.js";
+import type { AllUseItems } from "../../route-types.js";
 import type { LoaderDefinition } from "../../types.js";
 
 function Shell() {
@@ -36,47 +55,52 @@ function testLoaderDef(): LoaderDefinition<any> {
 
 const NESTED_IN_LAYOUT = /declared outside the layout\(\) it is nested in/;
 
-describe("a definition nested under an entry it was not created in", () => {
-  it("throws for a route created above the layout that nests it", () => {
-    const parent = parentEntry();
-    expect(() =>
-      withDslStore(parent, () => {
-        const a = route("a", Page);
-        layout(Shell, () => [a]);
-      }),
-    ).toThrow(NESTED_IN_LAYOUT);
-  });
+/** One item per helper, each declared under the callback's own entry. */
+const DECLARATIONS: Array<[string, () => AllUseItems]> = [
+  ["route()", () => route("a", Page)],
+  ["path()", () => createPathHelper<any>()("/b", Page, { name: "b" })],
+  ["layout()", () => layout(Shell)],
+  ["cache()", () => cache({ ttl: 60 }, () => [])],
+  ["middleware()", () => middleware(() => undefined)],
+  ["transition()", () => transition({})],
+  ["parallel()", () => parallel({ "@side": Page })],
+  ["intercept()", () => intercept("@modal", "a", Page)],
+  ["loader()", () => loader(testLoaderDef())],
+  ["loading()", () => loading(null as never)],
+  ["revalidate()", () => revalidate(() => true)],
+  ["errorBoundary()", () => errorBoundary(null as never)],
+  ["notFoundBoundary()", () => notFoundBoundary(null as never)],
+  [
+    "include()",
+    () =>
+      createIncludeHelper<any>()(
+        "/block",
+        urls(({ path }) => [path("/a", Page)]),
+      ),
+  ],
+];
 
-  it("throws for a route created above a cache() block that nests it", () => {
+describe("a definition nested under an entry it was not created in", () => {
+  for (const [helper, declare] of DECLARATIONS) {
+    it(`throws for a ${helper} item created above the layout that nests it`, () => {
+      const parent = parentEntry();
+      expect(() =>
+        withDslStore(parent, () => {
+          const item = declare();
+          layout(Shell, () => [item]);
+        }),
+      ).toThrow(NESTED_IN_LAYOUT);
+    });
+  }
+
+  it("names the callback the item belongs in", () => {
     const parent = parentEntry();
     expect(() =>
       withDslStore(parent, () => {
         const a = route("a", Page);
         cache({ ttl: 60 }, () => [a]);
       }),
-    ).toThrow(/declared outside the cache\(\) it is nested in/);
-  });
-
-  it("throws for a loader created above the layout that nests it", () => {
-    const parent = parentEntry();
-    expect(() =>
-      withDslStore(parent, () => {
-        const data = loader(testLoaderDef());
-        layout(Shell, () => [data]);
-      }),
-    ).toThrow(NESTED_IN_LAYOUT);
-  });
-
-  it("throws for an include() created above the layout that nests it", () => {
-    const parent = parentEntry();
-    const include = createIncludeHelper<any>();
-    const patterns = urls(({ path }) => [path("/a", Page, { name: "a" })]);
-    expect(() =>
-      withDslStore(parent, () => {
-        const block = include("/block", patterns);
-        layout(Shell, () => [block]);
-      }),
-    ).toThrow(NESTED_IN_LAYOUT);
+    ).toThrow(/route\(\) declared outside the cache\(\) it is nested in \[/);
   });
 
   it("keeps a route created inside the layout's own callback", () => {
