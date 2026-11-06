@@ -404,6 +404,8 @@ export const NamedRoutes = {
   "settledLaneErrors.ok": "/settled-lane-errors/ok",
   settledReadHub: "/settled-read",
   settledReadPage: "/settled-read/page",
+  "sharedMountA.settings": "/shared-mount-a/settings",
+  "sharedMountB.settings": "/shared-mount-b/settings",
   shopArchive: "/shop/:slug.archive.html",
   shopCategory: "/shop/:categoryId",
   shopProduct: "/shop/:productId.html",

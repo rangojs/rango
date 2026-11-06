@@ -38,6 +38,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createElement, isValidElement, type ReactNode } from "react";
 import { createRouter } from "../../../router.js";
+import { invariant } from "../../../errors.js";
 import { createLoader } from "../../../loader.rsc.js";
 import { Static } from "../../../static-handler.js";
 import { urls } from "../../../urls.js";
@@ -84,11 +85,17 @@ vi.mock("@vitejs/plugin-rsc/rsc/client", async () => ({
     new Response(stream).json(),
 }));
 
+const StaticHit = Static(
+  () => el("p", "static live"),
+  undefined,
+  "walker#Static",
+);
+
 // The build-time static store holds one Static() handler's output, so its
-// route is a static hit (tryStaticHandler); every other lookup misses.
-globalThis.__STATIC_MANIFEST = {
-  "walker#Static": async () => ({ default: JSON.stringify("static hit") }),
-};
+// route is a static hit (tryStaticHandler); every other lookup misses. The
+// store is keyed by the mount's artifact key (definition + mount scope), so
+// beforeAll reads it off the definition the router mounted instead of assuming
+// the definition's id alone.
 afterAll(() => {
   globalThis.__STATIC_MANIFEST = undefined;
 });
@@ -250,11 +257,7 @@ beforeAll(async () => {
               }),
             ],
           ),
-          path(
-            "/static-hit",
-            Static(() => el("p", "static live"), undefined, "walker#Static"),
-            { name: "staticHit" },
-          ),
+          path("/static-hit", StaticHit, { name: "staticHit" }),
           layout(
             () => el("section", "response slot"),
             () => [
@@ -273,6 +276,12 @@ beforeAll(async () => {
       ),
     ],
   );
+  const staticKey = StaticHit.$$staticMounts?.[0]?.key;
+  invariant(staticKey !== undefined, "the router did not mount StaticHit");
+  globalThis.__STATIC_MANIFEST = {
+    [staticKey]: async () => ({ default: JSON.stringify("static hit") }),
+  };
+
   await buildRouterTrieFromUrlpatterns(router);
   const request = new Request("https://example.com/probe");
   // match() is the internal router surface the RSC handler calls.

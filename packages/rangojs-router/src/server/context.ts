@@ -886,7 +886,6 @@ export function stampStaticDefScope(
 
   const key = staticArtifactKey(def.$$id as string, {
     routeName: bakeRouteName,
-    rootScoped,
     routerId,
   });
   const mounts = (def.$$staticMounts ??= [] as StaticMount[]) as StaticMount[];

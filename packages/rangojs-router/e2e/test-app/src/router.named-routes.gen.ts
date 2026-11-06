@@ -648,6 +648,8 @@ export const NamedRoutes = {
   "settledLaneErrors.ok": "/settled-lane-errors/ok",
   settledReadHub: "/settled-read",
   settledReadPage: "/settled-read/page",
+  "sharedMountA.settings": "/shared-mount-a/settings",
+  "sharedMountB.settings": "/shared-mount-b/settings",
   sharedRefetch: "/shared-refetch",
   sharedRefetchError: "/shared-refetch-error",
   sharedRefetchErrorMixed: "/shared-refetch-error-mixed",

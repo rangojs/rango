@@ -169,7 +169,7 @@ describe("a Static() def mounted twice", () => {
     );
 
     const keyOf = (def: StaticHandlerDefinition, scope: string) =>
-      `test#${def.$$id.split("#")[1]}::${ROUTER_ID}::${scope}::scoped`;
+      `test#${def.$$id.split("#")[1]}::${ROUTER_ID}::${scope}`;
     const expectedKeys = ["a", "b"].flatMap((scope) => [
       keyOf(nav, scope),
       keyOf(aside, scope),
@@ -202,11 +202,7 @@ describe("a Static() def mounted twice", () => {
 
     const { assets } = await bake(patterns, { SharedNav: nav });
 
-    expect(Object.keys(assets)).toEqual([
-      `test#SharedNav::${ROUTER_ID}::a::scoped`,
-    ]);
-    expect(assets[`test#SharedNav::${ROUTER_ID}::a::scoped`]).toContain(
-      "/a/settings",
-    );
+    expect(Object.keys(assets)).toEqual([`test#SharedNav::${ROUTER_ID}::a`]);
+    expect(assets[`test#SharedNav::${ROUTER_ID}::a`]).toContain("/a/settings");
   });
 });

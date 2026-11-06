@@ -320,7 +320,10 @@ import { GuidePlainLoader } from "./loaders/guide-plain.js";
 import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
-import { staticSharedMountPatterns } from "./pages/static-shared-mount.js";
+import {
+  sharedMountScopeA,
+  sharedMountScopeB,
+} from "./pages/static-shared-mount.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
 import { SearchPage } from "./pages/search.js";
 import { transformCasesPatterns } from "./pages/transform-cases.js";
@@ -3177,7 +3180,12 @@ export const urlpatterns = urls(
 
         // One Static() layout and one Static() slot, each mounted in two named
         // include scopes (one artifact per mount scope).
-        include("/", staticSharedMountPatterns, { name: "" }),
+        include("/shared-mount-a", sharedMountScopeA, {
+          name: "sharedMountA",
+        }),
+        include("/shared-mount-b", sharedMountScopeB, {
+          name: "sharedMountB",
+        }),
 
         // Composable docs package (demonstrates include + factory pattern)
         include("/docs", docsPatterns, { name: "docs" }),

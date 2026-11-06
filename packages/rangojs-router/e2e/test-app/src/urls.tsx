@@ -65,7 +65,10 @@ import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { orphanFetchablePatterns } from "./urls/orphan-fetchable.js";
 import { prerenderPatterns } from "./urls/prerender.js";
-import { staticSharedMountPatterns } from "./urls/static-shared-mount.js";
+import {
+  sharedMountScopeA,
+  sharedMountScopeB,
+} from "./urls/static-shared-mount.js";
 import { onDemandPatterns } from "./urls/on-demand-prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
@@ -1396,7 +1399,8 @@ export const urlpatterns = urls(
 
       // One Static() layout and one Static() slot, each mounted in two named
       // include scopes (one artifact per mount scope).
-      include("/", staticSharedMountPatterns, { name: "" }),
+      include("/shared-mount-a", sharedMountScopeA, { name: "sharedMountA" }),
+      include("/shared-mount-b", sharedMountScopeB, { name: "sharedMountB" }),
 
       // On-demand (ISR-style) prerender: Passthrough + onDemand route and its
       // requestless router.prerender() trigger.

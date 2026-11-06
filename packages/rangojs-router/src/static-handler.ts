@@ -115,19 +115,29 @@ export interface StaticMount {
  * mount its own artifact: `entry.staticHandlerId` carries this key at runtime
  * and the collector writes the manifest entry under it.
  *
- * Every scope value is percent-encoded, so a route name or router id containing
- * "::" cannot compose another mount's key (a collision would serve the wrong
+ * Only the owning router and the mount's route name compose the key, because
+ * both sides must compute the SAME key from different stores: build discovery
+ * stamps it under the router's own evaluation store, and the runtime rebuilds
+ * the route's entries per request (router/manifest.ts), where the include's
+ * name prefix is the value both paths reproduce exactly. The mount's root scope
+ * is a bake input, not part of the key: the two paths still disagree about it
+ * for a named include nested under a transparent one (build says scoped,
+ * runtime says root), and the runtime could not tell such mounts apart anyway.
+ * Two mounts that share a key therefore share one artifact — as every mount of
+ * a definition did before, so this never regresses one.
+ *
+ * Every value is percent-encoded, so a route name or router id containing "::"
+ * cannot compose another mount's key (a collision would serve the wrong
  * artifact silently).
  */
 export function staticArtifactKey(
   handlerId: string,
-  mount: Pick<StaticMount, "routeName" | "rootScoped" | "routerId">,
+  mount: Pick<StaticMount, "routeName" | "routerId">,
 ): string {
   return [
     handlerId,
     encodeURIComponent(mount.routerId ?? ""),
     encodeURIComponent(mount.routeName ?? ""),
-    mount.rootScoped === false ? "scoped" : "root",
   ].join("::");
 }
 

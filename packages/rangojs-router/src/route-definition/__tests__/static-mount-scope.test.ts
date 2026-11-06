@@ -104,8 +104,8 @@ describe("Static() mount scope", () => {
       .staticHandlerId;
     const keyB = (b.root.layout[0] as { staticHandlerId: string })
       .staticHandlerId;
-    expect(keyA).toBe("test#SharedNav::mount-router::mountA::scoped");
-    expect(keyB).toBe("test#SharedNav::mount-router::mountB::scoped");
+    expect(keyA).toBe("test#SharedNav::mount-router::mountA");
+    expect(keyB).toBe("test#SharedNav::mount-router::mountB");
     expect(mountsOf(SharedNav)).toEqual([
       {
         key: keyA,
@@ -164,8 +164,8 @@ describe("Static() mount scope", () => {
           staticHandlerIds?: Record<string, string>;
         }
       ).staticHandlerIds?.["@aside"];
-    expect(slotKey(a)).toBe("test#SharedAside::mount-router::mountA::scoped");
-    expect(slotKey(b)).toBe("test#SharedAside::mount-router::mountB::scoped");
+    expect(slotKey(a)).toBe("test#SharedAside::mount-router::mountA");
+    expect(slotKey(b)).toBe("test#SharedAside::mount-router::mountB");
   });
 
   it("a path() mount keys on its full route name, not the include prefix", () => {
@@ -180,7 +180,7 @@ describe("Static() mount scope", () => {
       staticHandlerId: string;
     };
     expect(entry.staticHandlerId).toBe(
-      "test#SharedNav::mount-router::mountA.settings::scoped",
+      "test#SharedNav::mount-router::mountA.settings",
     );
     expect(mountsOf(SharedNav)).toEqual([
       {
@@ -192,7 +192,7 @@ describe("Static() mount scope", () => {
     ]);
   });
 
-  it("a root-scoped mount never shares a key with a named-include mount", () => {
+  it("a mount at root scope keys apart from a named-include mount", () => {
     const SharedNav = staticDef("test#SharedNav");
     const patterns = urls(({ layout }) => [layout(SharedNav, () => [])]);
 
@@ -201,9 +201,9 @@ describe("Static() mount scope", () => {
 
     expect(
       (atRoot.root.layout[0] as { staticHandlerId: string }).staticHandlerId,
-    ).toBe("test#SharedNav::mount-router::::root");
+    ).toBe("test#SharedNav::mount-router::");
     expect(
       (inInclude.root.layout[0] as { staticHandlerId: string }).staticHandlerId,
-    ).toBe("test#SharedNav::mount-router::mountA::scoped");
+    ).toBe("test#SharedNav::mount-router::mountA");
   });
 });
