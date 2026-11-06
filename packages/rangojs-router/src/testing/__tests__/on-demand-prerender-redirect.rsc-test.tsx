@@ -30,19 +30,25 @@ import {
   Prerender,
   redirect,
   urls,
+  type HandlerContext,
 } from "../../index.rsc.js";
 import type { MemoryPrerenderStore } from "../../prerender/index.js";
 
-/** slug -> where the item moved to. Absent: the item is where the URL says. */
-const moved = new Map<string, string>();
+/**
+ * slug -> where the item moved to, and whether the handler opts out of the
+ * same-origin rule for it. Absent: the item is where the URL says.
+ */
+const moved = new Map<string, { to: string; external?: boolean }>();
 const runs = { producer: 0, live: 0 };
 
 const ProductDef = Prerender<{ slug: string }>(
   async () => [],
   async (ctx) => {
     runs.producer += 1;
-    const to = moved.get(ctx.params.slug);
-    if (to !== undefined) throw redirect(to);
+    const m = moved.get(ctx.params.slug);
+    if (m !== undefined) {
+      throw m.external ? redirect(m.to, { external: true }) : redirect(m.to);
+    }
     return <h1>{`${ctx.params.slug}:render-${runs.producer}`}</h1>;
   },
   { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.slug}`] } },
@@ -54,8 +60,10 @@ const GuideDef = Prerender<{ slug: string }>(
   async () => [],
   async (ctx) => {
     runs.producer += 1;
-    const to = moved.get(ctx.params.slug);
-    if (to !== undefined) throw redirect(to);
+    const m = moved.get(ctx.params.slug);
+    if (m !== undefined) {
+      throw m.external ? redirect(m.to, { external: true }) : redirect(m.to);
+    }
     return <h1>{`guide:${ctx.params.slug}:render-${runs.producer}`}</h1>;
   },
   { onDemand: true },
@@ -65,12 +73,46 @@ const Guide = Passthrough(GuideDef, async (ctx) => {
   return <h1>{`live:${ctx.params.slug}`}</h1>;
 });
 
-function makeRouter(prerender: { store: MemoryPrerenderStore }) {
-  return createRouter({ prerender }).routes(
-    urls(({ path }) => [
+// A redirect can come from anywhere in the render, and the producer reports
+// it the same way: a layout handler's, and a component's (which surfaces while
+// the tree is encoded, through the Flight error sink, not the resolution).
+function MovedLayout(ctx: HandlerContext<{ slug: string }>): React.ReactNode {
+  const m = moved.get(ctx.params.slug);
+  if (m !== undefined) throw redirect(m.to);
+  return <header>{ctx.params.slug}</header>;
+}
+
+function MovedComponent({ slug }: { slug: string }): React.ReactNode {
+  const m = moved.get(slug);
+  if (m !== undefined) throw redirect(m.to);
+  return <p>{slug}</p>;
+}
+
+const InLayoutDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => <p>{`in-layout:${ctx.params.slug}`}</p>,
+  { onDemand: true },
+);
+
+const InComponentDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => <MovedComponent slug={ctx.params.slug} />,
+  { onDemand: true },
+);
+
+function makeRouter(
+  prerender: { store: MemoryPrerenderStore },
+  options: { basename?: string } = {},
+) {
+  return createRouter({ prerender, ...options }).routes(
+    urls(({ path, layout }) => [
       path("/products/:slug", ProductDef, { name: "product" }),
       path("/guides/:slug", Guide, { name: "guide" }),
       path("/start", () => <p>start</p>, { name: "start" }),
+      layout(MovedLayout, () => [
+        path("/in-layout/:slug", InLayoutDef, { name: "inLayout" }),
+      ]),
+      path("/in-component/:slug", InComponentDef, { name: "inComponent" }),
     ]),
   );
 }
@@ -99,7 +141,7 @@ describe("on-demand prerender: a refresh that answers with a redirect", () => {
     expect(before.response.status).toBe(200);
     expect(before.flight).toContain("a:render-1");
 
-    moved.set("a", "/products/a-new");
+    moved.set("a", { to: "/products/a-new" });
     const result = await prerender("/products/a");
     expect(result).toMatchObject({
       ok: true,
@@ -135,7 +177,7 @@ describe("on-demand prerender: a refresh that answers with a redirect", () => {
   it("a client navigation gets the Flight soft redirect, not the page", async () => {
     const router = makeRouter({ store });
     await router.prerender({ env: {} })("/start");
-    moved.set("b", "/products/b-new");
+    moved.set("b", { to: "/products/b-new" });
     await router.prerender({ env: {} })("/products/b");
 
     const navigation = await serveShellRequest(router, "/products/b", {
@@ -155,7 +197,7 @@ describe("on-demand prerender: a refresh that answers with a redirect", () => {
     const router = makeRouter({ store });
     const prerender = router.prerender({ env: {} });
 
-    moved.set("c", "/products/c-new");
+    moved.set("c", { to: "/products/c-new" });
     expect(await prerender("/products/c")).toMatchObject({
       status: "redirected",
     });
@@ -179,7 +221,7 @@ describe("on-demand prerender: a refresh that answers with a redirect", () => {
     try {
       const router = makeRouter({ store });
       const prerender = router.prerender({ env: {} });
-      moved.set("d", "/products/d-new");
+      moved.set("d", { to: "/products/d-new" });
       await prerender("/products/d");
 
       // Fresh: nothing renders, and the result says what a request gets.
@@ -212,7 +254,7 @@ describe("on-demand prerender: a refresh that answers with a redirect", () => {
     try {
       const router = makeRouter({ store });
       const prerender = router.prerender({ env: {} });
-      moved.set("e", "/products/e-new");
+      moved.set("e", { to: "/products/e-new" });
       await prerender("/products/e");
 
       clock.mockReturnValue(1_000_000 + 5);
@@ -231,7 +273,7 @@ describe("on-demand prerender: a refresh that answers with a redirect", () => {
     const router = makeRouter({ store });
     const prerender = router.prerender({ env: {} });
 
-    moved.set("f", "/guides/f-new");
+    moved.set("f", { to: "/guides/f-new" });
     expect(await prerender("/guides/f")).toMatchObject({
       ok: true,
       status: "redirected",
@@ -242,6 +284,82 @@ describe("on-demand prerender: a refresh that answers with a redirect", () => {
     expect(response.response.status).toBe(302);
     expect(response.response.headers.get("Location")).toBe("/guides/f-new");
     expect(runs.live).toBe(0);
+  });
+
+  it("an external redirect keeps its opt-in: the document request is the off-host Location, not the app root", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+
+    moved.set("x", {
+      to: "https://elsewhere.example/landing",
+      external: true,
+    });
+    // `{ external: true }` is the opt-in out of the same-origin guard, which
+    // lives on the Response as an out-of-band brand. A stored entry cannot
+    // carry a brand, so the flag travels and the serve path re-brands: without
+    // it the outgoing guard rewrites the Location to "/".
+    await prerender("/products/x");
+
+    const response = await serveShellRequest(router, "/products/x");
+    expect(response.response.status).toBe(302);
+    expect(response.response.headers.get("Location")).toBe(
+      "https://elsewhere.example/landing",
+    );
+  });
+
+  it("a basename app's stored redirect keeps the basename in its Location", async () => {
+    // A live request prefixes an app-local redirect target with the basename
+    // (prefixBasename, route-definition/redirect.ts). A producer render is a
+    // request too: its context carries `_basename`, so the stored Location is
+    // the one the handler answers with.
+    const router = makeRouter({ store }, { basename: "/app" });
+    const prerender = router.prerender({ env: {} });
+
+    moved.set("y", { to: "/products/y-new" });
+    expect(await prerender("/app/products/y")).toMatchObject({
+      ok: true,
+      status: "redirected",
+      redirect: { status: 302, location: "/app/products/y-new" },
+    });
+
+    const response = await serveShellRequest(router, "/app/products/y");
+    expect(response.response.status).toBe(302);
+    expect(response.response.headers.get("Location")).toBe(
+      "/app/products/y-new",
+    );
+  });
+
+  it("a redirect from a layout handler is stored too", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+
+    moved.set("l", { to: "/products/l-new" });
+    expect(await prerender("/in-layout/l")).toMatchObject({
+      ok: true,
+      status: "redirected",
+      redirect: { status: 302, location: "/products/l-new" },
+    });
+    const response = await serveShellRequest(router, "/in-layout/l");
+    expect(response.response.status).toBe(302);
+    expect(response.response.headers.get("Location")).toBe("/products/l-new");
+  });
+
+  it("a redirect a component throws while the tree is encoded is stored too", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+
+    moved.set("c", { to: "/products/c-new" });
+    // Flight reports a component's throw through its error sink and finishes
+    // the encode; the producer re-throws it and reports the redirect from
+    // there, not from the segment resolution.
+    expect(await prerender("/in-component/c")).toMatchObject({
+      ok: true,
+      status: "redirected",
+      redirect: { status: 302, location: "/products/c-new" },
+    });
+    const response = await serveShellRequest(router, "/in-component/c");
+    expect(response.response.status).toBe(302);
+    expect(response.response.headers.get("Location")).toBe("/products/c-new");
   });
 
   it("a route that is not on-demand still warms: the redirect is only an on-demand answer", async () => {

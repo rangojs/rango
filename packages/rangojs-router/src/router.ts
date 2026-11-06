@@ -735,6 +735,10 @@ export function createRouter<TEnv = any>(
     buildRouterContext,
     mergedRouteMap,
     resolveAllSegments,
+    // A producer render's `redirect()` prefixes an app-local target as a live
+    // request's does (server/request-context `_basename`), so a stored
+    // redirect's Location is the one a visitor gets from the handler.
+    basename,
   };
 
   async function matchForPrerender(

@@ -36,6 +36,8 @@ import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
 import { isRedirectResponse } from "../response-utils.js";
+import { isExternalRedirect } from "../redirect-origin.js";
+import type { StoredRedirect } from "../prerender/writable-store.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -69,6 +71,13 @@ export interface PrerenderMatchDeps<TEnv = any> {
   buildRouterContext: () => RouterContext<TEnv>;
   mergedRouteMap: Record<string, string>;
   resolveAllSegments: RouterContext<TEnv>["resolveAllSegments"];
+  /**
+   * The owning router's basename. Set on the request context as `_basename`, so
+   * a `redirect()` in a producer render prefixes an app-local target exactly
+   * as a live request's does (route-definition/redirect.ts reads it), and a
+   * stored redirect's `Location` is the one the handler answers with.
+   */
+  basename?: string;
 }
 
 /**
@@ -119,7 +128,7 @@ export async function matchForPrerender<TEnv = any>(
    * way a `notFound()` marker is. A build-time render keeps throwing it
    * (`prerender.onError`).
    */
-  redirect?: { status: number; location: string };
+  redirect?: StoredRedirect;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -158,13 +167,17 @@ export async function matchForPrerender<TEnv = any>(
   // Flight encode through firstFlightError. An on-demand run reports it as an
   // outcome so the trigger stores it with the route's ttl and tags; a
   // build-time run rethrows it, keeping prerender.onError's policy.
-  const redirectOutcome = (
-    value: unknown,
-  ): { status: number; location: string } | null =>
+  const redirectOutcome = (value: unknown): StoredRedirect | null =>
     onDemand && value instanceof Response && isRedirectResponse(value)
-      ? { status: value.status, location: value.headers.get("Location")! }
+      ? {
+          status: value.status,
+          location: value.headers.get("Location")!,
+          // The opt-in is a brand on the Response, which a stored entry cannot
+          // carry: it travels as a flag for the serve path to re-brand.
+          ...(isExternalRedirect(value) ? { external: true as const } : {}),
+        }
       : null;
-  const redirectResult = (redirect: { status: number; location: string }) => ({
+  const redirectResult = (redirect: StoredRedirect) => ({
     segments: [],
     handles: "",
     routeName: matched.routeKey,
@@ -356,6 +369,7 @@ export async function matchForPrerender<TEnv = any>(
         // Scope the bake context's own lookups (createPrerenderContext reads it
         // through the request ALS) per router as well.
         _routerId: deps.routerId,
+        ...(deps.basename ? { _basename: deps.basename } : {}),
       };
 
       return runWithRequestContext(minimalRequestContext, async () => {

@@ -84,6 +84,7 @@ import {
 } from "../../cache/cache-scope.js";
 import { ShellRecordUnavailableError } from "../../cache/shell-snapshot.js";
 import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
+import { markExternalRedirect } from "../../redirect-origin.js";
 import { paramsEqual } from "../params-util.js";
 import { markSourceHeld, readsOfAllParams } from "../source-reads.js";
 import { requestHeaders } from "../../server/request-headers.js";
@@ -174,10 +175,17 @@ type StoredSegmentSource =
  * handleRscRendering).
  */
 function storedRedirectResponse(redirect: StoredRedirect): Response {
-  return new Response(null, {
+  const response = new Response(null, {
     status: redirect.status,
     headers: { Location: redirect.location, "X-RSC-Redirect": "soft" },
   });
+  // The handler's `{ external: true }` opt-in cannot be stored as a brand, so
+  // the entry carries the flag and the replayed Response is branded here: the
+  // outgoing 3xx guard (rsc/redirect-guard.ts) and the SPA intercept
+  // (rsc/helpers.ts) otherwise block an off-host Location and land the visitor
+  // on the app root.
+  if (redirect.external === true) markExternalRedirect(response);
+  return response;
 }
 
 /**

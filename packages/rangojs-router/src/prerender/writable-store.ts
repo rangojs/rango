@@ -98,6 +98,15 @@ export interface StoredRedirect {
   status: number;
   /** The `Location` the handler's Response pointed at. */
   location: string;
+  /**
+   * The `{ external: true }` opt-in the handler's redirect carried. The opt-in
+   * itself is an out-of-band brand on the Response (redirect-origin.ts), which
+   * cannot be stored, so it travels as this flag and the serve path re-brands
+   * the Response it replays: without it the outgoing 3xx guard and the SPA
+   * intercept block an off-host `Location` and land the visitor on the app
+   * root. Written only by the router, from the app's own `redirect()`.
+   */
+  external?: true;
 }
 
 /**
@@ -295,7 +304,10 @@ export function isStoredEntryValidFor(
       redirect.status >= 300 &&
       redirect.status < 400 &&
       typeof redirect.location === "string" &&
-      redirect.location !== "",
+      redirect.location !== "" &&
+      // Absent, or exactly the opt-in: a store that hands back anything else
+      // is not answering with a shape the router wrote.
+      (redirect.external === undefined || redirect.external === true),
   ].filter(Boolean).length;
   if (
     candidate.v !== 1 ||

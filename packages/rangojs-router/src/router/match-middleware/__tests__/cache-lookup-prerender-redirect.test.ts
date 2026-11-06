@@ -64,6 +64,7 @@ import {
   type StoredRedirect,
   type WritablePrerenderStore,
 } from "../../../prerender/writable-store.js";
+import { isExternalRedirect } from "../../../redirect-origin.js";
 import type { PrerenderConfig } from "../../../prerender/on-demand.js";
 import type { EntryData } from "../../../server/context.js";
 import type { MatchContext, MatchPipelineState } from "../../match-context.js";
@@ -283,6 +284,29 @@ describe("withCacheLookup: a stored redirect answers the request", () => {
     expect((thrown as Response).status).toBe(308);
   });
 
+  it("an external redirect is replayed with its opt-in branded, so the guard lets it through", async () => {
+    // The opt-in is a WeakSet brand on the Response, which a store cannot
+    // carry: without re-branding, guardOutgoingRedirect (rsc/redirect-guard.ts)
+    // rewrites an off-host Location to the app root.
+    const external = { status: 302, location: "https://elsewhere.example/x" };
+    const plain = await lookup({
+      overlay: (now) => redirectEntry(now, external),
+    });
+    expect((plain.thrown as Response).headers.get("Location")).toBe(
+      external.location,
+    );
+    expect(isExternalRedirect(plain.thrown as Response)).toBe(false);
+
+    const branded = await lookup({
+      overlay: (now) =>
+        redirectEntry(now, { ...external, external: true as const }),
+    });
+    expect(isExternalRedirect(branded.thrown as Response)).toBe(true);
+    expect((branded.thrown as Response).headers.get("Location")).toBe(
+      external.location,
+    );
+  });
+
   it("a stale redirect still answers, and schedules onRevalidate like a stale page", async () => {
     const onRevalidate = vi.fn();
     const { thrown } = await lookup({
@@ -331,6 +355,9 @@ describe("withCacheLookup: what a stored redirect does not answer", () => {
       { v: 1, redirect: { status: 302.5, location: "/product/43" } },
       { v: 1, redirect: { status: 302 } },
       { v: 1, redirect: { status: 302, location: "" } },
+      // The opt-in is `true` or absent; anything else is not a stored shape.
+      { v: 1, redirect: { status: 302, location: "/x", external: false } },
+      { v: 1, redirect: { status: 302, location: "/x", external: "yes" } },
       // A page and a redirect in one envelope: not a shape the router writes.
       {
         v: 1,

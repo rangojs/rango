@@ -360,6 +360,24 @@ describe("createPrerenderTrigger", () => {
       expect(stored.meta.staleAt).toBeDefined();
     });
 
+    it("keeps the external opt-in the producer reported", async () => {
+      const external = {
+        status: 302,
+        location: "https://elsewhere.example/x",
+        external: true as const,
+      };
+      const { trigger, store } = harness({
+        runProducer: async () => output({ redirect: external }),
+      });
+
+      expect(await trigger("/products/42")).toMatchObject({
+        ok: true,
+        status: "redirected",
+        redirect: external,
+      });
+      expect(store.entries()[0]![1]).toMatchObject({ redirect: external });
+    });
+
     it("replaces a page stored by an earlier refresh, and a later refresh replaces the redirect", async () => {
       const store = createMemoryPrerenderStore();
       let answer: ProducerOutput = output();
