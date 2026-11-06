@@ -1022,6 +1022,40 @@ describe("createPrerenderTrigger", () => {
         expect(stored?.meta.staleAt).toBeGreaterThan(stored!.meta.storedAt);
       });
 
+      it("a redirecting render writes nothing and reports skipped-redirect: the page stored before keeps serving", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        const page = store.peek(productKey());
+
+        runProducer.mockResolvedValueOnce(output({ redirect: true }));
+        expect(await trigger("/products/42")).toEqual({
+          ok: false,
+          path: "on-demand",
+          status: "skipped-redirect",
+          target: "/products/42",
+          routeName: "products.detail",
+        });
+        // Neither the redirect nor a "removed" marker: the entry is untouched.
+        expect(store.peek(productKey())).toBe(page);
+        expect(store.size).toBe(1);
+      });
+
+      it("a redirecting render on a cold target writes nothing at all", async () => {
+        const { trigger, store } = harness({
+          runProducer: async () => output({ redirect: true }),
+        });
+
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: false,
+          path: "on-demand",
+          status: "skipped-redirect",
+        });
+        expect(store.size).toBe(0);
+      });
+
       it("a failed marker write is store-failed and keeps the previous entry", async () => {
         const store = createMemoryPrerenderStore();
         const { trigger } = harness({

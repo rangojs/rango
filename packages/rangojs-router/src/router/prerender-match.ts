@@ -35,6 +35,7 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isThrownRedirect } from "../response-utils.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -110,6 +111,12 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /**
+   * On-demand only: the render answered `redirect()` and nothing else failed.
+   * Request-dependent, so there is nothing to store: the entry already stored
+   * for the URL keeps serving (create-prerender-trigger.ts, `skipped-redirect`).
+   */
+  redirect?: true;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -393,15 +400,22 @@ export async function matchForPrerender<TEnv = any>(
         const onFlightError = (error: unknown): void => {
           flightErrors.push(error);
         };
-        // The collected error to rethrow. On an on-demand refresh a failure
-        // goes ahead of a notFound(): a render that hit a missing item AND a
-        // failing data source must keep the page (render-failed), not remove
-        // it because the notFound() happened to be reported first.
+        // The collected error to rethrow. On an on-demand refresh the order is
+        // a failure, then a redirect, then a notFound(): a render that hit a
+        // missing item AND a failing data source must keep the page
+        // (render-failed), not remove it because the notFound() happened to be
+        // reported first, and a request-dependent redirect must not stand in
+        // for a failure either. A redirect still wins over a notFound(): it is
+        // the weaker claim about the page (a visitor who may not see it, not
+        // one it is gone for), so the trigger stores nothing.
         const firstFlightError = (): unknown => {
-          const failure = onDemand
-            ? flightErrors.findIndex((e) => !isDataNotFoundError(e))
-            : -1;
-          return flightErrors[failure === -1 ? 0 : failure];
+          if (!onDemand) return flightErrors[0];
+          const failure = flightErrors.findIndex(
+            (e) => !isDataNotFoundError(e) && !isThrownRedirect(e),
+          );
+          if (failure !== -1) return flightErrors[failure];
+          const redirect = flightErrors.findIndex(isThrownRedirect);
+          return flightErrors[redirect === -1 ? 0 : redirect];
         };
         const serializedSegments = await serializeSegments(
           nonLoaderSegments,
@@ -634,13 +648,26 @@ export async function matchForPrerender<TEnv = any>(
   );
   // A build or dev render keeps the throw (the caller's onError policy).
   if (!onDemand) return rendered;
-  // An on-demand refresh reports a notFound() anywhere in the render (a
-  // handler's throw, or the only kind of error Flight collected) as an
-  // outcome, with the route's onDemand config: the trigger stores the
-  // "removed" marker stamped like a page (create-prerender-trigger.ts).
+  // An on-demand refresh reports a notFound() or a redirect() anywhere in the
+  // render (a handler's throw, or the only kind of error Flight collected) as
+  // an outcome, with the route's onDemand config: the trigger stores the
+  // "removed" marker stamped like a page for the first, and nothing at all for
+  // the second (create-prerender-trigger.ts).
   try {
     return await rendered;
   } catch (error) {
+    // A redirect can depend on the request (a session or auth check), so it
+    // does not show the page is gone: keep what is stored.
+    if (isThrownRedirect(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        redirect: true,
+        onDemandConfig,
+      };
+    }
     if (!isDataNotFoundError(error)) throw error;
     return {
       segments: [],

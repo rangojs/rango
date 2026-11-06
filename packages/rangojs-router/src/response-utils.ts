@@ -62,6 +62,25 @@ export function isRedirectResponse(response: Response): boolean {
 }
 
 /**
+ * True when a thrown value is a redirect Response. A handler hands a
+ * `redirect()` on by throwing it (`handleHandlerResult` in
+ * `router/segment-resolution/helpers.ts`), and Flight collects one thrown by a
+ * deep async component as an error row, so both arrive as a caught value.
+ *
+ * Duck-typed, not `instanceof Response`: the value crosses the same
+ * bundle/realm boundaries `isDataNotFoundError` guards against (a Vite dev
+ * duplicate module graph, an RSC serialization hop), where `instanceof`
+ * silently answers false.
+ */
+export function isThrownRedirect(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const response = value as Response;
+  if (typeof response.status !== "number") return false;
+  if (typeof response.headers?.get !== "function") return false;
+  return isRedirectResponse(response);
+}
+
+/**
  * Set a header on a response the router hands to the host, skipping a
  * WebSocket upgrade (its headers are not to be touched) and swallowing the
  * TypeError of immutable headers (a passed-through platform Response):

@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a redirecting on-demand prerender refresh keeps the page and reports `skipped-redirect`
+
+**Before.** `router.prerender()` (and a `prerender.many()` sweep) over an
+on-demand route whose render answered `redirect()` reported
+`{ ok: false, status: "render-failed" }`, the same as a crash, and a sweep
+reported a failure on every pass for a page that was fine. A redirect from the
+route handler, a layout handler, a parallel-slot handler, a `Passthrough`
+route's build handler, a handler streaming behind `loading()`, or a deep async
+component all landed there.
+
+**Now.** A redirect is request-dependent (a session or auth check), so it does
+not show the page is gone: the refresh stores nothing, neither the redirect nor
+a `"removed"` marker, and reports
+`{ ok: false, path: "on-demand", status: "skipped-redirect" }`. The entry
+stored before keeps serving to documents and client navigations and
+revalidates on its own `ttl` and `tags`: a later refresh that renders a page
+replaces it, and `markStale(tags)` followed by an `{ onlyIfStale: true }`
+refresh still renders it again. A render that redirects and also fails another
+way stays `render-failed`, in either order, and a render that both redirects
+and hits `notFound()` stores nothing either. A build-time render that redirects
+is unchanged: it is a render error under `prerender.onError`.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

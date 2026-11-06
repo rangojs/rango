@@ -21,6 +21,9 @@
  * - A refresh always renders and replaces; `onlyIfStale` is the cron-sweep
  *   opt-in and the only path that returns `already-fresh`.
  * - A failed render/store keeps the previous entry (replace-on-success).
+ * - A `redirect()` in the render stores nothing at all: it can depend on the
+ *   request, so it does not show the page is gone. The refresh reports
+ *   `skipped-redirect`, and the entry stored before keeps serving.
  * - A `notFound()` in the render is not a failure: it stores a "removed"
  *   marker in place of the page, stamped with the route's ttl and tags so it
  *   is rechecked like a page. `prerender.remove()` stores one without
@@ -89,6 +92,8 @@ export interface ProducerOutput {
   passthrough?: true;
   /** The render hit `notFound()` and nothing else failed: no page to store. */
   notFound?: true;
+  /** The render answered `redirect()` and nothing else failed: no page to store. */
+  redirect?: true;
   onDemandConfig?: OnDemandRouteConfig;
 }
 
@@ -579,6 +584,20 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         ok: false,
         path: "on-demand",
         status: "no-match",
+        target: display,
+        routeName: match.routeName,
+      };
+    }
+    // A redirect is request-dependent (a session or auth check), so a refresh
+    // that answers one does not show the page is gone: store nothing, neither
+    // the redirect nor a "removed" marker, and let the entry stored before
+    // keep serving and revalidate on its own ttl and tags. Not render-failed:
+    // a sweep must not report a failure for a page that is fine.
+    if (produced.redirect) {
+      return {
+        ok: false,
+        path: "on-demand",
+        status: "skipped-redirect",
         target: display,
         routeName: match.routeName,
       };
