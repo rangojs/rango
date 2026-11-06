@@ -544,6 +544,27 @@ describe("createPrerenderTrigger", () => {
       expect(results[1]).toMatchObject({ ok: false, status: "no-match" });
     });
 
+    it("a redirecting target is one result of the batch, and the others still render", async () => {
+      const runProducer: PrerenderTriggerDeps["runProducer"] = async ({
+        pathname,
+      }) => {
+        if (pathname === "/products/2") throw redirectResponse();
+        return output({ params: { id: pathname.split("/")[2] } });
+      };
+      const { trigger, store } = harness({ runProducer });
+      const results = await trigger.many([
+        "/products/1",
+        "/products/2",
+        "/products/3",
+      ]);
+      expect(results.map((r) => r.status)).toEqual([
+        "rendered",
+        "skipped-redirect",
+        "rendered",
+      ]);
+      expect(store.size).toBe(2);
+    });
+
     it("many with throwOnError and concurrency stops the batch", async () => {
       const started: string[] = [];
       const runProducer: PrerenderTriggerDeps["runProducer"] = async ({

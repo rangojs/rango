@@ -122,6 +122,16 @@ const MixedDef = Prerender<{ slug: string }>(
   ),
   { onDemand: true },
 );
+const MixedReversedDef = Prerender<{ slug: string }>(
+  async () => [],
+  async () => (
+    <div>
+      <Broken />
+      <Redirecting />
+    </div>
+  ),
+  { onDemand: true },
+);
 
 function makeRouter(store: MemoryPrerenderStore) {
   return createRouter({ prerender: { store } }).routes(
@@ -154,6 +164,12 @@ function makeRouter(store: MemoryPrerenderStore) {
           path("/od-mixed/:slug", MixedDef, { name: "odMixed" }, () => [
             loading(<p>Loading</p>),
           ]),
+          path(
+            "/od-mixed-reversed/:slug",
+            MixedReversedDef,
+            { name: "odMixedReversed" },
+            () => [loading(<p>Loading</p>)],
+          ),
         ],
       ),
     ]),
@@ -279,22 +295,24 @@ describe("on-demand prerender: a redirecting refresh", () => {
     });
   });
 
-  it("a render that redirects and also fails some other way stays render-failed", async () => {
-    const router = makeRouter(store);
-    const prerender = router.prerender({ env: {} });
-    const path = "/od-mixed/x";
+  for (const path of ["/od-mixed/x", "/od-mixed-reversed/x"]) {
+    it(`a render that redirects and also fails some other way stays render-failed (${path})`, async () => {
+      const router = makeRouter(store);
+      const prerender = router.prerender({ env: {} });
 
-    await prerender("/od-route/x");
-    const stored = JSON.stringify(store.entries());
+      await prerender("/od-route/x");
+      const stored = JSON.stringify(store.entries());
 
-    // Flight collects the redirect thrown by one child and the failure thrown
-    // by another; the failure decides, so a redirect never reports a crash as
-    // a skip (the notFound() rule, extended).
-    const result = await prerender(path);
-    expect(result).toMatchObject({ ok: false, status: "render-failed" });
-    expect((result as { error: Error }).error.message).toBe("upstream 500");
-    expect(JSON.stringify(store.entries())).toBe(stored);
-  });
+      // Flight collects the redirect thrown by one child and the failure
+      // thrown by another; the failure decides, so a redirect never reports a
+      // crash as a skip, whichever of the two the tree lists first (the
+      // notFound() rule, extended).
+      const result = await prerender(path);
+      expect(result).toMatchObject({ ok: false, status: "render-failed" });
+      expect((result as { error: Error }).error.message).toBe("upstream 500");
+      expect(JSON.stringify(store.entries())).toBe(stored);
+    });
+  }
 
   it("a redirecting refresh of a param with no stored page stores nothing either", async () => {
     const router = makeRouter(store);

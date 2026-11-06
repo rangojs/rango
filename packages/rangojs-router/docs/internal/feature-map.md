@@ -1057,6 +1057,15 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   re-sends the route's own segments from the overlay). Passthrough routes
   re-render live on actions. A stale overlay entry still serves because it is
   newer than the build artifact; staleness only schedules refresh work.
+- A refresh whose render answers `redirect()` writes nothing and returns
+  `skipped-redirect` (`isThrownRedirect`, `response-utils.ts`: a 3xx
+  Response carrying a `Location`; every handler kind reaches the trigger's one
+  catch). A redirect can depend on the request, so it does not show the page is
+  gone, unlike `notFound()`: the stored page keeps serving and revalidates on
+  its own schedule. `firstFlightError` ranks a collected failure ahead of a
+  redirect and a redirect ahead of a `notFound()`, so a render that also failed
+  is `render-failed`. Build-time renders are unchanged
+  (`prerender.onError` decides), as is a warm of a route that is not on-demand.
 - The producer reuses `matchForPrerender` without inheriting request state.
   Personalized reads map to `skipped-personalized`; failed renders and writes
   leave the previous entry intact (a `notFound()` is not a failure: it removes

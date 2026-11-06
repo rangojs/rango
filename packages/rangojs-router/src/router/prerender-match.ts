@@ -399,17 +399,17 @@ export async function matchForPrerender<TEnv = any>(
         // a failing data source must keep the page (render-failed), not remove
         // it because the notFound() happened to be reported first; a render
         // that redirected AND failed some other way must keep it too
-        // (render-failed), not report skipped-redirect.
+        // (render-failed), not report skipped-redirect. Earliest of each kind
+        // wins, so the order two siblings report in never decides.
         const firstFlightError = (): unknown => {
           if (!onDemand) return flightErrors[0];
-          const failure = flightErrors.findIndex(
-            (e) => !isDataNotFoundError(e) && !isThrownRedirect(e),
-          );
-          if (failure !== -1) return flightErrors[failure];
-          const redirect = flightErrors.findIndex(
-            (e) => !isDataNotFoundError(e),
-          );
-          return flightErrors[redirect === -1 ? 0 : redirect];
+          const rank = (error: unknown): number =>
+            isDataNotFoundError(error) ? 2 : isThrownRedirect(error) ? 1 : 0;
+          let first: unknown = flightErrors[0];
+          for (const error of flightErrors) {
+            if (rank(error) < rank(first)) first = error;
+          }
+          return first;
         };
         const serializedSegments = await serializeSegments(
           nonLoaderSegments,
