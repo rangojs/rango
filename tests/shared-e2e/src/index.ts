@@ -4008,13 +4008,18 @@ export async function expectRedirectingRefreshKeepsStoredPage(
   // the live handler does not answer for a page that is still there.
   const { pageUrl, triggerUrl, sourceTestId, stampTestId } =
     fixture.passthrough;
-  const passSlug = `redirect-${pushProbe("pass")}`;
+  const passSlug = pushProbe("redirect-pass");
   const passTrigger = triggerUrl(passSlug);
+  /** The page the store serves, as its render stamp. */
+  const servedPassthrough = async (): Promise<string> => {
+    await page.goto(pageUrl(passSlug));
+    await waitForShellHydration(page);
+    await expect(byTestId(page, sourceTestId)).toHaveText("prerender");
+    return (await byTestId(page, stampTestId).textContent()) ?? "";
+  };
+
   await refreshPage(page, passTrigger);
-  await page.goto(pageUrl(passSlug));
-  await waitForShellHydration(page);
-  await expect(byTestId(page, sourceTestId)).toHaveText("prerender");
-  const passStamp = (await byTestId(page, stampTestId).textContent()) ?? "";
+  const passStamp = await servedPassthrough();
 
   await removeTrigger(page, passTrigger, "?redirect=1");
   try {
@@ -4024,22 +4029,13 @@ export async function expectRedirectingRefreshKeepsStoredPage(
       path: "on-demand",
       status: "skipped-redirect",
     });
-
-    await page.goto(pageUrl(passSlug));
-    await waitForShellHydration(page);
-    await expect(byTestId(page, sourceTestId)).toHaveText("prerender");
-    await expect(byTestId(page, stampTestId)).toHaveText(passStamp);
+    expect(await servedPassthrough()).toBe(passStamp);
   } finally {
     await removeTrigger(page, passTrigger, "?redirect=0");
   }
 
   await refreshPage(page, passTrigger);
-  await page.goto(pageUrl(passSlug));
-  await waitForShellHydration(page);
-  await expect(byTestId(page, sourceTestId)).toHaveText("prerender");
-  expect((await byTestId(page, stampTestId).textContent()) ?? "").not.toBe(
-    passStamp,
-  );
+  expect(await servedPassthrough()).not.toBe(passStamp);
 }
 
 /**

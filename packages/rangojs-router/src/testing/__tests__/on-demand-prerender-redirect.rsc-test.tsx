@@ -64,8 +64,14 @@ const renders = {
   live: 0,
 };
 
+/** Set to make the redirect target off-host (`{ external: true }`). */
+let externalRedirect = false;
+
 function answerRedirect(redirects: boolean): void {
-  if (redirects) throw redirect("/login");
+  if (!redirects) return;
+  throw externalRedirect
+    ? redirect("https://accounts.example.com/oauth", { external: true })
+    : redirect("/login");
 }
 
 const RouteDef = Prerender<{ slug: string }>(
@@ -211,8 +217,11 @@ const DeepRedirectThenNotFoundDef = Prerender<{ slug: string }>(
   { onDemand: true },
 );
 
-function makeRouter(prerender: { store: MemoryPrerenderStore }) {
-  return createRouter({ prerender }).routes(
+function makeRouter(
+  prerender: { store: MemoryPrerenderStore },
+  options: { basename?: string } = {},
+) {
+  return createRouter({ ...options, prerender }).routes(
     urls(({ path }) => [
       path("/route/:slug", RouteDef, { name: "route" }),
       layout(LayoutHandler, () => [
@@ -334,6 +343,7 @@ describe("on-demand prerender: a redirecting refresh stores nothing", () => {
       redirecting[key] = false;
     for (const key of Object.keys(renders) as (keyof typeof renders)[])
       renders[key] = 0;
+    externalRedirect = false;
   });
 
   afterEach(() => {
@@ -477,6 +487,34 @@ describe("on-demand prerender: a redirecting refresh stores nothing", () => {
     await expect(prerender("/route/a", { throwOnError: true })).rejects.toThrow(
       'router.prerender("/route/a") failed: skipped-redirect',
     );
+  });
+
+  it("a basename and an off-host redirect leave the page too", async () => {
+    const router = makeRouter({ store }, { basename: "/app" });
+    const prerender = router.prerender({ env: {} });
+    const url = "/app/route/a";
+    await prerender(url);
+    const before = servedStamp((await serveShellRequest(router, url)).flight);
+
+    redirecting.route = true;
+    for (const external of [false, true]) {
+      externalRedirect = external;
+      expect(await prerender(url)).toMatchObject({
+        ok: false,
+        path: "on-demand",
+        status: "skipped-redirect",
+        target: url,
+      });
+      expect(servedStamp((await serveShellRequest(router, url)).flight)).toBe(
+        before,
+      );
+    }
+    // The entry itself is untouched: same key, same ttl and tags.
+    expect(store.size).toBe(1);
+    expect(store.entries()[0]?.[1].meta).toMatchObject({
+      ttl: 3600,
+      tags: ["od:a"],
+    });
   });
 
   it("many() reports one result per target and does not stop at a redirecting one", async () => {
