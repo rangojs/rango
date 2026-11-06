@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a navigation served from a record replaces the handle values it re-sends
+
+**Before.** A partial response names the segments whose handle values the
+browser replaces (`resolvedIds`): the ones whose handler ran. A `cache()` or
+`Prerender()` record keeps the segments but not that fact, so a HIT that
+re-sent a segment — a `revalidate(() => true)` rule, a changed param — carried
+the record's handle values and still left the browser on the values it held
+before the navigation. A breadcrumb the MISS cleared stayed on screen after a
+HIT of the same navigation, and a `useHandle()` read the previous page's value.
+
+**Now.** A stored HIT names every segment it sends from its record, so the
+browser replaces exactly the handle values the response carries, none when the
+record holds none: the same segments the MISS that wrote the record replaced.
+A segment the HIT keeps (no `revalidate()` rule asks for it, the params are
+unchanged) still keeps the browser's values. A PPR navigation replay and a
+`Prerender()` HIT follow the same rule. Nothing else on the wire changed:
+`resolvedIds` is the only field whose contents differ.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

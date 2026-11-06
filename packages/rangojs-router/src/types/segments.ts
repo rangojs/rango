@@ -202,11 +202,13 @@ export interface ResolvedSegment {
    *  segment of one group; see the group-route branch in segment-system.tsx. */
   clientGroup?: string;
   /**
-   * @internal Server-side marker: true when the segment's handler actually ran
-   * this request (not skipped via the revalidate cache path). Used by
-   * match-result.ts to populate `MatchResult.resolvedIds` for client-side
-   * handle-bucket cleanup. Stripped from the wire payload before serialization
-   * — never reaches the client.
+   * @internal Server-side marker: true when this response carries the
+   * segment's handler values — its handler ran this request (not skipped via
+   * the revalidate cache path), or a stored HIT re-sends the record's copy of
+   * them (cache-lookup.ts serveStoredSegments). Used by match-result.ts to
+   * populate `MatchResult.resolvedIds` for client-side handle-bucket cleanup.
+   * Stripped from the wire payload before serialization — never reaches the
+   * client.
    */
   _handlerRan?: boolean;
 }
@@ -259,7 +261,10 @@ export interface MatchResult {
   matched: string[];
   diff: string[];
   /**
-   * Every segment id whose handler actually ran on the server this request,
+   * Every segment id whose handler values this response carries: every
+   * segment whose handler ran on the server this request, every stored
+   * segment a cache() or Prerender() HIT sends from its record (the record's
+   * copy stands in for the handler's, cache-lookup.ts serveStoredSegments),
    * including ones with `component === null` that get filtered out of
    * `segments`/`diff` to avoid wasted bytes, and every loader segment that
    * ran. Drives the client's handle merge (handles/pushed-by.ts) — a slot

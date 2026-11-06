@@ -612,8 +612,18 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      // This response carries the segment's handler values: the record's copy
+      // of them, nothing when the record holds none. A stored segment carries
+      // no _handlerRan (segment-codec.ts serializeSegments copies named
+      // fields), so without this a HIT listed no re-sent segment and the
+      // client kept the values it held before the navigation, where the MISS
+      // that wrote the record replaced them.
+      segment._handlerRan = true;
+      sentIds?.add(segment.id);
+    }
     yield segment;
   }
 

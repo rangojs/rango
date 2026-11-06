@@ -83,12 +83,13 @@ export function withSegmentHandles(
  * the segment (`${shortCode}D${index}.${$$id}`, a loader's pushes being filed
  * under its shortCode; an id it does not register, a dependency or a loader a
  * handler read, counts as the handler's). A run that has values in the
- * response, or ran for it (`resolvedIds`: the handlers and loaders that ran),
- * replaces its values with the ones it delivered, nothing when it delivered
- * none. The other runs keep theirs in place, and the response's values take
- * the position of the first value they replace (the end when they replace
- * none). New containers throughout: an object a reader was handed (a history
- * entry's data) is never written to.
+ * response, or ran for it (`resolvedIds`: the handlers and loaders that ran,
+ * and every stored segment a cache() or Prerender() HIT sends from its
+ * record), replaces its values with the ones it delivered, nothing when it
+ * delivered none. The other runs keep theirs in place, and the response's
+ * values take the position of the first value they replace (the end when they
+ * replace none). New containers throughout: an object a reader was handed (a
+ * history entry's data) is never written to.
  *
  * A segment with no values of a handle takes, for each loader `matched`
  * registers on it that did not run, the values that loader pushed under a
