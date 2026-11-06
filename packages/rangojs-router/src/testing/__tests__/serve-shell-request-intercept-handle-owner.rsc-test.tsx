@@ -37,7 +37,7 @@ import {
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
-import { withoutPushedBy } from "../../handles/pushed-by.js";
+import { handleBucketsOf } from "./helpers/handle-buckets.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
@@ -85,20 +85,6 @@ async function matchedOf(flight: string | undefined): Promise<string[]> {
   return metadata.matched;
 }
 
-/** The pushes a response delivers, by the segment id that owns them. */
-async function bucketsOf(
-  result: Awaited<ReturnType<typeof serveShellRequest>>,
-): Promise<Record<string, string[]>> {
-  const handles = withoutPushedBy((await result.readHandles())!.hydration);
-  return Object.fromEntries(
-    Object.values(handles).flatMap((bySegment) =>
-      Object.entries(bySegment).map(
-        ([segmentId, values]) => [segmentId, values as string[]] as const,
-      ),
-    ),
-  );
-}
-
 async function open(push: "loader" | "handler", held: "none" | "page") {
   const router = makeRouter(push);
   const cacheStore = new MemorySegmentCacheStore();
@@ -114,7 +100,7 @@ async function open(push: "loader" | "handler", held: "none" | "page") {
     cacheStore,
     partial: { from: "/list", segments },
   });
-  return { result, segments, buckets: await bucketsOf(result) };
+  return { result, segments, buckets: await handleBucketsOf(result) };
 }
 
 beforeEach(async () => {
@@ -147,7 +133,7 @@ describe("control: a parallel slot's push is filed under the slot's own id", () 
       cacheStore: new MemorySegmentCacheStore(),
       partial: true,
     });
-    expect(await bucketsOf(result)).toEqual({
+    expect(await handleBucketsOf(result)).toEqual({
       M0L0L0: ["layout"],
       "M0L0L0.@aside": ["aside"],
     });

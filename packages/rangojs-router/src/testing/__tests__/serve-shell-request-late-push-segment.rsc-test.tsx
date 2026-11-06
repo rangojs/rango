@@ -44,7 +44,7 @@ import {
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
-import { withoutPushedBy } from "../../handles/pushed-by.js";
+import { handleBucketsOf } from "./helpers/handle-buckets.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
@@ -165,20 +165,6 @@ async function serve(url: string, hold: Hold) {
     cacheStore: new MemorySegmentCacheStore(),
   });
   return { errors: [...errors], matched: await matchedOf(result.flight) };
-}
-
-/** The handle values a response delivers, by the segment id that owns them. */
-async function bucketOf(
-  result: Awaited<ReturnType<typeof serveShellRequest>>,
-): Promise<Record<string, string[]>> {
-  const handles = withoutPushedBy((await result.readHandles())!.hydration);
-  return Object.fromEntries(
-    Object.values(handles).flatMap((bySegment) =>
-      Object.entries(bySegment).map(
-        ([segmentId, values]) => [segmentId, values as string[]] as const,
-      ),
-    ),
-  );
 }
 
 /** The one LateHandlePushError the response reported, and its segment. */
@@ -480,7 +466,7 @@ describe("what a layout's or a slot's ctx starts", () => {
     const layout = (await matchedOf(miss.flight))
       .filter((id) => /L\d+$/.test(id))
       .at(-1)!;
-    expect(await bucketOf(miss)).toEqual({ [layout]: ["cached-crumb"] });
+    expect(await handleBucketsOf(miss)).toEqual({ [layout]: ["cached-crumb"] });
     // The HIT's replay is what the component's call reads.
     cachedFrom = "component";
     errors.length = 0;
@@ -500,7 +486,7 @@ describe("what a layout's or a slot's ctx starts", () => {
     const slot = (await matchedOf(miss.flight)).find((id) =>
       id.endsWith(".@panel"),
     )!;
-    expect(await bucketOf(miss)).toEqual({ [slot]: ["cached-crumb"] });
+    expect(await handleBucketsOf(miss)).toEqual({ [slot]: ["cached-crumb"] });
     cachedFrom = "component";
     errors.length = 0;
     const hit = await serveShellRequest(router, "/start-slot", { cacheStore });
