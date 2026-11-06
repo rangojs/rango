@@ -518,11 +518,18 @@ rango({ prerender: { onError: "warn" } }); // default is "fail"
 | `throw new Skip("reason")`  | Skip entry, log SKIP, continue               | Skip entry, log SKIP, continue   |
 | `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
 | A child component throws    | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
+| `return redirect("/login")` | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
 
-The last row covers a handler that returns fine but whose tree holds an async
-server component that throws while the page is rendered at build, for example
-because its fetch fails. That error goes through the same policy instead of being
-baked as an error row, and a `Skip` thrown there skips the URL.
+The "child component throws" row covers a handler that returns fine but whose
+tree holds an async server component that throws while the page is rendered at
+build, for example because its fetch fails. That error goes through the same
+policy instead of being baked as an error row, and a `Skip` thrown there skips
+the URL.
+
+A redirect is a build error because a build has no page to bake for it, and the
+log line names the URL without an error message (a `Response` has no
+`message`). Only an on-demand refresh turns a redirect into an outcome,
+`skipped-redirect` ("A redirect stores nothing").
 
 With `"warn"` the errored entry is logged and left un-baked (never served as a baked
 200 error page). `"warn"` is a build-unblock, not a runtime contract: the route falls
@@ -824,10 +831,45 @@ skips a fresh entry and returns `already-fresh`. The result is inspectable
 `already-fresh`, `removed` (the render hit `notFound()`, see "Remove a
 page"), `no-match`, `no-store`, `skipped-personalized`,
 `skipped-unsupported-target` (a target with `?search` or `#hash`),
-`skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
-the previous entry, except `skipped-passthrough`, which hands the page to the
-live handler. A `markStale()` that lands while a refresh renders marks the entry that
-refresh stores.
+`skipped-passthrough`, `skipped-redirect` (the render answered `redirect()`,
+see "A redirect stores nothing"), `render-failed` and `store-failed`. Every
+failure keeps the previous entry, except `skipped-passthrough`, which hands the
+page to the live handler. A `markStale()` that lands while a refresh renders
+marks the entry that refresh stores.
+
+### A redirect stores nothing
+
+`redirect()` in a handler is not a report about the page. It is often decided
+per request — a session, an auth check, a locale or canonical-URL rule — and
+the refresh's render is requestless, so it answers what a cookie-free visitor
+would get. Storing that would serve a `302` to visitors who have a session, and
+storing a "removed" marker for it would delete a page that is fine.
+
+```typescript
+await prerender("/products/42");
+// { ok: false, status: "skipped-redirect", target: "/products/42" }
+```
+
+So a refresh whose render answers a redirect writes nothing: no page, no
+marker, and no warm request (there is no new entry to build the route's caches
+on). The page stored before keeps serving, to a document and to a client
+navigation, until its own schedule replaces it — its `ttl` and `tags`, an
+`onRevalidate` sweep, or a later refresh that renders a page. It is `ok: false`
+like `skipped-personalized`: a sweep that counts failures should report it as
+"request-dependent answer", not as a page.
+
+- **Every handler kind counts**: the route handler, a layout handler, a
+  parallel slot handler, a `Passthrough` route's build handler, and any of them
+  behind `loading()`.
+- **A real failure wins.** A render that redirects _and_ throws is
+  `render-failed`, and the page stays: a broken render must not read as an
+  answer.
+- **A redirect outranks a `notFound()`.** If one part redirects and another
+  calls `notFound()`, nothing is stored: a request-dependent answer cannot
+  justify deleting the page.
+- **A build-time redirect is still a build error.** A build has no page to
+  bake, so it goes to `prerender.onError`: the URL fails the build by default,
+  and `"warn"` skips baking it.
 
 A route that is not on-demand is not refused: the same call warms its runtime
 caches instead (see "Warm any route before traffic"). An on-demand route gets
@@ -1013,7 +1055,8 @@ in dev. A removed page is the exception: its marker answers 404 in dev too.
   from webhooks before refreshing them.
 - **A throw in a refresh keeps the old entry** (`render-failed`). A
   `notFound()` on its own is not a failure: it removes the page (see "Remove
-  a page").
+  a page"), and a `redirect()` on its own stores nothing (see "A redirect
+  stores nothing").
 - **Intercepted navigations are not refreshed.** A refresh writes the main
   variant only; an intercept navigation still serves the build's intercept
   variant, and an on-demand route used as an intercept target 404s on a param
@@ -1242,7 +1285,10 @@ one partition warmed).
 
 - Middleware runs and sees an anonymous request. An auth middleware that
   redirects makes the result `render-failed` with `responseStatus: 302`: an
-  anonymous visitor is not served a cached page there either.
+  anonymous visitor is not served a cached page there either. This is the warm
+  path (a route that is not on-demand), where the result describes the response
+  a visitor gets; an on-demand refresh whose render redirects is
+  `skipped-redirect` ("A redirect stores nothing").
 - `cookies()` or `headers()` read outside any cached scope see nothing, and
   the anonymous view is rendered and stored wherever a cookie-free visitor's
   would be.

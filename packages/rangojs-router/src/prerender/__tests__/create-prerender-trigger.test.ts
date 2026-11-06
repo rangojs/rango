@@ -235,6 +235,59 @@ describe("createPrerenderTrigger", () => {
     expect(store.size).toBe(0);
   });
 
+  it("maps a redirect to skipped-redirect: nothing stored, not even a marker", async () => {
+    const { trigger, store } = harness({
+      runProducer: async () => output({ redirected: true }),
+    });
+    const result = await trigger("/products/42");
+    expect(result).toEqual({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+      target: "/products/42",
+      routeName: "products.detail",
+    });
+    // Not a page and not a "removed" marker: a redirect can depend on the
+    // request, so the stored page keeps serving.
+    expect(store.size).toBe(0);
+  });
+
+  it("a redirecting refresh keeps the stored page and warms nothing", async () => {
+    const fetch = vi.fn(async () => new Response("ok"));
+    const { trigger, store } = harness({
+      runProducer: async () => output(),
+      resolveCacheConfig: () => ({
+        store: Object.assign(new MemorySegmentCacheStore(), {
+          scope: "global" as const,
+        }),
+      }),
+      ambientOrigin: () => "https://shop.example",
+      fetch,
+    });
+    expect(await trigger("/products/42")).toMatchObject({ status: "rendered" });
+    const stored = store.entries();
+    fetch.mockClear();
+
+    const redirecting = harness({
+      config: { store },
+      runProducer: async () => output({ redirected: true }),
+      resolveCacheConfig: () => ({
+        store: Object.assign(new MemorySegmentCacheStore(), {
+          scope: "global" as const,
+        }),
+      }),
+      ambientOrigin: () => "https://shop.example",
+      fetch,
+    });
+    expect(await redirecting.trigger("/products/42")).toMatchObject({
+      ok: false,
+      status: "skipped-redirect",
+    });
+    expect(store.entries()).toEqual(stored);
+    // Nothing was stored, so there is no new entry for a warm to build on.
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("maps a passthrough sentinel to skipped-passthrough", async () => {
     const { trigger, store } = harness({
       runProducer: async () => output({ passthrough: true }),

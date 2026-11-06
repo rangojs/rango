@@ -35,6 +35,7 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponse } from "../response-utils.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -68,6 +69,62 @@ export interface PrerenderMatchDeps<TEnv = any> {
   buildRouterContext: () => RouterContext<TEnv>;
   mergedRouteMap: Record<string, string>;
   resolveAllSegments: RouterContext<TEnv>["resolveAllSegments"];
+}
+
+/** A redirect Response a requestless render threw or Flight collected. */
+function redirectResponseOf(value: unknown): Response | undefined {
+  return value instanceof Response && isRedirectResponse(value)
+    ? value
+    : undefined;
+}
+
+/**
+ * The redirect a resolved segment holds as its component or layout. A route or
+ * layout handler's redirect is thrown before this (handleHandlerResult), and a
+ * streamed handler's rejection is a Flight error; a parallel slot's is only
+ * visible here, as the value the slot's handler returned — a slot behind
+ * `loading()` is deferred, so its thenable is resolved to see it.
+ *
+ * The returned segments have such a value emptied: the render is not stored, and
+ * a Response encoded as a component fails with an unrelated error that would
+ * hide every other failure in the render.
+ */
+async function takeSegmentRedirects(
+  segments: readonly ResolvedSegment[],
+): Promise<{ redirect?: Response; segments: ResolvedSegment[] }> {
+  let redirect: Response | undefined;
+  const sanitized: ResolvedSegment[] = [];
+  for (const segment of segments) {
+    const component = await redirectValueOf(segment.component);
+    const layout = await redirectValueOf(segment.layout);
+    redirect ??= component ?? layout;
+    sanitized.push(
+      component || layout
+        ? {
+            ...segment,
+            component: component ? null : segment.component,
+            layout: layout ? null : segment.layout,
+          }
+        : segment,
+    );
+  }
+  return { redirect, segments: sanitized };
+}
+
+/**
+ * The redirect a component or layout value is. A deferred value (a handler
+ * behind `loading()`) is resolved to see it; a rejection is left to
+ * serialization, which reports it as the render's error.
+ */
+async function redirectValueOf(value: unknown): Promise<Response | undefined> {
+  if (value && typeof (value as { then?: unknown }).then === "function") {
+    try {
+      value = await value;
+    } catch {
+      return undefined;
+    }
+  }
+  return redirectResponseOf(value);
 }
 
 /**
@@ -110,6 +167,13 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /**
+   * On-demand only: the render answered a redirect and nothing else failed.
+   * A redirect can depend on the request (a session or auth check), so it says
+   * nothing about the page being gone: the trigger stores nothing and the
+   * stored page keeps serving (docs/design/ondemand-prerender.md).
+   */
+  redirected?: true;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -361,6 +425,15 @@ export async function matchForPrerender<TEnv = any>(
           { pathname: buildCtx.pathname },
         );
 
+        // 8b. A redirect a parallel-slot handler returned, taken out of the
+        // tree (takeSegmentRedirects). It is reported with the collected
+        // errors, so a real failure elsewhere in the render still decides the
+        // outcome (on-demand: `render-failed` beats it).
+        const taken = onDemand
+          ? await takeSegmentRedirects(allSegments)
+          : undefined;
+        const slotRedirect = taken?.redirect;
+
         // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
         // When the route declares loading(), the handler result is deferred so the
         // component is a thenable resolving to the sentinel — detectPrerenderPassthrough
@@ -371,7 +444,7 @@ export async function matchForPrerender<TEnv = any>(
         }
 
         // 10. Filter out any loader segments (belt-and-suspenders)
-        const nonLoaderSegments = allSegments.filter(
+        const nonLoaderSegments = (taken?.segments ?? allSegments).filter(
           (s) => s.type !== "loader",
         );
 
@@ -396,12 +469,19 @@ export async function matchForPrerender<TEnv = any>(
         // The collected error to rethrow. On an on-demand refresh a failure
         // goes ahead of a notFound(): a render that hit a missing item AND a
         // failing data source must keep the page (render-failed), not remove
-        // it because the notFound() happened to be reported first.
+        // it because the notFound() happened to be reported first. A redirect
+        // outranks a notFound() too — it is request-dependent, so the refresh
+        // stores nothing rather than removing the page — and loses to a real
+        // failure, which keeps the page.
         const firstFlightError = (): unknown => {
-          const failure = onDemand
-            ? flightErrors.findIndex((e) => !isDataNotFoundError(e))
-            : -1;
-          return flightErrors[failure === -1 ? 0 : failure];
+          if (!onDemand) return flightErrors[0];
+          const failure = flightErrors.findIndex(
+            (e) => !isDataNotFoundError(e) && !redirectResponseOf(e),
+          );
+          if (failure !== -1) return flightErrors[failure];
+          return (
+            flightErrors.find((e) => redirectResponseOf(e)) ?? flightErrors[0]
+          );
         };
         const serializedSegments = await serializeSegments(
           nonLoaderSegments,
@@ -413,6 +493,9 @@ export async function matchForPrerender<TEnv = any>(
         if (onDemand && personalized) {
           throw personalized;
         }
+        // A slot's redirect joins the collected errors, behind a real failure
+        // and ahead of a notFound() (firstFlightError).
+        if (slotRedirect) flightErrors.push(slotRedirect);
 
         // 13. Collect handle data per segment (skip segments with no handle data).
         // Encoded through the Flight codec (not stored raw) so Promise/ReactNode
@@ -637,10 +720,21 @@ export async function matchForPrerender<TEnv = any>(
   // An on-demand refresh reports a notFound() anywhere in the render (a
   // handler's throw, or the only kind of error Flight collected) as an
   // outcome, with the route's onDemand config: the trigger stores the
-  // "removed" marker stamped like a page (create-prerender-trigger.ts).
+  // "removed" marker stamped like a page (create-prerender-trigger.ts). A
+  // redirect is an outcome too, and one that stores nothing.
   try {
     return await rendered;
   } catch (error) {
+    if (redirectResponseOf(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        redirected: true,
+        onDemandConfig,
+      };
+    }
     if (!isDataNotFoundError(error)) throw error;
     return {
       segments: [],

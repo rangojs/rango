@@ -26,6 +26,9 @@
  *   is rechecked like a page. `prerender.remove()` stores one without
  *   rendering, which never goes stale. A Passthrough build handler that
  *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
+ * - A `redirect()` in the render stores nothing at all: the answer can depend
+ *   on the request, so it is `skipped-redirect` and the stored page keeps
+ *   serving (docs/design/ondemand-prerender.md).
  * - A page and a render's marker (a `notFound()` or a decline) carry the
  *   render's start as `storedAt`, so a `markStale()` that lands during the
  *   render marks the result; `staleAt` counts the ttl from the write. A
@@ -89,6 +92,11 @@ export interface ProducerOutput {
   passthrough?: true;
   /** The render hit `notFound()` and nothing else failed: no page to store. */
   notFound?: true;
+  /**
+   * The render answered a redirect and nothing else failed: nothing to store.
+   * A redirect can depend on the request, so it says nothing about the page.
+   */
+  redirected?: true;
   onDemandConfig?: OnDemandRouteConfig;
 }
 
@@ -583,6 +591,20 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         routeName: match.routeName,
       };
     }
+    // A render that answered a redirect: a request-dependent answer (a session
+    // or an auth check), not proof the page is gone. Store nothing — no page,
+    // no "removed" marker — and leave the stored entry to its own schedule
+    // (its ttl and tags, a later refresh, a sweep).
+    if (produced.redirected) {
+      return {
+        ok: false,
+        path: "on-demand",
+        status: "skipped-redirect",
+        target: display,
+        routeName: match.routeName,
+      };
+    }
+
     // No page to store: the render hit notFound() (the page no longer
     // exists; keeping the old entry would serve a deleted item until the next
     // deploy), or a Passthrough build handler declined the param (the live

@@ -41,7 +41,8 @@ adapters are in-memory + CF KV). One status was added beyond the original
 result union: `skipped-passthrough`, returned when a `Passthrough + onDemand`
 route's build handler returns `ctx.passthrough()` for the refreshed param (no
 shared payload to persist; the "removed" marker is stored so that the live
-handler serves it).
+handler serves it). A later one is `skipped-redirect`: a refresh whose render
+answered `redirect()`, which stores nothing at all ("A render that redirects").
 
 On-demand routes stay off the separate PPR shell lane in v1. A refresh can
 replace the durable segment payload, but it cannot atomically replace a cached
@@ -397,6 +398,9 @@ type PrerenderResult =
         | "skipped-personalized"
         | "skipped-unsupported-target"
         | "skipped-passthrough"
+        // the render answered a redirect: nothing is stored, and the page
+        // stored before keeps serving ("A render that redirects")
+        | "skipped-redirect"
         | "skipped-not-on-demand" // prerender.remove() only
         | "render-failed"
         | "store-failed";
@@ -509,6 +513,58 @@ the next deploy. On an on-demand run the producer reports a
 recognizes the error across realms by name), unless something else failed in
 the same render, and the trigger stores the "removed" marker and returns
 `removed`. See "Removing A Page".
+
+### A render that redirects
+
+A redirect is not a failure either, and unlike a `notFound()` it is not an
+observation about the page at all. `redirect()` from a handler — a session or
+an auth check, a locale or a canonical-URL rule — can depend on the request.
+The refresh's producer is requestless, so the redirect it gets is the answer a
+_cookie-free_ render would have given a visitor; it says nothing about whether
+the page still exists. Storing something for it would be wrong in both
+directions: a redirect page would serve a `302` to visitors who have a session,
+and a "removed" marker would delete a page that is fine.
+
+So a refresh whose render answers a redirect **stores nothing** — no page, no
+marker — reports `skipped-redirect`, and leaves the stored entry exactly as it
+was. The page keeps serving, to documents and to client navigations, until its
+own schedule replaces it: its `ttl` and `tags`, an `onRevalidate` sweep, or a
+later refresh that renders a page. No warm request follows it either: there is
+no new entry for the route's runtime caches to be rebuilt on.
+
+`skipped-redirect` is `ok: false`, like `skipped-personalized`: a sweep that
+counts `!ok` as a failure should treat both as "the render answered something
+request-dependent, not a page", and a sweep over a page that keeps redirecting
+keeps reporting it — which is the truth, not a crash.
+
+It holds for every handler kind that can redirect, because each one reaches
+the same funnel (`matchForPrerender` on an on-demand run reports
+`{ redirected: true }`):
+
+| handler kind                        | how the redirect reaches the producer                    |
+| ----------------------------------- | -------------------------------------------------------- |
+| route handler                       | `handleHandlerResult` rethrows the `Response`            |
+| layout handler                      | same (`resolveLayoutComponent`)                          |
+| parallel-slot handler               | the value the slot resolved to (`takeSegmentRedirects`)  |
+| `Passthrough` route's build handler | the handler is the producer, so a rethrow                |
+| any of the above behind `loading()` | a Flight error collected while the deferred tree encodes |
+
+Two precedence rules, both needed because a render can go wrong more than one
+way:
+
+- **A real failure wins.** A render that redirects _and_ throws somewhere else
+  is `render-failed`, and the stored page stays: the data source may be
+  failing, and a refresh must not mistake a broken render for an answer. A
+  parallel slot's redirect is therefore taken out of the tree and reported
+  with the collected errors rather than thrown on the spot, so the rest of the
+  render still runs and its failures are seen.
+- **A redirect outranks a `notFound()`.** If one part of the render answers a
+  redirect and another hits `notFound()`, nothing is stored: a redirect is
+  request-dependent, so it cannot justify deleting the page.
+
+A build-time render that redirects is unchanged: a build has no page to bake,
+so it is a render error under `prerender.onError` — the URL fails the build by
+default, and `"warn"` skips baking it. Only the refresh reports a skip.
 
 ## Stored Payload
 
@@ -745,6 +801,10 @@ decided between `removed` and `render-failed`. Now any error that is not a
 `prerender-match.ts`), as a personalization error already did. The advice for
 an app follows from that: call `notFound()` when you know the item is gone,
 throw anything else when you are not sure.
+
+A redirect is the third answer a render can give, and it stores nothing at all:
+no page and no marker. "A render that redirects" (Producer Semantics) has the
+why and the precedence rules.
 
 The batch form is `prerender.remove.many(targets, { concurrency, throwOnError })`,
 not an option on `.many()`. Next to `prerender.many(targets)` it reads as the
@@ -1054,7 +1114,10 @@ resolve env-scoped writable store
 run requestless prerender producer
   |
   +-- personalized --> skipped-personalized
-  +-- render failed --> render-failed (also when a notFound() happened too)
+  +-- redirect, nothing else failed --> skipped-redirect (nothing written,
+  |                                    no warm; the stored page keeps serving)
+  +-- render failed --> render-failed (also when a notFound() or a redirect
+                        happened too)
   +-- notFound() only --> write the "removed" marker, stamped with the
   |                       route's ttl and tags --> removed (no warm)
   +-- ctx.passthrough() --> write the same marker --> skipped-passthrough,

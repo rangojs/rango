@@ -443,6 +443,7 @@ export const NamedRoutes = {
   notFoundNoBoundary: "/not-found-no-boundary",
   "ns.nsChild": "/ns-reverse",
   onDemandDetail: "/on-demand/:slug",
+  onDemandNav: "/od-nav/:slug",
   onDemandPersonalized: "/on-demand-personalized/:slug",
   onDemandPersonalizedTrigger: "/od-personalized-trigger/:slug",
   onDemandPlain: "/on-demand-plain/:slug",

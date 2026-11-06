@@ -330,6 +330,12 @@ let runtimePrerenderIdCounter = 0;
 //   Prerender<{ slug: string }> → params = { slug: string }
 
 // Overload 1: Static handler (build-time only)
+//
+// A handler may return a Response (`redirect()`) as any route handler may. What
+// it means depends on who renders it: the build fails the URL under
+// `prerender.onError` (it has no page to bake), while a requestless on-demand
+// refresh reports `skipped-redirect` and stores nothing
+// (docs/design/ondemand-prerender.md, "A render that redirects").
 export function Prerender<
   T extends
     | keyof DefaultPrerenderRouteMap
@@ -341,8 +347,9 @@ export function Prerender<
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
   ) =>
     | ReactNode
+    | Response
     | PrerenderPassthroughResult
-    | Promise<ReactNode | PrerenderPassthroughResult>,
+    | Promise<ReactNode | Response | PrerenderPassthroughResult>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
@@ -364,8 +371,9 @@ export function Prerender<
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
   ) =>
     | ReactNode
+    | Response
     | PrerenderPassthroughResult
-    | Promise<ReactNode | PrerenderPassthroughResult>,
+    | Promise<ReactNode | Response | PrerenderPassthroughResult>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;

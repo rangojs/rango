@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a redirecting on-demand refresh keeps the page and reports `skipped-redirect`
+
+**Before.** `router.prerender(url)` on a `Prerender(..., { onDemand })` route
+whose render answered `redirect()` returned `{ ok: false, status:
+"render-failed" }`, the same result as a crash: a cron sweep over a page that
+was fine reported a failure on every pass. A redirect from a parallel slot
+handler was worse: it failed serialization with "Only plain objects, and a few
+built-ins, can be passed to Client Components" instead of naming the redirect.
+
+**Now.** A refresh whose render answers a redirect stores nothing — no page,
+and no "removed" marker either — and reports
+`{ ok: false, status: "skipped-redirect" }`, next to `skipped-personalized`. A
+redirect can depend on the request (a session or auth check), so it says
+nothing about whether the page still exists; the entry stored before keeps
+serving, to documents and to client navigations, until its own `ttl` and tags,
+an `onRevalidate` sweep, or a later refresh that renders a page replaces it. No
+warm request follows it. It holds for every handler kind: the route handler, a
+layout handler, a parallel slot handler, a `Passthrough` route's build handler,
+and any of them behind `loading()`.
+
+```ts
+const result = await router.prerender({ env })("/products/42");
+// Before: { ok: false, status: "render-failed", error: Response }
+// Now:    { ok: false, status: "skipped-redirect" }
+```
+
+A render that redirects _and_ fails some other way is still `render-failed`
+(the page stays), and a redirect outranks a `notFound()` in the same render:
+nothing is stored. A build-time render that redirects is unchanged — a build
+has no page to bake, so it goes to `prerender.onError` (`"fail"` fails the
+build, `"warn"` skips the URL). `Prerender()`'s handler type now accepts a
+`Response` return, as `Handler` already did, so a redirect needs no cast.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

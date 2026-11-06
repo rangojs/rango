@@ -314,9 +314,11 @@ import {
   GuideSwrDef,
   guidePlainFailKey,
   guidePlainGoneKey,
+  guidePlainRedirectKey,
 } from "./pages/guide-plain.js";
 import { guideDeclineKey } from "./pages/guides-handler.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
+import { GuidePlainNavLink } from "./components/GuidePlainNavLink.js";
 import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
@@ -479,6 +481,13 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
   return prerenderResultJson(result);
 };
 
+/** A page outside the store that links to a stored one (a client navigation). */
+const GuidePlainNavPage: Handler<{ slug: string }> = async (ctx) => (
+  <div data-testid="gp-nav-page">
+    <GuidePlainNavLink slug={ctx.params.slug} />
+  </div>
+);
+
 // Trigger for the PLAIN (non-Passthrough) on-demand route. Ops via query:
 //   default             -> plain refresh (always renders)
 //   ?onlyIfStale=1      -> cron-sweep opt-in; "already-fresh" when entry fresh
@@ -488,6 +497,8 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
 //                          the next refresh hits notFound() or renders again
 //   ?fail=1 / ?fail=0   -> take the data source down / bring it back, so the
 //                          next refresh throws something other than notFound()
+//   ?redirect=1 / ?redirect=0 -> the render answers redirect() instead of a
+//                          page: skipped-redirect, nothing stored
 //   ?target=<path> (repeated) -> prerender.many(targets): the results as a
 //                          JSON array in target order
 const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
@@ -514,6 +525,13 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") await ctx.env.PRERENDER_KV.put(failKey, "1");
     else await ctx.env.PRERENDER_KV.delete(failKey);
     return Response.json({ fail: fail === "1" });
+  }
+  const redirecting = ctx.url.searchParams.get("redirect");
+  if (redirecting) {
+    const redirectKey = guidePlainRedirectKey(ctx.params.slug);
+    if (redirecting === "1") await ctx.env.PRERENDER_KV.put(redirectKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(redirectKey);
+    return Response.json({ redirect: redirecting === "1" });
   }
   const targets = ctx.url.searchParams.getAll("target");
   if (targets.length > 0) {
@@ -3162,6 +3180,11 @@ export const urlpatterns = urls(
           { name: "guidePlain" },
           () => [loader(GuidePlainLoader)],
         ),
+        // A page outside the store that links to a stored one, so the e2e can
+        // reach it the way a visitor does (a client navigation).
+        path("/guide-plain-nav/:slug", GuidePlainNavPage, {
+          name: "guidePlainNav",
+        }),
         // SWR on-demand fixture (ttl 1): a stale overlay hit serves and
         // schedules the router-level onRevalidate via waitUntil.
         path("/guide-swr/:slug", GuideSwrDef, { name: "guideSwr" }),

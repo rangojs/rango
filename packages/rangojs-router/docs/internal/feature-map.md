@@ -1029,6 +1029,14 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   (`InternalHandlerContext._prerenderRemoved`, read by `gateOnDemandProducer`
   in `urls/path-helper.ts`), a Passthrough route runs its live handler. The
   marker has no `entry`, so a router from before it reads it as a miss.
+- A refresh whose render answers a redirect stores nothing at all (no page,
+  no marker) and reports `skipped-redirect`: a redirect can depend on the
+  request, so it says nothing about the page, and the stored entry keeps
+  serving. Every handler kind funnels through `matchForPrerender` reporting
+  `{ redirected: true }` — a route or layout handler's rethrown `Response`, a
+  parallel slot's value (`takeSegmentRedirects`, which also empties it out of
+  the tree), a streamed handler's Flight error. A real failure outranks it
+  (`render-failed`), and it outranks a `notFound()` (nothing stored).
 - A refresh whose render hits `notFound()` anywhere, and nothing else
   (`matchForPrerender` reports `{ notFound: true }` on an on-demand run and
   rethrows any other collected error ahead of it, `firstFlightError`), stores

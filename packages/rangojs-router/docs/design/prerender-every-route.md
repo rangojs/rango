@@ -721,6 +721,8 @@ export type PrerenderResult =
         | "skipped-no-origin"
         | "skipped-personalized"
         | "skipped-passthrough"
+        // on-demand only: the render answered redirect(); nothing is stored
+        | "skipped-redirect"
         | "skipped-store-not-shared"
         | "shell-not-stored"
         | "skipped-uncached"

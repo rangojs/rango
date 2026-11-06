@@ -100,6 +100,7 @@ export const NamedRoutes = {
   featuresDetail: "/features/:slug",
   filesWildcard: "/files/*",
   guidePlain: "/guide-plain/:slug",
+  guidePlainNav: "/guide-plain-nav/:slug",
   guidePlainTrigger: "/guide-plain-trigger/:slug",
   "guides.detail": "/guides/:slug",
   "guides.personalized": "/guides/personalized/:slug",

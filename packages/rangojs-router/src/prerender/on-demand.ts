@@ -195,6 +195,12 @@ export type PrerenderResult =
         // No prerender store (on-demand), or no `createRouter({ cache })` (warm).
         | "no-store"
         | "skipped-personalized"
+        // The render answered a redirect (`redirect()` in a handler, a layout
+        // or parallel slot, or a streamed handler): a request-dependent answer,
+        // so nothing is stored, no "removed" marker either, and the page
+        // stored before keeps serving. The next refresh that renders a page
+        // replaces the entry.
+        | "skipped-redirect"
         | "skipped-unsupported-target"
         // The route (a Passthrough + onDemand route) returned ctx.passthrough()
         // for this param set: no shared payload to persist. The "removed"

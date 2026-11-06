@@ -3864,6 +3864,9 @@ export interface PrerenderOutcomesFixture extends PrerenderRemoveFixture {
   path: (slug: string) => string;
   stampTestId: string;
   onDemandTestId: string;
+  /** A page outside the store whose client `<Link>` opens `path(slug)`. */
+  navUrl: (slug: string) => string;
+  navLinkTestId: string;
   passthrough: PrerenderRemoveFixture["passthrough"] & {
     declineBakedSlug: string;
   };
@@ -3923,6 +3926,56 @@ export async function expectManyReturnsOneResultPerTargetInOrder(
     const stamp = await readStoredStamp(page, fixture, slug);
     expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
   }
+}
+
+/**
+ * A refresh whose render answers a redirect is `skipped-redirect`: the answer
+ * can depend on the request, so nothing is stored (no page, no "removed"
+ * marker) and the page stored before keeps serving — same stamp, to a document
+ * and to a client navigation. A refresh that renders a page later replaces it.
+ */
+export async function expectRedirectingRefreshKeepsStoredPage(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("redirect");
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?redirect=1");
+  try {
+    const skipped = await removeTrigger(page, trigger);
+    expect(skipped, JSON.stringify(skipped)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+    });
+    // Nothing written: the page stored before still serves, unchanged.
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+
+    // A client navigation to it gets that page, not the redirect and not a
+    // fresh render.
+    await page.goto(fixture.navUrl(slug));
+    await waitForShellHydration(page);
+    await markDocument(page);
+    await byTestId(page, fixture.navLinkTestId).click();
+    await page.waitForURL((url) => url.pathname === fixture.path(slug));
+    expect(
+      await isMarkedDocument(page),
+      "client navigation kept the document (no reload)",
+    ).toBe(true);
+    await waitForShellHydration(page);
+    await expect(byTestId(page, fixture.slugTestId)).toHaveText(slug);
+    await expect(byTestId(page, fixture.onDemandTestId)).toHaveText("true");
+    expect(await byTestId(page, fixture.stampTestId).textContent()).toBe(stamp);
+  } finally {
+    await removeTrigger(page, trigger, "?redirect=0");
+  }
+
+  await refreshPage(page, trigger);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
 }
 
 /**
