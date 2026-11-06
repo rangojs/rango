@@ -17,6 +17,7 @@ import {
   warnOnStreamedResponse,
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
+import { withSegmentScope } from "./handler-context.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
 import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
 import { findInOrphans } from "./error-handling.js";
@@ -393,6 +394,11 @@ export async function resolveInterceptEntry<TEnv>(
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
+  // The slot's ctx carries the slot's segment: a component the handler or the
+  // intercept's layout hands it to renders after the walker pinned whatever
+  // came next, and its push must still file under the slot (withSegmentScope).
+  const slotContext = withSegmentScope(context, slotSegmentId, undefined);
+
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
@@ -400,7 +406,7 @@ export async function resolveInterceptEntry<TEnv>(
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, slotContext),
             ),
           )
         : handler;
@@ -425,7 +431,7 @@ export async function resolveInterceptEntry<TEnv>(
       const layoutResult = await runInSegmentTagScope(
         slotSegmentId,
         layout,
-        context,
+        slotContext,
       );
       if (layoutResult instanceof Response) {
         throw layoutResult;

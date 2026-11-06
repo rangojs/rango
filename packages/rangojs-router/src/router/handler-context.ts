@@ -20,10 +20,12 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  runAsSegment,
   scopeReverse,
   type ReverseScope,
   type ScopableReverse,
 } from "../server/context.js";
+import { isHandle } from "../handle.js";
 import {
   guardRequestHeaders,
   readGuardedTheme,
@@ -207,36 +209,73 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a layout's or parallel slot's handler gets: a prototype child of
- * the request's one handler ctx that carries its own segment.
+ * The ctx a handler gets: a prototype child of the request's one handler ctx
+ * that carries the segment its handler runs for.
  *
- * The segment rides the object for the same reason the scope does: the walker
- * moves the shared `_currentSegmentId` on while an async component the handler
- * handed this ctx to is still rendering, so a push made through this ctx after
- * an `await` would otherwise file under (and a LateHandlePushError name)
- * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
- * router/loader-resolution.ts), which holds after an `await` and in a
- * component the ctx is handed to.
+ * A handle push resolves its segment when `ctx.use(Handle)` is called, not
+ * when the push function it returns runs (setupLoaderAccess). An async
+ * component the handler handed this ctx to renders after the handler
+ * returned, outside every async scope, and by then the walker has pinned
+ * `_currentSegmentId` to a later segment (a slot, a child route): the dev
+ * LateHandlePushError named that one. The child's own `use` runs the push
+ * inside `runAsSegment(segmentId)`, so the segment rides the closure, not the
+ * call frame and not the receiver: it holds after an `await`, in a component
+ * the ctx is handed to, and for a destructured `const { use } = ctx`, a
+ * `{ ...ctx }` copy or a wrapper that calls the captured `use` without a
+ * receiver.
+ *
+ * The child repeats the request ctx's own enumerable fields, so a handler's
+ * `{ ...ctx }` still copies a usable ctx (params, pathname, `_variables`, the
+ * taint brand) and not just `use`; the pin stays a live accessor because the
+ * walker moves it and a reader must see where it is. `theme`, `rewrittenFrom`
+ * and the request-context symbol stay inherited: the child resolves them
+ * through the prototype chain (server/rewrite-trail.ts `definedOn`).
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
- * call that takes this ctx, cache-runtime.ts). Every other field reads
- * through live (`_currentSegmentId` as resolution moves it, ctx.set values).
+ * call that takes this ctx, cache-runtime.ts).
  */
 export function withSegmentScope<C>(
   ctx: C,
   segmentId: string,
   scope: ReverseScope | undefined,
 ): C {
+  const installed = ctx as {
+    use: (item: unknown) => unknown;
+    reverse?: unknown;
+  };
   const scoped = Object.create(ctx as object) as C & {
-    _handleSegmentId: string;
+    use: (item: unknown) => unknown;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
-  scoped._handleSegmentId = segmentId;
+  // Own enumerable DATA fields only: a prerender ctx's `request`, `headers`
+  // and `res` are accessors that throw when read (createPrerenderContext),
+  // and they must stay inherited so they still throw on read, not on scope.
+  for (const key of Reflect.ownKeys(ctx as object)) {
+    const desc = Object.getOwnPropertyDescriptor(ctx as object, key);
+    if (desc === undefined || !desc.enumerable || !("value" in desc)) continue;
+    Object.defineProperty(scoped, key, desc);
+  }
+  Object.defineProperty(scoped, "_currentSegmentId", {
+    enumerable: true,
+    configurable: true,
+    get: () => (ctx as { _currentSegmentId?: string })._currentSegmentId,
+    set: (value: string | undefined) => {
+      (ctx as { _currentSegmentId?: string })._currentSegmentId = value;
+    },
+  });
+  // Own and enumerable, so `{ ...ctx }` carries it; read off `ctx` at call
+  // time, so the loader-cache interceptor (loader-cache.ts) still sees the
+  // call. Only a handle push reads the segment at `use` time: a loader read
+  // files under the owner the walker pinned for it (resolveOwnerLoaders), so
+  // scoping it here would move the loader's handle pushes.
+  scoped.use = (item: unknown): unknown =>
+    isHandle(item)
+      ? runAsSegment(segmentId, () => installed.use(item))
+      : installed.use(item);
   if (scope !== undefined) {
-    scoped.reverse = scopeReverse((ctx as any).reverse, scope);
+    scoped.reverse = scopeReverse(installed.reverse as ScopableReverse, scope);
     scoped._reverseScope = scope;
   }
   return scoped;

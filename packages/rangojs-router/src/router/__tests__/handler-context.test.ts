@@ -24,7 +24,11 @@ import {
   stripInternalParams,
   withSegmentScope,
 } from "../handler-context";
-import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import {
+  scopeReverse,
+  segmentPinOf,
+  type ReverseScope,
+} from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
 
 beforeEach(() => {
@@ -589,12 +593,26 @@ describe("createReverseFunction", () => {
       );
     });
 
-    it("withSegmentScope: the scope and the segment ride the ctx; other fields read through live", () => {
+    // isHandle only reads the brand, so a push target needs no module id.
+    const pushTarget = { __brand: "handle", $$id: "push-target" } as any;
+    const loaderTarget = { $$id: "loader-target" } as any;
+
+    /** A ctx whose `use` records the segment it resolves the call under. */
+    function recordingCtx() {
+      const seen: (string | undefined)[] = [];
       const ctx = {
         params,
         reverse: routeReverse(),
         _currentSegmentId: "L0",
+        use: () => {
+          seen.push(segmentPinOf(ctx));
+        },
       } as unknown as InternalHandlerContext<any, any>;
+      return { ctx, seen };
+    }
+
+    it("withSegmentScope: the scope and the segment ride the ctx; other fields read through live", () => {
+      const { ctx, seen } = recordingCtx();
       const scope = { prefix: "account", rootScoped: false };
       const scoped = withSegmentScope(ctx, "M0L0L0", scope);
       // Destructured and called later, as a component handed the ctx does.
@@ -604,23 +622,35 @@ describe("createReverseFunction", () => {
       expect(scoped._currentSegmentId).toBe("L1");
       expect(scoped.params).toBe(params);
       expect(scoped._reverseScope).toBe(scope);
-      // The segment the push through this ctx files under holds too.
-      expect(scoped._handleSegmentId).toBe("M0L0L0");
-      expect(ctx._handleSegmentId).toBeUndefined();
       // The shared ctx keeps the route's resolution.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
+      // A push through this ctx files under the segment the walker has since
+      // moved off, however `use` is reached.
+      scoped.use(pushTarget);
+      const { use } = scoped;
+      use(pushTarget);
+      ({ ...scoped }).use(pushTarget);
+      expect(seen).toEqual(["M0L0L0", "M0L0L0", "M0L0L0"]);
     });
 
     it("withSegmentScope: a segment without a reverse scope still carries the segment", () => {
-      const ctx = {
-        reverse: routeReverse(),
-      } as unknown as InternalHandlerContext<any, any>;
+      const { ctx, seen } = recordingCtx();
       const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
       expect(scoped).not.toBe(ctx);
-      expect(scoped._handleSegmentId).toBe("M0L0L0R0");
       expect(scoped._reverseScope).toBeUndefined();
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
+      ctx._currentSegmentId = "M0L0L0R0.@side";
+      scoped.use(pushTarget);
+      expect(seen).toEqual(["M0L0L0R0"]);
+    });
+
+    it("withSegmentScope: a loader read keeps the walker's pin for its owner", () => {
+      const { ctx, seen } = recordingCtx();
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      ctx._currentSegmentId = "M0L0L0D0.loader";
+      scoped.use(loaderTarget);
+      expect(seen).toEqual(["M0L0L0D0.loader"]);
     });
   });
 

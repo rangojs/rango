@@ -4,16 +4,18 @@
 
 ### Fixed: a dev `LateHandlePushError` names the segment whose ctx pushed
 
-**Before.** An async server component a layout's (or a parallel slot's)
-handler handed its `ctx` to that pushed a handle after an `await` was rejected
-— by design, the `.defer()` path is the mitigation — and the dev
-`LateHandlePushError` named the child route's segment: `ctx.use(Handle)` read
-the request's shared segment id when it was called, and by then the route
-handler had run and moved it on.
+**Before.** An async server component a layout's (or a parallel slot's, a
+route's, an intercept's) handler handed its `ctx` to that pushed a handle
+after an `await` was rejected — by design, the `.defer()` path is the
+mitigation — and the dev `LateHandlePushError` named another segment:
+`ctx.use(Handle)` read the request's shared segment id when it was called, and
+by then the walker had moved it on (to the route, to a slot).
 
-**Now.** The message names the layout's or the slot's segment, the one that
-owns the ctx the push went through:
+**Now.** The message names the segment whose ctx made the push:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
+Every handler's ctx carries its own segment, so the message is right for a
+layout, a parallel slot, a route (its own slots included) and an intercept,
+and after the component destructured `use` or copied the ctx with `{ ...ctx }`.
 The push is still rejected, at the same moment, and production still shows no
 message.
 
