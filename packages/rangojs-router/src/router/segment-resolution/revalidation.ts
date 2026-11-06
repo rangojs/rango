@@ -813,12 +813,20 @@ async function resolveParallelSlotComponent<TEnv>(
     } else if (handler === undefined) {
       return undefined;
     } else {
-      // Slot-keyed pushes — slot owns its own bucket, parent layout owns its
-      // own. On slot-only revalidations the partial merge updates only the
-      // slot's bucket; the parent's bucket stays intact.
-      (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-        parallelId;
       handlerRan = true;
+      // Slot-keyed pushes: the slot owns its own bucket, the parent entry its
+      // own. On slot-only revalidations the partial merge then updates only
+      // the slot's bucket and the parent's stays intact.
+      //
+      // Pinned only while the handler runs. A component the handler hands
+      // `slotContext` to renders later, after the walker moved this pin on
+      // (the route's handler, another slot), and takes its segment from the
+      // ctx instead (withSegmentScope); leaving the pin on the slot named the
+      // slot for a push made through the ROUTE's ctx, which is the request's
+      // own and reads this pin.
+      const internal = context as InternalHandlerContext<any, TEnv>;
+      const pinned = internal._currentSegmentId;
+      internal._currentSegmentId = parallelId;
       const slotContext = withSegmentScope(
         context,
         parallelId,
@@ -862,6 +870,8 @@ async function resolveParallelSlotComponent<TEnv>(
         }
       } catch (error) {
         throw noteThrower(error, parallelId, "parallel");
+      } finally {
+        internal._currentSegmentId = pinned;
       }
     }
   }

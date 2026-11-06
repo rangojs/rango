@@ -4,7 +4,11 @@
  * Creates the handler context object passed to route handlers, middleware, and loaders.
  */
 
-import type { HandlerContext, InternalHandlerContext } from "../types";
+import type {
+  HandlerContext,
+  InternalHandlerContext,
+  SegmentAwareUse,
+} from "../types";
 import {
   _getRequestContext,
   type RequestContext,
@@ -207,17 +211,22 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a layout's or parallel slot's handler gets: a prototype child of
- * the request's one handler ctx that carries its own segment.
+ * The ctx a layout's, parallel slot's or intercept's handler gets: a
+ * prototype child of the request's one handler ctx that carries its own
+ * segment.
  *
  * The segment rides the object for the same reason the scope does: the walker
  * moves the shared `_currentSegmentId` on while an async component the handler
  * handed this ctx to is still rendering, so a push made through this ctx after
  * an `await` would otherwise file under (and a LateHandlePushError name)
- * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
- * router/loader-resolution.ts), which holds after an `await` and in a
- * component the ctx is handed to.
+ * whatever segment the walker pinned since.
+ *
+ * The child owns `use`, and its `use` supplies the segment as an argument
+ * (`SegmentAwareUse`, types/handler-context.ts): the segment is part of the
+ * call, never of the receiver, so `const { use } = ctx`, a `{ ...ctx }` copy,
+ * a `use` handed on as a prop and a wrapper between here and the push lane all
+ * keep it. Reading it off `this` instead failed every one of those shapes
+ * (the #1164 class: a push silently filing under the walker's latest pin).
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -231,10 +240,16 @@ export function withSegmentScope<C>(
 ): C {
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
+    use?: SegmentAwareUse;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  // Looked up per call, not captured: loader-cache.ts replaces the request
+  // ctx's `use` with its cached-loader read-through after the first cached
+  // loader, and that interceptor forwards the segment argument through.
+  scoped.use = (item, explicit) =>
+    (ctx as { use: SegmentAwareUse }).use(item, explicit ?? segmentId);
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

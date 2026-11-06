@@ -441,6 +441,20 @@ export type HandlerContext<
 };
 
 /**
+ * `ctx.use` as the runtime installs it: `segmentId` is the segment the call
+ * came through, supplied by the ctx it was called on when that ctx carries
+ * one (withSegmentScope). A ctx that carries none (the request's own) leaves
+ * it undefined and its pin decides. The public `use` takes one argument; the
+ * second is how a segment-scoped ctx keeps its segment across a detached
+ * `const { use } = ctx` or a `{ ...ctx }` copy.
+ * @internal
+ */
+export type SegmentAwareUse = (
+  item: LoaderDefinition<any, any> | Handle<any, any>,
+  segmentId?: string,
+) => unknown;
+
+/**
  * Internal handler context with additional props for router internals.
  * Use `HandlerContext` for user-facing code.
  * @internal
@@ -459,9 +473,10 @@ export type InternalHandlerContext<
   /** Current segment ID for handle data attribution. */
   _currentSegmentId?: string;
   /**
-   * The segment a layout's or parallel slot's ctx belongs to
-   * (withSegmentScope): a handle push made through it files under that
-   * segment, before or after an `await`.
+   * The segment a layout's, parallel slot's or intercept's ctx belongs to
+   * (withSegmentScope): readers of the segment a call came through
+   * (`segmentPinOf`, cache-runtime.ts) take this before the walker's pin, so
+   * they hold however long after the handler returned the call runs.
    */
   _handleSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */

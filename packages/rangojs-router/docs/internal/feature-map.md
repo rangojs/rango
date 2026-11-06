@@ -267,9 +267,12 @@ default, but a CUSTOM-collect handle that failed to register silently gets the w
 shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 
 **A streamed handler's pushes stay in its own segment:** `runAsSegment` /
-`segmentPinOf` (`server/context.ts`), plus `_handleSegmentId` on a layout's or
-slot's ctx (`withSegmentScope`, `router/handler-context.ts`) for a push from a
-component the handler handed that ctx to; see execution-model.md "A streamed
+`segmentPinOf` (`server/context.ts`), plus a segment-scoped ctx for a push from a
+component the handler handed it to: a layout's, slot's or intercept's ctx owns
+`use` and passes its segment to the push lane (`withSegmentScope`,
+`SegmentAwareUse`, `router/handler-context.ts`, `types/handler-context.ts`), so
+every call shape keeps it; `loaderOwner` takes the same carried segment for a
+loader a component starts through that ctx. See execution-model.md "A streamed
 handler keeps its segment".
 
 ---

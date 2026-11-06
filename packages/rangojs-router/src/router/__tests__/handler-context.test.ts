@@ -622,6 +622,34 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: the child's use supplies its segment in every call shape", () => {
+      // The parent's use records the segment it was handed; it reads no
+      // receiver, so a detached call or a `{ ...ctx }` copy keeps the child's.
+      const seen: (string | undefined)[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use: (_item: unknown, segmentId?: string) => {
+          seen.push(segmentId);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      const handle = { $$id: "crumbs" };
+
+      scoped.use(handle as never);
+      const { use } = scoped;
+      use(handle as never);
+      ({ ...scoped }).use(handle as never);
+      const copied = { ...scoped };
+      (copied.use as (item: unknown) => void)(handle);
+      // The request's own ctx carries none: its pin decides.
+      ctx.use(handle as never);
+
+      expect(seen).toEqual(["M0L0L0", "M0L0L0", "M0L0L0", "M0L0L0", undefined]);
+      // A call shape cannot lose it, and the child never reads `this`.
+      expect(Object.hasOwn(scoped, "use")).toBe(true);
+      expect(ctx).not.toHaveProperty("use", scoped.use);
+    });
   });
 
   describe("optional params", () => {

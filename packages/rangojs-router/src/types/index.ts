@@ -34,6 +34,7 @@ export type {
   Handler,
   HandlerContext,
   InternalHandlerContext,
+  SegmentAwareUse,
   GenericParams,
   RevalidateParams,
   ShouldRevalidateFn,
