@@ -852,8 +852,14 @@ async function resolveParallelSlotComponent<TEnv>(
             component = result as ReactNode;
           }
         } else {
-          // A static value (a Promise included) goes to render as is.
-          component = typeof handler === "function" ? await run() : handler;
+          // A static value (a Promise included) goes to render as is. A
+          // returned Response (redirect, file) short-circuits like a route or
+          // layout handler's: without handleHandlerResult it would be
+          // rendered into the Flight stream instead of becoming the answer.
+          component =
+            typeof handler === "function"
+              ? handleHandlerResult(await run())
+              : handler;
           doneHandler();
         }
       } catch (error) {

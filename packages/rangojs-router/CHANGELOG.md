@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `parallel()` slot handler's `redirect()` is sent as the answer, not rendered into the page
+
+**Before.** A `redirect()` returned by a slot handler skipped
+`handleHandlerResult` (`resolveParallelSlotComponent`), so its `Response` was
+resolved into the segment's component instead of short-circuiting. A document
+request answered `200` with no `Location`; a client navigation, prefetch or
+action revalidation carried the `Response` inside its Flight payload; an
+on-demand prerender refresh failed the whole render with `Only plain objects,
+and a few built-ins, can be passed to Client Components from Server
+Components`. The same redirect on a route or layout handler answered `302` in
+every case.
+
+**Now.** A slot handler's returned redirect answers as a route or layout
+handler's does: `302` with its `Location` on a document request, the
+client-navigation redirect on a partial, prefetch or action-revalidation
+request, and `render-failed` on an on-demand refresh, which keeps the page
+stored before serving (a redirect is never stored). A thrown redirect is
+unchanged, and so is a slot that declares `loading()`: its handler streams, so
+its redirect is still rendered into the stream, as a route handler under
+`loading()` is (the dev warning names it).
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
