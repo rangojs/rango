@@ -1375,7 +1375,17 @@ pins that a shared segment's crumb comes from the page on screen.
   the fifth (a held loader's rerun replaces its pushes in place) is the
   control.
 - `src/router/__tests__/match-result.test.ts`, "partial match resolvedIds
-  names the loader segments that ran".
+  names the loader segments that ran", and "should strip the internal marker
+  from a slot segment".
+- `src/testing/__tests__/intercept-slot-resolved-ids.rsc-test.tsx`, "a live
+  intercept slot in resolvedIds": four of its tests fail before the slot
+  carries the marker, the fill and the static-handler ones pin the cases the
+  answer must leave unlisted.
+- e2e `intercept slot handles and held loaders (dev)` / `(production)` in the
+  router test-app and `tests/cloudflare-basic` (body:
+  `tests/shared-e2e/src/intercept-held-scenario.ts`), "a crumb the moved
+  modal's handler no longer pushes clears": fails on the branch head before
+  the fix in dev, passes in both modes in both apps.
 - `src/server/__tests__/handle-store.test.ts`, "HandleStore pushedBy records
   (the run of each push)"; `src/handles/__tests__/deferred-resolution.test.ts`,
   "keeps the pushedBy record aligned with the values it drops".
