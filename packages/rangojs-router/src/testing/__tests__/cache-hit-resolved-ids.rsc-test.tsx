@@ -466,7 +466,7 @@ describe("a stored answer lists what it sends, as the live render lists what it 
       // The row compares a MISS with the HIT that follows it: the first
       // request must have rendered the page live, or the two would be two
       // HITs and the row would pass without the fix.
-      expect(handlerRuns).not.toEqual([]);
+      expect(handlerRuns.length).toBeGreaterThan(0);
       handlerRuns = [];
       const hit = await readAnswer(
         await serveShellRequest(router, shape.url, { cacheStore, ...request }),
