@@ -622,6 +622,46 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: use keeps the segment detached or copied", () => {
+      // The receiver ctx.use reads the segment from is only there for a
+      // `ctx.use(Handle)` call. A consumer that detaches the method or copies
+      // the ctx (a `{ ...ctx }` copy has no inherited `use`) must still reach
+      // the segment, so the child owns a `use` closing over itself.
+      const seen: Array<string | undefined> = [];
+      const ctx = {
+        use(this: { _handleSegmentId?: string }) {
+          seen.push(this?._handleSegmentId);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      const { use } = scoped as any;
+      use({});
+      (({ ...scoped }) as any).use({});
+      expect(seen).toEqual(["M0L0L0", "M0L0L0"]);
+    });
+
+    it("withSegmentScope: use reads the request ctx's interceptor at call time", () => {
+      // loader-cache.ts replaces ctx.use on the request's ctx after a handler
+      // may already have handed its child out: the child's `use` must go
+      // through the current one, not the one installed when it was created.
+      const calls: string[] = [];
+      const ctx = {
+        use(this: { _handleSegmentId?: string }, item: unknown) {
+          calls.push(`first:${String(item)}`);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      (ctx as any).use = function (
+        this: { _handleSegmentId?: string },
+        item: unknown,
+      ) {
+        calls.push(`second:${String(item)}`);
+        return undefined;
+      };
+      (scoped as any).use("loader");
+      expect(calls).toEqual(["second:loader"]);
+    });
   });
 
   describe("optional params", () => {

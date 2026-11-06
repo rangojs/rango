@@ -2551,10 +2551,11 @@ Limits:
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
 - A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `_handleSegmentId`, and `reverse` and `_reverseScope` when the
-  segment has a scope, so `{ ...ctx }` there copies only those. A getter keyed
-  by its holder resolves through the prototype chain (`rewrittenFrom`,
-  `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
+  fields are `_handleSegmentId`, `use`, and `reverse` and `_reverseScope`
+  when the segment has a scope, so `{ ...ctx }` there copies only those. A
+  getter keyed by its holder resolves through the prototype chain
+  (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
+  child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a
@@ -2598,14 +2599,30 @@ the only thing left to ask. That ctx carries its segment
 segment off the receiver it was called on (`handlePushSegment`,
 `loader-resolution.ts`) — a push from such a component, and the dev
 `LateHandlePushError` it throws, names the layout or the slot, not whichever
-segment the walker pinned since. The other readers take `segmentPinOf(ctx)`,
-the innermost scope's segment else the ctx's carried one else its pin: a
-handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the build
-pass, which runs the same walker), a started loader's owning segment
-(`loaderOwner`, after a prefetch-deferred loader's registered owner), and the
-caller segment a `"use cache"` call records and replays under
-(`cache-runtime.ts`). A route handler's ctx is still the request's one ctx,
-so `{ ...ctx }` there copies what it copies in any route.
+segment the walker pinned since.
+
+The child owns a `use` too, closing over itself, and that is what makes the
+segment hold for every ordinary call shape: a detached `const { use } = ctx`
+has no receiver to read the segment from, and a `{ ...ctx }` copy has no `use`
+at all (it is own on the request's ctx, so the child only inherits it, and a
+copy does not inherit). The child's `use` reads the parent's at call time, so
+an interceptor installed on the request's ctx later (`loader-cache.ts`) stays
+in the path. `withSegmentScope` is the one funnel: a layout, a parallel slot
+and a prerender build ctx all get the child here.
+
+The other readers take `segmentPinOf(ctx)`, the innermost scope's segment
+else the ctx's carried one else its pin: a handle push's segment
+(`setupLoaderAccess`, and `setupBuildUse` for the build pass, which runs the
+same walker), a started loader's owning segment (`loaderOwner`, after a
+prefetch-deferred loader's registered owner), and the caller segment a
+`"use cache"` call records and replays under (`cache-runtime.ts`). The
+loader owner needs one more step: `loaderOwner` is handed the request ctx, not
+the receiver, so `ctx.use(Loader)` runs its kickoff inside
+`runAsSegment(receiver's segment)` — the scope is the only thing that carries
+the segment down to it. A loader a component starts through a layout's ctx
+files its pushes under the layout, not the route that rendered the component.
+A route handler's ctx is still the request's one ctx, so `{ ...ctx }` there
+copies what it copies in any route.
 
 You might worry about runtimes that lose async context. The fallback is the
 ctx's own segment (a layout's or slot's) or its pin (the request's one ctx),
@@ -2631,7 +2648,9 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to) and `server/__tests__/segment-pin.test.ts`. The e2e
+slot handed the ctx to; every call shape of `ctx.use` from `call-shapes.ts`;
+a loader the component starts through the layout's ctx) and
+`server/__tests__/segment-pin.test.ts`. The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.
 

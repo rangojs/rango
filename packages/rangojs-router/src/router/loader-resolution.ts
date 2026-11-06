@@ -1074,7 +1074,15 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    // The ctx a loader is started through owns its pushes: a layout's or
+    // slot's ctx carries its segment (withSegmentScope), and loaderOwner
+    // reads it from this scope (segmentPinOf). Without the scope it reads the
+    // request ctx's pin, whatever segment the walker resolved last.
+    const carried = (this as { _handleSegmentId?: string } | undefined)
+      ?._handleSegmentId;
+    return carried === undefined
+      ? useLoader(loader, null)
+      : runAsSegment(carried, () => useLoader(loader, null));
   } as typeof ctx.use;
 }
 

@@ -5,9 +5,14 @@
  *
  * The push is rejected by design (the `.defer()` path is the mitigation), so
  * the message is all a consumer sees of it: it must name the segment whose
- * ctx made the push, not whichever segment the walker pinned last. A layout
- * handler's ctx carries its own segment, so the message names the layout; a
- * route handler's ctx reads the request's pin, which is still the route's.
+ * ctx made the push, not whichever segment the walker pinned last. A layout's
+ * or parallel slot's ctx carries its own segment, so the message names the
+ * layout or the slot; a route handler's ctx reads the request's pin, which is
+ * still the route's.
+ *
+ * The segment has to hold however the consumer calls the method: a detached
+ * `const { use } = ctx`, a `{ ...ctx }` copy, and either after an `await`
+ * included (call-shapes.ts).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -24,28 +29,65 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   createHandle,
+  createLoader,
   createRouter,
   urls,
   type HandlerContext,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
+import { callShapes, type CallShapeName } from "./helpers/call-shapes.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
 const errors: string[] = [];
 
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** `ctx.use(Crumbs)` in one ordinary call shape, then the push. */
+async function pushInShape(
+  ctx: HandlerContext,
+  shape: CallShapeName,
+  label: string,
+): Promise<void> {
+  const shapeOf = callShapes(ctx as any, "use").find((s) => s.name === shape)!;
+  const push = (await shapeOf.call(Crumbs)) as (v: string[]) => void;
+  push([label]);
+}
+
 /** An async server component pushing the ctx its handler handed it. */
 async function LatePush({
   ctx,
   label,
+  shape = "method",
 }: {
   ctx: HandlerContext;
   label: string;
+  shape?: CallShapeName;
 }) {
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  ctx.use(Crumbs)(label);
+  await tick();
+  await pushInShape(ctx, shape, label);
   return <span>{label}</span>;
+}
+
+/** A loader body that pushes through its own ctx after an `await`. */
+const BodyLoader = createLoader(async (ctx: any) => {
+  await tick();
+  ctx.use(Crumbs)(["loader"]);
+  return "body";
+});
+
+/** An async server component starting a loader through its handler's ctx. */
+async function LateLoaderPush({ ctx }: { ctx: HandlerContext }) {
+  await tick();
+  await ctx.use(BodyLoader);
+  return <span>loader</span>;
+}
+
+/** The call shape the URL asks for, `method` when it asks for none. */
+function shapeOf(ctx: HandlerContext): CallShapeName {
+  const params = ctx.params as Record<string, string | undefined> | undefined;
+  return (params?.shape ?? "method") as CallShapeName;
 }
 
 function makeRouter() {
@@ -61,12 +103,15 @@ function makeRouter() {
           layout(
             (ctx) => (
               <div>
-                <LatePush ctx={ctx} label="layout" />
+                <LatePush ctx={ctx} label="layout" shape={shapeOf(ctx)} />
               </div>
             ),
             () => [
               path("/component-layout", () => <p>page</p>, {
                 name: "componentLayout",
+              }),
+              path("/component-layout-shape/:shape", () => <p>page</p>, {
+                name: "componentLayoutShape",
               }),
             ],
           ),
@@ -74,16 +119,29 @@ function makeRouter() {
             () => <section>slot frame</section>,
             () => [
               parallel({
-                "@panel": (ctx) => <LatePush ctx={ctx} label="slot" />,
+                "@panel": (ctx) => (
+                  <LatePush ctx={ctx} label="slot" shape={shapeOf(ctx)} />
+                ),
               }),
               path("/component-slot", () => <p>page</p>, {
                 name: "componentSlot",
+              }),
+              path("/component-slot-shape/:shape", () => <p>page</p>, {
+                name: "componentSlotShape",
               }),
             ],
           ),
           path("/component", (ctx) => <LatePush ctx={ctx} label="route" />, {
             name: "component",
           }),
+          layout(
+            (ctx) => <LateLoaderPush ctx={ctx} />,
+            () => [
+              path("/component-loader", () => <p>page</p>, {
+                name: "componentLoader",
+              }),
+            ],
+          ),
         ],
       ),
     ]),
@@ -114,6 +172,20 @@ function latePushSegment(reported: string[]): string {
   return segment![1]!;
 }
 
+/** The layout's own segment id in the response's matched list. */
+function layoutOf(matched: string[]): string {
+  return matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+}
+
+const SHAPES: CallShapeName[] = [
+  "method",
+  "detached",
+  "spread",
+  "spread detached",
+  "after await",
+  "after await detached",
+];
+
 beforeEach(async () => {
   await resetShellTestState();
 });
@@ -121,8 +193,7 @@ beforeEach(async () => {
 describe("a LateHandlePushError names the segment whose ctx pushed", () => {
   it("the layout's, for a component the layout handler handed its ctx to", async () => {
     const { errors: reported, matched } = await serve("/component-layout");
-    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
-    expect(latePushSegment(reported)).toBe(layout);
+    expect(latePushSegment(reported)).toBe(layoutOf(matched));
   });
 
   it("the slot's, for a component the parallel slot's handler handed its ctx to", async () => {
@@ -135,5 +206,35 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     const { errors: reported, matched } = await serve("/component");
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the layout's, however the component calls ctx.use", async () => {
+    for (const shape of SHAPES) {
+      const { errors: reported, matched } = await serve(
+        `/component-layout-shape/${encodeURIComponent(shape)}`,
+      );
+      expect({ shape, segment: latePushSegment(reported) }).toEqual({
+        shape,
+        segment: layoutOf(matched),
+      });
+    }
+  });
+
+  it("the slot's, however the component calls ctx.use", async () => {
+    for (const shape of SHAPES) {
+      const { errors: reported, matched } = await serve(
+        `/component-slot-shape/${encodeURIComponent(shape)}`,
+      );
+      const slot = matched.find((id) => id.endsWith(".@panel"))!;
+      expect({ shape, segment: latePushSegment(reported) }).toEqual({
+        shape,
+        segment: slot,
+      });
+    }
+  });
+
+  it("the layout's, for a loader the component starts through that ctx", async () => {
+    const { errors: reported, matched } = await serve("/component-loader");
+    expect(latePushSegment(reported)).toBe(layoutOf(matched));
   });
 });
