@@ -459,9 +459,11 @@ export type InternalHandlerContext<
   /** Current segment ID for handle data attribution. */
   _currentSegmentId?: string;
   /**
-   * The segment a layout's or parallel slot's ctx belongs to
+   * The segment a layout's, parallel slot's or intercept's ctx belongs to
    * (withSegmentScope): a handle push made through it files under that
-   * segment, before or after an `await`.
+   * segment, before or after an `await`. Its own `use` hands this to the
+   * ctx's `use` implementation, so the push names it however `use` was
+   * obtained.
    */
   _handleSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */

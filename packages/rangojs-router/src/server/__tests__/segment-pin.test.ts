@@ -28,6 +28,20 @@ describe("segmentPinOf", () => {
     expect(segmentPinOf(ctx)).toBe("R0.@side");
   });
 
+  it("reads a layout's or slot's carried segment before the shared pin", () => {
+    // A scoped ctx's own segment holds after the walker moved the pin on
+    // (withSegmentScope, router/handler-context.ts).
+    expect(
+      segmentPinOf({ _handleSegmentId: "L0", _currentSegmentId: "R1" }),
+    ).toBe("L0");
+    // Inside a scope, the scope still wins.
+    expect(
+      runAsSegment("R2", () =>
+        segmentPinOf({ _handleSegmentId: "L0", _currentSegmentId: "R1" }),
+      ),
+    ).toBe("R2");
+  });
+
   it("the innermost scope wins; an undefined segment falls back to the ctx", () => {
     const ctx = { _currentSegmentId: "R0.@side" };
     expect(

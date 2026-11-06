@@ -124,3 +124,50 @@ describe("matchForPrerender: a layout declared inside the route with no loader",
     });
   });
 });
+
+/**
+ * An async server component pushing the ctx its layout handler handed it,
+ * with `use` destructured off that ctx first. The bake seals the handle store
+ * before it renders the tree, so the push is accepted into the segment the
+ * ctx carries and collected under it (build-time collection never arms the
+ * late-push guard: handle-store.ts notifyDrain arms `completed` only once a
+ * stream consumer exists).
+ */
+async function LateLayoutPush({ ctx }: { ctx: any }) {
+  const { use } = ctx;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  use(Crumbs)("late-crumb");
+  return <span>late</span>;
+}
+
+const componentRouter: any = createRouter<Record<string, never>>({}).routes(
+  ({ path, layout }: any) => [
+    layout(<div>shell</div>, () => [
+      layout(
+        (ctx: any) => <LateLayoutPush ctx={ctx} />,
+        () => [
+          path(
+            "/page",
+            Prerender(() => <p>page</p>),
+            { name: "page" },
+          ),
+        ],
+      ),
+    ]),
+  ],
+);
+
+describe("matchForPrerender: a component the layout handler handed its ctx to", () => {
+  it("files its push under the layout's segment, not the route's pin", async () => {
+    const result = await componentRouter.matchForPrerender("/page", {});
+    const handles = await deserializeResult<
+      Record<string, Record<string, string[]>>
+    >(result.handles);
+    const ids: string[] = result.segments.map((s: any) => s.metadata.id);
+    // The layout above the route: the deepest layout id, the route is its R0.
+    const layout = ids.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(handles).toEqual({
+      [layout]: { "test#Crumbs": ["late-crumb"] },
+    });
+  });
+});

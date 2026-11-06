@@ -214,10 +214,11 @@ function createPrerenderPassthroughFn(
  * moves the shared `_currentSegmentId` on while an async component the handler
  * handed this ctx to is still rendering, so a push made through this ctx after
  * an `await` would otherwise file under (and a LateHandlePushError name)
- * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
- * router/loader-resolution.ts), which holds after an `await` and in a
- * component the ctx is handed to.
+ * whatever segment the walker pinned since. The child's own `use` hands the
+ * segment to the ctx's `use` implementation as a value (handlePushSegment,
+ * router/loader-resolution.ts), so a call through this ctx names its segment
+ * however `use` was obtained: called as a method, destructured, or passed on
+ * as a callback.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -231,6 +232,7 @@ export function withSegmentScope<C>(
 ): C {
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
+    use?: unknown;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
@@ -239,6 +241,19 @@ export function withSegmentScope<C>(
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;
   }
+  // The segment travels as the second argument, a value the closure holds, so
+  // no receiver has to survive the call. Read the parent's `use` at call time:
+  // a wrapper installed on the shared ctx while a loader cache() executes
+  // (loader-cache.ts executeLoaderData) still serves reads made here.
+  //
+  // A string is the only thing a nested scope passes on; anything else a
+  // caller's own arguments put in that position (`items.forEach(ctx.use)`
+  // hands over the index) is not a segment, and this ctx's own stands.
+  const parent = ctx as {
+    use: (item: unknown, segment?: string) => unknown;
+  };
+  scoped.use = (item: unknown, segment?: unknown): unknown =>
+    parent.use(item, typeof segment === "string" ? segment : segmentId);
   return scoped;
 }
 

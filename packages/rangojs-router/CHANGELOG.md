@@ -11,8 +11,9 @@ handler handed its `ctx` to that pushed a handle after an `await` was rejected
 the request's shared segment id when it was called, and by then the route
 handler had run and moved it on.
 
-**Now.** The message names the layout's or the slot's segment, the one that
-owns the ctx the push went through:
+**Now.** The message names the segment that owns the ctx the push went
+through — a layout's, a parallel slot's or an intercept's, however `use` was
+taken off that ctx (destructured included):
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
 The push is still rejected, at the same moment, and production still shows no
 message.

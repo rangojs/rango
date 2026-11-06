@@ -18,6 +18,7 @@ import {
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { withSegmentScope } from "./handler-context.js";
 import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
 import { findInOrphans } from "./error-handling.js";
 import {
@@ -364,8 +365,9 @@ export async function resolveInterceptEntry<TEnv>(
     belongsToRoute,
   );
   // The slot's tag scope (#957, cache-tag.ts runInSegmentTagScope) and the
-  // owner of its handler's handle pushes (a handler's ctx.use(Handle) reads
-  // it when called).
+  // pin a handler's ctx.use(Handle) read while it runs. The handler gets the
+  // ctx below, which carries the slot's segment itself (withSegmentScope): a
+  // component it hands the ctx to pushes after the walker moved this pin on.
   (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
     slotSegmentId;
 
@@ -393,6 +395,12 @@ export async function resolveInterceptEntry<TEnv>(
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
+  // The ctx the intercept's handler and layout get: the request's handler ctx
+  // carrying this slot's segment, as a layout's or a parallel slot's does
+  // (withSegmentScope). Its dot-local reverse stays the route's: an intercept
+  // declares none.
+  const slotContext = withSegmentScope(context, slotSegmentId, undefined);
+
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
@@ -400,7 +408,7 @@ export async function resolveInterceptEntry<TEnv>(
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, slotContext),
             ),
           )
         : handler;
@@ -425,7 +433,7 @@ export async function resolveInterceptEntry<TEnv>(
       const layoutResult = await runInSegmentTagScope(
         slotSegmentId,
         layout,
-        context,
+        slotContext,
       );
       if (layoutResult instanceof Response) {
         throw layoutResult;

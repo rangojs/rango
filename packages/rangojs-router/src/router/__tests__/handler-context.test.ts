@@ -622,6 +622,69 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: the child's use hands its segment over, detached too", () => {
+      const calls: [string, string | undefined][] = [];
+      const ctx = {
+        use: (item: string, segment?: string) => {
+          calls.push([item, segment]);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
+      // Called as a method, then taken out of the object first: the segment
+      // rides the closure, so neither call can lose it.
+      scoped.use("handle" as any);
+      const { use } = scoped;
+      use("handle" as any);
+      expect(calls).toEqual([
+        ["handle", "M0L0L0R0"],
+        ["handle", "M0L0L0R0"],
+      ]);
+    });
+
+    it("withSegmentScope: a nested child hands over its own segment", () => {
+      const calls: [string, string | undefined][] = [];
+      const ctx = {
+        use: (item: string, segment?: string) => {
+          calls.push([item, segment]);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const outer = withSegmentScope(ctx, "M0L0L0", undefined);
+      const inner = withSegmentScope(outer, "M0L0L0L0", undefined);
+      inner.use("handle" as any);
+      outer.use("handle" as any);
+      expect(calls).toEqual([
+        ["handle", "M0L0L0L0"],
+        ["handle", "M0L0L0"],
+      ]);
+    });
+
+    it("withSegmentScope: a caller's own arguments are not a segment", () => {
+      // `items.map(ctx.use)` hands over (item, index, array): the index is not
+      // a segment, and the child's own stands.
+      const calls: [string, string | undefined][] = [];
+      const ctx = {
+        use: (item: string, segment?: string) => {
+          calls.push([item, segment]);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
+      (["handle"] as string[]).map(scoped.use as any);
+      expect(calls).toEqual([["handle", "M0L0L0R0"]]);
+    });
+
+    it("withSegmentScope: the child's use reads the shared ctx's use live", () => {
+      // A loader cache() interceptor replaces the shared ctx's use while it
+      // runs (loader-cache.ts executeLoaderData): the child must reach it.
+      const calls: string[] = [];
+      const ctx = {
+        use: () => calls.push("installed"),
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      (ctx as any).use = () => calls.push("interceptor");
+      scoped.use("handle" as any);
+      expect(calls).toEqual(["interceptor"]);
+    });
   });
 
   describe("optional params", () => {

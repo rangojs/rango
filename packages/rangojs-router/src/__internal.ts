@@ -129,7 +129,7 @@ export type {
 /**
  * @internal
  * Internal handler context with additional props for router internals.
- * Includes `_currentSegmentId` and `_responseType`.
+ * Includes `_currentSegmentId`, `_handleSegmentId` and `_responseType`.
  */
 export type { InternalHandlerContext } from "./types.js";
 

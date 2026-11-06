@@ -103,24 +103,26 @@ export type LoaderErrorCallback = (
 /**
  * The segment a handle push through `ctx.use` files under.
  *
- * The receiver decides when it carries a segment: a layout's or a parallel
- * slot's ctx does (withSegmentScope), and the segment holds however long after
- * the handler returned, so an async component the handler handed the ctx to
- * still files under it after the walker moved the shared pin on. Any other
- * receiver reads the ctx `use` was installed on, whose `_currentSegmentId`
- * the walker pins — a handler that built a smaller ctx with `use` copied onto
- * it (a Prerender handler forwarding to a shared page handler) included.
+ * `segment` is the value a layout's or a parallel slot's ctx passes
+ * (withSegmentScope, router/handler-context.ts): the segment holds however
+ * long after the handler returned, so an async component the handler handed
+ * the ctx to still files under it after the walker moved the shared pin on.
+ * Without it (a route handler's ctx) the segment is the ctx's own: the ctx
+ * `use` was installed on, whose `_currentSegmentId` the walker pins — a
+ * handler that built a smaller ctx with `use` copied onto it (a Prerender
+ * handler forwarding to a shared page handler) included. A second argument
+ * that is not a string is not a segment: a caller passing `ctx.use` as a
+ * callback hands over its own arguments (`items.forEach(ctx.use)` passes the
+ * index), and those fall back to the ctx's own.
  */
 function handlePushSegment(
-  receiver: unknown,
+  segment: unknown,
   installed: HandlerContext<any, any>,
 ): string | undefined {
-  const carried = (receiver as { _handleSegmentId?: string } | undefined)
-    ?._handleSegmentId;
   return segmentPinOf(
-    carried === undefined
-      ? (installed as { _currentSegmentId?: string })
-      : { _handleSegmentId: carried },
+    typeof segment === "string"
+      ? { _handleSegmentId: segment }
+      : (installed as { _currentSegmentId?: string }),
   );
 }
 
@@ -1006,18 +1008,17 @@ export function setupLoaderAccess<TEnv>(
       },
     )(loader, null);
 
-  // A regular function, not an arrow: `ctx.use` resolves the push segment
-  // from the RECEIVER when it carries one (handlePushSegment), so a layout's
-  // or slot's ctx files the push under its own segment however long after the
-  // handler returned.
-  ctx.use = function (
-    this: HandlerContext<any, TEnv> | undefined,
+  // A layout's or slot's ctx calls this with its segment as the second
+  // argument (withSegmentScope), so the push files under that segment however
+  // long after the handler returned. A route handler's ctx passes none.
+  ctx.use = ((
     item: LoaderDefinition<any, any> | Handle<any, any>,
-  ) {
+    segment?: unknown,
+  ) => {
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = handlePushSegment(this, ctx);
+      const segmentId = handlePushSegment(segment, ctx);
 
       if (!segmentId) {
         throw new Error(
@@ -1075,7 +1076,7 @@ export function setupLoaderAccess<TEnv>(
     }
 
     return useLoader(loader, null);
-  } as typeof ctx.use;
+  }) as typeof ctx.use;
 }
 
 /**
@@ -1086,16 +1087,16 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
   // Eagerly capture the HandleStore (same ALS protection as setupLoaderAccess).
   const handleStoreRef = _getRequestContext()?._handleStore;
 
-  ctx.use = function (
-    this: HandlerContext<any, TEnv> | undefined,
+  ctx.use = ((
     item: LoaderDefinition<any, any> | Handle<any, any>,
-  ) {
+    segment?: unknown,
+  ) => {
     // Handle case: return a push function bound to the segment the calling
     // ctx was scoped to (withSegmentScope), else the current one.
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = handlePushSegment(this, ctx);
+      const segmentId = handlePushSegment(segment, ctx);
 
       if (!segmentId) {
         throw new Error(
@@ -1127,7 +1128,7 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
         "Use them on parent layouts with cache() for request-time data, " +
         "or use a passthrough prerender handler.",
     );
-  } as typeof ctx.use;
+  }) as typeof ctx.use;
 }
 
 /**
