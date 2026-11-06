@@ -991,26 +991,24 @@ export function setupLoaderAccess<TEnv>(
   // (withSegmentScope) supplies its own, however long after the handler
   // returned and whatever call shape reached this function. Without one the
   // walker's pin decides, as for the request's own ctx.
-  const pushHandle = (
-    segmentId: string | undefined,
-    handle: Handle<any, any>,
-  ) => {
-    const segment = segmentId ?? segmentPinOf(internal);
-    if (!segment) {
-      throw new Error(
-        `Handle "${handle.$$id}" used outside of handler context. ` +
-          `Handles must be used within route/layout handlers.`,
+  const useImpl: SegmentAwareUse = (item, segmentId) => {
+    if (isHandle(item)) {
+      const handle = item;
+      const segment = segmentId ?? segmentPinOf(internal);
+
+      if (!segment) {
+        throw new Error(
+          `Handle "${handle.$$id}" used outside of handler context. ` +
+            `Handles must be used within route/layout handlers.`,
+        );
+      }
+
+      return withDefer(
+        (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+          pushHandleValue(handleStoreRef, segment, handle.$$id, dataOrFn);
+        },
       );
     }
-    return withDefer(
-      (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
-        pushHandleValue(handleStoreRef, segment, handle.$$id, dataOrFn);
-      },
-    );
-  };
-
-  const useImpl: SegmentAwareUse = (item, segmentId) => {
-    if (isHandle(item)) return pushHandle(segmentId, item);
 
     // Deadlock guard and handler-to-loader dependency tracking.
     // Skip when inside a DSL loader scope (resolveLoaderData also calls

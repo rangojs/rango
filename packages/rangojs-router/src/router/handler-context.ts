@@ -248,8 +248,7 @@ export function withSegmentScope<C>(
   // Looked up per call, not captured: loader-cache.ts replaces the request
   // ctx's `use` with its cached-loader read-through after the first cached
   // loader, and that interceptor forwards the segment argument through.
-  scoped.use = (item, explicit) =>
-    (ctx as { use: SegmentAwareUse }).use(item, explicit ?? segmentId);
+  scoped.use = (item) => (ctx as { use: SegmentAwareUse }).use(item, segmentId);
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;
