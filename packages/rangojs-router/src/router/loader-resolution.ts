@@ -514,6 +514,9 @@ function createLoaderExecutor<TEnv>(
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
+  /** The ctx the read went through, when it is not `ctx` (a layout's or a
+   * slot's child, so the loader's pushes file under its segment). */
+  readThrough?: HandlerContext<any, TEnv>,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
@@ -532,6 +535,7 @@ function createLoaderExecutor<TEnv>(
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    readThrough?: HandlerContext<any, TEnv>,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -629,7 +633,9 @@ function createLoaderExecutor<TEnv>(
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
     // starts anyway keeps the segment that registers it (loaderOwner).
-    const owningSegmentId = loaderOwner(ctx, loader.$$id);
+    // `readThrough` is the ctx `use` was called on: a layout's or slot's child
+    // carries its own segment, which holds after the walker moved on.
+    const owningSegmentId = loaderOwner(readThrough ?? ctx, loader.$$id);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -1074,7 +1080,7 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    return useLoader(loader, null, this ?? ctx);
   } as typeof ctx.use;
 }
 

@@ -2603,11 +2603,12 @@ forwarder to the parent's current one, for the receiver-less case: `const {
 use } = ctx` in such a component still reaches the same receiver, where an
 inherited `use` would fall back to the shared ctx's pin. The other readers
 take `segmentPinOf(ctx)`, the innermost scope's segment else the ctx's
-carried one else its pin: a
-handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the build
-pass, which runs the same walker), a started loader's owning segment
-(`loaderOwner`, after a prefetch-deferred loader's registered owner), and the
-caller segment a `"use cache"` call records and replays under
+carried one else its pin: a handle push's segment (`setupLoaderAccess`, and
+`setupBuildUse` for the build pass, which runs the same walker), a started
+loader's owning segment (`loaderOwner`, after a prefetch-deferred loader's
+registered owner; `ctx.use(Loader)` hands the executor the ctx it was called
+on, so a loader a component starts through such a ctx files under it too),
+and the caller segment a `"use cache"` call records and replays under
 (`cache-runtime.ts`). A route handler's ctx is still the request's one ctx,
 so `{ ...ctx }` there copies what it copies in any route.
 
@@ -2642,7 +2643,9 @@ after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route with no parallel
 slot, a layout and a slot handed the ctx to, `const { use } = ctx` included,
-and the bucket a push that lands before collection completes files in) and
+and the bucket a push that lands before collection completes files in),
+`testing/__tests__/serve-shell-request-loader-owner-segment.rsc-test.tsx` (a
+loader a layout's or a slot's component starts) and
 `server/__tests__/segment-pin.test.ts`. The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.

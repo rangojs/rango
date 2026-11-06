@@ -18,10 +18,11 @@ The push is still rejected, at the same moment, and production still shows no
 message.
 
 A push that lands before collection completes is attributed the same way: a
-component that pushes through that ctx with no `await` puts its value in the
-layout's or the slot's handle data, where it used to land in the child route's
-bucket (the segment the walker had pinned by then). So does a `const { use } =
-ctx` taken off such a ctx: the segment rides the ctx, not the call.
+component that pushes through that ctx with no `await`, or that starts a
+loader through it (`ctx.use(Loader)`), puts the value in the layout's or the
+slot's handle data, where it used to land in the child route's bucket (the
+segment the walker had pinned by then). So does a `const { use } = ctx` taken
+off such a ctx: the segment rides the ctx, not the call.
 
 ## 0.35.0 (2026-11-04)
 
