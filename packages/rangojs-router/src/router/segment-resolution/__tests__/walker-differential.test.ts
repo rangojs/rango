@@ -301,9 +301,29 @@ type Projected = Record<string, unknown>;
  * A value as data the two walks can be compared on: promises settled, an
  * element as its type, key and props, collections by their entries, a
  * function by its name.
+ *
+ * A streamed handler's promise can reject: a slot handler that resolves a
+ * Response has it thrown by handleHandlerResult, so the segment's component is
+ * a rejected promise (a redirect, as a route's streamed handler already was).
+ * Projected as `rejected` beside `promise`, and a Response by its status and
+ * Location, so the two walkers compare on the outcome and not on the object.
  */
 async function settled(value: unknown): Promise<unknown> {
-  if (value instanceof Promise) return { promise: await settled(await value) };
+  if (value instanceof Response) {
+    return {
+      response: {
+        status: value.status,
+        location: value.headers.get("Location"),
+      },
+    };
+  }
+  if (value instanceof Promise) {
+    try {
+      return { promise: await settled(await value) };
+    } catch (error) {
+      return { promise: { rejected: await settled(error) } };
+    }
+  }
   if (isValidElement(value)) {
     const type = value.type as string | { name?: string };
     return {
@@ -538,7 +558,15 @@ function walkRevalidating(
 
 /** The text a rendered value shows: its strings, elements unwrapped. */
 async function textOf(node: unknown): Promise<string> {
-  if (node instanceof Promise) return textOf(await node);
+  // A rejected streamed promise renders nothing of its own: a thrown Response
+  // (a redirect) and a boundary's fallback are the render's, not the value's.
+  if (node instanceof Promise) {
+    try {
+      return await textOf(await node);
+    } catch {
+      return "";
+    }
+  }
   if (typeof node === "string" || typeof node === "number") return `${node}`;
   if (Array.isArray(node)) {
     return (await Promise.all(node.map(textOf))).join("");
