@@ -713,6 +713,8 @@ export const NamedRoutes = {
   shopPlayground: "/shop-playground",
   "slotRedirect.aside.index": "/slot-redirect/aside",
   "slotRedirect.index": "/slot-redirect",
+  "slotRedirect.onDemand.index": "/slot-redirect/on-demand",
+  "slotRedirect.onDemandTrigger": "/slot-redirect/on-demand-trigger",
   "slotRedirect.plain.index": "/slot-redirect/plain",
   "slotRedirect.streamed.index": "/slot-redirect/streamed",
   "slotRedirect.target": "/slot-redirect/target",

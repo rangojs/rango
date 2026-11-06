@@ -2,6 +2,8 @@
 export const routes = {
   "aside.index": "/aside",
   index: "/",
+  "onDemand.index": "/on-demand",
+  onDemandTrigger: "/on-demand-trigger",
   "plain.index": "/plain",
   "streamed.index": "/streamed",
   target: "/target",

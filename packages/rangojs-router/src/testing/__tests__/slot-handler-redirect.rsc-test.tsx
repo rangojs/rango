@@ -49,20 +49,19 @@ type SlotMode = "page" | "return" | "throw" | "external";
 let slotMode: SlotMode = "page";
 let slotRuns = 0;
 
-function slotHandler(): React.ReactNode {
+// A slot handler may return a Response, as a route handler's type already
+// allows: no cast here, so the suite pins the consumer-facing signature.
+function slotHandler(): React.ReactNode | Response {
   slotRuns += 1;
   switch (slotMode) {
     case "return":
-      return redirect(
-        "/slot-redirect/target",
-        302,
-      ) as unknown as React.ReactNode;
+      return redirect("/slot-redirect/target", 302);
     case "throw":
       throw redirect("/slot-redirect/target", 302);
     case "external":
       return redirect("https://accounts.example.com/login", {
         external: true,
-      }) as unknown as React.ReactNode;
+      });
     default:
       return <aside data-testid="slot">aside</aside>;
   }
@@ -175,6 +174,30 @@ describe("a slot handler's redirect", () => {
     );
     // The Response is not in the payload for the browser to render.
     expect(result.flight).toBeUndefined();
+  });
+
+  it("a thrown redirect answers a client navigation the same way", async () => {
+    const router = makeRouter();
+    slotMode = "throw";
+    const result = await serveShellRequest(router, "/slot-redirect", {
+      partial: { from: "/" },
+    });
+    expect(result.response.status).toBe(204);
+    expect(result.response.headers.get("X-RSC-Redirect")).toBe(
+      "http://localhost/slot-redirect/target",
+    );
+  });
+
+  it("a synchronous return under the slot's loading() answers a client navigation the same way", async () => {
+    const router = makeRouter();
+    slotMode = "return";
+    const result = await serveShellRequest(router, "/slot-redirect/loading", {
+      partial: { from: "/" },
+    });
+    expect(result.response.status).toBe(204);
+    expect(result.response.headers.get("X-RSC-Redirect")).toBe(
+      "http://localhost/slot-redirect/target",
+    );
   });
 
   it("prefixes a root-relative Location with the basename", async () => {

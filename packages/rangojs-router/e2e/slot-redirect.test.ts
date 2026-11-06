@@ -84,6 +84,49 @@ function defineTests(f: Fixture) {
     await clickAndWaitFor(testId(page, "sr-link-aside"), testId(page, "sr-ok"));
     await expect(testId(page, "sr-aside")).toBeVisible();
   });
+
+  test("an on-demand refresh whose slot redirects keeps the page stored before", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const toggle = (redirects: boolean) =>
+      page.request.get(
+        f.url(`/slot-redirect/on-demand-trigger?redirect=${redirects ? 1 : 0}`),
+      );
+    const refresh = async () =>
+      (
+        await page.request.get(f.url("/slot-redirect/on-demand-trigger"))
+      ).json();
+    const stampOf = async () => {
+      await page.goto(f.url("/slot-redirect/on-demand"));
+      await waitForHydration(page);
+      await expect(testId(page, "sr-od-page")).toBeVisible();
+      return testId(page, "sr-od-stamp").textContent();
+    };
+
+    // Store the page, and read the stamp it froze.
+    await toggle(false);
+    expect(await refresh()).toMatchObject({ ok: true, status: "rendered" });
+    const stamp = await stampOf();
+    expect(stamp).toBeTruthy();
+
+    // The slot redirects: the refresh reports the redirect, never a page.
+    await toggle(true);
+    expect(await refresh()).toMatchObject({
+      ok: false,
+      status: "render-failed",
+      error: { status: 302, location: "/slot-redirect/target" },
+    });
+
+    // The page stored before still serves, with the stamp it froze.
+    expect(await stampOf()).toBe(stamp);
+
+    // A later refresh with no redirect replaces it.
+    await toggle(false);
+    expect(await refresh()).toMatchObject({ ok: true, status: "rendered" });
+    expect(await stampOf()).not.toBe(stamp);
+  });
 }
 
 // -- Dev mode ----------------------------------------------------------------
