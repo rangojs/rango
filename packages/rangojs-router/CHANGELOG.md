@@ -21,6 +21,12 @@ Each handler's ctx carries its own segment, and its own `use` keeps it when a
 component calls it detached from the ctx. The push is still rejected, at the
 same moment, and production still shows no message.
 
+A `"use cache"` call taking that ctx answers with the same segment: a HIT
+replays the pushes its miss recorded into the segment the calling ctx carries,
+so a component that hands a layout's ctx to a cached function sees the same
+handle data on a hit as on the miss (before, the hit replayed into whichever
+segment the walker had pinned since, and a late replay named that one).
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

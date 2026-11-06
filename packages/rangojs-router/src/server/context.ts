@@ -1742,14 +1742,39 @@ export function runAsSegment<R>(segmentId: string | undefined, fn: () => R): R {
 }
 
 /**
- * The segment code here runs for: the innermost runAsSegment scope, else the
- * request ctx's pin (a handler the walker awaits).
+ * The segment a ctx carries for the work started through it: `_handleSegmentId`
+ * on a route's, a layout's, a slot's or an intercept's ctx (withSegmentScope,
+ * router/handler-context.ts; `_pushSegmentId` for the route, whose ctx is the
+ * request's one, revalidation.ts resolveEntryHandler). Both are own,
+ * enumerable fields of the object that sets them, so a `{ ...ctx }` copy
+ * carries them too.
  *
- * `carried` is the segment the ctx a caller was invoked on belongs to, for a
- * reader that asks the object rather than the frame — a handle push through a
- * layout's or slot's ctx, which holds after the walker moved on
- * (handlePushSegment, router/loader-resolution.ts). The other readers pass
- * none and read the pin.
+ * Read this where the segment must follow the OBJECT, not the frame: a handle
+ * push through the ctx (handlePushSegment, router/loader-resolution.ts), and
+ * the caller segment a "use cache" call records its pushes under and replays
+ * them into (cache-runtime.ts). The walker moves the shared pin on without
+ * awaiting a streamed handler, so the frame stops naming the handler while a
+ * component it handed its ctx to still renders.
+ *
+ * A reader that must follow the frame instead (a started loader's owning
+ * segment, loaderOwner) passes none.
+ */
+export function carriedPushSegment(ctx: unknown): string | undefined {
+  const carried = ctx as
+    | { _handleSegmentId?: string; _pushSegmentId?: string }
+    | undefined;
+  return carried?._handleSegmentId ?? carried?._pushSegmentId;
+}
+
+/**
+ * The segment code here runs for: the innermost runAsSegment scope, else the
+ * segment the ctx carries (carriedPushSegment), else the request ctx's pin (a
+ * handler the walker awaits).
+ *
+ * `carried` is the caller's answer to carriedPushSegment, for a reader that
+ * asks the object rather than the frame. The reader that must read the pin
+ * passes none: a started loader's owning segment is the walker's pin at
+ * kickoff, not the segment the request ctx carries.
  */
 export function segmentPinOf(
   ctx: { _currentSegmentId?: string },

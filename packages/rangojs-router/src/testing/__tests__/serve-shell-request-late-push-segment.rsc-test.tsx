@@ -37,6 +37,10 @@ import {
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
+import {
+  CachedCrumbs,
+  cachedCrumb,
+} from "./fixtures/streamed-handle-owner-data.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
@@ -165,6 +169,17 @@ function latePushSegment(reported: string[]): string {
   const segment = /for segment "([^"]+)" was pushed after/.exec(reported[0]!);
   expect(segment).not.toBeNull();
   return segment![1]!;
+}
+
+/** Every LateHandlePushError's segment, in the order the response reported it. */
+function latePushSegments(reported: string[]): string[] {
+  return reported
+    .filter((message) => message.includes(" was pushed after"))
+    .map((message) => {
+      const segment = /for segment "([^"]+)" was pushed after/.exec(message);
+      expect(segment).not.toBeNull();
+      return segment![1]!;
+    });
 }
 
 beforeEach(async () => {
@@ -312,5 +327,131 @@ describe("a component an intercept handler handed its ctx to", () => {
     // after the response: the message is the only thing to read.
     expect(latePushSegment([...errors])).toBe("M0L0L0.@modal");
     await result.readHandles();
+  });
+});
+
+/**
+ * Where the layout's / the route's "use cache" call is made: in the handler,
+ * so the entry records its push while the store is open, or late in a
+ * component, so the next request's HIT replays it after collection.
+ */
+const cachedCallIn: { value: "handler" | "component" } = { value: "handler" };
+
+/** The same late push, through a "use cache" call taking the ctx. */
+async function LateCached({ ctx }: { ctx: HandlerContext }) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return <span>{await cachedCrumb(ctx, "cached")}</span>;
+}
+
+/** A layout's handler and its component, on the same URL and cache key. */
+function cachedLayoutRouter() {
+  return createRouter({
+    onError: ({ error }) => {
+      errors.push(error instanceof Error ? error.message : String(error));
+    },
+  }).routes(
+    urls(({ path, layout }) => [
+      layout(
+        () => <main>shell</main>,
+        () => [
+          layout(
+            async (ctx) =>
+              cachedCallIn.value === "handler" ? (
+                <section>{await cachedCrumb(ctx, "cached")}</section>
+              ) : (
+                <section>
+                  <LateCached ctx={ctx} />
+                </section>
+              ),
+            () => [
+              path("/cached-layout", () => <p>page</p>, {
+                name: "cachedLayout",
+              }),
+            ],
+          ),
+        ],
+      ),
+    ]),
+  );
+}
+
+/** A route's handler and its component, with a slot pinned after the route. */
+function cachedRouteRouter() {
+  return createRouter({
+    onError: ({ error }) => {
+      errors.push(error instanceof Error ? error.message : String(error));
+    },
+  }).routes(
+    urls(({ path, layout, parallel }) => [
+      layout(
+        () => <main>shell</main>,
+        () => [
+          path(
+            "/cached-route",
+            async (ctx) =>
+              cachedCallIn.value === "handler" ? (
+                <article>{await cachedCrumb(ctx, "cached")}</article>
+              ) : (
+                <article>
+                  <LateCached ctx={ctx} />
+                </article>
+              ),
+            { name: "cachedRoute" },
+            () => [parallel({ "@side": () => <aside>side</aside> })],
+          ),
+        ],
+      ),
+    ]),
+  );
+}
+
+/** A response's reported errors, matched ids and cached-crumb buckets. */
+async function serveCached(
+  router: Parameters<typeof serveShellRequest>[0],
+  url: string,
+  cacheStore: MemorySegmentCacheStore,
+) {
+  errors.length = 0;
+  const result = await serveShellRequest(router, url, { cacheStore });
+  const { hydration, late } = (await result.readHandles())!;
+  const data = late.at(-1) ?? hydration;
+  return {
+    errors: [...errors],
+    matched: await matchedOf(result.flight),
+    buckets: (data[CachedCrumbs.$$id] ?? {}) as Record<string, string[]>,
+  };
+}
+
+describe('a "use cache" hit replays under the ctx it was given', () => {
+  it("the layout's, when a component calls it with the layout's ctx", async () => {
+    const router = cachedLayoutRouter();
+    const cacheStore = new MemorySegmentCacheStore();
+    cachedCallIn.value = "handler";
+    const first = await serveCached(router, "/cached-layout", cacheStore);
+    const layout = first.matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    // The fresh run pushes into the layout's bucket...
+    expect(first.buckets).toEqual({ [layout]: ["cached"] });
+    expect(first.errors).toEqual([]);
+
+    // ...and the HIT replays into the same segment, though the walker pinned
+    // the route by the time the component calls it.
+    cachedCallIn.value = "component";
+    const second = await serveCached(router, "/cached-layout", cacheStore);
+    expect(latePushSegments(second.errors)).toEqual([layout, layout]);
+  });
+
+  it("the route's, when a component calls it with the route's ctx", async () => {
+    const router = cachedRouteRouter();
+    const cacheStore = new MemorySegmentCacheStore();
+    cachedCallIn.value = "handler";
+    const first = await serveCached(router, "/cached-route", cacheStore);
+    const route = first.matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(first.buckets).toEqual({ [route]: ["cached"] });
+    expect(first.errors).toEqual([]);
+
+    // The route's slot is pinned after it, so the pin alone would name the slot.
+    cachedCallIn.value = "component";
+    const second = await serveCached(router, "/cached-route", cacheStore);
+    expect(latePushSegments(second.errors)).toEqual([route, route]);
   });
 });

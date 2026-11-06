@@ -2615,12 +2615,19 @@ The receiver is what a caller can lose, so the child owns `use` too
 child's own `use` supplies it. It reads the base ctx's `use` at call time,
 because `loader-cache.ts` swaps that for its override interceptor.
 
-The other readers take `segmentPinOf(ctx)`, the innermost scope's segment
-else the ctx's pin, and pass no carried segment: a started loader's owning
-segment (`loaderOwner`, after a prefetch-deferred loader's registered owner)
-and the caller segment a `"use cache"` call records and replays under
-(`cache-runtime.ts`). They are handed the request's one ctx, so they keep
-reading its pin.
+Two readers take `segmentPinOf(ctx, carriedPushSegment(ctx))`, the innermost
+scope's segment else the segment the ctx carries else its pin: the handle
+push above, and the caller segment a `"use cache"` call records its pushes
+under and replays them into (`cache-runtime.ts`). The cached reader needs it
+for the same reason the push does: a component a layout handed its ctx to
+calls the cached function after the walker pinned the route, and the HIT then
+replayed the recorded pushes into the route while the miss had pushed them
+into the layout — a cached read that disagrees with its own first write, and
+when the replay lands after collection, a `LateHandlePushError` naming the
+route. A started loader's owning segment (`loaderOwner`, after a
+prefetch-deferred loader's registered owner) is the one reader that must
+follow the frame instead: it is handed the request's one ctx, and the pin at
+kickoff is the loader's owner, which the ctx's carried segment is not.
 
 You might worry about runtimes that lose async context. The fallback is the
 ctx's own segment, else the pin, the behaviour before this scope: a lost
@@ -2643,8 +2650,10 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to, through `ctx.use` and through a destructured `use`,
-and for a route whose slot resolves after its handler) and
+slot handed the ctx to, through `ctx.use`, through a destructured `use` and
+through a `{ ...ctx }` copy, for a route whose slot resolves after its
+handler, for an intercept's handler, and for a `"use cache"` HIT whose
+replayed pushes take the segment of the ctx the component called it with) and
 `server/__tests__/segment-pin.test.ts`. The e2e `handles-after-await`
 (test-app and cloudflare-basic, dev and production) checks the message on the
 page.

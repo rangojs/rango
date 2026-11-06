@@ -71,6 +71,7 @@ import {
   runInsideLoaderBodyScope,
   runInsideLoaderRun,
   runAsSegment,
+  carriedPushSegment,
   segmentPinOf,
   isInsidePushCallbackScope,
   runInsidePushCallbackScope,
@@ -103,32 +104,25 @@ export type LoaderErrorCallback = (
 /**
  * The segment a handle push through `ctx.use` files under.
  *
- * The receiver decides when it carries a segment: a layout's or a parallel
- * slot's ctx does (withSegmentScope), and the segment holds however long after
- * the handler returned, so an async component the handler handed the ctx to
- * still files under it after the walker moved the shared pin on. A detached
- * call reaches this with the child as the receiver too: the child owns `use`,
- * which supplies it.
+ * The receiver decides when it carries a segment: a route's, a layout's, a
+ * slot's or an intercept's ctx does (carriedPushSegment, server/context.ts),
+ * and the segment holds however long after the handler returned, so an async
+ * component the handler handed the ctx to still files under it after the
+ * walker moved the shared pin on. A detached call reaches this with the child
+ * as the receiver too: the child owns `use`, which supplies it.
  *
- * The request's one handler ctx carries the route's segment instead
- * (`_pushSegmentId`, revalidation.ts resolveEntryHandler): the route handler
- * has no child, because a route handler's `{ ...ctx }` must copy the ctx's
- * fields for a "use cache" call, and its components push after the route's
- * slots and orphan layouts were pinned.
- *
- * Any other receiver reads the ctx `use` was installed on, whose
- * `_currentSegmentId` the walker pins — a handler that built a smaller ctx
- * with `use` copied onto it (a Prerender handler forwarding to a shared page
- * handler) included.
+ * Any other receiver reads the ctx `use` was installed on, whose pin the
+ * walker moves — a handler that built a smaller ctx with `use` copied onto it
+ * (a Prerender handler forwarding to a shared page handler) included.
  */
 function handlePushSegment(
   receiver: unknown,
   installed: HandlerContext<any, any>,
 ): string | undefined {
-  const carried =
-    (receiver as { _handleSegmentId?: string } | undefined)?._handleSegmentId ??
-    (installed as { _pushSegmentId?: string })._pushSegmentId;
-  return segmentPinOf(installed as { _currentSegmentId?: string }, carried);
+  return segmentPinOf(
+    installed as { _currentSegmentId?: string },
+    carriedPushSegment(receiver) ?? carriedPushSegment(installed),
+  );
 }
 
 /**

@@ -25,7 +25,7 @@ import {
   runAsBackgroundWork,
   type RequestContext,
 } from "../server/request-context.js";
-import { segmentPinOf } from "../server/context.js";
+import { carriedPushSegment, segmentPinOf } from "../server/context.js";
 import { isUnderTestRunner } from "../runtime-env.js";
 import {
   isTainted,
@@ -506,11 +506,18 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         if (ctx.body !== undefined || ctx.formData !== undefined) {
           hasBodyCtx = true;
         }
-        // Only an argument with a pin (a handler or loader ctx, or its copy)
-        // is the caller: a request context before it has no claim.
+        // Only an argument with a segment (a handler or loader ctx, or its
+        // copy) is the caller: a request context before it has no claim. The
+        // ctx's own segment comes first: a component the handler handed its
+        // ctx to calls this after the walker moved the pin on, and the HIT
+        // replays the recorded pushes into the segment it answers with
+        // (carriedPushSegment, server/context.ts).
         if (callerSegmentId === undefined) {
+          const carried = carriedPushSegment(ctx);
           callerSegmentId =
-            ctx._currentSegmentId === undefined ? undefined : segmentPinOf(ctx);
+            carried === undefined && ctx._currentSegmentId === undefined
+              ? undefined
+              : segmentPinOf(ctx, carried);
           claimLoaderPushes = ctx._claimLoaderPushes;
         }
         if (ctx.params && typeof ctx.params === "object") {

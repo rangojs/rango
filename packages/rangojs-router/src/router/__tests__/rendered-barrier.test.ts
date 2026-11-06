@@ -24,6 +24,7 @@ vi.mock("../../server/context", async (importActual) => {
     runInsideLoaderRun: <T>(_run: unknown, fn: () => T): T => fn(),
     runAsSegment: actual.runAsSegment,
     segmentPinOf: actual.segmentPinOf,
+    carriedPushSegment: actual.carriedPushSegment,
     isInsidePushCallbackScope: actual.isInsidePushCallbackScope,
     runInsidePushCallbackScope: actual.runInsidePushCallbackScope,
   };
@@ -44,6 +45,7 @@ vi.mock("../../server/context.js", async (importActual) => {
     runInsideLoaderRun: <T>(_run: unknown, fn: () => T): T => fn(),
     runAsSegment: actual.runAsSegment,
     segmentPinOf: actual.segmentPinOf,
+    carriedPushSegment: actual.carriedPushSegment,
     isInsidePushCallbackScope: actual.isInsidePushCallbackScope,
     runInsidePushCallbackScope: actual.runInsidePushCallbackScope,
   };

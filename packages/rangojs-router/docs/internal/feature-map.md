@@ -268,11 +268,15 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 
 **A streamed handler's pushes stay in its own segment:** `runAsSegment` /
 `segmentPinOf` (`server/context.ts`), plus the segment a handler's ctx carries
-(`_handleSegmentId` on a layout's or slot's `withSegmentScope` child, the
-route's `_pushSegmentId` on the request's one ctx; `router/handler-context.ts`,
-`resolveEntryHandler`) for a push from a component the handler handed that ctx
-to, its own `use` keeping the segment when the call lost the receiver; see
-execution-model.md "A streamed handler keeps its segment".
+(`_handleSegmentId` on a layout's, a slot's or an intercept's `withSegmentScope`
+child, the route's `_pushSegmentId` on the request's one ctx;
+`router/handler-context.ts`, `resolveEntryHandler`) for a push from a component
+the handler handed that ctx to, its own `use` keeping the segment when the call
+lost the receiver. `carriedPushSegment` is that lookup: `handlePushSegment`
+(`router/loader-resolution.ts`) and the caller segment a `"use cache"` HIT
+replays into (`cache/cache-runtime.ts`) both read it, so the replay lands where
+the recording run pushed; see execution-model.md "A streamed handler keeps its
+segment".
 
 ---
 
