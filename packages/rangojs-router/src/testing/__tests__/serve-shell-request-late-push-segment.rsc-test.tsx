@@ -194,12 +194,20 @@ async function matchedOf(flight: string | undefined): Promise<string[]> {
   return metadata.matched;
 }
 
-async function serve(url: string, hold: Hold) {
+/** Serve one document on `router`, with the errors it reported. */
+async function serveOn(
+  router: Parameters<typeof serveShellRequest>[0],
+  url: string,
+) {
   errors.length = 0;
-  const result = await serveShellRequest(makeRouter(hold), url, {
+  const result = await serveShellRequest(router, url, {
     cacheStore: new MemorySegmentCacheStore(),
   });
   return { errors: [...errors], matched: await matchedOf(result.flight) };
+}
+
+async function serve(url: string, hold: Hold) {
+  return serveOn(makeRouter(hold), url);
 }
 
 /** The one LateHandlePushError the response reported, and its segment. */
@@ -405,13 +413,7 @@ function loaderRouter() {
 }
 
 describe("a loader a component started through a handler's ctx", () => {
-  const serveLoader = async (url: string) => {
-    errors.length = 0;
-    const result = await serveShellRequest(loaderRouter(), url, {
-      cacheStore: new MemorySegmentCacheStore(),
-    });
-    return { errors: [...errors], matched: await matchedOf(result.flight) };
-  };
+  const serveLoader = (url: string) => serveOn(loaderRouter(), url);
 
   it("files its push under the layout's segment", async () => {
     const { errors: reported, matched } = await serveLoader("/loader-layout");
