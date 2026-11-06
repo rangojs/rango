@@ -201,6 +201,15 @@ describe("a cache() HIT lists the segments it replays in resolvedIds", () => {
     // Only resolvedIds changed: no internal marker rides the payload.
     expect(hit.flight).not.toContain("storedSentIds");
     expect(hit.flight).not.toContain("_handlerRan");
+
+    // A document lists every segment it renders, a HIT of its record included:
+    // the full-match branch of buildMatchResult, which the marker never
+    // reaches.
+    const documentHit = await serveShellRequest(router, "/a", { cacheStore });
+    const documentAnswer = await readAnswer(documentHit);
+    expect(documentAnswer.answer.resolvedIds).toEqual(
+      documentAnswer.answer.matched,
+    );
   });
 });
 
