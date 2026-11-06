@@ -2560,7 +2560,10 @@ Limits:
   in two modules resolves in the scope of the declaration that starts it
   first (outer entries resolve first).
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
-  resolves from the matched route everywhere, a layout included.
+  resolves from the matched route everywhere, a layout included. A bake has
+  no matched route, so there it resolves in the def's include scope — the
+  same anchor the bake ctx's `reverse` uses (`renderStaticSegment`,
+  `router/prerender-match.ts`).
 - A layout's or slot's ctx is a different object from the route's. Its own
   fields are `reverse` and `_reverseScope`, so `{ ...ctx }` there copies only
   those. A getter keyed by its holder resolves through the prototype chain

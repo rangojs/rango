@@ -20,18 +20,40 @@ vi.mock(
 );
 
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
-import { createRouter, Static, urls } from "../../index.rsc.js";
+import {
+  createRouter,
+  getRequestContext,
+  Static,
+  urls,
+} from "../../index.rsc.js";
+import type { StaticBuildContext } from "../../index.rsc.js";
 import { toInternal } from "../../router/router-interfaces.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 
 // Literal segments: a Static segment has no params, so a route with a required
 // mount param could only bake `Missing param` in both the old and new code.
-const ProjectLayout = Static((ctx) => (
-  <section>
-    <p>{`project-layout:${ctx.reverse(".settings")}`}</p>
-    <p>{`project-layout-up:${ctx.reverse(".billing")}`}</p>
-  </section>
-));
+/** A server component the layout hands its ctx to; renders later. */
+async function ProjectChildLink({ ctx }: { ctx: StaticBuildContext }) {
+  await Promise.resolve();
+  return <p>{`project-child:${ctx.reverse(".settings")}`}</p>;
+}
+
+const ProjectLayout = Static(async (ctx) => {
+  // After an await: the scope rides the ctx, not the call frame, exactly as
+  // it does for a live layout.
+  await Promise.resolve();
+  // Detached: the scope is closed over, not read off the receiver.
+  const { reverse } = ctx;
+  return (
+    <section>
+      <p>{`project-layout-detached:${reverse(".settings")}`}</p>
+      <p>{`project-layout:${ctx.reverse(".settings")}`}</p>
+      <p>{`project-layout-up:${ctx.reverse(".billing")}`}</p>
+      <p>{`project-layout-request:${getRequestContext()!.reverse(".settings")}`}</p>
+      <ProjectChildLink ctx={ctx} />
+    </section>
+  );
+});
 
 const ProjectSlot = Static((ctx) => (
   <aside>{`project-slot:${ctx.reverse(".settings")}`}</aside>
@@ -105,6 +127,9 @@ describe("a Static() segment bakes the same reverse() the live segment resolves"
     const live = await renderLive("/acme/web/issues");
     expect(live).toContain("project-layout:/acme/web/settings");
     expect(live).toContain("project-slot:/acme/web/settings");
+    expect(live).toContain("project-child:/acme/web/settings");
+    expect(live).toContain("project-layout-detached:/acme/web/settings");
+    expect(live).toContain("project-layout-request:/acme/web/settings");
 
     const layoutBaked = await bake(ProjectLayout);
     const slotBaked = await bake(ProjectSlot);
@@ -112,6 +137,9 @@ describe("a Static() segment bakes the same reverse() the live segment resolves"
     // Before: the prefix lost its last segment and both baked /acme/settings.
     expect(layoutBaked).toContain("project-layout:/acme/web/settings");
     expect(layoutBaked).toContain("project-layout-up:/acme/billing");
+    expect(layoutBaked).toContain("project-layout-detached:/acme/web/settings");
+    expect(layoutBaked).toContain("project-layout-request:/acme/web/settings");
+    expect(layoutBaked).toContain("project-child:/acme/web/settings");
     expect(slotBaked).toContain("project-slot:/acme/web/settings");
   });
 

@@ -23,6 +23,7 @@ import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
 import { freshPassInput } from "./segment-resolution/resolution-pass.js";
 import { runWithRouterContext } from "./router-context.js";
+import { scopeReverse } from "../server/context";
 import type {
   EntryData,
   InterceptEntry,
@@ -723,15 +724,21 @@ export async function renderStaticSegment<TEnv = any>(
     _renderBarrier: Promise.resolve(),
     _resolveRenderBarrier: () => {},
     _reportedErrors: new WeakSet<object>(),
-    reverse: createReverseFunction(
-      mergedRouteMap,
-      routeName,
-      {},
-      // Def-stamped value first: the collector passes the mount-time
-      // root-scope captured on the Static definition (stampStaticDefScope),
-      // which needs no registry lookup and survives name-prefix arguments.
-      reverseScope?.rootScoped ??
-        (routeName ? isRouteRootScoped(routeName, routerId) : undefined),
+    // A bake has no matched route, so getRequestContext().reverse(".name")
+    // resolves in the def's own include scope, the same anchor the bake ctx's
+    // reverse uses (createStaticContext).
+    reverse: scopeReverse(
+      createReverseFunction(
+        mergedRouteMap,
+        routeName,
+        {},
+        // Def-stamped value first: the collector passes the mount-time
+        // root-scope captured on the Static definition (stampStaticDefScope),
+        // which needs no registry lookup and survives name-prefix arguments.
+        reverseScope?.rootScoped ??
+          (routeName ? isRouteRootScoped(routeName, routerId) : undefined),
+      ),
+      reverseScope,
     ),
     // Scope the bake context's own lookups (createStaticContext reads it
     // through the request ALS) per router as well.
