@@ -114,8 +114,7 @@ export type LoaderErrorCallback = (
  * (`_pushSegmentId`, revalidation.ts resolveEntryHandler): the route handler
  * has no child, because a route handler's `{ ...ctx }` must copy the ctx's
  * fields for a "use cache" call, and its components push after the route's
- * slots and orphan layouts were pinned. `segmentPinOf` does not read it: a
- * started loader's owner and a "use cache" caller segment keep the live pin.
+ * slots and orphan layouts were pinned.
  *
  * Any other receiver reads the ctx `use` was installed on, whose
  * `_currentSegmentId` the walker pins — a handler that built a smaller ctx
@@ -129,11 +128,7 @@ function handlePushSegment(
   const carried =
     (receiver as { _handleSegmentId?: string } | undefined)?._handleSegmentId ??
     (installed as { _pushSegmentId?: string })._pushSegmentId;
-  return segmentPinOf(
-    carried === undefined
-      ? (installed as { _currentSegmentId?: string })
-      : { _handleSegmentId: carried },
-  );
+  return segmentPinOf(installed as { _currentSegmentId?: string }, carried);
 }
 
 /**

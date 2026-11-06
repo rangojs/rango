@@ -2616,13 +2616,11 @@ child's own `use` supplies it. It reads the base ctx's `use` at call time,
 because `loader-cache.ts` swaps that for its override interceptor.
 
 The other readers take `segmentPinOf(ctx)`, the innermost scope's segment
-else the ctx's carried one else its pin: a handle push's segment
-(`setupLoaderAccess`, and `setupBuildUse` for the build pass, which runs the
-same walker), a started loader's owning segment (`loaderOwner`, after a
-prefetch-deferred loader's registered owner), and the caller segment a `"use
-cache"` call records and replays under (`cache-runtime.ts`). `segmentPinOf`
-ignores `_pushSegmentId`, and those readers are handed the request's one ctx,
-so they keep reading its pin.
+else the ctx's pin, and pass no carried segment: a started loader's owning
+segment (`loaderOwner`, after a prefetch-deferred loader's registered owner)
+and the caller segment a `"use cache"` call records and replays under
+(`cache-runtime.ts`). They are handed the request's one ctx, so they keep
+reading its pin.
 
 You might worry about runtimes that lose async context. The fallback is the
 ctx's own segment, else the pin, the behaviour before this scope: a lost
