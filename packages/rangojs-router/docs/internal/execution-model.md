@@ -2598,8 +2598,12 @@ the only thing left to ask. That ctx carries its segment
 segment off the receiver it was called on (`handlePushSegment`,
 `loader-resolution.ts`) — a push from such a component, and the dev
 `LateHandlePushError` it throws, names the layout or the slot, not whichever
-segment the walker pinned since. The other readers take `segmentPinOf(ctx)`,
-the innermost scope's segment else the ctx's carried one else its pin: a
+segment the walker pinned since. That ctx owns its `use`, a non-enumerable
+forwarder to the parent's current one, for the receiver-less case: `const {
+use } = ctx` in such a component still reaches the same receiver, where an
+inherited `use` would fall back to the shared ctx's pin. The other readers
+take `segmentPinOf(ctx)`, the innermost scope's segment else the ctx's
+carried one else its pin: a
 handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the build
 pass, which runs the same walker), a started loader's owning segment
 (`loaderOwner`, after a prefetch-deferred loader's registered owner), and the
@@ -2631,7 +2635,9 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to) and `server/__tests__/segment-pin.test.ts`. The e2e
+slot handed the ctx to, `const { use } = ctx` included, and the bucket a push
+that lands before collection completes files in) and
+`server/__tests__/segment-pin.test.ts`. The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.
 

@@ -223,6 +223,15 @@ function createPrerenderPassthroughFn(
  * the module that declared the segment (`_reverseScope` keys a "use cache"
  * call that takes this ctx, cache-runtime.ts). Every other field reads
  * through live (`_currentSegmentId` as resolution moves it, ctx.set values).
+ *
+ * `use` is the exception: the child owns a forwarder, because the receiver is
+ * the only thing that carries the segment into `ctx.use` and a detached call
+ * (`const { use } = ctx` in a component the handler handed the ctx to) has
+ * none. It reads the parent's `use` at call time, so whatever setup installed
+ * it (setupLoaderAccess, setupBuildUse, a loader-cache interceptor) still runs
+ * and still sees this child as its receiver. Non-enumerable: a `{ ...ctx }`
+ * copy must keep inheriting `use` so it resolves off its own
+ * `_handleSegmentId`.
  */
 export function withSegmentScope<C>(
   ctx: C,
@@ -235,6 +244,17 @@ export function withSegmentScope<C>(
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  Object.defineProperty(scoped, "use", {
+    configurable: true,
+    writable: true,
+    enumerable: false,
+    value: function (item: unknown): unknown {
+      return (ctx as { use: (item: unknown) => unknown }).use.call(
+        scoped,
+        item,
+      );
+    },
+  });
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

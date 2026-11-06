@@ -8,6 +8,10 @@
  * ctx made the push, not whichever segment the walker pinned last. A layout
  * handler's ctx carries its own segment, so the message names the layout; a
  * route handler's ctx reads the request's pin, which is still the route's.
+ *
+ * A push that lands before collection completes shows the same attribution as
+ * data: it files under the segment whose ctx made it, so the layout's
+ * collectHandle(Handle) reads what its own component pushed.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -21,7 +25,11 @@ vi.mock(
   () => import("../vitest-stubs/plugin-rsc.js"),
 );
 
-import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
+import {
+  resetShellTestState,
+  serveShellRequest,
+  type ServeShellRequestResult,
+} from "../flight.entry.js";
 import {
   createHandle,
   createRouter,
@@ -30,6 +38,7 @@ import {
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
+import type { HandleData } from "../../server/handle-store.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
@@ -44,6 +53,26 @@ async function LatePush({
   label: string;
 }) {
   await new Promise((resolve) => setTimeout(resolve, 0));
+  ctx.use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
+/** The same, taking `use` off the ctx: no receiver is left to read it off. */
+async function LatePushDetached({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  const { use } = ctx;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
+/** Pushes with no await: before handle collection completes. */
+function SyncPush({ ctx, label }: { ctx: HandlerContext; label: string }) {
   ctx.use(Crumbs)(label);
   return <span>{label}</span>;
 }
@@ -84,6 +113,41 @@ function makeRouter() {
           path("/component", (ctx) => <LatePush ctx={ctx} label="route" />, {
             name: "component",
           }),
+          layout(
+            (ctx) => (
+              <div>
+                <LatePushDetached ctx={ctx} label="layout-detached" />
+              </div>
+            ),
+            () => [
+              path("/component-detached", () => <p>page</p>, {
+                name: "componentDetached",
+              }),
+            ],
+          ),
+          layout(
+            (ctx) => (
+              <div>
+                <SyncPush ctx={ctx} label="layout-sync" />
+              </div>
+            ),
+            () => [
+              path("/component-sync", () => <p>page</p>, {
+                name: "componentSync",
+              }),
+            ],
+          ),
+          layout(
+            () => <section>sync slot frame</section>,
+            () => [
+              parallel({
+                "@panel": (ctx) => <SyncPush ctx={ctx} label="slot-sync" />,
+              }),
+              path("/component-sync-slot", () => <p>page</p>, {
+                name: "componentSyncSlot",
+              }),
+            ],
+          ),
         ],
       ),
     ]),
@@ -103,7 +167,20 @@ async function serve(url: string) {
   const result = await serveShellRequest(makeRouter(), url, {
     cacheStore: new MemorySegmentCacheStore(),
   });
-  return { errors: [...errors], matched: await matchedOf(result.flight) };
+  return {
+    errors: [...errors],
+    matched: await matchedOf(result.flight),
+    crumbs: await crumbsBySegment(result),
+  };
+}
+
+/** Each segment's Crumbs values the response delivers. */
+async function crumbsBySegment(
+  result: ServeShellRequestResult,
+): Promise<Record<string, unknown[]>> {
+  const handles = await result.readHandles();
+  const data = (handles?.late.at(-1) ?? handles?.hydration ?? {}) as HandleData;
+  return (data[Crumbs.$$id] ?? {}) as Record<string, unknown[]>;
 }
 
 /** The one LateHandlePushError the response reported, and its segment. */
@@ -135,5 +212,31 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     const { errors: reported, matched } = await serve("/component");
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the layout's, for a component that took use off the layout's ctx", async () => {
+    const { errors: reported, matched } = await serve("/component-detached");
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+});
+
+describe("a push a component makes before collection completes files under the ctx's segment", () => {
+  it("the layout's, for a component the layout handler handed its ctx to", async () => {
+    const { crumbs, matched } = await serve("/component-sync");
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(crumbs[layout]).toEqual(["layout-sync"]);
+    // The route the walker pinned by the time the component rendered keeps
+    // its own bucket empty.
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(crumbs[route]).toBeUndefined();
+  });
+
+  it("the slot's, for a component the parallel slot's handler handed its ctx to", async () => {
+    const { crumbs, matched } = await serve("/component-sync-slot");
+    const slot = matched.find((id) => id.endsWith(".@panel"))!;
+    expect(crumbs[slot]).toEqual(["slot-sync"]);
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(crumbs[route]).toBeUndefined();
   });
 });

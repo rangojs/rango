@@ -622,6 +622,56 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    /** `use` that records its receiver: what handlePushSegment reads. */
+    function recordingUse(receivers: unknown[]) {
+      return function (this: unknown, item: unknown) {
+        receivers.push(this);
+        return item;
+      };
+    }
+
+    it("withSegmentScope: use() reaches the scoped ctx as its receiver when it is called detached", () => {
+      const receivers: unknown[] = [];
+      const ctx = {
+        use: recordingUse(receivers),
+        reverse: routeReverse(),
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", {
+        prefix: "account",
+        rootScoped: false,
+      });
+      const scopedUse = scoped as unknown as {
+        use: (item: unknown) => unknown;
+      };
+      // `const { use } = ctx`, as a component handed the ctx does: no
+      // receiver left to read the segment off.
+      const { use } = scopedUse;
+      use("handle");
+      scopedUse.use("handle");
+      expect(receivers).toEqual([scoped, scoped]);
+      // The parent's use, unchanged: its own pushes read the walker's pin.
+      expect((ctx.use as unknown as (item: unknown) => unknown)("handle")).toBe(
+        "handle",
+      );
+      expect(receivers.at(-1)).toBe(ctx);
+    });
+
+    it("withSegmentScope: use() follows the parent's current use", () => {
+      const receivers: unknown[] = [];
+      const ctx = {
+        use: recordingUse(receivers),
+        reverse: routeReverse(),
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // A loader-cache interceptor installed after the segment's ctx exists.
+      ctx.use = recordingUse(receivers) as typeof ctx.use;
+      const { use } = scoped as unknown as {
+        use: (item: unknown) => unknown;
+      };
+      use("handle");
+      expect(receivers).toEqual([scoped]);
+    });
   });
 
   describe("optional params", () => {
