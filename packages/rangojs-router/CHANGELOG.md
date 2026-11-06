@@ -18,8 +18,9 @@ A route handler's ctx is the request's one ctx, so the walk puts the request's
 segment back on the route once the route's own parallel slots have resolved:
 its message names the route, not the slot. A loader a component starts through
 a layout's or slot's ctx files its pushes under that segment, so a late push
-from the loader body names the layout or the slot as well. The push is still
-rejected, at the same moment, and production still shows no message.
+from the loader body names the layout or the slot as well, and so does a `use`
+destructured off that ctx (`const { use } = ctx`). The push is still rejected,
+at the same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

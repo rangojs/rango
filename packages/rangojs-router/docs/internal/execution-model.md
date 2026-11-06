@@ -2551,9 +2551,10 @@ Limits:
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
 - A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `_handleSegmentId`, and `reverse` and `_reverseScope` when the
-  segment has a scope, so `{ ...ctx }` there copies only those. A getter keyed
-  by its holder resolves through the prototype chain (`rewrittenFrom`,
+  fields are `_handleSegmentId`, `use` (a wrapper closing over the child, so a
+  destructured `use` keeps the segment), and `reverse` and `_reverseScope` when
+  the segment has a scope, so `{ ...ctx }` there copies only those. A getter
+  keyed by its holder resolves through the prototype chain (`rewrittenFrom`,
   `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
