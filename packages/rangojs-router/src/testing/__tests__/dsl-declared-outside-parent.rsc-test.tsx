@@ -63,7 +63,7 @@ describe("a definition nested under an entry it was not created in", () => {
           return [layout(Shell, () => [a])];
         }),
       ),
-    ).toThrow(/route\(\) declared outside the layout\(\) it is nested in/);
+    ).toThrow(/path\(\) declared outside the layout\(\) it is nested in/);
   });
 
   it("rejects a route created above a cache() block that nests it", () => {
@@ -74,7 +74,7 @@ describe("a definition nested under an entry it was not created in", () => {
           return [cache({ ttl: 60 }, () => [a])];
         }),
       ),
-    ).toThrow(/route\(\) declared outside the cache\(\) it is nested in/);
+    ).toThrow(/path\(\) declared outside the cache\(\) it is nested in/);
   });
 
   it("rejects the same route returned twice, once outside its layout", () => {
@@ -85,7 +85,7 @@ describe("a definition nested under an entry it was not created in", () => {
           return [layout(Shell, () => [a]), a];
         }),
       ),
-    ).toThrow(/route\(\) declared outside the layout\(\) it is nested in/);
+    ).toThrow(/path\(\) declared outside the layout\(\) it is nested in/);
   });
 
   it("keeps the orphan cache() form: its following siblings serve", async () => {

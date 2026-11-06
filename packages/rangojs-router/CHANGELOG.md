@@ -12,9 +12,10 @@ put the route at the root, `Shell` never rendered, and the request answered 200.
 `Shell`, so the two shapes read the same and behaved differently.
 
 **Now.** Nesting a definition under an entry it was not created in throws
-where it is written: `route() declared outside the layout() it is nested in
+where it is written: `path() declared outside the layout() it is nested in
 [<id>]: a definition registers under the entry whose callback creates it, so
-create it inside that callback`. It holds for every helper (`path`, `route`,
+create it inside that callback`. The message names the helper you called and
+the callback it belongs in. It holds for every helper (`path`, `route`,
 `layout`, `cache`, `middleware`, `transition`, `parallel`, `intercept`,
 `loader`, `loading`, `revalidate`, `errorBoundary`, `notFoundBoundary`,
 `include()`). The inline form is unchanged, and so is the `cache()` form whose

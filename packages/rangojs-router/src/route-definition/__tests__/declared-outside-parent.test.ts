@@ -108,7 +108,9 @@ describe("a definition nested under an entry it was not created in", () => {
   // middleware(fn, children) and transition(config, children) build transparent
   // layout entries, and intercept() validates against a spread of the enclosing
   // entry, so all three used to report "layout()".
-  const CONTAINERS: Array<[string, (item: AllUseItems) => void]> = [
+  // `item` is any: each helper's use() slot takes its own item union, and the
+  // point here is the message, not the shape the type system already rejects.
+  const CONTAINERS: Array<[string, (item: any) => void]> = [
     ["layout", (item) => void layout(Shell, () => [item])],
     ["cache", (item) => void cache({ ttl: 60 }, () => [item])],
     ["middleware", (item) => void middleware(mw, () => [item])],
