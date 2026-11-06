@@ -12,11 +12,17 @@ nothing on the render that wrote the record kept the values of the page the
 visitor left: a breadcrumb a navigation cleared came back on every later hit
 of the same URL.
 
+An intercept's slot was never listed, live or stored: moving an open
+intercept to an item whose handler pushes nothing (`/photos/1` to `/photos/2`
+in a `@modal`) kept the first item's breadcrumb or title.
+
 **Now.** A stored segment a response serves is listed in `resolvedIds`, next
 to the handlers and loaders that ran, so the browser replaces that segment's
 handle values with the ones the response delivers (none when the record holds
-none). A segment the client keeps is still left out, as on a live navigation.
-Nothing else on the wire changes.
+none). An intercept's slot is listed whenever its handler runs or its stored
+copy is served. A segment the client keeps is still left out, as on a live
+navigation, and a cache hit lists exactly what the render that wrote its
+record listed. Nothing else on the wire changes.
 
 ## 0.35.0 (2026-11-04)
 

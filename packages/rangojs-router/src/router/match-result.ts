@@ -131,6 +131,34 @@ export async function collectSegments(
   return segments;
 }
 
+/** `s` without the internal _handlerRan marker; `s` itself when it has none. */
+function withoutHandlerRan(s: ResolvedSegment): ResolvedSegment {
+  if (s._handlerRan === undefined) return s;
+  const { _handlerRan: _drop, ...rest } = s;
+  return rest as ResolvedSegment;
+}
+
+/**
+ * The slots the answer carries, each segment without its _handlerRan marker.
+ * An intercept's slot segment reaches the client here as well as in
+ * `segments`, and both a live slot (intercept-resolution.ts
+ * resolveInterceptEntry) and a stored one (cache-lookup.ts
+ * serveStoredSegments) carry the marker.
+ */
+function slotsWithoutHandlerRan(
+  slots: MatchPipelineState["slots"],
+): MatchResult["slots"] {
+  let out: MatchResult["slots"];
+  for (const name in slots) {
+    const slot = slots[name]!;
+    (out ??= {})[name] = {
+      ...slot,
+      segments: slot.segments.map(withoutHandlerRan),
+    };
+  }
+  return out;
+}
+
 export function buildMatchResult<TEnv>(
   allSegments: ResolvedSegment[],
   ctx: MatchContext<TEnv>,
@@ -203,12 +231,7 @@ export function buildMatchResult<TEnv>(
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    cleanedSegments.push(withoutHandlerRan(s));
     diff.push(s.id);
   }
 
@@ -227,7 +250,7 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    slots: slotsWithoutHandlerRan(state.slots),
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),

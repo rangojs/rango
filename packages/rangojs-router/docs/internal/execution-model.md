@@ -782,8 +782,14 @@ See "Rewrite" below for what moves and what stays.
   the ones the response delivers, none when the record holds none, as for a
   handler that ran (`mergePartialHandleData`). A record carries no
   `_handlerRan` (`serializeSegments` copies named fields), so the list is
-  derived from the send decision on serve, not persisted. Pinned for a
-  `cache()` record, a `Prerender()` entry and a replay HIT by
+  derived from the send decision on serve, not persisted. An intercept's slot
+  is listed the same way, live when its handler runs
+  (`intercept-resolution.ts` `resolveInterceptEntry`; a fill's kept slot is
+  not) and stored when its copy is sent, so a HIT of an intercept lists what
+  its MISS listed. The slot segment reaches the client in `slots` as well as
+  in `segments`, and `buildMatchResult` strips the marker from both. Pinned
+  for a `cache()` record, a `Prerender()` entry, a replay HIT and an
+  intercept moved between items, live and stored, by
   `testing/__tests__/cache-hit-resolved-ids.rsc-test.tsx` and, across the
   three sources, by `match-middleware/__tests__/stored-source.rsc-test.tsx`.
   Production may use

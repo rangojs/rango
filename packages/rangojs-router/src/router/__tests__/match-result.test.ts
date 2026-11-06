@@ -456,6 +456,37 @@ describe("match-result", () => {
       expect(result.segments.every((s) => !("_handlerRan" in s))).toBe(true);
     });
 
+    it("strips _handlerRan from the slots too, and lists the slot that ran", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["L0", "L0R0"],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["L0", "L0R0"];
+      const slot = createSegment("L0.@modal", {
+        type: "parallel",
+        slot: "@modal",
+        namespace: "intercept:item",
+        _handlerRan: true,
+      } as Partial<ResolvedSegment>);
+      state.interceptSegments = [slot];
+      state.slots["@modal"] = { active: true, segments: [slot] };
+
+      const result = buildMatchResult([slot], ctx, state);
+
+      expect(result.resolvedIds).toEqual(["L0.@modal"]);
+      expect(result.slots?.["@modal"]?.segments?.map((s) => s.id)).toEqual([
+        "L0.@modal",
+      ]);
+      // Both containers reach the client: neither may carry the marker.
+      expect(result.segments.every((s) => !("_handlerRan" in s))).toBe(true);
+      expect(
+        result.slots?.["@modal"]?.segments?.every((s) => !("_handlerRan" in s)),
+      ).toBe(true);
+      // The pipeline's own state keeps it.
+      expect(state.slots["@modal"]!.segments[0]!._handlerRan).toBe(true);
+    });
+
     // #1103: the browser replaces the handle pushes of a loader that ran and
     // keeps those of a loader the response skipped, so resolvedIds names the
     // loaders that ran. A skipped loader is in matched only.

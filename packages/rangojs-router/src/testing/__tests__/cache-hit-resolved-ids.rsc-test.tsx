@@ -11,6 +11,10 @@
  * copies named fields only) and serveStoredSegments (cache-lookup.ts) never
  * set it, so a HIT listed none of its stored segments: a breadcrumb the MISS
  * that wrote the record cleared came back on every HIT of it.
+ *
+ * An intercept's slot is listed the same way, live (resolveInterceptEntry)
+ * and stored. Its segment reaches the client in `slots` too, so the marker
+ * is stripped there as well (match-result.ts buildMatchResult).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -42,6 +46,10 @@ import { deserializeResult } from "../../cache/segment-codec.js";
 import { mergePartialHandleData } from "../../handles/pushed-by.js";
 import { filterSegmentOrder } from "../../browser/react/filter-segment-order.js";
 import type { HandleData } from "../../server/handle-store.js";
+import {
+  expectNoInternalFields,
+  serveEveryShape,
+} from "./helpers/response-shapes.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
@@ -181,6 +189,67 @@ const pprRouter = createRouter({}).routes(
   ]),
 );
 
+/** The item ids whose intercept pushes a crumb. */
+let modalPushesFor = new Set(["1"]);
+
+/** Intercept handler runs, to tell a stored slot from a fresh one. */
+const modalRuns = { count: 0 };
+
+type InterceptSource = "live" | "cache" | "prerender";
+
+/**
+ * An `@modal` intercept of /item/:id over /list, rendered live, under
+ * cache(), or on a Prerender() route whose bake holds the intercept variant.
+ * Its handler pushes `modal-<id>` only for the ids in `modalPushesFor`.
+ */
+function interceptRouter(source: InterceptSource) {
+  return createRouter({}).routes(
+    urls(({ path, layout, intercept, cache }) => {
+      const tree = () =>
+        layout(
+          (ctx: HandlerContext) => {
+            ctx.use(Crumbs)("root");
+            return <main>shell</main>;
+          },
+          () => [
+            path(
+              "/list",
+              (ctx: HandlerContext) => {
+                ctx.use(Crumbs)("list");
+                return <ul>list</ul>;
+              },
+              { name: "list" },
+            ),
+            path(
+              "/item/:id",
+              source === "prerender"
+                ? Prerender<{ id: string }>(
+                    async () => [{ id: "1" }, { id: "2" }],
+                    () => <article>item</article>,
+                  )
+                : () => <article>item</article>,
+              { name: "item" },
+            ),
+            intercept(
+              "@modal",
+              ".item",
+              (ctx: HandlerContext<{ id: string }>) => {
+                modalRuns.count += 1;
+                if (modalPushesFor.has(ctx.params.id)) {
+                  ctx.use(Crumbs)(`modal-${ctx.params.id}`);
+                }
+                return <dialog>modal</dialog>;
+              },
+            ),
+          ],
+        );
+      return source === "cache"
+        ? [cache({ ttl: 600 }, () => [tree()])]
+        : [tree()];
+    }),
+  );
+}
+
 interface Answer {
   matched: string[];
   resolvedIds?: string[];
@@ -264,6 +333,8 @@ async function documentOf(
 
 beforeEach(async () => {
   chainPushes = true;
+  modalPushesFor = new Set(["1"]);
+  modalRuns.count = 0;
   for (const page of Object.keys(runs) as (keyof typeof runs)[]) {
     runs[page] = 0;
   }
@@ -419,4 +490,78 @@ describe("a ppr shell replay lists the segments it serves in resolvedIds", () =>
     // The chain layout is the one that pushed nothing: it is listed.
     expect(answer.resolvedIds).toContain(idPushing(list.handles, "chain"));
   });
+});
+
+describe("an intercept slot whose handler ran is listed in resolvedIds", () => {
+  it.each(["live", "cache", "prerender"] as const)(
+    "%s: moving the open intercept to an item that pushes nothing clears the previous item's crumb, on the MISS and on its HIT",
+    async (source) => {
+      const router = interceptRouter(source);
+      const cacheStore = new MemorySegmentCacheStore();
+      const moved: { crumbs: string[]; resolvedIds?: string[] }[] = [];
+      const runsPerRound: number[] = [];
+      // The first round renders (and writes the records or bakes the
+      // variant); the second is served from them where the source stores.
+      for (let round = 0; round < 2; round++) {
+        const runsBefore = modalRuns.count;
+        const list = await documentOf(router, "/list", cacheStore);
+        const open = await serveShellRequest(router, "/item/1", {
+          cacheStore,
+          partial: {
+            from: "/list",
+            interceptSource: "/list",
+            segments: list.matched,
+          },
+        });
+        const opened = await after(list.handles, open);
+        expect(opened.crumbs).toEqual(["root", "modal-1", "list"]);
+        const move = await serveShellRequest(router, "/item/2", {
+          cacheStore,
+          partial: {
+            from: "/item/1",
+            interceptSource: "/list",
+            segments: opened.matched,
+          },
+        });
+        const { answer, payload } = await readAnswer(move);
+        expect(payload).not.toContain("_handlerRan");
+        moved.push({
+          crumbs: (await after(opened.handles, move)).crumbs,
+          resolvedIds: answer.resolvedIds,
+        });
+        runsPerRound.push(modalRuns.count - runsBefore);
+      }
+      // A stored source serves the second round without running the slot.
+      expect(runsPerRound[1]).toBe(source === "live" ? 2 : 0);
+      expect(moved[0]!.crumbs).toEqual(["root", "list"]);
+      expect(moved[1]).toEqual(moved[0]);
+    },
+  );
+});
+
+describe("every response shape of an intercept keeps the marker internal", () => {
+  it.each(["live", "cache", "prerender"] as const)(
+    "%s: each HIT lists the ids its MISS listed, and no shape carries _handlerRan",
+    async (source) => {
+      modalPushesFor = new Set();
+      const shapes = await serveEveryShape(interceptRouter(source), {
+        from: "/list",
+        to: "/item/1",
+        intercept: { next: "/item/2" },
+      });
+      expectNoInternalFields(shapes);
+      const ids: Record<string, string[] | undefined> = {};
+      for (const { name, result } of shapes) {
+        ids[name] = (await readAnswer(result)).answer.resolvedIds;
+      }
+      for (const name of Object.keys(ids)) {
+        if (!name.endsWith(" HIT")) continue;
+        expect(ids[name], name).toEqual(ids[name.replace(/ HIT$/, " MISS")]);
+      }
+      // The open intercept's slot ran, or is served for it: it is listed.
+      expect(
+        ids["intercept opened MISS"]?.some((id) => id.endsWith(".@modal")),
+      ).toBe(true);
+    },
+  );
 });

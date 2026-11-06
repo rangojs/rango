@@ -203,11 +203,12 @@ export interface ResolvedSegment {
   clientGroup?: string;
   /**
    * @internal Server-side marker: true when the segment's handler layer is
-   * served this request — its handler ran, or a stored copy of it is served
-   * in place of running (cache-lookup.ts serveStoredSegments). Used by
+   * served this request — its handler ran (an intercept's slot included,
+   * intercept-resolution.ts resolveInterceptEntry), or a stored copy of it is
+   * served in place of running (cache-lookup.ts serveStoredSegments). Used by
    * match-result.ts to populate `MatchResult.resolvedIds` for client-side
-   * handle-bucket cleanup. Stripped from the wire payload before serialization
-   * — never reaches the client.
+   * handle-bucket cleanup. buildMatchResult strips it from every container it
+   * emits, `segments` and `slots` alike — never reaches the client.
    */
   _handlerRan?: boolean;
 }
@@ -261,7 +262,8 @@ export interface MatchResult {
   diff: string[];
   /**
    * Every segment id whose handler layer this response serves: its handler
-   * ran, or a stored copy of it is served in place of running (a cache() or
+   * ran (an intercept's slot included), or a stored copy of it is served in
+   * place of running (a cache() or
    * prerender HIT, cache-lookup.ts serveStoredSegments), including ones with
    * `component === null` that get filtered out of `segments`/`diff` to avoid
    * wasted bytes, and every loader segment that ran. Drives the client's
