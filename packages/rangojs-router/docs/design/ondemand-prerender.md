@@ -37,11 +37,13 @@ param that only a refresh produced: the intercept navigation skips the overlay,
 misses the bundled `:i` artifact, and the gated producer refuses to render. Track under the intercept-refresh follow-up. Also deferred: build-time
 durable seeding (Phase 8),
 a Vercel Blob adapter (the interface is platform-agnostic; the concrete v1
-adapters are in-memory + CF KV). One status was added beyond the original
+adapters are in-memory + CF KV). Two statuses were added beyond the original
 result union: `skipped-passthrough`, returned when a `Passthrough + onDemand`
 route's build handler returns `ctx.passthrough()` for the refreshed param (no
 shared payload to persist; the "removed" marker is stored so that the live
-handler serves it).
+handler serves it), and `skipped-redirect`, returned when the refresh's render
+answers `redirect()` — nothing is stored at all there, because a redirect can
+depend on the request (see "A Redirecting Refresh").
 
 On-demand routes stay off the separate PPR shell lane in v1. A refresh can
 replace the durable segment payload, but it cannot atomically replace a cached
@@ -395,6 +397,9 @@ type PrerenderResult =
         | "no-match"
         | "no-store"
         | "skipped-personalized"
+        // the render answered redirect(): request-dependent, so nothing is
+        // stored and the entry stored before keeps serving
+        | "skipped-redirect"
         | "skipped-unsupported-target"
         | "skipped-passthrough"
         | "skipped-not-on-demand" // prerender.remove() only
@@ -927,6 +932,90 @@ support use cases like user-generated content getting removed by its author.
 Note, `notFound` follows the same `revalidate` behavior described here."
 (nextjs.org/docs/pages/api-reference/functions/get-static-props)
 
+## A Redirecting Refresh
+
+A refresh whose render answers `redirect()` stores nothing: not the redirect,
+not a "removed" marker. The result is
+`{ ok: false, path: "on-demand", status: "skipped-redirect", target, routeName }`,
+and the entry stored before keeps serving to documents and client navigations
+and revalidates on its own `ttl` and `tags`.
+
+The reason is the same one that makes `skipped-personalized` a skip rather
+than a failure: a redirect can depend on the request. A handler that checks a
+session or an auth rule answers `redirect("/login")` for one caller and the
+page for another, and the producer renders requestlessly — so it cannot tell
+"this page is gone" from "this render is the wrong one to ask". A `notFound()`
+is the opposite claim: the handler looked at the data source and the item is
+not in it. That is why one writes a marker and the other writes nothing.
+
+The status is not `render-failed` either. A crash is a broken page and a
+sweep should count it; a redirecting refresh is a page that is fine and a
+render that declined to describe it. Reporting it as a failure made a sweep
+report one on every pass over a route whose handler redirects when the
+producer runs (an auth check that sees no session, say), for a page that was
+being served correctly the whole time.
+
+### Every kind of handler, one rule
+
+A `redirect()` counts wherever it happens in the render: the route handler, a
+layout handler, a parallel-slot handler, a `Passthrough` route's build
+handler, a handler streaming behind `loading()`, or a deep async component.
+The producer (`matchForPrerender`, `router/prerender-match.ts`) reports it the
+way it already reports a `notFound()`, as an outcome with the route's
+`onDemand` config (`{ redirect: true, onDemandConfig }`), and the trigger maps
+that to the result (`renderOnDemand` in
+`prerender/create-prerender-trigger.ts`).
+
+A redirect thrown by a handler and one collected from a component's Flight
+row take the same path, so `redirect()` inside a component is not a special
+case. `isThrownRedirect` (`response-utils.ts`) recognizes the Response by
+shape rather than `instanceof`, for the cross-realm reason
+`isDataNotFoundError` does.
+
+### Order of outcomes
+
+A render can produce more than one of these at once, and the order decides:
+
+| the render produced                  | the result                          |
+| ------------------------------------ | ----------------------------------- |
+| a redirect and any other failure     | `render-failed`, whatever was first |
+| a redirect and a `notFound()`        | `skipped-redirect`, nothing stored  |
+| a `notFound()` and any other failure | `render-failed`, whatever was first |
+| a `notFound()` alone                 | `removed`, the marker is stored     |
+
+`firstFlightError` (`prerender-match.ts`) picks the value to rethrow: a
+failure first, then a redirect, then a `notFound()`. Without the middle rank
+the order two sibling components happened to be reported in would decide
+between `render-failed` and a skip, which is the same bug the `notFound()`
+half had before any error that is not a `DataNotFoundError` went first.
+
+### What stays, and what replaces it
+
+- The stored page keeps serving, to a document request and to a client
+  navigation: both read the overlay in the match, and the entry is untouched.
+- A refresh that renders a page later replaces the entry, as any write does.
+- `markStale(tags)` followed by an `{ onlyIfStale: true }` refresh renders it
+  again. A redirect there stores nothing, so the entry stays stale and the
+  next sweep looks again; a render that answers with a page replaces it.
+- A `Passthrough` route keeps the stored page, so its live handler does not
+  take over for a page that is still there.
+- `throwOnError: true` throws a `PrerenderError` naming `skipped-redirect`, as
+  it does for `skipped-personalized`; `.many()` returns one result per target
+  and does not stop.
+- Nothing is warmed on top: there is no new entry for the route's caches to be
+  rebuilt on, and the stored page's caches were built when it was written.
+
+### At build time, nothing changed
+
+A build or dev render keeps its throw (`matchForPrerender` only maps the two
+outcomes when `onDemand` is set), so a `Prerender` route that redirects at
+build time is a render error under `prerender.onError`: `"fail"` (the
+default) fails the build, naming the URL, and `"warn"` logs and skips baking
+that URL. The thrown value is a Response, which has no `message`, so both log
+lines end in `undefined` rather than a reason — an unhelpful message that is
+left as it was, because the policy is the point and changing the log would be
+a separate change to the build's error handling.
+
 ## Build-time Durable Seeding
 
 The first implementation can keep the existing bundled manifest as the build
@@ -1055,6 +1144,8 @@ run requestless prerender producer
   |
   +-- personalized --> skipped-personalized
   +-- render failed --> render-failed (also when a notFound() happened too)
+  +-- redirect() --> write nothing --> skipped-redirect (no warm): the entry
+  |                  stored before keeps serving
   +-- notFound() only --> write the "removed" marker, stamped with the
   |                       route's ttl and tags --> removed (no warm)
   +-- ctx.passthrough() --> write the same marker --> skipped-passthrough,
@@ -1291,6 +1382,17 @@ behavior. Coverage should include:
   removed both ways, the recheck through `markStale` and `onlyIfStale`, an
   action on a removed page, and a `Passthrough` route (`expectRemoved*` in
   `tests/shared-e2e`).
+- A redirecting refresh: every handler kind that can answer `redirect()`
+  (route, layout, parallel slot, `Passthrough` build handler, a handler behind
+  `loading()`, a deep component), cold and over a stored page, the document
+  and the client navigation that follow, `markStale` + `onlyIfStale`, a
+  redirect beside a failure and beside a `notFound()`, `throwOnError` and
+  `.many()` (`testing/__tests__/on-demand-prerender-redirect.rsc-test.tsx`);
+  the trigger's own write-nothing rule (`create-prerender-trigger.test.ts`);
+  the build-time rethrow (`prerender-render-error.test.tsx`); and in a
+  browser, dev and production in both apps, the stored page still serving to a
+  document and a client navigation (`expectRedirectingRefreshKeepsStoredPage`
+  in `tests/shared-e2e`).
 - E2E tests in both dev and production for the e2e test app and the Cloudflare
   basic app.
 - Production tests proving a durable entry serves through the prerender store

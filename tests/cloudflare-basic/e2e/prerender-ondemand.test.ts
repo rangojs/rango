@@ -8,6 +8,7 @@ import {
   expectManyReturnsOneResultPerTargetInOrder,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
+  expectRedirectingRefreshKeepsStoredPage,
   expectRemovedUnbakedPageAnswers404,
   type PrerenderOutcomesFixture,
 } from "@shared/e2e";
@@ -327,6 +328,7 @@ const guideFixture = (f: Fixture): PrerenderOutcomesFixture => ({
     pageUrl: (slug) => f.url(`/guides/${slug}`),
     triggerUrl: (slug) => f.url(`/guide-trigger/${slug}`),
     sourceTestId: "guide-source",
+    stampTestId: "guide-rendered-at",
     bakedSlug: "removable",
     declineBakedSlug: "decline-baked",
   },
@@ -366,6 +368,12 @@ function defineOutcomesFlow(f: Fixture) {
     page,
   }) => {
     await expectFailedRefreshKeepsStoredPage(page, guideFixture(f));
+  });
+
+  test("a redirecting refresh is skipped-redirect, and the stored page keeps serving", async ({
+    page,
+  }) => {
+    await expectRedirectingRefreshKeepsStoredPage(page, guideFixture(f));
   });
 
   test("a Passthrough param the build handler declines is skipped-passthrough, and the live handler serves it", async ({

@@ -3602,6 +3602,8 @@ export interface PrerenderRemoveFixture {
     pageUrl: (slug: string) => string;
     triggerUrl: (slug: string) => string;
     sourceTestId: string;
+    /** A value captured once per render, so two serves can be compared. */
+    stampTestId: string;
     bakedSlug: string;
   };
 }
@@ -3957,6 +3959,87 @@ export async function expectFailedRefreshKeepsStoredPage(
 
   await refreshPage(page, trigger);
   expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
+
+/**
+ * A refresh whose render answers `redirect()` is `skipped-redirect` and stores
+ * nothing: a redirect can depend on the request, so it does not show the page
+ * is gone. The page stored before keeps serving, to a document request and to
+ * a client navigation (same stamp, not a 302 and not a re-render), and a
+ * refresh once the render stops redirecting replaces it. The second half is a
+ * `Passthrough` route's build handler: its stored page keeps serving, so the
+ * live handler does not take over for a page that is still there.
+ */
+export async function expectRedirectingRefreshKeepsStoredPage(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("redirect");
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?redirect=1");
+  try {
+    const skipped = await removeTrigger(page, trigger);
+    expect(skipped, JSON.stringify(skipped)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+      target: fixture.path(slug),
+    });
+
+    // The page stored before, to a document request.
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+
+    // ... and to a client navigation, which reads the overlay in the match.
+    await routerNavigate(page, fixture.pageUrl(slug));
+    await expect(byTestId(page, fixture.slugTestId)).toHaveText(slug);
+    await expect(byTestId(page, fixture.stampTestId)).toHaveText(stamp);
+  } finally {
+    await removeTrigger(page, trigger, "?redirect=0");
+  }
+
+  await refreshPage(page, trigger);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+
+  // A Passthrough route's build handler: the stored page keeps serving, so
+  // the live handler does not answer for a page that is still there.
+  const { pageUrl, triggerUrl, sourceTestId, stampTestId } =
+    fixture.passthrough;
+  const passSlug = `redirect-${pushProbe("pass")}`;
+  const passTrigger = triggerUrl(passSlug);
+  await refreshPage(page, passTrigger);
+  await page.goto(pageUrl(passSlug));
+  await waitForShellHydration(page);
+  await expect(byTestId(page, sourceTestId)).toHaveText("prerender");
+  const passStamp = (await byTestId(page, stampTestId).textContent()) ?? "";
+
+  await removeTrigger(page, passTrigger, "?redirect=1");
+  try {
+    const skipped = await removeTrigger(page, passTrigger);
+    expect(skipped, JSON.stringify(skipped)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+    });
+
+    await page.goto(pageUrl(passSlug));
+    await waitForShellHydration(page);
+    await expect(byTestId(page, sourceTestId)).toHaveText("prerender");
+    await expect(byTestId(page, stampTestId)).toHaveText(passStamp);
+  } finally {
+    await removeTrigger(page, passTrigger, "?redirect=0");
+  }
+
+  await refreshPage(page, passTrigger);
+  await page.goto(pageUrl(passSlug));
+  await waitForShellHydration(page);
+  await expect(byTestId(page, sourceTestId)).toHaveText("prerender");
+  expect((await byTestId(page, stampTestId).textContent()) ?? "").not.toBe(
+    passStamp,
+  );
 }
 
 /**

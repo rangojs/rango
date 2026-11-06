@@ -823,11 +823,12 @@ skips a fresh entry and returns `already-fresh`. The result is inspectable
 (`{ ok, path: "on-demand", status, key, tags, ttl }`); statuses are `rendered`,
 `already-fresh`, `removed` (the render hit `notFound()`, see "Remove a
 page"), `no-match`, `no-store`, `skipped-personalized`,
-`skipped-unsupported-target` (a target with `?search` or `#hash`),
-`skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
-the previous entry, except `skipped-passthrough`, which hands the page to the
-live handler. A `markStale()` that lands while a refresh renders marks the entry that
-refresh stores.
+`skipped-redirect` (the render answered `redirect()`, see "A refresh that
+redirects"), `skipped-unsupported-target` (a target with `?search` or
+`#hash`), `skipped-passthrough`, `render-failed` and `store-failed`. Every
+failure keeps the previous entry, except `skipped-passthrough`, which hands
+the page to the live handler. A `markStale()` that lands while a refresh
+renders marks the entry that refresh stores.
 
 A route that is not on-demand is not refused: the same call warms its runtime
 caches instead (see "Warm any route before traffic"). An on-demand route gets
@@ -962,6 +963,41 @@ successfully generated page before. This is meant to support use cases like
 user-generated content getting removed by its author. Note, `notFound`
 follows the same `revalidate` behavior described here."
 ([getStaticProps](https://nextjs.org/docs/pages/api-reference/functions/get-static-props))
+
+### A refresh that redirects
+
+A render can answer `redirect()` instead of a page, for example when it checks
+a session or an auth rule. The refresh stores nothing then — not the redirect,
+not a "removed" marker — and returns
+`{ ok: false, path: "on-demand", status: "skipped-redirect" }`. The page
+stored before keeps serving to documents and client navigations and
+revalidates on its own `ttl` and `tags`.
+
+The reason is that a redirect can depend on the request: the producer renders
+requestlessly, so it cannot tell "this page is gone" (a `notFound()`, which
+writes the marker) from "this is the wrong render to ask". It is not a
+failure either: a sweep that counts `render-failed` would report one on every
+pass over a route whose handler redirects for an anonymous render, for a page
+that is fine.
+
+```typescript
+await prerender("/products/42");
+// { ok: false, path: "on-demand", status: "skipped-redirect", ... }
+// The page stored by an earlier refresh still answers 200.
+```
+
+- **Anywhere in the render**: the route handler, a layout or parallel-slot
+  handler, a `Passthrough` route's build handler, a handler streaming behind
+  `loading()`, or a component in the tree.
+- **A later refresh replaces the entry** once the render answers with a page;
+  `markStale(tags)` followed by `{ onlyIfStale: true }` still renders it
+  again, and keeps the page when that render redirects too.
+- **A render that redirects and fails another way stays `render-failed`**,
+  whichever the two came first. A render that both redirects and hits
+  `notFound()` stores nothing either.
+- **At build time nothing changed**: a `Prerender` render that redirects is a
+  render error under `prerender.onError` — `"fail"` fails the build, `"warn"`
+  skips that URL.
 
 ### What is served
 

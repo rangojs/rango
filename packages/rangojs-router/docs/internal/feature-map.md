@@ -1038,6 +1038,16 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   stale one still answers 404, schedules `onRevalidate`, is rendered again by
   `onlyIfStale`, and `markStale()` reaches it. A `remove()` marker has
   neither and is permanent until a refresh without `onlyIfStale`.
+- A refresh whose render answers `redirect()` stores nothing (neither the
+  redirect nor a marker) and returns `skipped-redirect`: a redirect can depend
+  on the request, so it does not show the page is gone, and it is not a
+  failure, so a sweep does not count one. `matchForPrerender` reports
+  `{ redirect: true }` on an on-demand run (`isThrownRedirect`,
+  `src/response-utils.ts`), and `firstFlightError` ranks a failure ahead of a
+  redirect, a redirect ahead of a `notFound()`. The stored page keeps serving
+  to documents and navigations, revalidating on its `ttl` and `tags`; a later
+  render replaces it. A build-time render that redirects still rethrows to
+  `prerender.onError`.
 - `remove()` and a refresh are two writes to one key: last write wins, except
   that a page is not written over a marker stored after its render started
   (`renderOnDemand` re-reads the key). No warm request follows `removed`. A
@@ -1060,7 +1070,9 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
 - The producer reuses `matchForPrerender` without inheriting request state.
   Personalized reads map to `skipped-personalized`; failed renders and writes
   leave the previous entry intact (a `notFound()` is not a failure: it removes
-  the page, above). Its context carries the router's cache
+  the page, above; a `redirect()` stores nothing: it is `skipped-redirect`,
+  request-dependent, and the stored page keeps serving). Its context carries
+  the router's cache
   versions (`_versions`), so `getCacheVersions()` inside a refresh answers like
   a live request.
 - Stores are plain get/set (`WritablePrerenderStore`): the trigger composes the

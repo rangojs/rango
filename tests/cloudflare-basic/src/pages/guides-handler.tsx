@@ -1,4 +1,4 @@
-import { Prerender, Passthrough, cookies } from "@rangojs/router";
+import { Prerender, Passthrough, cookies, redirect } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 
 // Known slugs that get pre-rendered at build time.
@@ -21,6 +21,14 @@ const knownGuides: Record<string, string> = {
 export const guideDeclineKey = (slug: string): string =>
   `guide-decline:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
+/**
+ * KV key of a slug whose build handler answers redirect() instead: a
+ * request-dependent outcome, so a refresh stores nothing and the page stored
+ * before keeps serving rather than the live handler taking over.
+ */
+export const guideRedirectKey = (slug: string): string =>
+  `guide-redirect:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
 export const GuidesDetailDef = Prerender<{ slug: string }>(
   async () => Object.keys(knownGuides).map((slug) => ({ slug })),
   async (ctx) => {
@@ -32,6 +40,12 @@ export const GuidesDetailDef = Prerender<{ slug: string }>(
         (await ctx.env.PRERENDER_KV.get(guideDeclineKey(ctx.params.slug))))
     ) {
       return ctx.passthrough();
+    }
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guideRedirectKey(ctx.params.slug)))
+    ) {
+      throw redirect("/login");
     }
     const title = knownGuides[ctx.params.slug] ?? `Guide: ${ctx.params.slug}`;
     const renderedAt = new Date().toISOString();

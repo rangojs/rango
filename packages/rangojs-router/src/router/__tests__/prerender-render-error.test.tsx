@@ -43,6 +43,7 @@ vi.mock("@vitejs/plugin-rsc/rsc/server", pluginRscMock);
 vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { Prerender } from "../../prerender.js";
+import { redirect } from "../../route-definition/redirect.js";
 import { Skip } from "../../errors.js";
 import { createRouter } from "../../router.js";
 import { urls } from "../../urls/urls-function.js";
@@ -100,6 +101,26 @@ describe("matchForPrerender surfaces prerender render errors (#587)", () => {
     // than fail the build, so the Skip must survive as a Skip instance.
     expect(err).toBeInstanceOf(Skip);
     expect((err as Skip).message).toMatch(/draft/);
+    expect(renderSpy).not.toHaveBeenCalled();
+  });
+
+  test("a build render that answers redirect() rethrows the Response, so prerender.onError decides", async () => {
+    const router = routerWith("/login-required", "loginRequired", () => {
+      throw redirect("/login");
+    });
+
+    let err: unknown;
+    try {
+      await router.matchForPrerender("/login-required", {});
+    } catch (e) {
+      err = e;
+    }
+    // The build's policy (resolvePrerenderError, vite/utils/prerender-utils.ts)
+    // treats it as a render error: "fail" fails the build, "warn" skips the
+    // URL. Never baked. Only an on-demand refresh maps it to an outcome.
+    expect(err).toBeInstanceOf(Response);
+    expect((err as Response).status).toBe(302);
+    expect((err as Response).headers.get("Location")).toBe("/login");
     expect(renderSpy).not.toHaveBeenCalled();
   });
 

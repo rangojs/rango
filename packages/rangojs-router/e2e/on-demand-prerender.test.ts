@@ -8,6 +8,7 @@ import {
   expectManyReturnsOneResultPerTargetInOrder,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
+  expectRedirectingRefreshKeepsStoredPage,
   expectRemovedUnbakedPageAnswers404,
   type PrerenderOutcomesFixture,
 } from "@shared/e2e";
@@ -309,6 +310,7 @@ const removeFixture = (f: Fixture): PrerenderOutcomesFixture => ({
     pageUrl: (slug) => f.url(`/on-demand/${slug}`),
     triggerUrl: (slug) => f.url(`/od-trigger/${slug}`),
     sourceTestId: "od-source",
+    stampTestId: "od-stamp",
     bakedSlug: "removable",
     declineBakedSlug: "decline-baked",
   },
@@ -348,6 +350,12 @@ function defineOutcomeTests(f: Fixture) {
     page,
   }) => {
     await expectFailedRefreshKeepsStoredPage(page, removeFixture(f));
+  });
+
+  test("a redirecting refresh is skipped-redirect, and the stored page keeps serving", async ({
+    page,
+  }) => {
+    await expectRedirectingRefreshKeepsStoredPage(page, removeFixture(f));
   });
 
   test("a Passthrough param the build handler declines is skipped-passthrough, and the live handler serves it", async ({

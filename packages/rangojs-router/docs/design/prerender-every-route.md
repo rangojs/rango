@@ -720,6 +720,9 @@ export type PrerenderResult =
         | "skipped-unsupported-target"
         | "skipped-no-origin"
         | "skipped-personalized"
+        // on-demand only: the render answered redirect(), which can depend on
+        // the request, so nothing is stored (ondemand-prerender.md)
+        | "skipped-redirect"
         | "skipped-passthrough"
         | "skipped-store-not-shared"
         | "shell-not-stored"
