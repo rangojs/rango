@@ -14,8 +14,11 @@ back on the HIT of the same navigation.
 
 **Now.** A stored HIT lists every segment its record sends, as the MISS that
 wrote the record listed the segments that ran. The breadcrumb clears on the
-HIT too. Nothing else on the wire changes: the marker is stripped from
-`segments` and from `slots`, so only `resolvedIds` differs.
+HIT too. An intercept slot whose handler re-runs is listed as well, so a slot
+that re-runs and pushes nothing clears the values the page carried instead of
+keeping them, on a live navigation and on a HIT alike. Nothing else on the
+wire changes: the marker is stripped from `segments` and from `slots`, so only
+`resolvedIds` differs.
 
 ## 0.35.0 (2026-11-04)
 
