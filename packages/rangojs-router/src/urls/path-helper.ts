@@ -308,12 +308,14 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       );
       return declaredUnder(
         { name: namespace, type: "route", uses: result } as RouteItem,
+        "path",
         ctx.parent,
       );
     }
 
     return declaredUnder(
       { name: namespace, type: "route" } as RouteItem,
+      "path",
       ctx.parent,
     );
   }) as PathFn<TEnv>;

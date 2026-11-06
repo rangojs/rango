@@ -107,8 +107,8 @@ const emptySegmentBase = (): EntryPropDatas &
 });
 
 /**
- * The entry whose callback created a use item, recorded by each DSL helper on
- * the item it returns.
+ * Where a DSL helper created a use item: the entry whose callback ran it, and
+ * the helper's own name.
  *
  * A helper fixes its entry's parent pointer, short code and namespace the
  * moment it runs, so an item created in one callback and returned from another
@@ -116,35 +116,52 @@ const emptySegmentBase = (): EntryPropDatas &
  * the mark the tree silently disagrees with the code — a `const a = path("/a",
  * A)` declared at the top of urls() and nested in a layout() registers under
  * the root, the layout never renders, and the route answers 200 from the root.
+ *
+ * The helper name is recorded rather than read back from the item: several
+ * helpers produce the same item type (path() and route() both return a
+ * `type: "route"` item), and the error has to name the call the user wrote.
  */
 const DECLARED_UNDER: unique symbol = Symbol("rango.declaredUnder");
 
-type DeclaredUseItem = { [DECLARED_UNDER]?: EntryData | null };
+type DeclaredUseItem = {
+  [DECLARED_UNDER]?: { helper: string; parent: EntryData | null };
+};
 
-/** Record `parent` on a helper's use item; returns the item. */
-function declaredUnder<T extends object>(item: T, parent: EntryData | null): T {
-  (item as DeclaredUseItem)[DECLARED_UNDER] = parent;
+/** Record where a helper created `item`; returns the item. */
+function declaredUnder<T extends object>(
+  item: T,
+  helper: string,
+  parent: EntryData | null,
+): T {
+  (item as DeclaredUseItem)[DECLARED_UNDER] = { helper, parent };
   return item;
 }
 
 /**
- * Reject a use item nested under an entry it was not created in. The callback's
- * own entry is the item's declaring entry or an ancestor of it: cache() without
- * children moves ctx.parent down to its own entry, so the siblings after it are
- * declared one level deeper and still belong to the callback. An orphan is
- * walked through orphanOwner (attachOrphanSibling), the entry it was declared
- * in.
+ * Reject a use item nested under an entry it was not created in. `label` is the
+ * helper whose callback returned the items (its user-facing name, not the entry
+ * type: middleware(fn, children) and transition(config, children) are transparent
+ * layout entries). The callback's own entry is the item's declaring entry or an
+ * ancestor of it: cache() without children moves ctx.parent down to its own
+ * entry, so the siblings after it are declared one level deeper and still belong
+ * to the callback. An orphan is walked through orphanOwner
+ * (attachOrphanSibling), the entry it was declared in.
  */
-function assertDeclaredIn(entry: EntryData, items: AllUseItems[]): void {
+function assertDeclaredIn(
+  label: string,
+  entry: EntryData,
+  items: AllUseItems[],
+): void {
   for (const item of items) {
-    if (!item || !(DECLARED_UNDER in item)) continue;
-    let node = (item as DeclaredUseItem)[DECLARED_UNDER] ?? null;
+    const mark = item ? (item as DeclaredUseItem)[DECLARED_UNDER] : undefined;
+    if (!mark) continue;
+    let node = mark.parent;
     while (node && node !== entry) {
       node = node.parent ?? node.orphanOwner ?? null;
     }
     invariant(
       node === entry,
-      `${item.type}() declared outside the ${entry.type}() it is nested in [${item.name}]: ` +
+      `${mark.helper}() declared outside the ${label}() it is nested in [${item!.name}]: ` +
         "a definition registers under the entry whose callback creates it, so create it inside that callback",
     );
   }
@@ -179,7 +196,7 @@ function validateUseItems(
     Array.isArray(result) && result.every((item) => isValidUseItem(item)),
     `${label}() ${kind === "use" ? "use()" : "children"} callback must return an array of use items [${namespace}]`,
   );
-  assertDeclaredIn(entry, result as AllUseItems[]);
+  assertDeclaredIn(label, entry, result as AllUseItems[]);
   return result as AllUseItems[];
 }
 
@@ -256,7 +273,11 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
   }
   const name = `$${store.getNextIndex("revalidate")}`;
   parent.revalidate.push(toShouldRevalidateFn(fn));
-  return declaredUnder({ name, type: "revalidate" } as RevalidateItem, parent);
+  return declaredUnder(
+    { name, type: "revalidate" } as RevalidateItem,
+    "revalidate",
+    parent,
+  );
 };
 
 /**
@@ -305,6 +326,7 @@ const errorBoundary: RouteHelpers<any, any>["errorBoundary"] = (fallback) => {
   parent.errorBoundary.push(fallback);
   return declaredUnder(
     { name, type: "errorBoundary" } as ErrorBoundaryItem,
+    "errorBoundary",
     parent,
   );
 };
@@ -356,6 +378,7 @@ const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (
   parent.notFoundBoundary.push(fallback);
   return declaredUnder(
     { name, type: "notFoundBoundary" } as NotFoundBoundaryItem,
+    "notFoundBoundary",
     parent,
   );
 };
@@ -422,7 +445,11 @@ const cache: RouteHelpers<any, any>["cache"] = (
   if (route && ctx.parent) {
     route.cache = cacheConfig;
     if (!children) {
-      return declaredUnder({ name, type: "cache" } as CacheItem, ctx.parent);
+      return declaredUnder(
+        { name, type: "cache" } as CacheItem,
+        "cache",
+        ctx.parent,
+      );
     }
     const uses = runAndValidateUseItems(
       store,
@@ -434,6 +461,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     );
     return declaredUnder(
       { name, type: "cache", uses } as CacheItem,
+      "cache",
       ctx.parent,
     );
   }
@@ -447,7 +475,11 @@ const cache: RouteHelpers<any, any>["cache"] = (
     if (parent && parent.type === "loader") {
       // Direct assignment to loader entry's cache field
       parent.cache = cacheConfig;
-      return declaredUnder({ name, type: "cache" } as CacheItem, parent);
+      return declaredUnder(
+        { name, type: "cache" } as CacheItem,
+        "cache",
+        parent,
+      );
     }
 
     // Create orphan cache entry (like orphan layout)
@@ -478,6 +510,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
 
     return declaredUnder(
       { name: namespace, type: "cache" } as CacheItem,
+      "cache",
       parent,
     );
   }
@@ -526,6 +559,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
 
   return declaredUnder(
     { name: namespace, type: "cache", uses: result } as CacheItem,
+    "cache",
     ctx.parent,
   );
 };
@@ -585,6 +619,7 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
     parent.middleware.push(...fns);
     return declaredUnder(
       { name, type: "middleware" } as MiddlewareItem,
+      "middleware",
       parent,
     );
   }
@@ -645,6 +680,7 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
       type: "middleware",
       uses: result,
     } as MiddlewareItem,
+    "middleware",
     ctx.parent,
   );
 };
@@ -797,6 +833,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   }
   return declaredUnder(
     { name: namespace, type: "parallel" } as ParallelItem,
+    "parallel",
     ctx.parent,
   );
 };
@@ -965,6 +1002,7 @@ const intercept = (
   ctx.parent.intercept.push(entry);
   return declaredUnder(
     { name: namespace, type: "intercept" } as InterceptItem,
+    "intercept",
     ctx.parent,
   );
 };
@@ -1060,7 +1098,11 @@ const loader: RouteHelpers<any, any>["loader"] = (
   ctx.parent.loader.push(
     ctx.isSSR ? documentModeLoader(loaderEntry) : loaderEntry,
   );
-  return declaredUnder({ name, type: "loader" } as LoaderItem, ctx.parent);
+  return declaredUnder(
+    { name, type: "loader" } as LoaderItem,
+    "loader",
+    ctx.parent,
+  );
 };
 
 /**
@@ -1103,7 +1145,11 @@ const loading: RouteHelpers<any, any>["loading"] = (component, options) => {
       : undefined;
 
   const name = `$${store.getNextIndex("loading")}`;
-  return declaredUnder({ name, type: "loading" } as LoadingItem, parent);
+  return declaredUnder(
+    { name, type: "loading" } as LoadingItem,
+    "loading",
+    parent,
+  );
 };
 
 /**
@@ -1147,6 +1193,7 @@ const transition = (
     parent.transition = config;
     return declaredUnder(
       { name, type: "transition" } as TransitionItem,
+      "transition",
       parent,
     );
   }
@@ -1180,6 +1227,7 @@ const transition = (
       type: "transition",
       uses: result,
     } as TransitionItem,
+    "transition",
     ctx.parent,
   );
 };
@@ -1228,6 +1276,7 @@ const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {
     );
     return declaredUnder(
       { name: namespace, type: "route", uses: result } as RouteItem,
+      "route",
       ctx.parent,
     );
   }
@@ -1235,6 +1284,7 @@ const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   /* typesafe item */
   return declaredUnder(
     { name: namespace, type: "route" } as RouteItem,
+    "route",
     ctx.parent,
   );
 };
@@ -1346,6 +1396,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   if (result) {
     return declaredUnder(
       { name: namespace, type: "layout", uses: result } as LayoutItem,
+      "layout",
       ctx.parent,
     );
   }
@@ -1354,6 +1405,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
       name: namespace,
       type: "layout",
     } as LayoutItem,
+    "layout",
     ctx.parent,
   );
 };

@@ -44,6 +44,7 @@ function Shell() {
 function Page() {
   return null;
 }
+const mw = () => undefined;
 
 function testLoaderDef(): LoaderDefinition<any> {
   return {
@@ -101,6 +102,54 @@ describe("a definition nested under an entry it was not created in", () => {
         cache({ ttl: 60 }, () => [a]);
       }),
     ).toThrow(/route\(\) declared outside the cache\(\) it is nested in \[/);
+  });
+
+  // The callback is named by the helper that ran it, not by its entry type:
+  // middleware(fn, children) and transition(config, children) build transparent
+  // layout entries, and intercept() validates against a spread of the enclosing
+  // entry, so all three used to report "layout()".
+  const CONTAINERS: Array<[string, (item: AllUseItems) => void]> = [
+    ["layout", (item) => void layout(Shell, () => [item])],
+    ["cache", (item) => void cache({ ttl: 60 }, () => [item])],
+    ["middleware", (item) => void middleware(mw, () => [item])],
+    ["transition", (item) => void transition({}, () => [item])],
+    ["intercept", (item) => void intercept("@modal", "a", Page, () => [item])],
+    ["parallel", (item) => void parallel({ "@side": Page }, () => [item])],
+    ["loader", (item) => void loader(testLoaderDef(), () => [item])],
+    ["route", (item) => void route("b", Page, () => [item])],
+    [
+      "path",
+      (item) =>
+        void createPathHelper<any>()("/b", Page, { name: "b" }, () => [item]),
+    ],
+  ];
+
+  for (const [helper, nest] of CONTAINERS) {
+    it(`names ${helper}() as the callback an outside item belongs in`, () => {
+      const parent = parentEntry();
+      expect(() =>
+        withDslStore(parent, () => {
+          const item = route("a", Page);
+          nest(item);
+        }),
+      ).toThrow(
+        new RegExp(
+          `^Invariant: route\\(\\) declared outside the ${helper}\\(\\) it is nested in \\[`,
+        ),
+      );
+    });
+  }
+
+  // path() and route() both return a `type: "route"` item, so the item is named
+  // by the helper the user called, not by its type.
+  it("names the helper that created the item, not the item's type", () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, () => {
+        const a = createPathHelper<any>()("/a", Page, { name: "a" });
+        layout(Shell, () => [a]);
+      }),
+    ).toThrow(/^Invariant: path\(\) declared outside the layout\(\)/);
   });
 
   it("keeps a route created inside the layout's own callback", () => {

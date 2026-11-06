@@ -202,6 +202,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
           ...position,
         },
       } as IncludeItem,
+      "include",
       capturedParent,
     );
   };
