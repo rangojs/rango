@@ -964,26 +964,29 @@ response as its `error`, as before.
 Every handler kind is covered, because each one's `redirect()` reaches the
 trigger as a thrown `Response`:
 
-| where the redirect comes from          | how it surfaces                                       |
-| -------------------------------------- | ----------------------------------------------------- |
-| the route handler                      | `handleHandlerResult` throws the returned `Response`  |
-| a layout handler                       | the same (`resolveLayoutComponent`)                   |
-| a parallel-slot handler                | the producer throws it before serializing (below)     |
-| a `Passthrough` route's build handler  | it is the route handler                               |
-| a handler streaming behind `loading()` | the resolved result is the `Response`; it is rethrown |
+| where the redirect comes from          | how it surfaces                                                                          |
+| -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| the route handler                      | `handleHandlerResult` throws the returned `Response`                                     |
+| a layout handler                       | the same (`resolveLayoutComponent`)                                                      |
+| a parallel-slot handler                | the producer holds its segment out of the payload and throws it after the encode (below) |
+| a `Passthrough` route's build handler  | it is the route handler                                                                  |
+| a handler streaming behind `loading()` | the resolved result is the `Response`; it is rethrown                                    |
 
 A parallel slot is the one place the resolution does not throw a handler's
 `Response`: `resolveParallelSlotComponent` takes the raw result as the slot's
 component, so it would ride into the payload and fail serialization with
 "Only plain objects … can be passed to Client Components", which reads as a
 crash. On an on-demand run `matchForPrerender` looks for those Responses on
-the resolved segments (`findPrerenderResponses`, `src/prerender.ts`) and
-throws one before serializing, so a slot's redirect is reported like every
-other. A non-redirect `Response` goes first when a render carries both: a
-render that redirects and also fails another way stays `render-failed`, as a
-render error goes ahead of a `notFound()` (`firstFlightError`). Build and dev
-renders keep the serialization error their `prerender.onError` policy already
-handles.
+the resolved segments (`findPrerenderResponseSegments`, `src/prerender.ts`),
+holds those segments out of the payload and throws the `Response` after the
+encode, so a slot's redirect is reported like every other. After the encode,
+not before it, because that is where a failure elsewhere in the tree surfaces
+(a component in Flight's error rows): a render that redirects and also fails
+another way stays `render-failed`, as a render error goes ahead of a
+`notFound()` (`firstFlightError`). A non-redirect `Response` also goes ahead
+of a redirect the same render carries. The withheld payload is never stored
+on either path. Build and dev renders keep the serialization error their
+`prerender.onError` policy already handles.
 
 Nothing here changes a build-time render: a `redirect()` at build time throws
 its `Response` like any other render error, so `prerender.onError` decides —

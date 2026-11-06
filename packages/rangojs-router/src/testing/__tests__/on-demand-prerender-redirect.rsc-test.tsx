@@ -45,6 +45,8 @@ import type {
 const redirectSlugs = new Set<string>();
 /** Set to make the layout handler throw: a render that fails another way. */
 let layoutFails = false;
+/** Set to make an async child throw while the payload is encoded. */
+let childFails = false;
 const runs = { page: 0, layout: 0, slot: 0, streamed: 0, passthrough: 0 };
 
 /** Both a build handler's and a live handler's context carry the params. */
@@ -94,6 +96,18 @@ function Slot(ctx: Params): React.ReactNode {
   return <aside>{`slot:${ctx.params.slug}`}</aside>;
 }
 
+/** A child that fails while the payload is encoded, not during resolution. */
+async function Child({ params }: Params): Promise<React.ReactNode> {
+  await Promise.resolve();
+  if (childFails) throw new Error("child down");
+  return <p>{`child:${params.slug}`}</p>;
+}
+const ChildPageDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => <Child params={ctx.params} />,
+  { onDemand: true },
+);
+
 const FrozenDef = Prerender<{ slug: string }>(
   async () => [],
   async (ctx) => {
@@ -128,6 +142,9 @@ function makeRouter(prerender: PrerenderConfig) {
         () => [
           parallel({ "@aside": Slot }),
           path("/with-slot/:slug", PageDef, { name: "withSlot" }),
+          path("/with-slot-and-child/:slug", ChildPageDef, {
+            name: "withSlotChild",
+          }),
         ],
       ),
       path("/passthrough/:slug", Frozen, { name: "passthrough" }),
@@ -175,6 +192,7 @@ describe("on-demand prerender: a redirecting refresh keeps the page", () => {
     store = createMemoryPrerenderStore();
     redirectSlugs.clear();
     layoutFails = false;
+    childFails = false;
     for (const key of Object.keys(runs) as (keyof typeof runs)[]) runs[key] = 0;
   });
 
@@ -283,6 +301,21 @@ describe("on-demand prerender: a redirecting refresh keeps the page", () => {
       ok: false,
       status: "render-failed",
     });
+    expect((result as { error?: unknown }).error).toBeInstanceOf(Error);
+    expect(store.entries()[0]![1]).toBe(before);
+  });
+
+  it("a slot that redirects and a child that fails while encoding stays render-failed", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+    await prerender("/with-slot-and-child/a");
+    const before = store.entries()[0]![1];
+
+    redirectSlugs.add("a");
+    childFails = true;
+    const result = await prerender("/with-slot-and-child/a");
+
+    expect(result).toMatchObject({ ok: false, status: "render-failed" });
     expect((result as { error?: unknown }).error).toBeInstanceOf(Error);
     expect(store.entries()[0]![1]).toBe(before);
   });

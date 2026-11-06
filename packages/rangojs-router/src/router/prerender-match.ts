@@ -14,7 +14,7 @@ import {
 } from "./handler-context.js";
 import {
   detectPrerenderPassthrough,
-  findPrerenderResponses,
+  findPrerenderResponseSegments,
 } from "../prerender.js";
 import { isRedirectResponse } from "../response-utils.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
@@ -374,28 +374,33 @@ export async function matchForPrerender<TEnv = any>(
           return { ...passthroughResult(), onDemandConfig };
         }
 
-        // An on-demand refresh: a parallel slot handler's Response is not
-        // thrown by the resolution (see resolveParallelSlotComponent), so
-        // serializing it fails with a "not a plain object" error and the
-        // refresh reads as a crash. Throw it here instead, as every other
-        // handler kind does, so the trigger reports the render's own outcome
-        // (skipped-redirect, or render-failed) and keeps the stored page.
-        // Build/dev keep the serialization error their onError policy handles.
-        // A failure goes ahead of a redirect, as a render error goes ahead of
-        // a notFound() (firstFlightError): a slot answering 401 fails the
-        // render even when another slot redirects.
-        if (onDemand) {
-          const responses = await findPrerenderResponses(allSegments);
-          const thrown =
-            responses.find((response) => !isRedirectResponse(response)) ??
-            responses[0];
-          if (thrown) throw thrown;
-        }
-
         // 10. Filter out any loader segments (belt-and-suspenders)
         const nonLoaderSegments = allSegments.filter(
           (s) => s.type !== "loader",
         );
+
+        // An on-demand refresh: a parallel slot handler's Response is not
+        // thrown by the resolution (see resolveParallelSlotComponent), so
+        // serializing it fails with a "not a plain object" error and the
+        // refresh reads as a crash. Hold those segments out of the payload and
+        // throw their Response after the encode, as every other handler kind
+        // throws it, so the trigger reports the render's own outcome
+        // (skipped-redirect, or render-failed) and keeps the stored page. The
+        // encode runs first because it is where a failure elsewhere in the
+        // tree surfaces (a component in Flight's error rows): a render that
+        // redirects and also fails another way is render-failed, as a render
+        // error goes ahead of a notFound() (firstFlightError). Build/dev keep
+        // the serialization error their onError policy handles.
+        const withheldResponses = onDemand
+          ? await findPrerenderResponseSegments(nonLoaderSegments)
+          : [];
+        const withheld = new Set(
+          withheldResponses.map(({ segment }) => segment),
+        );
+        const payloadSegments =
+          withheld.size === 0
+            ? nonLoaderSegments
+            : nonLoaderSegments.filter((segment) => !withheld.has(segment));
 
         // 11. Wait for handles to settle
         handleStore.seal();
@@ -426,7 +431,7 @@ export async function matchForPrerender<TEnv = any>(
           return flightErrors[failure === -1 ? 0 : failure];
         };
         const serializedSegments = await serializeSegments(
-          nonLoaderSegments,
+          payloadSegments,
           onFlightError,
         );
         const personalized = flightErrors.find((e) =>
@@ -454,6 +459,17 @@ export async function matchForPrerender<TEnv = any>(
         const handles = await encodeHandles(handlesRecord, onFlightError);
         // Before intercept resolution, as a handler throw would be.
         if (flightErrors.length > 0) throw firstFlightError();
+        // A withheld slot Response, once the encode reported nothing: a failure
+        // among the collected errors went first (firstFlightError above). A
+        // Response that is not a redirect is a failure, so it goes before a
+        // redirect the same render carries.
+        if (withheldResponses.length > 0) {
+          const responses = withheldResponses.map(({ response }) => response);
+          throw (
+            responses.find((response) => !isRedirectResponse(response)) ??
+            responses[0]
+          );
+        }
 
         // Use the trie-level route key (e.g., "docs", "docs.article")
         const routeName = matched.routeKey;

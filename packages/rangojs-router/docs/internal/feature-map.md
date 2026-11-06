@@ -1048,10 +1048,12 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   (`handleHandlerResult`), a handler behind `loading()` resolves to it, and a
   parallel-slot handler's is not thrown by the resolution
   (`resolveParallelSlotComponent` takes the raw result as the slot's
-  component), so `matchForPrerender` throws one before serializing
-  (`findPrerenderResponses`, `src/prerender.ts`) — a non-redirect `Response`
-  ahead of a redirect. Any other thrown `Response` stays `render-failed`, and
-  a build-time render that redirects keeps its `prerender.onError` policy.
+  component), so `matchForPrerender` holds those segments out of the payload
+  (`findPrerenderResponseSegments`, `src/prerender.ts`) and throws the
+  `Response` after the encode — a failure the encode reports first, and a
+  non-redirect `Response` ahead of a redirect. Any other thrown `Response`
+  stays `render-failed`, and a build-time render that redirects keeps its
+  `prerender.onError` policy.
 - `remove()` and a refresh are two writes to one key: last write wins, except
   that a page is not written over a marker stored after its render started
   (`renderOnDemand` re-reads the key). No warm request follows `removed`. A

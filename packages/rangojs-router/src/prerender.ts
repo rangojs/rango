@@ -508,23 +508,32 @@ export async function detectPrerenderPassthrough(
 }
 
 /**
- * The Responses a resolved segment carries, which its resolution did not
- * throw: a parallel slot handler's result.
+ * The segments that carry a Response their resolution did not throw: a
+ * parallel slot handler's result.
  *
  * A route handler's or layout handler's Response is thrown by
  * `handleHandlerResult` and short-circuits the render. A slot's is not
  * (`resolveParallelSlotComponent` takes the raw result as the slot's
  * component), so a slot handler that returns `redirect()` or a 401 would ride
  * into the payload and fail serialization with an unrelated error. The
- * on-demand producer asks for these before serializing, to report the render's
- * own outcome (create-prerender-trigger.ts).
+ * on-demand producer withholds those segments from the payload and throws
+ * their Response after the encode, so an error another part of the render
+ * reports while encoding goes first (`matchForPrerender`, and the trigger's
+ * `skipped-redirect`).
  */
-export async function findPrerenderResponses(
-  segments: ReadonlyArray<{ component: unknown }>,
-): Promise<Response[]> {
-  return (await resolveSegmentComponents(segments)).filter(
-    (component): component is Response => component instanceof Response,
-  );
+export async function findPrerenderResponseSegments<
+  T extends { component: unknown },
+>(
+  segments: ReadonlyArray<T>,
+): Promise<Array<{ segment: T; response: Response }>> {
+  const components = await resolveSegmentComponents(segments);
+  const found: Array<{ segment: T; response: Response }> = [];
+  segments.forEach((segment, i) => {
+    const component = components[i];
+    if (component instanceof Response)
+      found.push({ segment, response: component });
+  });
+  return found;
 }
 
 /**

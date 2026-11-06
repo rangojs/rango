@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   detectPrerenderPassthrough,
-  findPrerenderResponses,
+  findPrerenderResponseSegments,
   PRERENDER_PASSTHROUGH,
 } from "../prerender.js";
 
@@ -45,46 +45,52 @@ describe("detectPrerenderPassthrough", () => {
 });
 
 // A parallel slot handler's Response is not thrown by the resolution, so the
-// on-demand producer looks for it on the resolved segments before serializing.
-describe("findPrerenderResponses", () => {
+// on-demand producer looks for it on the resolved segments, holds those
+// segments out of the payload and throws the Response after the encode.
+describe("findPrerenderResponseSegments", () => {
   const redirect = new Response(null, {
     status: 302,
     headers: { location: "/login" },
   });
   const unauthorized = new Response("nope", { status: 401 });
 
-  it("finds a synchronous Response component", async () => {
+  it("finds the segment a synchronous Response component sits on", async () => {
+    const slot = { id: "s1", component: redirect as unknown };
     expect(
-      await findPrerenderResponses([
-        { component: { type: "div" } },
-        { component: redirect },
+      await findPrerenderResponseSegments([
+        { id: "s0", component: { type: "div" } },
+        slot,
       ]),
-    ).toEqual([redirect]);
+    ).toEqual([{ segment: slot, response: redirect }]);
   });
 
   it("finds one wrapped in a Promise (a slot behind loading())", async () => {
+    const slot = { id: "s1", component: Promise.resolve(redirect) };
     expect(
-      await findPrerenderResponses([{ component: Promise.resolve(redirect) }]),
-    ).toEqual([redirect]);
+      await findPrerenderResponseSegments([
+        { id: "s0", component: { type: "div" } },
+        slot,
+      ]),
+    ).toEqual([{ segment: slot, response: redirect }]);
   });
 
   it("returns every one, so the caller can prefer a failure over a redirect", async () => {
-    expect(
-      await findPrerenderResponses([
-        { component: redirect },
-        { component: unauthorized },
-      ]),
-    ).toEqual([redirect, unauthorized]);
+    const first = { id: "s0", component: redirect as unknown };
+    const second = { id: "s1", component: unauthorized as unknown };
+    expect(await findPrerenderResponseSegments([first, second])).toEqual([
+      { segment: first, response: redirect },
+      { segment: second, response: unauthorized },
+    ]);
   });
 
   it("returns none for ordinary components or a rejected thenable", async () => {
     const rejected = Promise.reject(new Error("boom"));
     rejected.catch(() => {});
     expect(
-      await findPrerenderResponses([
-        { component: { type: "div" } },
-        { component: null },
-        { component: rejected },
+      await findPrerenderResponseSegments([
+        { id: "s0", component: { type: "div" } },
+        { id: "s1", component: null },
+        { id: "s2", component: rejected },
       ]),
     ).toEqual([]);
   });
