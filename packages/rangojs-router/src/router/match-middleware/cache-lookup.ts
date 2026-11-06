@@ -612,8 +612,19 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      // A sent stored segment stands in for a run of its handler: the record's
+      // values are that run's, and the browser replaces them with what the
+      // response delivers, nothing when the record holds none. Marked so a
+      // partial match lists it in `resolvedIds` as the MISS that wrote the
+      // record listed it (match-result.ts). A record cannot carry the marker
+      // itself: serializeSegments (segment-codec.ts) copies named fields only.
+      // A full match lists every id and never reads it.
+      if (!ctx.isFullMatch) segment._handlerRan = true;
+      sentIds?.add(segment.id);
+    }
     yield segment;
   }
 

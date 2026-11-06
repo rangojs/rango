@@ -1275,6 +1275,33 @@ which run made each one.
    A snapshot without pushedBy records (every value the handler's) merges
    exactly as before.
 
+### A stored segment the response sends is a run
+
+A response served from a `cache()` record, a `Prerender()` entry or a PPR
+replay runs no handler for the segments it serves. Their values come from the
+record, and they are the values the run that wrote the record pushed — none,
+when that run pushed nothing. The browser has to treat them as that run's,
+which it does when the id is in `resolvedIds`; a kept segment's values must
+stay, which it does when the id is not.
+
+So the marker is the send decision itself: `serveStoredSegments`
+(`router/match-middleware/cache-lookup.ts`) marks a stored segment it sends
+with `_handlerRan`, the same field a live walk sets on a segment whose handler
+ran, and `match-result.ts` reads it for `resolvedIds`. A segment it keeps
+(`keepClientSegment`, the client holds it and no `revalidate()` rule asks for
+it) stays unmarked. The rule needs no record change: the send decision already
+says which runs stand, and `serializeSegments` (`cache/segment-codec.ts`)
+would have to grow the record format to carry the marker, for a fact the
+response recomputes anyway.
+
+What broke without it: a chain layout whose `revalidate(() => true)` sent it
+from the record, and whose handler had pushed nothing when the record was
+written, was served but not listed. A navigation that missed the cache
+cleared its crumb; the next one, which hit the record, brought it back. A
+`Prerender()` route whose param changed had the same shape: the stored route
+segment was sent, its entry held no push for it, and the previous param's
+crumb survived.
+
 ### Covered later: a page shown from the history cache
 
 A link navigation to a URL the history cache holds sends the cached segment

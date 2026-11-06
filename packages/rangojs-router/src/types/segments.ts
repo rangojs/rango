@@ -202,8 +202,11 @@ export interface ResolvedSegment {
    *  segment of one group; see the group-route branch in segment-system.tsx. */
   clientGroup?: string;
   /**
-   * @internal Server-side marker: true when the segment's handler actually ran
-   * this request (not skipped via the revalidate cache path). Used by
+   * @internal Server-side marker: true when this response's handle values for
+   * the segment stand for a run of its handler — the handler ran this request
+   * (not skipped via the revalidate cache path), or the segment was served
+   * from a stored record and sent, its recorded values standing in for the
+   * run the record's MISS made (serveStoredSegments, cache-lookup.ts). Used by
    * match-result.ts to populate `MatchResult.resolvedIds` for client-side
    * handle-bucket cleanup. Stripped from the wire payload before serialization
    * — never reaches the client.
