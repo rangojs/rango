@@ -21,6 +21,12 @@ import { expect, test, type Page } from "@playwright/test";
  *    alone (handles/pushed-by.ts: `matched` lists the loader segment). Userland
  *    pins: src/testing/__tests__/serve-shell-request-intercept-handle-owner.rsc-test.tsx,
  *    src/testing/__tests__/prefetch-false-intercept.rsc-test.tsx.
+ * 3. A slot whose handler ran is listed in `resolvedIds`, as a walk segment
+ *    whose handler ran is (match-result.ts): the browser replaces the slot's
+ *    handle values with that answer's, so a crumb the moved modal's handler
+ *    no longer pushes clears. A slot a fill keeps runs no handler, is not
+ *    listed, and keeps the values the page holds. Userland pins:
+ *    src/testing/__tests__/intercept-slot-resolved-ids.rsc-test.tsx.
  */
 
 export interface InterceptHeldScenarioOptions {
@@ -170,5 +176,21 @@ export function runInterceptHeldTests(
     await expect(
       page.getByTestId("ih-crumb").filter({ hasText: "modal-handler:1" }),
     ).toHaveCount(1);
+  });
+
+  test("a crumb the moved modal's handler no longer pushes clears", async ({
+    page,
+  }) => {
+    const crumb = (text: string) =>
+      page.getByTestId("ih-crumb").filter({ hasText: new RegExp(`^${text}$`) });
+    await openModal(page, "ih-open-handler", "ih-handler-modal");
+    await expect(crumb("modal-handler:1")).toHaveCount(1);
+
+    // A link in the open modal moves it to the next item, whose run of the
+    // slot's handler pushes nothing.
+    await page.getByTestId("ih-handler-intercept-next-silent").click();
+
+    await expect(page.getByTestId("ih-handler-modal-id")).toHaveText("2");
+    await expect(crumb("modal-handler:1")).toHaveCount(0);
   });
 }

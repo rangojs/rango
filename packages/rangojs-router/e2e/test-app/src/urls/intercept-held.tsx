@@ -329,7 +329,12 @@ export const interceptHeldPatterns = urls(
           name: "handlerItem",
         }),
         intercept("@modal", ".handlerItem", (ctx) => {
-          ctx.use(InterceptHeldCrumbs)(`modal-handler:${ctx.params.id}`);
+          // `?silent` runs the handler and pushes nothing: the crumb the modal
+          // pushed on the page it came from must clear (resolvedIds lists the
+          // slot whose handler ran, match-result.ts).
+          if (ctx.searchParams.get("silent") !== "1") {
+            ctx.use(InterceptHeldCrumbs)(`modal-handler:${ctx.params.id}`);
+          }
           return (
             <Modal testId="ih-handler-modal">
               <p data-testid="ih-handler-modal-id">{ctx.params.id}</p>
@@ -360,6 +365,13 @@ export const interceptHeldPatterns = urls(
                 data-testid="ih-handler-intercept-next"
               >
                 Next item
+              </Link>
+              <Link
+                to={`/intercept-held/handler/${Number(ctx.params.id) + 1}?silent=1`}
+                prefetch="none"
+                data-testid="ih-handler-intercept-next-silent"
+              >
+                Next item, no crumb
               </Link>
               <Link
                 to={`/intercept-held/list/${ctx.params.id}`}

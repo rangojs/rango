@@ -389,6 +389,52 @@ describe("match-result", () => {
 
       expect(result.slots).toBeUndefined();
     });
+
+    // The intercept funnel marks the slot it ran (intercept-resolution.ts
+    // resolveInterceptEntry) so `resolvedIds` lists it; the slot rides
+    // `slots`, which the strip over `segments` never reaches.
+    it("should strip the internal marker from a slot segment", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["page"],
+        clientSegmentSet: new Set(["page"]),
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["page", "modal-seg"];
+      state.slots = {
+        "@modal": {
+          active: true,
+          segments: [createSegment("modal-seg", { _handlerRan: true })],
+        },
+      };
+
+      const segments = [
+        createSegment("page"),
+        createSegment("modal-seg", { _handlerRan: true }),
+      ];
+      const result = buildMatchResult(segments, ctx, state);
+
+      expect(result.resolvedIds).toEqual(["modal-seg"]);
+      expect(result.slots?.["@modal"]?.segments?.[0]).not.toHaveProperty(
+        "_handlerRan",
+      );
+    });
+
+    it("should keep the slot object it was given when no marker is set", () => {
+      const ctx = createMockContext({ isFullMatch: true });
+      const state = createPipelineState();
+      const slots = {
+        "@modal": {
+          active: true,
+          segments: [createSegment("modal-seg")],
+        },
+      };
+      state.slots = slots;
+
+      const result = buildMatchResult([createSegment("page")], ctx, state);
+
+      expect(result.slots).toBe(slots);
+    });
   });
 
   describe("buildMatchResult() - route middleware", () => {

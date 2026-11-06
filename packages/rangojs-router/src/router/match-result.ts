@@ -210,12 +210,7 @@ export function buildMatchResult<TEnv>(
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    cleanedSegments.push(withoutHandlerRan(s));
     diff.push(s.id);
   }
 
@@ -234,7 +229,7 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    slots: cleanSlots(state.slots),
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
@@ -244,6 +239,44 @@ export function buildMatchResult<TEnv>(
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };
+}
+
+/** A segment without the internal `_handlerRan` marker (types/segments.ts). */
+function withoutHandlerRan(segment: ResolvedSegment): ResolvedSegment {
+  if (segment._handlerRan === undefined) return segment;
+  const { _handlerRan: _drop, ...rest } = segment;
+  return rest as ResolvedSegment;
+}
+
+/**
+ * The `metadata.slots` payload without the internal `_handlerRan` marker. An
+ * intercept slot's segment rides `slots`, not `segments`, so the strip above
+ * does not reach it; its handler sets the marker as a chain entry's does
+ * (intercept-resolution.ts resolveInterceptEntry), and a marker left on it
+ * would reach the client.
+ */
+function cleanSlots(
+  slots: MatchPipelineState["slots"],
+): MatchPipelineState["slots"] | undefined {
+  const names = Object.keys(slots);
+  if (names.length === 0) return undefined;
+  let stripped = false;
+  for (const name of names) {
+    if (slots[name]!.segments.some((s) => s._handlerRan !== undefined)) {
+      stripped = true;
+      break;
+    }
+  }
+  if (!stripped) return slots;
+  const out: MatchPipelineState["slots"] = {};
+  for (const name of names) {
+    const slot = slots[name]!;
+    out[name] = {
+      active: slot.active,
+      segments: slot.segments.map(withoutHandlerRan),
+    };
+  }
+  return out;
 }
 
 /**

@@ -1278,6 +1278,14 @@ which run made each one.
    id: a segment the live walk resolved under a stored one's id is not the
    stored copy. A segment the lookup keeps stays out of the set, as a segment
    a live walk keeps.
+   An intercept's slot is a segment whose handler the live walk runs, so
+   `resolveInterceptEntry` (`router/intercept-resolution.ts`) sets the same
+   marker on it: a link inside an open modal whose handler pushed nothing
+   clears the slot's values instead of keeping the crumb the modal showed on
+   the page it came from. A fill that keeps the slot runs no handler and
+   stays unlisted. The slot rides `metadata.slots` rather than `segments`, so
+   `buildMatchResult` strips the marker from both (`cleanSlots`): no internal
+   field reaches the client through either.
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment

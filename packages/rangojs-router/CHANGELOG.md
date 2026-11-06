@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Fixed: an intercept's slot clears the handle values its re-run handler no longer pushes
+
+**Before.** A link inside an open modal re-runs the slot's handler, and a
+partial response's `resolvedIds` names the runs whose handle values the
+browser replaces. The intercept funnel built its slot segment without the
+marker the walk sets on a segment whose handler ran, so the slot was never
+listed: a crumb the modal showed on the page it came from stayed after a move
+whose handler pushed nothing, where the same move between two pages cleared it.
+
+**Now.** The slot's segment carries the walk's marker and `resolvedIds` lists
+it: the browser replaces the slot's values with the answer's, or clears them
+when it pushed none. A fill that keeps the slot runs no handler, so it is not
+listed and the page keeps its values. The marker is stripped from
+`metadata.slots` as it is from `segments` on the way out, so no internal field
+reaches the client.
+
+```tsx
+intercept("@modal", ".item", (ctx) => {
+  if (showCrumb) ctx.use(Crumbs)("modal");
+  return <Modal>{/* a link to /item/2 */}</Modal>;
+});
+
+// Move the open modal to /item/2 with showCrumb false: the crumb now clears.
+```
+
 ### Fixed: a page served from a `cache()` record or a `Prerender()` entry clears the handle values its record does not carry
 
 **Before.** A partial response's `resolvedIds` names the runs whose handle
