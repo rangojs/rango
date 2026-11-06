@@ -153,7 +153,10 @@ function assertDeclaredIn(
   items: AllUseItems[],
 ): void {
   for (const item of items) {
-    const mark = item ? (item as DeclaredUseItem)[DECLARED_UNDER] : undefined;
+    if (!item) continue;
+    const mark = (item as DeclaredUseItem)[DECLARED_UNDER];
+    // Items a caller built by hand carry no mark: they register nothing, so
+    // there is no entry to disagree with.
     if (!mark) continue;
     let node = mark.parent;
     while (node && node !== entry) {
@@ -161,7 +164,7 @@ function assertDeclaredIn(
     }
     invariant(
       node === entry,
-      `${mark.helper}() declared outside the ${label}() it is nested in [${item!.name}]: ` +
+      `${mark.helper}() declared outside the ${label}() it is nested in [${item.name}]: ` +
         "a definition registers under the entry whose callback creates it, so create it inside that callback",
     );
   }
