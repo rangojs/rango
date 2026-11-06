@@ -612,8 +612,21 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (send) {
+      // The response carries this segment's handle values from the record, so
+      // its run replaces the client's (handles/pushed-by.ts
+      // mergePartialHandleData): name it in `resolvedIds` as a live walk names
+      // a handler that ran (match-result.ts). A record stores no
+      // `_handlerRan` (segment-codec.ts serializeSegments copies named fields),
+      // and it needs none: both write paths render every stored segment's
+      // handler (a direct write has no null component among the covered
+      // segments, a proactive one re-renders the whole tree — cache-store.ts),
+      // so what a response decides is only which segments it sends.
+      segment._handlerRan = true;
+      sentIds?.add(segment.id);
+    } else {
+      keepClientSegment(segment);
+    }
     yield segment;
   }
 

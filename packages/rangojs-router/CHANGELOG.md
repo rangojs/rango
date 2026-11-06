@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a page served from a `cache()` or `Prerender()` record keeps the handle values its handlers cleared
+
+**Before.** A partial response's `resolvedIds` names the segments whose
+handle values it replaces (`ctx.use(SomeHandle)` pushes, breadcrumbs and
+titles among them). A live render named every segment whose handler ran, but a
+record stores no such marker (`serializeSegments` copies named fields), so a
+hit named none of the segments it served from the record. The browser kept the
+values of the page it left: a layout handler that re-ran and pushed nothing
+cleared its breadcrumb on the miss, and the breadcrumb came back on the next
+hit of the same page.
+
+**Now.** A hit names every stored segment it sends — the runs whose values it
+replaces — so a miss and the hits that follow it deliver the same handle state.
+The same holds for a `Prerender()` entry and for a PPR navigation replay, which
+now reports what the live render it replaces reports.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
