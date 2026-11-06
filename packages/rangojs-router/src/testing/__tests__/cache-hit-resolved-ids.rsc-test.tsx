@@ -157,12 +157,16 @@ describe("cache() HIT: resolvedIds names every stored segment it sends", () => {
     const { page, miss, hit } = await navigate();
     const before = await streamedHandles(page);
     const chain = idHolding(before, "chain:1");
+    const root = idHolding(before, "root");
     const afterMiss = await merged(before, miss);
     const afterHit = await merged(before, hit);
     // The chain's handler pushed nothing for /item/2, and the record holds
     // none: both answers clear the crumb the page held.
     expect(crumbs(afterMiss)[chain]).toBeUndefined();
     expect(crumbs(afterHit)).toEqual(crumbs(afterMiss));
+    // The root layout has no revalidate() rule, so the HIT keeps it: its
+    // values stay as the page held them.
+    expect(crumbs(afterHit)[root]).toEqual(["root"]);
   });
 });
 
