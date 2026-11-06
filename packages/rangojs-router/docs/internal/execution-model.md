@@ -2550,10 +2550,13 @@ Limits:
   first (outer entries resolve first).
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
-- A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `_handleSegmentId`, `use`, and `reverse` and `_reverseScope` when
-  the segment has a scope, so `{ ...ctx }` there copies only those. A getter
-  keyed by its holder resolves through the prototype chain (`rewrittenFrom`,
+- A layout's, a slot's or an intercept's ctx is a different object from the
+  route's. Its own fields are `_handleSegmentId`, `use`, and `reverse` and
+  `_reverseScope` when the segment has a scope, so `{ ...ctx }` there copies
+  only those — the `NOCACHE_SYMBOL` brand and `_currentSegmentId` stay on the
+  request's ctx, so such a copy passed to a `"use cache"` call is not a caller
+  and runs uncached (with the unserializable-args warning). A getter keyed by
+  its holder resolves through the prototype chain (`rewrittenFrom`,
   `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
