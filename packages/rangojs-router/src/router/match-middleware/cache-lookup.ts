@@ -67,6 +67,7 @@ import {
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
+  type PrerenderRedirect,
 } from "../../prerender/writable-store.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "../../cache/cache-policy.js";
 import type {
@@ -804,7 +805,7 @@ export function scheduleOverlayRevalidation<TEnv>(
  * client-navigation one.
  */
 function storedRedirectResponse(
-  redirect: { location: string; status: number; external?: true },
+  redirect: PrerenderRedirect,
   reqCtx: RequestContext<any> | undefined,
 ): Response {
   const response = new Response(null, {

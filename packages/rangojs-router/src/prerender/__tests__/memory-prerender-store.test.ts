@@ -3,6 +3,7 @@ import { createMemoryPrerenderStore } from "../memory-prerender-store.js";
 import {
   serializePrerenderKey,
   composeStoredEntry,
+  composeStoredRedirect,
   composeStoredTombstone,
   isStoredEntryValidFor,
   isStoredEntryStale,
@@ -156,6 +157,38 @@ describe("isStoredEntryValidFor — malformed durable values read as a miss", ()
     expect(
       isStoredEntryValidFor(
         { v: 1, entry: { segments: [], handles: null }, meta } as any,
+        k,
+        m,
+      ),
+    ).toBe(false);
+  });
+  it("accepts a stored redirect and rejects a malformed one", () => {
+    const redirect = composeStoredRedirect(
+      k,
+      { location: "/products/43", status: 302 },
+      { params: m, tags: [] },
+      1000,
+    );
+    expect(isStoredEntryValidFor(redirect, k, m)).toBe(true);
+    // A redirect with no target, or with a status no browser follows, is a
+    // corrupt value: a miss, so the build-time entry serves instead.
+    expect(
+      isStoredEntryValidFor(
+        { ...redirect, redirect: { location: "", status: 302 } },
+        k,
+        m,
+      ),
+    ).toBe(false);
+    expect(
+      isStoredEntryValidFor(
+        { ...redirect, redirect: { location: "/x", status: 200 } },
+        k,
+        m,
+      ),
+    ).toBe(false);
+    expect(
+      isStoredEntryValidFor(
+        { ...redirect, redirect: { location: "/x", status: "302" } } as any,
         k,
         m,
       ),

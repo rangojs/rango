@@ -93,6 +93,19 @@ type StoredTombstone = StoredEnvelope & {
 };
 
 /**
+ * Where a refresh's render said the URL goes now, and the status to answer
+ * with. `location` is the target exactly as the render resolved it.
+ * `external` is `redirect(url, { external: true })`'s opt-in, carried on the
+ * entry because the brand is a WeakSet membership on the Response object
+ * (redirect-origin.ts) and no store can keep one.
+ */
+export interface PrerenderRedirect {
+  location: string;
+  status: number;
+  external?: true;
+}
+
+/**
  * The redirect a refresh's render answered with, stored in place of the page
  * it replaced: a handler's `redirect()` (or any 3xx Response carrying a
  * Location) reached during a requestless render. A request that finds it is
@@ -103,14 +116,9 @@ type StoredTombstone = StoredEnvelope & {
  * miss, falling back to the build-time page) rather than serving a blank one.
  * `meta` is stamped like a page's, so a redirect goes stale and is rechecked
  * like one.
- *
- * `location` is the target exactly as the render resolved it, and `external`
- * carries `redirect(url, { external: true })`'s opt-in: the brand is a WeakSet
- * membership on the Response object (redirect-origin.ts), which does not
- * survive a store round trip, so the serve path restores it.
  */
 type StoredRedirect = StoredEnvelope & {
-  redirect: { location: string; status: number; external?: true };
+  redirect: PrerenderRedirect;
   entry?: never;
   removed?: never;
 };
@@ -240,7 +248,7 @@ export function composeStoredTombstone(
  */
 export function composeStoredRedirect(
   key: PrerenderKey,
-  redirect: { location: string; status: number; external?: true },
+  redirect: PrerenderRedirect,
   options: StoredEntryOptions,
   now: number,
   staleFrom: number = now,

@@ -34,6 +34,7 @@ import type { RouteMatchResult } from "./pattern-matching.js";
 import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
+import type { PrerenderRedirect } from "../prerender/writable-store.js";
 import { isDataNotFoundError } from "../errors.js";
 import { isRedirectResponse } from "../response-utils.js";
 import { isExternalRedirect } from "../redirect-origin.js";
@@ -118,7 +119,7 @@ export async function matchForPrerender<TEnv = any>(
    * `redirect(url, { external: true })`'s out-of-band opt-in, which the store
    * has to keep because the brand on the Response object cannot survive it.
    */
-  redirect?: { location: string; status: number; external?: true };
+  redirect?: PrerenderRedirect;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;

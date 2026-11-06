@@ -57,6 +57,7 @@ import {
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
+  type PrerenderRedirect,
   type PrerenderStoredEntry,
 } from "./writable-store.js";
 import type {
@@ -99,7 +100,7 @@ export interface ProducerOutput {
    * Response carrying a Location) and nothing else failed. No page to store,
    * and nothing removed: the redirect is stored in its place.
    */
-  redirect?: { location: string; status: number; external?: true };
+  redirect?: PrerenderRedirect;
   onDemandConfig?: OnDemandRouteConfig;
 }
 

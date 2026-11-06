@@ -84,6 +84,38 @@ const OffHostDef = Prerender<{ slug: string }>(
   { onDemand: true },
 );
 
+// The same target without the opt-in: serving a stored redirect goes through
+// the same open-redirect guard as any other document redirect.
+const OffHostUnooptedDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    throw redirect(`https://elsewhere.example/${ctx.params.slug}`);
+  },
+  { onDemand: true },
+);
+
+// A render that both answers a redirect and fails: the two are collected from
+// the same Flight pass, in sibling order, and the failure has to win.
+function Moved(): React.ReactNode {
+  throw redirect("/products/b");
+}
+async function Failing(): Promise<React.ReactNode> {
+  await Promise.resolve();
+  throw new Error("upstream 500");
+}
+
+const BothDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => (
+    <div>
+      <Moved />
+      <Failing />
+      <h1>{`both:${ctx.params.slug}`}</h1>
+    </div>
+  ),
+  { onDemand: true },
+);
+
 function makeRouter(config: PrerenderConfig) {
   return createRouter({ prerender: config }).routes(
     urls(({ path, layout }) => [
@@ -92,6 +124,10 @@ function makeRouter(config: PrerenderConfig) {
       layout(movedLayout, () => [
         path("/laid/:slug", LaidDef, { name: "laid" }),
       ]),
+      path("/offhost-plain/:slug", OffHostUnooptedDef, {
+        name: "offhostPlain",
+      }),
+      path("/both/:slug", BothDef, { name: "both" }),
     ]),
   );
 }
@@ -282,5 +318,44 @@ describe("on-demand prerender: a refresh that answers redirect()", () => {
     expect(served.response.headers.get("Location")).toBe(
       "https://shop.example/a",
     );
+  });
+
+  it("a render that answers a redirect and fails elsewhere is render-failed, and the page keeps serving", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+
+    expect(await prerender("/products/a")).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
+    const failed = await prerender("/both/a");
+    expect(failed).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "render-failed",
+    });
+    if (failed.ok) throw new Error("expected a failure");
+    expect((failed.error as Error).message).toBe("upstream 500");
+    // Nothing was stored for the page that moved, so the URL keeps its page.
+    expect((await serveShellRequest(router, "/both/a")).response.status).toBe(
+      404,
+    );
+    expect((await serveShellRequest(router, "/products/a")).flight).toContain(
+      "a:Alpha:render-1",
+    );
+  });
+
+  it("a stored redirect without the opt-in is neutralized off-host, as any document redirect is", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+
+    expect(await prerender("/offhost-plain/a")).toMatchObject({
+      ok: true,
+      status: "redirected",
+    });
+
+    const served = await serveShellRequest(router, "/offhost-plain/a");
+    expect(served.response.status).toBe(302);
+    expect(served.response.headers.get("Location")).toBe("/");
   });
 });
