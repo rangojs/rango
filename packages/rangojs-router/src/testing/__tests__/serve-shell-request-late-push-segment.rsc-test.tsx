@@ -43,58 +43,46 @@ const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
 const errors: string[] = [];
 
-/** An async server component pushing the ctx its handler handed it. */
-async function LatePush({
-  ctx,
-  label,
-}: {
-  ctx: HandlerContext;
-  label: string;
-}) {
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  ctx.use(Crumbs)(label);
-  return <span>{label}</span>;
-}
-
-/** The same, holding `use` alone, as a destructured ctx hands it on. */
-async function LateDetachedPush({
-  ctx,
-  label,
-}: {
-  ctx: HandlerContext;
-  label: string;
-}) {
-  const { use } = ctx;
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  use(Crumbs)(label);
-  return <span>{label}</span>;
-}
-
-/** The same, holding a spread copy of the ctx, as `{ ...ctx }` hands it on. */
-async function LateCopyPush({
-  ctx,
-  label,
-}: {
-  ctx: HandlerContext;
-  label: string;
-}) {
-  const copy = { ...ctx };
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  copy.use(Crumbs)(label);
-  return <span>{label}</span>;
-}
-
-/** How the component holds the ctx it was handed. */
+/** How a component holds the ctx its handler handed it. */
 type Hold = "ctx" | "detached" | "copy";
 
-const HOLD = {
-  ctx: LatePush,
-  detached: LateDetachedPush,
-  copy: LateCopyPush,
-} as const;
+const HOLDS: readonly Hold[] = ["ctx", "detached", "copy"];
+
+/**
+ * The `use` as the component holds it: the ctx's own, one destructured off it
+ * (`const { use } = ctx`), or one off a spread copy (`{ ...ctx }`). The child's
+ * own `use` is what keeps the segment through the last two.
+ */
+function heldUse(ctx: HandlerContext, hold: Hold) {
+  if (hold === "detached") {
+    const { use } = ctx;
+    return use;
+  }
+  if (hold === "copy") {
+    const copy = { ...ctx };
+    return copy.use;
+  }
+  return ctx.use;
+}
+
+/** An async server component pushing the ctx its handler handed it. */
+function latePush(hold: Hold) {
+  return async function LatePush({
+    ctx,
+    label,
+  }: {
+    ctx: HandlerContext;
+    label: string;
+  }) {
+    const use = heldUse(ctx, hold);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    use(Crumbs)(label);
+    return <span>{label}</span>;
+  };
+}
 
 function makeRouter(hold: Hold) {
-  const Push = HOLD[hold];
+  const Push = latePush(hold);
   return createRouter({
     onError: ({ error }) => {
       errors.push(error instanceof Error ? error.message : String(error));
@@ -270,6 +258,7 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
 
 /** An intercept whose handler hands its ctx to a late-pushing component. */
 function interceptRouter() {
+  const LatePush = latePush("ctx");
   return createRouter({
     onError: ({ error }) => {
       errors.push(error instanceof Error ? error.message : String(error));
@@ -332,24 +321,10 @@ const StartedData = createLoader(async (ctx) => {
   return { started: true };
 });
 
-/** The ctx as the component holds it, as LatePush varies it above. */
-const START = {
-  ctx: (ctx: HandlerContext) => ctx.use,
-  detached: (ctx: HandlerContext) => {
-    const { use } = ctx;
-    return use;
-  },
-  copy: (ctx: HandlerContext) => {
-    const copy = { ...ctx };
-    return copy.use;
-  },
-} as const;
-
 /** An async component starting a loader through the ctx its handler gave it. */
 function startsLoader(hold: Hold) {
-  const read = START[hold];
   return async function StartsLoader({ ctx }: { ctx: HandlerContext }) {
-    const use = read(ctx);
+    const use = heldUse(ctx, hold);
     await new Promise((resolve) => setTimeout(resolve, 0));
     // Awaited: the push is rejected (the run is after handle collection) and
     // the router reports it through onError, which is what the test reads.
@@ -409,7 +384,7 @@ function loaderRouter(hold: Hold, kind: "layout" | "route" | "slot") {
 }
 
 describe("a loader a handler's ctx starts", () => {
-  for (const hold of ["ctx", "detached", "copy"] as const) {
+  for (const hold of HOLDS) {
     it(`files its pushes under the layout whose ctx started it (${hold})`, async () => {
       const { errors: reported, matched } = await serve(
         "/p",
