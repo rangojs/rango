@@ -246,16 +246,11 @@ export function withSegmentScope<C>(
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
-  scoped.use = (item: unknown): unknown => {
-    const live = (ctx as { use?: unknown }).use;
-    if (typeof live !== "function") {
-      throw new Error("ctx.use() called before loaders were initialized");
-    }
-    return (live as (this: unknown, arg: unknown) => unknown).call(
+  scoped.use = (item: unknown): unknown =>
+    (ctx as { use: (this: unknown, arg: unknown) => unknown }).use.call(
       carrier,
       item,
     );
-  };
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;
