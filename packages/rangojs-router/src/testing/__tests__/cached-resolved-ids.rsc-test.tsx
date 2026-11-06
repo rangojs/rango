@@ -16,6 +16,10 @@
  * The marker is stored with the record (segment-codec.ts) and cleared for a
  * segment the HIT keeps (cache-lookup.ts keepClientSegment): a kept segment's
  * handler did not run for this response, and the browser keeps its values.
+ *
+ * A ppr shell replay re-resolves the segments it sends live, so it names them
+ * itself and never had the defect; its test pins that the fix leaves the
+ * replay the live path's crumbs and ids.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -123,7 +127,6 @@ async function documentOf(
   router: Router,
   url: string,
 ): Promise<{ handles: HandleData; matched: string[]; crumbs: string[] }> {
-  chainPushes = true;
   const { answer, handles } = await readAnswer(
     await serveShellRequest(router, url, {
       cacheStore: new MemorySegmentCacheStore(),
@@ -295,5 +298,30 @@ describe("a PPR navigation replay lists the segments whose handler ran for the s
     expect(live.crumbs).toEqual(["root", "item"]);
     expect(replay.crumbs).toEqual(live.crumbs);
     expect(replay.resolvedIds).toEqual(live.resolvedIds);
+  });
+});
+
+/**
+ * The same tree, but /item/1's shell is captured by a document request first,
+ * with the chain layout pushing nothing. A navigation to it then replays that
+ * capture (`x-rango-ppr-replay`, the fragment splice) and re-resolves the
+ * sent chain layout live: it names the layout itself, so this path never had
+ * the defect and the fix leaves it alone. The test pins that the replay keeps
+ * the live path's crumbs and ids.
+ */
+describe("a ppr document shell replay keeps the live path's ids", () => {
+  it("clears a sent chain layout whose capture pushed nothing", async () => {
+    const pageList = await documentOf(pprRouter, "/list");
+    expect(pageList.crumbs).toEqual(["root", "chain", "list"]);
+    chainPushes = false;
+    await documentOf(pprRouter, "/item/1");
+    const replay = await crumbsAfter(
+      pageList.handles,
+      await serveShellRequest(pprRouter, "/item/1", {
+        cacheStore: new MemorySegmentCacheStore(),
+        partial: { from: "/list", segments: pageList.matched },
+      }),
+    );
+    expect(replay.crumbs).toEqual(["root", "item"]);
   });
 });
