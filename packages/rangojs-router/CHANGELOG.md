@@ -16,7 +16,9 @@ owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
 The push is still rejected, at the same moment, and production still shows no
 message. A push that beats collection (a streamed tree) files under the
-layout's or the slot's segment too.
+layout's or the slot's segment too. A `use` taken off the ctx before the call
+(`const { use } = ctx`, or one passed as a callback) names that segment as
+well.
 
 ### Breaking: a layout's or a parallel slot's handler ctx is always a derived object
 

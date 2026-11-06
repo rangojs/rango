@@ -8,6 +8,8 @@
  * ctx made the push, not whichever segment the walker pinned last. A layout
  * handler's ctx carries its own segment, so the message names the layout; a
  * route handler's ctx reads the request's pin, which is still the route's.
+ * A `use` destructured off that ctx has no receiver left, so the ctx carries
+ * one too (withSegmentScope).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -48,6 +50,20 @@ async function LatePush({
   return <span>{label}</span>;
 }
 
+/** The same push through a `use` detached from the ctx before the await. */
+async function DetachedPush({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  const { use } = ctx;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
 function makeRouter() {
   return createRouter({
     onError: ({ error }) => {
@@ -67,6 +83,18 @@ function makeRouter() {
             () => [
               path("/component-layout", () => <p>page</p>, {
                 name: "componentLayout",
+              }),
+            ],
+          ),
+          layout(
+            (ctx) => (
+              <div>
+                <DetachedPush ctx={ctx} label="detached" />
+              </div>
+            ),
+            () => [
+              path("/component-detached", () => <p>page</p>, {
+                name: "componentDetached",
               }),
             ],
           ),
@@ -129,6 +157,12 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     const { errors: reported, matched } = await serve("/component-slot");
     const slot = matched.find((id) => id.endsWith(".@panel"))!;
     expect(latePushSegment(reported)).toBe(slot);
+  });
+
+  it("the layout's, for a component that detached `use` from its ctx", async () => {
+    const { errors: reported, matched } = await serve("/component-detached");
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
   });
 
   it("the route's, for a component the route handler handed its ctx to", async () => {

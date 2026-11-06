@@ -2551,13 +2551,13 @@ Limits:
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
 - A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `_handleSegmentId`, and `reverse` and `_reverseScope` when the
-  segment has a scope, so `{ ...ctx }` there copies only those: a copy has no
-  `use`, so `copy.use(Handle)` throws, and no `params` or `pathname`, so a
-  `"use cache"` call given it keys without them. Hand the ctx itself on. A
-  getter keyed by its holder resolves through the prototype chain
-  (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
-  child inherits.
+  fields are `_handleSegmentId`, a non-enumerable `use`, and `reverse` and
+  `_reverseScope` when the segment has a scope, so `{ ...ctx }` there copies
+  only `_handleSegmentId` and the reverse pair: a copy has no `use`, so
+  `copy.use(Handle)` throws, and no `params` or `pathname`, so a `"use cache"`
+  call given it keys without them. Hand the ctx itself on. A getter keyed by
+  its holder resolves through the prototype chain (`rewrittenFrom`,
+  `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a
@@ -2601,7 +2601,10 @@ the only thing left to ask. That ctx carries its segment
 segment off the receiver it was called on (`handlePushSegment`,
 `loader-resolution.ts`) — a push from such a component, and the dev
 `LateHandlePushError` it throws, names the layout or the slot, not whichever
-segment the walker pinned since. The other readers take `segmentPinOf(ctx)`,
+segment the walker pinned since. A `use` taken off the ctx before the call
+(`const { use } = ctx`) has no receiver left, so the child also owns a
+non-enumerable `use` that forwards to the parent's current one with the child
+as the receiver. The other readers take `segmentPinOf(ctx)`,
 the innermost scope's segment else the ctx's carried one else its pin: a
 handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the build
 pass, which runs the same walker), a started loader's owning segment

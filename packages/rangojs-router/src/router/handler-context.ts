@@ -219,6 +219,16 @@ function createPrerenderPassthroughFn(
  * router/loader-resolution.ts), which holds after an `await` and in a
  * component the ctx is handed to.
  *
+ * A `use` detached from its ctx (`const { use } = ctx`, one passed as a
+ * callback) has no receiver left to read that segment off, so the child also
+ * owns a `use` that forwards to the parent's CURRENT one with this child as
+ * the receiver. Reading it off the parent at call time, not capturing it, is
+ * what keeps a loader-cache interceptor the request ctx installs later
+ * (loader-cache.ts executeLoaderData) answering for this segment. Not
+ * enumerable: a `{ ...ctx }` copy is documented to carry only the segment
+ * (execution-model.md "A streamed handler keeps its segment"), and a copy is
+ * not a ctx.
+ *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
  * call that takes this ctx, cache-runtime.ts). Every other field reads
@@ -235,6 +245,11 @@ export function withSegmentScope<C>(
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  Object.defineProperty(scoped, "use", {
+    value: (item: unknown) => (ctx as any).use.call(scoped, item),
+    writable: true,
+    configurable: true,
+  });
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;
