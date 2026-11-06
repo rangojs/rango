@@ -7,12 +7,12 @@
  * (`mergePartialHandleData`, handles/pushed-by.ts): a run's old values give
  * way only when the response delivers values of that run or lists it in
  * `resolvedIds`. A live walk marks the segments whose handler ran
- * (`_handlerRan`, segment-resolution/revalidation.ts), which is how a
- * breadcrumb that clears on a MISS clears. A stored record does not carry
- * that marker (segment-codec.ts `serializeSegments` copies named fields
- * only), so a HIT listed none of the segments it re-sent: a chain layout
- * whose `revalidate()` re-sends it kept its crumb from the page before, and
- * the breadcrumb came back on the HIT.
+ * (`_handlerRan`, segment-resolution/revalidation.ts and
+ * intercept-resolution.ts), which is how a breadcrumb that clears on a MISS
+ * clears. A stored record does not carry that marker (segment-codec.ts
+ * `serializeSegments` copies named fields only), so a HIT listed none of the
+ * segments it re-sent: a chain layout whose `revalidate()` re-sends it kept
+ * its crumb from the page before, and the breadcrumb came back on the HIT.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -49,9 +49,11 @@ const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
 /** Whether the chain layout pushes on this request. */
 let chainPushes = true;
+/** Whether the intercept's handler pushes on this request. */
+let modalPushes = true;
 
 const router = createRouter({}).routes(
-  urls(({ path, cache, layout, parallel, revalidate }) => [
+  urls(({ path, cache, layout, parallel, intercept, revalidate }) => [
     cache({ ttl: 600 }, () => [
       layout(
         (ctx: HandlerContext) => {
@@ -86,7 +88,25 @@ const router = createRouter({}).routes(
                 },
                 { name: "b" },
               ),
+              path(
+                "/item/:id",
+                (ctx: HandlerContext<{ id: string }>) => {
+                  ctx.use(Crumbs)(`item-${ctx.params.id}`);
+                  return <p>item</p>;
+                },
+                { name: "item" },
+              ),
             ],
+          ),
+          // An intercept's slot: sent on every intercept navigation, and
+          // marked as run by the live walk and by a stored serve.
+          intercept(
+            "@modal",
+            ".item",
+            (ctx: HandlerContext<{ id: string }>) => {
+              if (modalPushes) ctx.use(Crumbs)(`modal-${ctx.params.id}`);
+              return <dialog>modal</dialog>;
+            },
           ),
           // Kept on a HIT: its rule says no, so it is not sent and must not
           // be listed.
@@ -185,6 +205,7 @@ async function missThenHit(
 
 beforeEach(async () => {
   chainPushes = true;
+  modalPushes = true;
   await resetShellTestState();
 });
 
@@ -225,6 +246,41 @@ describe("a cache() HIT lists the segments it sends", () => {
       true,
     );
     expect(hitAnswer.resolvedIds).toEqual(missAnswer.resolvedIds);
+  });
+
+  it("an intercept's slot that re-runs and pushes nothing clears its crumb on the HIT, as on the MISS", async () => {
+    const list = await documentOf("/list");
+    modalPushes = true;
+    const opened = await serveShellRequest(router, "/item/1", {
+      cacheStore: list.store,
+      partial: {
+        from: "/list",
+        interceptSource: "/list",
+        segments: list.matched,
+      },
+    });
+    const openedAnswer = (await readAnswer(opened)).answer;
+    expect(await crumbsAfter(list.handles, opened)).toContain("modal-1");
+    const slot = openedAnswer.matched.find((id) => id.endsWith(".@modal"));
+    expect(slot).toBeDefined();
+
+    modalPushes = false;
+    const move = async (): Promise<ServeShellRequestResult> =>
+      serveShellRequest(router, "/item/2", {
+        cacheStore: list.store,
+        partial: {
+          from: "/item/1",
+          interceptSource: "/list",
+          segments: openedAnswer.matched,
+        },
+      });
+    const miss = await move();
+    const hit = await move();
+    const page = (await readAnswer(opened)).handles;
+    expect(await crumbsAfter(page, miss)).not.toContain("modal-1");
+    expect(await crumbsAfter(page, hit)).not.toContain("modal-1");
+    expect((await readAnswer(miss)).answer.resolvedIds).toContain(slot);
+    expect((await readAnswer(hit)).answer.resolvedIds).toContain(slot);
   });
 
   it("a segment the HIT keeps is not listed", async () => {

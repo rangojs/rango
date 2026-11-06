@@ -1268,11 +1268,11 @@ which run made each one.
    the record's values are replayed for those segments only
    (`cache-lookup.ts` `serveStoredSegments` marks a sent stored segment as
    run), so the browser replaces that run's values as it does for a handler
-   that ran. A segment the HIT keeps is not listed, and an intercept's slot
-   is never marked: the live walk builds it without the marker
-   (`intercept-resolution.ts` `resolveInterceptEntry`), so marking it on a
-   HIT would report an id no MISS reports and would reach the client in
-   `slots`.
+   that ran. A segment the HIT keeps is not listed. An intercept's slot is
+   marked on both sides: the live walk in `resolveInterceptEntry`
+   (`intercept-resolution.ts`) and a stored serve in the loop above. The
+   slot's segments also reach the client in the payload's `slots`, which is
+   why `match-result.ts` strips the marker there too (`withoutHandlerRan`).
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment

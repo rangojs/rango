@@ -15,8 +15,10 @@ navigation: a breadcrumb a handler clears on a MISS came back on the HIT.
 same ids the MISS that wrote the record listed, so the browser replaces that
 run's values on the HIT too. A segment the HIT keeps is still not listed, and
 a `Prerender()` entry, an on-demand overlay entry and a `ppr` navigation
-replay list the same ids as a `cache()` record of the same page. Nothing else
-on the wire changes and no client code changed.
+replay list the same ids as a `cache()` record of the same page. An
+intercept's slot is listed on both sides as well: a slot whose handler
+re-runs and pushes nothing no longer keeps the values of the page before.
+Nothing else on the wire changes and no client code changed.
 
 ## 0.35.0 (2026-11-04)
 

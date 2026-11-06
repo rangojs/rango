@@ -621,13 +621,7 @@ async function* serveStoredSegments<TEnv>(
       // resolvedIds (match-result.ts), so the browser replaces that run's
       // values as it does for a handler that ran. Without the mark a HIT
       // listed none and the page kept the values from before the navigation.
-      //
-      // An intercept's slot is not marked: the live walk builds it without
-      // the marker (intercept-resolution.ts resolveInterceptEntry), so a HIT
-      // would report a resolvedIds no MISS reports, and the marker would
-      // reach the client in `slots`, whose segments match-result.ts passes
-      // through unstripped.
-      if (!isInterceptSegment(segment)) segment._handlerRan = true;
+      segment._handlerRan = true;
       sentIds?.add(segment.id);
     }
     yield segment;

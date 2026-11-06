@@ -203,12 +203,7 @@ export function buildMatchResult<TEnv>(
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    cleanedSegments.push(withoutHandlerRan(s));
     diff.push(s.id);
   }
 
@@ -227,7 +222,10 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    slots:
+      Object.keys(state.slots).length > 0
+        ? withoutHandlerRanInSlots(state.slots)
+        : undefined,
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
@@ -237,6 +235,31 @@ export function buildMatchResult<TEnv>(
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };
+}
+
+/** The segment without its internal run marker, or the segment itself. */
+function withoutHandlerRan(segment: ResolvedSegment): ResolvedSegment {
+  if (segment._handlerRan === undefined) return segment;
+  const { _handlerRan: _drop, ...rest } = segment;
+  return rest as ResolvedSegment;
+}
+
+/**
+ * `state.slots` holds the intercept slot segments themselves, not the copies
+ * the segment list gets, so a marker on one would reach the client in the
+ * payload's `slots`. Copies keep every marker out.
+ */
+function withoutHandlerRanInSlots(
+  slots: MatchPipelineState["slots"],
+): MatchPipelineState["slots"] {
+  const out: MatchPipelineState["slots"] = {};
+  for (const [name, slot] of Object.entries(slots)) {
+    out[name] = {
+      ...slot,
+      segments: (slot.segments ?? []).map(withoutHandlerRan),
+    };
+  }
+  return out;
 }
 
 /**

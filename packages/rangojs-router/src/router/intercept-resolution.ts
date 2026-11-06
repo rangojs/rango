@@ -369,9 +369,18 @@ export async function resolveInterceptEntry<TEnv>(
   (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
     slotSegmentId;
 
+  /**
+   * The slot segment, marked as run when its handler ran for this response
+   * (the live walk marks a layout and a parallel slot the same way,
+   * segment-resolution/revalidation.ts). `_handlerRan` is what lists it in
+   * resolvedIds, so the browser replaces the handler run's handle values
+   * with this response's: without it a slot that re-ran and pushed nothing
+   * kept the values from the page before (match-result.ts).
+   */
   const slotSegment = (
     component: ReactNode,
     layout: ReactNode | undefined,
+    handlerRan = false,
   ): ResolvedSegment => ({
     id: slotSegmentId,
     namespace: `intercept:${interceptEntry.routeName}`,
@@ -384,6 +393,7 @@ export async function resolveInterceptEntry<TEnv>(
     slot: interceptEntry.slotName,
     belongsToRoute,
     parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
+    ...(handlerRan ? { _handlerRan: true as const } : {}),
   });
 
   // A fill keeps a slot the client holds: neither its handler nor its layout
@@ -393,6 +403,9 @@ export async function resolveInterceptEntry<TEnv>(
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
+  // The handler ran unless it threw into the route boundary (the catch
+  // below), which renders the boundary instead of the slot.
+  let handlerRan = true;
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
@@ -405,6 +418,7 @@ export async function resolveInterceptEntry<TEnv>(
           )
         : handler;
   } catch (error) {
+    handlerRan = false;
     handlerResult = renderInterceptHandlerError(
       pass,
       error,
@@ -473,6 +487,7 @@ export async function resolveInterceptEntry<TEnv>(
       try {
         component = await handlerResult;
       } catch (error) {
+        handlerRan = false;
         component = renderInterceptHandlerError(
           pass,
           error,
@@ -487,7 +502,7 @@ export async function resolveInterceptEntry<TEnv>(
   // started with ctx.use() by now are delivered from this response.
   deliverStartedLoaders(context, loaderSegments);
 
-  return [slotSegment(component, layoutElement), ...loaderSegments];
+  return [slotSegment(component, layoutElement, handlerRan), ...loaderSegments];
 }
 
 /**
