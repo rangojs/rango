@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a page served from a `cache()` record or a `Prerender()` entry clears the handle values its record does not carry
+
+**Before.** A partial response's `resolvedIds` names the runs whose handle
+values the browser replaces (`mergePartialHandleData`). A live render listed
+the segments whose handler re-ran; a page served from a record or an entry did
+not, because the record does not carry the marker the walk sets. So a value
+only the page being left pushed — a breadcrumb a layout no longer pushes —
+cleared on a MISS and stayed on a HIT: the same navigation gave two different
+pages depending on whether the record was there.
+
+**Now.** A stored segment the response sends is listed in `resolvedIds`, as a
+re-run handler's is: the record's values replace the browser's, or clear them
+when the record carries none. A segment the response keeps is not listed, so
+its values stay. The client is unchanged; only `resolvedIds` on the wire.
+
+```ts
+// A chain layout above /a and /b, inside cache({ ttl: 60 })
+layout((ctx) => {
+  if (showBreadcrumb) ctx.use(Crumbs)('chain');
+  return <section>chain</section>;
+}, () => [revalidate(() => true)]);
+
+// Navigate from a page showing the crumb to one whose record was written
+// without it: the crumb now clears, as it does on a MISS.
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

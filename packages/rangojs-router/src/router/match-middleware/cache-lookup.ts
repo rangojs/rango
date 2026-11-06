@@ -612,8 +612,17 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      sentIds?.add(segment.id);
+      // A stored segment the response sends stands in for a run of its
+      // handler: the record's values replace the client's, or clear them when
+      // it carries none, exactly as a re-run handler's do on a MISS. Without
+      // the marker buildMatchResult omits it from `resolvedIds`, and the
+      // browser keeps the values of the page it leaves.
+      segment._handlerRan = true;
+    }
     yield segment;
   }
 
