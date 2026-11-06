@@ -1263,7 +1263,11 @@ which run made each one.
 3. **`resolvedIds` names the loaders that ran** (`router/match-result.ts`).
    A partial match resolves only the loaders it runs, so each loader segment
    it returns is in `resolvedIds` next to the handlers that ran. That also
-   makes the field's documented "superset of `diff`" true.
+   makes the field's documented "superset of `diff`" true. A stored record
+   carries the handler marker of the render that wrote it
+   (`segment-codec.ts` `serializeSegments`), so a HIT names the handlers that
+   ran for the record among the segments it sends, and clears the marker of
+   the ones it keeps (`cache-lookup.ts` `keepClientSegment`).
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment

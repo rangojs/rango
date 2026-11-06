@@ -290,6 +290,13 @@ export async function serializeSegments(
           transition: segment.transition,
           mountPath: segment.mountPath,
           clientGroup: segment.clientGroup,
+          // The record's content is what this handler run produced, so a HIT
+          // reports the segment in `resolvedIds` exactly as the MISS did
+          // (match-result.ts). No other stored field says it: a null
+          // component is also a segment the client kept (its handler never
+          // ran), and a handler may push nothing at all, which is the case
+          // that needs the marker (handles/pushed-by.ts).
+          ...(segment._handlerRan ? { _handlerRan: true } : {}),
         },
       };
     }),

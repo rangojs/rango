@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `cache()` HIT clears the handle values of a segment whose handler the record re-sends, as the MISS did
+
+**Before.** A partial response's `resolvedIds` names the segments whose handler
+ran, and the browser replaces those segments' handle values (`useHandle`) with
+what the response delivered, nothing included. A stored `cache()` record did
+not say which of its segments' handlers had run when it was written, so a HIT
+named no handler at all: a layout its `revalidate()` re-sent whose handler
+pushed nothing kept the values of the page being left. A breadcrumb that
+cleared on the MISS came back on the HIT, and stayed.
+
+**Now.** The record carries the marker of the render that wrote it, and a HIT
+names every segment it sends that render ran the handler for: the same ids the
+MISS reported for them. A segment the HIT keeps is never named, so its values
+stand as on a live navigation. A `Prerender()` bake and a `ppr` shell replay
+report the ids of the render that produced them the same way. The client is
+unchanged: `resolvedIds` is the only thing a response reports differently.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -1017,6 +1017,11 @@ async function readSegmentCacheSource<TEnv>(
 function keepClientSegment(segment: ResolvedSegment): void {
   segment.component = null;
   segment.loading = undefined;
+  // A stored segment carries the marker of the render that wrote the record
+  // (segment-codec.ts serializeSegments). The client keeps this one, so its
+  // handler did not run for this response and `resolvedIds` must not name it:
+  // the browser would clear the values it is keeping (handles/pushed-by.ts).
+  segment._handlerRan = false;
 }
 
 /**
