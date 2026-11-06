@@ -244,7 +244,7 @@ export function buildMatchResult<TEnv>(
 
 /**
  * A segment as the wire carries it: the internal `_handlerRan` marker stripped
- * (segments/types.ts). The marker decides `resolvedIds` and must not reach the
+ * (types/segments.ts). The marker decides `resolvedIds` and must not reach the
  * client, in any container the answer puts a segment in.
  */
 function withoutInternalFields(segment: ResolvedSegment): ResolvedSegment {
