@@ -35,4 +35,31 @@ describe("segmentPinOf", () => {
     ).toBe("L0");
     expect(runAsSegment(undefined, () => segmentPinOf(ctx))).toBe("R0.@side");
   });
+
+  // A layout's or slot's ctx carries its own segment (`_handleSegmentId`,
+  // router/handler-context.ts withSegmentScope) because the walker moves the
+  // shared pin on while a component that ctx was handed to still renders.
+  it("reads the segment a layout's or slot's ctx carries over the shared pin", () => {
+    expect(
+      segmentPinOf({
+        _currentSegmentId: "M0L0L0R0",
+        _handleSegmentId: "M0L0L0",
+      }),
+    ).toBe("M0L0L0");
+    // The pin need not exist: the carried segment is the ctx's own.
+    expect(segmentPinOf({ _handleSegmentId: "M0L0L0.@panel" })).toBe(
+      "M0L0L0.@panel",
+    );
+  });
+
+  it("a scope still wins over the segment the ctx carries", () => {
+    const carried = {
+      _currentSegmentId: "M0L0L0R0",
+      _handleSegmentId: "M0L0L0",
+    };
+    expect(runAsSegment("M0L0L0D0.products", () => segmentPinOf(carried))).toBe(
+      "M0L0L0D0.products",
+    );
+    expect(runAsSegment(undefined, () => segmentPinOf(carried))).toBe("M0L0L0");
+  });
 });
