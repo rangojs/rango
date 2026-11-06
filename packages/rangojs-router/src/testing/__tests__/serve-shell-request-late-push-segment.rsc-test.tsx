@@ -87,7 +87,7 @@ function makeRouter() {
       errors.push(error instanceof Error ? error.message : String(error));
     },
   }).routes(
-    urls(({ path, layout, parallel }) => [
+    urls(({ path, layout, parallel, intercept }) => [
       layout(
         () => <main>shell</main>,
         () => [
@@ -130,6 +130,15 @@ function makeRouter() {
               }),
             ],
           ),
+          path("/list", () => <ul>list</ul>, { name: "list" }),
+          path("/item/:id", () => <article>item</article>, { name: "item" }),
+          // The intercept's handler gets the shared ctx and its slot is the
+          // last thing the walker pins, so the push names the slot.
+          intercept("@modal", ".item", (ctx) => (
+            <dialog>
+              <LatePush ctx={ctx} label="intercept" />
+            </dialog>
+          )),
         ],
       ),
     ]),
@@ -144,11 +153,22 @@ async function matchedOf(flight: string | undefined): Promise<string[]> {
   return metadata.matched;
 }
 
-async function serve(url: string) {
+async function serve(url: string, from?: string) {
   errors.length = 0;
   shapeErrors.length = 0;
-  const result = await serveShellRequest(makeRouter(), url, {
-    cacheStore: new MemorySegmentCacheStore(),
+  const router = makeRouter();
+  const cacheStore = new MemorySegmentCacheStore();
+  let partial: { from: string; segments: string[] } | undefined;
+  if (from !== undefined) {
+    const page = await serveShellRequest(router, from, {
+      cacheStore,
+      partial: true,
+    });
+    partial = { from, segments: await matchedOf(page.flight) };
+  }
+  const result = await serveShellRequest(router, url, {
+    cacheStore,
+    partial,
   });
   return {
     errors: [...errors],
@@ -234,6 +254,13 @@ describe("every ordinary call shape names the segment whose ctx pushed", () => {
       segmentOf: (matched: string[]) =>
         matched.filter((id) => /R\d+$/.test(id)).at(-1)!,
     },
+    {
+      name: "intercept",
+      url: "/item/1",
+      from: "/list",
+      segmentOf: (matched: string[]) =>
+        matched.find((id) => id.endsWith(".@modal"))!,
+    },
   ]) {
     for (const one of SHAPES) {
       it(`${row.name}: ${one}`, async () => {
@@ -242,7 +269,7 @@ describe("every ordinary call shape names the segment whose ctx pushed", () => {
           errors: reported,
           matched,
           shapeErrors: thrown,
-        } = await serve(row.url);
+        } = await serve(row.url, (row as { from?: string }).from);
         expect(thrown).toEqual([]);
         expect(latePushSegment(reported)).toBe(row.segmentOf(matched));
       });

@@ -2637,19 +2637,21 @@ and puts the previous pin back after it (`resolveOrphanLayout`); its
 handler's ctx carries the orphan's segment either way. A push function bound
 before the await (`const push = ctx.use(Handle)`) was always filed right.
 
-An intercept's handler still gets the shared ctx. Its pushes name the
+An intercept's handler still gets the shared ctx, and its pushes name the
 intercept's slot because `resolveInterceptEntry` pins it last in the request
 and nothing runs after it — by the pin, not by a carried segment, so a future
-segment resolved after an intercept would take the name.
+segment resolved after an intercept would take the name. Its ctx keeps the
+shared object (and so the full `{ ...ctx }` copy) for the same reason a route
+handler's does; the row is pinned by the same test file.
 
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader
 the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
-segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to, in every call shape, on a cached route and through an
-intercept), `router/__tests__/parallel-slot-current-segment-id.test.ts` (the
+segment a `LateHandlePushError` names for a component a route, a layout, a slot
+and an intercept handed the ctx to, in every call shape, on a cached route and
+through an intercept), `router/__tests__/parallel-slot-current-segment-id.test.ts` (the
 slot's pin during the handler, the entry's after it) and
 `server/__tests__/segment-pin.test.ts`. The e2e `handles-after-await`
 (test-app and cloudflare-basic, dev and production) checks the message on the
