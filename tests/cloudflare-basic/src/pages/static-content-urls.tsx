@@ -3,6 +3,8 @@ import { ParallelOutlet } from "@rangojs/router/client";
 import {
   DocsNavLayout,
   DocsIndexPage,
+  DocsNestedLayout,
+  DocsNestedPage,
   DocsTocSidebar,
 } from "./static-content.js";
 
@@ -24,15 +26,26 @@ function DocsPage(ctx: { params: { slug: string } }) {
   );
 }
 
-export const staticContentPatterns = urls(({ path, layout, parallel }) => [
-  // Static layout wraps all docs routes -- rendered once at build time
-  layout(DocsNavLayout, () => [
-    // Static index page -- also rendered at build time (on path())
-    path("/", DocsIndexPage, { name: "index" }),
-    // Dynamic page -- rendered at request time, with static parallel @toc sidebar
-    path("/:slug", DocsPage, { name: "docsPage" }, () => [
-      // Static parallel slot -- TOC sidebar rendered once at build time
-      parallel({ "@toc": DocsTocSidebar }),
-    ]),
+// A nested module with its own "docsPage": the nested Static layout's
+// dot-local `.docsPage` must resolve here, not in the parent module.
+const nestedPatterns = urls(({ path, layout }) => [
+  layout(DocsNestedLayout, () => [
+    path("/:slug", DocsNestedPage, { name: "docsPage" }),
   ]),
 ]);
+
+export const staticContentPatterns = urls(
+  ({ path, layout, parallel, include }) => [
+    // Static layout wraps all docs routes -- rendered once at build time
+    layout(DocsNavLayout, () => [
+      // Static index page -- also rendered at build time (on path())
+      path("/", DocsIndexPage, { name: "index" }),
+      // Dynamic page -- rendered at request time, with static parallel @toc sidebar
+      path("/:slug", DocsPage, { name: "docsPage" }, () => [
+        // Static parallel slot -- TOC sidebar rendered once at build time
+        parallel({ "@toc": DocsTocSidebar }),
+      ]),
+      include("/nested", nestedPatterns, { name: "nested" }),
+    ]),
+  ],
+);

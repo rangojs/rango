@@ -417,6 +417,7 @@ export const NamedRoutes = {
   "staleDefaults.shelled": "/stale-defaults/shelled",
   "staticContent.docsPage": "/static-content/:slug",
   "staticContent.index": "/static-content",
+  "staticContent.nested.docsPage": "/static-content/nested/:slug",
   streamedDocument: "/streamed-document",
   streamedHandleOwner: "/streamed-handle-owner",
   streamedHandleOwnerLoader: "/streamed-handle-owner/loader",

@@ -63,6 +63,23 @@ test.describe("static-handler (dev)", () => {
     await expect(testId(page, "docs-nav-deployment")).toBeVisible();
   });
 
+  test("nested static layout links with a dot-local name in its own module", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content/nested/deep"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "static-nested-page")).toBeVisible();
+    // `.docsPage` from the nested module: resolving one include too high
+    // yields /static-content/deep, the parent module's route.
+    await expect(testId(page, "static-nested-link")).toHaveAttribute(
+      "href",
+      "/static-content/nested/deep",
+    );
+  });
+
   // -- path() with Static --
 
   test("static path renders index page content", async ({ page }) => {
@@ -233,6 +250,23 @@ test.describe("static-handler (production)", () => {
     await expect(testId(page, "docs-nav-getting-started")).toBeVisible();
     await expect(testId(page, "docs-nav-configuration")).toBeVisible();
     await expect(testId(page, "docs-nav-deployment")).toBeVisible();
+  });
+
+  test("nested static layout links with a dot-local name in its own module", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content/nested/deep"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "static-nested-page")).toBeVisible();
+    // `.docsPage` from the nested module: resolving one include too high
+    // yields /static-content/deep, the parent module's route.
+    await expect(testId(page, "static-nested-link")).toHaveAttribute(
+      "href",
+      "/static-content/nested/deep",
+    );
   });
 
   // -- path() with Static --

@@ -162,3 +162,29 @@ export const DocsTocSidebar = Static(async () => {
     </aside>
   );
 });
+
+// --- Nested Static layout: dot-local reverse in the module that declares it. ---
+// Mounted at include(..., { name: "nested" }) below DocsNavLayout, so its
+// prefix is "staticContent.nested" and its `.docsPage` must resolve to the
+// nested module's route, not the parent module's docsPage. A bake that
+// resolves one include too high links /static-content/<slug> instead of
+// /static-content/nested/<slug>, at build time only (dev renders live).
+export const DocsNestedLayout = Static((ctx) => (
+  <div data-testid="static-nested-layout">
+    <Link
+      to={ctx.reverse(".docsPage", { slug: "deep" })}
+      data-testid="static-nested-link"
+    >
+      Deep doc
+    </Link>
+    <Outlet />
+  </div>
+));
+
+export function DocsNestedPage(ctx: { params: { slug: string } }) {
+  return (
+    <div data-testid="static-nested-page">
+      <h2>Nested doc: {ctx.params.slug}</h2>
+    </div>
+  );
+}
