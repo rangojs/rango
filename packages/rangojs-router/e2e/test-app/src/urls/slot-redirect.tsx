@@ -3,34 +3,17 @@ import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 // A parallel slot handler's redirect().
 //
-// A slot handler's result now passes through handleHandlerResult, as a route's
-// or a layout's does, so a returned redirect() short-circuits to a real HTTP
+// A slot handler's result passes through handleHandlerResult, as a route's or a
+// layout's does, so a returned redirect() short-circuits to a real HTTP
 // redirect instead of being rendered as the slot's component. A synchronous
 // return under the slot's own loading() short-circuits too.
 //
-// Each slot gets its own layout under its own mount: two sibling layouts at
-// one position share a segment id, and the browser could not tell them apart.
-function PlainSlotLayout() {
+// Each slot sits under its own mount so the three pages have their own layout
+// entry, as they would in an app: /plain redirects, /streamed redirects under
+// the slot's loading(), /aside renders.
+function SlotLayout() {
   return (
-    <main data-testid="sr-plain-layout">
-      <Outlet />
-      <ParallelOutlet name="@sr-aside" />
-    </main>
-  );
-}
-
-function StreamedSlotLayout() {
-  return (
-    <main data-testid="sr-streamed-layout">
-      <Outlet />
-      <ParallelOutlet name="@sr-aside" />
-    </main>
-  );
-}
-
-function AsideSlotLayout() {
-  return (
-    <main data-testid="sr-aside-layout">
+    <main data-testid="sr-layout">
       <Outlet />
       <ParallelOutlet name="@sr-aside" />
     </main>
@@ -45,7 +28,7 @@ function SlotRedirectPage() {
   return <div data-testid="sr-page">page that never renders</div>;
 }
 
-function SlotRedirectAsidePage() {
+function SlotAsidePage() {
   return <div data-testid="sr-ok">ok page</div>;
 }
 
@@ -71,7 +54,7 @@ function SlotRedirectIndex() {
 
 /** A synchronous returned redirect() from a slot handler. */
 const plainPatterns = urls(({ path, layout, parallel }) => [
-  layout(PlainSlotLayout, () => [
+  layout(SlotLayout, () => [
     parallel({ "@sr-aside": () => redirect("/slot-redirect/target", 302) }),
     path("/", SlotRedirectPage, { name: "index" }),
   ]),
@@ -79,7 +62,7 @@ const plainPatterns = urls(({ path, layout, parallel }) => [
 
 /** The same return under the slot's own loading(). */
 const streamedPatterns = urls(({ path, layout, parallel, loading }) => [
-  layout(StreamedSlotLayout, () => [
+  layout(SlotLayout, () => [
     parallel({
       "@sr-aside": {
         handler: () => redirect("/slot-redirect/target", 302),
@@ -92,9 +75,9 @@ const streamedPatterns = urls(({ path, layout, parallel, loading }) => [
 
 /** A slot that renders: a normal page still works beside the two above. */
 const asidePatterns = urls(({ path, layout, parallel }) => [
-  layout(AsideSlotLayout, () => [
+  layout(SlotLayout, () => [
     parallel({ "@sr-aside": SlotAside }),
-    path("/", SlotRedirectAsidePage, { name: "index" }),
+    path("/", SlotAsidePage, { name: "index" }),
   ]),
 ]);
 

@@ -1010,20 +1010,30 @@ On a route **without** `loading()`, a handler that returns or throws a `Response
 the resolution boundary, so the thrown `Response` propagates out to `match()`
 and becomes a 302/308.
 
-On a route that declares `loading()`, the handler result is **streamed** — it is
-not awaited at the resolution boundary (`resolveEntryHandler` in
-`segment-resolution/revalidation.ts`). So an
-**async** handler that returns a `Response` has that `Response` surface only
-during RSC serialization, where it is rendered into the stream via React's
-error boundary instead of becoming an HTTP redirect. A **synchronous** `Response`
-return on a `loading()` route still throws synchronously and redirects correctly;
-only the async/Promise sub-branch is affected. Parallel slots with `loading()`
-share this behavior.
+Every handler result — a route's, a layout's, a parallel slot's, an intercept
+slot's — goes through `handleHandlerResult` (`segment-resolution/helpers.ts`):
+a returned `Response` is thrown, so it short-circuits instead of being used as
+the segment's component. `resolveParallelSlotComponent` was the one funnel that
+skipped it, so a slot handler's returned `redirect()` rendered: a document
+request answered 200 with the `Response` in the Flight stream, a client
+navigation put it in the partial payload, and an on-demand refresh failed with
+Flight's plain-objects error instead of the `Response` a route handler reports.
 
-To redirect from a `loading()` route, issue the redirect from middleware, a
-loader, or a synchronous handler return. In development, `warnOnStreamedResponse`
-(`segment-resolution/helpers.ts`) logs a warning when a streamed handler resolves
-or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
+On a route or slot that declares `loading()`, the handler result is
+**streamed** — it is not awaited at the resolution boundary
+(`resolveRouteComponent` / `resolveParallelSlotComponent` in
+`segment-resolution/revalidation.ts`). A **synchronous** `Response` return still
+throws synchronously and redirects correctly. An **async** handler that returns
+a `Response` has it surface only during RSC serialization, where it is rendered
+into the stream via React's error boundary instead of becoming an HTTP redirect:
+the promise `handleHandlerResult` derives rejects, and by the time React reads it
+the status line is committed. That limitation is a route's and a slot's alike.
+
+To redirect from a `loading()` route or slot, issue the redirect from
+middleware, a loader, or a synchronous handler return. In development,
+`warnOnStreamedResponse` (`segment-resolution/helpers.ts`) logs a warning when a
+streamed handler settles with a `Response`, so the swallowed-redirect failure
+mode is visible.
 
 ### Streamed handler rejections render the declared boundary
 
