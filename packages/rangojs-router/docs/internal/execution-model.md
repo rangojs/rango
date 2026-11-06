@@ -2551,9 +2551,9 @@ Limits:
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
 - A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `_handleSegmentId`, and `reverse` and `_reverseScope` when the
-  segment has a scope, so `{ ...ctx }` there copies only those. A getter keyed
-  by its holder resolves through the prototype chain (`rewrittenFrom`,
+  fields are `_handleSegmentId`, `use`, and `reverse` and `_reverseScope` when
+  the segment has a scope, so `{ ...ctx }` there copies only those. A getter
+  keyed by its holder resolves through the prototype chain (`rewrittenFrom`,
   `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
@@ -2594,18 +2594,24 @@ scope. Await continuations inherit the scope. A layout's or slot's ctx is the
 case the scope cannot reach: React renders the components that ctx was
 handed to after the handler returned, outside every scope, so the object is
 the only thing left to ask. That ctx carries its segment
-(`_handleSegmentId`, `withSegmentScope`), and `ctx.use` resolves the push
-segment off the receiver it was called on (`handlePushSegment`,
+(`_handleSegmentId`, `withSegmentScope`) and owns `use`, which calls the
+handler ctx's `use` with itself as the receiver (`handlePushSegment`,
 `loader-resolution.ts`) — a push from such a component, and the dev
 `LateHandlePushError` it throws, names the layout or the slot, not whichever
-segment the walker pinned since. The other readers take `segmentPinOf(ctx)`,
-the innermost scope's segment else the ctx's carried one else its pin: a
-handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the build
-pass, which runs the same walker), a started loader's owning segment
-(`loaderOwner`, after a prefetch-deferred loader's registered owner), and the
-caller segment a `"use cache"` call records and replays under
-(`cache-runtime.ts`). A route handler's ctx is still the request's one ctx,
-so `{ ...ctx }` there copies what it copies in any route.
+segment the walker pinned since. Owning `use` is what keeps the segment with
+a call that never passes the ctx: `const { use } = ctx`, a smaller ctx built
+with `use` copied onto it, and `{ ...ctx }` all push under the same segment
+(and the copy carries `use`, so it can push at all). The other readers take
+`segmentPinOf(ctx)`, the innermost scope's segment else the ctx's carried one
+else its pin: a handle push's segment (`setupLoaderAccess`, and
+`setupBuildUse` for the build pass, which runs the same walker), a started
+loader's owning segment (`loaderOwner`, after a prefetch-deferred loader's
+registered owner, then the segment of the ctx `ctx.use(loader)` was called
+on — the executor is built once from the handler ctx, so it cannot read a
+caller's carried segment off that), and the caller segment a `"use cache"`
+call records and replays under (`cache-runtime.ts`). A route handler's ctx is
+still the request's one ctx, so `{ ...ctx }` there copies what it copies in
+any route.
 
 You might worry about runtimes that lose async context. The fallback is the
 ctx's own segment (a layout's or slot's) or its pin (the request's one ctx),
@@ -2628,12 +2634,15 @@ covered by its `runAsSegment` scope, a component it hands the ctx to is not).
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader
 the handler starts, a `"use cache"` call, a loader started from a loader body
-after an await; `{ ...ctx }` in a `loading()` route),
+after an await, a loader a component starts through a layout's ctx;
+`{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to) and `server/__tests__/segment-pin.test.ts`. The e2e
-`handles-after-await` (test-app and cloudflare-basic, dev and production)
-checks the message on the page.
+slot handed the ctx to, and for a `use` the component destructured, built a
+smaller ctx with, or copied out of a `{ ...ctx }`) and
+`server/__tests__/segment-pin.test.ts`. The e2e `handles-after-await`
+(test-app and cloudflare-basic, dev and production) checks the message on the
+page.
 
 ### Cache-safety contract for context variables
 

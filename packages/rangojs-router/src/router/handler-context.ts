@@ -235,6 +235,22 @@ export function withSegmentScope<C>(
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  // A receiver is not the only way this ctx is used: `const { use } = ctx`, a
+  // smaller ctx copying `use`, and `{ ...ctx }` all call it without this
+  // object, and each would read the shared ctx's pin instead — the push the
+  // segment exists to attribute would name whichever segment the walker
+  // pinned since. Owning `use` keeps the segment with the function however it
+  // is called. It reads the parent's `use` at call time rather than capturing
+  // it: executeLoaderData swaps that one on the handler ctx around a loader
+  // body (segment-resolution/loader-cache.ts), and the swap must still see the
+  // call. Enumerable so `{ ...ctx }` carries it too.
+  Object.defineProperty(scoped, "use", {
+    value: (item: unknown) =>
+      (ctx as { use: (item: unknown) => unknown }).use.call(scoped, item),
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

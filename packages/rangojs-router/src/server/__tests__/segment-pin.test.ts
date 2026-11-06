@@ -12,6 +12,21 @@ describe("segmentPinOf", () => {
     expect(segmentPinOf({})).toBeUndefined();
   });
 
+  it("reads the ctx's carried segment over the shared pin it inherits", () => {
+    // A layout's or slot's ctx is a prototype child of the handler ctx
+    // (withSegmentScope): its own segment holds after the walker moved the
+    // inherited pin on, which is what a push through it must name.
+    expect(
+      segmentPinOf({ _currentSegmentId: "R0", _handleSegmentId: "L0" }),
+    ).toBe("L0");
+    // A scope around the call still says what the code runs for.
+    expect(
+      runAsSegment("R0", () =>
+        segmentPinOf({ _currentSegmentId: "R0", _handleSegmentId: "L0" }),
+      ),
+    ).toBe("R0");
+  });
+
   it("reads the scope's segment after the shared pin moves, across awaits", async () => {
     const ctx = { _currentSegmentId: "R0" };
     const seen: Array<string | undefined> = [];

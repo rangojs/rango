@@ -35,6 +35,7 @@ import {
   createLoader,
   createRouter,
   urls,
+  type HandlerContext,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
@@ -298,6 +299,41 @@ function spreadRoutes(copies: Record<"streamed" | "awaited", Copy>) {
   );
 }
 
+const LayoutLoader = createLoader(async (ctx) => {
+  ctx.use(Crumbs)("started");
+  return null;
+});
+
+/**
+ * A sync component that starts a loader through the layout's ctx. A loader a
+ * handler starts files under the segment whose code started it (loaderOwner);
+ * a component renders after the handler returned, so it can only name its
+ * segment through the ctx it was handed.
+ */
+function LayoutStartedLoader({ ctx }: { ctx: HandlerContext }) {
+  ctx.use(LayoutLoader);
+  return <span>started</span>;
+}
+
+function layoutStartedLoader() {
+  return createRouter({}).routes(
+    urls(({ path, layout }) => [
+      layout(
+        (ctx) => {
+          ctx.use(Crumbs)("layout");
+          return <main>shell</main>;
+        },
+        () => [
+          layout(
+            (ctx) => <LayoutStartedLoader ctx={ctx} />,
+            () => [path("/sl", () => <p>sl</p>, { name: "sl" })],
+          ),
+        ],
+      ),
+    ]),
+  );
+}
+
 /** A loading() intercept handler that pushes after `w`, beside a layout slot. */
 function streamedIntercept(w: Wait) {
   return createRouter({}).routes(
@@ -509,6 +545,16 @@ for (const mode of ["document", "navigation"] as const) {
           "M0L0L0R0.@side": ["side"],
         },
         collected: ["layout", "route", "inner", "side"],
+      });
+    });
+
+    it("a loader a component starts through the layout's ctx files under the layout", async () => {
+      expect(await serve(layoutStartedLoader(), "/sl", mode)).toEqual({
+        buckets: {
+          M0L0L0: ["layout"],
+          M0L0L0L0: ["started"],
+        },
+        collected: ["layout", "started"],
       });
     });
 

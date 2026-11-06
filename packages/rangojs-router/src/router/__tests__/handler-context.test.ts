@@ -622,6 +622,47 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: use keeps the ctx as its receiver however it is reached", () => {
+      // handlePushSegment (router/loader-resolution.ts) reads the segment off
+      // the receiver, so a call that does not pass `scoped` — destructured,
+      // copied onto a smaller ctx, or taken from a spread copy — must still
+      // reach it as one. Otherwise it reads the shared ctx's pin, the bug the
+      // carried segment exists to fix.
+      const receivers: unknown[] = [];
+      const ctx = {
+        use(this: unknown) {
+          receivers.push(this);
+          return "pushed";
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+
+      const { use } = scoped;
+      expect(use("handle" as never)).toBe("pushed");
+      expect(receivers.at(-1)).toBe(scoped);
+
+      const smaller = { params: {}, use: scoped.use };
+      smaller.use("handle" as never);
+      expect(receivers.at(-1)).toBe(scoped);
+
+      const copy = { ...scoped };
+      expect(Object.hasOwn(copy, "use")).toBe(true);
+      copy.use("handle" as never);
+      expect(receivers.at(-1)).toBe(scoped);
+    });
+
+    it("withSegmentScope: use reads the parent's use at call time", () => {
+      // executeLoaderData swaps ctx.use on the handler ctx around a loader
+      // body (segment-resolution/loader-cache.ts); a scoped ctx must see the
+      // swapped one, so the child holds no copy of it.
+      const ctx = {
+        use: () => "before",
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      ctx.use = (() => "after") as unknown as typeof ctx.use;
+      expect(scoped.use("handle" as never)).toBe("after");
+    });
   });
 
   describe("optional params", () => {

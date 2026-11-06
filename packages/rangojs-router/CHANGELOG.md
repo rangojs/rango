@@ -17,6 +17,15 @@ owns the ctx the push went through:
 The push is still rejected, at the same moment, and production still shows no
 message.
 
+The segment holds however the push reaches `use`: `ctx.use(Handle)` as a
+method, `const { use } = ctx`, a smaller ctx built with `use` copied onto it,
+and a `{ ...ctx }` copy all name the layout's or the slot's segment. A loader
+such a ctx starts (`ctx.use(Loader)`) files its pushes under that segment too.
+One shape change comes with it: a layout's or slot's ctx is a prototype child
+of the request's ctx, so `{ ...ctx }` there copies its own fields —
+`_handleSegmentId`, `use`, and `reverse`/`_reverseScope` when the segment has
+a scope — and no longer the whole request ctx for a segment with no scope.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
