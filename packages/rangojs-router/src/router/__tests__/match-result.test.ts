@@ -480,6 +480,31 @@ describe("match-result", () => {
       expect(result.resolvedIds).toEqual(["R0", "R0D1.rerun"]);
       expect(result.matched).toEqual(["R0", "R0D0.held", "R0D1.rerun"]);
     });
+
+    // A stored segment the answer sends stands in for a run of its handler:
+    // its record's values replace the client's, or clear them. A kept stored
+    // segment is not in the set, so its values stay, as on a live walk. The
+    // ids ride in the pipeline state, not on the segment: the same object
+    // reaches the client through containers this strip does not cover.
+    it("partial match resolvedIds names the stored segments the answer sends", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["L0", "L0R0"],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["L0", "L0R0", "L0R0D0.kept"];
+      state.cachedSentIds = new Set(["L0"]);
+      const segments = [
+        createSegment("L0", { type: "layout" }),
+        createSegment("L0R0", { component: null }),
+      ];
+
+      const result = buildMatchResult(segments, ctx, state);
+
+      expect(result.resolvedIds).toEqual(["L0"]);
+      expect(result.matched).toEqual(["L0", "L0R0", "L0R0D0.kept"]);
+      expect(result.segments.every((s) => !("_handlerRan" in s))).toBe(true);
+    });
   });
 
   describe("buildMatchResult() - fromStorage", () => {

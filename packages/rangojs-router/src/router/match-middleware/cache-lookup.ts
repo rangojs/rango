@@ -595,6 +595,18 @@ async function* serveStoredSegments<TEnv>(
 
   yield* liveSegments;
 
+  // A partial answer lists a stored segment it sends in `resolvedIds`
+  // (match-result.ts): the record's handle values replace the client's, or
+  // clear them when it carries none, exactly as a re-run handler's do. A
+  // segment kept below is not listed: the client keeps its values, as on a
+  // live walk. Collected here, where the send decision is made, rather than
+  // marked on the segment: the same object travels to the wire through
+  // containers `buildMatchResult` does not strip (an intercept's slot,
+  // `state.slots`), so a marker on it leaks to the client.
+  const storedSentIds = ctx.isFullMatch
+    ? undefined
+    : (state.cachedSentIds ??= new Set<string>());
+
   for (const segment of segments) {
     if (interceptFillSkips(ctx, segment)) continue;
     let send = sends(segment);
@@ -616,12 +628,7 @@ async function* serveStoredSegments<TEnv>(
       keepClientSegment(segment);
     } else {
       sentIds?.add(segment.id);
-      // A stored segment the response sends stands in for a run of its
-      // handler: the record's values replace the client's, or clear them when
-      // it carries none, exactly as a re-run handler's do on a MISS. Without
-      // the marker buildMatchResult omits it from `resolvedIds`, and the
-      // browser keeps the values of the page it leaves.
-      segment._handlerRan = true;
+      storedSentIds?.add(segment.id);
     }
     yield segment;
   }

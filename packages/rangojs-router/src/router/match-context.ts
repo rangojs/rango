@@ -257,6 +257,15 @@ export interface MatchPipelineState {
   cachedSegments?: ResolvedSegment[];
   cachedMatchedIds?: string[];
 
+  // Ids of the stored segments a partial response sends. A sent record or
+  // entry segment stands in for a run of its handler: its values replace the
+  // client's, or clear them when it carries none, so match-result.ts lists
+  // these in `resolvedIds` (handles/pushed-by.ts). A kept segment is absent:
+  // the client keeps its values, as on a live walk. Derived per request by
+  // cache-lookup.ts, never stored: the same record sends on one navigation
+  // and is kept on another.
+  cachedSentIds?: Set<string>;
+
   // Whether cache should be revalidated (SWR)
   shouldRevalidate?: boolean;
 

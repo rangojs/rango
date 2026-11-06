@@ -65,7 +65,7 @@ const PageData = createLoader(async (ctx) => {
 });
 
 const router = createRouter({}).routes(
-  urls(({ path, cache, layout, loader }) => [
+  urls(({ path, cache, layout, intercept, loader }) => [
     layout(
       (ctx: HandlerContext) => {
         ctx.use(Crumbs)("root");
@@ -96,6 +96,24 @@ const router = createRouter({}).routes(
               return <p>b</p>;
             },
             { name: "b" },
+          ),
+          path(
+            "/item/:id",
+            (ctx: HandlerContext<{ id: string }>) => {
+              ctx.use(Crumbs)("item-page");
+              return <article>item</article>;
+            },
+            { name: "item" },
+            () => [loader(PageData)],
+          ),
+          intercept(
+            "@modal",
+            ".item",
+            (ctx: HandlerContext) => {
+              ctx.use(Crumbs)("modal");
+              return <dialog>modal</dialog>;
+            },
+            () => [loader(PageData)],
           ),
         ]),
         layout(
@@ -290,6 +308,40 @@ describe("a partial response's resolvedIds names what its record replaces", () =
       partial: { from: "/b", segments: from.matched },
     });
     expect(hit.flight).not.toContain("_handlerRan");
+  });
+
+  it("lists the intercept slot a HIT sends, and carries no marker on it", async () => {
+    // A cache HIT with an intercept sends the record's slot segment through
+    // `state.slots`, a container buildMatchResult does not strip: a marker
+    // set on the segment object (rather than the id recorded in the pipeline
+    // state) reached the client here.
+    const cacheStore = new MemorySegmentCacheStore();
+    const from = await pageOf("/b");
+    const request = {
+      cacheStore,
+      partial: {
+        from: "/b",
+        interceptSource: "/b",
+        segments: from.matched,
+      },
+    };
+    const miss = await serveShellRequest(router, "/item/1", request);
+    const hit = await serveShellRequest(router, "/item/1", request);
+
+    const { answer } = await readAnswer(hit);
+    const slot = answer.matched.find((id) => id.includes(".@modal"));
+    expect(slot).toBeDefined();
+    expect(answer.resolvedIds).toContain(slot);
+    for (const text of [
+      miss.flight,
+      miss.prelude,
+      miss.body,
+      hit.flight,
+      hit.prelude,
+      hit.body,
+    ]) {
+      expect(text ?? "").not.toContain("_handlerRan");
+    }
   });
 });
 
