@@ -184,18 +184,24 @@ const pprRouter = createRouter({}).routes(
 interface Answer {
   matched: string[];
   resolvedIds?: string[];
-  handles?: AsyncIterable<HandleData>;
 }
 
-/** A response's metadata and the last handle state it streamed. */
+/**
+ * A response's metadata and the handle state the browser merges: the last
+ * streamed yield, which holds everything the response pushed so far, or the
+ * document snapshot when nothing streamed.
+ */
 async function readAnswer(
   result: ServeShellRequestResult,
 ): Promise<{ answer: Answer; handles: HandleData; payload: string }> {
   const payload = result.flight!;
   const { metadata } = await deserializeResult<{ metadata: Answer }>(payload);
-  let handles: HandleData = {};
-  for await (const data of metadata.handles ?? []) handles = data;
-  return { answer: metadata, handles, payload };
+  const handles = await result.readHandles();
+  return {
+    answer: metadata,
+    handles: handles?.late.at(-1) ?? handles?.hydration ?? {},
+    payload,
+  };
 }
 
 /** The id of the segment whose pushes hold `crumb`. */
