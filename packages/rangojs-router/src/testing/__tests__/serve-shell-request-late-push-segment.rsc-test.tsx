@@ -96,6 +96,13 @@ function probe(row: Row, shape: CallShapeName) {
   };
 }
 
+/** A component that pushes a labelled crumb after collection completed. */
+async function Pusher({ ctx, label }: { ctx: HandlerContext; label: string }) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  ctx.use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
 function makeRouter(row: Row, shape: CallShapeName) {
   const Probe = probe(row, shape);
   return createRouter({
@@ -239,5 +246,46 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     expect(latePushSegment(reported)).toBe(
       expectedSegment("use cache", matched),
     );
+  });
+});
+
+describe("nested handler scopes", () => {
+  it("each layout's ctx keeps its own segment after the inner one ran", async () => {
+    errors.length = 0;
+    const router = createRouter({
+      onError: ({ error }) => {
+        errors.push(error instanceof Error ? error.message : String(error));
+      },
+    }).routes(
+      urls(({ path, layout }) => [
+        layout(
+          (ctx) => (
+            <div>
+              <Pusher ctx={ctx} label="outer" />
+            </div>
+          ),
+          () => [
+            layout(
+              (ctx) => (
+                <section>
+                  <Pusher ctx={ctx} label="inner" />
+                </section>
+              ),
+              () => [path("/nested", () => <p>page</p>, { name: "nested" })],
+            ),
+          ],
+        ),
+      ]),
+    );
+    const result = await serveShellRequest(router, "/nested", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    const matched = await matchedOf(result.flight);
+    const layouts = matched.filter((id) => /L\d+$/.test(id));
+    const named = errors.map(
+      (message) => /for segment "([^"]+)" was pushed after/.exec(message)![1],
+    );
+    // The root layout hands no ctx out; the two below it do.
+    expect(named).toEqual(layouts.slice(-2));
   });
 });
