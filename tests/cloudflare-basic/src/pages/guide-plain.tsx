@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -14,6 +14,16 @@ export const guidePlainGoneKey = (slug: string): string =>
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
+/** KV key of a slug whose item moved: the page answers redirect(). */
+export const guidePlainMovedKey = (slug: string): string =>
+  `gp-moved:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/**
+ * Where a page whose item moved sends a visitor: same-origin, so the redirect
+ * guard passes it, and never requested (the e2e reads the 3xx, not the page).
+ */
+export const guideMovedUrl = (slug: string): string => `/moved/${slug}`;
+
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
 // entry and no baked entry throws DataNotFoundError -> 404 (the retained
@@ -22,7 +32,8 @@ export const guidePlainFailKey = (slug: string): string =>
 // retains this producer body for router.prerender().
 // A slug the e2e deleted from the data source (guidePlainGoneKey, set by the
 // trigger's ?gone=1 op) is a notFound(): a refresh of it stores the "removed"
-// marker. Read only on a refresh, where ctx.env is the live env.
+// marker. Read only on a refresh, where ctx.env is the live env. The same for
+// a slug whose item moved (guidePlainMovedKey, ?redirect=1): redirect().
 export const GuidePlainDef = Prerender<{ slug: string }>(
   async () => [{ slug: "intro" }],
   async (ctx) => {
@@ -37,6 +48,14 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
       (await ctx.env.PRERENDER_KV.get(guidePlainFailKey(ctx.params.slug)))
     ) {
       throw new Error("upstream 500");
+    }
+    // The item moved: a refresh stores the "removed" marker (a requestless
+    // render has no request to answer the redirect on).
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainMovedKey(ctx.params.slug)))
+    ) {
+      throw redirect(guideMovedUrl(ctx.params.slug));
     }
     // Per-render stamp + entropy: stable across overlay hits (frozen payload),
     // different across renders.

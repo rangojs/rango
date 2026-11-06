@@ -1,5 +1,6 @@
-import { Prerender, Passthrough, cookies } from "@rangojs/router";
+import { Prerender, Passthrough, cookies, redirect } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
+import { guideMovedUrl, guidePlainMovedKey } from "./guide-plain.js";
 
 // Known slugs that get pre-rendered at build time.
 // Unknown slugs fall through to the Passthrough live handler.
@@ -32,6 +33,14 @@ export const GuidesDetailDef = Prerender<{ slug: string }>(
         (await ctx.env.PRERENDER_KV.get(guideDeclineKey(ctx.params.slug))))
     ) {
       return ctx.passthrough();
+    }
+    // The item moved: a refresh stores the "removed" marker, and the live
+    // handler answers the next request with the 3xx itself.
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainMovedKey(ctx.params.slug)))
+    ) {
+      throw redirect(guideMovedUrl(ctx.params.slug));
     }
     const title = knownGuides[ctx.params.slug] ?? `Guide: ${ctx.params.slug}`;
     const renderedAt = new Date().toISOString();
@@ -77,6 +86,9 @@ export const GuidesDetailDef = Prerender<{ slug: string }>(
 );
 
 export const GuidesDetail = Passthrough(GuidesDetailDef, async (ctx) => {
+  if (await ctx.env.PRERENDER_KV.get(guidePlainMovedKey(ctx.params.slug))) {
+    return redirect(guideMovedUrl(ctx.params.slug));
+  }
   const title = knownGuides[ctx.params.slug] ?? `Guide: ${ctx.params.slug}`;
   const renderedAt = new Date().toISOString();
 

@@ -3582,7 +3582,10 @@ export async function expectDevWarmOfLocalMemoryStoreRuns(
  *   `?onlyIfStale=1` is `prerender(page, { onlyIfStale: true })`;
  *   `?markStale=<tag>` is `prerender.markStale([tag])`. `?gone=1` deletes the
  *   slug from the fixture's data source, so the page's handler calls
- *   `notFound()` on its next refresh, and `?gone=0` restores it.
+ *   `notFound()` on its next refresh, and `?gone=0` restores it. `?redirect=1`
+ *   makes the page's handler answer `redirect("/moved/<slug>")` on its next
+ *   refresh (the item moved), and `?redirect=0` stops it; the Passthrough
+ *   route's live handler answers the same redirect.
  * - `tag(slug)`: the tag the route's `onDemand.tags` stamps for the slug. The
  *   route's `ttl` is long, so an entry goes stale only through `markStale`.
  * - `bakedSlug`: a slug `getParams()` lists, which a production build bakes.
@@ -3604,6 +3607,85 @@ export interface PrerenderRemoveFixture {
     sourceTestId: string;
     bakedSlug: string;
   };
+}
+
+/**
+ * A refresh whose render answers a `redirect()`: a requestless render has no
+ * request to send it to, so the page it stored goes out of service — the
+ * marker answers (the same 404 a removed page gives), and a refresh once the
+ * item is back brings the page back. The marker is stamped with the route's
+ * ttl and tags, so a sweep rechecks it like a page.
+ */
+export async function expectRedirectingRefreshStopsServingThePage(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("moved");
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  try {
+    await removeTrigger(page, trigger, "?redirect=1");
+    const redirected = await removeTrigger(page, trigger);
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+      tags: [fixture.tag(slug)],
+    });
+    await expectPageRemoved(page, fixture, slug);
+  } finally {
+    await removeTrigger(page, trigger, "?redirect=0");
+  }
+
+  // The item is back at its URL: the marker answers until a refresh replaces
+  // it, exactly as for a notFound() removal.
+  await expectPageRemoved(page, fixture, slug);
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+}
+
+/**
+ * The same refresh on a `Passthrough` route: the marker hands the URL back to
+ * the live handler, which sends the redirect itself — a real 3xx to the new
+ * URL, with the request in hand, not a 404.
+ */
+export async function expectRedirectingRefreshRunsLiveHandler(
+  page: Page,
+  fixture: PrerenderRemoveFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { pageUrl, triggerUrl, sourceTestId } = fixture.passthrough;
+  const slug = `moved-${pushProbe("live")}`;
+  const source = byTestId(page, sourceTestId);
+
+  await refreshPage(page, triggerUrl(slug));
+  await page.goto(pageUrl(slug));
+  await expect(source).toHaveText("prerender");
+
+  try {
+    await removeTrigger(page, triggerUrl(slug), "?redirect=1");
+    const redirected = await removeTrigger(page, triggerUrl(slug));
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+    });
+
+    const response = await page.request.get(pageUrl(slug), {
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(302);
+    expect(response.headers()["location"]).toBe(`/moved/${slug}`);
+  } finally {
+    await removeTrigger(page, triggerUrl(slug), "?redirect=0");
+  }
+
+  await refreshPage(page, triggerUrl(slug));
+  await page.goto(pageUrl(slug));
+  await expect(source).toHaveText("prerender");
 }
 
 /** One call of a removal fixture's trigger: its JSON answer. */

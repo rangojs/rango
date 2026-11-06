@@ -1,6 +1,6 @@
 ---
 name: prerender
-description: Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip, refresh them from a running app with on-demand prerender (Prerender onDemand + router.prerender, ISR-style), and warm any other route's runtime caches (ppr shell, cache(), "use cache", document cache) before traffic with the same router.prerender. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), refreshing one page from a webhook, cron or queue without a redeploy, removing a deleted item's page (prerender.remove, or notFound() in a refresh), making routes ready after a deploy or an updateTag so no visitor pays the first render, or deciding which routes to prerender vs render live.
+description: Pre-render route segments at build time with Prerender (with getParams), Passthrough live fallback, Static segments, and Skip, refresh them from a running app with on-demand prerender (Prerender onDemand + router.prerender, ISR-style), and warm any other route's runtime caches (ppr shell, cache(), "use cache", document cache) before traffic with the same router.prerender. Use when a page's content is mostly static and shouldn't render on every request, speeding up cold responses, reading build-only data (files, build env), refreshing one page from a webhook, cron or queue without a redeploy, removing a deleted item's page (prerender.remove, notFound() in a refresh, or a refresh whose render redirects a moved item), making routes ready after a deploy or an updateTag so no visitor pays the first render, or deciding which routes to prerender vs render live.
 argument-hint: [passthrough]
 ---
 
@@ -821,8 +821,9 @@ will not finish.
 A refresh always renders and replaces; `{ onlyIfStale: true }` (cron sweeps)
 skips a fresh entry and returns `already-fresh`. The result is inspectable
 (`{ ok, path: "on-demand", status, key, tags, ttl }`); statuses are `rendered`,
-`already-fresh`, `removed` (the render hit `notFound()`, see "Remove a
-page"), `no-match`, `no-store`, `skipped-personalized`,
+`already-fresh`, `removed` (the render hit `notFound()` or answered a
+`redirect()`, see "Remove a page"), `no-match`, `no-store`,
+`skipped-personalized`,
 `skipped-unsupported-target` (a target with `?search` or `#hash`),
 `skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
 the previous entry, except `skipped-passthrough`, which hands the page to the
@@ -850,12 +851,14 @@ const prerender = router.prerender({ env, ctx });
 await prerender.remove("/products/42");
 await prerender.remove.many(paths, { concurrency: 4 });
 
-// 2. By refreshing: a render that hits notFound() removes its own page.
+// 2. By refreshing: a render that hits notFound() removes its own page, and so
+//    does one that redirects (the item moved: the URL is not a page here).
 export const ProductPage = Prerender(
   async () => [{ id: "featured" }],
   async (ctx) => {
     const product = await ctx.env.PRODUCTS.get(ctx.params.id);
     if (!product) notFound();
+    if (product.movedTo) throw redirect(`/products/${product.movedTo}`);
     return <Product data={product} />;
   },
   { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.id}`] } },
@@ -863,16 +866,24 @@ export const ProductPage = Prerender(
 await prerender("/products/42"); // { ok: true, status: "removed", ... }
 ```
 
-Both return `{ ok: true, path: "on-demand", status: "removed", key, tags }`.
+All three return `{ ok: true, path: "on-demand", status: "removed", key, tags }`.
 The result is `ok: true`: a removal worked, so count `removed` in what a sweep
 reports, next to `rendered` and `already-fresh`. From the next request on, the
 route answers 404 for that param, in dev and in production; a `Passthrough`
 route runs its live handler. A page the build baked is covered too: its
 build-time entry is not served.
 
-The two differ in how long they last:
+A redirect cannot be stored: a requestless render has no request to send one
+to, and the `Location` it built has no request's origin or basename and never
+passed the same-origin guard. So a refresh that answers one takes the page out
+of service, and the redirect itself is answered where a request exists: on a
+`Passthrough` route by the live handler, which throws it with the request in
+hand. A plain `onDemand` route has no live handler, so its visitor gets the
+404 the route already answers for a param it holds no page for.
 
-|                          | `prerender.remove(url)`                    | a refresh that hits `notFound()`                                                   |
+The three differ in how long they last:
+
+|                          | `prerender.remove(url)`                    | a refresh that hits `notFound()` or answers `redirect()`                           |
 | ------------------------ | ------------------------------------------ | ---------------------------------------------------------------------------------- |
 | renders                  | no                                         | yes                                                                                |
 | the marker               | permanent: no `ttl`, no tags               | has the route's `ttl` and `tags`, like the page it replaces                        |
@@ -894,6 +905,11 @@ The two differ in how long they last:
   rendered again by `onRevalidate` or a sweep, like a stale page. `remove()` is
   a decision, not an observation: its marker stays until a
   `prerender(url)` without `onlyIfStale` renders the page.
+- **A `redirect()` anywhere in the render removes the page too**, and the
+  marker is stamped and rechecked like a `notFound()` one: the item may move
+  back, and a data source that redirects for a moment must not remove a page
+  until the next deploy. A render that redirects _and_ fails is
+  `render-failed` and keeps the page, whichever came first.
 - **`ctx.passthrough()` in a refresh stores the marker too.** A `Passthrough`
   route whose build handler declines a param gets `skipped-passthrough`, and
   the live handler answers from then on, not a page stored or baked earlier.

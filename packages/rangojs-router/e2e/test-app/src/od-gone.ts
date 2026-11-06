@@ -13,3 +13,9 @@ export const failSlugs: Set<string> = new Set();
 // handler calls ctx.passthrough() for a slug in this set (?decline=1 /
 // ?decline=0 on /od-trigger), so a refresh is `skipped-passthrough`.
 export const declineSlugs: Set<string> = new Set();
+
+// And an item that moved: the page's handler answers redirect() for a slug in
+// this set (?redirect=1 / ?redirect=0), on the plain route and on the
+// Passthrough route's build and live handlers alike, so a refresh stores the
+// "removed" marker and the live handler sends the 3xx.
+export const movedSlugs: Set<string> = new Set();

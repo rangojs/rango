@@ -1029,11 +1029,17 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   (`InternalHandlerContext._prerenderRemoved`, read by `gateOnDemandProducer`
   in `urls/path-helper.ts`), a Passthrough route runs its live handler. The
   marker has no `entry`, so a router from before it reads it as a miss.
-- A refresh whose render hits `notFound()` anywhere, and nothing else
-  (`matchForPrerender` reports `{ notFound: true }` on an on-demand run and
-  rethrows any other collected error ahead of it, `firstFlightError`), stores
-  the marker too, and so does a Passthrough build handler that returns
-  `ctx.passthrough()` (`skipped-passthrough`, so its live handler answers).
+- A refresh whose render hits `notFound()` anywhere, or answers a
+  `redirect()` (`matchForPrerender` reports `{ notFound: true }` /
+  `{ redirect: true }` on an on-demand run and rethrows any other collected
+  error ahead of either, `firstFlightError`), stores the marker too, and so
+  does a Passthrough build handler that returns `ctx.passthrough()`
+  (`skipped-passthrough`, so its live handler answers). A redirect is a 3xx
+  `Response` with a `Location` (`isRedirectOutcome`); any other Response stays
+  `render-failed` and keeps the page. The redirect is not stored: a
+  requestless render has no request to build a `Location` for, so a
+  Passthrough route's live handler sends the 3xx and a plain route answers the
+  404 a param without a page already gets.
   Those markers are stamped with the route's `ttl` and `tags` like a page: a
   stale one still answers 404, schedules `onRevalidate`, is rendered again by
   `onlyIfStale`, and `markStale()` reaches it. A `remove()` marker has
@@ -1059,8 +1065,8 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   newer than the build artifact; staleness only schedules refresh work.
 - The producer reuses `matchForPrerender` without inheriting request state.
   Personalized reads map to `skipped-personalized`; failed renders and writes
-  leave the previous entry intact (a `notFound()` is not a failure: it removes
-  the page, above). Its context carries the router's cache
+  leave the previous entry intact (a `notFound()` or a `redirect()` is not a
+  failure: it removes the page, above). Its context carries the router's cache
   versions (`_versions`), so `getCacheVersions()` inside a refresh answers like
   a live request.
 - Stores are plain get/set (`WritablePrerenderStore`): the trigger composes the

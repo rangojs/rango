@@ -47,8 +47,10 @@ route was pre-rendered.
   pr-miss contract in production: an overlay+manifest miss is a 404
   (`DataNotFoundError`), never an in-request producer render. A page is taken
   out of service by a "removed" marker in the overlay (`prerender.remove()`,
-  or a refresh whose handler calls `notFound()`), which also hides the
-  build-time entry below it. A refresh cannot
+  or a refresh whose render calls `notFound()` or answers `redirect()`), which
+  also hides the build-time entry below it. A redirect cannot be stored — a
+  requestless render has no request to send it to — so the marker answers and
+  a `Passthrough` route's live handler issues the 3xx. A refresh cannot
   reach connected clients until their prefetch caches expire — see the
   staleness call-outs in `docs/design/ondemand-prerender.md`.
 

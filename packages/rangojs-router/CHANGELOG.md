@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a refresh whose render redirects stops serving the page it replaced
+
+**Before.** `router.prerender()` on an `onDemand` route whose render answered
+`redirect()` returned `render-failed` and kept the page stored before it, so
+the URL went on serving a page the app now redirects away from: a renamed
+product kept showing its old page until the next deploy.
+
+**Now.** A redirect is an outcome, not a failure. A requestless render has no
+request to send it to, so the refresh stores the same "removed" marker a
+`notFound()` writes and returns `{ ok: true, status: "removed" }`. A plain
+`onDemand` route answers the next request with a 404, exactly as for a
+`notFound()`; a `Passthrough` route's live handler answers it, so the visitor
+gets the app's own 3xx to the new URL. The marker carries the route's `ttl`
+and `tags` and is rechecked like a page: `{ onlyIfStale: true }` leaves it
+while it is fresh and renders again once it is stale, so a refresh brings the
+page back once the item stops redirecting. Anything else a render throws, a
+`Response` included, is still `render-failed` and keeps the page.
+
+```ts
+// A product that moved: its page redirects to the new slug.
+const Product = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    const moved = await movedTo(ctx.params.slug);
+    if (moved) throw redirect(`/products/${moved}`);
+    return <ProductPage slug={ctx.params.slug} />;
+  },
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.slug}`] } },
+);
+
+// Before: { ok: false, status: "render-failed" }, old page still served.
+// Now:    { ok: true, status: "removed" }, 404 (or the live handler's 3xx).
+await router.prerender({ env })("/products/old-slug");
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

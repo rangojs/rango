@@ -200,7 +200,8 @@ Two timestamps, two meanings. `meta.storedAt` is when the render started: a
 the entry the render stores (#1072). `meta.staleAt` counts the ttl from the
 write, so a render slower than its ttl is not born stale (that would have it
 re-queue itself through `onRevalidate` with no visitor). The same holds for the
-marker of a refresh that hit `notFound()` and for a `ctx.passthrough()` decline.
+marker of a refresh that hit `notFound()` or answered a `redirect()`, and for a
+`ctx.passthrough()` decline.
 A `remove()` marker renders nothing and carries its write time in both. A
 result's `ttl` is the configured one (`meta.ttl`), never `staleAt - storedAt`.
 
@@ -358,9 +359,9 @@ await prerender.remove.many(paths, { concurrency: 4 });
 ```
 
 It stores a "removed" marker in place of the page, which masks the manifest
-entry instead of re-exposing it. A refresh whose render hits `notFound()`
-stores one too, with the route's `ttl` and `tags` so that it is rechecked. See
-"Removing A Page".
+entry instead of re-exposing it. A refresh whose render hits `notFound()` or
+answers a `redirect()` stores one too, with the route's `ttl` and `tags` so
+that it is rechecked. See "Removing A Page".
 
 ### Result object
 
@@ -376,8 +377,8 @@ type PrerenderResult =
       path: "on-demand";
       // "already-fresh" only occurs with onlyIfStale: true.
       // "removed": the "removed" marker is stored in place of the page, by
-      // remove(), by a render that hit notFound(), or found fresh by
-      // onlyIfStale. ok: true, so a sweep counts it.
+      // remove(), by a render that hit notFound() or answered a redirect(),
+      // or found fresh by onlyIfStale. ok: true, so a sweep counts it.
       status: "rendered" | "already-fresh" | "removed";
       target: string;
       routeName: string;
@@ -509,6 +510,20 @@ the next deploy. On an on-demand run the producer reports a
 recognizes the error across realms by name), unless something else failed in
 the same render, and the trigger stores the "removed" marker and returns
 `removed`. See "Removing A Page".
+
+A `redirect()` is the second such throw, and for the same reason: the render is
+telling you this URL is not a page any more, it is a place to send a visitor
+from. Keeping the old entry would serve a renamed product's old page until the
+deploy. The producer reports it as `{ redirect: true, onDemandConfig }`
+(`isRedirectOutcome`, `prerender-match.ts`) and the trigger stores the same
+marker, because a redirect is the one thing it cannot store: a requestless
+render has no request, so the `Location` it built carries no request's origin
+or basename and never passed the same-origin guard. Storing it and replaying it
+would mean re-deriving `redirect()`'s rules at serve time, which is the drift
+`redirect-origin.ts` exists to prevent. So the marker answers instead, and the
+redirect is issued where a request exists: a `Passthrough` route's live handler.
+Every other `Response` a render throws (a handler's 404, a file) stays
+`render-failed` and keeps the page: an outage must not take a page down.
 
 ## Stored Payload
 
@@ -689,7 +704,9 @@ A product gets deleted. Its refreshed page has to stop serving, and until
 #1060 nothing could make it: a refresh whose handler called `notFound()` came
 back `render-failed` and kept the old entry (the last good page is served,
 which is right for an outage and wrong for a deletion), and nothing called
-`store.delete()`.
+`store.delete()`. A product that moves had the same shape of bug: the handler
+answered `redirect()`, the refresh came back `render-failed`, and the old page
+kept serving a URL the app now redirects away from.
 
 You might reach for that `delete()` first. It is the wrong tool, for the reason
 mark-stale exists: under the overlay sits the bundled manifest, and for a param
@@ -702,7 +719,8 @@ tombstone) stored in place of the page.
 ```ts
 // prerender.remove(): permanent
 { v: 1, removed: true, meta: { storedAt, tags: [], version, params } }
-// a refresh that hit notFound(): stamped like the page it replaces
+// a refresh that hit notFound() or answered a redirect(): stamped like the
+// page it replaces
 { v: 1, removed: true, meta: { storedAt, staleAt, tags, version, params } }
 ```
 
@@ -713,38 +731,49 @@ the same `DataNotFoundError` a miss throws (a 404 through the app's
 `notFound` boundary), and a `Passthrough` route runs its live handler. Pages
 the build baked are covered like pages only a refresh produced.
 
-### Two writers, one mechanism
+### Three writers, one mechanism
 
 1. **A refresh whose render hits `notFound()`.** `await prerender(url)` on a
    deleted product does the right thing: the result is
    `{ ok: true, path: "on-demand", status: "removed", ... }`. It is `ok: true`,
    so a sweep counts it with `rendered` and `already-fresh`.
-2. **`await prerender.remove(target)`**, which renders nothing. A "product
+2. **A refresh whose render answers `redirect()`.** The item moved, and a
+   requestless render cannot send a visitor anywhere: the same result, the same
+   marker. What a visitor gets is the route's own answer to "no page here": a
+   `Passthrough` route's live handler, which throws the redirect with the
+   request in hand and answers the 3xx; a plain `onDemand` route has no live
+   handler, so the 404 a param without a page already gets. Before this, the
+   refresh was `render-failed` and kept the page, so the URL went on serving a
+   page the app now redirects away from.
+3. **`await prerender.remove(target)`**, which renders nothing. A "product
    deleted" webhook fires when the item is gone from the CMS, which is not
    always when it is gone from the read replica the handler queries; a removal
    that needed a render would bring the page back from a lagging data source.
 
-Both end in a `store.set(key, marker)` (`composeStoredTombstone`,
+All three end in a `store.set(key, marker)` (`composeStoredTombstone`,
 `writable-store.ts`; `renderOnDemand` in `create-prerender-trigger.ts`), and a
 later `prerender(url)` that renders overwrites the marker with the page:
 `set()` replaces, whatever was there.
 
 A `notFound()` counts wherever it happens in the render: the route handler, a
 layout handler, a parallel slot handler, any server component, sync or async.
-The producer (`matchForPrerender`) turns it into an outcome instead of a
-throw, `{ notFound: true, onDemandConfig }`, because the trigger needs the
-route's `ttl` and `tags` to stamp the marker, and it only had those for a
-render that succeeded.
+So does a `redirect()` (a 3xx `Response` with a `Location`; anything else a
+handler answers with is not one). The producer (`matchForPrerender`) turns
+either into an outcome instead of a throw, `{ notFound: true, onDemandConfig }`
+or `{ redirect: true, onDemandConfig }`, because the trigger needs the route's
+`ttl` and `tags` to stamp the marker, and it only had those for a render that
+succeeded.
 
 One rule keeps a failing data source from ever removing a page. A render can
-hit a missing item and an outage at once (one component calls `notFound()`,
-another throws `upstream 500`), and Flight collects both. The producer used to
-rethrow the first one it collected, so the order of two sibling components
-decided between `removed` and `render-failed`. Now any error that is not a
-`DataNotFoundError` goes first on an on-demand run (`firstFlightError`,
-`prerender-match.ts`), as a personalization error already did. The advice for
-an app follows from that: call `notFound()` when you know the item is gone,
-throw anything else when you are not sure.
+hit a missing or moved item and an outage at once (one component calls
+`notFound()`, another throws `upstream 500`), and Flight collects both. The
+producer used to rethrow the first one it collected, so the order of two
+sibling components decided between `removed` and `render-failed`. Now any error
+that is not a no-page outcome goes first on an on-demand run
+(`firstFlightError`, `prerender-match.ts`), as a personalization error already
+did. The advice for an app follows from that: call `notFound()` or `redirect()`
+when you know the item is gone or moved, throw anything else when you are not
+sure.
 
 The batch form is `prerender.remove.many(targets, { concurrency, throwOnError })`,
 not an option on `.many()`. Next to `prerender.many(targets)` it reads as the
@@ -764,9 +793,10 @@ its page until someone refreshed it by hand, and no sweep would ever look
 again. Next.js, the precedent for the `notFound()` half, re-checks its 404 for
 the same reason (see "Precedent").
 
-So the two writers stamp different markers, and nothing else tells them apart:
+So `remove()` and a render's own outcome stamp different markers, and nothing
+else tells them apart:
 
-|                         | `prerender.remove()`    | a refresh that hit `notFound()`                                               |
+|                         | `prerender.remove()`    | a refresh that hit `notFound()` or answered `redirect()`                      |
 | ----------------------- | ----------------------- | ----------------------------------------------------------------------------- |
 | `meta.staleAt`          | none                    | from the route's `onDemand.ttl`, else the router's `prerender.ttl`, else none |
 | `meta.tags`             | `[]`                    | the route's `onDemand.tags`                                                   |
@@ -774,7 +804,8 @@ So the two writers stamp different markers, and nothing else tells them apart:
 | `{ onlyIfStale: true }` | leaves it, `removed`    | leaves it while fresh (`removed`); renders again once stale                   |
 | `markStale(tags)`       | cannot reach it         | marks it stale, so it is rechecked                                            |
 
-A `notFound()` marker is a page entry without a page: `composeStoredTombstone`
+A `notFound()` or `redirect()` marker is a page entry without a page:
+`composeStoredTombstone`
 takes the same `{ ttl, tags, params }` a page takes and composes its `meta`
 through `composeStoredEntry`, so there is one staleness rule and the stores
 need no code for it (`markStale` in the memory store and the tag markers in the
@@ -853,8 +884,8 @@ lock between them. Whichever lands last is what requests see, and two cases
 are worth knowing.
 
 Two refreshes of one page race. A marker stored after a render started is not
-overwritten by that render's page, and a render's own marker (a `notFound()` or
-a decline) carries that render's start. So a `remove()` always wins over a
+overwritten by that render's page, and a render's own marker (a `notFound()`, a
+`redirect()` or a decline) carries that render's start. So a `remove()` always wins over a
 render in flight, since its marker carries its write time, while an older
 render's `notFound()` marker does not win over a render that started after it:
 the later render read newer data, and its page is kept.
@@ -1057,6 +1088,7 @@ run requestless prerender producer
   +-- render failed --> render-failed (also when a notFound() happened too)
   +-- notFound() only --> write the "removed" marker, stamped with the
   |                       route's ttl and tags --> removed (no warm)
+  +-- redirect() only --> write the same marker --> removed (no warm)
   +-- ctx.passthrough() --> write the same marker --> skipped-passthrough,
   |                         then the warm request below
   |

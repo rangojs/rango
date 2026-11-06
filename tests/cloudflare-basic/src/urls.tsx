@@ -314,6 +314,7 @@ import {
   GuideSwrDef,
   guidePlainFailKey,
   guidePlainGoneKey,
+  guidePlainMovedKey,
 } from "./pages/guide-plain.js";
 import { guideDeclineKey } from "./pages/guides-handler.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
@@ -454,7 +455,10 @@ function prerenderResultJson(result: PrerenderResult): Response {
 // be a circular type. Returns the PrerenderResult as JSON for the e2e.
 // ?remove=1 removes the page instead (prerender.remove()): the live handler
 // answers the next request. ?decline=1 / ?decline=0 make the build handler
-// decline the slug (ctx.passthrough()) / stop declining it.
+// decline the slug (ctx.passthrough()) / stop declining it. ?redirect=1 /
+// ?redirect=0 make the page answer redirect() for the slug (the item moved) /
+// stop: a refresh then stores the "removed" marker and the live handler sends
+// the 3xx.
 const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
   const decline = ctx.url.searchParams.get("decline");
   if (decline) {
@@ -462,6 +466,13 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (decline === "1") await ctx.env.PRERENDER_KV.put(declineKey, "1");
     else await ctx.env.PRERENDER_KV.delete(declineKey);
     return Response.json({ decline: decline === "1" });
+  }
+  const moved = ctx.url.searchParams.get("redirect");
+  if (moved) {
+    const movedKey = guidePlainMovedKey(ctx.params.slug);
+    if (moved === "1") await ctx.env.PRERENDER_KV.put(movedKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(movedKey);
+    return Response.json({ moved: moved === "1" });
   }
   const { router } = await import("./router.js");
   const prerender = router.prerender({
@@ -488,6 +499,8 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
 //                          the next refresh hits notFound() or renders again
 //   ?fail=1 / ?fail=0   -> take the data source down / bring it back, so the
 //                          next refresh throws something other than notFound()
+//   ?redirect=1 / 0     -> the item moved: the page answers redirect(), so a
+//                          refresh removes it
 //   ?target=<path> (repeated) -> prerender.many(targets): the results as a
 //                          JSON array in target order
 const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
@@ -514,6 +527,13 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") await ctx.env.PRERENDER_KV.put(failKey, "1");
     else await ctx.env.PRERENDER_KV.delete(failKey);
     return Response.json({ fail: fail === "1" });
+  }
+  const moved = ctx.url.searchParams.get("redirect");
+  if (moved) {
+    const movedKey = guidePlainMovedKey(ctx.params.slug);
+    if (moved === "1") await ctx.env.PRERENDER_KV.put(movedKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(movedKey);
+    return Response.json({ moved: moved === "1" });
   }
   const targets = ctx.url.searchParams.getAll("target");
   if (targets.length > 0) {

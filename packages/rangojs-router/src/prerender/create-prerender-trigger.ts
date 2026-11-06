@@ -26,6 +26,9 @@
  *   is rechecked like a page. `prerender.remove()` stores one without
  *   rendering, which never goes stale. A Passthrough build handler that
  *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
+ *   A `redirect()` in the render stores one as well: a requestless render has
+ *   no request to send a redirect to, and the page it stored must stop
+ *   serving a URL the app now redirects away from.
  * - A page and a render's marker (a `notFound()` or a decline) carry the
  *   render's start as `storedAt`, so a `markStale()` that lands during the
  *   render marks the result; `staleAt` counts the ttl from the write. A
@@ -89,6 +92,8 @@ export interface ProducerOutput {
   passthrough?: true;
   /** The render hit `notFound()` and nothing else failed: no page to store. */
   notFound?: true;
+  /** The render answered a `redirect()`: no page to store. */
+  redirect?: true;
   onDemandConfig?: OnDemandRouteConfig;
 }
 
@@ -585,11 +590,17 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     }
     // No page to store: the render hit notFound() (the page no longer
     // exists; keeping the old entry would serve a deleted item until the next
-    // deploy), or a Passthrough build handler declined the param (the live
-    // handler is to answer, which it only does once nothing in a prerender
-    // store does). Both store the "removed" marker, stamped below with the
-    // route's ttl and tags like a page, so the outcome is rechecked like one.
-    const noPage = produced.notFound === true || produced.passthrough === true;
+    // deploy), answered a redirect() (a requestless render has no request to
+    // send it to, and keeping the old entry would serve a URL the app now
+    // redirects away from), or a Passthrough build handler declined the param
+    // (the live handler is to answer, which it only does once nothing in a
+    // prerender store does). All three store the "removed" marker, stamped
+    // below with the route's ttl and tags like a page, so the outcome is
+    // rechecked like one.
+    const noPage =
+      produced.notFound === true ||
+      produced.redirect === true ||
+      produced.passthrough === true;
 
     // Resolve soft TTL + tags from the route's onDemand config (read off the
     // loaded route entry by the producer), falling back to the router default.
@@ -657,7 +668,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     return {
       ok: true,
       path: "on-demand",
-      status: produced.notFound ? "removed" : "rendered",
+      status: produced.notFound || produced.redirect ? "removed" : "rendered",
       target: display,
       routeName: match.routeName,
       key: keyStr,

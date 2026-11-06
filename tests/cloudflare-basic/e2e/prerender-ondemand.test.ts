@@ -9,6 +9,8 @@ import {
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
+  expectRedirectingRefreshRunsLiveHandler,
+  expectRedirectingRefreshStopsServingThePage,
   type PrerenderOutcomesFixture,
 } from "@shared/e2e";
 
@@ -349,6 +351,20 @@ function defineRemoveFlow(f: Fixture) {
     page,
   }) => {
     await expectRemovedPassthroughPageRunsLiveHandler(page, guideFixture(f));
+  });
+
+  // A refresh whose render redirects: a requestless render has no request to
+  // answer it on, so the page it stored stops serving instead of staying.
+  test("a refresh whose render redirects stops serving the page, and a later refresh brings it back", async ({
+    page,
+  }) => {
+    await expectRedirectingRefreshStopsServingThePage(page, guideFixture(f));
+  });
+
+  test("a Passthrough route's redirecting refresh is answered by its live handler, which sends the 3xx", async ({
+    page,
+  }) => {
+    await expectRedirectingRefreshRunsLiveHandler(page, guideFixture(f));
   });
 }
 

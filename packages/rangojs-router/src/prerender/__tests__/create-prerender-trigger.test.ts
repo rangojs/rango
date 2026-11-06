@@ -1043,6 +1043,73 @@ describe("createPrerenderTrigger", () => {
       });
     });
 
+    describe("a refresh whose producer answers a redirect()", () => {
+      it("stores the marker over the previous entry and reports removed, with no warm", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const fetch = vi.fn<PrerenderTriggerDeps["fetch"]>(
+          async () => new Response("ok"),
+        );
+        const { trigger, store } = harness({
+          runProducer,
+          fetch,
+          resolveCacheConfig: () => ({ store: new MemorySegmentCacheStore() }),
+          ambientOrigin: () => "https://shop.example",
+        });
+        await trigger("/products/42");
+        expect(store.peek(productKey())).toHaveProperty("entry");
+        fetch.mockClear();
+
+        runProducer.mockResolvedValueOnce(output({ redirect: true }));
+        const result = await trigger("/products/42");
+
+        // The same marker a notFound() writes, with the same result shape: a
+        // redirect is not a page either, so nothing warms on top of it.
+        expect(result).toEqual(removed);
+        expect(fetch).not.toHaveBeenCalled();
+        expect(store.peek(productKey())).toMatchObject(tombstone);
+        expect(store.peek(productKey())).not.toHaveProperty("entry");
+        expect(store.size).toBe(1);
+      });
+
+      it("stamps the marker with the route's ttl and tags, so a sweep rechecks it like a page", async () => {
+        const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+        try {
+          const { trigger, store } = harness({
+            runProducer: async () =>
+              output({
+                redirect: true,
+                onDemandConfig: {
+                  ttl: 60,
+                  tags: ({ params }) => [`product:${params.id}`],
+                },
+              }),
+          });
+
+          expect(await trigger("/products/42")).toEqual({
+            ...removed,
+            tags: ["product:42"],
+            ttl: 60,
+          });
+          expect(store.peek(productKey())).toEqual({
+            v: 1,
+            removed: true,
+            meta: {
+              storedAt: 1000,
+              staleAt: 61_000,
+              ttl: 60,
+              tags: ["product:42"],
+              version: "b1",
+              params: { id: "42" },
+            },
+          });
+        } finally {
+          clock.mockRestore();
+        }
+      });
+    });
+
     describe("prerender.remove()", () => {
       it("stores the marker without calling the producer", async () => {
         const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(

@@ -33,6 +33,7 @@ import {
   notFound,
   Passthrough,
   Prerender,
+  redirect,
   updateTag,
   urls,
   type HandlerContext,
@@ -56,6 +57,8 @@ class SharedMemoryStore extends MemorySegmentCacheStore {
 
 /** The data source: slug -> title. A missing slug is a deleted product. */
 const catalog = new Map<string, string>();
+/** slug -> the slug its page now redirects to: the item moved. */
+const movedTo = new Map<string, string>();
 const runs = { producer: 0, hot: 0, live: 0, loader: 0, plain: 0 };
 /** Set to make the next producer run fail like an upstream outage. */
 let outage = false;
@@ -69,6 +72,12 @@ const StockLoader = createLoader(async () => {
 
 /** Set to throw a not-found error another realm made (matched by name). */
 let foreignNotFound = false;
+
+/** The redirect the item's page answers once it moved, if it has. */
+function redirectToMoved(slug: string): Response | undefined {
+  const to = movedTo.get(slug);
+  return to === undefined ? undefined : redirect(`/moved/${to}`);
+}
 
 function product(slug: string): string {
   if (outage) throw new Error("upstream 500");
@@ -120,6 +129,12 @@ async function Flaky(): Promise<React.ReactNode> {
   if (flaky) throw new Error("upstream 500");
   return <p>stock</p>;
 }
+/** A child that redirects: the item moved. */
+function MovedTitle({ slug }: { slug: string }): React.ReactNode {
+  const moved = redirectToMoved(slug);
+  if (moved) throw moved;
+  return <h1>{`title:${product(slug)}`}</h1>;
+}
 
 /** An on-demand page whose handler reads nothing: its tree does. */
 const tree = (render: (slug: string) => React.ReactNode) =>
@@ -142,6 +157,19 @@ const FailingThenMissingDef = tree((slug) => (
   <>
     <Flaky />
     <AsyncTitle slug={slug} />
+  </>
+));
+// A redirect and an outage in one render, in both orders.
+const RedirectThenFailingDef = tree((slug) => (
+  <>
+    <MovedTitle slug={slug} />
+    <Flaky />
+  </>
+));
+const FailingThenRedirectDef = tree((slug) => (
+  <>
+    <Flaky />
+    <MovedTitle slug={slug} />
   </>
 ));
 
@@ -190,6 +218,28 @@ const Baked = Passthrough(BakedDef, async (ctx) => (
   <h1>{`live:${product(ctx.params.slug)}`}</h1>
 ));
 
+// An item that moved: its page redirects to the new URL. A requestless render
+// has no request to answer a redirect with, so the refresh takes the page out
+// of service instead of keeping the one it stored (create-prerender-trigger.ts).
+const MovedDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    const moved = redirectToMoved(ctx.params.slug);
+    if (moved) throw moved;
+    return <h1>{`moved:${ctx.params.slug}:${product(ctx.params.slug)}`}</h1>;
+  },
+  { onDemand: { ttl: 60, tags: ({ params }) => [`moved:${params.slug}`] } },
+);
+
+// The same page behind a live handler, which redirects the same way: once the
+// stored page is out of service the live handler answers, with a real 3xx.
+const MovedLive = Passthrough(MovedDef, async (ctx) => {
+  runs.live += 1;
+  const moved = redirectToMoved(ctx.params.slug);
+  if (moved) return moved;
+  return <h1>{`live:${ctx.params.slug}:run-${runs.live}`}</h1>;
+});
+
 function PlainPage(): React.ReactNode {
   runs.plain += 1;
   return <p>{`plain-run${runs.plain}`}</p>;
@@ -225,6 +275,8 @@ function makeRouter(
         path("/live/:slug", LiveProduct, { name: "live" }),
         path("/declining/:slug", Declining, { name: "declining" }),
         path("/baked/:slug", Baked, { name: "baked" }),
+        path("/moved/:slug", MovedDef, { name: "moved" }),
+        path("/moved-live/:slug", MovedLive, { name: "movedLive" }),
         path("/plain", PlainPage, { name: "plain" }),
         path("/tree/sync/:slug", SyncComponentDef, { name: "treeSync" }),
         path("/tree/async/:slug", AsyncComponentDef, { name: "treeAsync" }),
@@ -233,6 +285,12 @@ function makeRouter(
         }),
         path("/tree/failing-missing/:slug", FailingThenMissingDef, {
           name: "treeFailingMissing",
+        }),
+        path("/tree/redirect-failing/:slug", RedirectThenFailingDef, {
+          name: "treeRedirectFailing",
+        }),
+        path("/tree/failing-redirect/:slug", FailingThenRedirectDef, {
+          name: "treeFailingRedirect",
         }),
         layout(ProductLayout, () => [
           path("/in-layout/:slug", StaticDef, { name: "inLayout" }),
@@ -294,6 +352,7 @@ describe("on-demand prerender: removing a refreshed page", () => {
     catalog.clear();
     catalog.set("a", "Alpha");
     catalog.set("b", "Beta");
+    movedTo.clear();
     for (const key of Object.keys(runs) as (keyof typeof runs)[]) runs[key] = 0;
     outage = false;
     flaky = false;
@@ -386,6 +445,76 @@ describe("on-demand prerender: removing a refreshed page", () => {
     const back = await serveShellRequest(router, "/products/a");
     expect(back.response.status).toBe(200);
     expect(back.flight).toContain("a:Alpha returns:render-2");
+  });
+
+  it("a refresh whose handler redirects takes the page out of service; a later refresh restores it", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+    await prerender("/moved/a");
+    expect((await serveShellRequest(router, "/moved/a")).response.status).toBe(
+      200,
+    );
+
+    // The item moved: the render answers a redirect, which no requestless
+    // render can send. The page it stored must stop serving all the same.
+    movedTo.set("a", "b");
+    const redirected = await prerender("/moved/a");
+
+    const gone = await serveShellRequest(router, "/moved/a");
+    expect(gone.response.status).toBe(404);
+    // The data source still has the item: only the redirect says the URL is
+    // not this page, and the stored render is not what answers.
+    expect(gone.body).not.toContain("moved:a:Alpha");
+    expect(redirected).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+      target: "/moved/a",
+      routeName: "moved",
+      tags: ["moved:a"],
+      ttl: 60,
+    });
+
+    // Stamped with the route's ttl and tags like a page: a sweep leaves the
+    // marker while it is fresh, and renders again once it is stale.
+    expect(await prerender("/moved/a", { onlyIfStale: true })).toMatchObject({
+      ok: true,
+      status: "removed",
+    });
+    movedTo.delete("a");
+    await prerender.markStale(["moved:a"]);
+    expect(await prerender("/moved/a", { onlyIfStale: true })).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
+    const back = await serveShellRequest(router, "/moved/a");
+    expect(back.response.status).toBe(200);
+    expect(back.flight).toContain("moved:a:Alpha");
+  });
+
+  it("a Passthrough route's redirecting refresh is answered by its live handler, which sends the redirect", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+    await prerender("/moved-live/a");
+    expect((await serveShellRequest(router, "/moved-live/a")).flight).toContain(
+      "moved:a:Alpha",
+    );
+    expect(runs.live).toBe(0);
+
+    movedTo.set("a", "b");
+    const redirected = await prerender("/moved-live/a");
+
+    // The marker hands the URL back to the live handler, which answers the
+    // redirect with the request in hand: a real 3xx to the new URL.
+    const live = await serveShellRequest(router, "/moved-live/a");
+    expect(live.response.status).toBe(302);
+    expect(live.response.headers.get("location")).toBe("/moved/b");
+    expect(runs.live).toBe(1);
+    expect(redirected).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+    });
   });
 
   it("a refresh that fails any other way keeps serving the page", async () => {
@@ -547,6 +676,33 @@ describe("on-demand prerender: removing a refreshed page", () => {
         expect(served.flight).toContain("title:Alpha");
 
         // Without the outage the same render is a notFound(): removed.
+        flaky = false;
+        expect(await prerender(path)).toMatchObject({ status: "removed" });
+      });
+    }
+
+    // The same for a render that redirects: an outage must not take the page
+    // out of service, whichever component reports first.
+    for (const path of [
+      "/tree/redirect-failing/a",
+      "/tree/failing-redirect/a",
+    ]) {
+      it(`${path}: render-failed, and the page stays`, async () => {
+        const router = makeRouter({ store });
+        const prerender = router.prerender({ env: {} });
+        expect(await prerender(path)).toMatchObject({ status: "rendered" });
+
+        movedTo.set("a", "b");
+        flaky = true;
+        const failed = await prerender(path);
+
+        expect(failed).toMatchObject({ ok: false, status: "render-failed" });
+        expect((failed as { error: Error }).error.message).toBe("upstream 500");
+        const served = await serveShellRequest(router, path);
+        expect(served.response.status).toBe(200);
+        expect(served.flight).toContain("title:Alpha");
+
+        // Without the outage the same render is a redirect: removed.
         flaky = false;
         expect(await prerender(path)).toMatchObject({ status: "removed" });
       });
